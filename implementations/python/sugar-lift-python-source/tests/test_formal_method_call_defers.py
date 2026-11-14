@@ -29,7 +29,7 @@ from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import ListValue, StringValue, TermValue
 from sugar_lift_py_tests.floor.none_value import NoneValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_source_tree.nodes import FunctionDef
 
 from test_contextlib_suppress_source_exit_faces import _corpus, _open
@@ -49,7 +49,7 @@ def _carrier(tmp_path, source):
 
 def _discharge(carrier, actual):
     (cid, *_rest) = carrier.demand.operand_coordinate_cids
-    return outcome_to_exitset(carrier.discharge(None, {cid: actual}))
+    return carrier.discharge(None, {cid: actual})
 
 
 def _faces(exits):

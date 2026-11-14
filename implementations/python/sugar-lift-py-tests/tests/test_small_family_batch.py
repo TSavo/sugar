@@ -59,7 +59,7 @@ def test_classdef_ground_true_body_constructs_its_field(tmp_path: Path) -> None:
     )
     class_def = next(n for n in sf.nodes() if type(n).__name__ == "ClassDef")
     sugar = class_def.sugar()
-    value = sugar.desugar().value
+    value = sugar.desugar().completed_value()
     assert [field.name for field in value.class_fields] == ["x"]
 
 
@@ -70,7 +70,7 @@ def test_classdef_ground_false_body_does_not_invent_its_field(tmp_path: Path) ->
     )
     class_def = next(n for n in sf.nodes() if type(n).__name__ == "ClassDef")
     sugar = class_def.sugar()
-    value = sugar.desugar().value
+    value = sugar.desugar().completed_value()
     assert [field.name for field in value.class_fields] == ["y"]
 
 
@@ -82,7 +82,7 @@ def test_classdef_conditional_fields_preserve_source_override_order(
         "class C:\n    if True:\n        x = 1\n    x = 2\n",
     )
     class_def = next(n for n in sf.nodes() if type(n).__name__ == "ClassDef")
-    value = class_def.sugar().desugar().value
+    value = class_def.sugar().desugar().completed_value()
     assert [field.name for field in value.class_fields] == ["x", "x"]
     assert value.class_fields[-1].value.value == 2
 

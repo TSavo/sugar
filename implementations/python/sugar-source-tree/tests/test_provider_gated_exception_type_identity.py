@@ -192,7 +192,7 @@ def test_authenticated_exception_type_sugar_does_not_force_attribute_floor():
     sugar = AuthenticatedExceptionTypeSugar(
         surface, _identity("pyarrow.ArrowInvalid"), site=None
     )
-    value = sugar.desugar().value
+    value = sugar.desugar().completed_value()
     assert isinstance(value, AuthenticatedExceptionTypeValue)
     assert value.exception_type_identity() == _identity("pyarrow.ArrowInvalid")
     assert value.exception_type_mro() is None

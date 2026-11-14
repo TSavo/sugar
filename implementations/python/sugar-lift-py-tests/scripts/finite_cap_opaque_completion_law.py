@@ -3,7 +3,7 @@
 
 A performance cap may avoid materializing authenticated finite construction, but
 its over-cap arm must remain honest: a loud typed terminal or an exact/witnessed
-symbolic representation.  It may not return an opaque ``Complete``, a generic
+symbolic representation.  It may not return an opaque ``ExitSet.completed``, a generic
 coordinate, or force-curried construction.
 
 This is a baseline-free structural census.  R > 0 exits red.  File, parse, and
@@ -113,9 +113,8 @@ def _call_has_true_keyword(node: ast.Call, keyword: str) -> bool:
 
 
 def _is_completion_constructor(name: str) -> bool:
-    """``Complete(...)`` or the ExitSet form ``ExitSet.completed(...)``."""
-    parts = name.split(".")
-    return parts[-1] == "Complete" or parts[-2:] == ["ExitSet", "completed"]
+    """``ExitSet.completed(...)``."""
+    return name.split(".")[-2:] == ["ExitSet", "completed"]
 
 
 def _is_forbidden_cap_complete(node: ast.Call) -> bool:
@@ -125,7 +124,7 @@ def _is_forbidden_cap_complete(node: ast.Call) -> bool:
     constructor = (
         _name(payload.func).split(".")[-1] if isinstance(payload, ast.Call) else ""
     )
-    # Over-cap Complete is closed by default.  Only an exact compact value whose
+    # Over-cap completion is closed by default.  Only an exact compact value whose
     # identity contains the finite constructor/elements/count is admitted.
     return constructor not in _EXACT_COMPACT_CONSTRUCTORS
 

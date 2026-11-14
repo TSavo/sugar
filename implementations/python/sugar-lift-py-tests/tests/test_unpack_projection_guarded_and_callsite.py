@@ -162,11 +162,11 @@ GUARDED_SYMBOLIC_ELSE = (
 
 def _halted_unpack_exits(outcome):
     """The halted exits of a partition that carry the retained unpack demand."""
-    from sugar_lift_py_tests.outcome.exit_set import Halted, outcome_to_exitset
+    from sugar_lift_py_tests.outcome.exit_set import Halted
 
     return [
         exit_
-        for exit_ in outcome_to_exitset(outcome).exits
+        for exit_ in outcome.exits
         if isinstance(exit_, Halted)
         and isinstance(exit_.effect, SequenceUnpackRuntimeEffect)
     ]

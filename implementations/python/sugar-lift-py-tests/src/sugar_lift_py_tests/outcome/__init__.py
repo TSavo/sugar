@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-from .complete import Complete
 from .complete_value import complete_value
-from .exit_set import Completed, ExitSet, Halted, outcome_to_exitset, true_guard
-from .incomplete import Incomplete
-from .outcome import Outcome
+from .exit_set import Completed, ExitSet, Halted, true_guard
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationDemandV1,
     NativeOperationExitCarrierV1,
@@ -14,18 +11,14 @@ from sugar_lift_py_tests.caller_parameter_contract import (
 )
 
 __all__ = [
-    "Complete",
     "Completed",
     "ExitSet",
     "Halted",
-    "Incomplete",
     "NativeOperationDemandV1",
     "NativeOperationExitCarrierV1",
     "NativeOperationResolutionV1",
     "authenticated_exceptional_resolution_count",
-    "Outcome",
     "complete_value",
-    "outcome_to_exitset",
     "native_operator_demand",
     "true_guard",
 ]

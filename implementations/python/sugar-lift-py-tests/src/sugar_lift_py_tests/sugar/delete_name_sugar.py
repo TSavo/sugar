@@ -6,7 +6,7 @@ from sugar_lift_py_tests.effect import NameErrorEffect
 from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.floor.branch_result_coordinate import branch_result_guard
 from sugar_lift_py_tests.ir import not_
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.binding_projection import (
     GuardedProjection,
     LoopGuardedProjection,
@@ -95,5 +95,5 @@ class DeleteNameSugar(Sugar):
     def witnesses(cls):
         return ()
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         return delete_binding(self.prior, name=self.name, site=self.site, ctx=ctx)

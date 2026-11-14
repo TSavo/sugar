@@ -43,61 +43,6 @@ def test_effect_coordinate_never_embeds_effect_payload() -> None:
     assert term.args[0].value == "file.py:1:0:1:10"
 
 
-def test_router_match_once_emits_binding_facts() -> None:
-    from sugar_lift_py_tests.context_manager_contract import EffectMatcher, Expects
-    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-    from sugar_lift_py_tests.effect_router import EffectBinding, route
-    from sugar_lift_py_tests.outcome import Incomplete
-
-    entries = (
-        Incomplete(RaiseEffect.for_builtin("ValueError", occurrence="t.py:2:4")),
-    )
-    out = route(
-        entries,
-        Expects(matcher=EffectMatcher(kind="raise", name="ValueError")),
-        slot_id="S",
-    )
-    assert len(out.bindings) == 1
-    assert isinstance(out.bindings[0], EffectBinding)
-    assert out.bindings[0].slot_id == "S"
-    assert out.bindings[0].type_name == "ValueError"
-    # Match consumed the halt; binding facts present
-    assert not any(isinstance(e, Incomplete) for e in out.entries)
-    formulas = [e.formula if hasattr(e, "formula") else e for e in out.stated_facts]
-    names = []
-    for f in formulas:
-        if getattr(f, "name", None) == "=" and getattr(f.args[0], "name", None):
-            names.append(f.args[0].name)
-        else:
-            names.append(getattr(f, "name", None))
-    assert "effect_slot_type" in names
-    assert "effect_slot_identity" not in names
-    assert "effect_slot_origin" in names
-
-
-def test_wrong_match_does_not_bind_slot() -> None:
-    from sugar_lift_py_tests.context_manager_contract import EffectMatcher, Expects
-    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-    from sugar_lift_py_tests.effect_router import route
-    from sugar_lift_py_tests.outcome import Incomplete
-
-    entries = (
-        Incomplete(
-            RaiseEffect.for_builtin(
-                "KeyError",
-                occurrence="implementations/python/sugar-lift-py-tests/tests/test_effect_slot_binding_testimony.py:81:0",
-            )
-        ),
-    )
-    out = route(
-        entries,
-        Expects(matcher=EffectMatcher(kind="raise", name="ValueError")),
-        slot_id="S",
-    )
-    assert out.bindings == ()
-    assert any(isinstance(e, Incomplete) for e in out.entries)
-
-
 def test_observed_effect_projects_only_an_authenticated_context_preimage() -> None:
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.floor.effect_coordinate import (

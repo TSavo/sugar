@@ -1,6 +1,6 @@
 """The closed finite-projection decision for comprehensions (#7347).
 
-`ComprehensionSugar._finite_map` used to answer `Outcome | None`, and the bare
+`ComprehensionSugar._finite_map` used to answer `ExitSet | None`, and the bare
 `None` stood for AT LEAST FOUR DISTINCT FACTS:
 
 1. the iterable genuinely has no finite-member roster;
@@ -24,7 +24,7 @@ be minted at a callsite -- it requires editing this module, which makes every
 exhaustive `match` over it fail loudly until it is revisited. A guard can be
 bypassed by a new callsite; a missing constructor cannot.
 
-`Projected` transports the existing `Outcome` and is NOT a fifth non-success
+`Projected` transports the existing `ExitSet` and is NOT a fifth non-success
 cause. Absence and lookup-failure never share a representation here.
 """
 
@@ -72,18 +72,21 @@ class FiniteProjectionNonSuccessV1(Enum):
 
 @dataclass(frozen=True)
 class Projected:
-    """A finite projection was produced. Transports the existing `Outcome`."""
+    """A finite projection was produced. Transports the existing `ExitSet`."""
 
     outcome: object
 
     def __post_init__(self) -> None:
         if self.outcome is None:
-            raise TypeError("Projected transports an Outcome, never None")
-        from sugar_lift_py_tests.outcome.outcome import Outcome
+            raise TypeError("Projected transports an ExitSet, never None")
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+        from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
-        if not isinstance(self.outcome, Outcome):
+        if not isinstance(self.outcome, (ExitSet, NativeOperationExitCarrierV1)):
             raise TypeError(
-                "Projected transports an Outcome; got "
+                "Projected transports an ExitSet; got "
                 f"{type(self.outcome).__name__}"
             )
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
@@ -81,7 +81,7 @@ class ClassConstructorBodySugar(Sugar):
             reason="a class call projects its ordinary definition and initializer",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         def project_new_return(definition, block):
             """Return the shadow receiver state produced by source ``__new__``.
 
@@ -133,7 +133,6 @@ class ClassConstructorBodySugar(Sugar):
             )
             from sugar_lift_py_tests.floor import BlockValue
             from sugar_lift_py_tests.floor import EllipsisValue
-            from sugar_lift_py_tests.outcome import outcome_to_exitset
             from sugar_source_tree.panic import SugarNotWritten
 
             # The outer CallSiteValue.force_floor already curried constructor
@@ -146,7 +145,6 @@ class ClassConstructorBodySugar(Sugar):
             outcome = self.initializer_body.desugar(initializer_ctx)
             if isinstance(outcome, NativeOperationExitCarrierV1):
                 return outcome
-            outcome = outcome_to_exitset(outcome)
             # One unconditional completed face is the whole initializer; only
             # then does an ellipsis-only body mean a stub constructor.
             sole = outcome.completed_value() is not None
@@ -189,7 +187,7 @@ class ClassConstructorBodySugar(Sugar):
 
         return self.enter_initializer(ctx, initialize)
 
-    def enter_initializer(self, ctx, initialize) -> Outcome:
+    def enter_initializer(self, ctx, initialize) -> ExitSet:
         """THE class call up to its ``__init__``: the one place a receiver is
         made for an initializer to run on.
 

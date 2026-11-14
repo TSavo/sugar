@@ -68,7 +68,6 @@ def _discharged_dict_method(out):
     )
     from sugar_lift_py_tests.floor import TermValue
     from sugar_lift_py_tests.floor.dict_value import DictValue
-    from sugar_lift_py_tests.outcome import outcome_to_exitset
 
     assert isinstance(out, NativeOperationExitCarrierV1)
     assert out.demand.operator == "method_call"
@@ -77,7 +76,7 @@ def _discharged_dict_method(out):
     for index, cid in enumerate(operands):
         if cid is not None:
             actuals[cid] = TermValue(index)
-    return outcome_to_exitset(out.discharge(None, actuals))
+    return out.discharge(None, actuals)
 
 
 @dataclass(frozen=True)

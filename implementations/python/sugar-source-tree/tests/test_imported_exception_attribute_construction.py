@@ -209,7 +209,7 @@ def test_import_bound_exception_desugars_to_authenticated_type(tmp_path):
         "    with expect(pa.ArrowInvalid):\n"
         "        raise ValueError('x')\n",
     )
-    call = boundary.manager.desugar().value
+    call = boundary.manager.desugar().completed_value()
     expected = call.arg_values[0]
     assert isinstance(expected, AuthenticatedExceptionTypeValue)
     assert expected.exception_type_identity() == ctor(
@@ -229,7 +229,7 @@ def test_arrow_exception_module_attr_desugars_to_authenticated_type(tmp_path):
         "    with expect(pyarrow.ArrowException):\n"
         "        raise ValueError('x')\n",
     )
-    expected = boundary.manager.desugar().value.arg_values[0]
+    expected = boundary.manager.desugar().completed_value().arg_values[0]
     assert isinstance(expected, AuthenticatedExceptionTypeValue)
     assert expected.exception_type_identity() == ctor(
         "python:exception_type_identity",
@@ -319,7 +319,7 @@ def test_importorskip_binding_authenticates_arrow_invalid(tmp_path):
         [str_const("import"), str_const("pyarrow.ArrowInvalid")],
     )
     boundary = _boundary(tmp_path, path.read_text(encoding="utf-8"))
-    expected = boundary.manager.desugar().value.arg_values[0]
+    expected = boundary.manager.desugar().completed_value().arg_values[0]
     assert isinstance(expected, AuthenticatedExceptionTypeValue)
     assert expected.exception_type_identity() == identity
 

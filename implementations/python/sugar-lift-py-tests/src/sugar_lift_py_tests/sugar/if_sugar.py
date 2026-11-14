@@ -27,7 +27,7 @@ import functools
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
@@ -196,7 +196,7 @@ class IfSugar(Sugar):
             prefix="",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
@@ -261,7 +261,7 @@ class IfSugar(Sugar):
             else FalseBoolLiteralSugar(site=self.site)
         )
 
-    def _desugar_condition(self, condition, ctx: object = None) -> Outcome:
+    def _desugar_condition(self, condition, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor.branch_result_coordinate import (
             BranchResultAuthentication,
             branch_result_guard,
@@ -409,7 +409,7 @@ class IfSugar(Sugar):
         observed_formula,
         authentication,
         incoming=None,
-    ) -> Outcome:
+    ) -> ExitSet:
         from dataclasses import replace as _replace
 
         from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces

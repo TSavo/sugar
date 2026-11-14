@@ -42,8 +42,8 @@ from sugar_lift_py_tests.floor import FloorValue, NoneValue, SymbolicValue, Term
 from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.ir import PrimitiveSort, ctor, make_var, str_const
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
-from sugar_lift_py_tests.outcome.exit_set import Completed, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import ExitSet
+from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
@@ -137,12 +137,12 @@ class _OperandReturningTruth(FloorValue):
         return ctor("python:probe_operand_truth", [])
 
 
-def _not_sugar(value) -> Outcome:
+def _not_sugar(value) -> ExitSet:
     return UnaryOpSugar("Not", _ValueSugar(value), _Site()).desugar(None)
 
 
 def _completed_value(outcome):
-    exits = outcome_to_exitset(outcome).exits
+    exits = outcome.exits
     assert len(exits) == 1
     assert isinstance(exits[0], Completed)
     return exits[0].value
@@ -284,7 +284,7 @@ def test_not_never_returns_the_operand_itself() -> None:
 def test_halted_truth_is_not_negated() -> None:
     """Face (b): a halted ``bool(value)`` has no truth value to negate."""
     outcome = _not_sugar(_AmbiguousTruth())
-    exits = outcome_to_exitset(outcome).exits
+    exits = outcome.exits
     assert len(exits) == 1
     # A raise is a Halted face: the effect is TypeError and not flipped.
     face = exits[0]
@@ -296,7 +296,7 @@ def test_halted_truth_is_not_negated() -> None:
 def test_truthful_exceptional_face_carries_floor_type_not_boundary() -> None:
     """Face (a)+(d): TypeError coordinate comes from the truth floor."""
     outcome = _not_sugar(_AmbiguousTruth())
-    exits = outcome_to_exitset(outcome).exits
+    exits = outcome.exits
     face = exits[0]
     if isinstance(face, Completed):
         effect = face.effect
@@ -413,7 +413,7 @@ def test_lying_boundary_exception_type_is_not_truth_origin() -> None:
     truthful_outcome = UnaryOpSugar(
         "Not", _ValueSugar(_AmbiguousTruth()), fragment
     ).desugar(None)
-    truthful_exits = outcome_to_exitset(truthful_outcome).exits
+    truthful_exits = truthful_outcome.exits
     face = truthful_exits[0]
     if isinstance(face, Completed):
         truthful_effect = face.effect

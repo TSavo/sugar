@@ -73,9 +73,9 @@ def _attribute_faces(src):
 
 def _attribute_completion_and_halt(src):
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-    from sugar_lift_py_tests.outcome import Halted, outcome_to_exitset
+    from sugar_lift_py_tests.outcome import Halted
 
-    exits = outcome_to_exitset(_attribute_faces(src)).exits
+    exits = _attribute_faces(src).exits
     halts = [
         f
         for f in exits

@@ -695,21 +695,15 @@ def function_contract_rows(fn, file_rel: str):
     reduction; no other lifter adds to it (#7767). A SugarNotWritten from an
     unported body statement propagates (the whole function is a frontier gap).
     """
-    from sugar_lift_py_tests.outcome import (
-        NativeOperationExitCarrierV1,
-        Outcome,
-        outcome_to_exitset,
-    )
+    from sugar_lift_py_tests.outcome import ExitSet
 
     def_memento = function_def_memento(fn, file_rel)
     outcome = owner_reduction(fn).outcome
-    if isinstance(outcome, NativeOperationExitCarrierV1) or not isinstance(
-        outcome, Outcome
-    ):
+    if not isinstance(outcome, ExitSet):
         require_outcome_in_scope(outcome, fn.sugar())
         return def_memento, None
     return def_memento, reduction_rows(
-        outcome_to_exitset(outcome),
+        outcome,
         owner=fn.sugar(),
         blame=fn.fragment,
         def_memento=def_memento,

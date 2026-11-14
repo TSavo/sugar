@@ -8,7 +8,7 @@ from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordin
 if TYPE_CHECKING:
     from sugar_lift_py_tests.context import ReduceContext
     from sugar_lift_py_tests.floor import FloorValue
-    from sugar_lift_py_tests.outcome import Outcome
+    from sugar_lift_py_tests.outcome import ExitSet
 
 
 @dataclass(frozen=True)
@@ -31,5 +31,5 @@ class CallableApplication:
                 "CallableApplication.call_occurrence must be SourceFragmentCoordinateV1"
             )
 
-    def apply(self, receiver: "FloorValue", ctx: "ReduceContext | None") -> "Outcome":
+    def apply(self, receiver: "FloorValue", ctx: "ReduceContext | None") -> "ExitSet":
         return receiver.callable_application_with(self, ctx)

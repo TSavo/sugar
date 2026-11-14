@@ -25,7 +25,7 @@ def _fn(src):
 
 
 def _out(src):
-    return _fn(src).sugar().desugar().value.post().args[1]
+    return _fn(src).sugar().desugar().completed_value().post().args[1]
 
 
 def test_concrete_counter_unrolls():

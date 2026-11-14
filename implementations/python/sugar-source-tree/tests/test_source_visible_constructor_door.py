@@ -259,7 +259,7 @@ def test_source_visible_new_constructor_refuses_foreign_returned_receiver() -> N
     )
     call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
 
-    coordinate = call.sugar().desugar().value
+    coordinate = call.sugar().desugar().completed_value()
 
     assert isinstance(coordinate, CallSiteValue)
     assert coordinate.body is None
@@ -301,7 +301,7 @@ def test_new_receiver_field_store_refuses_foreign_receiver_identity() -> None:
         context=context,
     )
     class_node = next(node for node in source.nodes() if isinstance(node, ClassDef))
-    class_value = class_node.sugar().desugar().value
+    class_value = class_node.sugar().desugar().completed_value()
     receiver_coordinate = (
         class_node.source_visible_constructor_frame().body.receiver_coordinate_cid
     )
@@ -340,7 +340,7 @@ def test_source_visible_new_constructor_refuses_uncompleted_return(
     )
     call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
 
-    coordinate = call.sugar().desugar().value
+    coordinate = call.sugar().desugar().completed_value()
 
     assert isinstance(coordinate, CallSiteValue)
     assert coordinate.body is None
@@ -369,7 +369,7 @@ def test_source_visible_new_constructor_refuses_nonexact_field_roster(
     )
     call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
 
-    coordinate = call.sugar().desugar().value
+    coordinate = call.sugar().desugar().completed_value()
 
     assert isinstance(coordinate, CallSiteValue)
     assert coordinate.body is None
@@ -444,13 +444,13 @@ def test_source_frame_binds_constructed_defaults_and_variadics() -> None:
         "renamed_variadic"
     ].source_visible_call_frame()
 
-    default_call = calls[0].sugar().desugar().value
+    default_call = calls[0].sugar().desugar().completed_value()
     default_block = default_call.force_floor(
         None, owner="default-call-frame", project_callsite=False
     )
     assert default_block.statements[0].value == TermValue(9)
 
-    variadic_call = calls[1].sugar().desugar().value
+    variadic_call = calls[1].sugar().desugar().completed_value()
     assert isinstance(variadic_call.arg_values[1], TupleValue)
     assert variadic_call.arg_values[1].elements == (TermValue(2), TermValue(3))
     assert isinstance(variadic_call.arg_values[2], DictValue)
@@ -469,7 +469,7 @@ def test_class_body_assign_of_free_call_is_opaque_dig_cue() -> None:
     class_node = next(node for node in source.nodes() if isinstance(node, ClassDef))
     sugar = class_node.sugar()
     assert type(sugar).__name__ == "ClassDefinitionSugar"
-    value = sugar.desugar().value
+    value = sugar.desugar().completed_value()
     field = next(f for f in value.class_fields if f.name == "state")
     assert field.value.term.name == "call:make_state"
     assert field.value.body is None
@@ -492,7 +492,7 @@ def test_class_body_chained_assign_constructs_each_exact_binding(monkeypatch) ->
 
     monkeypatch.setattr(type(attribute), "desugar", complete_attribute)
 
-    value = sugar.desugar().value
+    value = sugar.desugar().completed_value()
 
     assert tuple(field.name for field in value.class_fields) == (
         "long_name",
@@ -552,7 +552,7 @@ def test_yield_from_tuple_delegates_each_value_then_returns_to_the_generator() -
     call = next(node for node in source.nodes() if isinstance(node, Call))
     context.source_call_frames[_coordinate(call)] = function.source_visible_call_frame()
 
-    machine = call.sugar().desugar().value
+    machine = call.sugar().desugar().completed_value()
     first = machine.resume()
     assert isinstance(first, YieldEffect)
     assert first.value == TermValue(1)
@@ -615,7 +615,7 @@ def _construct_last_class_call(source_text: str):
     context.source_call_frames[_coordinate(call)] = (
         called.source_visible_constructor_frame()
     )
-    return call.sugar().desugar().value.force_floor(
+    return call.sugar().desugar().completed_value().force_floor(
         None, owner="class-call-with-source-new", project_callsite=False
     )
 
@@ -675,7 +675,7 @@ def test_class_value_application_refuses_source_new_and_keeps_plain_class() -> N
     def class_value(text: str):
         source = _source_file(text)
         class_node = next(n for n in source.nodes() if isinstance(n, ClassDef))
-        return class_node.sugar().desugar().value
+        return class_node.sugar().desugar().completed_value()
 
     operation = SimpleNamespace(site="renamed-site", arguments=(), keyword_names=())
     with pytest.raises(SugarNotWritten) as raised:

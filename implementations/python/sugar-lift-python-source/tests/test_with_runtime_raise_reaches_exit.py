@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.effect import RaiseEffect, RuntimeEffect
-from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
 from sugar_source_tree.nodes import FunctionDef, With
 
@@ -46,7 +46,7 @@ def _with(tmp_path: Path, manager: str, body: str):
     func = next(
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
-    return outcome_to_exitset(func.sugar().desugar())
+    return func.sugar().desugar()
 
 
 def _raised(exits):
@@ -121,7 +121,7 @@ def _function(tmp_path: Path, manager: str, body: str, params: str = ""):
     func = next(
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
-    return outcome_to_exitset(func.sugar().desugar())
+    return func.sugar().desugar()
 
 
 @pytest.mark.parametrize(

@@ -994,10 +994,9 @@ def test_subscript_root_preserves_nested_compare_owned_refusal() -> None:
         if isinstance(node, Compare) and node.line_col_span().start_line == 595
     )
 
-    from sugar_lift_py_tests.outcome import outcome_to_exitset
     from sugar_lift_py_tests.outcome.exit_set import Halted
 
-    exits = outcome_to_exitset(subscript.sugar().desugar(None)).exits
+    exits = subscript.sugar().desugar(None).exits
     compare_halts = [
         exit_
         for exit_ in exits

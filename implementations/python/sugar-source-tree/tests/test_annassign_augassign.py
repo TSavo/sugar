@@ -35,19 +35,21 @@ def _fn(src):
 
 
 def test_annotated_assign_with_value_is_inert_and_threads():
-    v = _fn("def A():\n    x: int = 5\n    return x\n").sugar().desugar().value
+    outcome = _fn("def A():\n    x: int = 5\n    return x\n").sugar().desugar()
+    v = outcome.completed_value()
     assert v.invs() == ()
     assert v.post().args[1].value == 5
 
 
 def test_bare_annotation_lifts_and_states_nothing():
-    v = _fn("def A(z):\n    x: int\n    return z\n").sugar().desugar().value
+    v = _fn("def A(z):\n    x: int\n    return z\n").sugar().desugar().completed_value()
     assert v.invs() == ()
     assert v.post().args[1].name == "z"
 
 
 def test_aug_assign_rebinds_and_is_inert():
-    v = _fn("def A():\n    t = 0\n    t += 2\n    return t\n").sugar().desugar().value
+    outcome = _fn("def A():\n    t = 0\n    t += 2\n    return t\n").sugar().desugar()
+    v = outcome.completed_value()
     assert v.invs() == ()
     assert v.post().args[1].value == 2
 
@@ -93,10 +95,9 @@ def _red_effects(source):
     # assertions are about the store the COMPLETED arm records; the halt face
     # and the composition laws live in
     # sugar-lift-py-tests/tests/test_store_outcome_composition.py.
-    from sugar_lift_py_tests.outcome.exit_set import sole_completed_outcome
+    from sugar_lift_py_tests.outcome.exit_set import sole_completed_value
 
-    outcome = sole_completed_outcome(_fn(source).sugar().desugar())
-    entries = outcome.value.record.statements
+    entries = sole_completed_value(_fn(source).sugar().desugar()).record.statements
     return [
         halt.effect
         for entry in entries
@@ -167,7 +168,7 @@ def _constructed_object(annotation):
         for item in SourceFile(path_source(_write(source)), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions()
         if item.name == "make"
     )
-    return function.sugar().desugar().value.record.statements[-1].value
+    return function.sugar().desugar().completed_value().record.statements[-1].value
 
 
 def test_annotated_store_on_constructed_receiver_matches_plain_store():
@@ -203,7 +204,7 @@ def test_bare_attribute_annotation_evaluates_only_renamed_receiver():
     assert isinstance(sugar, ExprStatementSugar)
     assert sugar.value == declaration.target.value.sugar()
 
-    value = function.sugar().desugar().value
+    value = function.sugar().desugar().completed_value()
     assert value.post().args[1].name == "receiver"
 
 
@@ -237,8 +238,10 @@ def test_aug_assign_with_no_prior_binding_is_sound():
 
 
 def test_discrimination_annassign_value_changes_the_post():
-    a = _fn("def A():\n    x: int = 5\n    return x\n").sugar().desugar().value.post()
-    b = _fn("def A():\n    x: int = 6\n    return x\n").sugar().desugar().value.post()
+    a_outcome = _fn("def A():\n    x: int = 5\n    return x\n").sugar().desugar()
+    b_outcome = _fn("def A():\n    x: int = 6\n    return x\n").sugar().desugar()
+    a = a_outcome.completed_value().post()
+    b = b_outcome.completed_value().post()
     assert a.args[1].value == 5
     assert b.args[1].value == 6
     assert a.args[1].value != b.args[1].value

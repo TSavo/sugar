@@ -5,7 +5,7 @@ from typing import ClassVar
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.floor import ReturnValue
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
@@ -35,7 +35,7 @@ class ReturnSugar(Sugar):
             lying=prefix + "def test_a():\n    assert A(5) == 0\n",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         if self.value is None:
             from sugar_lift_py_tests.floor import NoneValue
 

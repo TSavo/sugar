@@ -199,8 +199,8 @@ def _constructed_boundaries(tmp_path, source=SOURCE, *, warning_first=False):
 def test_variable_patterns_reach_both_nested_boundaries(tmp_path):
     """Truthful: Assign substitution supplies both real ``match=`` operands."""
     outer, inner = _constructed_boundaries(tmp_path)
-    outer_call = outer.manager.desugar().value
-    inner_call = inner.manager.desugar().value
+    outer_call = outer.manager.desugar().completed_value()
+    inner_call = inner.manager.desugar().completed_value()
     assert isinstance(outer_call, CallSiteValue)
     assert isinstance(inner_call, CallSiteValue)
     assert outer_call.arg_values[-1] == StringValue("unsupported operand type.+for &:")
@@ -210,8 +210,8 @@ def test_variable_patterns_reach_both_nested_boundaries(tmp_path):
 def test_lying_variable_patterns_do_not_alias_between_boundaries(tmp_path):
     """Lying: swapped expectations must fail; the two bindings stay distinct."""
     outer, inner = _constructed_boundaries(tmp_path)
-    outer_pattern = outer.manager.desugar().value.arg_values[-1]
-    inner_pattern = inner.manager.desugar().value.arg_values[-1]
+    outer_pattern = outer.manager.desugar().completed_value().arg_values[-1]
+    inner_pattern = inner.manager.desugar().completed_value().arg_values[-1]
     assert outer_pattern != inner_pattern
 
 
@@ -220,10 +220,9 @@ def test_reverse_order_branch_constructs_both_native_boundaries(tmp_path):
     outer, inner = _constructed_boundaries(tmp_path, STRESS_SOURCE, warning_first=True)
     assert isinstance(outer.semantics.effect_kind, WarningEffectKindV1)
     assert isinstance(inner.semantics.effect_kind, RaiseEffectKindV1)
-    assert outer.manager.desugar().value.arg_values[-1] == StringValue(
-        "Operation between non"
-    )
-    inner_call = inner.manager.desugar().value
+    outer_call = outer.manager.desugar().completed_value()
+    assert outer_call.arg_values[-1] == StringValue("Operation between non")
+    inner_call = inner.manager.desugar().completed_value()
     assert isinstance(inner_call.arg_values[0], AuthenticatedExceptionTypeValue)
     assert inner_call.arg_values[-1] == StringValue("has no kernel")
 
@@ -644,10 +643,8 @@ def _three_deep_level_receipts(exception_name: str):
 def test_three_deep_innermost_manager_halt_reaches_outer_assertion_after_cleanup():
     """Truthful: the subject's OSError crosses BytesIO cleanup and is consumed."""
     from sugar_lift_py_tests.outcome import Completed
-    from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 
-    outcome, middle_exit, inner_enter, inner_exit = _three_deep_manager_halt("OSError")
-    exits = outcome_to_exitset(outcome)
+    exits, middle_exit, inner_enter, inner_exit = _three_deep_manager_halt("OSError")
     completed = [face for face in exits.exits if isinstance(face, Completed)]
     assert len(completed) == 1
     assert not any(
@@ -662,12 +659,8 @@ def test_three_deep_innermost_manager_halt_reaches_outer_assertion_after_cleanup
 def test_three_deep_nonmatching_manager_halt_stays_halted_after_cleanup():
     """Lying twin: outer OSError boundary must not consume a TypeError halt."""
     from sugar_lift_py_tests.outcome import Completed, Halted
-    from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 
-    outcome, middle_exit, inner_enter, inner_exit = _three_deep_manager_halt(
-        "TypeError"
-    )
-    exits = outcome_to_exitset(outcome)
+    exits, middle_exit, inner_enter, inner_exit = _three_deep_manager_halt("TypeError")
     preserved = [
         face
         for face in exits.exits

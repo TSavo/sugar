@@ -24,7 +24,7 @@ class ConstructionPanic(BaseException):
 
 
 def construction_panic(info: ConstructionGap) -> NoReturn:
-    """Raise the construction None arm. No Incomplete soft arm; no audit row."""
+    """Raise the construction None arm. No soft halted arm; no audit row."""
     raise ConstructionPanic(info)
 
 

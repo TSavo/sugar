@@ -694,16 +694,13 @@ class SourceVisibleCallFrameV1:
                 value = named.pop(name)
                 present = True
             if not present and default is not None:
-                from sugar_lift_py_tests.outcome import (
-                    NativeOperationExitCarrierV1,
-                    outcome_to_exitset,
-                )
+                from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
 
                 outcome = default.desugar(ctx)
                 exits = (
                     None
                     if isinstance(outcome, NativeOperationExitCarrierV1)
-                    else outcome_to_exitset(outcome)
+                    else outcome
                 )
                 # One completed arm under truth that owes nothing: a default
                 # that owes would drop its debt into the bound actual.

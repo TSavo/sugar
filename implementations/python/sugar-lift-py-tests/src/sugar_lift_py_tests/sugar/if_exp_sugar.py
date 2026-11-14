@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
@@ -96,7 +96,7 @@ class IfExpSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         # The test itself can halt or partition (`(a if f() else b)` where the
         # call is unresolvable, `(a if (d[k] := c) else b)`): thread it through
         # `and_then` rather than reading `cond.value`.  The test is an operand:
@@ -112,7 +112,7 @@ class IfExpSugar(ConstructedTermSugar):
             )
         )
 
-    def _join(self, cond_value, ctx) -> Outcome:
+    def _join(self, cond_value, ctx) -> ExitSet:
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
 
@@ -143,23 +143,33 @@ class IfExpSugar(ConstructedTermSugar):
         then_out = self._holding(self.body.desugar(ctx), ctx)
         else_out = self._holding(self.orelse.desugar(ctx), ctx)
 
-        # A deferred native-operation arm is not an ExitSet. Forcing it through
-        # outcome_to_exitset panics; BoolOp already keeps that carrier beside
-        # the already-decided face via short_circuit. The same law applies
-        # here: evaluate the deferred arm only on its face, and keep the
-        # completed peer as the stopping face. Do not evaluate exc.message
-        # on the path that wrote str(exc). Both-deferred arms stay loud.
+        # A deferred native-operation arm is not an ExitSet. BoolOp keeps that
+        # carrier beside the already-decided face via short_circuit. The same
+        # law applies here: evaluate the deferred arm only on its face, and
+        # keep the completed peer as the stopping face. Do not evaluate
+        # exc.message on the path that wrote str(exc). Both-deferred arms stay
+        # loud.
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
 
         then_deferred = isinstance(then_out, NativeOperationExitCarrierV1)
         else_deferred = isinstance(else_out, NativeOperationExitCarrierV1)
-        if then_deferred ^ else_deferred:
-            from sugar_lift_py_tests.outcome.exit_set import (
-                outcome_to_exitset,
-                partition as _partition,
+        if then_deferred and else_deferred:
+            from sugar_lift_py_tests.gap.info import GapKind
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="IfExpSugar",
+                blame=self.site,
+                observed="both conditional-expression arms are deferred "
+                "native-operation carriers",
+                requested="at most one deferred arm beside a decided ExitSet arm",
+                fix="retain each carrier through caller discharge",
+                gap_kind=GapKind.FLOOR,
             )
+        if then_deferred or else_deferred:
+            from sugar_lift_py_tests.outcome.exit_set import partition as _partition
 
             then_face, else_face = _partition(("IfExpSugar", self.site, formula))
             # The decided peer stands under its own polarity, as BoolOp's
@@ -167,25 +177,22 @@ class IfExpSugar(ConstructedTermSugar):
             if then_deferred:
                 return then_out.short_circuit(
                     continuing_guard=formula,
-                    stopped=outcome_to_exitset(else_out).guarded(not_formula),
+                    stopped=else_out.guarded(not_formula),
                     continuing_face=then_face,
                     stopped_face=else_face,
                 )
             return else_out.short_circuit(
                 continuing_guard=not_formula,
-                stopped=outcome_to_exitset(then_out).guarded(formula),
+                stopped=then_out.guarded(formula),
                 continuing_face=else_face,
                 stopped_face=then_face,
             )
         return self._join_arms(formula, then_out, else_out)
 
-    def _join_arms(self, formula, then_out, else_out) -> Outcome:
+    def _join_arms(self, formula, then_out, else_out) -> ExitSet:
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.ir import not_
-        from sugar_lift_py_tests.outcome.exit_set import (
-            outcome_to_exitset,
-            partition as _partition,
-        )
+        from sugar_lift_py_tests.outcome.exit_set import partition as _partition
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             plain_completed_value,
         )
@@ -235,10 +242,8 @@ class IfExpSugar(ConstructedTermSugar):
         # by then the guards have been conjoined with a prefix and their shape
         # no longer shows it. Testimony carried here does not decay.
         then_face, else_face = _partition(("IfExpSugar", self.site, formula))
-        exits = outcome_to_exitset(then_out).guarded(formula, then_face)
-        exits = exits.union(
-            outcome_to_exitset(else_out).guarded(not_formula, else_face)
-        )
+        exits = then_out.guarded(formula, then_face)
+        exits = exits.union(else_out.guarded(not_formula, else_face))
 
         # FACTOR THE COMPLETED FACE (#6324). An EXPRESSION's exit set is consumed
         # by `and_then`, and `ExitSet.sequence` appends every exit of the tail
@@ -280,7 +285,7 @@ class IfExpSugar(ConstructedTermSugar):
             return exits
         return exits.factor_completed()
 
-    def _holding(self, outcome, ctx) -> Outcome:
+    def _holding(self, outcome, ctx) -> ExitSet:
         """``outcome`` (one arm's), each completed value also carrying, for
         every walrus in either arm that did not bind on it, the name's value
         from before the expression under that walrus's key (a held bind).
@@ -308,14 +313,13 @@ class IfExpSugar(ConstructedTermSugar):
             carry_walrus_binds,
             peel_walrus_binds,
         )
-        from sugar_lift_py_tests.outcome import outcome_to_exitset
 
         priors: dict = {}
 
         def prior_value(evaluation, prior):
             # The read of the name before the expression, once per arm.
             if evaluation not in priors:
-                read = outcome_to_exitset(prior.desugar(ctx))
+                read = prior.desugar(ctx)
                 value = read.completed_value()
                 priors[evaluation] = (
                     None
@@ -343,4 +347,4 @@ class IfExpSugar(ConstructedTermSugar):
                 return ExitSet.completed(value)
             return ExitSet.completed(carry_walrus_binds((*binds, *held), presented))
 
-        return outcome_to_exitset(outcome).and_then(hold)
+        return outcome.and_then(hold)

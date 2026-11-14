@@ -34,7 +34,6 @@ from sugar_lift_py_tests.floor import ReturnValue, TermValue
 from sugar_lift_py_tests.floor.branch_result_coordinate import BranchResultSlot
 from sugar_lift_py_tests.floor.named_expression_value import NamedExpressionValue
 from sugar_lift_py_tests.outcome import ExitSet
-from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 from sugar_lift_py_tests.sugar.comparison_op_sugar import ComparisonOpSugar
 from sugar_lift_py_tests.sugar.if_sugar import IfSugar
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
@@ -290,7 +289,7 @@ def test_left_hand_comparison_presented_owns_and_carry_binds() -> None:
     assert cmp_out.completed_value().name == "n"
     assert cmp_out.completed_value().assigned_value == TermValue(5)
     scoped = cmp_out.completed_value().extend_scope(_root("cmp"))
-    assert _name("n").desugar(scoped).value == TermValue(5)
+    assert _name("n").desugar(scoped).completed_value() == TermValue(5)
 
 
 def test_no_string_predicate_from_left_door() -> None:
@@ -315,7 +314,7 @@ def test_right_hand_zero_lt_walrus_reaches_typed_method() -> None:
     assert isinstance(direct.completed_value(), NamedExpressionValue)
     assert direct.completed_value().assigned_value == TermValue(5)
     scoped = out.completed_value().extend_scope(_root("rhs"))
-    assert _name("n").desugar(scoped).value == TermValue(5)
+    assert _name("n").desugar(scoped).completed_value() == TermValue(5)
 
 
 def test_ordinary_rhs_term_uses_default_less_than_from_left() -> None:
@@ -351,7 +350,7 @@ def test_rhs_walrus_via_comparison_op_sugar_lt() -> None:
     if isinstance(val, NamedExpressionValue):
         assert val.assigned_value == TermValue(5)
         scoped = val.extend_scope(_root("cmp-lt-bind"))
-        assert _name("n").desugar(scoped).value == TermValue(5)
+        assert _name("n").desugar(scoped).completed_value() == TermValue(5)
     else:
         # Ground fold may present a bool-ish predicate; bind still carried if NEV.
         assert type(val).__name__ in (
@@ -480,7 +479,7 @@ def test_source_body_read_after_condition_walrus_is_honorably_red_until_gbr() ->
     body0 = if_stmt.then_body[0]
     assert type(body0).__name__ == "ReturnSugar"
     assert type(body0.value).__name__ == "GuardedBindingReadSugar"
-    out = outcome_to_exitset(sugar.desugar(None))
+    out = sugar.desugar(None)
     assert isinstance(out, ExitSet)
     halted = [e for e in out.exits if isinstance(e, Halted)]
     assert halted, out.exits

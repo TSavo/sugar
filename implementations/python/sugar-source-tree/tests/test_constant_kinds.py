@@ -29,7 +29,7 @@ def _fn(src):
 
 def _return_value(src):
     """desugar `def A(): return <expr>` and return the floor value."""
-    return _fn(src).sugar().desugar().value.post().args[1]
+    return _fn(src).sugar().desugar().completed_value().post().args[1]
 
 
 def test_bytes_literal_lifts_to_canonical_python_bytes_term():

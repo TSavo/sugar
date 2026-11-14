@@ -168,7 +168,6 @@ def test_undecided_store_completes_only_under_its_own_atom(tmp_path):
         Completed,
         Halted,
         complement_guard,
-        outcome_to_exitset,
     )
 
     store = _store(
@@ -179,7 +178,7 @@ def test_undecided_store_completes_only_under_its_own_atom(tmp_path):
         _site(tmp_path),
     )
 
-    exits = outcome_to_exitset(store.desugar()).exits
+    exits = store.desugar().exits
     (done,) = [face for face in exits if isinstance(face, Completed)]
     (halt,) = [face for face in exits if isinstance(face, Halted)]
     assert "python:setitem.completes" in str(done.guard)

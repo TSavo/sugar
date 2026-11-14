@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from sugar_lift_py_tests.floor import SymbolicValue
 from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.ir import make_var
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 
@@ -36,7 +36,7 @@ class FormalRefSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         temporal = getattr(ctx, "temporal", None) if ctx is not None else None
         if temporal is not None:
             bound = temporal.value_if_bound(self.coordinate.coordinate_cid)

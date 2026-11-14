@@ -81,12 +81,11 @@ def test_sequence_carries_the_prefix_debt_onto_every_continuation() -> None:
     assert unanswered_calls.owed_calls(sequenced) == (item,)
 
 
-def test_an_owing_arm_is_never_collapsed_to_a_linear_outcome() -> None:
+def test_an_owing_arm_keeps_its_debt_on_the_arm() -> None:
     item = unanswered_calls.unanswered_call(None, _Site())
     owing = ExitSet.completed(TermValue(1)).sequence(
         lambda value: ExitSet((Completed(true_guard(), value, owed=(item,)),))
     )
-    assert isinstance(owing.collapse(), ExitSet)
     assert owing.completed_value() == TermValue(1)
     # The debt rides the arm; an arm that owes nothing carries none.
     assert owing.owed_items() == (item,)

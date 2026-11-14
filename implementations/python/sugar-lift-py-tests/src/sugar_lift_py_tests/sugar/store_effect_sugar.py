@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import typed_red_effect_witness
 
@@ -50,7 +50,7 @@ class AttributeStoreEffectSugar(Sugar):
             wrong_reason_needle="attribute store target `.b`",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         # Python constructs the RHS before evaluating an assignment target.
         return self.value.desugar(ctx).and_then(
             lambda value: self.receiver.desugar(ctx).and_then(
@@ -58,7 +58,7 @@ class AttributeStoreEffectSugar(Sugar):
             )
         )
 
-    def desugar_store(self, ctx: object, value) -> Outcome:
+    def desugar_store(self, ctx: object, value) -> ExitSet:
         """Store an RHS already reduced once by a chained assignment."""
         return self.receiver.desugar(ctx).and_then(
             lambda receiver: self.project_setattr(
@@ -66,11 +66,11 @@ class AttributeStoreEffectSugar(Sugar):
             )
         )
 
-    def _store(self, receiver, value, ctx) -> Outcome:
+    def _store(self, receiver, value, ctx) -> ExitSet:
         return self.project_setattr(receiver, self.attr, value, self.site, ctx)
 
     @staticmethod
-    def project_setattr(receiver, attr: str, value, site, ctx) -> Outcome:
+    def project_setattr(receiver, attr: str, value, site, ctx) -> ExitSet:
         """Producer-owned attribute **store** projection (one door).
 
         The law shared by ordinary AttributeStoreEffectSugar and
@@ -185,7 +185,7 @@ class SubscriptStoreEffectSugar(Sugar):
         # witness asserted the superseded generic effect.
         return ()
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         # Python evaluates the RHS before the target receiver and key.
         return self.value.desugar(ctx).and_then(
             lambda value: self.receiver.desugar(ctx).and_then(
@@ -195,18 +195,18 @@ class SubscriptStoreEffectSugar(Sugar):
             )
         )
 
-    def desugar_store(self, ctx: object, value) -> Outcome:
+    def desugar_store(self, ctx: object, value) -> ExitSet:
         return self.receiver.desugar(ctx).and_then(
             lambda receiver: self.index.desugar(ctx).and_then(
                 lambda index: self._store(receiver, index, value, ctx)
             )
         )
 
-    def _store(self, receiver, index, value, ctx) -> Outcome:
+    def _store(self, receiver, index, value, ctx) -> ExitSet:
         return self.project_setitem(receiver, index, value, self.site, ctx)
 
     @staticmethod
-    def project_setitem(receiver, index, value, site, ctx) -> Outcome:
+    def project_setitem(receiver, index, value, site, ctx) -> ExitSet:
         """Producer-owned subscript **store** projection (one door).
 
         Shared by the ordinary store statement and an unpack target's

@@ -11,7 +11,7 @@ from sugar_lift_py_tests.floor.class_definition_value import (
     ConstructedClassMethodV1,
     DeferredClassMethodV1,
 )
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 
@@ -140,7 +140,7 @@ class ClassDefinitionSugar(Sugar):
     def class_definition_cid(self) -> str:
         return cid_of_json(self.preimage)
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         # A class statement runs once: Python binds the class it builds, and
         # every ``Cls(...)`` reads that one class.  So a module-level statement
         # is reduced once and its outcome kept with its sugar; every class call
@@ -165,7 +165,7 @@ class ClassDefinitionSugar(Sugar):
             item is statement for item in getattr(module, "body", ())
         )
 
-    def _reduce_statement(self, ctx) -> Outcome:
+    def _reduce_statement(self, ctx) -> ExitSet:
         # Python evaluates the base expressions, in order, before the class
         # body runs; if one raises, the statement raises and no class exists.
         # So the bases are an ordinary operand fold (#7755): ``and_then`` runs
@@ -185,7 +185,7 @@ class ClassDefinitionSugar(Sugar):
 
         return self._fold_bases(self.base_sugars, (), ctx, class_body)
 
-    def _fold_bases(self, remaining, evaluated, ctx, class_body) -> Outcome:
+    def _fold_bases(self, remaining, evaluated, ctx, class_body) -> ExitSet:
         if not remaining:
             return self._construct(evaluated, class_body)
         head, *rest = remaining
@@ -195,7 +195,7 @@ class ClassDefinitionSugar(Sugar):
             )
         )
 
-    def _construct(self, evaluated_bases, class_body) -> Outcome:
+    def _construct(self, evaluated_bases, class_body) -> ExitSet:
         from sugar_lift_py_tests.floor import BuiltinDictClassValue, ClassValue
 
         base_values = []

@@ -57,8 +57,8 @@ def transfer(statement: ast.stmt, state):
     assert _classes("""
 def desugar(value):
     if value is None:
-        return Complete(None)
-    return Complete(value)
+        return ExitSet.completed(None)
+    return ExitSet.completed(value)
 """) == {"FABRICATED-COMPLETION-FALLBACK"}
 
 
@@ -89,7 +89,7 @@ def transfer(statement, state):
 def desugar(value):
     if value is None:
         raise TypedGap("opaque")
-    return Complete(value)
+    return ExitSet.completed(value)
 """
     assert LAW.scan_python_source(source, "clean.py") == []
 

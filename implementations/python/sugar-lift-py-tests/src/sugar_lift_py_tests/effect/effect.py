@@ -12,7 +12,7 @@ from .expectation_not_met_effect import ExpectationNotMetEffect
 from .loop_control_effect import LoopControlEffect
 
 # FactoryGapEffect and DigBoundaryEffect are DELETED.
-# No-recognizer is panic, not a typed Incomplete arm.
+# No-recognizer is panic, not a typed halted arm.
 Effect = (
     RaiseEffect
     | UndeterminedRaiseEffect
@@ -52,7 +52,7 @@ def require_effect(effect: object) -> Effect:
     ):
         return effect
     raise TypeError(
-        "Incomplete.effect must be a typed Effect "
+        "a halted arm's effect must be a typed Effect "
         "(RaiseEffect | UndeterminedRaiseEffect | WarningEffect | RuntimeEffect | "
         "CoverageGapEffect | SourceOracleEffect); "
         "FactoryGap/DigBoundary were deleted — the None arm panics"

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     Sugar,
@@ -49,11 +49,7 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
     is sequenced each step, never the halts collected so far, so the work stays
     linear in the operand count.
     """
-    from sugar_lift_py_tests.outcome.exit_set import (
-        Completed,
-        ExitSet,
-        outcome_to_exitset,
-    )
+    from sugar_lift_py_tests.outcome.exit_set import Completed
 
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
@@ -71,9 +67,8 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
         return ExitSet((*halted, *beneath.exits)).normalize()
 
     for index, sugar in enumerate(sugars):
-        # A deferred native-operation operand is not an ExitSet. Forcing it
-        # through outcome_to_exitset panics; IfExp and BoolOp already keep
-        # that carrier until discharge. The remaining operands and finish
+        # A deferred native-operation operand is not an ExitSet. IfExp and
+        # BoolOp keep that carrier until discharge. The remaining operands and finish
         # wait via and_then so the list does not invent a completed message.
         # The operands before it already ran: once the carrier discharges, its
         # exits leave beneath their prefix beside every halt they collected. A
@@ -90,7 +85,7 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
                     projected, prefix=prefix, halted=collected
                 )
             )
-        factors = outcome_to_exitset(desugared).factor_completed()
+        factors = desugared.factor_completed()
         stepped = prefix.sequence(lambda _last, *, factors=factors: factors)
         halted.extend(stepped.halts())
         completed = tuple(
@@ -105,9 +100,7 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
         prefix = ExitSet(completed)
         values.append(completed[0].value)
 
-    return leave(
-        outcome_to_exitset(finish(tuple(values))), prefix=prefix, halted=halted
-    )
+    return leave(finish(tuple(values)), prefix=prefix, halted=halted)
 
 
 @dataclass(frozen=True)
@@ -163,7 +156,7 @@ class SpreadCollectionSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         sugars = tuple(sugar for _, sugar in self.elements)
 
         def finish(values):
@@ -233,7 +226,7 @@ class SpreadDictSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         flattened = tuple(
             sugar
             for key, value in self.entries
@@ -311,7 +304,7 @@ class SpreadCallSugar(ConstructedTermSugar):
             arg_terms.append(term)
         return ctor("python:call", [callee_term, *arg_terms])
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         def after_callee(callee_value):
             sugars = tuple(sugar for _, _, sugar in self.arguments)
             return _collect(
@@ -325,7 +318,7 @@ class SpreadCallSugar(ConstructedTermSugar):
             return after_callee(None)
         return self.callee.desugar(ctx).and_then(after_callee)
 
-    def _finish(self, callee_value, values, ctx=None) -> Outcome:
+    def _finish(self, callee_value, values, ctx=None) -> ExitSet:
         from sugar_lift_py_tests.floor import BoundMethodValue
 
         # A bound method (a source method read off its receiver, or one
@@ -399,7 +392,7 @@ class SpreadCallSugar(ConstructedTermSugar):
             callsite, self.callee_name or "python:call", self.site
         )
 
-    def _produce_framed(self, framed, ctx) -> Outcome:
+    def _produce_framed(self, framed, ctx) -> ExitSet:
         """A projected source body is reduced once, at the Call, as CallSiteSugar does.
 
         Its halts are the call's own faces and its completion is retained on

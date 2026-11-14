@@ -103,7 +103,7 @@ def test_showcase_shape_binds_through_the_local_assignment() -> None:
     # ``r[0][0]`` indexes an opaque call result, so each subscript may raise
     # (an UndeterminedRaiseEffect under the complement of its completion
     # atom). Every completed face still closes over ``out`` alone.
-    from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+    from sugar_lift_py_tests.outcome import Completed, Halted
 
     directory = tempfile.mkdtemp()
     path = os.path.join(directory, "m.py")
@@ -120,7 +120,7 @@ def test_showcase_shape_binds_through_the_local_assignment() -> None:
             ).functions()
         )
     )
-    exits = outcome_to_exitset(function.sugar().desugar(None))
+    exits = function.sugar().desugar(None)
     halts = [face for face in exits.exits if isinstance(face, Halted)]
     owners = {face.effect.producer_node_owner for face in halts}
     assert owners == {"CallSiteValue.subscript", "UnknownCallee:numpy.rot90"}

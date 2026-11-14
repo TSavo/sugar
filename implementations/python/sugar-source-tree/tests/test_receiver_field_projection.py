@@ -44,7 +44,7 @@ def test_authenticated_receiver_store_projects_exact_rhs_to_later_read(
         ObjectValue("RenamedManager", (), identity=coordinate.cid),
     )
 
-    block = frame.body.desugar(_ReduceCtx(temporal)).value
+    block = frame.body.desugar(_ReduceCtx(temporal)).completed_value()
 
     assert isinstance(block.statements[-1], ReturnValue)
     assert block.statements[-1].value == TermValue(7)

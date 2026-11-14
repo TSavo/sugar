@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
@@ -29,17 +29,13 @@ class WithFormalManagerSugar(Sugar):
     def witnesses(cls):
         return ()
 
-    def desugar(self, ctx: object = None) -> Outcome:
-        from sugar_lift_py_tests.outcome import outcome_to_exitset
-        from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+    def desugar(self, ctx: object = None) -> ExitSet:
+        from sugar_lift_py_tests.outcome.exit_set import Halted
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
             ExitFaceBinding,
             ManagerBinding,
             prepend_facts_to_exitset,
-        )
-        from sugar_lift_py_tests.sugar.exit_set_routing import (
-            sugar_outcome_to_exitset,
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             reduce_block_to_exitset,
@@ -49,7 +45,7 @@ class WithFormalManagerSugar(Sugar):
             _returned_value,
         )
 
-        manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx)).sequence(
+        manager_es = self.manager.desugar(ctx).sequence(
             lambda value: _project_manager_receiver(value, ctx)
         )
         construct = getattr(self.protocol, "construct_manager", None)
@@ -68,9 +64,7 @@ class WithFormalManagerSugar(Sugar):
             # and faces and owes what it owes; the exit routing carries a body
             # face's debts onto every arm it leaves through.
             enter_es = ExitSet((manager_face,)).sequence(
-                lambda manager: outcome_to_exitset(
-                    self.protocol.enter_resource_outcome_for(manager, ctx)
-                )
+                lambda manager: self.protocol.enter_resource_outcome_for(manager, ctx)
             )
             for enter_face in enter_es.exits:
                 if isinstance(enter_face, Halted):
@@ -86,9 +80,7 @@ class WithFormalManagerSugar(Sugar):
                 body_es = ExitSet((enter_face,)).sequence(
                     lambda _entered: reduce_block_to_exitset(self.body, ctx)
                 )
-                exit_es = outcome_to_exitset(
-                    self.protocol.exit_outcome_for(entered, ctx)
-                )
+                exit_es = self.protocol.exit_outcome_for(entered, ctx)
                 for body_face in body_es.exits:
                     face_facts = ExitFaceBinding.from_body_exit(
                         self.exit_face_id, body_face

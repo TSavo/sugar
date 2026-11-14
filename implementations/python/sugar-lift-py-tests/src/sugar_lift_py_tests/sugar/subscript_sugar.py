@@ -5,7 +5,7 @@ from typing import Any
 
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
@@ -71,14 +71,18 @@ class SubscriptSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def desugar(self, ctx: Any = None) -> Outcome:
+    def desugar(self, ctx: Any = None) -> ExitSet:
         # Operand reduction may publish a dual-edge ExitSet. Sequence its
         # completed faces through the receiver floor; a typed refusal remains a
-        # refusal and must never be converted into an empty outcome.
+        # refusal and must never be converted into an empty outcome. One plain
+        # completed arm hands its value straight to the step (``and_then``),
+        # as a deferred carrier the step answers; over any other shape a
+        # carrier is refused by ``ExitSet.and_then``. Undecided lookups raise
+        # SugarNotWritten from the receiver floor (named refusal), exact exits
+        # complete.
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
         )
-        from sugar_lift_py_tests.outcome import outcome_to_exitset
 
         # The receiver and the index are operands: a walrus in either
         # (``(xs := ys)[0]``, ``xs[(i := 0)]``) binds once, through the one
@@ -92,37 +96,11 @@ class SubscriptSugar(ConstructedTermSugar):
 
         receiver_outcome = self.receiver.desugar(ctx)
         index_outcome = self.index.desugar(ctx)
-
-        from sugar_lift_py_tests.outcome import ExitSet as _ExitSet
-        from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            plain_completed_value,
-        )
-
-        # One plain completed arm is the single-outcome path: its value is
-        # handed straight to the step, as a deferred carrier the step answers.
-        receiver_partitioned = (
-            isinstance(receiver_outcome, _ExitSet)
-            and plain_completed_value(receiver_outcome) is None
-        )
-        index_partitioned = (
-            isinstance(index_outcome, _ExitSet)
-            and plain_completed_value(index_outcome) is None
-        )
-        if receiver_partitioned or index_partitioned:
-            subscripted = outcome_to_exitset(receiver_outcome).and_then(
-                lambda receiver: outcome_to_exitset(index_outcome).and_then(
-                    lambda index: outcome_to_exitset(subscript(receiver, index))
-                )
+        return receiver_outcome.and_then(
+            lambda receiver: index_outcome.and_then(
+                lambda index: subscript(receiver, index)
             )
-        else:
-            # Single-outcome path: undecided lookups raise SugarNotWritten
-            # from the receiver floor (named refusal), exact exits complete.
-            subscripted = receiver_outcome.and_then(
-                lambda receiver: index_outcome.and_then(
-                    lambda index: subscript(receiver, index)
-                )
-            )
-        return subscripted
+        )
 
     def _subscript(self, receiver, index, ctx):
         """One door: prefer ``subscript_with`` (operation) over legacy ``subscript``.

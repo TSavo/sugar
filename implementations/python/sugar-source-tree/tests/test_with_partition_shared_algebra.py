@@ -80,9 +80,6 @@ from sugar_lift_py_tests.outcome.exit_set import (
     Halted,
     complement_guard,
 )
-from sugar_lift_py_tests.sugar.exit_set_routing import (
-    sugar_outcome_to_exitset,
-)
 from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_exitset
 from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBoundarySugar
 from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
@@ -260,7 +257,7 @@ def _resource_route(body_es, resource, disposition):
     real tree-owned exit sugar, and a typed disposition. Nothing is
     reimplemented.
     """
-    exit_es = sugar_outcome_to_exitset(resource.exit.desugar())
+    exit_es = resource.exit.desugar()
     return body_es.and_exit(exit_es, disposition=disposition)
 
 
@@ -670,7 +667,7 @@ def test_the_assertion_contract_is_not_a_generic_exit(tmp_path, monkeypatch):
     _routed, calls = _capture_boundary_routing(boundary, monkeypatch)
     _incoming, _exit_es, disposition = calls[0]
 
-    real_exit_es = sugar_outcome_to_exitset(resource.exit.desugar())
+    real_exit_es = resource.exit.desugar()
     as_exit = body_es.and_exit(real_exit_es, disposition=disposition)
 
     assert isinstance(_on_guard(as_exit, _sole(body_es, Completed).guard), Halted)
@@ -682,7 +679,7 @@ def test_discrimination_a_resource_contract_reaches_that_exit_normally(tmp_path)
     """The route above is a live route, so the refusal is a refusal."""
     resource, _ = _both_arms(tmp_path)
     body_es = _body_exitset(resource.body)
-    real_exit_es = sugar_outcome_to_exitset(resource.exit.desugar())
+    real_exit_es = resource.exit.desugar()
 
     routed = body_es.and_exit(real_exit_es, disposition=resource.disposition)
     assert isinstance(_on_guard(routed, _sole(body_es, Completed).guard), Completed)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
@@ -30,7 +30,7 @@ class WithEffectBoundarySugar(Sugar):
             lying="def f():\n    with expect(ValueError):\n        raise TypeError()\n",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.context_manager_contract import (
             AuthenticatedRaiseMatcher,
             EffectBoundaryDisposition,
@@ -44,10 +44,7 @@ class WithEffectBoundarySugar(Sugar):
         )
         from sugar_lift_py_tests.effect import ExpectationNotMetEffect
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
-        from sugar_lift_py_tests.sugar.exit_set_routing import (
-            sugar_outcome_to_exitset,
-        )
+        from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             reduce_block_to_exitset,
         )
@@ -70,7 +67,7 @@ class WithEffectBoundarySugar(Sugar):
                     fix="keep other effect-boundary variants loud until their typed router exists",
                 )
 
-        manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx))
+        manager_es = self.manager.desugar(ctx)
         construction_halts, construction_guard = self._construction_faces()
         routed = []
         for manager_exit in manager_es.exits:

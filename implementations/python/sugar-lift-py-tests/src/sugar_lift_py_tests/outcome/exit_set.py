@@ -9,9 +9,6 @@ from typing import Callable, Generic, TypeVar
 from sugar_lift_py_tests.effect import Effect, require_effect
 from sugar_lift_py_tests.ir import Formula, _Connective, and_, not_, or_
 
-from .complete import Complete
-from .incomplete import Incomplete
-
 T = TypeVar("T")
 U = TypeVar("U")
 
@@ -495,7 +492,7 @@ class Completed(Generic[T]):
     # Testimony ABOUT this arm, never part of what it denotes: two arms with the
     # same guard and destination are the same exit whether or not a producer
     # stamped them. Excluded from compare/repr so carrying testimony cannot
-    # perturb exit equality, normalize's merge, collapse, or any golden repr.
+    # perturb exit equality, normalize's merge, or any golden repr.
     faces: frozenset[PartitionFace] = _dataclass_field(
         default=_NO_FACES, compare=False, repr=False
     )
@@ -538,25 +535,16 @@ class ExitSet(Generic[T]):
 
     @classmethod
     def completed(cls, value: T, guard: Formula | None = None) -> "ExitSet[T]":
-        """CONVERSION RULE: ``Complete(v)`` becomes ``ExitSet.completed(v)``.
-
-        One completed arm holding ``v`` under ``guard`` (truth when omitted).
-        ``Complete(v)`` denoted exactly the unguarded case, so the rewrite is
-        one-for-one and passes no guard.
-        """
+        """One completed arm holding ``v`` under ``guard`` (truth when omitted)."""
         return cls((Completed(guard or true_guard(), value),)).normalize()
 
     @classmethod
     def halted(
         cls, effect: Effect, guard: Formula | None = None, state=None
     ) -> "ExitSet[T]":
-        """CONVERSION RULE: ``Incomplete(e)`` becomes ``ExitSet.halted(e)``.
-
-        One halted arm with ``effect`` under ``guard`` (truth when omitted),
-        from ``state``. ``Incomplete(e, (c1, ..., cn))`` becomes
-        ``ExitSet.halted(e, guard=and_([c1, ..., cn]))`` -- the same arm
-        ``outcome_to_exitset`` builds from it. ``Incomplete(e).guarded(c)``
-        becomes ``ExitSet.halted(e).guarded(c)``.
+        """One halted arm with ``effect`` under ``guard`` (truth when omitted),
+        from ``state``. A halt under several branch conditions is
+        ``ExitSet.halted(e, guard=and_([c1, ..., cn]))``.
         """
         return cls((Halted(guard or true_guard(), effect, state),)).normalize()
 
@@ -586,11 +574,8 @@ class ExitSet(Generic[T]):
     def completed_value(self):
         """The single unconditional completed value, else ``None``.
 
-        CONVERSION RULE: ``isinstance(o, Complete)`` becomes
-        ``o.completed_value() is not None``, and the ``o.value`` it guarded
-        becomes ``o.completed_value()``. Answers a value exactly when the set
-        is ONE completed arm under truth -- the only shape ``collapse`` ever
-        turned into a ``Complete``. A guarded completion, a second arm, or any
+        Answers a value exactly when the set is ONE completed arm under
+        truth. A guarded completion, a second arm, or any
         halt answers ``None``: there is no single success value to hand over,
         and the caller reasons over the arms instead. ``owed`` does not enter:
         it is not part of what the arm denotes.
@@ -606,12 +591,9 @@ class ExitSet(Generic[T]):
     def halts(self) -> tuple[Halted, ...]:
         """The halted arms, in order.
 
-        CONVERSION RULE: ``isinstance(o, Incomplete)`` becomes
-        ``o.halts() == o.exits`` (every arm halts; nothing completes), and the
-        ``o.effect`` it guarded becomes ``h.effect`` for each ``h`` in
-        ``o.halts()``. Where the linear code asked only "can this halt",
-        ``bool(o.halts())`` is the question. A guarded halt keeps its guard on
-        the arm: ``Incomplete.branch_conditions`` is ``h.guard``.
+        Every arm halts exactly when ``o.halts() == o.exits``; "can this
+        halt" is ``bool(o.halts())``. A guarded halt keeps its guard on the
+        arm (``h.guard``).
         """
         return tuple(exit_ for exit_ in self.exits if isinstance(exit_, Halted))
 
@@ -926,7 +908,7 @@ class ExitSet(Generic[T]):
         The prefix arm's obligations ride onto EVERY exit the tail produced
         under it. They were incurred before the tail ran, on the path that
         reached it, so every continuation of that path owes them -- the same
-        argument that puts an obligation on ``Incomplete`` when the effect
+        argument that puts an obligation on a halted arm when the effect
         answers after the demand was incurred. Conjoined guards, so union:
         each side is already weakened under its own face and `g -> D` still
         holds under `g and h`. Nothing is conjoined into a single demand.
@@ -969,21 +951,14 @@ class ExitSet(Generic[T]):
     def and_then(self, step):
         """Run ``step`` on every completed arm's value; halts bypass it.
 
-        CONVERSION RULE: ``o.and_then(step)`` stays ``o.and_then(step)``. A
-        linear ``Complete(v).and_then(step)`` was ``step(v)`` and
-        ``Incomplete(e).and_then(step)`` was itself; over one arm this is the
-        same, and over many it is that law per arm (``sequence``), with each
-        arm's guard, faces and ``owed`` carried onto what ``step`` produced
-        under it. ``step`` may still answer a linear ``Complete`` /
-        ``Incomplete`` while its callers convert (lifted here through
-        ``outcome_to_exitset``); once it answers ``ExitSet`` only, call
-        ``o.sequence(step)``.
+        This is ``sequence`` per arm, with each arm's guard, faces and
+        ``owed`` carried onto what ``step`` produced under it.
 
         Over ONE plain arm (truth, no faces, owing nothing) it is exactly
         ``step(v)``, including when ``step`` answers a deferred
-        native-operation carrier: ``Complete(v).and_then(step)`` handed that
-        carrier on, and so does this. Over any other shape a carrier still
-        meets ``outcome_to_exitset``'s loud door, as it did before.
+        native-operation carrier: that carrier is handed on. Over any other
+        shape a carrier, or anything else that is not an ``ExitSet``, is
+        refused by name (``_require_exit_set``).
         """
         if (
             len(self.exits) == 1
@@ -999,8 +974,8 @@ class ExitSet(Generic[T]):
             following = step(self.exits[0].value)
             if isinstance(following, NativeOperationExitCarrierV1):
                 return following
-            return self.sequence(lambda _value: outcome_to_exitset(following))
-        return self.sequence(lambda value: outcome_to_exitset(step(value)))
+            return self.sequence(lambda _value: _require_exit_set(following))
+        return self.sequence(lambda value: _require_exit_set(step(value)))
 
     def and_finally(
         self,
@@ -1222,51 +1197,29 @@ class ExitSet(Generic[T]):
                 )
         return ExitSet(tuple(exits)).normalize()
 
-    def collapse(self):
-        """Return the old linear Outcome only for one unconditional exit.
 
-        An arm that OWES something is never collapsed: ``Complete`` and
-        ``Incomplete`` have no owed slot, so collapsing would drop the debt.
-        It stays the one-arm ``ExitSet`` it is.
-        """
-        normalized = self.normalize()
-        if (
-            len(normalized.exits) != 1
-            or not _is_true(normalized.exits[0].guard)
-            or normalized.exits[0].owed
-        ):
-            return self if normalized == self else normalized
-        exit_ = normalized.exits[0]
-        if isinstance(exit_, Completed):
-            return Complete(exit_.value)
-        return Incomplete(exit_.effect)
+def sole_completed_value(outcome: ExitSet):
+    """The value of a body outcome's ONE completed arm.
 
-
-def sole_completed_outcome(outcome):
-    """Project a body outcome onto its ONE completed arm.
-
-    A store partitions a block into a completed and a halted arm, so a body that
-    contains one reduces to an ``ExitSet`` rather than to a single linear
-    ``Outcome``. A caller that is legitimately reasoning about the success path
-    only -- "what does this store witness, what is the post when everything
-    completed" -- uses this door.
+    A store partitions a block into a completed and a halted arm, so a body
+    that contains one reduces to several arms. A caller that is legitimately
+    reasoning about the success path only -- "what does this store witness,
+    what is the post when everything completed" -- uses this door.
 
     It REFUSES loudly when there is not exactly one completed arm, so a dropped
     success face or a silently duplicated one surfaces here instead of being
     papered over. It is not a way to discard halt arms: the halted arms are the
     other half of the meaning and are asserted by the composition laws.
     """
-    if not isinstance(outcome, ExitSet):
-        return outcome
     completed = [exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)]
     if len(completed) != 1:
         raise ValueError(
-            "sole_completed_outcome requires exactly one completed arm; got "
+            "sole_completed_value requires exactly one completed arm; got "
             f"{len(completed)} completed of {len(outcome.exits)} exits. "
             "A body with several completed faces has no single success path to "
             "project onto — reason over the ExitSet arms directly."
         )
-    return Complete(completed[0].value)
+    return completed[0].value
 
 
 def factored_operand(outcome):
@@ -1295,14 +1248,14 @@ def factored_operand(outcome):
     partition from the exit level to the value level -- one arm carrying a
     ``GuardedValue``, which is an ordinary floor value that a collection, a
     call argument, or a concatenation holds like any other. The accumulator
-    then stays at one completed arm by induction from ``Complete(())``, and the
+    then stays at one completed arm by induction from ``ExitSet.completed(())``, and the
     halted arms stay at the exit level where they already grow linearly.
 
     Same denotation, linear growth. Nothing is capped, pruned, or dropped, and
     ``ExitSetFactoringGap`` still refuses loudly when an operand's completed
     arms are not provably pairwise exclusive.
 
-    The factored operand stays an ``ExitSet`` (#7825: no ``collapse``). A
+    The factored operand stays an ``ExitSet``. A
     deferred native-operation carrier is not an ``ExitSet`` and passes through
     as itself, which is why the operand folds call this door rather than
     ``factor_completed`` directly.
@@ -1312,16 +1265,15 @@ def factored_operand(outcome):
     return outcome.factor_completed()
 
 
-def outcome_to_exitset(outcome) -> ExitSet:
+def _require_exit_set(outcome) -> ExitSet:
+    """``and_then``'s refusal: a step answered something that is not exits.
+
+    Not a conversion: an ``ExitSet`` is handed back as itself and nothing
+    else is ever turned into one. A deferred native-operation carrier is
+    refused as the undischarged demand it is; anything else by its type.
+    """
     if isinstance(outcome, ExitSet):
         return outcome
-    if isinstance(outcome, Complete):
-        return ExitSet.completed(outcome.value)
-    if isinstance(outcome, Incomplete):
-        if outcome.branch_conditions:
-            guard = and_(list(outcome.branch_conditions))
-            return ExitSet((Halted(guard, outcome.effect, None),)).normalize()
-        return ExitSet((Halted(true_guard(), outcome.effect, None),)).normalize()
 
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
@@ -1332,7 +1284,7 @@ def outcome_to_exitset(outcome) -> ExitSet:
     if isinstance(outcome, NativeOperationExitCarrierV1):
 
         construction_panic_gap(
-            owner="outcome_to_exitset",
+            owner="ExitSet.and_then",
             blame=outcome.demand.source_node,
             observed=(
                 "undischarged native operation demand: "
@@ -1350,14 +1302,11 @@ def outcome_to_exitset(outcome) -> ExitSet:
         )
 
     construction_panic_gap(
-        owner="outcome_to_exitset",
+        owner="ExitSet.and_then",
         blame=type(outcome).__name__,
-        observed=f"{type(outcome).__name__} is not an Outcome the exit algebra knows",
-        requested="Complete, Incomplete or ExitSet",
-        fix=(
-            "give this outcome variant an arm in `outcome_to_exitset`, or stop "
-            "producing it upstream of the exit algebra"
-        ),
+        observed=f"{type(outcome).__name__} is not an ExitSet",
+        requested="ExitSet",
+        fix="answer an ExitSet from the step",
         gap_kind=GapKind.FLOOR,
     )
 
@@ -1372,9 +1321,8 @@ __all__ = [
     "complement_guard",
     "factored_operand",
     "false_guard",
-    "sole_completed_outcome",
+    "sole_completed_value",
     "true_guard",
-    "outcome_to_exitset",
 ]
 
 

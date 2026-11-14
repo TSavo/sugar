@@ -25,7 +25,7 @@ def _fn(src):
 
 def _call_term(src):
     """Project the returned call coordinate without illegal UniverseValue.post."""
-    universe = _fn(src).sugar().desugar().value
+    universe = _fn(src).sugar().desugar().completed_value()
     for entry in universe.record.statements:
         if type(entry).__name__ == "ReturnValue":
             return entry.value.term

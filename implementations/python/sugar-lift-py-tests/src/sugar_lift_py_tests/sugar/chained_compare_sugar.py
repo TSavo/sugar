@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 from typing import TYPE_CHECKING
 
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.witnesses import _boolop_wrapped_pair
 
@@ -69,7 +69,7 @@ class ChainedCompareSugar(ConstructedTermSugar):
 
         return BoolOpSugar("And", self.values, self.site).to_term(owner=owner)
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
         first = self.values[0]
@@ -77,7 +77,7 @@ class ChainedCompareSugar(ConstructedTermSugar):
             lambda left: self._reduce_from(0, left, ctx)
         )
 
-    def _reduce_from(self, index: int, left, ctx: object) -> Outcome:
+    def _reduce_from(self, index: int, left, ctx: object) -> ExitSet:
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
         )

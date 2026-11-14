@@ -34,7 +34,7 @@ def _fn(src):
 
 
 def _invs(src):
-    return _fn(src).sugar().desugar().value.invs()
+    return _fn(src).sugar().desugar().completed_value().invs()
 
 
 def test_first_case_guarded_by_its_match():

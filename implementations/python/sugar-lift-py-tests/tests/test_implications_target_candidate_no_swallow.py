@@ -29,7 +29,7 @@ def test_truthful_function_contract_rows_exception_propagates():
             blame=SimpleNamespace(filename="t.py", line=1, col=0),
             owner="test.implications.target",
             observed="body sugar not written",
-            requested="Complete universe with contract rows",
+            requested="a completed universe with contract rows",
             fix="write body sugar; do not drop the target from candidates",
         )
 

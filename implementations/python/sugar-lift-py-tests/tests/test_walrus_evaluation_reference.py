@@ -52,7 +52,7 @@ from sugar_lift_py_tests.generator_construction import (
     YieldEffect,
     YieldStepV1,
 )
-from sugar_lift_py_tests.outcome import Completed, ExitSet, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
 from sugar_lift_py_tests.sugar.binop_sugar import BinOpSugar
 from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
@@ -103,7 +103,7 @@ def _root(owner: str = "walrus-evaluation") -> ReduceContext:
 def _value(outcome):
     """The one unconditional completed value of an outcome (#7825 reads
     ``ExitSet`` only), else None."""
-    return outcome_to_exitset(outcome).completed_value()
+    return outcome.completed_value()
 
 
 # ---------------------------------------------------------------------------
@@ -484,7 +484,7 @@ def test_an_assignment_binds_its_rhs_walrus() -> None:
     ctx = _root("walrus-assign")
     ctx = ctx.with_temporal(ctx.temporal.bind_value("x", TermValue(4)))
     statement = AssignSugar(name="y", value=walrus, site=SITE)
-    (face,) = outcome_to_exitset(statement.desugar(ctx)).exits
+    (face,) = statement.desugar(ctx).exits
     assert isinstance(face, Completed)
     after = face.value.context
     read = EvaluationRefSugar(evaluation=KEY, name="x", site=None, walrus=True)
@@ -732,11 +732,7 @@ def test_a_conditional_arm_walrus_binds_only_its_own_arm() -> None:
         site=SITE,
         walrus_priors=((KEY, "x", IntLiteralSugar(3, site=SITE)),),
     ).desugar(_root("walrus-ifexp"))
-    arms = [
-        exit_.value
-        for exit_ in outcome_to_exitset(outcome).exits
-        if isinstance(exit_, Completed)
-    ]
+    arms = [exit_.value for exit_ in outcome.exits if isinstance(exit_, Completed)]
     assert len(arms) == 2
     read = EvaluationRefSugar(evaluation=KEY, name="x", site=None, walrus=True)
     seen = []
@@ -757,11 +753,7 @@ def test_an_arm_walrus_with_no_prior_is_refused_on_the_other_arm() -> None:
         orelse=_walrus_sugar("x", 5),
         site=SITE,
     ).desugar(_root("walrus-ifexp-unbound"))
-    arms = [
-        exit_.value
-        for exit_ in outcome_to_exitset(outcome).exits
-        if isinstance(exit_, Completed)
-    ]
+    arms = [exit_.value for exit_ in outcome.exits if isinstance(exit_, Completed)]
     assert len(arms) == 2
     bound = [peel_walrus_binds(value) for value in arms]
     assert sorted(len(binds) for binds, _presented in bound) == [0, 1]

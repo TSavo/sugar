@@ -332,7 +332,7 @@ def test_bound_method_delete_producer_outcome_halts_with_named_keyerror() -> Non
         and isinstance(node.func, Attribute)
         and node.func.attr == "drop"
     )
-    site = calls[0].sugar().desugar(None).value
+    site = calls[0].sugar().desugar(None).completed_value()
     assert isinstance(site, CallSiteValue)
     outcome = site.producer_outcome(None)
     assert isinstance(

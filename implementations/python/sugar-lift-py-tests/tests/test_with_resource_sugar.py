@@ -360,7 +360,7 @@ def test_raised_body_routes_exact_face_coordinates_to_exit():
     )
     exit_sugar = _parametric_exit(face_id=face_id)
     type_coord, value_coord, traceback_coord = (
-        argument.desugar().value for argument in exit_sugar.args
+        argument.desugar().completed_value() for argument in exit_sugar.args
     )
     assert type_coord == ExitTypeCoordinate(face_id, None)
     assert value_coord == ExitValueCoordinate(face_id, None)
@@ -799,10 +799,13 @@ def test_parametric_exit_args_are_exit_refs():
         "ExitValueRefSugar",
         "ExitTracebackRefSugar",
     ]
-    assert exit_sugar.args[0].desugar().value.face_id == "face1"
-    assert isinstance(exit_sugar.args[0].desugar().value, ExitTypeCoordinate)
-    assert isinstance(exit_sugar.args[1].desugar().value, ExitValueCoordinate)
-    assert isinstance(exit_sugar.args[2].desugar().value, ExitTracebackCoordinate)
+    assert exit_sugar.args[0].desugar().completed_value().face_id == "face1"
+    type_ref, value_ref, traceback_ref = (
+        argument.desugar().completed_value() for argument in exit_sugar.args[:3]
+    )
+    assert isinstance(type_ref, ExitTypeCoordinate)
+    assert isinstance(value_ref, ExitValueCoordinate)
+    assert isinstance(traceback_ref, ExitTracebackCoordinate)
 
 
 def test_manager_ref_sugar_is_manager_coordinate():

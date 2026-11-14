@@ -24,7 +24,6 @@ from sugar_lift_py_tests.context.reduce_context import ReduceContext
 from sugar_lift_py_tests.effect import NameErrorEffect, RaiseEffect
 from sugar_lift_py_tests.floor import ReturnValue, TermValue
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
-from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 from sugar_lift_py_tests.sugar.comparison_op_sugar import ComparisonOpSugar
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 from sugar_lift_py_tests.sugar.match_sugar import MatchCaseSpec, MatchSugar
@@ -69,7 +68,7 @@ def _match(subject: Sugar, *cases: MatchCaseSpec) -> MatchSugar:
 def _reduce(sugar: Sugar, ctx=None):
     if ctx is None:
         ctx = ReduceContext.root(owner="test_match_guard")
-    return outcome_to_exitset(sugar.desugar(ctx))
+    return sugar.desugar(ctx)
 
 
 def _returns(outcome: ExitSet) -> list:
@@ -395,7 +394,7 @@ def test_swapped_capture_name_does_not_bind_wrong_name() -> None:
         MatchCaseSpec(alternatives=(), body=(_ret(_int(2)),)),
     )
     # Free name y becomes symbolic; comparison may factored dual faces — must not
-    # silently treat as capture x. Outcome may be multi-face or one completed arm.
+    # silently treat as capture x. The arms may be several or one completed arm.
     outcome = sugar.desugar(ReduceContext.root(owner="swap-name"))
     assert isinstance(outcome, ExitSet)
 

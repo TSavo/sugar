@@ -19,7 +19,7 @@ def _fn(src: str):
 
 
 def _post_term(src):
-    return _fn(src).sugar().desugar().value.post().args[1]
+    return _fn(src).sugar().desugar().completed_value().post().args[1]
 
 
 def test_list_tuple_set_dict_construct_their_terms():

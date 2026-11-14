@@ -10,7 +10,7 @@ from sugar_lift_py_tests.effect import (
     RaiseEffect,
     UndeterminedRaiseEffect,
 )
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import typed_red_effect_witness
 
@@ -54,7 +54,7 @@ class RaiseSugar(Sugar):
             wrong_reason_needle="raise KeyError",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         # The halt: a halted arm carrying the named raise effect. blame is the
         # construction locus; source_sha256 pins the text the raise lives in.
         source = getattr(self.site.unit, "source", None)

@@ -9,7 +9,7 @@ distinction while the suite was quoted as "16 pre-existing."
 
 | Class | Count | Action |
 |-------|------:|--------|
-| Retired-architecture test expectations | 10 | Rewrite to live LoopRecurrence / typed Incomplete / class-field dig-cue |
+| Retired-architecture test expectations | 10 | Rewrite to live LoopRecurrence / typed halted arm / class-field dig-cue |
 | Live law — test helper API lag (parameter contracts) | 6 | Rewrite helpers to project coordinates without illegal `UniverseValue.post` |
 | Live law — product false green | 0 confirmed after rewrites | (while True NormalExhaustion is intentional fuel exhaustion under live_loop) |
 | Golden pin drift | 1 | Re-pin quirks corpus |
@@ -38,7 +38,7 @@ restore factory SugarNotWritten.
 
 | Test | Old | Live |
 |------|-----|------|
-| `test_listcomp_dissolves::test_undecidable_filtered_comprehension_stays_loud` | `SugarNotWritten` | `Complete` with `py.listcomp` + `python:loop.filter_guard` |
+| `test_listcomp_dissolves::test_undecidable_filtered_comprehension_stays_loud` | `SugarNotWritten` | `ExitSet.completed` with `py.listcomp` + `python:loop.filter_guard` |
 
 **Action:** Assert the typed filter-guard coordinate (honest residual), not silence.
 
@@ -48,9 +48,9 @@ restore factory SugarNotWritten.
 
 | Test | Old | Live |
 |------|-----|------|
-| `test_exit_builds::test_unwritten_raised_child_stays_loud` | `SugarNotWritten` at `sugar()` | `Incomplete(RaiseEffect)` with constructed `LambdaCallable` |
+| `test_exit_builds::test_unwritten_raised_child_stays_loud` | `SugarNotWritten` at `sugar()` | `ExitSet.halted(RaiseEffect)` with constructed `LambdaCallable` |
 
-**Action:** Assert Incomplete raise of lambda (more honest than construction refuse).
+**Action:** Assert the halted raise of lambda (more honest than construction refuse).
 
 ---
 

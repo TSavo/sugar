@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
@@ -103,7 +103,7 @@ class FormattedValueSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor.string_value import StringValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import ctor, str_const
@@ -203,7 +203,7 @@ class JoinedStrSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor.string_value import StringValue
         from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
@@ -233,7 +233,7 @@ class JoinedStrSugar(ConstructedTermSugar):
             )
         return outcome
 
-    def reference_term(self, ctx: object = None) -> Outcome:
+    def reference_term(self, ctx: object = None) -> ExitSet:
         """Project this JoinedStr as the reference ``python:fstring`` ctor."""
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome.exit_set import factored_operand

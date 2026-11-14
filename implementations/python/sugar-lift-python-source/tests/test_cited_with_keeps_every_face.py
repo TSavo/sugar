@@ -22,7 +22,7 @@ import pytest
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import ReturnValue, TermValue
-from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_source_tree.nodes import FunctionDef
 
 from test_contextlib_suppress_source_exit_faces import _corpus, _open
@@ -46,7 +46,7 @@ def _faces(tmp_path: Path, body: str):
     func = next(
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
-    return outcome_to_exitset(func.sugar().desugar())
+    return func.sugar().desugar()
 
 
 def _effect_names(exits):

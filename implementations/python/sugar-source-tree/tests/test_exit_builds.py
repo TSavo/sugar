@@ -39,7 +39,7 @@ def test_valued_return_carries_its_built_child() -> None:
 
 
 def test_implicit_falloff_builds_the_same_none_post() -> None:
-    universe = _function("def A():\n    pass\n").sugar().desugar().value
+    universe = _function("def A():\n    pass\n").sugar().desugar().completed_value()
 
     assert universe.post().args[1].name == "None"
 

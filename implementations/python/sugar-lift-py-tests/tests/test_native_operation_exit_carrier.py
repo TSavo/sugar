@@ -40,7 +40,6 @@ from sugar_lift_py_tests.outcome import (
     Completed,
     ExitSet,
     Halted,
-    outcome_to_exitset,
     true_guard,
 )
 from sugar_lift_py_tests.outcome.exit_set import complement_guard, partition
@@ -572,8 +571,10 @@ def test_nested_carrier_missing_its_formal_actual_stays_undischarged():
 
 def test_guarded_but_undischarged_carrier_cannot_report_completion():
     carrier, _, _ = _carrier()
+    guarded = carrier.guarded(atomic("test.guard", []))
+    prefix = ExitSet.completed(TermValue(0), guard=atomic("test.prefix", []))
     with pytest.raises(ConstructionPanic, match="native operation"):
-        outcome_to_exitset(carrier.guarded(atomic("test.guard", [])))
+        prefix.and_then(lambda _value: guarded)
 
 
 def test_same_native_operation_demand_can_halt_for_authenticated_actuals():
@@ -602,9 +603,10 @@ def test_same_native_operation_demand_can_halt_for_authenticated_actuals():
 
 def test_undischarged_native_operation_is_typed_loud_not_completed():
     carrier, _, _ = _carrier()
+    prefix = ExitSet.completed(TermValue(0), guard=atomic("test.prefix", []))
 
     with pytest.raises(ConstructionPanic, match="native operation"):
-        outcome_to_exitset(carrier)
+        prefix.and_then(lambda _value: carrier)
 
 
 def test_missing_authenticated_actual_is_undischarged_not_a_construction_panic():

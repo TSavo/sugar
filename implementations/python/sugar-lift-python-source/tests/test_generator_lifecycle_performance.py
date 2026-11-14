@@ -33,7 +33,6 @@ from sugar_lift_py_tests.generator_construction import (
     YieldEffect,
     YieldStepV1,
 )
-from sugar_lift_py_tests.outcome import outcome_to_exitset
 from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted, partition
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
@@ -330,7 +329,7 @@ def test_exit_outcome_for_resumes_exact_entered_machine_once():
     protocol = _protocol()
     entered = protocol.enter_resource_outcome().completed_value()
     exit_outcome = protocol.exit_outcome_for(entered)
-    exits = outcome_to_exitset(exit_outcome)
+    exits = exit_outcome
     assert len(exits.exits) == 1
     face = exits.exits[0]
     assert isinstance(face.value, BlockValue)
@@ -365,7 +364,7 @@ def test_suppression_truth_only_from_authenticated_exit_outcome():
     protocol = _protocol()
     entered = protocol.enter_resource_outcome().completed_value()
     exit_outcome = protocol.exit_outcome_for(entered)
-    block = outcome_to_exitset(exit_outcome).exits[0].value
+    block = exit_outcome.exits[0].value
     assert isinstance(block, BlockValue)
     returned = block.statements[-1]
     assert isinstance(returned, ReturnValue)
@@ -409,7 +408,7 @@ def test_pre_yield_inert_step_then_yield_still_enters():
     assert isinstance(outcome.completed_value(), EnteredGeneratorManagerStateV1)
     # Exit still once after inert-prefix enter.
     exit_outcome = protocol.exit_outcome_for(outcome.completed_value())
-    face = outcome_to_exitset(exit_outcome).exits[0]
+    face = exit_outcome.exits[0]
     assert face.value.statements[-1] == ReturnValue(TermValue(False))
 
 

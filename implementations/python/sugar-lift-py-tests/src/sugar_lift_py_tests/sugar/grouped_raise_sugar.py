@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.effect import GroupedRaiseEffect, RaiseEffect
-from sugar_lift_py_tests.outcome import ExitSet, Outcome, true_guard
+from sugar_lift_py_tests.outcome import ExitSet, true_guard
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_source_tree.fragment import SourceFragment
 
@@ -40,7 +40,7 @@ class GroupedRaiseSugar(Sugar):
     def witnesses(cls):
         return ()
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             plain_completed_value,
         )

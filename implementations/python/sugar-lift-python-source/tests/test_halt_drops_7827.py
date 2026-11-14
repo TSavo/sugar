@@ -11,12 +11,13 @@ Where the solver cannot tell the halves apart, because a claim over an
 unbound formal stays ``open`` (#7766), the twin is also pinned at the
 reduction level, where the lost face is visible.
 
-Confirmed (pinned expected-red):
+Confirmed, and no longer pinned expected-red once the linear result form was
+deleted (#7825):
 
-1. ``floor/guarded_value.py`` ``GuardedValue._map``: an ``Incomplete`` on the
-   true arm returns at once, and the false arm is never evaluated. ``x = [] if
-   c else [2]; return x[0]`` keeps a completed face under ``not c``, but it
-   holds no ``ReturnValue``; Python returns ``2`` there.
+1. ``floor/guarded_value.py`` ``GuardedValue._map``: a linear halt on the
+   true arm returned at once, and the false arm was never evaluated. ``x = []
+   if c else [2]; return x[0]`` must keep a completed face under ``not c``
+   that holds a ``ReturnValue``; Python returns ``2`` there.
 
 Confirmed and fixed by H2 of #7825 (the store family answers its two faces
 at the producer, ``store_faces``):
@@ -30,9 +31,10 @@ at the producer, ``store_faces``):
 Struck (each test below records why): ``sugar/for_universal_sugar.py``
 (since deleted),
 ``sugar/exit_set_routing.py`` ``exitset_to_outcome`` (since deleted, #7826),
-``sugar/match_sugar.py`` ``_outcome_as_exitset`` / ``_incomplete_as_halted``,
-and of item 6: ``sugar_outcome_to_exitset``, ``Incomplete.and_then`` and
-``caller_parameter_contract.py``'s ``undischarged`` arm.
+``sugar/match_sugar.py``'s linear-halt converters (since deleted, #7825),
+and of item 6: the with-manager bridge and the linear halt's ``and_then``
+(both since deleted, #7825) and ``caller_parameter_contract.py``'s
+``undischarged`` arm.
 """
 
 from __future__ import annotations
@@ -142,15 +144,6 @@ def test_guarded_value_truthful_half_returns_on_its_completed_face() -> None:
     assert len(_completed_returns(outcome)) == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "floor/guarded_value.py GuardedValue._map: the true arm's Incomplete "
-        "(IndexError from [][0]) returns before the false arm is evaluated, so "
-        "the completed face under `not c` has no ReturnValue; Python returns 2 "
-        "there (#7827 item 1)"
-    ),
-)
 def test_guarded_value_lying_half_returns_the_false_arm_on_its_completed_face() -> None:
     outcome = _function(_GUARDED.format(arm="[]", tail=_GUARDED_RETURN))
 
@@ -219,9 +212,9 @@ def test_the_linear_projection_of_a_boundary_is_gone() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 5. sugar/match_sugar.py _outcome_as_exitset / _incomplete_as_halted:
-#    struck. A guarded case has no sugar (Match.sugar refuses by name), and a
-#    halting subject is handed back before either converter runs.
+# 5. sugar/match_sugar.py linear-halt converters: struck, then deleted
+#    (#7825). A guarded case has no sugar (Match.sugar refuses by name), and a
+#    halting subject is handed back as its own arms.
 # ---------------------------------------------------------------------------
 
 
@@ -241,14 +234,8 @@ def test_a_guarded_case_refuses_by_name() -> None:
     ids=["truthful", "lying"],
 )
 def test_a_guarded_halting_subject_keeps_both_faces_without_the_converters(
-    arm: str, faces, monkeypatch
+    arm: str, faces
 ) -> None:
-    import sugar_lift_py_tests.sugar.match_sugar as match_sugar
-
-    def refuse(*args):
-        raise AssertionError("converter reached")
-
-    monkeypatch.setattr(match_sugar, "_incomplete_as_halted", refuse)
     outcome = _function(
         f"def test_f(xs):\n    c = xs is None\n    x = {arm} if c else [2]\n"
         "    match x[0]:\n        case 2:\n            a = 1\n    return 3\n"
@@ -259,12 +246,13 @@ def test_a_guarded_halting_subject_keeps_both_faces_without_the_converters(
 
 # ---------------------------------------------------------------------------
 # 6. The store family read as a plain halt.
-#    Confirmed at outcome/exit_set.py outcome_to_exitset, reached by
-#    `o.x += 1` (ExitSet.and_then in AugAssignSugar).
-#    Struck: sugar_outcome_to_exitset (its ten callers pass a with-manager,
-#    __enter__ or __exit__ expression outcome, never a store);
-#    Incomplete.and_then (no expression step runs after a store: a chained
-#    target store is sequenced by the block reducer, pinned below);
+#    Confirmed at outcome/exit_set.py's linear-to-arms bridge (since deleted,
+#    #7825), reached by `o.x += 1` (ExitSet.and_then in AugAssignSugar).
+#    Struck: the with-manager bridge (since deleted; its ten callers passed a
+#    with-manager, __enter__ or __exit__ expression outcome, never a store);
+#    the linear halt's and_then (since deleted; no expression step runs after
+#    a store: a chained target store is sequenced by the block reducer,
+#    pinned below);
 #    caller_parameter_contract.py's undischarged arm (the native projector is
 #    not called from source reduction; a formal store's call reduces the
 #    callee with its actuals bound).
@@ -288,7 +276,7 @@ def test_augassign_lying_half_keeps_a_completed_face(tmp_path: Path) -> None:
 
 
 def test_a_chained_target_store_keeps_its_completed_face() -> None:
-    """Struck for Incomplete.and_then: the store before the next target is
+    """Struck for the linear halt's and_then: the store before the next target is
     sequenced by the block reducer, which keeps both of its faces."""
     completed, halts = _faces(
         _function(_STORE.format(line="o.x = a = 1", tail="return a\n"))

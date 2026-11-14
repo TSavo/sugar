@@ -13,7 +13,7 @@ from typing import ClassVar
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import inert_statement_return_witness
 
@@ -33,7 +33,7 @@ class ExprStatementSugar(Sugar):
             statement='"""a docstring"""',
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         # Reduce the value (effects propagate via and_then). A completed value
         # in statement position STATES nothing -- but it is not erased: it rides
         # as a record entry, contributing only what its own floor defaults give

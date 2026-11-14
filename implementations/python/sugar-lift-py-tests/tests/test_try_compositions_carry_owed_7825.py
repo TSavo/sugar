@@ -16,7 +16,6 @@ from sugar_lift_py_tests.context.reduce_context import ReduceContext
 from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted, true_guard
 from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -127,7 +126,7 @@ def test_an_owing_except_star_handler_makes_the_result_owe_it() -> None:
         ),
         handlers=(
             (
-                (_Fixed(lambda _c: Complete(ve_typed)),),
+                (_Fixed(lambda _c: ExitSet.completed(ve_typed)),),
                 (_Fixed(lambda c: _owing_completion(c, "debt:handler")),),
                 "slot-ve-7825",
             ),
@@ -175,7 +174,7 @@ def _one_leaf_try_star(tag: str, handler_body: tuple):
         body=(_Fixed(lambda _c: ExitSet((Halted(body_atom, group, None),))),),
         handlers=(
             (
-                (_Fixed(lambda _c: Complete(ve_typed)),),
+                (_Fixed(lambda _c: ExitSet.completed(ve_typed)),),
                 handler_body(leaf),
                 f"slot-ve-{tag}",
             ),

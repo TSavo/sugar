@@ -5,7 +5,7 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.effect import NameErrorEffect
 from sugar_lift_py_tests.floor.branch_result_coordinate import branch_result_guard
 from sugar_lift_py_tests.ir import not_
-from sugar_lift_py_tests.outcome import ExitSet, Outcome, outcome_to_exitset
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.binding_projection import (
     GuardedProjection,
     LoopGuardedProjection,
@@ -83,7 +83,7 @@ def _read_loop_projection(
 
 def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
     if isinstance(state, Sugar):
-        return outcome_to_exitset(state.desugar(ctx))
+        return state.desugar(ctx)
     if isinstance(state, UnboundProjection):
         return ExitSet.halted(NameErrorEffect.at(name=read_name, site=read_site))
     if isinstance(state, LoopGuardedProjection):
@@ -225,7 +225,7 @@ class GuardedBindingReadSugar(ConstructedTermSugar):
     def witnesses(cls):
         return ()
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         return read_binding(
             self.state, read_name=self.name, read_site=self.site, ctx=ctx
         )

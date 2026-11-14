@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
@@ -151,17 +151,6 @@ def _halted_face(face, prefix_guard):
             ),
         )
     )
-
-
-def _incomplete_as_halted(incomplete, prefix_guard):
-    """A stateless halt under prefix: Halted with state=None is honest.
-
-    No match path calls this since the match reads ``ExitSet`` arms only
-    (#7825); ``test_halt_drops_7827`` pins that no path reaches it.
-    """
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
-
-    return ExitSet.halted(incomplete.effect, prefix_guard, state=None)
 
 
 def _formula_from_floor_value(value, site):
@@ -355,7 +344,7 @@ class MatchSugar(Sugar):
             lying="2",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.ir import or_
         from sugar_lift_py_tests.outcome.exit_set import true_guard
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
@@ -496,6 +485,6 @@ class _CompleteValueSugar(Sugar):
     def witnesses(cls):
         return ()
 
-    def desugar(self, ctx=None) -> Outcome:
+    def desugar(self, ctx=None) -> ExitSet:
         del ctx
         return ExitSet.completed(self.value)

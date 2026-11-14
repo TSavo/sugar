@@ -21,7 +21,7 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
 from sugar_lift_py_tests.floor.return_value import ReturnValue
-from sugar_lift_py_tests.outcome import Completed, ExitSet, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.sugar.assign_sugar import (
     AssignSugar,
     ChainedAssignSugar,
@@ -160,7 +160,7 @@ def _returned(outcome) -> list:
         if record is not None:
             visit(record)
 
-    for exit_ in outcome_to_exitset(outcome).exits:
+    for exit_ in outcome.exits:
         if isinstance(exit_, Completed):
             visit(exit_.value)
     return found
@@ -240,7 +240,7 @@ def test_the_assignment_binds_its_value_under_the_alias_key() -> None:
     sugar = AssignSugar(
         name="y", value=_FloorSugar(TWO), site=None, evaluations=(("y", KEY),)
     )
-    block = outcome_to_exitset(sugar.desugar(ctx)).completed_value()
+    block = sugar.desugar(ctx).completed_value()
     assert block.context.temporal.value_if_bound(KEY) == TWO
 
 
@@ -249,10 +249,10 @@ def test_a_later_write_of_the_aliased_name_is_not_read() -> None:
     sugar = AssignSugar(
         name="y", value=_FloorSugar(TWO), site=None, evaluations=(("y", KEY),)
     )
-    block = outcome_to_exitset(sugar.desugar(ctx)).completed_value()
+    block = sugar.desugar(ctx).completed_value()
     later = block.context.with_temporal(block.context.temporal.bind_value("x", THREE))
     read = EvaluationRefSugar(evaluation=KEY, name="y", site=None)
-    assert outcome_to_exitset(read.desugar(later)).completed_value() == TWO
+    assert read.desugar(later).completed_value() == TWO
 
 
 def test_a_chained_assignment_binds_each_alias_key() -> None:
@@ -266,7 +266,7 @@ def test_a_chained_assignment_binds_each_alias_key() -> None:
         site=None,
         evaluations=(("y", key_y), ("z", key_z)),
     )
-    block = outcome_to_exitset(sugar.desugar(ctx)).completed_value()
+    block = sugar.desugar(ctx).completed_value()
     assert block.context.temporal.value_if_bound(key_y) == TWO
     assert block.context.temporal.value_if_bound(key_z) == TWO
 
@@ -274,7 +274,7 @@ def test_a_chained_assignment_binds_each_alias_key() -> None:
 def test_without_an_alias_the_assignment_binds_no_key() -> None:
     ctx = ReduceContext.root(owner="alias-evaluation")
     sugar = AssignSugar(name="y", value=_FloorSugar(TWO), site=None)
-    outcome = outcome_to_exitset(sugar.desugar(ctx))
+    outcome = sugar.desugar(ctx)
     block = outcome.completed_value()
     context = getattr(block, "context", None)
     assert context is None or context.temporal.value_if_bound(KEY) is None

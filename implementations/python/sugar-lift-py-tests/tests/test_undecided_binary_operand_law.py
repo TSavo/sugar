@@ -71,13 +71,9 @@ def _comprehension() -> ComprehensionValue:
 def _two_faced(left, right, method: str, operator: str):
     """Undecided native dispatch: completes under its atom, else halts undetermined."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-    from sugar_lift_py_tests.outcome.exit_set import (
-        Completed,
-        Halted,
-        outcome_to_exitset,
-    )
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 
-    exits = outcome_to_exitset(getattr(left, method)(right, SITE, None)).exits
+    exits = getattr(left, method)(right, SITE, None).exits
     (done,) = [face for face in exits if isinstance(face, Completed)]
     (halt,) = [face for face in exits if isinstance(face, Halted)]
     assert "python:binary_op.completes" in repr(done.guard)
@@ -255,9 +251,9 @@ def test_the_whole_function_publishes_the_undecided_binary_halt(
         ).functions()
     )
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-    from sugar_lift_py_tests.outcome.exit_set import Halted, outcome_to_exitset
+    from sugar_lift_py_tests.outcome.exit_set import Halted
 
-    exits = outcome_to_exitset(fn.sugar().desugar(None)).exits
+    exits = fn.sugar().desugar(None).exits
     owners = [
         face.effect.producer_node_owner
         for face in exits

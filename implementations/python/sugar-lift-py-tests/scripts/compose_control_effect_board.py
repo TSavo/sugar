@@ -2029,7 +2029,7 @@ def seal_board_from_aggregate(
     defects = list(agg["defects"])
     # One meaning each — never bag-sum-as-the-residual.
     # Desugar: only panic count is residual. defects / typed-refusal / constructed-effect
-    # were outcome KINDS (Exception vs SugarNotWritten vs Incomplete), not quantities
+    # were outcome KINDS (Exception vs SugarNotWritten vs halted arm), not quantities
     # of unwritten work. Dropped as residual axes (T correction: two outcomes only).
     r_construction_panics = len(construction_panics)
     r_desugar_panics = len(agg["desugar_construction_panics"])

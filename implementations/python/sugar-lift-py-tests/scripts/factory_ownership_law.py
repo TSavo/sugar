@@ -2,7 +2,7 @@
 """Ownership-law census: selected Sugar arms must construct honestly.
 
 Blind spot the side-door census does not close: a broad ``owns()`` can claim a
-shape and manufacture Incomplete instead of leaving the factory with no candidate
+shape and manufacture a soft halt instead of leaving the factory with no candidate
 (→ ConstructionPanic).
 
 This instrument is STEP-1 static enforcement of the ownership law:
@@ -126,14 +126,13 @@ def _call_name(node: ast.Call) -> str | None:
 
 
 def _is_halt_constructor(node: ast.Call) -> bool:
-    """``Incomplete(...)`` or the ExitSet form ``ExitSet.halted(...)``."""
-    if isinstance(node.func, ast.Attribute):
-        return (
-            node.func.attr == "halted"
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "ExitSet"
-        ) or node.func.attr == "Incomplete"
-    return isinstance(node.func, ast.Name) and node.func.id == "Incomplete"
+    """``ExitSet.halted(...)``."""
+    return (
+        isinstance(node.func, ast.Attribute)
+        and node.func.attr == "halted"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "ExitSet"
+    )
 
 
 def _is_typed_runtime_effect_incomplete(node: ast.Call) -> bool:
@@ -249,7 +248,7 @@ def scan_sugar_tree(sugar_root: Path) -> list[OwnershipOffender]:
                         "owns() present without witnesses() / opt-out — "
                         "cannot prove honest construction or typed red twin; "
                         "unsupported shapes must leave factory with no candidate "
-                        "→ ConstructionPanic, never soft Incomplete",
+                        "→ ConstructionPanic, never a soft halt",
                     )
                 )
             # broad-owns is advisory only (observed-kind owns is lawful for many
@@ -262,7 +261,7 @@ def scan_sugar_tree(sugar_root: Path) -> list[OwnershipOffender]:
                         "broad-unenrolled-owns",
                         node.name,
                         "broad observed-only owns without witnesses — capture then "
-                        "Incomplete risk; enroll twin or narrow + ConstructionPanic",
+                        "soft-halt risk; enroll twin or narrow + ConstructionPanic",
                     )
                 )
         if owned_sugars:
@@ -282,7 +281,7 @@ def scan_sugar_tree(sugar_root: Path) -> list[OwnershipOffender]:
                         "untyped-incomplete-after-owns",
                         owner,
                         "owns() selected this module's Sugar, but the selected "
-                        "path manufactures Incomplete without a concrete "
+                        "path manufactures a halt without a concrete "
                         "*RuntimeEffect; unsupported construction must leave no "
                         "candidate so factory None → ConstructionPanic",
                     )
@@ -319,7 +318,7 @@ def format_report(offenders: list[OwnershipOffender]) -> str:
         f"auditor_errors = {len(auditor_errors)}",
         "Law: every selected Sugar arm produces cited construction or genuine typed "
         "runtime effect under a bad twin; unsupported shapes leave factory with no "
-        "candidate → ConstructionPanic. Soft Incomplete after broad owns is illegal.",
+        "candidate → ConstructionPanic. A soft halt after broad owns is illegal.",
         "",
         "By kind:",
     ]

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
@@ -55,7 +55,7 @@ class AttributeSugar(ConstructedTermSugar):
         )
 
     @staticmethod
-    def project_attribute(receiver, name: str, site, ctx: object) -> Outcome:
+    def project_attribute(receiver, name: str, site, ctx: object) -> ExitSet:
         """Producer-owned attribute **read** projection (one door).
 
         The law shared by ordinary AttributeSugar and Attribute AugAssign:
@@ -219,7 +219,7 @@ class AttributeSugar(ConstructedTermSugar):
             return unknown
         return receiver.attribute(name, site, ctx)
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         return self.receiver.desugar(ctx).and_then(
             lambda receiver: self.project_attribute(receiver, self.name, self.site, ctx)
         )

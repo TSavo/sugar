@@ -32,7 +32,7 @@ from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
 from sugar_lift_py_tests.floor.tuple_value import TupleValue
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.operations import SequenceProjectionOperation
-from sugar_lift_py_tests.outcome.exit_set import Completed, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 from sugar_lift_python_source.source_oracle import path_source, workspace_path_source
 from sugar_lift_py_tests.lift_rpc import tree_construction_context_for_workspace
 from sugar_source_tree.tree import SourceFile
@@ -258,8 +258,8 @@ def test_later_store_halt_preserves_earlier_star_bindings(tmp_path: Path) -> Non
         "    xs[0] = 9\n"
         "    return head\n"
     )
-    raw = _workspace_function_sugar(tmp_path, source, "star_then_store").desugar(None)
-    outcome = outcome_to_exitset(raw)
+    function_sugar = _workspace_function_sugar(tmp_path, source, "star_then_store")
+    outcome = function_sugar.desugar(None)
     halted = [e for e in outcome.exits if isinstance(e, Halted)]
     completed = [e for e in outcome.exits if isinstance(e, Completed)]
     assert len(halted) == 1
@@ -286,9 +286,8 @@ def test_later_store_halt_discrimination_not_sole_completed(tmp_path: Path) -> N
         "    xs[0] = 9\n"
         "    return head\n"
     )
-    outcome = outcome_to_exitset(
-        _workspace_function_sugar(tmp_path, source, "star_then_store_d").desugar(None)
-    )
+    function_sugar = _workspace_function_sugar(tmp_path, source, "star_then_store_d")
+    outcome = function_sugar.desugar(None)
     with pytest.raises(AssertionError):
         assert len(outcome.exits) == 1 and isinstance(
             outcome.exits[0], Completed

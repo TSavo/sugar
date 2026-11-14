@@ -55,9 +55,8 @@ def _completed(outcome):
     completion atom, beside the completion this file inspects."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.outcome import Completed, Halted
-    from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 
-    exits = outcome_to_exitset(outcome).exits
+    exits = outcome.exits
     completed = [face for face in exits if isinstance(face, Completed)]
     halted = [face for face in exits if isinstance(face, Halted)]
     assert len(completed) == 1, exits

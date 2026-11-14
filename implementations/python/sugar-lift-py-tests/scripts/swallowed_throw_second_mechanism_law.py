@@ -18,8 +18,8 @@ Axes (kept separate; never summed into a single threshold):
 * ``R_exception_soft_continue`` — ``except Exception`` then bare ``continue``
   in a production loop (manufactures absence for the next shot).
 * ``R_soft_unresolved_sugar_return`` — production returns
-  ``SoftUnresolvedWithSugar`` / ``SoftUnresolvedTrySugar`` (UNDECIDED as soft
-  Incomplete).
+  ``SoftUnresolvedWithSugar`` / ``SoftUnresolvedTrySugar`` (UNDECIDED as a soft
+  halt).
 * ``R_literal_eval_raw_substitution`` — ``literal_eval`` under ``try``, except
   assigns raw source text as the decoded value (meaning outside Sugar).
 
@@ -314,7 +314,7 @@ def scan_file(path: Path, *, rel: str) -> list[SwallowOffender]:
                         kind="soft-unresolved-sugar-return",
                         note=(
                             f"return {soft}(...) is dual-mode soft survival — "
-                            "UNDECIDED rendered as Incomplete outside the tower"
+                            "UNDECIDED rendered as a soft halt outside the tower"
                         ),
                         fix=(
                             "delete the soft sugar return; let SourceTreePanic / "

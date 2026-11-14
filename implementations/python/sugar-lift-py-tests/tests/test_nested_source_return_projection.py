@@ -233,8 +233,8 @@ def test_recursion_by_name_is_not_the_transport() -> None:
     alpha_call = _calls_named(tree, "alpha")[0]
     beta_call = _calls_named(tree, "beta")[0]
     assert _coordinate(alpha_call) != _coordinate(beta_call)
-    a = alpha_call.sugar().desugar(None).value
-    b = beta_call.sugar().desugar(None).value
+    a = alpha_call.sugar().desugar(None).completed_value()
+    b = beta_call.sugar().desugar(None).completed_value()
     # Frame CIDs distinguish alpha vs beta — not target_name spelling.
     assert (
         a.source_call_frame_cid
@@ -312,7 +312,7 @@ def test_two_hop_preserves_outer_and_inner_occurrences_on_dig_path() -> None:
     )
     outer_call = _calls_named(tree, "outer")[0]
     inner_call = _calls_named(tree, "inner")[0]
-    outer_cs = outer_call.sugar().desugar(None).value
+    outer_cs = outer_call.sugar().desugar(None).completed_value()
     assert outer_cs.source_call_frame_cid is not None
     assert (
         outer_cs.source_call_frame_cid
@@ -334,7 +334,7 @@ def test_two_hop_dig_must_not_stop_at_outer_block_without_return_floor() -> None
         NESTED + "\nouter()\n",
         bind=frozenset({"outer", "inner"}),
     )
-    outer_cs = _calls_named(tree, "outer")[0].sugar().desugar(None).value
+    outer_cs = _calls_named(tree, "outer")[0].sugar().desugar(None).completed_value()
     dug = outer_cs._dig_floor_or_none(None, owner="two-hop-dig-ceiling")
     assert dug is not None
     # Recurse one hop if dig surfaces another CallSiteValue (inner).

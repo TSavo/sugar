@@ -150,7 +150,7 @@ def test_else_path_does_not_run_after_handler_so_handler_local_is_not_else_exit(
 def test_else_and_handler_are_guarded_alternatives_not_cross_fed():
     """Static partition twin via two separate sources (complete vs halt).
 
-    Complete body takes else; halt body takes handler. Cross-feeding would
+    Completed body takes else; halt body takes handler. Cross-feeding would
     make both return the same arm on both sources.
     """
     complete = _desugar(

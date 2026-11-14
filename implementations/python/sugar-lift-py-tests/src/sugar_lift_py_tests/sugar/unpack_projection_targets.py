@@ -16,7 +16,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 
@@ -29,7 +29,7 @@ class UnpackProjectionTarget(ABC):
     """
 
     @abstractmethod
-    def apply_member(self, member, ctx) -> Outcome:
+    def apply_member(self, member, ctx) -> ExitSet:
         """Apply one authenticated roster member to this target leaf."""
 
     def occupies_star_slot(self) -> bool:
@@ -37,7 +37,7 @@ class UnpackProjectionTarget(ABC):
         return False
 
 
-def _rebind_name(name: str, member, evaluation: str | None) -> Outcome:
+def _rebind_name(name: str, member, evaluation: str | None) -> ExitSet:
     """Rebind a lexical leaf to its member, and under its projection of the
     statement's one evaluation when the statement was substituted (temporal
     choice 1: every later read is an ``EvaluationRef`` to that projection)."""
@@ -59,7 +59,7 @@ class NameUnpackTarget(UnpackProjectionTarget):
     name: str
     evaluation: str | None = None
 
-    def apply_member(self, member, ctx) -> Outcome:
+    def apply_member(self, member, ctx) -> ExitSet:
         del ctx
         return _rebind_name(self.name, member, self.evaluation)
 
@@ -74,7 +74,7 @@ class StarUnpackTarget(UnpackProjectionTarget):
     def occupies_star_slot(self) -> bool:
         return True
 
-    def apply_member(self, member, ctx) -> Outcome:
+    def apply_member(self, member, ctx) -> ExitSet:
         del ctx
         return _rebind_name(self.name, member, self.evaluation)
 
@@ -87,7 +87,7 @@ class AttributeUnpackTarget(UnpackProjectionTarget):
     attr: str
     site: object = dataclass_field(compare=False)
 
-    def apply_member(self, member, ctx) -> Outcome:
+    def apply_member(self, member, ctx) -> ExitSet:
         from sugar_lift_py_tests.sugar.store_effect_sugar import (
             AttributeStoreEffectSugar,
         )
@@ -109,7 +109,7 @@ class SubscriptUnpackTarget(UnpackProjectionTarget):
     index: Sugar
     site: object = dataclass_field(compare=False)
 
-    def apply_member(self, member, ctx) -> Outcome:
+    def apply_member(self, member, ctx) -> ExitSet:
         from sugar_lift_py_tests.sugar.store_effect_sugar import (
             SubscriptStoreEffectSugar,
         )
@@ -146,6 +146,6 @@ class ApplyUnpackMemberSugar(Sugar):
             reason="DynamicUnpackStoreAssignSugar sequences ApplyUnpackMemberSugar",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         # One obligation: the target owns apply_member. No kinds ladder.
         return self.target.apply_member(self.member, ctx)

@@ -22,7 +22,6 @@ everything is exactly as wrong as one that says no to everything.
 from __future__ import annotations
 
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-from sugar_lift_py_tests.outcome import outcome_to_exitset
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
@@ -36,7 +35,7 @@ def _residual_raises(source: str) -> tuple[str, ...]:
         construction_context=TreeConstructionContextV1.for_test_without_workspace(),
     )
     function = next(iter(source_file.functions()))
-    exit_set = outcome_to_exitset(function.sugar().desugar())
+    exit_set = function.sugar().desugar()
     names: list[str] = []
     seen: set[int] = set()
 

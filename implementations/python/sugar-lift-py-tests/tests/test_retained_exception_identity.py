@@ -37,7 +37,7 @@ tester atom does not appear at all.
 from __future__ import annotations
 
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-from sugar_lift_py_tests.outcome import ExitSet, outcome_to_exitset
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
@@ -56,7 +56,7 @@ def _universe(source: str):
 
 def _residual_raises(source: str) -> tuple[str, ...]:
     """Every raise that survived the `try` -- the effects still on the wall."""
-    exit_set = outcome_to_exitset(_universe(source))
+    exit_set = _universe(source)
     names: list[str] = []
     seen: set[int] = set()
 

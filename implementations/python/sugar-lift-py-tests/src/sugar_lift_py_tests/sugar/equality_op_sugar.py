@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field, replace
 
 from sugar_lift_py_tests.ir import Term
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
@@ -67,7 +67,7 @@ class EqualityOpSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         # Reduce both sides; the left, standing on the equals floor, answers
         # whether it equals the right. That is all `==` desugars to.
         return self.left.desugar(ctx).and_then(
@@ -76,7 +76,7 @@ class EqualityOpSugar(ConstructedTermSugar):
             )
         )
 
-    def apply_reduced(self, left, right, ctx: object = None) -> Outcome:
+    def apply_reduced(self, left, right, ctx: object = None) -> ExitSet:
         """Apply equality/refinement to operands already evaluated once."""
         return _equals_and_refine(
             left.project_operation_receiver(

@@ -45,7 +45,6 @@ from sugar_lift_py_tests.generator_construction import (
     GeneratorConstructionV1,
     ReturnStepV1,
 )
-from sugar_lift_py_tests.outcome import outcome_to_exitset
 from sugar_lift_py_tests.sugar.string_literal_sugar import StringLiteralSugar
 from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_python_source.manager_protocol_construction import (
@@ -332,5 +331,5 @@ def test_planted_nested_manager_step_lifecycle_performance() -> None:
     )
     # Exit outer: NestedManagerExitStep exits nested then terminates.
     exit_outcome = outer_protocol.exit_outcome_for(entered)
-    exits = outcome_to_exitset(exit_outcome)
+    exits = exit_outcome
     assert len(exits.exits) == 1

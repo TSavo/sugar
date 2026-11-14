@@ -39,7 +39,7 @@ from sugar_lift_py_tests.floor.named_expression_value import (
 )
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
-from sugar_lift_py_tests.outcome import Completed, ExitSet, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
 from sugar_lift_py_tests.sugar.loop_recurrence_sugar import LoopRecurrenceSugar
 from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
@@ -79,7 +79,7 @@ def _root(owner: str = "walrus-writes") -> ReduceContext:
 
 
 def _value(outcome):
-    return outcome_to_exitset(outcome).completed_value()
+    return outcome.completed_value()
 
 
 def _returned_value(outcome):

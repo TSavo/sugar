@@ -8,7 +8,7 @@ from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
     _NATIVE_OPERATION_PROJECTORS,
 )
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
@@ -60,7 +60,7 @@ class AugAssignSugar(Sugar):
             lying=prefix + "def test_a():\n    assert A(3) == 3\n",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         return self.left.desugar(ctx).and_then(
             lambda left: self.right.desugar(ctx).and_then(
                 lambda right: project_augmented(
@@ -74,7 +74,7 @@ class AugAssignSugar(Sugar):
             )
         )
 
-    def _rebind(self, result) -> Outcome:
+    def _rebind(self, result) -> ExitSet:
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind, ScopeRebinds
         from sugar_lift_py_tests.outcome import ExitSet
 
@@ -96,7 +96,7 @@ def project_augmented(
     projector: Callable,
     site,
     ctx,
-) -> Outcome:
+) -> ExitSet:
     """Mint formal i* demand, or project ground through the explicit projector.
 
     ``operator`` is the carrier name from ``BinaryOperator.inplace_operator``
@@ -165,7 +165,7 @@ class SubscriptAugAssignSugar(Sugar):
     def witnesses(cls):
         return ()
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         return self.receiver.desugar(ctx).and_then(
             lambda receiver: self.index.desugar(ctx).and_then(
                 lambda index: receiver.subscript(index, self.get_site).and_then(
@@ -185,7 +185,7 @@ class SubscriptAugAssignSugar(Sugar):
             )
         )
 
-    def _store(self, receiver, index, result, ctx) -> Outcome:
+    def _store(self, receiver, index, result, ctx) -> ExitSet:
         coordinates = tuple(
             getattr(operand, "formal_coordinate", None)
             for operand in (receiver, index, result)
@@ -252,7 +252,7 @@ class AttributeAugAssignSugar(Sugar):
     def witnesses(cls):
         return ()
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         # Ordering: receiver → producer-owned get → RHS → inplace → producer-owned setattr.
         # Get/store are AttributeSugar / AttributeStoreEffectSugar doors only.
         from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar

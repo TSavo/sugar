@@ -124,7 +124,7 @@ def _row(module, file: str) -> dict[str, object]:
         "inputKey": input_key,
         "rowId": module.canonical_cid({"inputKey": input_key}),
         "stageId": module.STAGE_ENUMERATE_FILE_TERMINAL,
-        "observedEventType": "sugar_lift_py_tests.outcome.Complete",
+        "observedEventType": "sugar_lift_py_tests.outcome.exit_set.ExitSet",
         "terminalKind": "constructed",
         "observed_chain_length": 1,
         "blocking_terminal_count": 0,

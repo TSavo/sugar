@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect, UndeterminedRaiseEffect
-from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_lift_py_tests.unanswered_calls import owed_calls
 from sugar_source_tree.nodes import FunctionDef
 
@@ -30,7 +30,7 @@ def _exits(tmp_path: Path, source: str):
     func = next(
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
-    return outcome_to_exitset(func.sugar().desugar())
+    return func.sugar().desugar()
 
 
 def _undetermined(exits):
@@ -107,7 +107,7 @@ def test_raise_after_construction_carries_the_statement_prefix(tmp_path) -> None
     # ``raise E(...)`` is a simple statement: it binds nothing before its own
     # halt, so the raise arm sequenced after the call's completing arm carries
     # the block's prefix as its pre-halt state, exactly as a plain
-    # ``Incomplete`` raise does. A boundary that consumes it needs that record.
+    # unconditional raise does. A boundary that consumes it needs that record.
     exits = _exits(
         tmp_path,
         'import json\ndef f():\n    raise json.JSONDecodeError("m", "d", 0)\n',

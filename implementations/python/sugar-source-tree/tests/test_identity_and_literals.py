@@ -37,7 +37,7 @@ def test_is_not_is_identity_negated():
 
 
 def test_float_literal_is_real_sorted():
-    post = _fn("def A():\n    return 2.5\n").sugar().desugar().value.post()
+    post = _fn("def A():\n    return 2.5\n").sugar().desugar().completed_value().post()
     assert type(post.args[1]).__name__ == "_ConstReal"
 
 

@@ -23,7 +23,7 @@ import pytest
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
 from sugar_lift_py_tests.ir import atomic, str_const, ctor
-from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_lift_py_tests.outcome.exit_set import ExitSet, complement_guard
 from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.panic import SugarNotWritten
@@ -145,7 +145,7 @@ def _class_sugar(tmp_path: Path, source: str, name: str):
 
 def _class_value(tmp_path: Path, name: str):
     sugar = _class_sugar(tmp_path / name, "", name)
-    value = sugar.desugar().value
+    value = sugar.desugar().completed_value()
     assert isinstance(value, ClassDefinitionValue)
     return value
 
@@ -179,7 +179,7 @@ def _atom(name: str):
 
 def _rows(outcome):
     rows = []
-    for face in outcome_to_exitset(outcome).exits:
+    for face in outcome.exits:
         if isinstance(face, Halted):
             rows.append(("halt", getattr(face.effect, "producer_node_owner", None)))
         else:
@@ -239,9 +239,8 @@ def test_a_base_with_several_completions_builds_one_class_per_completion(
 def test_a_source_base_that_always_raises_is_the_statements_raise(tmp_path: Path):
     """The class body never runs after a base that raised: its refusal is
     not reached, and the base's raise is the statement's only face."""
-    outcome = outcome_to_exitset(
-        _class_sugar(tmp_path, "class W(boom()):\n    x = boom()\n", "W").desugar()
-    )
+    class_sugar = _class_sugar(tmp_path, "class W(boom()):\n    x = boom()\n", "W")
+    outcome = class_sugar.desugar()
     assert not any(isinstance(face, Completed) for face in outcome.exits)
     assert [type(face.effect).__name__ for face in outcome.exits] == ["RaiseEffect"]
 

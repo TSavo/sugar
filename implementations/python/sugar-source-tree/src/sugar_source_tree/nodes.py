@@ -9324,10 +9324,9 @@ class Assign(Statement):
     def _constructed_floor_value(value):
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import _term_content_cid
-        from sugar_lift_py_tests.outcome import outcome_to_exitset
         from .binding_provenance import ConstructedValueTestimonyV1
 
-        outcome = outcome_to_exitset(value.sugar().desugar())
+        outcome = value.sugar().desugar()
         constructed = outcome.completed_value()
         # A construction testimony has no arm to carry an owed item on: an
         # owing value is not constructed here.

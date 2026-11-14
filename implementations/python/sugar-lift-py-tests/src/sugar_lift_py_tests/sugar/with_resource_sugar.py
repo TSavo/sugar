@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
@@ -92,19 +92,16 @@ class WithResourceSugar(Sugar):
             "    assert not A(True)\n",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         # Construction boundary: only ExitSet algebra + binding facts.
         # No sugar-class imports or construction on this path.
         from sugar_lift_py_tests.floor import EnteredManagerStateValue
-        from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+        from sugar_lift_py_tests.outcome.exit_set import Halted
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
             ExitFaceBinding,
             ManagerBinding,
             prepend_facts_to_exitset,
-        )
-        from sugar_lift_py_tests.sugar.exit_set_routing import (
-            sugar_outcome_to_exitset,
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             _ReducedBlock,
@@ -114,7 +111,7 @@ class WithResourceSugar(Sugar):
         # The manager, the enter, the body and the exit all run under the
         # ``with`` statement's own context: there is no second way to reduce
         # them without it (#7757).
-        manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx))
+        manager_es = self.manager.desugar(ctx)
         parts: list = []
 
         for mgr_exit in manager_es.exits:
@@ -133,7 +130,7 @@ class WithResourceSugar(Sugar):
             # and faces and owes what it owes; the exit routing carries a body
             # face's debts onto every arm it leaves through.
             enter_es = ExitSet((mgr_exit,)).sequence(
-                lambda _manager: sugar_outcome_to_exitset(self.enter.desugar(ctx))
+                lambda _manager: self.enter.desugar(ctx)
             )
             for enter_exit in enter_es.exits:
                 if isinstance(enter_exit, Halted):
@@ -158,7 +155,7 @@ class WithResourceSugar(Sugar):
                 )
 
                 # Parametric exit: materialize once, fan over every body face.
-                exit_es = sugar_outcome_to_exitset(self.exit.desugar(ctx))
+                exit_es = self.exit.desugar(ctx)
 
                 for body_exit in body_es.exits:
                     face_facts = ExitFaceBinding.from_body_exit(

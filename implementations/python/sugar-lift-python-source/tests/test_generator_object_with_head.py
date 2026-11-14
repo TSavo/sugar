@@ -16,7 +16,7 @@ import pytest
 from sugar_lift_py_tests.generator_object_with_refusal import (
     observed_generator_object_with_refusal,
 )
-from sugar_lift_py_tests.outcome import Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Halted
 from sugar_lift_py_tests.sugar.generator_with_sugar import (
     GeneratorObjectWithSugar,
     GeneratorWithSugar,
@@ -68,7 +68,7 @@ def _halt_effects(source_file):
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
     effects = []
-    for face in outcome_to_exitset(func.sugar().desugar()).exits:
+    for face in func.sugar().desugar().exits:
         if isinstance(face, Halted):
             effects.append(face.effect)
             continue

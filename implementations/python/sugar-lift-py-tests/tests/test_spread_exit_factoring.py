@@ -39,7 +39,6 @@ from sugar_lift_py_tests.outcome.exit_set import (
     Completed,
     ExitSet,
     Halted,
-    outcome_to_exitset,
     true_guard,
 )
 from sugar_lift_py_tests.sugar.spread_sugar import (
@@ -152,7 +151,7 @@ _TERM_SHAPE = {
 
 
 def _spread(elements, kind: str = "collection") -> ExitSet:
-    return outcome_to_exitset(_SUGARS[kind](elements).desugar())
+    return _SUGARS[kind](elements).desugar()
 
 
 # --- the legacy-expansion oracle: denotation, not representation ------------
@@ -276,7 +275,7 @@ def _legacy_spread(elements, kind: str = "collection") -> ExitSet:
     production = spread_module._collect
     spread_module._collect = _legacy_collect
     try:
-        return outcome_to_exitset(sugar.desugar())
+        return sugar.desugar()
     finally:
         spread_module._collect = production
 

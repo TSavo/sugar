@@ -28,7 +28,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
 from sugar_lift_py_tests.corpus_pin import pin_corpus
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
-from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
 from sugar_source_tree.nodes import FunctionDef, With
 from sugar_source_tree.reporter import CollectingReporter
@@ -83,7 +83,7 @@ def _suppress(tmp_path, handler: str, body: str):
     func = next(
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
-    return outcome_to_exitset(func.sugar().desugar())
+    return func.sugar().desugar()
 
 
 def _halts(exits):

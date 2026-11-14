@@ -119,7 +119,7 @@ def test_re_regexflag_chained_names_retain_targets_and_one_evaluated_floor(
         for field in fields
     ) == ((146, 4, 146, 14), (146, 17, 146, 18))
 
-    constructed = sugar.desugar().value
+    constructed = sugar.desugar().completed_value()
     values = tuple(
         field.value
         for field in constructed.class_fields
