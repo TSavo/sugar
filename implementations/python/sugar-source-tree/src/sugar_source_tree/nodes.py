@@ -3528,6 +3528,55 @@ def _arm_walruses(arm):
     return found
 
 
+def _reads_precede_writes(segment, name: str, in_lambda: set) -> bool:
+    """Whether every read of ``name`` in ``segment`` (one element, key, value,
+    condition or iterable of a comprehension) is evaluated before every
+    walrus of ``name`` in it writes: it sits inside the value of each such
+    walrus, which is evaluated whole before the walrus writes.  A read
+    anywhere else in the segment (after a walrus of it, or before one, which
+    is not told apart here), or in a lambda (``in_lambda``: it runs when the
+    lambda is called), is not.  A read is a ``Name`` of ``name`` that is not
+    a walrus's target, or a running-value reference to it a substitution
+    already made (``recurrence``)."""
+
+    def field(walrus, slot):
+        # The child the walk reaches, by identity.
+        return next(child for edge, _index, child in walrus.children() if edge == slot)
+
+    walruses = [
+        node
+        for node in segment.walk()
+        if node.kind == "NamedExpr"
+        and node.target.kind == "Name"
+        and node.target.id == name
+        and id(node) not in in_lambda
+    ]
+    targets = {
+        id(field(node, "target")) for node in segment.walk() if node.kind == "NamedExpr"
+    }
+    values = [
+        {id(inner) for inner in field(walrus, "value").walk()} for walrus in walruses
+    ]
+    for node in segment.walk():
+        if id(node) in targets:
+            continue
+        if node.kind == "Name":
+            reads = node.id == name
+        else:
+            reads = (
+                node.kind == "EvaluationRef"
+                and node.name == name
+                and getattr(node, "recurrence", False) is True
+            )
+        if not reads:
+            continue
+        if id(node) in in_lambda:
+            return False
+        if not all(id(node) in inside for inside in values):
+            return False
+    return True
+
+
 def _evaluation_ref(
     owner,
     span,
@@ -3539,6 +3588,7 @@ def _evaluation_ref(
     cell: bool = False,
     deferred: bool = False,
     of: "Optional[Node]" = None,
+    recurrence: bool = False,
 ) -> "Node":
     """``EvaluationRef(evaluation, name)`` at ``span``: a read of ``name``
     rewritten to a reference to the evaluation bound under ``evaluation``
@@ -3559,7 +3609,10 @@ def _evaluation_ref(
     (``Lambda._construct_sugar``, ``LambdaSugar``).  ``deferred`` marks a
     walrus in a generator expression's element or conditions: it writes when
     the generator is consumed, not where the generator is made, so where its
-    key is unbound the read is undecided by name.
+    key is unbound the read is undecided by name.  ``recurrence`` marks a
+    member reference to a comprehension's running value of a name a walrus
+    in it writes (``ListComp._walrus_recurrence``): where the comprehension
+    bound no running value, the read is refused by name.
 
     ``of`` is the right-hand side an assignment's target was given: which
     object the name denotes, never its value.  The value is the key's; the
@@ -3582,6 +3635,8 @@ def _evaluation_ref(
         slots = (*slots, ("deferred", Leaf(True)))
     if of is not None:
         slots = (*slots, ("of", Leaf(of)))
+    if recurrence:
+        slots = (*slots, ("recurrence", Leaf(True)))
     return materialize(
         owner.unit,
         ShadowNode("EvaluationRef", span, slots),
@@ -4759,7 +4814,7 @@ class Node(Typed):
         under-substitutes rather than captures -- safe)."""
         return {n.id for n in target.walk() if n.kind == "Name"}
 
-    def _substitute_generators(self, generators, scope):
+    def _substitute_generators(self, generators, scope, recurrence=None):
         """Substitute comprehension generators, threading each target as a
         binding for its own ifs, the FOLLOWING generators and the result
         expression. Returns (new_generators, result_scope, changed) --
@@ -4770,15 +4825,24 @@ class Node(Typed):
         #7661; ``ListComp._target_references``): a read in the element or a
         condition is an ``EvaluationRef``, never the name looked up by
         spelling. A target shape the comprehension has no sugar for binds no
-        reference; its names stay masked."""
+        reference; its names stay masked.
+
+        ``recurrence`` maps each name a walrus in the comprehension writes to
+        a reference to the comprehension's running value of it
+        (``ListComp._walrus_recurrence``): every read of it inside the
+        comprehension -- a condition, a later generator's iterable, the
+        element -- reads that, never the binding before the comprehension.
+        The first generator's iterable is evaluated before any member, so it
+        reads ``scope``."""
         bound = set()
         inner = scope
-        carried = {}
+        recurrence = dict(recurrence or {})
+        carried = dict(recurrence)
         new_gens = []
         changed = False
         for index, gen in enumerate(generators):
             references = ListComp._target_references(self, index, gen)
-            new_gen = gen._substitute_clause(inner, references)
+            new_gen = gen._substitute_clause(inner, {**recurrence, **references})
             if new_gen is not gen:
                 changed = True
             new_gens.append(new_gen)
@@ -14754,7 +14818,14 @@ class ListComp(Expression):
             return unrolled
         from .shadow import rewrite
 
-        new_gens, inner, gc = self._substitute_generators(self.generators, scope)
+        recurrence = ListComp._walrus_recurrence(
+            self, (self.elt,), deferred=bool(scope.get(_DEFERRED_WALRUS))
+        )
+        new_gens, inner, gc = self._substitute_generators(
+            self.generators,
+            scope,
+            ListComp._recurrence_references(self, recurrence),
+        )
         template_scope = _member_closure_scope(self, inner, (self.elt,))
         if ListComp._contains_forbidden_shape(self, (self.elt,)):
             template_scope = {**template_scope, _NESTED_COMPREHENSION_TEMPLATE: True}
@@ -14766,7 +14837,7 @@ class ListComp(Expression):
             changed["elt"] = new_elt
         rewritten = rewrite(self, **changed) if changed else self
         return ListComp._carrying_walrus_priors(
-            self, rewritten, (rewritten.elt,), scope
+            self, rewritten, (rewritten.elt,), scope, recurrence
         )
 
     def _try_unroll_to_display(self, scope):
@@ -14878,11 +14949,119 @@ class ListComp(Expression):
         """
         return any(node.kind == "NamedExpr" for root in roots for node in root.walk())
 
-    def _carrying_walrus_priors(self, node, roots: tuple, scope):
+    def _walrus_recurrence(self, roots: tuple, *, deferred: bool) -> tuple:
+        """``(name, running coordinate, ordered)`` for each name a walrus in
+        this comprehension writes: in ``roots`` (the element, or a dict
+        comprehension's key and value) or a condition, not in a lambda (which
+        writes the lambda's own scope) and not in a nested generator
+        expression (which writes when it is consumed).
+
+        A read of such a name inside the comprehension is a read of the
+        recurrence the members run: the first member reads the binding
+        before the comprehension, each later member the last write of the
+        members before it, and within a member a condition, the key and the
+        value read the writes made before them.  Substitution rewrites every
+        such read to a reference to the name's running coordinate
+        (``_recurrence_references``), which ``ComprehensionSugar`` binds
+        before the first member and rebinds at every write it applies.
+
+        ``ordered`` is whether that coordinate holds the value every read
+        sees: within one element, key, value or condition the comprehension
+        applies no write before the whole of it is evaluated, so a read there
+        that is not evaluated before every walrus of the name there (inside
+        each one's value) would see a stale value.  A read in a lambda runs
+        when the lambda is called, not where it is made.  Either way the
+        name is not ``ordered``: nothing binds its coordinate and every read
+        of it in the comprehension is refused by name.  A ``deferred``
+        comprehension (a generator expression, or one inside it) runs its
+        members when it is consumed: none of its names is ``ordered``.
+        """
+        segments = (
+            *roots,
+            *(guard for gen in self.generators for guard in gen.ifs),
+            *(gen.iter for gen in self.generators[1:]),
+        )
+        if not any(
+            node.kind == "NamedExpr" for segment in segments for node in segment.walk()
+        ):
+            return ()
+        in_lambda = {
+            id(inner)
+            for segment in segments
+            for lam in segment.walk()
+            if lam.kind == "Lambda"
+            for inner in lam.walk()
+        }
+        in_generator = {
+            id(inner)
+            for segment in segments
+            for generator in segment.walk()
+            if generator.kind == "GeneratorExp"
+            for inner in generator.walk()
+        }
+        names: list = []
+        for segment in segments:
+            for walrus in segment.walk():
+                if (
+                    walrus.kind == "NamedExpr"
+                    and walrus.target.kind == "Name"
+                    and id(walrus) not in in_lambda
+                    and id(walrus) not in in_generator
+                    and walrus.target.id not in names
+                ):
+                    names.append(walrus.target.id)
+        return tuple(
+            (
+                name,
+                ListComp._walrus_recurrence_coordinate(self, name),
+                not deferred
+                and all(
+                    _reads_precede_writes(segment, name, in_lambda)
+                    for segment in segments
+                ),
+            )
+            for name in names
+        )
+
+    def _walrus_recurrence_coordinate(self, name: str) -> str:
+        """The coordinate this comprehension binds its running value of
+        ``name`` under: its source occurrence and the name.  A rewrite
+        borrows the origin's span, so substitution and construction mint the
+        same coordinate.  It is bound and read inside one evaluation of the
+        comprehension, as a member coordinate is."""
+        from sugar_lift_python_source.canonical import cid_of_json
+
+        return cid_of_json(
+            {
+                "kind": "comprehension-walrus-recurrence",
+                "schemaVersion": "1",
+                "source": self.fragment.seal().to_dict(),
+                "name": name,
+            }
+        )
+
+    def _recurrence_references(self, recurrence: tuple) -> dict:
+        """Each name in ``recurrence`` (``_walrus_recurrence``), to a member
+        reference to its running coordinate, marked ``recurrence``."""
+        return {
+            name: _evaluation_ref(
+                self, self.span, coordinate, name, member=True, recurrence=True
+            )
+            for name, coordinate, _ordered in recurrence
+        }
+
+    def _walrus_recurrence_sugar(self) -> tuple:
+        """The ``(name, running coordinate, ordered)`` roster
+        ``_carrying_walrus_priors`` stored; empty when it stored none."""
+        return tuple(getattr(self, "walrus_recurrence", None) or ())
+
+    def _carrying_walrus_priors(self, node, roots: tuple, scope, recurrence=()):
         """``node`` (this comprehension, substituted) carrying its walrus
         roster: each walrus in ``roots`` and its generators' conditions, as
         ``(name, evaluation key)``, and the read of that name in the scope
-        the comprehension is evaluated in, before any member runs.
+        the comprehension is evaluated in, before any member runs.  It also
+        carries ``recurrence`` (``_walrus_recurrence``): the running
+        coordinate of each name, which the members' reads of it read.
 
         A list, set or dict comprehension whose members never reach a walrus
         writes nothing: after it the name keeps the binding it had before,
@@ -14940,10 +15119,12 @@ class ListComp(Expression):
             *(
                 slot
                 for slot in desc.slots
-                if slot[0] not in ("walrus_roster", "walrus_priors")
+                if slot[0]
+                not in ("walrus_roster", "walrus_priors", "walrus_recurrence")
             ),
             ("walrus_roster", Leaf(roster)),
             ("walrus_priors", Children(tuple(_handle_of(prior) for prior in priors))),
+            ("walrus_recurrence", Leaf(tuple(recurrence))),
         )
         tags = occurrence_tags_of(node)
         shadow = (
@@ -15035,6 +15216,7 @@ class ListComp(Expression):
             element=self.elt.sugar(),
             site=self.fragment,
             walrus_priors=ListComp._walrus_prior_sugars(self),
+            walrus_recurrence=ListComp._walrus_recurrence_sugar(self),
         )
 
     def _comprehension_target(self, target: "Node"):
@@ -15194,7 +15376,14 @@ class SetComp(Expression):
             return display
         from .shadow import rewrite
 
-        new_gens, inner, gc = self._substitute_generators(self.generators, scope)
+        recurrence = ListComp._walrus_recurrence(
+            self, (self.elt,), deferred=bool(scope.get(_DEFERRED_WALRUS))
+        )
+        new_gens, inner, gc = self._substitute_generators(
+            self.generators,
+            scope,
+            ListComp._recurrence_references(self, recurrence),
+        )
         template_scope = _member_closure_scope(self, inner, (self.elt,))
         if ListComp._contains_forbidden_shape(self, (self.elt,)):
             template_scope = {**template_scope, _NESTED_COMPREHENSION_TEMPLATE: True}
@@ -15206,7 +15395,7 @@ class SetComp(Expression):
             changed["elt"] = new_elt
         rewritten = rewrite(self, **changed) if changed else self
         return ListComp._carrying_walrus_priors(
-            self, rewritten, (rewritten.elt,), scope
+            self, rewritten, (rewritten.elt,), scope, recurrence
         )
 
     def _try_unroll_to_display(self, scope):
@@ -15277,6 +15466,7 @@ class SetComp(Expression):
             element=self.elt.sugar(),
             site=self.fragment,
             walrus_priors=ListComp._walrus_prior_sugars(self),
+            walrus_recurrence=ListComp._walrus_recurrence_sugar(self),
         )
 
 
@@ -15298,7 +15488,14 @@ class DictComp(Expression):
             return display
         from .shadow import rewrite
 
-        new_gens, inner, gc = self._substitute_generators(self.generators, scope)
+        recurrence = ListComp._walrus_recurrence(
+            self, (self.key, self.value), deferred=bool(scope.get(_DEFERRED_WALRUS))
+        )
+        new_gens, inner, gc = self._substitute_generators(
+            self.generators,
+            scope,
+            ListComp._recurrence_references(self, recurrence),
+        )
         template_scope = _member_closure_scope(self, inner, (self.key, self.value))
         if ListComp._contains_forbidden_shape(self, (self.key, self.value)):
             template_scope = {**template_scope, _NESTED_COMPREHENSION_TEMPLATE: True}
@@ -15311,7 +15508,7 @@ class DictComp(Expression):
                 changed[fld] = new
         rewritten = rewrite(self, **changed) if changed else self
         return ListComp._carrying_walrus_priors(
-            self, rewritten, (rewritten.key, rewritten.value), scope
+            self, rewritten, (rewritten.key, rewritten.value), scope, recurrence
         )
 
     def _try_unroll_to_display(self, scope):
@@ -15407,6 +15604,7 @@ class DictComp(Expression):
             element=self.value.sugar(),
             site=self.fragment,
             walrus_priors=ListComp._walrus_prior_sugars(self),
+            walrus_recurrence=ListComp._walrus_recurrence_sugar(self),
         )
 
 
@@ -15422,14 +15620,23 @@ class GeneratorExp(Expression):
         A walrus in the element or a condition runs when the generator is
         consumed, not here: it is substituted ``deferred``
         (``_DEFERRED_WALRUS``), so a read after the generator is made does
-        not claim its write."""
+        not claim its write.  A read inside the generator of a name its own
+        walrus writes reads the running value of the members consumed before
+        it, which depends on when they are consumed: it is a recurrence
+        reference (``ListComp._walrus_recurrence``) that nothing binds, so it
+        is refused by name."""
         from .shadow import rewrite
 
         if ListComp._contains_named_expression(
             self, (self.elt, *(guard for gen in self.generators for guard in gen.ifs))
         ):
             scope = {**scope, _DEFERRED_WALRUS: True}
-        new_gens, inner, gc = self._substitute_generators(self.generators, scope)
+        recurrence = ListComp._walrus_recurrence(self, (self.elt,), deferred=True)
+        new_gens, inner, gc = self._substitute_generators(
+            self.generators,
+            scope,
+            ListComp._recurrence_references(self, recurrence),
+        )
         template_scope = inner
         if ListComp._contains_forbidden_shape(self, (self.elt,)):
             template_scope = {**inner, _NESTED_COMPREHENSION_TEMPLATE: True}
@@ -17632,6 +17839,7 @@ class Name(Expression):
                     cell=getattr(bound, "cell", False) is True,
                     deferred=getattr(bound, "deferred", False) is True,
                     of=getattr(bound, "of", None),
+                    recurrence=getattr(bound, "recurrence", False) is True,
                 )
             return bound
         span = self.line_col_span()
@@ -17787,7 +17995,10 @@ class EvaluationRef(Expression):
     generator expression's walrus, which writes when the generator is
     consumed).  In a live loop's body a carried name reads the loop
     header's evaluation of it (``_loop_header_evaluation_key``), which the
-    recurrence binds per item.  Built by ``_evaluation_ref`` only.
+    recurrence binds per item.  Inside a comprehension a read of a name a
+    walrus in it writes is a member reference to the comprehension's
+    running value of the name (``ListComp._walrus_recurrence``), marked
+    ``recurrence``.  Built by ``_evaluation_ref`` only.
     """
 
     evaluation: str
@@ -17809,6 +18020,7 @@ class EvaluationRef(Expression):
             member=getattr(self, "member", False) is True,
             walrus=getattr(self, "walrus", False) is True,
             deferred=getattr(self, "deferred", False) is True,
+            recurrence=getattr(self, "recurrence", False) is True,
         )
 
 

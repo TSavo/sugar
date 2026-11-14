@@ -140,6 +140,13 @@ class ComprehensionSugar(ConstructedTermSugar):
     # key, value or a condition (``ListComp._carrying_walrus_priors``): where
     # no member writes the name, it keeps the binding the prior read answers.
     walrus_priors: tuple = dataclass_field(compare=False, default=())
+    # ``(name, running coordinate, ordered)`` for each name a walrus in the
+    # comprehension writes (``ListComp._walrus_recurrence``): every read of
+    # the name inside the comprehension reads the running coordinate, which
+    # ``_recurrence_start`` binds to the prior binding and ``_written``
+    # rebinds at every write.  A name that is not ``ordered`` has no
+    # running value: its reads are refused by name.
+    walrus_recurrence: tuple = dataclass_field(compare=False, default=())
 
     def __post_init__(self) -> None:
         if self.kind not in {
@@ -208,7 +215,7 @@ class ComprehensionSugar(ConstructedTermSugar):
                 # the key's walrus write.
                 return self.key.desugar(ctx).and_then(
                     lambda key: self.element.desugar(
-                        _with_writes(peel_walrus_binds(key)[0], ctx)
+                        self._written(peel_walrus_binds(key)[0], ctx)
                     ).and_then(
                         lambda element: self._complete(
                             resolved, element, key, writes=writes, outer=outer
@@ -374,7 +381,6 @@ class ComprehensionSugar(ConstructedTermSugar):
             return NotProjected(FiniteProjectionNonSuccessV1.REPLACEMENT_FAILED)
 
         from sugar_lift_py_tests.floor.named_expression_value import (
-            bind_walrus_binds,
             carry_walrus_binds,
             peel_walrus_binds,
         )
@@ -385,19 +391,22 @@ class ComprehensionSugar(ConstructedTermSugar):
         # condition binds the enclosing scope on every member that reaches
         # it: each member's conditions, then its element, write their keys,
         # the next member starts from those writes (``carried``), and the
-        # comprehension's value carries the last write of each key out to the
-        # enclosing statement.  A name no member wrote (no member, or none
-        # that reached its walrus) keeps its prior binding
-        # (``_unwritten_priors``).  Each condition and element is evaluated
-        # once per member and its walrus value is never evaluated again.  A
-        # generator expression writes nothing here: its writes wait for it to
-        # be consumed.
+        # comprehension's value carries each name's last write out to the
+        # enclosing statement (``_carried_out``).  A read of the name inside
+        # the comprehension reads its running value (``walrus_recurrence``):
+        # the prior binding for the first member (``_recurrence_start``),
+        # then every write before it, in evaluation order (``_written``).  A
+        # name no member wrote (no member, or none that reached its walrus)
+        # keeps its prior binding.  Each condition and element is evaluated
+        # once per member, after the members before it, and its walrus value
+        # is never evaluated again.  A generator expression writes nothing
+        # here: its writes wait for it to be consumed.
         def project(index, projected, binds, carried):
-            if index == len(sifted):
+            if index == len(members):
                 binds = (
                     ()
                     if self.kind == "py.generatorexp"
-                    else (*self._unwritten_priors(binds, ctx), *binds)
+                    else self._carried_out(binds, ctx)
                 )
                 if self.key is not None:
                     return ExitSet.completed(
@@ -431,23 +440,27 @@ class ComprehensionSugar(ConstructedTermSugar):
                     )
                 )
 
-            member, keep, condition_writes = sifted[index]
-            # The member's conditions ran (``_sifted_members``) before its
-            # element: their writes come first.
+            inner_ctx = self._member_ctx(generator, members[index], carried)
+            if not isinstance(inner_ctx, type(ctx)):
+                if generator.filters:
+                    # The member does not destructure: its conditions are
+                    # not decided here.
+                    raise _UndecidedMember
+                return inner_ctx
+            # The member's conditions run before its element, after every
+            # earlier member: their writes come first.
+            keep, condition_writes, inner_ctx = self._sifted(generator, inner_ctx)
             binds = _last_binds((*binds, *condition_writes))
-            carried = bind_walrus_binds(condition_writes, carried)
+            carried = self._written(condition_writes, carried)
             if not keep:
                 return project(index + 1, projected, binds, carried)
-            inner_ctx = self._member_ctx(generator, member, carried)
-            if not isinstance(inner_ctx, type(ctx)):
-                return inner_ctx
 
             def written(wrote):
                 """The member's walrus writes: on the next member's context
                 and on what the comprehension carries out."""
                 return (
                     _last_binds((*binds, *wrote)),
-                    bind_walrus_binds(wrote, carried),
+                    self._written(wrote, carried),
                 )
 
             if self.key is not None:
@@ -456,7 +469,7 @@ class ComprehensionSugar(ConstructedTermSugar):
                     key_binds, key = peel_walrus_binds(key_value)
                     # Python evaluates the key before the value: the value
                     # reads the key's walrus write.
-                    value_ctx = bind_walrus_binds(key_binds, inner_ctx)
+                    value_ctx = self._written(key_binds, inner_ctx)
                     return self.element.desugar(value_ctx).and_then(
                         lambda value_value: after_value(key_binds, key, value_value)
                     )
@@ -492,13 +505,17 @@ class ComprehensionSugar(ConstructedTermSugar):
         final_ctx = (
             self._final_member_ctx(generator, members[-1], ctx) if members else ctx
         )
-        sifted = self._sifted_members(generator, members, ctx)
-        if sifted is None:
+        try:
+            projected = project(0, (), (), self._recurrence_start(final_ctx, ctx))
+        except _UndecidedMember:
+            # A condition's verdict is not one decided bool for some member:
+            # which members survive is not fixed, and the comprehension stays
+            # symbolic.
             return NotProjected(FiniteProjectionNonSuccessV1.LAWFULLY_INAPPLICABLE)
         # ExitSet.and_then owns terminal/guarded propagation. Every constructed
         # outcome propagates unchanged through its own continuation law and is
         # TRANSPORTED by ``Projected`` -- which is not a non-success cause.
-        return Projected(project(0, (), (), final_ctx))
+        return Projected(projected)
 
     def _member_ctx(self, generator, member, ctx):
         """``ctx`` with one finite member bound to the generator's target.
@@ -658,90 +675,165 @@ class ComprehensionSugar(ConstructedTermSugar):
             )
         return ctx
 
-    def _sifted_members(self, generator, members, ctx):
-        """Each member, whether every ``if`` condition keeps it, and the
-        walrus writes its conditions made, when each verdict is decided.
+    def _sifted(self, generator, inner_ctx):
+        """Whether every ``if`` condition keeps the member ``inner_ctx``
+        binds, the walrus writes its conditions made, and ``inner_ctx`` with
+        those writes applied.
 
         Python evaluates a member's conditions in order, stopping at the
         first false one, and keeps the member only if all are true.  A
         walrus in a condition writes whether or not the member is kept: the
-        write reaches the next condition of the member and every later
-        member (``carried``).  When every condition reached reduces to a
-        plain decided bool (no effect, no halt, no symbolic guard), which
-        members survive is fixed, so the map projects over exactly those.
-        Any other verdict returns ``None`` and the comprehension stays
-        symbolic, as before.  Without conditions every member is kept and
+        write reaches the next condition of the member, its element and
+        every later member.  The member's conditions read what every earlier
+        member wrote, so they run here, member by member.  When every
+        condition reached reduces to a plain decided bool (no effect, no
+        halt, no symbolic guard), whether the member survives is fixed.  Any
+        other verdict raises ``_UndecidedMember`` and the comprehension stays
+        symbolic, as before.  Without conditions the member is kept and
         nothing is evaluated here.
         """
         from sugar_lift_py_tests.floor.named_expression_value import (
-            bind_walrus_binds,
             peel_walrus_binds,
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             plain_completed_value,
         )
 
-        if not generator.filters:
-            return tuple((member, True, ()) for member in members)
-        sifted = []
-        carried = ctx
-        for member in members:
-            inner_ctx = self._member_ctx(generator, member, carried)
-            if not isinstance(inner_ctx, type(ctx)):
-                return None
-            keep = True
-            wrote = ()
-            for guard in generator.filters:
-                value = plain_completed_value(guard.desugar(inner_ctx))
-                if value is None:
-                    return None
-                binds, verdict_value = peel_walrus_binds(value)
-                verdict = _decided_verdict(verdict_value)
-                if verdict is None:
-                    return None
-                wrote = (*wrote, *binds)
-                inner_ctx = bind_walrus_binds(binds, inner_ctx)
-                carried = bind_walrus_binds(binds, carried)
-                if not verdict:
-                    keep = False
-                    break
-            sifted.append((member, keep, wrote))
-        return tuple(sifted)
+        wrote = ()
+        for guard in generator.filters:
+            value = plain_completed_value(guard.desugar(inner_ctx))
+            if value is None:
+                raise _UndecidedMember
+            binds, verdict_value = peel_walrus_binds(value)
+            verdict = _decided_verdict(verdict_value)
+            if verdict is None:
+                raise _UndecidedMember
+            wrote = (*wrote, *binds)
+            inner_ctx = self._written(binds, inner_ctx)
+            if not verdict:
+                return False, wrote, inner_ctx
+        return True, wrote, inner_ctx
 
-    def _unwritten_priors(self, binds, ctx) -> tuple:
-        """A walrus write of its prior binding for each walrus whose name no
-        member wrote (``binds`` are the writes made): no member reached it,
-        so after the comprehension the name holds what it held before, read
-        in ``ctx`` (``_walrus_prior``).  A name whose prior read is not one
-        plain value (it was unbound, or its read partitions) gets none: a
-        read of it after the comprehension is refused by name, as an
-        unwritten walrus is (``EvaluationRefSugar``)."""
+    def _running_coordinates(self) -> dict:
+        """Each ``ordered`` name of ``walrus_recurrence``, to the coordinate
+        its running value is bound under.
+
+        Empty for a comprehension of several generators: a member of an
+        inner generator reads the writes of the inner members before it,
+        which one evaluation over symbolic members does not hold, so no
+        running value is bound and the reads are refused by name.  The
+        finite projection takes one generator only."""
+        if len(self.generators) != 1:
+            return {}
+        return {
+            name: coordinate
+            for name, coordinate, ordered in self.walrus_recurrence
+            if ordered
+        }
+
+    def _written(self, binds, ctx):
+        """``ctx`` with the walrus writes ``binds`` applied in evaluation
+        order, for what is evaluated after them: each walrus's name and key
+        (``bind_walrus_binds``), and the running value of its name
+        (``_running_coordinates``), so a later read of the name in the
+        comprehension reads the last write before it.  ``ctx`` itself when
+        there are none or it carries no temporal."""
+        if not binds or ctx is None or not hasattr(ctx, "temporal"):
+            return ctx
+        from dataclasses import replace
+
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            bind_walrus_binds,
+        )
+
+        ctx = bind_walrus_binds(binds, ctx)
+        running = self._running_coordinates()
+        temporal = ctx.temporal
+        for bind in binds:
+            coordinate = running.get(bind.name)
+            if coordinate is not None:
+                temporal = temporal.bind_value(coordinate, bind.assigned_value)
+        return replace(ctx, temporal=temporal)
+
+    def _recurrence_start(self, ctx, outer):
+        """``ctx`` with each running value (``_running_coordinates``) bound to
+        the name's binding before the comprehension, read in ``outer``
+        (``_walrus_prior``): what the first member's read of it reads.  A
+        name with no one plain prior binding gets none: a read of it before
+        any write is refused by name.  Only a finite projection starts the
+        recurrence: over a symbolic iterable each member's read needs the
+        write of the member before it, which one evaluation over the
+        symbolic member does not have, so a read before the member's own
+        write is refused by name."""
+        running = self._running_coordinates()
+        if not running:
+            return ctx
+        from dataclasses import replace
+
+        temporal = ctx.temporal
+        for name, coordinate in running.items():
+            prior = self._walrus_prior(name, outer)
+            if prior is not None:
+                temporal = temporal.bind_value(coordinate, prior)
+        return replace(ctx, temporal=temporal)
+
+    def _carried_out(self, binds, ctx) -> tuple:
+        """The walrus writes the comprehension carries out to the enclosing
+        statement, from ``binds`` (the last write of each walrus, in the
+        order of those writes, ``_last_binds``).
+
+        Every walrus of one name writes the same variable, so after the
+        comprehension each walrus's key holds the name's last write in
+        evaluation order, whichever walrus made it: a read after the
+        comprehension refers to one of the keys (the last walrus
+        substitution met).  A name no member wrote (no member, or none that
+        reached a walrus of it) holds what it held before, read in ``ctx``
+        (``_walrus_prior``).  A name whose prior read is not one plain value
+        (it was unbound, or its read partitions) gets none: a read of it
+        after the comprehension is refused by name, as an unwritten walrus
+        is (``EvaluationRefSugar``).  A write of a name the roster does not
+        hold is carried as it was made."""
         from sugar_lift_py_tests.floor.named_expression_value import (
             NamedExpressionValue,
         )
 
-        written = {bind.name for bind in binds}
-        priors = []
+        last = {}
+        for bind in binds:
+            last.pop(bind.name, None)
+            last[bind.name] = bind
+        rostered = {name for name, _evaluation, _read in self.walrus_priors}
+        carried = [bind for bind in binds if bind.name not in rostered]
         for name, evaluation, _read in self.walrus_priors:
-            if name in written:
-                continue
-            prior = self._walrus_prior(name, evaluation, ctx)
-            if prior is None:
-                continue
-            priors.append(NamedExpressionValue(name, prior, evaluation=evaluation))
-        return tuple(priors)
+            if name in last:
+                value = last[name].assigned_value
+            else:
+                value = self._walrus_prior(name, ctx)
+                if value is None:
+                    continue
+            carried.append(NamedExpressionValue(name, value, evaluation=evaluation))
+        return tuple(carried)
 
-    def _walrus_prior(self, name, evaluation, ctx):
-        """The one plain value the walrus ``(name, evaluation)``'s name held
-        before the comprehension, read in ``ctx`` through the read
-        substitution made of it there (``walrus_priors``), else ``None``."""
+    def _walrus_prior(self, name, ctx):
+        """The one plain value ``name`` held before the comprehension, read
+        in ``ctx`` through the read substitution made of it there
+        (``walrus_priors``; every walrus of the name has the same read),
+        else ``None``.  A read of an enclosing comprehension's running value
+        that is not bound there has none (``unwritten_recurrence``)."""
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
+            EvaluationRefSugar,
+        )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             plain_completed_value,
         )
 
-        for prior_name, prior_evaluation, read in self.walrus_priors:
-            if (prior_name, prior_evaluation) == (name, evaluation):
-                return plain_completed_value(read.desugar(ctx))
+        for prior_name, _evaluation, read in self.walrus_priors:
+            if prior_name != name:
+                continue
+            if isinstance(read, EvaluationRefSugar) and read.unwritten_recurrence(
+                ctx
+            ):
+                return None
+            return plain_completed_value(read.desugar(ctx))
         return None
 
     def _desugar_filters(
@@ -789,7 +881,7 @@ class ComprehensionSugar(ConstructedTermSugar):
                 iterable,
                 index,
                 resolved,
-                _with_writes(binds, ctx),
+                self._written(binds, ctx),
                 writes=(*writes, *((bind, index, filter_index) for bind in binds)),
                 outer=outer,
             )
@@ -844,23 +936,25 @@ class ComprehensionSugar(ConstructedTermSugar):
 
     def _symbolic_writes(self, resolved, writes, ctx, *, owner) -> tuple:
         """The walrus writes a comprehension over a symbolic iterable carries
-        out: for each walrus, its name after the comprehension.
+        out: for each name a walrus writes, the name after the comprehension,
+        under the key of every walrus of the name (``walrus_priors``).
 
-        The walrus writes for every member that reaches it, so the name
-        holds its write from the last such member when there is one, and
-        its prior binding (``_walrus_prior``, read in ``ctx``) when there is
-        none.  The members that reach it are those of every generator up to
-        its own, past every condition before it (``rows``); ``written`` is
-        the sequence of its writes over them, and the value is guarded by
-        that sequence being non-empty.
+        A walrus writes for every member that reaches it.  The members that
+        reach it are those of every generator up to its own, past every
+        condition before it (``rows``); its ``written`` sequence is its
+        writes over them.  ``writes`` holds the walruses of a member in
+        evaluation order (conditions in order, then the key, then the value
+        or element), so the writes of all the walruses of a name, member by
+        member in that order, are the name's writes in evaluation order:
+        the name holds the last of them when there is one, and its prior
+        binding (``_walrus_prior``, read in ``ctx``) when there is none.
+        ``python:comprehension.last_write`` and ``python.comprehension.wrote``
+        take the ``written`` sequences of every walrus of the name, in that
+        order; with one walrus they take its sequence alone.
 
         No write is carried (a read after the comprehension is refused by
-        name) for a walrus whose prior is not one plain value, or whose name
-        another walrus in the comprehension also writes: which of them wrote
-        last is not one value here.
+        name) for a name whose prior is not one plain value.
         """
-        from collections import Counter
-
         from sugar_lift_py_tests.floor import SymbolicValue
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.floor.named_expression_value import (
@@ -868,43 +962,48 @@ class ComprehensionSugar(ConstructedTermSugar):
         )
         from sugar_lift_py_tests.ir import atomic, ctor
 
-        writers = Counter(bind.name for bind, _generator, _condition in writes)
-        carried = []
+        by_name: dict = {}
         for bind, generator_index, condition_index in writes:
-            if writers[bind.name] != 1:
-                continue
-            prior = self._walrus_prior(bind.name, bind.evaluation, ctx)
+            by_name.setdefault(bind.name, []).append(
+                (bind, generator_index, condition_index)
+            )
+        carried = []
+        for name, named in by_name.items():
+            prior = self._walrus_prior(name, ctx)
             if prior is None:
                 continue
-            rows = tuple(resolved[: generator_index + 1])
-            if condition_index is not None:
-                target, coordinate, iterable, filters = rows[-1]
-                rows = (
-                    *rows[:-1],
-                    (target, coordinate, iterable, filters[:condition_index]),
+            sequences = []
+            for bind, generator_index, condition_index in named:
+                rows = tuple(resolved[: generator_index + 1])
+                if condition_index is not None:
+                    target, coordinate, iterable, filters = rows[-1]
+                    rows = (
+                        *rows[:-1],
+                        (target, coordinate, iterable, filters[:condition_index]),
+                    )
+                sequences.append(
+                    self._fold_term(
+                        "py.listcomp",
+                        rows,
+                        bind.assigned_value.to_term(owner=owner),
+                        owner=owner,
+                    )
                 )
-            written = self._fold_term(
-                "py.listcomp",
-                rows,
-                bind.assigned_value.to_term(owner=owner),
-                owner=owner,
-            )
             last = SymbolicValue(
                 ctor(
                     "python:comprehension.last_write",
-                    [written],
+                    list(sequences),
                     symbol_kind="coordinate",
                 )
             )
-            carried.append(
-                NamedExpressionValue(
-                    bind.name,
-                    GuardedValue(
-                        atomic("python.comprehension.wrote", [written]), last, prior
-                    ),
-                    evaluation=bind.evaluation,
-                )
+            value = GuardedValue(
+                atomic("python.comprehension.wrote", list(sequences)), last, prior
             )
+            for prior_name, evaluation, _read in self.walrus_priors:
+                if prior_name == name:
+                    carried.append(
+                        NamedExpressionValue(name, value, evaluation=evaluation)
+                    )
         return tuple(carried)
 
     def _fold_term(self, kind, resolved, element_term, *, owner):
@@ -969,15 +1068,10 @@ class ComprehensionSugar(ConstructedTermSugar):
         )
 
 
-def _with_writes(binds, ctx):
-    """``ctx`` with the walrus writes ``binds`` applied, for what is
-    evaluated after them in the same member; ``ctx`` itself when there are
-    none or it carries no temporal."""
-    if not binds or ctx is None or not hasattr(ctx, "temporal"):
-        return ctx
-    from sugar_lift_py_tests.floor.named_expression_value import bind_walrus_binds
-
-    return bind_walrus_binds(binds, ctx)
+class _UndecidedMember(Exception):
+    """A finite member whose conditions are not decided here
+    (``ComprehensionSugar._sifted``): the finite projection does not apply and
+    the comprehension stays symbolic (``_finite_map``)."""
 
 
 def _last_binds(binds) -> tuple:
