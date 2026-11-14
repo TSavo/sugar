@@ -462,6 +462,12 @@ class SourceVisibleCallFrameV1:
     #: of the first such constant in source order, reduced once per module.
     module_halt: object | None = field(default=None, compare=False)
     constructed_new_method: object | None = field(default=None, compare=False)
+    #: The fields of the ``__init__`` ``@dataclasses.dataclass`` writes
+    #: (``ClassDef._dataclass_generated_init_fields``), when this frame is
+    #: that ``__init__``'s: the body is rebuilt from them at each call
+    #: (``bind_actuals``).  The class statement (``definition_fragment_cid``)
+    #: fixes them, so they are no part of the frame's identity.
+    dataclass_fields: tuple | None = field(default=None, compare=False, repr=False)
     declaration_frame_cid: str | None = field(default=None, compare=False)
     #: Where the call this frame was constructed for runs while its module
     #: body runs (``sugar_source_tree.nodes.ModuleExecutionSiteV1``), or None:
@@ -955,6 +961,9 @@ class SourceVisibleCallFrameV1:
                 node_scope,
                 constructed_new_method=self.constructed_new_method,
             )
+        elif self.dataclass_fields is not None:
+            # The dataclass-written ``__init__``: its stores are the fields'.
+            body = rebuild(node_scope, dataclass_fields=self.dataclass_fields)
         else:
             body = rebuild(node_scope)
         return replace(
