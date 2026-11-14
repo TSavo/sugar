@@ -124,9 +124,11 @@ def test_a_bare_dataclass_writes_its_methods_whatever_its_fields() -> None:
 
     for name in ("__init__", "__repr__", "__eq__", "__hash__", "__match_args__"):
         assert p.namespace_owner(name) == (True, p), name
-    # Written by version (3.13), or under an annotated field name: undecided.
+    # Written by version (3.13): undecided.
     assert p.namespace_owner("__replace__") == (False, None)
-    assert p.namespace_binds("x") is None
+    # An annotation alone binds nothing, and the decorator writes nothing
+    # under a field with no ``Field`` default.
+    assert p.namespace_binds("x") is False
 
 
 def test_an_identity_decorator_writes_its_flag() -> None:
@@ -286,10 +288,12 @@ def test_eq_without_hash_holds_hash() -> None:
     assert e.namespace_owner("__hash__") == (True, e)
 
 
-def test_an_annotation_alone_is_undecided_and_creation_names_too() -> None:
-    p = _classes("class P:\n    x: int\n")["P"]
+def test_an_annotation_alone_binds_nothing_and_creation_names_are_undecided() -> None:
+    p = _classes("class P:\n    x: int\n    y: int = 0\n")["P"]
 
-    assert p.namespace_binds("x") is None
+    # The body's own statements tell ``x: int`` from ``y: int = 0``.
+    assert p.namespace_binds("x") is False
+    assert p.namespace_binds("y") is True
     assert p.namespace_owner("__doc__") == (False, None)
 
 

@@ -115,7 +115,11 @@ class ClassDefinitionValue(GuardStableValue):
         read, or ``OSError``/``SyntaxError``/... anywhere in it) is the one
         unanswered call (``UnknownCalleeCallV1``), exactly as the same class
         called by name is: never the zero-formal ``object`` frame or the
-        ``(*args)`` frame applied to a constructor nothing here read.
+        ``(*args)`` frame applied to a constructor nothing here read.  So is a
+        class whose ``__init__`` the one class-namespace lookup does not
+        decide as a source ``def`` or a builtin's
+        (``ClassDef.initializer_entry`` is None: a store to it, a base's
+        generated one, a conditional ``def``).
         """
         from sugar_lift_py_tests.floor.object_value import bind_call
 
@@ -142,9 +146,14 @@ class ClassDefinitionValue(GuardStableValue):
         if (
             definition._authenticated_new_constructor_shape() is None
             and definition._dataclass_generated_init_fields() is None
-            and definition.construction_order() is None
+            and (
+                definition.construction_order() is None
+                or definition.initializer_entry() is None
+            )
         ):
-            return self._unanswered_call(positional, keywords, operation.site)
+            return self._unanswered_call(
+                self.class_name, positional, keywords, operation.site
+            )
         frame = definition.source_visible_constructor_frame()
 
         def refuse(*, owner, blame, observed, requested, fix):
@@ -178,10 +187,11 @@ class ClassDefinitionValue(GuardStableValue):
             site=operation.site,
         )
 
-    def _unanswered_call(self, positional, keywords, site):
-        """``Cls(...)`` whose constructor nothing here read: the one
-        unanswered call (``UnknownCalleeCallV1``), two-faced and owed, its
-        completion the call's own result coordinate."""
+    def _unanswered_call(self, target, positional, keywords, site):
+        """``Cls(...)`` whose constructor nothing here read, or ``Cls.m(...)``
+        whose ``m`` the one class-namespace lookup does not decide: the one
+        unanswered call of ``target`` (``UnknownCalleeCallV1``), two-faced
+        and owed, its completion the call's own result coordinate."""
         from sugar_lift_py_tests.call_symbol import call_symbol
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import ctor, str_const
@@ -189,11 +199,11 @@ class ClassDefinitionValue(GuardStableValue):
 
         owner = str(site)
         callsite = CallSiteValue(
-            target_name=self.class_name,
+            target_name=target,
             arg_values=(*positional, *(value for _name, value in keywords)),
             parameters=(),
             term=ctor(
-                call_symbol(self.class_name),
+                call_symbol(target),
                 [value.to_term(owner=owner) for value in positional]
                 + [
                     ctor("py.kwarg", [str_const(name), value.to_term(owner=owner)])
@@ -205,7 +215,7 @@ class ClassDefinitionValue(GuardStableValue):
             keyword_names=tuple(name for name, _value in keywords),
             site=site,
         )
-        return UnknownCalleeCallV1(self.class_name).faces(callsite, site)
+        return UnknownCalleeCallV1(target).faces(callsite, site)
 
     def constructor_defaults(self) -> tuple:
         """``(key, value)``: the method defaults a call of the class binds
@@ -269,8 +279,48 @@ class ClassDefinitionValue(GuardStableValue):
         keywords=(),
         required_frame=None,
     ):
-        """Invoke one authenticated source method on the class object."""
-        candidates = tuple(method for method in self.methods if method.name == name)
+        """Invoke one authenticated source method on the class object.
+
+        ``Cls.m`` is the one class-namespace lookup over the class's MRO
+        (``ClassDef.namespace_owner``): the class that holds ``m`` answers
+        with the function its body wrote, which runs with that class as its
+        ``__class__`` cell.  A lookup it does not decide, or a class that
+        holds a value its body did not bind (``namespace_value_is_body``),
+        is the unanswered call; a name no source class of the order holds
+        refuses by name.  A class value built with no class statement has
+        only its own methods."""
+        holder = self
+        definition = self.class_definition
+        if definition is not None:
+            decided, found = definition.namespace_owner(name)
+            if not decided or (
+                found is not None
+                and not isinstance(found, str)
+                and not found.namespace_value_is_body(name)
+            ):
+                return self._unanswered_call(
+                    f"{self.class_name}.{name}",
+                    arguments,
+                    keywords,
+                    blame,
+                )
+            holder = (
+                None
+                if found is None or isinstance(found, str)
+                else self.class_value_of_statement(found)
+            )
+            if holder is None:
+                raise SugarNotWritten(
+                    owner=owner,
+                    blame=blame,
+                    observed=(
+                        f"{self.class_name}.{name} is held by "
+                        f"{getattr(found, 'name', found)}"
+                    ),
+                    requested="one authenticated class-method definition",
+                    fix="preserve unique method resolution or keep the call loud",
+                )
+        candidates = tuple(method for method in holder.methods if method.name == name)
         if required_frame is not None:
             candidates = tuple(
                 method
@@ -308,7 +358,7 @@ class ClassDefinitionValue(GuardStableValue):
         # lookup's implicit first actual off the descriptor kind
         # (``object_value.implicit_arguments``): a plain function read off its
         # class is unbound and takes none, a ``classmethod`` takes the class,
-        # a ``staticmethod`` none.  The class is ``m``'s lexical
+        # a ``staticmethod`` none.  The class that holds ``m`` is its lexical
         # ``__class__`` cell.
         return bind_method_call(
             self,
@@ -320,7 +370,7 @@ class ClassDefinitionValue(GuardStableValue):
                 tuple(coordinate.cid for coordinate in frame.formal_coordinates),
                 frame,
                 method.descriptor_kind,
-                defining_class=self,
+                defining_class=holder,
             ),
             arguments,
             keywords,
@@ -465,9 +515,13 @@ class ClassDefinitionValue(GuardStableValue):
     def _object_methods(self):
         from sugar_lift_py_tests.floor import ObjectMethodValue
 
-        # ObjectValue searches from the end, so emit the reversed C3 lookup
-        # tail before this class's methods.  A base method is retained with its
-        # original authenticated source frame; nothing is reconstructed here.
+        # The frames of every source method of the class and its C3 tail,
+        # each with the class value whose body wrote it.  Which one a name
+        # selects is never read off this roster's order: the one
+        # class-namespace lookup names the class that holds it
+        # (``ObjectValue.class_member``), and its method here is the one
+        # that class wrote.  A base method is retained with its original
+        # authenticated source frame; nothing is reconstructed here.
         inherited = tuple(
             (base, method)
             for base in reversed(self._c3_tail())

@@ -676,11 +676,13 @@ def construct_manager_protocol(
             behavior.manager_construction_cid,
             "constructor partition has no completed receiver face",
         )
-    if any(not item.has_method("__enter__") for item in receivers):
+    # A method the one class-namespace lookup does not decide (``has_method``
+    # None) is no source-visible method either.
+    if any(item.has_method("__enter__") is not True for item in receivers):
         return ManagerProtocolConstructionGapV1(
             "enter-missing", behavior.manager_construction_cid, "source-visible method"
         )
-    if any(not item.has_method("__exit__") for item in receivers):
+    if any(item.has_method("__exit__") is not True for item in receivers):
         return ManagerProtocolConstructionGapV1(
             "exit-missing", behavior.manager_construction_cid, "source-visible method"
         )
@@ -738,7 +740,9 @@ def _protocol_calls_at_face(representative, exit_face_id: str):
 
 
 def _method_frame_cid(receiver, name: str) -> str:
-    method = next(item for item in reversed(receiver.methods) if item.name == name)
-    if method.source_call_frame_cid is None:
+    """The frame of the method the one class-namespace lookup selects for
+    ``name`` on the receiver's type (``ObjectValue.class_member``)."""
+    _decided, method, _value = receiver.class_member(name)
+    if method is None or method.source_call_frame_cid is None:
         raise ValueError("source-visible method has no authenticated call frame")
     return method.source_call_frame_cid

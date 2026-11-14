@@ -73,7 +73,27 @@ class MappingObjectValue(ObjectValue):
         #8069), so a source override before ``dict`` wins and a source
         method after ``dict`` (``class M(dict, Mixin)``) does not.  A lookup
         the walk does not decide refuses by name: neither the source method
-        nor the dict base is assumed.
+        nor the dict base is assumed (``_protocol_owner``).
+        """
+        owner = self._protocol_owner(name)
+        if owner not in ("source", "dict", None):
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="MappingObjectValue.protocol_owner",
+                blame=site,
+                observed=f"{self.class_name}.{name}: {owner}",
+                requested="the class of the MRO that binds the name, read by binding",
+                fix="decide the class's namespace for the name (ClassDef.namespace_binds)",
+            )
+        return owner
+
+    def _protocol_owner(self, name: str) -> str | None:
+        """``"source"``, ``"dict"``, None (no class binds it), or what keeps
+        it undecided: ``"undecided"`` -- the one lookup does not decide it,
+        or the class that holds it holds a value its body did not bind
+        (``ClassDef.namespace_value_is_body``: a decorator's, a store's) --
+        or ``"bound by <builtin>"``.
 
         A receiver built with no class statement (a method roster only)
         has its roster: those source methods precede the dict base.
@@ -82,22 +102,13 @@ class MappingObjectValue(ObjectValue):
         if definition is None:
             return "source" if self.has_method(name) else "dict"
         decided, owner = definition.namespace_owner(name)
-        if not decided or (isinstance(owner, str) and owner != "dict"):
-            from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-            construction_panic_gap(
-                owner="MappingObjectValue.protocol_owner",
-                blame=site,
-                observed=(
-                    f"{self.class_name}.{name}: "
-                    + ("MRO not read" if not decided else f"bound by {owner}")
-                ),
-                requested="the class of the MRO that binds the name, read by binding",
-                fix="read every base of the class by its binding (ClassDef._read_base)",
-            )
-        if owner is None:
-            return None
-        return "dict" if isinstance(owner, str) else "source"
+        if not decided:
+            return "undecided"
+        if owner is None or owner == "dict":
+            return owner
+        if isinstance(owner, str):
+            return f"bound by {owner}"
+        return "source" if owner.namespace_value_is_body(name) else "undecided"
 
     def _refuse_source_protocol(self, name: str, site, door: str):
         """A source ``name`` read through a door that carries no reduction
@@ -269,13 +280,15 @@ class MappingObjectValue(ObjectValue):
         required_frame=None,
     ):
         """Answer a name the MRO resolves to the authenticated dict base from
-        its storage (``protocol_owner``, then ``dict_base_call``); every
-        other name -- a source override included -- is the source method's."""
+        its storage (``_protocol_owner``, then ``dict_base_call``); every
+        other name -- a source override included -- is the one source-method
+        selection's (``ObjectValue.call_method_value``), which answers a
+        name the lookup does not decide with the unanswered call."""
         if (
             required_frame is None
             and not keywords
             and len(arguments) in _DICT_BASE_ARITIES.get(name, ())
-            and self.protocol_owner(name, blame) == "dict"
+            and self._protocol_owner(name) == "dict"
         ):
             return self.dict_base_call(name, arguments, blame, ctx)
         return super().call_method_value(

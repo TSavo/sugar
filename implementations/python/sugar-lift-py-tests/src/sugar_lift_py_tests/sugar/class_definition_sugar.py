@@ -254,12 +254,6 @@ class ClassDefinitionSugar(Sugar):
             # subscript) remains outside the class model and gains no
             # authority or behavior here; its faces were already carried by
             # the fold.
-        # The last same-name method is Python's live class binding. Overload
-        # stubs written as ``def __init__(...): ...`` precede the implementation
-        # (RaisesExc); the first ``__init__`` would construct through an
-        # ellipsis body and drop every field store.
-        initializer = _written_initializer(self)
-
         def construct_class(body):
             body_value, method_defaults = body, ()
             if isinstance(body, _ClassBodyV1):
@@ -268,7 +262,7 @@ class ClassDefinitionSugar(Sugar):
                 self.class_name,
                 self.class_definition_cid,
                 self.methods,
-                initializer,
+                None,
                 self.binding_target_occurrence,
                 body_value,
                 self.docstring_cid,
@@ -278,12 +272,16 @@ class ClassDefinitionSugar(Sugar):
                 class_definition=self.class_definition,
                 method_defaults=method_defaults,
             )
-            if initializer is None:
-                # An inherited ``__init__`` is the one the class's MRO, read
-                # by the one base walk, selects (``initializer_class``).
-                owner = value.initializer_class()
-                if owner is not None and owner is not value:
-                    value = replace(value, initializer=_written_initializer(owner))
+            # The ``__init__`` a call of the class runs is the one the one
+            # class-namespace lookup selects (``initializer_class``: this
+            # class's own or an inherited one), the last ``def`` its class
+            # body wrote -- Python's live class binding (overload stubs
+            # written as ``def __init__(...): ...`` precede the
+            # implementation).  None when the lookup does not decide a
+            # source ``def``.
+            owner = value.initializer_class()
+            if owner is not None:
+                value = replace(value, initializer=_written_initializer(owner))
             return ExitSet.completed(value)
 
         # The class exists only on a face the whole body completed under;

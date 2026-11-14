@@ -194,8 +194,10 @@ def test_a_source_method_after_dict_in_the_mro_does_not_win() -> None:
     _context, receivers = _receivers()
     after = receivers["After"]
     assert type(after) is MappingObjectValue
-    # The roster holds Mixin's ``__getitem__``; the MRO reaches dict first.
-    assert after.has_method("__getitem__")
+    # The roster holds Mixin's ``__getitem__``, but the one class-namespace
+    # lookup reaches dict first: no source method answers.
+    assert any(method.name == "__getitem__" for method in after.methods)
+    assert after.has_method("__getitem__") is False
 
     assert after.protocol_owner("__getitem__", "t") == "dict"
 

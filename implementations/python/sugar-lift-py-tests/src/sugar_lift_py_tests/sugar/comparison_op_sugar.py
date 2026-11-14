@@ -463,7 +463,8 @@ class ComparisonOpSugar(ConstructedTermSugar):
             from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
             if any(
-                isinstance(value, ObjectValue) and value.has_method("__ne__")
+                isinstance(value, ObjectValue)
+                and value.has_method("__ne__") is not False
                 for value in (left, right)
             ):
                 construction_panic_gap(

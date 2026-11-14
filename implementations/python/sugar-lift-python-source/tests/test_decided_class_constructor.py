@@ -215,9 +215,11 @@ def test_a_local_base_is_never_the_module_class_of_its_spelling(tmp_path):
     assert b._source_initializer() is None
 
 
-def test_an_unread_base_decides_only_the_head_of_the_order(tmp_path):
-    # The first base follows the class in every MRO Python builds, so its
-    # ``__init__`` is decided though a later base is an import.
+def test_an_unread_base_leaves_the_initializer_undecided(tmp_path):
+    # The first base follows the class in every MRO Python builds, but the
+    # unread ``Mixin``'s metaclass or ``__init_subclass__`` may write
+    # ``__init__`` on ``B`` itself: the one class-namespace lookup
+    # (``namespace_owner``) does not decide it, so neither is ``A``'s assumed.
     source = (
         "from m import Mixin\n"
         "class A:\n"
@@ -228,7 +230,7 @@ def test_an_unread_base_decides_only_the_head_of_the_order(tmp_path):
     )
     b = _definition(tmp_path, source, "B")
     assert b.method_resolution_order() is None
-    assert b.initializer_entry().name == "A"
+    assert b.initializer_entry() is None
 
 
 def test_an_inherited_initializer_binds_its_own_default(tmp_path):

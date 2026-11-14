@@ -111,9 +111,11 @@ class ObjectValue(FloorValue):
 
         Different source classes require reflected/subclass dispatch testimony;
         unconstructed return/NotImplemented behavior remains a typed refusal.
-        Never substitute object identity for a user-defined equality body.
+        Never substitute object identity for a user-defined equality body,
+        nor for an ``__eq__`` the one class-namespace lookup does not decide
+        (a dataclass's generated one, a store): that is the unanswered call.
         """
-        if not self.has_method("__eq__"):
+        if self.has_method("__eq__") is False:
             return super().equals(other, site, ctx)
         return self._source_rich_comparison(
             "__eq__", other, site, ctx, owner="ObjectValue.equals"
@@ -121,7 +123,7 @@ class ObjectValue(FloorValue):
 
     def less_than(self, other, site, ctx):
         """``self < other`` invokes the class's authenticated ``__lt__``."""
-        if not self.has_method("__lt__"):
+        if self.has_method("__lt__") is False:
             return super().less_than(other, site, ctx)
         return self._source_rich_comparison(
             "__lt__", other, site, ctx, owner="ObjectValue.less_than"
@@ -129,7 +131,7 @@ class ObjectValue(FloorValue):
 
     def less_equal(self, other, site, ctx):
         """``self <= other`` invokes the class's authenticated ``__le__``."""
-        if not self.has_method("__le__"):
+        if self.has_method("__le__") is False:
             return super().less_equal(other, site, ctx)
         return self._source_rich_comparison(
             "__le__", other, site, ctx, owner="ObjectValue.less_equal"
@@ -137,7 +139,7 @@ class ObjectValue(FloorValue):
 
     def greater_than(self, other, site, ctx):
         """``self > other`` invokes the class's authenticated ``__gt__``."""
-        if not self.has_method("__gt__"):
+        if self.has_method("__gt__") is False:
             return super().greater_than(other, site, ctx)
         return self._source_rich_comparison(
             "__gt__", other, site, ctx, owner="ObjectValue.greater_than"
@@ -145,7 +147,7 @@ class ObjectValue(FloorValue):
 
     def greater_equal(self, other, site, ctx):
         """``self >= other`` invokes the class's authenticated ``__ge__``."""
-        if not self.has_method("__ge__"):
+        if self.has_method("__ge__") is False:
             return super().greater_equal(other, site, ctx)
         return self._source_rich_comparison(
             "__ge__", other, site, ctx, owner="ObjectValue.greater_equal"
@@ -162,7 +164,14 @@ class ObjectValue(FloorValue):
         left's definition-owned ordinary method frame.  A result other than a
         native boolean -- ``NotImplemented`` included -- stays a named
         refusal, as does every reflected or subclass order.
+
+        The method is the one the one class-namespace lookup selects
+        (``class_member``); a lookup it does not decide is the unanswered
+        call (``unanswered_method_call``).
         """
+        decided, method, _value = self.class_member(dunder)
+        if not decided:
+            return self.unanswered_method_call(dunder, (other,), (), site)
         same_class = (
             isinstance(other, ObjectValue)
             and getattr(self.defining_class, "class_definition_cid", None) is not None
@@ -180,11 +189,9 @@ class ObjectValue(FloorValue):
                 requested="same source class or an exact native right operand",
                 fix="derive reflected/subclass method order before rich comparison",
             )
-        method = next(
-            method for method in reversed(self.methods) if method.name == dunder
-        )
         if (
-            method.source_call_frame is None
+            method is None
+            or method.source_call_frame is None
             or method.source_call_frame_cid is None
             or method.descriptor_kind is not None
             or method.source_call_frame_cid != method.source_call_frame.frame_cid
@@ -292,7 +299,12 @@ class ObjectValue(FloorValue):
         undecided attribute read (``undecided_attribute``) over the object's
         identity (``identity_term``).  Only a name the class binds to a data
         descriptor (``_class_data_descriptor``) is answered from the class,
-        and never from the instance's fields."""
+        and never from the instance's fields.
+
+        Every member read off the class -- a property, a class field, a
+        method -- is the one the one class-namespace lookup selects
+        (``class_member``); a lookup it does not decide is the unanswered
+        read (``undecided_attribute``)."""
         from .object_identity import contents_current
 
         current = contents_current(self)
@@ -303,9 +315,10 @@ class ObjectValue(FloorValue):
                 from sugar_lift_py_tests.outcome import ExitSet
 
                 return ExitSet.completed(field.value)
-        for method in reversed(self.methods):
-            if method.name != name or method.descriptor_kind != "property":
-                continue
+        decided, selected, class_value = self.class_member(name)
+        if not decided:
+            return self.undecided_attribute(name, site, owner="ObjectValue.attribute")
+        if selected is not None and selected.descriptor_kind == "property":
             from dataclasses import replace
 
             from sugar_lift_py_tests.effect import RaiseEffect
@@ -338,16 +351,11 @@ class ObjectValue(FloorValue):
                     ctx=ctx,
                 )
             )
-        class_value = self._resolved_class_field(name)
         if class_value is not None:
             from sugar_lift_py_tests.outcome import ExitSet
 
             return ExitSet.completed(class_value)
-        selected = next(
-            (method for method in reversed(self.methods) if method.name == name),
-            None,
-        )
-        if selected is not None and selected.descriptor_kind != "property":
+        if selected is not None:
             # A function on the receiver's class, read off the instance, is
             # the value its descriptor binds (a non-data descriptor: no
             # instance field shadows it here, the field arm above already
@@ -408,16 +416,18 @@ class ObjectValue(FloorValue):
 
     def with_field_store(self, name: str, value: FloorValue) -> "ObjectValue":
         """Return this receiver identity after one authenticated field store."""
-        if any(
-            method.name == name and method.descriptor_kind == "property"
-            for method in self.methods
-        ):
+        descriptor = self._store_descriptor(name)
+        if descriptor is not False:
             from sugar_source_tree.panic import SugarNotWritten
 
             raise SugarNotWritten(
                 blame=f"{self.class_name}.{name}",
                 owner="ObjectValue.with_field_store",
-                observed="source-authenticated property data descriptor",
+                observed=(
+                    "source-authenticated property data descriptor"
+                    if descriptor
+                    else "a class member the one class-namespace lookup does not decide"
+                ),
                 requested="the descriptor's authenticated assignment behavior",
                 fix=(
                     "construct the property's setter before treating the write "
@@ -441,12 +451,31 @@ class ObjectValue(FloorValue):
             arrival=self.arrival,
         )
 
+    def _store_descriptor(self, name: str) -> "bool | None":
+        """Whether a store or delete of ``name`` on this receiver meets a
+        source property of its type -- the member the one class-namespace
+        lookup selects (``class_member``).  None when the lookup does not
+        decide it: a data descriptor nothing here read may answer the
+        store."""
+        decided, method, _value = self.class_member(name)
+        if not decided:
+            return None
+        return method is not None and method.descriptor_kind == "property"
+
+    def _refuse_undecided_store(self, name: str, site, owner: str) -> NoReturn:
+        """A store or delete of ``name`` whose class member the one lookup
+        does not decide: refused by name, never an instance-field store."""
+        self._floor_gap(
+            owner=owner,
+            blame=site,
+            observed=f"{self.class_name}.{name}: class member not decided",
+            requested="the class member the one class-namespace lookup selects",
+            fix="decide the class's namespace for the name (ClassDef.namespace_binds)",
+        )
+
     def authenticates_plain_attribute_store(self, name: str) -> bool:
         """Whether ``self.name = value`` is an ordinary instance-field store."""
-        return not any(
-            method.name == name and method.descriptor_kind == "property"
-            for method in self.methods
-        )
+        return self._store_descriptor(name) is False
 
     def setattr(self, name, value, site, ctx):
         """``self.name = value`` via instance-field store or property refusal.
@@ -457,10 +486,10 @@ class ObjectValue(FloorValue):
         """
         from sugar_lift_py_tests.outcome import ExitSet
 
-        if any(
-            method.name == name and method.descriptor_kind == "property"
-            for method in self.methods
-        ):
+        descriptor = self._store_descriptor(name)
+        if descriptor is None:
+            self._refuse_undecided_store(name, site, "ObjectValue.setattr")
+        if descriptor:
             from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
             return ground_exceptional_exit(
@@ -489,10 +518,10 @@ class ObjectValue(FloorValue):
 
         from .object_identity import contents_current
 
-        if any(
-            method.name == name and method.descriptor_kind == "property"
-            for method in self.methods
-        ):
+        descriptor = self._store_descriptor(name)
+        if descriptor is None:
+            self._refuse_undecided_store(name, site, "ObjectValue.delattr")
+        if descriptor:
             from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
             return ground_exceptional_exit(
@@ -672,7 +701,14 @@ class ObjectValue(FloorValue):
         (``CallSiteValue.producer_outcome``, as ``CallSiteSugar`` applies it):
         the body runs here and every face it has, raises included, is this
         call's.
+
+        The method is the one the one class-namespace lookup selects
+        (``class_member``); a lookup it does not decide is the unanswered
+        call (``unanswered_method_call``), never a method of the roster
+        found by its name.
         """
+        if self.has_method(name) is None:
+            return self.unanswered_method_call(name, arguments, keywords, blame)
         return self.bound_method_call(
             name,
             arguments,
@@ -694,60 +730,148 @@ class ObjectValue(FloorValue):
         keywords: tuple[tuple[str, FloorValue], ...] = (),
         required_frame: object | None = None,
     ):
-        """The call ``<method>(self, *arguments, **keywords)``, bound, unapplied."""
-        for method in reversed(self.methods):
-            if method.name != name:
-                continue
-            if required_frame is not None and (
-                method.source_call_frame_cid != required_frame.frame_cid
-            ):
-                continue
-            return bind_method_call(
-                self,
-                method,
-                arguments,
-                keywords,
-                class_name=self.class_name,
-                ctx=ctx,
+        """The call ``<method>(self, *arguments, **keywords)``, bound,
+        unapplied: the method is the one the one class-namespace lookup
+        selects for ``name`` (``class_member``).  A frame the caller requires
+        must be that method's own; no other method of the roster stands in
+        for it.  A lookup it does not decide has no method to bind and
+        refuses by name (``call_method_value`` answers it with the
+        unanswered call)."""
+        _decided, method, _value = self.class_member(name)
+        if method is None or (
+            required_frame is not None
+            and method.source_call_frame_cid != required_frame.frame_cid
+        ):
+            return self._floor_gap(
                 owner=owner,
                 blame=blame,
-                refuse=self._floor_gap,
-                required_frame=required_frame,
+                observed=f"{self.class_name}.{name}",
+                requested="constructor-bound method",
+                fix=f"construct a diggable body for `{self.class_name}.{name}`",
             )
-        return self._floor_gap(
+        return bind_method_call(
+            self,
+            method,
+            arguments,
+            keywords,
+            class_name=self.class_name,
+            ctx=ctx,
             owner=owner,
             blame=blame,
-            observed=f"{self.class_name}.{name}",
-            requested="constructor-bound method",
-            fix=f"construct a diggable body for `{self.class_name}.{name}`",
+            refuse=self._floor_gap,
+            required_frame=required_frame,
         )
 
-    def has_method(self, name: str) -> bool:
-        return any(method.name == name for method in self.methods)
+    def has_method(self, name: str) -> "bool | None":
+        """Whether the one class-namespace lookup selects a source method for
+        ``name`` on this receiver's type (``class_member``); None when the
+        lookup does not decide it."""
+        decided, method, _value = self.class_member(name)
+        return method is not None if decided else None
 
-    def class_field_value(self, name: str) -> FloorValue | None:
-        for field in reversed(self.class_fields):
-            if field.name == name:
-                return field.value
-        return None
+    def class_member(self, name: str) -> tuple:
+        """``(decided, method, value)``: the member ``name`` read on this
+        receiver's type is -- the one class-namespace lookup
+        (``ClassDef.namespace_owner`` over the receiver's class, #7757).
 
-    def _resolved_class_field(self, name: str) -> FloorValue | None:
-        """This class's field, else the first authenticated local base's.
+        The class of the MRO that holds ``name`` answers: ``method`` is the
+        source function its body wrote for it (the roster's method whose
+        defining class is that class, the last ``def``: Python's live
+        binding), ``value`` its class-body field of that name; both None when
+        no class binds it, a builtin class does, or the body bound it by
+        something else.  Not decided -- ``(False, None, None)``, the one
+        unanswered form, never a later class's member -- when the lookup is
+        not (an unread base, a decorator, a store, a conditional binding),
+        when the class that holds it holds a value its body did not bind
+        (``ClassDef.namespace_value_is_body``), or when that class has no
+        class value here.
 
-        Instance fields and data descriptors have already been considered.
-        A deleted instance field does not hide a still-present class field.
+        A receiver built with no class statement has only its own roster and
+        class fields (and its class value's bases' fields): no other class
+        is there to ask.
         """
-        found = self.class_field_value(name)
-        if found is not None:
-            return found
         defining = self.defining_class
-        if defining is None or not hasattr(defining, "_c3_tail"):
-            return None
-        for base in defining._c3_tail():
-            for field in reversed(getattr(base, "class_fields", ())):
-                if field.name == name:
-                    return field.value
-        return None
+        definition = getattr(defining, "class_definition", None)
+        if definition is None:
+            method = next(
+                (method for method in reversed(self.methods) if method.name == name),
+                None,
+            )
+            holders = (
+                self,
+                *(defining._c3_tail() if hasattr(defining, "_c3_tail") else ()),
+            )
+            value = next(
+                (
+                    field.value
+                    for holder in holders
+                    for field in reversed(getattr(holder, "class_fields", ()))
+                    if getattr(field, "name", None) == name
+                ),
+                None,
+            )
+            return True, method, value
+        decided, owner = definition.namespace_owner(name)
+        if not decided:
+            return False, None, None
+        if owner is None or isinstance(owner, str):
+            return True, None, None
+        if not owner.namespace_value_is_body(name):
+            return False, None, None
+        holder = defining.class_value_of_statement(owner)
+        if holder is None:
+            return False, None, None
+        method = next(
+            (
+                method
+                for method in reversed(self.methods)
+                if method.name == name and method.defining_class is holder
+            ),
+            None,
+        )
+        value = next(
+            (
+                field.value
+                for field in reversed(holder.class_fields)
+                if getattr(field, "name", None) == name
+            ),
+            None,
+        )
+        return True, method, value
+
+    def unanswered_method_call(self, name, arguments, keywords, site):
+        """``self.<name>(...)`` whose member the one class-namespace lookup
+        does not decide (``class_member``): the one unanswered call
+        (``UnknownCalleeCallV1``), two-faced and owed, its completion the
+        call's own result coordinate.  No method of the roster is assumed to
+        answer."""
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
+
+        target = f"{self.class_name}.{name}"
+        term_owner = str(site)
+        callsite = CallSiteValue(
+            target_name=target,
+            arg_values=(self, *arguments, *(value for _name, value in keywords)),
+            parameters=(),
+            term=ctor(
+                call_symbol(target),
+                [value.to_term(owner=term_owner) for value in (self, *arguments)]
+                + [
+                    ctor(
+                        "py.kwarg",
+                        [str_const(keyword), value.to_term(owner=term_owner)],
+                    )
+                    for keyword, value in keywords
+                ],
+                symbol_kind="coordinate",
+            ),
+            body=None,
+            keyword_names=tuple(keyword for keyword, _value in keywords),
+            site=site,
+        )
+        return UnknownCalleeCallV1(target).faces(callsite, site)
 
     def _class_data_descriptor(self, name: str) -> bool:
         """Whether the class's binding of ``name`` is a data descriptor,
@@ -775,17 +899,8 @@ class ObjectValue(FloorValue):
 
             held = type(vars(getattr(builtins, owner)).get(name))
             return hasattr(held, "__set__") or hasattr(held, "__delete__")
-        if not owner.namespace_value_is_body(name):
-            return False
-        owner_value = self.defining_class.class_value_of_statement(owner)
-        if owner_value is None:
-            return False
-        return any(
-            method.name == name
-            and method.descriptor_kind == "property"
-            and method.defining_class is owner_value
-            for method in self.methods
-        )
+        # A source owner's member is the one ``class_member`` selects.
+        return self._store_descriptor(name) is True
 
     def _floor_gap(
         self,

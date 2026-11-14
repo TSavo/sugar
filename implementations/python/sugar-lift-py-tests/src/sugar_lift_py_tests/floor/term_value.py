@@ -654,7 +654,7 @@ class TermValue(GuardStableValue):
             return SymbolicValue(self.to_term(owner=str(site))).matrix_multiply(
                 other, site, ctx
             )
-        if type(other) is ObjectValue and other.has_method("__rmatmul__"):
+        if type(other) is ObjectValue and other.has_method("__rmatmul__") is not False:
             return other.call_method_value(
                 "__rmatmul__",
                 (self,),
