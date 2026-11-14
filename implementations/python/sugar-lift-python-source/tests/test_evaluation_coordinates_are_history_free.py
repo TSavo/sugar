@@ -16,7 +16,6 @@ from sugar_source_tree.binding_state import backend_node_shape_cid_v2
 from sugar_source_tree.tree import SourceFile
 
 _MUTATION_KINDS = {
-    "BuiltinContainerCall",
     "PathContainerCall",
     "PathAfterCall",
     "ReceiverAfterCall",
@@ -62,7 +61,7 @@ def _mutation_shape_cids(source: str, rel: str) -> list[tuple[str, str]]:
 def test_a_mutation_node_has_one_content_whatever_was_lifted_before() -> None:
     first = _mutation_shape_cids(_SHARED, "shared.py")
     assert first, "the program must build mutation shadow nodes"
-    assert {kind for kind, _ in first} >= {"BuiltinContainerCall", "ReceiverAfterCall"}
+    assert {kind for kind, _ in first} >= {"PathContainerCall", "ReceiverAfterCall"}
     _mutation_shape_cids(_PREDECESSOR, "predecessor.py")
     _mutation_shape_cids(_PREDECESSOR, "predecessor.py")
     again = _mutation_shape_cids(_SHARED, "shared.py")
@@ -75,7 +74,7 @@ def test_two_iterations_stay_two_evaluations() -> None:
     cids = [
         cid
         for kind, cid in _mutation_shape_cids(_SHARED, "shared.py")
-        if kind == "BuiltinContainerCall"
+        if kind == "PathContainerCall"
     ]
     assert len(cids) >= 2
     assert len(set(cids)) == len(cids)

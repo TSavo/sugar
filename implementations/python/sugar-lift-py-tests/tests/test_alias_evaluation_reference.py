@@ -36,7 +36,7 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.nodes import (
     Assign,
-    AugAssign,
+    ContainerMutationStatement,
     EvaluationRef,
     FunctionDef,
     Return,
@@ -187,7 +187,14 @@ def test_an_alias_reads_its_own_projection_of_the_assignment() -> None:
 
 def test_the_alias_never_reads_the_name_it_was_given() -> None:
     body = _function(STRAIGHT).substitute({}).body
-    augs = [node for node in body if isinstance(node, AugAssign)]
+    # ``x += 1`` is the one mutation door's statement writing ``x`` (#7757).
+    augs = [
+        node
+        for node in body
+        if isinstance(node, ContainerMutationStatement)
+        and getattr(node, "rebinds", None) == "x"
+    ]
+    assert augs
     ret = body[-1]
     assert all(ret.value.evaluation != aug.evaluation for aug in augs)
     assert ret.value.name != "x"

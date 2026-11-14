@@ -34,16 +34,17 @@ from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect import NameErrorEffect
 from sugar_lift_py_tests.floor import TermValue
-from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.source_call_frame import (
     frame_at_current_module_execution_site,
 )
-from sugar_lift_py_tests.sugar.augassign_sugar import AugAssignSugar
 from sugar_lift_py_tests.sugar.binding_projection import UnboundProjection
 from sugar_lift_py_tests.sugar.branch_result_ref_sugar import BranchResultRefSugar
+from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+    ContainerMutationStatementSugar,
+)
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
     EvaluationRefSugar,
     evaluation_here,
@@ -68,11 +69,11 @@ from sugar_source_tree.nodes import (
     AnnAssign,
     Assign,
     Attribute,
-    AugAssign,
     BinOp,
     BranchResultRef,
     Call,
     ClassDef,
+    ContainerMutationStatement,
     EffectRef,
     EvaluationRef,
     For,
@@ -107,9 +108,15 @@ def _source(source: str) -> SourceFile:
 
 
 def _module_evaluations(tree: SourceFile) -> list[str]:
-    """The evaluation key of each module-level ``x += e``, in source order."""
+    """The evaluation key of each module-level ``x += e``, in source order:
+    the one mutation door's statement writing its name (#7757)."""
     body = tree.root.substitute({}).body
-    return [node.evaluation for node in body if isinstance(node, AugAssign)]
+    return [
+        node.evaluation
+        for node in body
+        if isinstance(node, ContainerMutationStatement)
+        and isinstance(getattr(node, "rebinds", None), str)
+    ]
 
 
 def _assignment_keys(tree: SourceFile, name: str) -> list[str]:
@@ -1217,24 +1224,33 @@ class _Ground(Sugar):
         return ()
 
 
-def _aug(evaluation: str) -> AugAssignSugar:
+def _aug(evaluation: str) -> ContainerMutationStatementSugar:
+    # ``x += e`` is the one mutation door's statement (#7757): its in-place
+    # call on ``3`` with ``2``, its result bound under ``evaluation``.
     tree = _source("def f(x):\n    x += 1\n")
     statement = _function(tree).sugar().statements[0]
-    assert isinstance(statement, AugAssignSugar)
+    assert isinstance(statement, ContainerMutationStatementSugar)
+    call, *rest = statement.evaluated
+    _key, index = statement.result_evaluation
     return replace(
         statement,
-        left=_Ground(TermValue(3)),
-        right=_Ground(TermValue(2)),
-        evaluation=evaluation,
+        evaluated=(
+            replace(call, receiver=_Ground(TermValue(3)), args=(_Ground(TermValue(2)),)),
+            *rest,
+        ),
+        result_evaluation=(evaluation, index),
     )
+
+
+def _after(ctx):
+    """The context the statement leaves."""
+    block = _aug(KEY).desugar(ctx).completed_value()
+    return block.context
 
 
 def test_outside_a_live_loop_only_the_evaluation_is_bound() -> None:
     ctx = ReduceContext.root(owner="module-global-evaluation")
-    rebind = _aug(KEY).desugar(ctx).completed_value()
-    assert isinstance(rebind, ScopeRebinds)
-    assert rebind.bindings == ((KEY, TermValue(5)),)
-    after = rebind.extend_scope(ctx)
+    after = _after(ctx)
     assert after.temporal.value_if_bound(KEY) == TermValue(5)
     assert after.temporal.value_if_bound("x") is None
 
@@ -1246,10 +1262,9 @@ def test_a_name_a_live_loop_carries_binds_only_the_evaluation_too() -> None:
         ReduceContext.root(owner="module-global-evaluation"),
         live_loop_names=frozenset({"x"}),
     )
-    rebind = _aug(KEY).desugar(ctx).completed_value()
-    assert isinstance(rebind, ScopeRebinds)
-    assert rebind.bindings == ((KEY, TermValue(5)),)
-    assert rebind.extend_scope(ctx).temporal.value_if_bound("x") is None
+    after = _after(ctx)
+    assert after.temporal.value_if_bound(KEY) == TermValue(5)
+    assert after.temporal.value_if_bound("x") is None
 
 
 # -- a function reduced on its own reads the module-final binding -------------

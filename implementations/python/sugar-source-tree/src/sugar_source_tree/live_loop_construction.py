@@ -260,6 +260,7 @@ def _carried_writes(statements, names) -> dict[str, tuple[str, ...]]:
         AsyncFunctionDef,
         AugAssign,
         ClassDef,
+        ContainerMutationStatement,
         FunctionDef,
         Lambda,
         LoopRecurrenceStatement,
@@ -306,6 +307,12 @@ def _carried_writes(statements, names) -> dict[str, tuple[str, ...]]:
         evaluation = getattr(node, "evaluation", None)
         if isinstance(node, (AugAssign, NamedExpr)) and isinstance(node.target, Name):
             write(node.target.id, evaluation)
+        elif isinstance(node, ContainerMutationStatement):
+            # ``x += e`` through the one mutation door: ``x`` is written to
+            # the in-place result under the statement's key.
+            rebinds = getattr(node, "rebinds", None)
+            if isinstance(rebinds, str):
+                write(rebinds, evaluation)
         elif isinstance(node, Assign) or (
             isinstance(node, AnnAssign)
             and isinstance(node.target, Name)

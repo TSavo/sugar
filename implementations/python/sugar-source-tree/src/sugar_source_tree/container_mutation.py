@@ -8,29 +8,35 @@ which carries the right-hand side it was given as the object the name denotes
 names given the same node (``a = r``, ``x = y = []``) are the same object,
 and a node built by another evaluation is another object.
 
-THE LAW, at a statement that calls a mutating method of a built-in container:
+THE LAW, at a statement that mutates the object a name denotes -- a
+mutating-named method call (``r.append(x)``, ``x = r.pop()``), an item store
+(``r[k] = v``), an item delete (``del r[k]``) or an augmented assignment
+(``r += x``) -- whatever the name was given (a display, ``'a b'.split()``, a
+parameter, a global):
 
-- **Decided receiver.** The receiver is bound to a ``list``/``dict``/``set``
-  display (or to such a receiver's post-state). The call becomes one
-  ``BuiltinContainerCall`` evaluated at the statement (``sugar/
-  builtin_container_call_sugar.py``): its halts leave there, and every name
-  bound to the receiver's object is rebound to the post-state projection.
-  A target (``x = r.pop()``) is bound to the result projection.
-- **Every other alias.** A name whose value merely CONTAINS the object
-  (``outer = [r]``) is not rebuilt: it is rebound to an unknown value minted at
-  the call. Never the pre-call contents.
-- **Receiver the source does not decide, bound by an assignment.**
-  ``parts = 'a b'.split(); parts.append('c')``: the value the binding holds
-  decides the call at reduce (``bound_receiver_mutation_statement``, the path
-  door with no steps): a ``ListValue`` takes the cited mutation a display's
-  receiver takes, any other value the ordinary call, and the object's names
-  read the post-state, or an unknown minted at the call.
-- **Undecided receiver.** A mutating method name on any other receiver (a
-  formal, a global) keeps its ordinary (opaque) call, and the receiver and
-  its aliases are rebound to an unknown value minted at the call.
-- **Exposure.** A decided container passed to a call the floor does not cite
-  as pure may be mutated by it: the object and its aliases are rebound to an
-  unknown after that statement.
+- **One door** (``name_mutation_statement``).  The operation becomes one
+  ``PathContainerCall`` with no path steps, evaluated at the statement: its
+  halts leave there.  The VALUE the receiver holds at reduce decides it
+  (``PathContainerCallSugar``): a ``ListValue``/``DictValue``/``SetValue``
+  takes the cited CPython mutation (``floor/builtin_container_method``); any
+  other value takes the ordinary operation -- the call, ``__setitem__``,
+  ``__delitem__``, the in-place operator -- and its contents afterwards are
+  unknown (an immutable value is unchanged).  The source's spelling of the
+  right-hand side never chooses the door.
+- **The object's names.** Every name bound to the receiver's object is
+  rebound to the object after the call (``PathAfterCall``): the post-state.
+  A target (``x = r.pop()``) is bound to the call's value; ``r += x`` binds
+  ``r`` to the in-place result, as Python does.
+- **Every other alias.** A name whose value merely holds the object
+  (``outer = [r]``) is not rebuilt: it reads an unknown value minted at the
+  call when the value the call changed is mutable (``ReceiverAfterCall``,
+  decided at reduce).  Never the pre-call contents.
+- **Exposure.** An object passed to a call the floor does not cite as pure,
+  or the receiver of a method call outside the door, may be changed by it:
+  each name bound to it is rebound to its value after the call, which the
+  value decides at reduce (``ReceiverAfterCall``): a builtin container the
+  call may change is unknown; an immutable value, or a container the call's
+  cited method or cited pure builtin leaves alone, is unchanged.
 
 Names are only rebound; nothing here decides what a call does.
 """
@@ -204,13 +210,27 @@ def _identity(node):
 
 
 def decided_container_kind(node) -> Optional[str]:
-    """``list``/``dict``/``set`` when ``node`` builds (or is the post-state of) one."""
-    from .nodes import BuiltinContainerProjection
+    """``list``/``dict``/``set`` when ``node`` builds (or is the post-state of) one.
 
+    Asked only about the object a creation node built: ``is`` between two
+    creations, a source helper's actual, a ``try`` edge.  Never which door a
+    mutation takes, nor whether a call changed an object: the value decides
+    those at reduce (``name_mutation_statement``, ``ReceiverAfterCall``)."""
     node = _identity(node)
-    if isinstance(node, BuiltinContainerProjection):
-        return node.call.container_kind if node.index == 0 else None
     kind = getattr(node, "kind", None)
+    if kind == "PathAfterCall":
+        # A name's object after a mutation through the one door: the same
+        # object, whose type no mutation changes.
+        if node.mode == "root" and not node.steps:
+            return decided_container_kind(node.root)
+        return None
+    if kind == "BuiltinContainerProjection":
+        # ``r += x``: the in-place result of a builtin container is the
+        # container itself.
+        call = node.call
+        if node.index == 1 and str(getattr(call, "method", "")).startswith("__i"):
+            return decided_container_kind(call.receiver)
+        return None
     if kind == "SourceCallActualAfter":
         # The helper only mutated the object: its type is the actual's.
         return decided_container_kind(node.state)
@@ -238,13 +258,44 @@ def _state(value):
 _FORMAL_KINDS = ("FormalRef", "BindingCoordinateRef")
 
 
+def _object(node):
+    """The node whose object ``node`` denotes, through mutations too.
+
+    ``_identity``, and: the object a name denotes after the one door's call
+    (``PathAfterCall`` with no steps) is the object the call was made on,
+    and a name's value after a call that may have changed it
+    (``ReceiverAfterCall`` with a ``prior``) is the object it was bound to --
+    a mutation changes an object's contents, never which object it is.  Only
+    object identity asks this; what a value holds is read through
+    ``_identity``, whose post-state still holds what the call stored."""
+    seen = 0
+    node = _identity(node)
+    while seen < 64:
+        kind = getattr(node, "kind", None)
+        if (
+            kind == "PathAfterCall"
+            and getattr(node, "mode", None) == "root"
+            and not getattr(node, "steps", ())
+        ):
+            node = _identity(node.root)
+        elif kind == "ReceiverAfterCall" and getattr(node, "prior", None) is not None:
+            # A name's value after a call that may have changed it: the same
+            # object it was bound to before.
+            node = _identity(node.prior)
+        else:
+            break
+        seen += 1
+    return node
+
+
 def _ref(node):
     """The object a node denotes: its backend handle, or a formal's coordinate.
 
     A read of a formal is re-spanned to its use site (``Name.substitute``), so
     every read is a fresh node over the same ``coordinate``.  A read of an
-    assigned name is the object its assignment was given (``_identity``)."""
-    node = _identity(node)
+    assigned name is the object its assignment was given (``_identity``);
+    a name's object after a mutation is the object before it (``_object``)."""
+    node = _object(node)
     if getattr(node, "kind", None) in _FORMAL_KINDS and hasattr(node, "coordinate"):
         return ("formal", node.kind, _coordinate_key(node.coordinate))
     return getattr(node, "ref", node)
@@ -268,15 +319,15 @@ def same_object(left, right) -> bool:
 
 
 def _is_formal(node) -> bool:
-    return getattr(_identity(node), "kind", None) in _FORMAL_KINDS
+    return getattr(_object(node), "kind", None) in _FORMAL_KINDS
 
 
 def _holds_no_reference(node) -> bool:
     """A value built from its operands that cannot be (or hold) one of them:
     ``len(r)`` (the builtin ``len``, by its binding), ``r[0]`` (the element,
-    read when evaluated), ``r == s``, ``r.copy()``/``r.index(x)`` on a
-    decided container."""
-    from .nodes import Attribute, Call, Compare, Subscript
+    read when evaluated), ``r == s``.  A method call's value may hold its
+    receiver: the receiver's type is the value's, decided at reduce."""
+    from .nodes import Call, Compare, Subscript
 
     if isinstance(node, (Compare, Subscript)):
         return True
@@ -284,13 +335,6 @@ def _holds_no_reference(node) -> bool:
         callee = _builtin_callee(node)
         if callee is not None:
             return callee in _cited().no_reference
-        func = node.func
-        if isinstance(func, Attribute) and decided_container_kind(func.value):
-            from sugar_lift_py_tests.floor.builtin_container_method import (
-                MUTATING_METHODS,
-            )
-
-            return func.attr not in MUTATING_METHODS[decided_container_kind(func.value)]
     return False
 
 
@@ -387,29 +431,10 @@ def _materialize(statement, kind, fields, tags=()):
     return materialize(statement.unit, ref, statement.reporter)
 
 
-def _call_node(statement, site_node, receiver, method, args, kind, tags, value_first):
-    from .backend import Child, Children, Leaf
-    from .shadow import _handle_of
-
-    return _materialize(
-        site_node,
-        "BuiltinContainerCall",
-        (
-            ("receiver", Child(_handle_of(receiver))),
-            ("args", Children(tuple(_handle_of(arg) for arg in args))),
-            ("method", Leaf(method)),
-            ("container_kind", Leaf(kind)),
-            ("value_first", Leaf(value_first)),
-            ("occurrence", Leaf(_evaluation(site_node, tags))),
-        ),
-        tags,
-    )
-
-
 def _projection(site_node, call, index, tags, evaluation=None):
     """Element ``index`` of ``call``'s ``(post-state, result)`` pair.
 
-    With ``evaluation`` (the statement's key, ``mutation_statement``,
+    With ``evaluation`` (the statement's key, ``name_mutation_statement``,
     ``path_mutation_statement``) the projection reads the pair the statement
     bound under that key (``ContainerMutationStatementSugar``): ``d[k] = v;
     ...; d[k]`` reads the dict the store left, never the call (and ``v``)
@@ -423,20 +448,76 @@ def _projection(site_node, call, index, tags, evaluation=None):
     return _materialize(site_node, "BuiltinContainerProjection", fields, tags)
 
 
-def _havoc(site_node, label, tags):
-    from .backend import Leaf
+def _havoc(site_node, label, tags, *, prior=None, conditions=None):
+    """The value a call may have changed, read after it.
 
+    With no ``conditions`` it is an unknown minted at the call.  With
+    ``conditions`` -- ``(subject, (method, pure, sharer))`` pairs -- the value
+    decides at reduce (``ReceiverAfterCallSugar``): ``prior`` is the name's
+    read before the call; it is kept unless some condition's object (its
+    ``subject`` read, or ``prior`` itself when None) has a value the call may
+    have changed (``_may_change``), and an immutable ``prior`` is kept."""
+    from .backend import Children, Leaf, MaybeChild
+    from .shadow import _handle_of
+
+    if conditions is None or prior is None:
+        prior, conditions = None, ()
+    subjects = []
+    rules = []
+    for subject, (method, pure, sharer) in conditions:
+        index = -1
+        if subject is not None:
+            for position, known in enumerate(subjects):
+                if known is subject:
+                    index = position
+                    break
+            else:
+                subjects.append(subject)
+                index = len(subjects) - 1
+        rule = (method, pure, sharer, index)
+        if rule not in rules:
+            rules.append(rule)
     return _materialize(
         site_node,
         "ReceiverAfterCall",
-        (("label", Leaf(label)), ("occurrence", Leaf(_evaluation(site_node, tags)))),
+        (
+            ("label", Leaf(label)),
+            ("occurrence", Leaf(_evaluation(site_node, tags))),
+            ("prior", MaybeChild(None if prior is None else _handle_of(prior))),
+            ("subjects", Children(tuple(_handle_of(node) for node in subjects))),
+            ("rules", Leaf(tuple(rules))),
+        ),
         tags,
     )
 
 
-def _statement(statement, names, states, evaluated, tags, evaluation=None):
+def _read_of(value):
+    """The node a read of a name bound to ``value`` is (``Name.substitute``),
+    or None when the binding holds no node."""
+    from .binding_state import BindingEntryV1, unwrap_binding_state
+    from .nodes import Node
+
+    if isinstance(value, BindingEntryV1):
+        value = value.state
+    try:
+        value = unwrap_binding_state(value)
+    except Exception:  # pragma: no cover - defensive: not a node state
+        return None
+    return value if isinstance(value, Node) else None
+
+
+def _statement(
+    statement, names, states, evaluated, tags, evaluation=None, rebinds=None
+):
     """The shadow statement; with ``evaluation`` it binds its call's pair
-    (``evaluated[0]``) under that key, which its projections read."""
+    (``evaluated[0]``) under that key, which its projections read.
+
+    ``rebinds`` is ``(name, index, key)`` for ``r += x``: the statement
+    writes ``name`` -- the in-place result ``evaluated[index]`` -- under
+    ``key``, the statement's own evaluation (``evaluation``; the pair is
+    then bound under ``pair_evaluation``): the write every later read of
+    ``name`` reads and a live loop carries
+    (``live_loop_construction._carried_writes``)."""
     from .backend import Children, Leaf
     from .shadow import _handle_of
 
@@ -445,57 +526,25 @@ def _statement(statement, names, states, evaluated, tags, evaluation=None):
         ("states", Children(tuple(_handle_of(state) for state in states))),
         ("evaluated", Children(tuple(_handle_of(node) for node in evaluated))),
     )
-    if evaluation is not None:
+    if rebinds is not None:
+        fields = (
+            *fields,
+            ("rebinds", Leaf(rebinds[0])),
+            ("rebinds_index", Leaf(rebinds[1])),
+            ("evaluation", Leaf(rebinds[2])),
+        )
+        if evaluation is not None:
+            fields = (*fields, ("pair_evaluation", Leaf(evaluation)))
+    elif evaluation is not None:
         fields = (*fields, ("evaluation", Leaf(evaluation)))
     return _materialize(statement, "ContainerMutationStatement", fields, tags)
 
 
-def mutation_statement(
-    statement,
-    scope,
-    *,
-    call_site,
-    receiver,
-    method,
-    args,
-    target_name=None,
-    value_first=False,
-):
-    """The shadow statement for one decided mutating call, or None.
-
-    ``receiver`` and ``args`` are already substituted against ``scope``.
-    """
-    from .shadow import occurrence_tags_of
-    from sugar_lift_py_tests.floor.builtin_container_method import MUTATING_METHODS
-
-    kind = decided_container_kind(receiver)
-    if kind is None or method not in MUTATING_METHODS[kind]:
-        return None
-    tags = occurrence_tags_of(statement)
-    call = _call_node(
-        statement, call_site, receiver, method, args, kind, tags, value_first
-    )
-    # The statement evaluates the call once and binds its pair under its own
-    # key; the receiver's post-state and the call's value read that key.
-    evaluation = statement._evaluation_key(scope)
-    post = _projection(call_site, call, 0, tags, evaluation)
-    exact, containing = aliases(scope, receiver)
-    names, states, evaluated = [], [], [call]
-    for name in exact:
-        names.append(name)
-        states.append(post)
-    for name in containing:
-        havoc = _havoc(call_site, name, tags)
-        names.append(name)
-        states.append(havoc)
-        evaluated.append(havoc)
-    if target_name is not None:
-        names.append(target_name)
-        states.append(_projection(call_site, call, 1, tags, evaluation))
-    return _statement(statement, names, states, evaluated, tags, evaluation)
-
-
 def _is_pure_call(call, scope) -> bool:
+    """A cited pure builtin (by its binding) over builtin operands, or a
+    method of a literal.  A method call on anything else is not pure here:
+    whether it changes its receiver is the receiver's value's question, asked
+    at reduce (``_call_targets``, ``ReceiverAfterCall``)."""
     from .nodes import Attribute, Constant
 
     func = call.func
@@ -514,17 +563,7 @@ def _is_pure_call(call, scope) -> bool:
         if callee in cited.no_dunder:
             return True
         return all(builtin_typed(arg, scope) for arg in call.args)
-    if isinstance(func, Attribute):
-        if isinstance(func.value, Constant):
-            return True
-        kind = decided_container_kind(func.value)
-        if kind is not None:
-            from sugar_lift_py_tests.floor.builtin_container_method import (
-                MUTATING_METHODS,
-            )
-
-            return func.attr not in MUTATING_METHODS[kind]
-    return False
+    return isinstance(func, Attribute) and isinstance(func.value, Constant)
 
 
 def _calls(statement, bound_refs, *, include_container_calls):
@@ -532,7 +571,6 @@ def _calls(statement, bound_refs, *, include_container_calls):
     value a name was already bound to (that value's calls ran earlier)."""
     from .nodes import (
         AsyncFunctionDef,
-        BuiltinContainerCall,
         Call,
         ClassDef,
         FunctionDef,
@@ -556,8 +594,6 @@ def _calls(statement, bound_refs, *, include_container_calls):
             return
         if isinstance(current, Call):
             yield current
-        if include_container_calls and isinstance(current, BuiltinContainerCall):
-            yield current
         if isinstance(current, PathContainerCall):
             # Its ``fallback`` is this same call, not a second one.
             if include_container_calls:
@@ -577,22 +613,17 @@ def havoc_after(statement, pre_scope, scope):
     statement's calls name objects by the nodes that scope bound.
     """
     from .nodes import (
-        BuiltinContainerCall,
         ContainerMutationStatement,
         DictSetDefaultAppendStatement,
         For,
         LoopRecurrenceStatement,
-        MappingPopAssignStatement,
         Node,
         PathContainerCall,
         While,
     )
 
-    if isinstance(
-        statement,
-        (DictSetDefaultAppendStatement, MappingPopAssignStatement),
-    ):
-        # These shadow statements already bind the receiver's post-state.
+    if isinstance(statement, DictSetDefaultAppendStatement):
+        # This shadow statement already binds the receiver's post-state.
         return scope
     bound_refs = {
         _ref(_state(value))
@@ -600,25 +631,25 @@ def havoc_after(statement, pre_scope, scope):
         if isinstance(_state(value), Node)
     }
     if isinstance(statement, ContainerMutationStatement):
-        # The cited call itself is threaded; what its operands' own calls (or
-        # the call, for an operand it keeps) may change is not.
+        # The call itself is threaded; what its operands' own calls (or the
+        # call, for an operand it keeps) may change is not.
         targets = []
         for call in statement.evaluated[:1]:
             for arg in call.args:
-                targets.extend(_exposed(arg, bound_refs))
+                targets.extend(
+                    (node, _OPERAND_RULES, None) for node in _exposed(arg, bound_refs)
+                )
                 for inner in _calls(arg, bound_refs, include_container_calls=False):
                     targets.extend(_call_targets(inner, pre_scope, bound_refs))
         return _rebind(statement, pre_scope, scope, targets)
     # A loop that may run its body any number of times leaves every object a
-    # cited call in that body changed unknown; a branch's cited calls are
-    # threaded by the branch and joined.
+    # mutation in that body changed unknown (when its value is one a
+    # mutation changes); a branch's mutations are threaded by the branch and
+    # joined.
     loop = isinstance(statement, (For, While, LoopRecurrenceStatement))
     targets = []
     applied = []
     for call in _calls(statement, bound_refs, include_container_calls=loop):
-        if isinstance(call, BuiltinContainerCall):
-            targets.append(call.receiver)
-            continue
         helper = None if loop else source_helper_actual_states(call, bound_refs)
         if helper is not None:
             havoc_targets, states = helper
@@ -628,11 +659,20 @@ def havoc_after(statement, pre_scope, scope):
         if isinstance(call, PathContainerCall):
             root, _steps = path_steps(call.receiver)
             if root is None:
-                # No steps (``bound_receiver_mutation_statement``): the
-                # receiver is the object the call may change.
-                root = call.receiver
-            targets.append(root)
-            targets.extend(_sharing_states(pre_scope, root))
+                # No steps (``name_mutation_statement``): the receiver is the
+                # object the call may change, and its value decides whether
+                # it did.
+                rules = ((call.method, False, False),)
+                targets.append((call.receiver, rules, None))
+                targets.extend(
+                    (state, rules, call.receiver)
+                    for state in _sharing_states(pre_scope, call.receiver)
+                )
+                continue
+            targets.append((root, None, None))
+            targets.extend(
+                (state, None, None) for state in _sharing_states(pre_scope, root)
+            )
             continue
         targets.extend(_call_targets(call, pre_scope, bound_refs))
     havocked = _rebind(statement, pre_scope, scope, targets)
@@ -641,7 +681,17 @@ def havoc_after(statement, pre_scope, scope):
     return _apply_actual_states(statement, pre_scope, scope, havocked, applied)
 
 
+# An operand handed to a call the floor does not cite: a builtin container in
+# it may be changed; any other value is kept (``_may_change``).
+_OPERAND_RULES = (("", False, False),)
+
+
 def _call_targets(call, scope, bound_refs):
+    """``(object, rules, subject)`` for every object ``call`` may change
+    (``_rebind``): its receiver when the method name is a builtin container's
+    mutator, and, unless the call is pure, every bound object its operands
+    reach.  ``rules`` say how the value decides at reduce (``_may_change``);
+    never the spelling of the receiver's binding."""
     from .nodes import Attribute, Name
     from sugar_lift_py_tests.floor.builtin_container_method import (
         ANY_MUTATING_METHOD,
@@ -649,29 +699,103 @@ def _call_targets(call, scope, bound_refs):
 
     targets = []
     func = call.func
-    if (
-        isinstance(func, Attribute)
-        and func.attr in ANY_MUTATING_METHOD
-        and decided_container_kind(func.value) is None
-    ):
+    if isinstance(func, Attribute) and func.attr in ANY_MUTATING_METHOD:
         receiver = func.value
         if isinstance(receiver, Name) or _ref(receiver) in bound_refs:
-            targets.append(receiver)
+            targets.append((receiver, ((func.attr, False, False),), None))
     if _is_pure_call(call, scope):
         return targets
-    roots = list(call.args) + [keyword.value for keyword in call.keywords]
+    # A cited pure builtin whose operands the source does not type: an
+    # operand whose value is builtin all the way down is unchanged.
+    pure = (("", _builtin_callee(call) in _cited().pure, False),)
+    for root in (*call.args, *(keyword.value for keyword in call.keywords)):
+        targets.extend((node, pure, None) for node in _exposed(root, bound_refs))
     if isinstance(func, Attribute):
-        roots.append(func.value)
-    for root in roots:
-        targets.extend(_exposed(root, bound_refs))
+        receiver = func.value
+        method = ((func.attr, False, False),)
+        # What the receiver holds changes only when the receiver's value
+        # runs an ordinary call (``sharer``): a builtin container's own
+        # method changes the container at most.
+        shared = ((func.attr, False, True),)
+        for node in _exposed(receiver, bound_refs):
+            if same_object(node, receiver):
+                targets.append((node, method, None))
+            elif getattr(receiver, "kind", None) in _READ_KINDS:
+                targets.append((node, shared, receiver))
+            else:
+                targets.append((node, _OPERAND_RULES, None))
     return targets
 
 
+# Nodes whose evaluation is a read of a value an earlier evaluation made:
+# reading one again after the call runs nothing.
+_READ_KINDS = frozenset(
+    {
+        "Name",
+        "EvaluationRef",
+        "FormalRef",
+        "BindingCoordinateRef",
+        "PathAfterCall",
+        "ReceiverAfterCall",
+        "BuiltinContainerProjection",
+        "SourceCallActualAfter",
+    }
+)
+
+
+# Bindings whose object may be a builtin container whose type only its value
+# at reduce decides: a display or comprehension, a call result, an item or
+# attribute read, an operator result, a key reference with no right-hand
+# side, a mutation's post-state.  A literal, a definition, an import, a
+# formal, and an instance of a source class are not.
+_EXPOSED_KINDS = frozenset(
+    {
+        "List",
+        "Dict",
+        "Set",
+        "ListComp",
+        "DictComp",
+        "SetComp",
+        "Call",
+        "Subscript",
+        "Attribute",
+        "BinOp",
+        "IfExp",
+        "BoolOp",
+        "EvaluationRef",
+        "PathAfterCall",
+        "BuiltinContainerProjection",
+        "ReceiverAfterCall",
+        "OpaqueObjectStateV1",
+        "SourceCallActualAfter",
+    }
+)
+
+
+def _may_be_changed(node) -> bool:
+    """Whether the object ``node`` denotes may be one a call changes."""
+    denoted = _identity(node)
+    kind = getattr(denoted, "kind", None)
+    if kind not in _EXPOSED_KINDS:
+        return False
+    if kind == "Call":
+        allocation = getattr(denoted.unit, "source_allocation_definition_for_call", None)
+        if allocation is not None and allocation(denoted) is not None:
+            # An instance of a source class: its fields are the object's
+            # own (``ObjectPlaceStateV1``), never a builtin container's.
+            return False
+    return True
+
+
 def _exposed(root, bound_refs):
-    """Decided containers reachable from a call operand."""
+    """Bound objects reachable from a call operand that a call may change.
+
+    Whether one did is its value's question at reduce (``_may_change``):
+    the candidates are every object the operand reaches, never only those
+    whose binding the source spells as a container."""
     found = []
     for node in _walk_values(root, kept_only=False):
-        if decided_container_kind(node) is not None and _ref(node) in bound_refs:
+        if _ref(node) in bound_refs and _may_be_changed(node):
             found.append(node)
     return found
 
@@ -689,7 +813,6 @@ def builtin_typed(node, scope, depth=0, *, names=frozenset()) -> bool:
     from .nodes import (
         BinOp,
         BoolOp,
-        BuiltinContainerCall,
         BuiltinContainerProjection,
         Call,
         Compare,
@@ -699,6 +822,8 @@ def builtin_typed(node, scope, depth=0, *, names=frozenset()) -> bool:
         JoinedStr,
         List,
         Name,
+        PathAfterCall,
+        PathContainerCall,
         Set,
         Slice,
         Starred,
@@ -750,7 +875,11 @@ def builtin_typed(node, scope, depth=0, *, names=frozenset()) -> bool:
         )
     if isinstance(node, BuiltinContainerProjection):
         return builtin(node.call)
-    if isinstance(node, BuiltinContainerCall):
+    if isinstance(node, PathAfterCall):
+        # A name's object after the one door's call: a builtin receiver
+        # given builtin operands is a builtin after it.
+        return not node.steps and builtin(node.call)
+    if isinstance(node, PathContainerCall):
         return builtin(node.receiver) and all(builtin(a) for a in node.args)
     if getattr(node, "kind", None) == "OpaqueObjectStateV1":
         return builtin(node.base)
@@ -768,28 +897,75 @@ def builtin_typed(node, scope, depth=0, *, names=frozenset()) -> bool:
 def _rebind(statement, pre_scope, scope, targets):
     """Rebind each name that held a target object before ``statement`` and
     still holds that value: a name the statement itself bound holds the value
-    the statement computed (``x = g(r)``), not the object ``g`` was given."""
+    the statement computed (``x = g(r)``), not the object ``g`` was given.
+
+    ``targets`` are ``(object, rules, subject)``: ``rules`` a tuple of
+    ``(method, pure, sharer)`` (``_may_change``), None for an object left
+    unknown whatever its value; ``subject`` the read whose value decides
+    (None: a name bound to the object decides by its own value, a name that
+    holds it by the object's).  Each name is rebound to its value after the
+    call (``_havoc``), which the value decides at reduce."""
+    from .nodes import Name
     from .shadow import occurrence_tags_of
 
     if not targets:
         return scope
-    names = []
-    for target in targets:
+    found = {}
+    asked = set()
+    for target, rules, explicit in targets:
+        # A read and the node it was given are one object: ask once.
+        question = (_object_key(target), rules, id(explicit))
+        if question in asked:
+            continue
+        asked.add(question)
         exact, containing = aliases(scope, target)
+        held = explicit
+        if held is None:
+            if exact and exact[0] in scope:
+                held = _read_of(scope[exact[0]])
+            elif isinstance(target, Name):
+                held = target
         for name in (*exact, *containing):
-            if name in names:
-                continue
             if name in scope and (
                 name not in pre_scope or scope[name] is not pre_scope[name]
             ):
                 continue
-            names.append(name)
-    if not names:
+            if rules is None:
+                conditions = None
+            elif explicit is None and name in exact:
+                conditions = [(None, rule) for rule in rules]
+            elif held is None:
+                # No read of the object it holds: nothing to decide by.
+                conditions = None
+            else:
+                conditions = [(held, rule) for rule in rules]
+            if name not in found:
+                found[name] = conditions
+            elif found[name] is None or conditions is None:
+                found[name] = None
+            else:
+                found[name] = [*found[name], *conditions]
+    if not found:
         return scope
     tags = occurrence_tags_of(statement)
-    binding = {name: _havoc(statement, name, tags) for name in names}
+    binding = {}
+    for name, conditions in found.items():
+        prior = _read_of(scope[name]) if name in scope else _global_read(targets, name)
+        binding[name] = _havoc(
+            statement, name, tags, prior=prior, conditions=conditions
+        )
     binding = statement._binding_entries(binding, scope)
     return {**scope, **binding}
+
+
+def _global_read(targets, name):
+    """A target that is a read of the unbound ``name`` (a global), or None."""
+    from .nodes import Name
+
+    for target, _rules, _subject in targets:
+        if isinstance(target, Name) and target.id == name:
+            return target
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -999,12 +1175,15 @@ def _path_after(
     unshared,
     inner=None,
     evaluation=None,
+    prior=None,
 ):
     """The root or the object after ``call``.  With ``evaluation`` (the
     statement's key, ``path_mutation_statement``) it reads the call's pair
     the statement bound under that key, never the call evaluated again.
     ``root`` is the read of the root at the statement (a name's reference
-    to its key), never the expression the name was given."""
+    to its key), never the expression the name was given.  ``prior`` (no
+    steps) is the read of the name this node rebinds, before the call: an
+    immutable receiver is unchanged, and the name keeps its own value."""
     from .backend import Child, Leaf, MaybeChild
     from .shadow import _handle_of
 
@@ -1019,6 +1198,7 @@ def _path_after(
         # The root after the call holds the object after it: a later
         # mutation of that object through another name reaches the root.
         ("inner", MaybeChild(None if inner is None else _handle_of(inner))),
+        ("prior", MaybeChild(None if prior is None else _handle_of(prior))),
     ]
     if evaluation is not None:
         fields.append(("evaluation", Leaf(evaluation)))
@@ -1042,6 +1222,49 @@ def _mutating_named_call(call) -> bool:
     )
 
 
+def _container_call(
+    site_node,
+    receiver,
+    method,
+    args,
+    fallback,
+    tags,
+    *,
+    label,
+    value_first=False,
+    operator_kind=None,
+    operator_site=None,
+):
+    """One mutating operation's ``PathContainerCall``: the call is evaluated
+    once and the receiver's value decides it (``PathContainerCallSugar``).
+
+    ``fallback`` is the ordinary call a method takes on a value the floor
+    does not cite; an item store, an item delete and an in-place operator
+    have none (their ordinary operation is the floor's own).  ``label``
+    names the unknown its receiver is after an ordinary call."""
+    from .backend import Child, Children, Leaf, MaybeChild
+    from .shadow import _handle_of
+
+    fields = (
+        ("receiver", Child(_handle_of(receiver))),
+        ("args", Children(tuple(_handle_of(arg) for arg in args))),
+        ("method", Leaf(method)),
+        ("fallback", MaybeChild(None if fallback is None else _handle_of(fallback))),
+        ("occurrence", Leaf(_evaluation(site_node, tags))),
+        ("label", Leaf(label)),
+        ("value_first", Leaf(value_first)),
+    )
+    if operator_kind is not None:
+        # ``r OP= x``: the operator (``operators.operator_for``) and its
+        # source token, minted before substitution (``AugAssign``).
+        fields = (
+            *fields,
+            ("operator_kind", Leaf(operator_kind)),
+            ("operator_site", Leaf(operator_site)),
+        )
+    return _materialize(site_node, "PathContainerCall", fields, tags)
+
+
 def path_mutation_statement(statement, scope, *, call, target_name=None):
     """The shadow statement for ``<path>.<mutator>(*args)``, or None.
 
@@ -1054,45 +1277,161 @@ def path_mutation_statement(statement, scope, *, call, target_name=None):
     # reads ``root_read``, never the display or call evaluated again at each
     # read of the name.
     root_read, steps = path_steps(call.func.value)
+    if root_read is None:
+        return None
     return _mutation_through(statement, scope, call, root_read, steps, target_name)
 
 
-def bound_receiver_mutation_statement(statement, scope, *, call, target_name=None):
-    """The shadow statement for ``<name>.<mutator>(*args)``, or None.
+def name_mutation_statement(
+    statement,
+    scope,
+    *,
+    site,
+    name,
+    receiver,
+    method,
+    args,
+    fallback=None,
+    target_name=None,
+    value_first=False,
+    operator_kind=None,
+    operator_site=None,
+    inplace=False,
+):
+    """The one door for a mutating operation on the object a name denotes.
 
-    ``name`` is a name an assignment bound (its read is a reference to the
-    assignment's key carrying the value node, ``of``) whose type the source
-    does not decide (``mutation_statement`` answered None):
-    ``parts = 'a b'.split(); parts.append('c')``.  The receiver is the path
-    door's with no steps: the call is evaluated once, at the statement, and
-    the value the binding holds decides it (``PathContainerCallSugar``) -- a
-    ``ListValue`` takes the cited ``list`` mutation exactly as a display's
-    does, any other value the ordinary call -- and every name bound to the
-    object is rebound to the object after the call (``PathAfterCall``): the
-    post-state when the value was a decided container, else an unknown minted
-    at the call.  A list display and a folded ``str.split`` are one case at
-    reduce: the value, never the spelling of the right-hand side.
+    ``r.append(x)``, ``x = r.pop()`` (``fallback`` the call), ``r[k] = v``
+    (``__setitem__``, ``value_first``: Python evaluates ``v`` first),
+    ``del r[k]`` (``__delitem__``) and ``r += x`` (``__iadd__``,
+    ``operator_kind``, ``inplace``; ``target_name`` the name itself, which
+    Python binds to the in-place result), whatever ``name`` was given -- a display,
+    ``'a b'.split()``, a parameter, a global.  ``receiver`` (the read of
+    ``name`` at the statement) and ``args`` are already substituted.
 
-    ``call`` is the statement's call, already substituted against ``scope``.
-    """
-    if not _mutating_named_call(call):
-        return None
-    from .nodes import Node
+    The operation is one ``PathContainerCall`` with no steps, evaluated at
+    the statement; the value the read holds at reduce decides it
+    (``PathContainerCallSugar``): a builtin container takes its cited
+    mutation, any other value the ordinary operation.  Every name bound to
+    the object is rebound to the object after the call (``PathAfterCall``),
+    every name that holds it to its value after the call
+    (``ReceiverAfterCall``), which the value decides at reduce."""
+    from .nodes import Node, _evaluation_ref
+    from .shadow import occurrence_tags_of
 
-    receiver = call.func.value
-    if getattr(receiver, "kind", None) != "EvaluationRef" or not isinstance(
-        getattr(receiver, "of", None), Node
-    ):
-        return None
-    return _mutation_through(statement, scope, call, receiver, (), target_name)
+    tags = occurrence_tags_of(statement)
+    call = _container_call(
+        site,
+        receiver,
+        method,
+        args,
+        fallback,
+        tags,
+        label=name,
+        value_first=value_first,
+        operator_kind=operator_kind,
+        operator_site=operator_site,
+    )
+    # The statement evaluates the call once and binds its pair under its own
+    # key; the object after it and the call's value read that key.  ``r +=
+    # x`` binds its in-place result under the statement's key, as Python
+    # binds ``r`` to it, and the pair under a key of its own.
+    evaluation = statement._evaluation_key(scope)
+    rebinds_name = inplace and target_name == name
+    pair_key = evaluation
+    if rebinds_name and isinstance(evaluation, str):
+        from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+        pair_key = projection_key(evaluation, f"{method}()")
+
+    def after_for(prior):
+        return _path_after(
+            site,
+            call,
+            receiver,
+            (),
+            "root",
+            name,
+            tags,
+            True,
+            evaluation=pair_key,
+            prior=prior,
+        )
+
+    root = _identity(receiver)
+    exact, containing = aliases(scope, root)
+    if name not in exact:
+        # ``name`` is the receiver: it denotes the object after the call,
+        # whatever its binding is (a guarded read included).
+        exact.append(name)
+    after = after_for(receiver)
+    names, states, evaluated = [], [], [call, after]
+    for alias in exact:
+        if alias == target_name or alias in names:
+            continue
+        names.append(alias)
+        # Each name reads the object after the call; an immutable receiver
+        # is unchanged, and the name keeps its own value.
+        states.append(
+            after
+            if alias == name or alias not in scope
+            else after_for(_read_of(scope[alias]))
+        )
+    # A name whose value holds the object, or shares anything with it: its
+    # value after the call is decided at reduce by the receiver's value.  A
+    # builtin container's cited mutation changes the container only (its
+    # holders are unknown after it); an ordinary call may change anything it
+    # reaches (``sharer``).
+    graph = _graph(root)
+    for alias, value in scope.items():
+        if not isinstance(alias, str) or alias in names or alias == target_name:
+            continue
+        state = _state(value)
+        if not isinstance(state, Node):
+            continue
+        if getattr(state, "kind", None) in _NEVER_HAVOC_KINDS:
+            continue
+        holds = alias in containing
+        if holds or (graph and _graph(state) & graph):
+            holder = _havoc(
+                site,
+                alias,
+                tags,
+                prior=_read_of(value),
+                conditions=[(receiver, (method, False, not holds))],
+            )
+            names.append(alias)
+            states.append(holder)
+            evaluated.append(holder)
+    rebinds = None
+    if target_name is not None:
+        result = _projection(site, call, 1, tags, pair_key)
+        names.append(target_name)
+        if rebinds_name and isinstance(evaluation, str):
+            # ``r += x`` writes ``r`` under the statement's key: every later
+            # read of ``r`` (a live loop's carried write, a function's read of
+            # a module global) reads that key.  ``r`` still denotes the object
+            # the call was made on (``of``): a container's in-place result is
+            # the container, and an immutable receiver's aliases keep their
+            # own value (``PathAfterCall``'s ``prior``).
+            evaluated.append(result)
+            rebinds = (target_name, len(evaluated) - 1, evaluation)
+            states.append(
+                _evaluation_ref(
+                    statement, statement.target.span, evaluation, name, of=after
+                )
+            )
+        else:
+            states.append(result)
+    return _statement(
+        statement, names, states, evaluated, tags, pair_key, rebinds=rebinds
+    )
 
 
 def _mutation_through(statement, scope, call, root_read, steps, target_name):
     """The path door's statement for ``call`` on the object ``root_read``
-    reaches through ``steps`` (none: the object ``root_read`` denotes)."""
-    from .backend import Child, Children, Leaf
+    reaches through ``steps``."""
     from .nodes import Node
-    from .shadow import _handle_of, occurrence_tags_of
+    from .shadow import occurrence_tags_of
 
     receiver = call.func.value
     # ``root`` is the object ``root_read`` denotes (``_identity``: the display
@@ -1110,17 +1449,8 @@ def _mutation_through(statement, scope, call, root_read, steps, target_name):
         # for the store to rebind.
         return None
     tags = occurrence_tags_of(statement)
-    path_call = _materialize(
-        call,
-        "PathContainerCall",
-        (
-            ("receiver", Child(_handle_of(receiver))),
-            ("args", Children(tuple(_handle_of(arg) for arg in call.args))),
-            ("method", Leaf(call.func.attr)),
-            ("fallback", Child(_handle_of(call))),
-            ("occurrence", Leaf(_evaluation(call, tags))),
-        ),
-        tags,
+    path_call = _container_call(
+        call, receiver, call.func.attr, call.args, call, tags, label="receiver"
     )
     member = _static_member(root, steps)
     # Distinct display nodes are distinct objects: the source alone says the
@@ -1278,22 +1608,36 @@ def _straight_line_helper(definition) -> bool:
 
 
 def _closed_state(state, actual) -> bool:
-    """``state`` is ``actual`` after cited mutations with closed operands."""
-    from .nodes import BuiltinContainerCall, BuiltinContainerProjection
+    """``state`` is ``actual`` after mutations through the one door
+    (``name_mutation_statement``) with closed operands."""
+    from .nodes import PathAfterCall, PathContainerCall
 
-    node = state
+    node = _identity(state)
     while True:
-        if same_object(node, actual):
-            return True
-        if isinstance(node, BuiltinContainerProjection) and node.index == 0:
+        if (
+            isinstance(node, PathAfterCall)
+            and node.mode == "root"
+            and not node.steps
+        ):
             call = node.call
-            if not isinstance(call, BuiltinContainerCall):
+            if not isinstance(call, PathContainerCall):
                 return False
             if not all(_closed_operand(arg) for arg in call.args):
                 return False
-            node = call.receiver
+            node = _identity(call.receiver)
             continue
-        return False
+        return same_object(node, actual)
+
+
+def _mutated(state) -> bool:
+    """Whether ``state`` is an object after a mutation through the one door
+    (its value is not the object's value before)."""
+    node = _identity(state)
+    return (
+        getattr(node, "kind", None) == "PathAfterCall"
+        and node.mode == "root"
+        and not node.steps
+    )
 
 
 def _closed_operand(node) -> bool:
@@ -1312,7 +1656,8 @@ def _closed_operand(node) -> bool:
 
 def source_helper_actual_states(call, bound_refs):
     """``(havoc_targets, [(actual, state, index)])`` for a call to a followable
-    source helper, or None when the call is not one (it keeps its havoc)."""
+    source helper, or None when the call is not one (it keeps its havoc).
+    ``havoc_targets`` are ``_rebind``'s ``(object, rules, subject)``."""
     from .nodes import Call, Name, Starred
 
     if (
@@ -1350,17 +1695,19 @@ def source_helper_actual_states(call, bound_refs):
     states = []
     claimed = {id(arg) for _index, arg in actuals}
     for index, arg in enumerate(call.args):
-        exposed = [
-            node for node in _exposed(arg, bound_refs) if id(node) not in claimed
-        ]
-        havoc_targets.extend(exposed)
+        havoc_targets.extend(
+            (node, _OPERAND_RULES, None)
+            for node in _exposed(arg, bound_refs)
+            if id(node) not in claimed
+        )
     for index, actual in actuals:
         name = params[index].name
         state = _state(net[name]) if name in net else actual
         if not _closed_state(state, actual):
-            havoc_targets.append(actual)
+            havoc_targets.append((actual, None, None))
             continue
-        if same_object(state, actual):
+        if not _mutated(state):
+            # The helper left the object as it was.
             continue
         states.append((actual, state, index))
     return havoc_targets, states
@@ -1430,7 +1777,12 @@ def _untouched(name, pre_scope, scope, havocked) -> bool:
 # not read anyway.
 _IDENTITY_LEAF_KINDS = frozenset({"Constant", "FormalRef", "BindingCoordinateRef"})
 _IDENTITY_STATE_KINDS = frozenset(
-    {"BuiltinContainerProjection", "SourceCallActualAfter", "OpaqueObjectStateV1"}
+    {
+        "PathAfterCall",
+        "BuiltinContainerProjection",
+        "SourceCallActualAfter",
+        "OpaqueObjectStateV1",
+    }
 )
 
 
@@ -1438,8 +1790,18 @@ def _identity_root(node):
     """The creation node (or formal) whose object ``node`` denotes, else None."""
     node = _identity(node)
     kind = getattr(node, "kind", None)
+    if kind == "PathAfterCall":
+        # The object after the one door's call is the object it was called on.
+        if node.mode == "root" and not node.steps:
+            return _identity_root(node.root)
+        return None
     if kind == "BuiltinContainerProjection":
-        return _identity_root(node.call.receiver) if node.index == 0 else None
+        # ``r += x``: a builtin container's in-place result is itself.
+        call = node.call
+        if node.index == 1 and str(getattr(call, "method", "")).startswith("__i"):
+            if decided_container_kind(call.receiver) is not None:
+                return _identity_root(call.receiver)
+        return None
     if kind == "SourceCallActualAfter":
         return _identity_root(node.state)
     if kind == "OpaqueObjectStateV1":

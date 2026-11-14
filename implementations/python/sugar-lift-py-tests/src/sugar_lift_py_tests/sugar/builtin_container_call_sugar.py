@@ -1,27 +1,30 @@
-"""A mutating method call on a built-in container, and the receiver it leaves.
+"""A mutating operation on an object, and the object it leaves.
 
-``r.append(x)`` on a receiver whose type is decided as ``builtins.list`` (or
-``dict``/``set``) has two products: the call's value and the receiver's
-contents afterwards. ``BuiltinContainerCallSugar`` evaluates the receiver and
-the operands once, in Python's order, and answers both as one pair
-``(post-state, result)`` from the cited law (``floor/builtin_container_method``):
-a decided exceptional exit is the call's own halt, at the call.
+``r.append(x)``, ``r[k] = v``, ``del r[k]``, ``r += x`` have two products: the
+operation's value and the receiver's contents afterwards.
+``PathContainerCallSugar`` (the one door, ``container_mutation.
+name_mutation_statement``) evaluates the receiver and the operands once, in
+Python's order, and answers both as one pair ``(post-state, result)``.  The
+VALUE the receiver holds decides: a ``ListValue``/``DictValue``/``SetValue``
+takes the cited law (``floor/builtin_container_method``), a decided
+exceptional exit being the operation's own halt, at it; any other value takes
+the ordinary operation, and its contents afterwards are unknown (an immutable
+value is unchanged).
 
-When the operands do not decide the effect, the call is two-faced like every
-call with no projected body: it completes under the opaque atom
+When the operands do not decide a cited mutation, the call is two-faced like
+every call with no projected body: it completes under the opaque atom
 ``python:builtin_method.completes(python:builtin_method(<type>.<name>, site))``
 and halts with an ``UndeterminedRaiseEffect`` under the complement. Its
 completed pair names an unknown result and an unknown post-state keyed on the
 same occurrence -- the receiver's prior contents are never kept.
 
-``ReceiverAfterCallSugar`` is a receiver an opaque call (or a call that may
-reach it through an alias) can have changed: an unknown value keyed on that
-call's occurrence. The statement evaluates it there, so a later read sees the
-one value minted at the call (``sugar/assigned_value.py``).
+``ReceiverAfterCallSugar`` is a value a call may have changed: an unknown
+keyed on that call's occurrence, unless the value the call met decides that
+it did not (``_may_change``).
 
-The statement (``ContainerMutationStatementSugar``) evaluates the pair (and any
-havoc) at the statement; the receiver and the call's target read projections
-of it, which answer from that one evaluation.
+The statement (``ContainerMutationStatementSugar``) evaluates the pair (and the
+values after it) at the statement; the receiver and the call's target read
+projections of it, which answer from that one evaluation.
 """
 
 from __future__ import annotations
@@ -42,7 +45,10 @@ def _not_verdict(cls, floor_name, reason):
 
 
 def _opaque_pair(kind, method, site):
-    """Two faces for an undecided call: an opaque completion or a raise."""
+    """Two faces for an undecided call: an opaque completion or a raise.
+
+    An in-place operator (``__iadd__``...) of a builtin container returns
+    the container: its result is its post-state."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
     from sugar_lift_py_tests.floor.tuple_value import TupleValue
@@ -53,14 +59,14 @@ def _opaque_pair(kind, method, site):
     target = f"{kind}.{method}"
     call = ctor("python:builtin_method", (str_const(target), str_const(key)))
     completes = atomic("python:builtin_method.completes", [call])
-    pair = TupleValue(
-        (
-            SymbolicValue(ctor("python:builtin_method.post_state", (call,))),
-            SymbolicValue(ctor("python:builtin_method.result", (call,))),
-        )
+    post = SymbolicValue(ctor("python:builtin_method.post_state", (call,)))
+    result = (
+        post
+        if _in_place(method)
+        else SymbolicValue(ctor("python:builtin_method.result", (call,)))
     )
     return ExitSet.two_faced(
-        pair,
+        TupleValue((post, result)),
         UndeterminedRaiseEffect(
             blame=str(site) if site is not None else None,
             occurrence=key if site is not None else None,
@@ -71,81 +77,71 @@ def _opaque_pair(kind, method, site):
     )
 
 
-@dataclass(frozen=True)
-class BuiltinContainerCallSugar(ConstructedTermSugar):
-    """``receiver.<method>(*args)`` on a decided list/dict/set: ``(post, result)``."""
+def _in_place(method) -> bool:
+    """``__iadd__``, ``__ior__``...: an augmented assignment's operator."""
+    return (
+        isinstance(method, str)
+        and method.startswith("__i")
+        and method.endswith("__")
+        and method not in ("__init__", "__iter__", "__index__")
+    )
 
-    receiver: Sugar
-    method: str
-    args: tuple
-    kind: str
-    site: object = dataclass_field(compare=False)
-    # ``d[k] = v`` evaluates ``v`` before the target ``d`` and key ``k``.
-    value_first: bool = False
-    # One per substituted call: iterations of an unrolled loop share the site.
-    evaluation_token: object = dataclass_field(default=None, compare=False)
 
-    @classmethod
-    def witnesses(cls):
-        return _not_verdict(
-            cls,
-            "TupleValue",
-            "the pair is consumed by the receiver and result projections",
-        )
+def _immutable(value, depth=0) -> bool:
+    """A value of an immutable builtin type all the way down: no call can
+    change it, and a name bound to it keeps it."""
+    from sugar_lift_py_tests.floor.bytes_value import BytesValue
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+        TrueBoolLiteralSugar,
+    )
 
-    def to_term(self, *, owner: str):
-        from sugar_lift_py_tests.ir import ctor, str_const
+    if depth > 32:
+        return False
+    if type(value) in (
+        TermValue,
+        StringValue,
+        BytesValue,
+        NoneValue,
+        TrueBoolLiteralSugar,
+        FalseBoolLiteralSugar,
+    ):
+        return getattr(value, "formal_coordinate", None) is None
+    if type(value) is TupleValue:
+        return all(_immutable(element, depth + 1) for element in value.elements)
+    return False
 
-        return ctor(
-            "python:builtin-container-call",
-            (
-                self.occurrence_term(owner=owner),
-                str_const(f"{self.kind}.{self.method}"),
-                self.receiver.to_term(owner=owner),
-                *(arg.to_term(owner=owner) for arg in self.args),
-            ),
-            symbol_kind="coordinate",
-        )
 
-    def desugar(self, ctx: object = None) -> ExitSet:
-        from sugar_lift_py_tests.floor.named_expression_value import (
-            consume_operands,
-            reduce_operands,
-        )
+def _may_change(value, method, pure, sharer) -> bool:
+    """Whether a call may have changed ``value``, the value it met.
 
-        # The receiver and the arguments are the call's operands: a walrus in
-        # one (``xs.append((x := 5))``) binds once, through the one operand
-        # door, and the law holds the values they present.  They reduce left
-        # to right, each under the state after the ones before it
-        # (``reduce_operands``).
-        def apply(receiver, *operands):
-            return self._apply(receiver, operands, ctx)
+    ``method`` names the receiver's method when the value is the receiver
+    (empty for an operand); ``pure``: the call is a cited pure builtin;
+    ``sharer``: the value is one the receiver holds or shares, which only an
+    ordinary call (a receiver the container law does not cite) can reach."""
+    from sugar_lift_py_tests.floor import builtin_container_method as law
+    from sugar_lift_py_tests.source_call_resolution import builtin_typed_value
 
-        if self.value_first:
-            *keys, value = self.args
-            # In evaluation order: the stored value first.
-            return reduce_operands((value, self.receiver, *keys), ctx).and_then(
-                lambda operands: consume_operands(
-                    lambda stored, receiver, *operands: self._apply(
-                        receiver, (*operands, stored), ctx
-                    ),
-                    *operands,
-                )
-            )
-        return reduce_operands((self.receiver, *self.args), ctx).and_then(
-            lambda operands: consume_operands(apply, *operands)
-        )
-
-    def _apply(self, receiver, operands, ctx):
-        from sugar_lift_py_tests.floor import builtin_container_method as law
-
-        if law.container_kind(receiver) == self.kind:
-            decided = law.apply(
-                self.kind, self.method, receiver, operands, self.site, ctx
-            )
-            if decided is not None:
-                return decided
-        return _opaque_pair(self.kind, self.method, self.site)
+    if _immutable(value):
+        return False
+    kind = law.container_kind(value)
+    if sharer:
+        return kind is None
+    if kind is None:
+        # An ordinary method of a mutating name may change its receiver; an
+        # operand the source does not type keeps its value, as it always has.
+        return method in law.ANY_MUTATING_METHOD or _in_place(method)
+    if method and method not in law.MUTATING_METHODS[kind] and not _in_place(method):
+        return False
+    if pure and builtin_typed_value(value):
+        return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -191,11 +187,22 @@ class BuiltinContainerProjectionSugar(ConstructedTermSugar):
 
 @dataclass(frozen=True)
 class ReceiverAfterCallSugar(ConstructedTermSugar):
-    """A receiver a call may have changed: unknown after that call."""
+    """A value a call may have changed, read after that call.
+
+    With no ``rules`` it is unknown after the call.  With ``rules`` --
+    ``(method, pure, sharer, subject)``, ``subject`` an index into
+    ``subjects`` or -1 for ``prior`` itself -- the value decides: ``prior``
+    (the name's read before the call) is kept when it is immutable, or when
+    no rule's object has a value the call may have changed
+    (``_may_change``); otherwise it is unknown, never the pre-call
+    contents."""
 
     label: str
     site: object = dataclass_field(compare=False)
     evaluation_token: object = dataclass_field(default=None, compare=False)
+    prior: object = None
+    subjects: tuple = ()
+    rules: tuple = ()
 
     @classmethod
     def witnesses(cls):
@@ -213,19 +220,31 @@ class ReceiverAfterCallSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
-        del ctx
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.ir import ctor, str_const
-        from sugar_lift_py_tests.occurrence import occurrence_key
-
-        return ExitSet.completed(
-            SymbolicValue(
-                ctor(
-                    "python:receiver_after_call",
-                    (str_const(occurrence_key(self.site)), str_const(self.label)),
-                )
-            )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            plain_completed_value,
         )
+
+        unknown = ExitSet.completed(_unknown_after(self.site, self.label))
+        if self.prior is None or not self.rules:
+            return unknown
+        held = self.prior.desugar(ctx)
+        value = plain_completed_value(held)
+        if value is None:
+            return unknown
+        if _immutable(value):
+            return held
+        met = {}
+        for method, pure, sharer, subject in self.rules:
+            if subject not in met:
+                if subject < 0:
+                    met[subject] = value
+                else:
+                    met[subject] = plain_completed_value(
+                        self.subjects[subject].desugar(ctx)
+                    )
+            if met[subject] is None or _may_change(met[subject], method, pure, sharer):
+                return unknown
+        return held
 
 
 @dataclass(frozen=True)
@@ -236,8 +255,12 @@ class ContainerMutationStatementSugar(Sugar):
     site: object = dataclass_field(compare=False)
     # The statement's key: the call's pair (``evaluated[0]``) is bound under
     # it, and the receiver's post-state and the call's value read it there
-    # (``BuiltinContainerProjection``), never the call evaluated again.
+    # (``PathAfterCall``, ``BuiltinContainerProjection``), never the call
+    # evaluated again.
     evaluation: str | None = None
+    # ``r += x``: ``(key, index)``, the in-place result ``evaluated[index]``
+    # bound under ``key``, the one every later read of ``r`` reads.
+    result_evaluation: tuple | None = None
     halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
@@ -258,18 +281,27 @@ class ContainerMutationStatementSugar(Sugar):
 
         def record(active, completed):
             # The receiver's post-state is this statement's store testimony,
-            # as a subscript store's updated container always was.
+            # as a subscript store's updated container always was; an
+            # immutable receiver (``n += 1``) was not changed and testifies
+            # nothing.
             pair = completed[0]
             entries = ()
-            if type(pair) is TupleValue and len(pair.elements) == 2:
+            if (
+                type(pair) is TupleValue
+                and len(pair.elements) == 2
+                and not _immutable(pair.elements[0])
+            ):
                 entries = (pair.elements[0],)
             return ExitSet.completed(_ReducedBlock(entries, True, (), (), active))
 
+        evaluations = ((self.evaluation, 0),) if self.evaluation else ()
+        if self.result_evaluation is not None:
+            evaluations = (*evaluations, self.result_evaluation)
         return evaluate_assignment_values(
             self.evaluated,
             ctx,
             tail=record,
-            evaluations=((self.evaluation, 0),) if self.evaluation else (),
+            evaluations=evaluations,
         )
 
 
@@ -288,19 +320,30 @@ def _unknown_after(site, label):
 
 @dataclass(frozen=True)
 class PathContainerCallSugar(ConstructedTermSugar):
-    """``<path>.<method>(*args)``: ``(receiver after, result)`` of one call.
+    """One mutating operation: ``(receiver after, result)``.
 
-    The receiver (the object the path evaluates to) is evaluated once. A
-    decided list/dict/set receiver takes the cited CPython mutation; any other
-    receiver takes the ordinary call (``fallback``), which reads the receiver
-    from this one evaluation, and leaves the receiver's contents unknown."""
+    ``r.append(x)``, ``r[k] = v`` (``__setitem__``), ``del r[k]``
+    (``__delitem__``), ``r += x`` (``__iadd__``...), on a name or through a
+    path.  The receiver is evaluated once.  A ``ListValue``/``DictValue``/
+    ``SetValue`` receiver takes the cited CPython mutation; any other
+    receiver takes the ordinary operation -- the call (``fallback``), which
+    reads the receiver from this one evaluation, the floor's item store or
+    delete, the in-place operator (``operator``) -- and its contents
+    afterwards are unknown, an immutable receiver's unchanged."""
 
     receiver: Sugar
     method: str
     args: tuple
-    fallback: Sugar
+    fallback: object
     site: object = dataclass_field(compare=False)
     evaluation_token: object = dataclass_field(default=None, compare=False)
+    # Names the unknown the receiver is after an ordinary call.
+    label: str = "receiver"
+    # ``d[k] = v`` evaluates ``v`` before the target ``d`` and key ``k``.
+    value_first: bool = False
+    # ``r OP= x``: the operator (``project_inplace``) and its source token.
+    operator: object = dataclass_field(default=None, compare=False)
+    operator_site: object = dataclass_field(default=None, compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -325,6 +368,108 @@ class PathContainerCallSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
+        if self.fallback is None:
+            return self._operate(ctx)
+        return self._call(ctx)
+
+    def _operate(self, ctx) -> ExitSet:
+        """An item store, an item delete or an in-place operator: every
+        operand is reduced once, in Python's order, then the receiver's
+        value decides."""
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+            reduce_operands,
+        )
+
+        # The receiver and the operands are the operation's operands: a
+        # walrus in one binds once, through the one operand door.  They
+        # reduce left to right, each under the state after the ones before
+        # it (``reduce_operands``).
+        if self.value_first and self.args:
+            *keys, value = self.args
+            # In evaluation order: the stored value first.
+            return reduce_operands((value, self.receiver, *keys), ctx).and_then(
+                lambda operands: consume_operands(
+                    lambda stored, receiver, *held: self._apply(
+                        receiver, (*held, stored), ctx
+                    ),
+                    *operands,
+                )
+            )
+        return reduce_operands((self.receiver, *self.args), ctx).and_then(
+            lambda operands: consume_operands(
+                lambda receiver, *held: self._apply(receiver, held, ctx),
+                *operands,
+            )
+        )
+
+    def _apply(self, receiver, operands, ctx) -> ExitSet:
+        from sugar_lift_py_tests.floor import builtin_container_method as law
+
+        kind = law.container_kind(receiver)
+        if kind is not None and self.method in law.MUTATING_METHODS[kind]:
+            decided = law.apply(kind, self.method, receiver, operands, self.site, ctx)
+            if decided is not None:
+                return decided
+            return _opaque_pair(kind, self.method, self.site)
+        return self._ordinary(receiver, operands, ctx)
+
+    def _ordinary(self, receiver, operands, ctx) -> ExitSet:
+        """The operation on a value the container law does not cite: the
+        floor's own item store or delete, or the in-place operator."""
+        from sugar_lift_py_tests.floor import builtin_container_method as law
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+        if self.method == "__setitem__" and len(operands) == 2:
+            from sugar_lift_py_tests.sugar.store_effect_sugar import (
+                SubscriptStoreEffectSugar,
+            )
+
+            key, value = operands
+            # The floor's store answers the receiver after it.
+            return SubscriptStoreEffectSugar.project_setitem(
+                receiver, key, value, self.site, ctx
+            ).and_then(lambda post: ExitSet.completed(TupleValue((post, law._none()))))
+        if self.method == "__delitem__" and len(operands) == 1:
+            from sugar_lift_py_tests.sugar.delete_effect_sugar import (
+                SubscriptDeleteEffectSugar,
+            )
+
+            (key,) = operands
+            return SubscriptDeleteEffectSugar.project_delitem(
+                receiver, key, self.site, ctx
+            ).and_then(lambda post: ExitSet.completed(TupleValue((post, law._none()))))
+        if _in_place(self.method) and self.operator is not None and len(operands) == 1:
+            from sugar_lift_py_tests.sugar.augassign_sugar import project_augmented
+
+            (operand,) = operands
+            post = self._after(receiver)
+            return project_augmented(
+                receiver,
+                operand,
+                operator=type(self.operator).inplace_operator,
+                projector=self.operator.project_inplace,
+                site=self.operator_site if self.operator_site is not None else self.site,
+                ctx=ctx,
+            ).and_then(lambda result: ExitSet.completed(TupleValue((post, result))))
+        from sugar_source_tree.panic import SugarNotWritten
+
+        raise SugarNotWritten(
+            owner="PathContainerCallSugar._ordinary",
+            blame=self.site,
+            observed=f"{self.method} with {len(operands)} operand(s) and no call",
+            requested="an item store, an item delete or an in-place operator",
+            fix="construct the operation through name_mutation_statement",
+        )
+
+    def _after(self, receiver):
+        """The receiver after an ordinary operation: an immutable value is
+        unchanged; anything else is unknown, minted at the operation."""
+        if _immutable(receiver):
+            return receiver
+        return _unknown_after(self.site, self.label)
+
+    def _call(self, ctx) -> ExitSet:
         from sugar_lift_py_tests.context import ReduceContext
         from sugar_lift_py_tests.floor import builtin_container_method as law
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
@@ -334,11 +479,11 @@ class PathContainerCallSugar(ConstructedTermSugar):
         )
 
         key = assigned_key(self.receiver)
-        unknown = _unknown_after(self.site, "receiver")
+        unknown = _unknown_after(self.site, self.label)
 
-        def ordinary(call_ctx):
+        def ordinary(call_ctx, post=unknown):
             return self.fallback.desugar(call_ctx).and_then(
-                lambda result: ExitSet.completed(TupleValue((unknown, result)))
+                lambda result: ExitSet.completed(TupleValue((post, result)))
             )
 
         outcome = self.receiver.desugar(ctx)
@@ -370,14 +515,58 @@ class PathContainerCallSugar(ConstructedTermSugar):
                         *operands,
                     )
                 )
+            if _inherited_mapping_pop(receiver, self.method, len(self.args)):
+                # ``d.pop(k, default)`` on an instance of a source ``dict``
+                # subclass that does not define ``pop``: the inherited
+                # ``dict.pop`` over its constructed entries.
+                return reduce_operands(
+                    self.args, written_by(receiver, ctx)
+                ).and_then(
+                    lambda operands: consume_operands(
+                        lambda pop_key, default: _mapping_pop_pair(
+                            receiver, pop_key, default, self.site
+                        ),
+                        *operands,
+                    )
+                )
+            post = self._after(receiver)
             if key is None:
-                return ordinary(ctx)
+                return ordinary(ctx, post)
             base = ctx if ctx is not None else ReduceContext.root(
                 owner="PathContainerCallSugar"
             )
-            return ordinary(base.with_assigned_value(key, receiver))
+            return ordinary(base.with_assigned_value(key, receiver), post)
 
         return outcome.and_then(on_receiver)
+
+
+def _inherited_mapping_pop(receiver, method, arity) -> bool:
+    """``pop(key, default)`` on a constructed mapping object whose class
+    defines no ``pop`` of its own."""
+    from sugar_lift_py_tests.floor.mapping_object_value import MappingObjectValue
+
+    return (
+        method == "pop"
+        and arity == 2
+        and isinstance(receiver, MappingObjectValue)
+        and not any(
+            getattr(field, "name", None) == "pop"
+            for field in getattr(receiver, "class_fields", ())
+        )
+    )
+
+
+def _mapping_pop_pair(receiver, key, default, site):
+    """``(receiver after, value)`` of the inherited ``dict.pop(key, default)``."""
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+    from sugar_lift_py_tests.sugar.mapping_pop_result_sugar import mapping_pop_result
+    from sugar_lift_py_tests.sugar.mapping_pop_state_sugar import mapping_pop_state
+
+    return mapping_pop_state(receiver, key, site).and_then(
+        lambda post: mapping_pop_result(receiver, key, default, site).and_then(
+            lambda result: ExitSet.completed(TupleValue((post, result)))
+        )
+    )
 
 
 def _may_present(value, kind, depth=0) -> bool:
@@ -534,6 +723,10 @@ class PathAfterCallSugar(ConstructedTermSugar):
     unshared: bool
     site: object = dataclass_field(compare=False)
     evaluation_token: object = dataclass_field(default=None, compare=False)
+    # Names the unknown this read is when the call decided nothing.
+    label: str = ""
+    # No steps: the read of the name this rebinds, before the call.
+    prior: object = None
 
     @classmethod
     def witnesses(cls):
@@ -558,7 +751,9 @@ class PathAfterCallSugar(ConstructedTermSugar):
             plain_completed_value,
         )
 
-        unknown = ExitSet.completed(_unknown_after(self.site, self.mode))
+        unknown = ExitSet.completed(
+            _unknown_after(self.site, self.label or self.mode)
+        )
         pair = plain_completed_value(self.call.desugar(ctx))
         if pair is None:
             return unknown
@@ -576,12 +771,16 @@ class PathAfterCallSugar(ConstructedTermSugar):
         if type(pair) is not TupleValue or len(pair.elements) != 2:
             return unknown
         post = pair.elements[0]
+        if not self.steps:
+            # No path (``name_mutation_statement``): the object the call was
+            # made on, after it -- the cited post-state, an unknown minted at
+            # an ordinary call, or an immutable receiver unchanged, which
+            # every name bound to it keeps as its own value.
+            if _immutable(post) and self.prior is not None:
+                return self.prior.desugar(ctx)
+            return ExitSet.completed(post)
         if law.container_kind(post) is None:
             return unknown
-        if not self.steps:
-            # No path (``bound_receiver_mutation_statement``): the root is
-            # the object the call changed, and its post-state is the object.
-            return ExitSet.completed(post)
         rooted = plain_completed_value(self.root.desugar(ctx))
         if rooted is None:
             return unknown

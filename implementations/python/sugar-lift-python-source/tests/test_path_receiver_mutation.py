@@ -28,6 +28,7 @@ from sugar_lift_py_tests.floor import (
     TupleValue,
 )
 
+from test_assignment_evaluates_rhs import _rows
 from test_builtin_container_mutation import _only_return, _returns
 
 
@@ -267,3 +268,88 @@ def test_a_value_holding_a_ground_split_is_unknown_after_its_append(tmp_path):
     value = _only_return(tmp_path, source)
     assert value != ListValue((ListValue(_strings("a", "b")),))
     assert _unknown_after_call(value)
+
+
+# -- One door for every mutation on a name (#7757) ---------------------------
+#
+# ``r[k] = v``, ``del r[k]`` and ``r += x`` take the same door a method
+# mutator does, whatever ``r`` was given: the value ``r`` holds at reduce
+# decides, never the spelling of its right-hand side.
+
+
+def test_an_item_store_on_a_ground_split_is_read_through_the_name(tmp_path):
+    source = (
+        "def f():\n"
+        "    r = 'a b'.split()\n"
+        "    r[0] = 'z'\n"
+        "    return r\n"
+    )
+    assert _only_return(tmp_path, source) == ListValue(_strings("z", "b"))
+
+
+def test_an_item_delete_on_a_ground_split_is_read_through_the_name(tmp_path):
+    source = (
+        "def f():\n"
+        "    r = 'a b'.split()\n"
+        "    del r[0]\n"
+        "    return r\n"
+    )
+    assert _only_return(tmp_path, source) == ListValue(_strings("b"))
+
+
+def test_an_augmented_add_on_a_ground_split_is_read_through_the_name(tmp_path):
+    source = (
+        "def f():\n"
+        "    r = 'a b'.split()\n"
+        "    r += ['c']\n"
+        "    return r\n"
+    )
+    assert _only_return(tmp_path, source) == ListValue(_strings("a", "b", "c"))
+
+
+def test_every_mutation_of_a_ground_split_is_seen_through_an_alias(tmp_path):
+    # Discriminating: the alias names the same object, so it reads every
+    # mutation's post-state, never the pre-call ``['a', 'b']`` (the old
+    # syntax door left a split's alias stale for ``[k] =``/``del``/``+=``).
+    source = (
+        "def f():\n"
+        "    r = 'a b'.split()\n"
+        "    alias = r\n"
+        "    r[0] = 'z'\n"
+        "    del r[1]\n"
+        "    r += ['c']\n"
+        "    return (alias, r)\n"
+    )
+    expected = ListValue(_strings("z", "c"))
+    assert _only_return(tmp_path, source) == TupleValue((expected, expected))
+
+
+def test_an_augmented_add_on_an_int_keeps_its_aliases(tmp_path):
+    # ``n += 1`` takes the same door; an int is not changed in place, so the
+    # alias keeps its own value and ``n`` reads the in-place result.
+    source = (
+        "def f():\n"
+        "    n = 1\n"
+        "    m = n\n"
+        "    n += 1\n"
+        "    n += 1\n"
+        "    return (m, n)\n"
+    )
+    assert _only_return(tmp_path, source) == TupleValue((TermValue(1), TermValue(3)))
+
+
+def test_a_parameter_reads_the_post_state_of_its_append(tmp_path):
+    # A formal takes the one door too: once the caller's list is supplied,
+    # ``xs`` reads the object after the call (unknown here: the call ran on
+    # the formal), never the pre-call ``[]``.
+    from test_formal_method_call_defers import _carrier, _discharge
+
+    source = "def f(xs):\n    xs.append(1)\n    return xs\n"
+    exits = _discharge(_carrier(tmp_path, source), ListValue(()))
+    returns = [payload for kind, payload, _ in _rows(exits) if kind == "return"]
+    assert returns
+    assert ListValue(()) not in returns
+    assert all(
+        _unknown_after_call(value) and value.term.args[1].value == "xs"
+        for value in returns
+    )
