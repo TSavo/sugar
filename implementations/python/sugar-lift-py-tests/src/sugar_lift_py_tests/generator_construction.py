@@ -87,32 +87,92 @@ class YieldStepV1:
 
 
 @dataclass(frozen=True)
-class YieldAssignStepV1:
-    """``y = yield v``: a yield whose resumed value is assigned to one name.
+class YieldAssignUnpackV1:
+    """The unpacking a yield assignment's targets spell (``a, b = yield v``,
+    ``a, *b = yield v``): flat Name leaves with at most one ``*Name``.
 
-    The yield is ``yield_step`` (it yields ``v``, recording any walrus bind the
-    value carries, as every yield does).  The assignment is the step the yield
-    resumes at (``_ResumeAssignStepV1``): it binds ``name`` to the value the
-    resume sent (``send``'s argument; ``None`` on a plain ``next``) in the
-    frame's binding state, keyed like any assignment (``evaluation``: the
-    target's projection of the statement's evaluation, ``Assign
-    .target_evaluations``).  ``evaluation`` is None only for a body that was
-    never substituted, whose reads of ``name`` are name reads.
+    It is the demand an ordinary ``a, b = e`` makes of its one evaluation
+    (``DynamicUnpackAssignSugar``): ``SequenceProjectionOperation`` asks the
+    value what it unpacks to.
     """
 
-    yield_step: YieldStepV1
-    name: str
+    prefix_names: tuple[str, ...]
+    star_name: str | None = None
+    suffix_names: tuple[str, ...] = ()
+
+    def operation(self, *, owner: str, blame: object):
+        from sugar_lift_py_tests.operations import SequenceProjectionOperation
+
+        if self.star_name is None:
+            return SequenceProjectionOperation(
+                target_names=self.prefix_names, owner=owner, blame=blame
+            )
+        return SequenceProjectionOperation(
+            target_names=(*self.prefix_names, *self.suffix_names),
+            owner=owner,
+            blame=blame,
+            star_name=self.star_name,
+            prefix_names=self.prefix_names,
+            suffix_names=self.suffix_names,
+        )
+
+
+@dataclass(frozen=True)
+class YieldAssignStepV1:
+    """``<targets> = yield v`` and ``<targets> = yield from xs``: a suspension
+    whose resumed value is assigned to the statement's targets.
+
+    ``yield_step`` suspends: a ``YieldStepV1`` yields ``v`` (recording any
+    walrus bind the value carries, as every yield does); a ``YieldFromStepV1``
+    delegates to the sub-iterator.  The assignment is the step it resumes at
+    (``_ResumeAssignStepV1``).  After a yield it binds the value the resume
+    sent (``send``'s argument; ``None`` on a plain ``next``) to every target
+    the way an ordinary assignment of those targets binds its one evaluation:
+
+    * ``y = ...``, ``y: T = ...`` and ``a = b = ...`` bind the value to each
+      Name, in source order;
+    * ``a, b = ...`` / ``a, *b = ...`` (``unpack``) unpack the value through
+      ``SequenceProjectionOperation`` and bind each member to its Name.
+
+    ``targets`` is ``(name, evaluation)`` per bound Name: ``evaluation`` is the
+    key the assignment's evaluation binds that Name under (``Assign
+    .target_evaluations``; a projection of the statement's evaluation for an
+    unpack), None only for a body that was never substituted, whose reads are
+    name reads.  ``occurrence`` is the statement's fragment (the unpack's
+    blame).
+
+    After a delegation the value to bind is the sub-iterator's return value
+    (``StopIteration.value``), which the yield-from step does not carry: the
+    resume refuses by name rather than bind a value it does not have.
+    """
+
+    yield_step: YieldStepV1 | YieldFromStepV1
+    targets: tuple[tuple[str, str | None], ...]
     fragment_cid: str
-    evaluation: str | None = None
+    unpack: YieldAssignUnpackV1 | None = None
+    occurrence: object = field(default=None, compare=False, repr=False)
+
+    def resume_step(self) -> "_ResumeAssignStepV1":
+        return _ResumeAssignStepV1(
+            self.targets,
+            self.fragment_cid,
+            self.unpack,
+            self.occurrence,
+            delegated=isinstance(self.yield_step, YieldFromStepV1),
+        )
 
 
 @dataclass(frozen=True)
 class _ResumeAssignStepV1:
-    """Where a ``YieldAssignStepV1`` suspends: the assignment of the sent value."""
+    """Where a ``YieldAssignStepV1`` suspends: the assignment of the resumed
+    value (the sent value after a yield; the delegation's return value after a
+    ``yield from``)."""
 
-    name: str
+    targets: tuple[tuple[str, str | None], ...]
     fragment_cid: str
-    evaluation: str | None = None
+    unpack: YieldAssignUnpackV1 | None = None
+    occurrence: object = field(default=None, compare=False, repr=False)
+    delegated: bool = False
 
 
 @dataclass(frozen=True)
@@ -812,6 +872,28 @@ def _generator_value_testimony(value: object, *, owner: str) -> dict:
     )
 
 
+def _yield_assign_targets_testimony(targets) -> list:
+    """Each bound Name of a yield assignment, with its evaluation key."""
+    rows = []
+    for name, evaluation in targets:
+        row = {"name": name}
+        if evaluation is not None:
+            row["evaluation"] = evaluation
+        rows.append(row)
+    return rows
+
+
+def _yield_assign_unpack_testimony(unpack) -> dict | None:
+    """The unpacking a yield assignment's targets spell, or None."""
+    if unpack is None:
+        return None
+    return {
+        "prefixNames": list(unpack.prefix_names),
+        "starName": unpack.star_name,
+        "suffixNames": list(unpack.suffix_names),
+    }
+
+
 def _generator_step_testimony(step: object, *, owner: str) -> dict:
     """Content-addressed testimony for one generator step."""
     if isinstance(step, YieldStepV1):
@@ -820,24 +902,21 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
             "value": _generator_value_testimony(step.value, owner=owner),
         }
     if isinstance(step, YieldAssignStepV1):
-        payload = {
+        return {
             "kind": "yield-assign",
-            "name": step.name,
             "fragmentCid": step.fragment_cid,
+            "targets": _yield_assign_targets_testimony(step.targets),
+            "unpack": _yield_assign_unpack_testimony(step.unpack),
             "yield": _generator_step_testimony(step.yield_step, owner=owner),
         }
-        if step.evaluation is not None:
-            payload["evaluation"] = step.evaluation
-        return payload
     if isinstance(step, _ResumeAssignStepV1):
-        payload = {
+        return {
             "kind": "resume-assign",
-            "name": step.name,
             "fragmentCid": step.fragment_cid,
+            "targets": _yield_assign_targets_testimony(step.targets),
+            "unpack": _yield_assign_unpack_testimony(step.unpack),
+            "delegated": step.delegated,
         }
-        if step.evaluation is not None:
-            payload["evaluation"] = step.evaluation
-        return payload
     if isinstance(step, YieldFromStepV1):
         return {
             "kind": "yield-from",
@@ -1776,25 +1855,14 @@ class GeneratorConstructionV1:
             arms = ExceptArmsStepV1(step.handlers, step.fragment_cid, step.site)
             return self._spliced((step.yield_step, arms))._transition(requested)
         if isinstance(step, YieldAssignStepV1):
-            # ``y = yield v``: the yield suspends here; the assignment of the
-            # sent value is the step it resumes at.
-            receive = _ResumeAssignStepV1(
-                step.name, step.fragment_cid, step.evaluation
-            )
-            return self._spliced((step.yield_step, receive))._transition(requested)
+            # ``<targets> = yield v`` / ``= yield from xs``: the suspension
+            # happens here; the assignment of the resumed value is the step
+            # it resumes at.
+            return self._spliced(
+                (step.yield_step, step.resume_step())
+            )._transition(requested)
         if isinstance(step, _ResumeAssignStepV1):
-            sent = self._sent_value(requested)
-            if isinstance(sent, GeneratorTransitionGapV1):
-                return sent
-            binding = GeneratorAssignBindingV1(
-                step.name, sent, step.fragment_cid, evaluation=step.evaluation
-            )
-            machine = replace(
-                self,
-                cursor=self.cursor + 1,
-                binding_state=(*self.binding_state, binding),
-            )
-            return machine._transition(requested)
+            return self._transition_resume_assign(step, requested)
         if isinstance(step, IfStepV1):
             return self._transition_branch(step, requested)
         if isinstance(step, ReturnStepV1):
@@ -1919,6 +1987,67 @@ class GeneratorConstructionV1:
         machine = replace(
             self,
             steps=(*self.steps[: self.cursor], runtime, *self.steps[self.cursor + 1 :]),
+        )
+        return machine._transition(requested)
+
+    def _transition_resume_assign(self, step: _ResumeAssignStepV1, requested: str):
+        """Bind the resumed value to a yield assignment's targets.
+
+        After a yield the value is the one the resume sent
+        (``_sent_value``).  Each Name of a plain or chained target binds it;
+        an unpacking target asks the value what it unpacks to, as an ordinary
+        ``a, b = e`` asks its one evaluation (``YieldAssignUnpackV1``): a
+        halted unpack (too few members, runtime cardinality) halts here and
+        binds nothing.  Each bound Name is keyed like any assignment of it
+        (``GeneratorAssignBindingV1.evaluation``).
+
+        After a ``yield from`` the value is the sub-iterator's return value,
+        which the yield-from step does not carry: refused by name.
+        """
+        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
+
+        names = ", ".join(name for name, _evaluation in step.targets)
+        if step.delegated:
+            return self._gap(
+                requested,
+                f"{names} = yield from: the delegation's return value "
+                "(StopIteration.value) is not carried by the yield-from step",
+            )
+        sent = self._sent_value(requested)
+        if isinstance(sent, GeneratorTransitionGapV1):
+            return sent
+        if step.unpack is None:
+            members = tuple((name, sent) for name, _evaluation in step.targets)
+        else:
+            unpacked = _step_exits(
+                step.unpack.operation(
+                    owner="GeneratorConstructionV1.YieldAssignStepV1.unpack",
+                    blame=step.occurrence,
+                ).submit(sent, self._guard_evaluation_context())
+            )
+            if _every_arm_halts(unpacked):
+                return self._fold_pending_cited_opaque_exits(
+                    self._halts_here(unpacked)
+                )
+            if not _plain_completion(unpacked) or not isinstance(
+                unpacked.completed_value(), ScopeRebinds
+            ):
+                return self._gap(
+                    requested,
+                    f"{names} = yield: unpack returned {type(unpacked).__name__}",
+                )
+            members = unpacked.completed_value().bindings
+        keys = dict(step.targets)
+        bindings = tuple(
+            GeneratorAssignBindingV1(
+                name, value, step.fragment_cid, evaluation=keys.get(name)
+            )
+            for name, value in members
+        )
+        machine = replace(
+            self,
+            cursor=self.cursor + 1,
+            binding_state=(*self.binding_state, *bindings),
         )
         return machine._transition(requested)
 
@@ -2369,7 +2498,7 @@ class GeneratorConstructionV1:
         Python's with law runs ``__exit__`` on every outgoing body edge,
         including a return, a raise, or a body halt such as a failed
         attribute store.
-        ``_compose_finally_for_nested_with`` seats cleanup before a return
+        The step producer's ``compose_finally`` seats cleanup before a return
         or raise and also on fall-through, so the remaining steps after
         that terminal include a finally copy and then
         ``NestedCitedOpaqueExitStepV1``. A return or raise must not skip

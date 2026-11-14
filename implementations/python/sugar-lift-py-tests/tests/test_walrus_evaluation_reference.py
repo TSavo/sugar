@@ -598,7 +598,9 @@ def test_a_yield_assignment_binds_the_sent_value_under_its_key() -> None:
     machine = _generator(
         "yield_assign",
         YieldAssignStepV1(
-            YieldStepV1(_walrus_sugar("x", 5)), "y", "fragment:yield-assign", Y_KEY
+            YieldStepV1(_walrus_sugar("x", 5)),
+            (("y", Y_KEY),),
+            "fragment:yield-assign",
         ),
         ReturnStepV1(EvaluationRefSugar(evaluation=Y_KEY, name="y", site=None)),
     )
@@ -625,7 +627,9 @@ def test_a_plain_resume_sends_none_into_a_yield_assignment() -> None:
     machine = _generator(
         "yield_assign_next",
         YieldAssignStepV1(
-            YieldStepV1(IntLiteralSugar(5, site=SITE)), "y", "fragment:next", Y_KEY
+            YieldStepV1(IntLiteralSugar(5, site=SITE)),
+            (("y", Y_KEY),),
+            "fragment:next",
         ),
         ReturnStepV1(EvaluationRefSugar(evaluation=Y_KEY, name="y", site=None)),
     )
@@ -642,9 +646,10 @@ def test_a_yield_assignment_is_a_named_step_reading_both_writes() -> None:
     steps = _generator_steps("def g():\n    y = yield (x := 5)\n    return (x, y)\n")
     assert isinstance(steps[0], YieldAssignStepV1)
     assert not any(isinstance(step, OpaqueStepV1) for step in steps)
-    assert steps[0].name == "y"
-    assert isinstance(steps[0].evaluation, str)
-    assert steps[0].evaluation.startswith(EVALUATION_PREFIX)
+    ((name, evaluation),) = steps[0].targets
+    assert name == "y"
+    assert isinstance(evaluation, str)
+    assert evaluation.startswith(EVALUATION_PREFIX)
     yielded = _generator("g", *steps).resume()
     assert isinstance(yielded, YieldEffect)
     assert yielded.value == TermValue(5)
