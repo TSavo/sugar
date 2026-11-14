@@ -87,10 +87,14 @@ def bind_unpack_projections(value, evaluation: str | None):
 
     if evaluation is None or not isinstance(value, ScopeRebinds):
         return ExitSet.completed(value)
+    from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
     from sugar_lift_py_tests.temporal.temporal_context import projection_key
 
     bindings = value.bindings
-    projected = tuple((projection_key(evaluation, n), m) for n, m in bindings)
+    # In a live loop each item's evaluation is its own key.
+    projected = tuple(
+        (evaluation_here(projection_key(evaluation, n)), m) for n, m in bindings
+    )
     return ExitSet.completed(ScopeRebinds((*bindings, *projected)))
 
 

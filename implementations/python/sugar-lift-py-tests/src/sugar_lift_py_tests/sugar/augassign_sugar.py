@@ -24,10 +24,12 @@ class AugAssignSugar(Sugar):
       2. Evaluate ``rhs`` once
       3. ``result = project_augmented / project_inplace`` (iadd edge, NotImplemented law)
       4. On success: the iadd result IS the binding.  It is bound under the
-         statement's evaluation key (``evaluation``), which every later read
+         statement's evaluation key (``evaluation``, qualified by the live
+         loop item it runs in: ``evaluation_here``), which every later read
          substitution rewrote (``EvaluationRef``) answers; and under the name,
-         for the readers substitution does not reach (a live loop's next item,
-         a class body, the export prefix's module bindings).
+         for the writers substitution does not see (a dynamic unpack) and the
+         readers it does not reach (a frame reading a module global, a module
+         class reduced in its caller's context).
       5. On halt: no rebind (a halted arm bypasses and_then) — prior binding stands
 
     Substitute does **not** thread ``_make_binop`` (__add__) as the rebind.
@@ -72,12 +74,17 @@ class AugAssignSugar(Sugar):
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind, ScopeRebinds
         from sugar_lift_py_tests.outcome import ExitSet
 
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
+
         if self.evaluation is None:
             return ExitSet.completed(ScopeRebind(self.name, result))
         # The name first, the evaluation last: a read of the evaluation is the
-        # latest of the two until something rebinds the name.
+        # latest of the two until something rebinds the name.  In a live loop
+        # each item's evaluation is its own key.
         return ExitSet.completed(
-            ScopeRebinds(((self.name, result), (self.evaluation, result)))
+            ScopeRebinds(
+                ((self.name, result), (evaluation_here(self.evaluation), result))
+            )
         )
 
 
