@@ -149,13 +149,20 @@ class SubscriptDeleteEffectSugar(Sugar):
         )
 
     def _delete(self, receiver, index, ctx) -> ExitSet:
+        return self.project_delitem(receiver, index, self.site, ctx)
+
+    @staticmethod
+    def project_delitem(receiver, index, site, ctx) -> ExitSet:
+        """Producer-owned subscript **delete** projection (one door): the
+        ordinary statement and the one mutation door's ``__delitem__`` on a
+        value the container law does not cite (``PathContainerCallSugar``)."""
         coordinates = tuple(
             getattr(operand, "formal_coordinate", None) for operand in (receiver, index)
         )
         if any(coordinate is not None for coordinate in coordinates):
             # Undischarged demand awaiting caller actuals — not a refusal.
-            return self.mint_delitem_carrier(
-                site=self.site,
+            return SubscriptDeleteEffectSugar.mint_delitem_carrier(
+                site=site,
                 receiver=receiver,
                 index=index,
             )
@@ -165,12 +172,12 @@ class SubscriptDeleteEffectSugar(Sugar):
             )
 
             return undecided_item_mutation_faces(
-                self.site,
+                site,
                 noun="delitem",
                 method="__delitem__",
                 owner="UndecidedDelitem",
             )
-        return receiver.delitem(index, self.site, ctx)
+        return receiver.delitem(index, site, ctx)
 
     @staticmethod
     def mint_delitem_carrier(*, site, receiver, index):

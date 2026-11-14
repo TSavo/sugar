@@ -45,7 +45,9 @@ from sugar_lift_py_tests.occurrence import (
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
 from sugar_lift_py_tests.sugar.assigned_value import carried_write_key
-from sugar_lift_py_tests.sugar.augassign_sugar import AugAssignSugar
+from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+    ContainerMutationStatementSugar,
+)
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
     EvaluationRefSugar,
     evaluation_here,
@@ -62,8 +64,8 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.live_loop_construction import LiveWhileRuntimeV1
 from sugar_source_tree.nodes import (
     Assign,
-    AugAssign,
     ClassDef,
+    ContainerMutationStatement,
     EvaluationRef,
     FunctionDef,
     Return,
@@ -72,6 +74,27 @@ from sugar_source_tree.nodes import (
 from sugar_source_tree.tree import SourceFile
 
 KEY = EVALUATION_PREFIX + "blake3-512:test-evaluation"
+
+
+def _is_in_place(node) -> bool:
+    """A substituted ``x += e``: the one mutation door's statement writing
+    its name to the in-place result under the statement's key (#7757)."""
+    return isinstance(node, ContainerMutationStatement) and isinstance(
+        getattr(node, "rebinds", None), str
+    )
+
+
+def _in_place_receiver(statement):
+    """The read of the name a ``x += e`` statement's in-place call runs on."""
+    assert isinstance(statement, ContainerMutationStatementSugar)
+    return statement.evaluated[0].receiver
+
+
+def _in_place_key(statement):
+    """The key a ``x += e`` statement binds its in-place result under."""
+    assert isinstance(statement, ContainerMutationStatementSugar)
+    key, _index = statement.result_evaluation
+    return key
 HEADER = EVALUATION_PREFIX + "blake3-512:test-header"
 LATCH = EVALUATION_PREFIX + "blake3-512:test-latch"
 WRITE = EVALUATION_PREFIX + "blake3-512:test-write"
@@ -321,7 +344,8 @@ def test_the_latch_is_the_items_last_evaluation() -> None:
     ctx = ReduceContext.root(owner="live-latch")
     with entered(_item(0)):
         ctx = recurrence._enter_header(_RUNTIME, ctx, (TermValue(1),))
-        # ``t += e`` binds its evaluation only (AugAssignSugar).
+        # ``t += e`` binds its evaluation only (the one mutation door's
+        # statement binds its in-place result under it).
         ctx = ctx.with_temporal(
             ctx.temporal.bind_value(evaluation_here(LATCH), TermValue(3))
         )
@@ -464,11 +488,11 @@ def test_a_live_body_reads_a_carried_name_through_the_header() -> None:
     [(header, _writes, _else_writes)] = runtime.carried_evaluations
     assert header.startswith(EVALUATION_PREFIX)
     [aug] = runtime.body_sugars
-    assert isinstance(aug, AugAssignSugar)
+    left = _in_place_receiver(aug)
     # ``t += v`` reads ``t`` through the header, not by spelling.
-    assert isinstance(aug.left, EvaluationRefSugar)
-    assert aug.left.evaluation == header
-    assert aug.left.name == "t"
+    assert isinstance(left, EvaluationRefSugar)
+    assert left.evaluation == header
+    assert left.name == "t"
 
 
 def test_the_bodys_write_is_its_augmented_assignment() -> None:
@@ -517,10 +541,10 @@ def test_a_live_while_runs_its_items_through_the_header() -> None:
     assert isinstance(runtime.test_sugar, EvaluationRefSugar)
     assert runtime.test_sugar.evaluation == header
     [aug] = runtime.body_sugars
-    assert isinstance(aug, AugAssignSugar)
-    assert isinstance(aug.left, EvaluationRefSugar)
-    assert aug.left.evaluation == header
-    assert writes == (aug.evaluation,)
+    left = _in_place_receiver(aug)
+    assert isinstance(left, EvaluationRefSugar)
+    assert left.evaluation == header
+    assert writes == (_in_place_key(aug),)
     assert else_writes == ()
     assert runtime.fuel > 0
 
@@ -940,13 +964,13 @@ def test_the_else_reads_a_carried_name_through_the_header() -> None:
     [(header, writes, else_writes)] = runtime.carried_evaluations
     [body_aug] = runtime.body_sugars
     [else_aug] = runtime.else_sugars
-    assert isinstance(else_aug, AugAssignSugar)
+    else_left = _in_place_receiver(else_aug)
     # ``t += 10`` in the else reads ``t`` through the header, not by spelling.
-    assert isinstance(else_aug.left, EvaluationRefSugar)
-    assert else_aug.left.evaluation == header
-    assert writes == (body_aug.evaluation,)
-    assert else_writes == (else_aug.evaluation,)
-    assert else_aug.evaluation != body_aug.evaluation
+    assert isinstance(else_left, EvaluationRefSugar)
+    assert else_left.evaluation == header
+    assert writes == (_in_place_key(body_aug),)
+    assert else_writes == (_in_place_key(else_aug),)
+    assert _in_place_key(else_aug) != _in_place_key(body_aug)
 
 
 def test_the_same_source_gives_the_same_header() -> None:
@@ -1264,7 +1288,7 @@ def test_each_read_of_an_evaluation_is_spanned_at_its_use() -> None:
         "def f(x):\n    x += 1\n    y = x\n    return (x, y)\n"
     ).substitute({})
     aug, assign, ret = rewritten.body
-    assert isinstance(aug, AugAssign)
+    assert _is_in_place(aug)
     assert isinstance(assign, Assign)
     assert isinstance(ret, Return)
     assert isinstance(ret.value, Tuple_)
@@ -1292,7 +1316,7 @@ def test_a_class_body_reads_the_evaluation() -> None:
         "        y = x\n"
         "    return C\n"
     ).substitute({})
-    aug = next(node for node in rewritten.body if isinstance(node, AugAssign))
+    aug = next(node for node in rewritten.body if _is_in_place(node))
     definition = next(node for node in rewritten.body if isinstance(node, ClassDef))
     field = definition.body[0]
     assert isinstance(field, Assign)
@@ -1305,7 +1329,7 @@ def test_a_module_block_and_its_class_body_read_the_evaluation() -> None:
     # export prefix that threaded a module's prefix went in #7896.
     module = _source("x = 1\nx += 1\nclass C:\n    y = x\nz = x\n").root
     body = module.substitute({}).body
-    aug = next(node for node in body if isinstance(node, AugAssign))
+    aug = next(node for node in body if _is_in_place(node))
     definition = next(node for node in body if isinstance(node, ClassDef))
     field = definition.body[0]
     assert isinstance(field, Assign)

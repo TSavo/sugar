@@ -4021,9 +4021,12 @@ def _exit_path_scope(clause_owner, path: str, bindings):
 def _holds_evaluation(statements) -> bool:
     """Whether a substituted suite holds a statement (or walrus) keyed as its
     own evaluation (``Statement._evaluation_key``: ``x += e``, ``a, b = f()``,
-    ``y = e``, ``y: T = e``, ``(x := e)``)."""
+    ``y = e``, ``y: T = e``, ``(x := e)``, a mutation through the one door)."""
     return any(
-        isinstance(node, (AugAssign, Assign, AnnAssign, NamedExpr))
+        isinstance(
+            node,
+            (AugAssign, Assign, AnnAssign, NamedExpr, ContainerMutationStatement),
+        )
         and isinstance(getattr(node, "evaluation", None), str)
         for statement in statements
         for node in statement.walk()
@@ -7965,20 +7968,20 @@ class FunctionDef(Statement):
             )
 
         def container_store_step(statement):
-            """``xs[i] = yield v`` on a decided list/dict/set: substitution
-            made it a ``ContainerMutationStatement`` whose call stores the
-            yield (``value_first``: Python evaluates it before the receiver
-            and the key).  The resume runs the statement's mutation with the
+            """``xs[i] = yield v`` on a name: substitution made it a
+            ``ContainerMutationStatement`` whose call stores the yield
+            (``value_first``: Python evaluates it before the receiver and
+            the key).  The resume runs the statement's mutation with the
             resumed value read through the yield's projection of the
             statement's key; the pair the mutation binds under that key
             (``store_keeps``) is what every later read of the receiver reads
-            (``BuiltinContainerProjection``).  Refused by name when the
-            receiver or key suspends (``store_target_suspends``); None when
-            the stored value's own operand suspends."""
+            (``PathAfterCall``).  Refused by name when the receiver or key
+            suspends (``store_target_suspends``); None when the stored
+            value's own operand suspends."""
             call = statement.evaluated[0] if statement.evaluated else None
             if (
-                not isinstance(call, BuiltinContainerCall)
-                or not call.value_first
+                not isinstance(call, PathContainerCall)
+                or getattr(call, "value_first", False) is not True
                 or not call.args
                 or not isinstance(call.args[-1], (Yield, YieldFrom))
             ):
@@ -10427,16 +10430,22 @@ class Delete(Statement):
                 {key: value for key, value in scope.items() if key not in bound}
             )
 
-        if len(self.targets) == 1 and isinstance(self.targets[0], Subscript):
-            from .container_mutation import mutation_statement
+        if (
+            len(self.targets) == 1
+            and isinstance(self.targets[0], Subscript)
+            and isinstance(self.targets[0].value, Name)
+        ):
+            from .container_mutation import name_mutation_statement
 
             target = self.targets[0]
             # ``del r[k]`` and ``del r[lo:hi:st]`` alike: the slice is the
-            # key ``__delitem__`` receives.
-            mutation = mutation_statement(
+            # key ``__delitem__`` receives.  The one door: the value ``r``
+            # holds at reduce decides it.
+            mutation = name_mutation_statement(
                 self,
                 scope,
-                call_site=target,
+                site=target,
+                name=target.value.id,
                 receiver=target.value.substitute(scope),
                 method="__delitem__",
                 args=(target.slice_.substitute(scope),),
@@ -11048,13 +11057,10 @@ class Assign(Statement):
         """
         from .shadow import rewrite, rewrite_with_leaves
 
-        mutation = self._builtin_container_mutation(scope)
+        mutation = self._container_mutation(scope)
         if mutation is not None:
             return mutation
-        mapping_pop = self._mapping_pop_assignment(scope)
-        if mapping_pop is not None:
-            return mapping_pop
-        mutation = self._bound_receiver_mutation(scope)
+        mutation = self._name_call_mutation(scope)
         if mutation is not None:
             return mutation
 
@@ -11470,20 +11476,26 @@ class Assign(Statement):
             self.reporter,
         )
 
-    def _builtin_container_mutation(self, scope):
-        """``x = r.<mutator>(...)`` or ``r[k] = v`` on a decided list/dict/set."""
+    def _container_mutation(self, scope):
+        """``r[k] = v`` on a name (the one door,
+        ``container_mutation.name_mutation_statement``) or ``x =
+        <path>.<mutator>(...)`` (``path_mutation_statement``)."""
         if len(self.targets) != 1:
             return None
-        from .container_mutation import mutation_statement
-
         target = self.targets[0]
         if isinstance(target, Subscript):
+            if not isinstance(target.value, Name):
+                return None
+            from .container_mutation import name_mutation_statement
+
             # ``r[k] = v`` and ``r[lo:hi:st] = it`` alike: the slice is the key
-            # ``__setitem__`` receives.
-            return mutation_statement(
+            # ``__setitem__`` receives.  The value ``r`` holds at reduce
+            # decides it, whatever ``r`` was given.
+            return name_mutation_statement(
                 self,
                 scope,
-                call_site=target,
+                site=target,
+                name=target.value.id,
                 receiver=target.value.substitute(scope),
                 method="__setitem__",
                 args=(target.slice_.substitute(scope), self.value.substitute(scope)),
@@ -11493,106 +11505,43 @@ class Assign(Statement):
         if (
             not isinstance(target, Name)
             or not isinstance(call, Call)
-            or call.keywords
             or not isinstance(call.func, Attribute)
-            or any(isinstance(arg, Starred) for arg in call.args)
+            or isinstance(call.func.value, Name)
         ):
             return None
-        mutation = mutation_statement(
-            self,
-            scope,
-            call_site=call,
-            receiver=call.func.value.substitute(scope),
-            method=call.func.attr,
-            args=tuple(arg.substitute(scope) for arg in call.args),
-            target_name=target.id,
-        )
-        if mutation is not None:
-            return mutation
         from .container_mutation import path_mutation_statement
 
         return path_mutation_statement(
             self, scope, call=call.substitute(scope), target_name=target.id
         )
 
-    def _bound_receiver_mutation(self, scope):
-        """``x = r.<mutator>(...)`` on a name ``r`` an assignment bound whose
-        type the source does not decide: the value ``r`` holds decides it
-        (``container_mutation.bound_receiver_mutation_statement``)."""
+    def _name_call_mutation(self, scope):
+        """``x = r.<mutator>(...)`` on a name ``r``: the one door
+        (``container_mutation.name_mutation_statement``); the value ``r``
+        holds at reduce decides it, whatever ``r`` was given."""
         if (
             len(self.targets) != 1
             or not isinstance(self.targets[0], Name)
             or not isinstance(self.value, Call)
             or not isinstance(self.value.func, Attribute)
+            or not isinstance(self.value.func.value, Name)
         ):
             return None
-        from .container_mutation import bound_receiver_mutation_statement
+        from .container_mutation import _mutating_named_call, name_mutation_statement
 
-        return bound_receiver_mutation_statement(
+        call = self.value.substitute(scope)
+        if not _mutating_named_call(call):
+            return None
+        return name_mutation_statement(
             self,
             scope,
-            call=self.value.substitute(scope),
+            site=call,
+            name=self.value.func.value.id,
+            receiver=call.func.value,
+            method=call.func.attr,
+            args=call.args,
+            fallback=call,
             target_name=self.targets[0].id,
-        )
-
-    def _mapping_pop_assignment(self, scope):
-        """Split ``result = mapping.pop(key, default)`` into two SSA bindings.
-
-        Python's operation has two products: the expression result and the
-        receiver's post-mutation state.  Both are derived from the same source
-        occurrence and threaded by the shadow tree; neither is reconstructed
-        from a later spelling of the receiver.
-        """
-        if not (
-            len(self.targets) == 1
-            and isinstance(self.targets[0], Name)
-            and isinstance(self.value, Call)
-            and not self.value.keywords
-            and len(self.value.args) == 2
-            and isinstance(self.value.func, Attribute)
-            and self.value.func.attr == "pop"
-            and isinstance(self.value.func.value, Name)
-        ):
-            return None
-        receiver_name = self.value.func.value.id
-        receiver = self.value.func.value.substitute(scope)
-        if _has_authenticated_source_method(receiver, "pop"):
-            return None
-
-        from .backend import Child, Leaf, materialize
-        from .shadow import ShadowNode, _handle_of
-
-        key = self.value.args[0].substitute(scope)
-        default = self.value.args[1].substitute(scope)
-
-        def projection(kind):
-            return materialize(
-                self.unit,
-                ShadowNode(
-                    kind,
-                    self.span,
-                    (
-                        ("receiver", Child(_handle_of(receiver))),
-                        ("key", Child(_handle_of(key))),
-                        ("default", Child(_handle_of(default))),
-                    ),
-                ),
-                self.reporter,
-            )
-
-        return materialize(
-            self.unit,
-            ShadowNode(
-                "MappingPopAssignStatement",
-                self.span,
-                (
-                    ("target_name", Leaf(self.targets[0].id)),
-                    ("receiver_name", Leaf(receiver_name)),
-                    ("result", Child(_handle_of(projection("MappingPopResult")))),
-                    ("post_state", Child(_handle_of(projection("MappingPopState")))),
-                ),
-            ),
-            self.reporter,
         )
 
     def _destructured_binding(self):
@@ -12353,9 +12302,10 @@ class AugAssign(Statement):
     def substitute(self, scope):
         """`<target> OP= <value>` -- substitute the value and load-side targets.
 
-        A plain Name target is a binding site: the prior load is carried as
-        ``prior_read``; the rebind itself is evaluation-time ScopeRebind of
-        authenticated project_inplace (not a substitute-time BinOp).
+        A plain Name target is the one mutation door's in-place call
+        (``container_mutation.name_mutation_statement``): the value the name
+        holds at reduce decides it, and the name is bound to the in-place
+        result under this statement's key.
 
         Attribute and Subscript targets are runtime stores — receivers (and
         subscript indices) are load expressions and must substitute so formals
@@ -12364,8 +12314,8 @@ class AugAssign(Statement):
         and carried as ``operator_site`` so formal declaration spans cannot
         steal it.
         """
-        from .backend import Child, Leaf, materialize
-        from .shadow import ShadowNode, _handle_of, rewrite
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode, rewrite
 
         # Structural operator site before any rewrite (Name/Attribute/Subscript).
         # Name rebind is evaluation-time ScopeRebind of project_inplace — not
@@ -12378,17 +12328,30 @@ class AugAssign(Statement):
                 pre_sub_operator_site = self._mint_operator_site_from_structure()
 
         if isinstance(self.target, Name):
-            # ``r += x`` on a decided list/dict/set mutates the object in
-            # place: every alias sees it (container_mutation.py).
-            from .container_mutation import mutation_statement
+            # ``r += x`` is the one door's in-place call on the object ``r``
+            # denotes (container_mutation.name_mutation_statement): a builtin
+            # container is changed in place, and every alias sees it; any
+            # other value takes the in-place operator, and ``r`` is bound to
+            # its result.  The value ``r`` holds at reduce decides.
+            from .container_mutation import name_mutation_statement
 
-            mutation = mutation_statement(
+            # The prior binding is the load (an if-join reads its phi).
+            prior_read = binding_state_read_node(
+                unwrap_binding_state(scope.get(self.target.id, self.target)),
+                make_read=self.target._make_binding_read,
+            )
+            mutation = name_mutation_statement(
                 self,
                 scope,
-                call_site=self,
-                receiver=self.target.substitute(scope),
+                site=self,
+                name=self.target.id,
+                receiver=prior_read,
                 method=f"__{self.op.inplace_operator}__",
                 args=(self.value.substitute(scope),),
+                target_name=self.target.id,
+                operator_kind=self.op.kind,
+                operator_site=pre_sub_operator_site,
+                inplace=True,
             )
             if mutation is not None:
                 return mutation
@@ -12414,43 +12377,7 @@ class AugAssign(Statement):
                 ),
                 self.reporter,
             )
-        rewritten = self if not changes else rewrite(self, **changes)
-        if not isinstance(rewritten.target, Name):
-            return rewritten
-        # Prior binding as the load; RHS already substituted.  Do not mint a
-        # BinOp rebind child — inplace owns the binding at desugar time.
-        name = rewritten.target.id
-        old_state = unwrap_binding_state(scope.get(name, rewritten.target))
-        old_read = binding_state_read_node(
-            old_state,
-            make_read=rewritten.target._make_binding_read,
-        )
-        desc = rewritten.ref.describe()
-        # A re-substitution replaces the key slots it was given: a node
-        # answers its FIRST slot of a name, so an appended key would never
-        # be read.
-        return materialize(
-            self.unit,
-            ShadowNode(
-                desc.kind,
-                desc.raw_span or self.span,
-                (
-                    *(
-                        slot
-                        for slot in desc.slots
-                        if slot[0] not in ("evaluation", "evaluation_exit_path")
-                    ),
-                    ("prior_read", Child(_handle_of(old_read))),
-                    ("operator_site", Leaf(pre_sub_operator_site)),
-                    ("evaluation", Leaf(self._evaluation_key(scope))),
-                    (
-                        "evaluation_exit_path",
-                        Leaf(self._evaluation_exit_path(scope)),
-                    ),
-                ),
-            ),
-            self.reporter,
-        )
+        return self if not changes else rewrite(self, **changes)
 
     def _mint_operator_site_from_structure(self):
         """Authenticated operator occurrence: gap between target and RHS spans.
@@ -12993,6 +12920,12 @@ class For(Statement):
                         bind(t)
                 elif n.kind in ("AugAssign", "AnnAssign", "NamedExpr"):
                     bind(n.target)
+                elif n.kind == "ContainerMutationStatement" and isinstance(
+                    getattr(n, "rebinds", None), str
+                ):
+                    # ``x += e`` substituted: the one mutation door writes
+                    # ``x`` to the in-place result.
+                    names.add(n.rebinds)
                 elif n.kind in ("For", "AsyncFor"):
                     # A nested loop's target rebinds its names on every item:
                     # a loop around it carries them like any other write.
@@ -13008,6 +12941,10 @@ class For(Statement):
         asking for bindings that are only materialized during substitution."""
         return any(
             n.kind in ("Assign", "AugAssign", "AnnAssign", "NamedExpr")
+            or (
+                n.kind == "ContainerMutationStatement"
+                and isinstance(getattr(n, "rebinds", None), str)
+            )
             for stmt in statements
             for n in stmt.walk()
         )
@@ -15955,26 +15892,49 @@ class Try(Statement):
         halt, never the state it began with."""
         if post is None:
             return net
+        from .container_mutation import _havoc, _read_of
+        from .shadow import occurrence_tags_of
+
         compound = getattr(statement, "kind", None) in self._COMPOUND_KINDS
-        changed = []
+        tags = occurrence_tags_of(statement)
+        binding = {}
         for name, before in pre.items():
             after = post.get(name, _MISSING)
             if after is _MISSING or after is before:
                 continue
             if isinstance(unwrap_binding_state(before), UnboundBinding):
                 continue
-            if compound or (
-                getattr(unwrap_binding_state(after), "kind", None)
-                in self._MID_STATEMENT_MUTATION_KINDS
+            state = unwrap_binding_state(after)
+            kind = getattr(state, "kind", None)
+            if compound:
+                binding[name] = _havoc(statement, name, tags)
+            elif kind in self._MID_STATEMENT_MUTATION_KINDS:
+                # A value the call met decides it (``ReceiverAfterCall`` with
+                # rules): whatever it decides after the call, it decides at
+                # a halt inside it too.  Otherwise unknown.
+                binding[name] = (
+                    state
+                    if kind == "ReceiverAfterCall" and getattr(state, "rules", None)
+                    else _havoc(statement, name, tags)
+                )
+            elif (
+                kind == "PathAfterCall"
+                and getattr(state, "mode", None) == "root"
+                and not getattr(state, "steps", ())
             ):
-                changed.append(name)
-        if not changed:
+                # The one mutation door: a cited container mutation halts
+                # before it stores, and an immutable is never changed; an
+                # ordinary call may change the object and THEN raise.
+                call = state.call
+                binding[name] = _havoc(
+                    statement,
+                    name,
+                    tags,
+                    prior=_read_of(before),
+                    conditions=[(call.receiver, (call.method, False, True))],
+                )
+        if not binding:
             return net
-        from .container_mutation import _havoc
-        from .shadow import occurrence_tags_of
-
-        tags = occurrence_tags_of(statement)
-        binding = {name: _havoc(statement, name, tags) for name in changed}
         binding = statement._binding_entries(binding, pre)
         return {**net, **binding}
 
@@ -16563,7 +16523,7 @@ class Expr(Statement):
     def substitute(self, scope):
         """Rewrite children and thread authenticated mutating-call post-state."""
         rewritten = self._substitute_children(scope)
-        mutation = self._builtin_container_mutation(scope)
+        mutation = self._name_mutation(scope, rewritten.value)
         if mutation is not None:
             return mutation
         from .container_mutation import path_mutation_statement
@@ -16572,17 +16532,8 @@ class Expr(Statement):
         if mutation is not None:
             return mutation
         state = self._dict_setdefault_append_state(scope)
-        statement_kind = "DictSetDefaultAppendStatement"
         if state is None:
-            state = self._mapping_pop_state(scope)
-            statement_kind = "MappingPopStatement"
-        if state is None:
-            from .container_mutation import bound_receiver_mutation_statement
-
-            mutation = bound_receiver_mutation_statement(
-                self, scope, call=rewritten.value
-            )
-            return rewritten if mutation is None else mutation
+            return rewritten
 
         name, post_state = state
         from .backend import Child, Leaf, materialize
@@ -16591,7 +16542,7 @@ class Expr(Statement):
         return materialize(
             self.unit,
             ShadowNode(
-                statement_kind,
+                "DictSetDefaultAppendStatement",
                 rewritten.span,
                 (
                     ("value", Child(_handle_of(rewritten.value))),
@@ -16602,25 +16553,31 @@ class Expr(Statement):
             self.reporter,
         )
 
-    def _builtin_container_mutation(self, scope):
-        """``r.<mutator>(*args)`` on a decided list/dict/set (container_mutation.py)."""
-        call = self.value
+    def _name_mutation(self, scope, call):
+        """``r.<mutator>(*args)`` on a name ``r``: the one door
+        (``container_mutation.name_mutation_statement``); the value ``r``
+        holds at reduce decides it, whatever ``r`` was given.  ``call`` is
+        the statement's call, already substituted against ``scope``."""
+        source = self.value
         if (
-            not isinstance(call, Call)
-            or call.keywords
-            or not isinstance(call.func, Attribute)
-            or any(isinstance(arg, Starred) for arg in call.args)
+            not isinstance(source, Call)
+            or not isinstance(source.func, Attribute)
+            or not isinstance(source.func.value, Name)
         ):
             return None
-        from .container_mutation import mutation_statement
+        from .container_mutation import _mutating_named_call, name_mutation_statement
 
-        return mutation_statement(
+        if not _mutating_named_call(call):
+            return None
+        return name_mutation_statement(
             self,
             scope,
-            call_site=call,
-            receiver=call.func.value.substitute(scope),
+            site=call,
+            name=source.func.value.id,
+            receiver=call.func.value,
             method=call.func.attr,
-            args=tuple(arg.substitute(scope) for arg in call.args),
+            args=call.args,
+            fallback=call,
         )
 
     def _dict_setdefault_append_state(self, scope):
@@ -16677,46 +16634,6 @@ class Expr(Statement):
         )
         return receiver_name, post_state
 
-    def _mapping_pop_state(self, scope):
-        """Recognize one inherited ``dict.pop(key, default)`` mutation.
-
-        The two-argument form has one completed post-state whether or not the
-        key exists.  One-argument ``pop`` can raise and remains on the ordinary
-        method-call path until its exceptional ExitSet is represented.
-        """
-        call = self.value
-        if (
-            not isinstance(call, Call)
-            or call.keywords
-            or len(call.args) != 2
-            or not isinstance(call.func, Attribute)
-            or call.func.attr != "pop"
-            or not isinstance(call.func.value, Name)
-        ):
-            return None
-        receiver_name = call.func.value.id
-        receiver = call.func.value.substitute(scope)
-        if _has_authenticated_source_method(receiver, "pop"):
-            return None
-
-        from .backend import Child, materialize
-        from .shadow import ShadowNode, _handle_of
-
-        post_state = materialize(
-            self.unit,
-            ShadowNode(
-                "MappingPopState",
-                self.span,
-                (
-                    ("receiver", Child(_handle_of(receiver))),
-                    ("key", Child(_handle_of(call.args[0].substitute(scope)))),
-                    ("default", Child(_handle_of(call.args[1].substitute(scope)))),
-                ),
-            ),
-            self.reporter,
-        )
-        return receiver_name, post_state
-
     def _construct_sugar(self):
         """`<expr>` as a statement constructs ExprStatementSugar WITH the
         value's sugar. States nothing; an effect in the value rides."""
@@ -16759,38 +16676,6 @@ class DictSetDefaultAppendStatement(Statement):
         # authority.  Its post-state sugar evaluates receiver/key/default/
         # appended exactly once and owns the resulting receiver mutation.
         return ExprStatementSugar(self.post_state.sugar(), self.fragment)
-
-
-class MappingPopStatement(DictSetDefaultAppendStatement):
-    """Shadow statement for completed ``mapping.pop(key, default)`` state."""
-
-
-class MappingPopAssignStatement(Statement):
-    """One pop occurrence exporting its result and receiver post-state."""
-
-    target_name: str
-    receiver_name: str
-    result: Expression
-    post_state: Expression
-    _child_fields = ("result", "post_state")
-
-    def substitute(self, scope):
-        del scope
-        return self
-
-    def substitution_binding(self, scope):
-        del scope
-        return {
-            self.target_name: self.result,
-            self.receiver_name: self.post_state,
-        }
-
-    def _construct_sugar(self):
-        # The shadow projections own the operation.  This statement only
-        # publishes them into the temporal rewrite and states no second call.
-        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
-
-        return InertSugar(site=self.fragment)
 
 
 class Pass(Statement):
@@ -21338,31 +21223,6 @@ class DictSetDefaultAppendState(Expression):
         )
 
 
-class MappingPopState(Expression):
-    """Shadow post-state of inherited ``dict.pop(key, default)``."""
-
-    receiver: Expression
-    key: Expression
-    default: Expression
-    _child_fields = ("receiver", "key", "default")
-
-    def substitute(self, scope):
-        del scope
-        return self
-
-    def _construct_sugar(self):
-        from sugar_lift_py_tests.sugar.mapping_pop_state_sugar import (
-            MappingPopStateSugar,
-        )
-
-        return MappingPopStateSugar(
-            receiver=self.receiver.sugar(),
-            key=self.key.sugar(),
-            default=self.default.sugar(),
-            site=self.fragment,
-        )
-
-
 class ReceiverFieldStoreState(Expression):
     receiver: Expression
     value: Expression
@@ -21383,16 +21243,24 @@ class ReceiverFieldStoreState(Expression):
         )
 
 
-class BuiltinContainerCall(Expression):
-    """One mutating method call on a decided list/dict/set (container_mutation.py)."""
+class PathContainerCall(Expression):
+    """One mutating operation on the object a name denotes, or a path from a
+    name reaches (``container_mutation.name_mutation_statement``,
+    ``path_mutation_statement``): the receiver's value at reduce decides it.
+
+    ``fallback`` is the ordinary call a method takes on a value the floor
+    does not cite; an item store (``value_first``: the stored value is
+    evaluated first), an item delete and an in-place operator
+    (``operator_kind``, ``operator_site``) have none."""
 
     receiver: Expression
     args: Tuple[Expression, ...]
     method: str
-    container_kind: str
-    value_first: bool
+    fallback: Optional[Expression]
     occurrence: str
-    _child_fields = ("receiver", "args")
+    label: str
+    value_first: bool
+    _child_fields = ("receiver", "args", "fallback")
 
     def substitute(self, scope):
         del scope
@@ -21402,63 +21270,47 @@ class BuiltinContainerCall(Expression):
         return self.storing_sugar(None)
 
     def storing_sugar(self, value_sugar):
-        """The call's sugar; with ``value_sugar``, a store's call (``d[k] =
-        v``, ``value_first``) storing that in place of its value operand's
-        sugar (a yield assignment's resume reads its resumed value through
-        it).  None when ``value_sugar`` is given for a call that stores no
-        value."""
-        from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
-            BuiltinContainerCallSugar,
-        )
-
-        if value_sugar is None:
-            args = tuple(arg.sugar() for arg in self.args)
-        elif not self.value_first or not self.args:
-            return None
-        else:
-            args = (*(arg.sugar() for arg in self.args[:-1]), value_sugar)
-        return BuiltinContainerCallSugar(
-            receiver=self.receiver.sugar(),
-            method=self.method,
-            args=args,
-            kind=self.container_kind,
-            site=self.fragment,
-            value_first=self.value_first,
-            evaluation_token=self.occurrence,
-        )
-
-
-class PathContainerCall(Expression):
-    """One mutating-named call on a receiver reached through a path."""
-
-    receiver: Expression
-    args: Tuple[Expression, ...]
-    method: str
-    fallback: Expression
-    occurrence: str
-    _child_fields = ("receiver", "args", "fallback")
-
-    def substitute(self, scope):
-        del scope
-        return self
-
-    def _construct_sugar(self):
+        """The call's sugar; with ``value_sugar``, an item store's call
+        (``d[k] = v``, ``value_first``) storing that in place of its value
+        operand's sugar (a yield assignment's resume reads its resumed value
+        through it).  None when ``value_sugar`` is given for a call that
+        stores no value."""
         from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
             PathContainerCallSugar,
         )
 
+        value_first = getattr(self, "value_first", False) is True
+        if value_sugar is None:
+            args = tuple(arg.sugar() for arg in self.args)
+        elif not value_first or not self.args:
+            return None
+        else:
+            args = (*(arg.sugar() for arg in self.args[:-1]), value_sugar)
+        operator = None
+        operator_kind = getattr(self, "operator_kind", None)
+        if isinstance(operator_kind, str):
+            from .operators import operator_for
+
+            operator = operator_for(operator_kind, blame=self.fragment)
+        fallback = self.fallback
         return PathContainerCallSugar(
             receiver=self.receiver.sugar(),
             method=self.method,
-            args=tuple(arg.sugar() for arg in self.args),
-            fallback=self.fallback.sugar(),
+            args=args,
+            fallback=None if fallback is None else fallback.sugar(),
             site=self.fragment,
             evaluation_token=self.occurrence,
+            label=getattr(self, "label", None) or "receiver",
+            value_first=value_first,
+            operator=operator,
+            operator_site=getattr(self, "operator_site", None),
         )
 
 
 class PathAfterCall(Expression):
-    """A path's root (``mode='root'``) or its object (``'inner'``) after a call.
+    """A path's root (``mode='root'``) or its object (``'inner'``) after a call;
+    with no ``steps``, the object a name denotes after the one door's call
+    (``name_mutation_statement``).
 
     The statement binds the call's pair under its key (``evaluation``,
     ``path_mutation_statement``): the projection reads the pair there, never
@@ -21474,7 +21326,8 @@ class PathAfterCall(Expression):
     unshared: bool
     occurrence: str
     inner: Optional[Expression]
-    _child_fields = ("call", "root", "inner")
+    prior: Optional[Expression]
+    _child_fields = ("call", "root", "inner", "prior")
 
     def substitute(self, scope):
         del scope
@@ -21491,6 +21344,7 @@ class PathAfterCall(Expression):
             if isinstance(evaluation, str)
             else self.call.sugar()
         )
+        prior = getattr(self, "prior", None)
         return PathAfterCallSugar(
             call=pair,
             root=self.root.sugar(),
@@ -21499,17 +21353,20 @@ class PathAfterCall(Expression):
             unshared=self.unshared,
             site=self.fragment,
             evaluation_token=self.occurrence,
+            label=self.label,
+            prior=None if prior is None else prior.sugar(),
         )
 
 
 class BuiltinContainerProjection(Expression):
-    """The receiver's post-state (0) or the call's value (1) of one call.
+    """The call's value (1) of one call (``index`` 0, its receiver after it,
+    is ``PathAfterCall``).
 
     The statement binds the call's pair under its key (``evaluation``,
-    ``mutation_statement``, ``path_mutation_statement``): the projection
-    reads the pair there, never the call (and its operands) evaluated
-    again.  A projection with no key (a statement never substituted) reads
-    its call."""
+    ``name_mutation_statement``, ``path_mutation_statement``): the
+    projection reads the pair there, never the call (and its operands)
+    evaluated again.  A projection with no key (a statement never
+    substituted) reads its call."""
 
     call: Expression
     index: int
@@ -21536,10 +21393,19 @@ class BuiltinContainerProjection(Expression):
 
 
 class ReceiverAfterCall(Expression):
-    """A value a call may have changed: unknown after that call."""
+    """A value a call may have changed, read after that call.
+
+    With no ``rules`` it is unknown after the call.  With ``rules`` the value
+    decides at reduce (``ReceiverAfterCallSugar``): ``prior`` (the name's
+    read before the call) is kept unless the value of some rule's object --
+    ``subjects[i]``, or ``prior`` itself for index -1 -- is one the call may
+    have changed (``container_mutation._havoc``)."""
 
     label: str
     occurrence: str
+    prior: Optional[Expression]
+    subjects: Tuple[Expression, ...]
+    _child_fields = ("prior", "subjects")
 
     def substitute(self, scope):
         del scope
@@ -21550,8 +21416,16 @@ class ReceiverAfterCall(Expression):
             ReceiverAfterCallSugar,
         )
 
+        prior = getattr(self, "prior", None)
+        subjects = getattr(self, "subjects", None) or ()
+        rules = getattr(self, "rules", None) or ()
         return ReceiverAfterCallSugar(
-            label=self.label, site=self.fragment, evaluation_token=self.occurrence
+            label=self.label,
+            site=self.fragment,
+            evaluation_token=self.occurrence,
+            prior=None if prior is None or not rules else prior.sugar(),
+            subjects=tuple(subject.sugar() for subject in subjects),
+            rules=tuple(rules),
         )
 
 
@@ -21581,7 +21455,13 @@ class SourceCallActualAfter(Expression):
 
 
 class ContainerMutationStatement(Statement):
-    """A statement whose mutating call rebinds every alias of its receiver."""
+    """A statement whose mutating call rebinds every alias of its receiver.
+
+    ``rebinds`` (``r += x``) is the name the statement writes to the
+    in-place result ``evaluated[rebinds_index]``, under the statement's own
+    key ``evaluation`` (the pair under ``pair_evaluation``): the write every
+    later read of the name reads and a live loop carries
+    (``live_loop_construction._carried_writes``)."""
 
     names: Tuple[str, ...]
     states: Tuple[Expression, ...]
@@ -21600,12 +21480,12 @@ class ContainerMutationStatement(Statement):
         return self.storing_sugar(None)
 
     def storing_sugar(self, value_sugar):
-        """The statement's sugar: its call (``evaluated[0]``), then any
-        havoc, evaluated here, the call's pair bound under the statement's
-        key.  With ``value_sugar``, a store's statement (``d[k] = v`` on a
-        decided container) storing that in place of its value operand's
-        sugar (a yield assignment's resume reads its resumed value through
-        it); None when the statement's call stores no value."""
+        """The statement's sugar: its call (``evaluated[0]``), then the
+        values after it, evaluated here, the call's pair bound under the
+        statement's key.  With ``value_sugar``, a store's statement (``d[k] =
+        v`` on a name) storing that in place of its value operand's sugar (a
+        yield assignment's resume reads its resumed value through it); None
+        when the statement's call stores no value."""
         from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
             ContainerMutationStatementSugar,
         )
@@ -21614,33 +21494,25 @@ class ContainerMutationStatement(Statement):
             evaluated = tuple(node.sugar() for node in self.evaluated)
         else:
             call = self.evaluated[0] if self.evaluated else None
-            if not isinstance(call, BuiltinContainerCall):
+            if not isinstance(call, PathContainerCall):
                 return None
             stored = call.storing_sugar(value_sugar)
             if stored is None:
                 return None
             evaluated = (stored, *(node.sugar() for node in self.evaluated[1:]))
         evaluation = getattr(self, "evaluation", None)
+        index = getattr(self, "rebinds_index", None)
+        result_evaluation = None
+        if isinstance(getattr(self, "rebinds", None), str) and isinstance(index, int):
+            # ``r += x``: the statement's key holds the in-place result, the
+            # pair its own key.
+            result_evaluation = (evaluation, index) if isinstance(evaluation, str) else None
+            evaluation = getattr(self, "pair_evaluation", None)
         return ContainerMutationStatementSugar(
             evaluated=evaluated,
             site=self.fragment,
             evaluation=evaluation if isinstance(evaluation, str) else None,
-        )
-
-
-class MappingPopResult(MappingPopState):
-    """Shadow expression result of inherited ``mapping.pop(key, default)``."""
-
-    def _construct_sugar(self):
-        from sugar_lift_py_tests.sugar.mapping_pop_result_sugar import (
-            MappingPopResultSugar,
-        )
-
-        return MappingPopResultSugar(
-            receiver=self.receiver.sugar(),
-            key=self.key.sugar(),
-            default=self.default.sugar(),
-            site=self.fragment,
+            result_evaluation=result_evaluation,
         )
 
 

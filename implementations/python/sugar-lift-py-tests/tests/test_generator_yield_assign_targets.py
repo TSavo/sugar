@@ -64,15 +64,12 @@ from sugar_lift_py_tests.sugar.assign_sugar import (
     KeyedStoreSugar,
 )
 from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
-    BuiltinContainerCallSugar,
     ContainerMutationStatementSugar,
+    PathContainerCallSugar,
 )
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
 from sugar_lift_py_tests.sugar.place_assign_sugar import PlaceAssignSugar
-from sugar_lift_py_tests.sugar.store_effect_sugar import (
-    AttributeStoreEffectSugar,
-    SubscriptStoreEffectSugar,
-)
+from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
 from sugar_lift_py_tests.temporal.temporal_context import (
     EVALUATION_PREFIX,
     projection_key,
@@ -376,11 +373,16 @@ def test_an_attribute_store_of_a_yield_is_a_named_store_step() -> None:
 
 
 def test_a_subscript_store_of_a_yield_is_a_named_store_step() -> None:
+    # ``d[k] = v`` on a name is the one mutation door's statement whatever
+    # ``d`` was given (a parameter here): the value ``d`` holds decides it.
     steps = _steps("def g(d, k):\n    d[k] = yield 5\n    return 9\n")
     step = steps[0]
     assert isinstance(step, YieldAssignStepV1)
     assert step.targets == ()
-    assert isinstance(step.store, SubscriptStoreEffectSugar)
+    assert isinstance(step.store, ContainerMutationStatementSugar)
+    call = step.store.evaluated[0]
+    assert isinstance(call, PathContainerCallSugar)
+    assert call.method == "__setitem__" and call.value_first
     assert step.store_evaluation.startswith(EVALUATION_PREFIX)
     assert not any(isinstance(item, OpaqueStepV1) for item in steps)
 
@@ -441,7 +443,8 @@ def test_a_store_on_a_local_list_is_the_statements_mutation() -> None:
     assert step.store.evaluation == evaluation
     assert step.store_evaluation == projection_key(evaluation, "yield")
     call = step.store.evaluated[0]
-    assert isinstance(call, BuiltinContainerCallSugar)
+    assert isinstance(call, PathContainerCallSugar)
+    assert call.method == "__setitem__" and call.value_first
     stored = call.args[-1]
     assert isinstance(stored, EvaluationRefSugar)
     assert stored.place and stored.evaluation == step.store_evaluation

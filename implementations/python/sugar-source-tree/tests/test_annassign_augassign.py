@@ -16,8 +16,11 @@ from sugar_lift_py_tests.effect import (
 )
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.expr_statement_sugar import ExprStatementSugar
-from sugar_lift_py_tests.sugar.augassign_sugar import AugAssignSugar
 from sugar_lift_py_tests.sugar.binop_sugar import BinOpSugar
+from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+    ContainerMutationStatementSugar,
+    PathContainerCallSugar,
+)
 from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -54,19 +57,35 @@ def test_aug_assign_rebinds_and_is_inert():
     assert v.post().args[1].value == 2
 
 
+def _in_place_call(statement_sugar):
+    """``x OP= e``'s in-place call: the one mutation door's statement
+    (#7757), whose first evaluation is the call on ``x``'s prior read."""
+    assert isinstance(statement_sugar, ContainerMutationStatementSugar)
+    call = statement_sugar.evaluated[0]
+    assert isinstance(call, PathContainerCallSugar)
+    return call
+
+
+def _is_in_place(statement) -> bool:
+    return statement.kind == "ContainerMutationStatement" and isinstance(
+        getattr(statement, "rebinds", None), str
+    )
+
+
 def test_name_augassign_constructs_inplace_owned_rebind():
     """Name OP=: project_inplace + name; not substitute-time BinOp rebind."""
     function = _fn("def arbitrary():\n    renamed = 1\n    renamed += 2\n")
     substituted = function.substitute({})
-    sugar = substituted.body[1].sugar()
-    assert isinstance(sugar, AugAssignSugar)
-    assert sugar.name == "renamed"
-    assert sugar.operator == "iadd"
+    assert _is_in_place(substituted.body[1])
+    assert substituted.body[1].rebinds == "renamed"
+    sugar = _in_place_call(substituted.body[1].sugar())
+    assert sugar.label == "renamed"
+    assert type(sugar.operator).inplace_operator == "iadd"
     from sugar_source_tree.operators import BinaryOperator
 
-    assert sugar.operation.__func__ is BinaryOperator.project_inplace
+    assert sugar.operator.project_inplace.__func__ is BinaryOperator.project_inplace
     # Prior read is the assigned constant, not a BinOpSugar binding child.
-    assert not isinstance(sugar.left, BinOpSugar)
+    assert not isinstance(sugar.receiver, BinOpSugar)
 
 
 def test_name_augassign_reads_the_guarded_join_not_a_last_writer():
@@ -79,14 +98,15 @@ def test_name_augassign_reads_the_guarded_join_not_a_last_writer():
         "    return renamed\n"
     )
     substituted = function.substitute({})
-    sugar = next(
-        statement.sugar()
-        for statement in substituted.body
-        if statement.kind == "AugAssign"
+    sugar = _in_place_call(
+        next(
+            statement.sugar()
+            for statement in substituted.body
+            if _is_in_place(statement)
+        )
     )
-    assert isinstance(sugar, AugAssignSugar)
     # Prior load is the if-join (IfExpSugar), not a last-writer Constant alone.
-    assert type(sugar.left).__name__ == "IfExpSugar"
+    assert type(sugar.receiver).__name__ == "IfExpSugar"
 
 
 def _red_effects(source):
@@ -233,8 +253,12 @@ def test_aug_assign_with_no_prior_binding_is_sound():
         "ExitSet",
         "NativeOperationExitCarrierV1",
     }
-    # AugAssign sugar is present — the binding was not dropped.
-    assert any(isinstance(s, AugAssignSugar) for s in sugar.statements)
+    # The in-place statement is present — the binding was not dropped.
+    assert any(
+        isinstance(s, ContainerMutationStatementSugar)
+        and s.result_evaluation is not None
+        for s in sugar.statements
+    )
 
 
 def test_discrimination_annassign_value_changes_the_post():

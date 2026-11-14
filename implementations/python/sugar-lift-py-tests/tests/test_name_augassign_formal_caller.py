@@ -31,6 +31,10 @@ from sugar_lift_py_tests.sugar.augassign_sugar import (
     SubscriptAugAssignSugar,
     project_augmented,
 )
+from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+    ContainerMutationStatementSugar,
+    PathContainerCallSugar,
+)
 from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_exitset
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -57,10 +61,13 @@ def _helper_definition(
 def _aug_sugar(source: str = "def f(x):\n    x += 1\n"):
     tree = _tree(source)
     function = next(n for n in tree.nodes() if isinstance(n, FunctionDef))
-    # Prefer the AugAssign statement sugar off the substituted function body.
+    # ``x += e`` off the substituted function body is the one mutation door's
+    # statement (#7757); its in-place call carries the operator.
     stmt = function.sugar().statements[0]
-    assert isinstance(stmt, AugAssignSugar), type(stmt)
-    return function, stmt
+    assert isinstance(stmt, ContainerMutationStatementSugar), type(stmt)
+    call = stmt.evaluated[0]
+    assert isinstance(call, PathContainerCallSugar), type(call)
+    return function, call
 
 
 def _call_outcome(body: str, actuals: str, signature: str = "x"):
@@ -112,7 +119,7 @@ class _FloorSugar(Sugar):
 
 def _production_sites():
     _, sugar = _aug_sugar()
-    return sugar.op_site, sugar.site
+    return sugar.operator_site, sugar.site
 
 
 def _production_name_aug(
@@ -142,14 +149,15 @@ def _production_name_aug(
 
 def test_name_augassign_constructs_with_operator_owned_project_inplace() -> None:
     _, sugar = _aug_sugar()
-    assert isinstance(sugar, AugAssignSugar)
-    assert sugar.operator == "iadd"
-    assert sugar.operator == Add.inplace_operator
-    assert sugar.operation.__func__ is BinaryOperator.project_inplace
-    assert sugar.name == "x"
-    assert sugar.op_site is not None
+    assert isinstance(sugar, PathContainerCallSugar)
+    assert sugar.method == "__iadd__"
+    assert type(sugar.operator).inplace_operator == "iadd"
+    assert type(sugar.operator).inplace_operator == Add.inplace_operator
+    assert sugar.operator.project_inplace.__func__ is BinaryOperator.project_inplace
+    assert sugar.label == "x"
+    assert sugar.operator_site is not None
     assert sugar.site is not None
-    assert sugar.op_site is not sugar.site
+    assert sugar.operator_site is not sugar.site
 
 
 def test_discrimination_name_path_is_not_store_target_sugar() -> None:
@@ -161,9 +169,10 @@ def test_discrimination_name_path_is_not_store_target_sugar() -> None:
 def test_op_site_is_structural_gap_for_name_target() -> None:
     function, sugar = _aug_sugar("def f(x):\n    x += 1\n")
     aug = next(n for n in function.body if isinstance(n, AugAssign))
-    text = sugar.op_site.unit.source[sugar.op_site.span.start : sugar.op_site.span.end]
+    op_site = sugar.operator_site
+    text = op_site.unit.source[op_site.span.start : op_site.span.end]
     assert "+=" in text
-    assert sugar.op_site is not aug.value.fragment
+    assert op_site is not aug.value.fragment
 
 
 # ---------------------------------------------------------------------------
@@ -478,8 +487,8 @@ def test_arithmetic_halt_is_not_completed_return_of_prior_binding() -> None:
 
 def test_name_path_shares_project_inplace_with_add_operator() -> None:
     _, sugar = _aug_sugar()
-    assert sugar.operator == Add.inplace_operator
-    assert sugar.operation.__func__ is BinaryOperator.project_inplace
+    assert type(sugar.operator).inplace_operator == Add.inplace_operator
+    assert sugar.operator.project_inplace.__func__ is BinaryOperator.project_inplace
 
 
 def test_project_augmented_formal_mints_iadd_not_add() -> None:
@@ -491,7 +500,7 @@ def test_project_augmented_formal_mints_iadd_not_add() -> None:
     from sugar_lift_py_tests.ir import PrimitiveSort, make_var
 
     _, sugar = _aug_sugar()
-    site = sugar.op_site
+    site = sugar.operator_site
     src = site.source_cid
     owner_def = SourceFragmentCoordinateV1(src, 1, 0, 1, 10)
 

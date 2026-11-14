@@ -51,43 +51,48 @@ class MappingPopResultSugar(ConstructedTermSugar):
         )
 
     def _apply(self, receiver, key, default):
-        from sugar_lift_py_tests.floor.dict_value import DictValue
-        from sugar_lift_py_tests.floor.mapping_object_value import MappingObjectValue
-        from sugar_lift_py_tests.floor.set_value import _closed_member_equal
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
-        from sugar_lift_py_tests.outcome import ExitSet
+        return mapping_pop_result(receiver, key, default, self.site)
 
-        if not isinstance(receiver, (DictValue, MappingObjectValue)):
-            construction_panic_gap(
-                owner="MappingPopResultSugar",
-                blame=self.site,
-                observed=type(receiver).__name__,
-                requested="constructed mapping receiver",
-                fix="retain pop as typed loud until its receiver floors",
-            )
-        entries = receiver.mapping_entries()
-        decisions = tuple(
-            _closed_member_equal(key, candidate) for candidate, _ in entries
+
+def mapping_pop_result(receiver, key, default, site):
+    """The value of ``receiver.pop(key, default)`` on a constructed mapping
+    (the one door's value-decided rule for an inherited ``dict.pop``,
+    ``PathContainerCallSugar``)."""
+    from sugar_lift_py_tests.floor.dict_value import DictValue
+    from sugar_lift_py_tests.floor.mapping_object_value import MappingObjectValue
+    from sugar_lift_py_tests.floor.set_value import _closed_member_equal
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    if not isinstance(receiver, (DictValue, MappingObjectValue)):
+        construction_panic_gap(
+            owner="MappingPopResultSugar",
+            blame=site,
+            observed=type(receiver).__name__,
+            requested="constructed mapping receiver",
+            fix="retain pop as typed loud until its receiver floors",
         )
-        if any(decision is None for decision in decisions):
+    entries = receiver.mapping_entries()
+    decisions = tuple(_closed_member_equal(key, candidate) for candidate, _ in entries)
+    if any(decision is None for decision in decisions):
 
-            construction_panic_gap(
-                owner="MappingPopResultSugar",
-                blame=self.site,
-                observed=(
-                    "undecidable mapping key equality: "
-                    f"key={type(key).__name__} over {type(receiver).__name__}"
-                ),
-                requested="one source-decided finite mapping key",
-                fix="construct key equality or keep pop typed loud",
-            )
-        matches = tuple(index for index, decision in enumerate(decisions) if decision)
-        if len(matches) > 1:
-            construction_panic_gap(
-                owner="MappingPopResultSugar",
-                blame=self.site,
-                observed="duplicate equal keys in constructed mapping",
-                requested="one canonical mapping entry per key",
-                fix="repair mapping construction before pop",
-            )
-        return ExitSet.completed(entries[matches[0]][1] if matches else default)
+        construction_panic_gap(
+            owner="MappingPopResultSugar",
+            blame=site,
+            observed=(
+                "undecidable mapping key equality: "
+                f"key={type(key).__name__} over {type(receiver).__name__}"
+            ),
+            requested="one source-decided finite mapping key",
+            fix="construct key equality or keep pop typed loud",
+        )
+    matches = tuple(index for index, decision in enumerate(decisions) if decision)
+    if len(matches) > 1:
+        construction_panic_gap(
+            owner="MappingPopResultSugar",
+            blame=site,
+            observed="duplicate equal keys in constructed mapping",
+            requested="one canonical mapping entry per key",
+            fix="repair mapping construction before pop",
+        )
+    return ExitSet.completed(entries[matches[0]][1] if matches else default)
