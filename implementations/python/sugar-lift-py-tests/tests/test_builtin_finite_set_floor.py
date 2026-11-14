@@ -43,11 +43,12 @@ def test_symbolic_finite_membership_emits_typed_obligation():
 
 
 def test_opaque_member_stays_loud():
-    from sugar_lift_py_tests.floor import FunctionCallable
+    from sugar_lift_py_tests.floor import LambdaCallable
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
+    opaque = LambdaCallable(parameters=(), body=None, construction_identity="opaque")
     with pytest.raises(ConstructionPanic):
-        _numbers(1).contains(FunctionCallable("opaque"), "site")
+        _numbers(1).contains(opaque, "site")
 
 
 def test_authenticated_set_constructor_closes_finite_dict_keys():

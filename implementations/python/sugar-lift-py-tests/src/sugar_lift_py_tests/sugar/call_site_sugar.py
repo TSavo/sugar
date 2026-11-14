@@ -642,14 +642,27 @@ class CallSiteSugar(ConstructedTermSugar):
             from sugar_lift_py_tests.floor import (
                 BuiltinSemanticCallable,
                 ClassDefinitionValue,
+                LambdaCallable,
             )
 
             receiver = ctx.temporal.value_if_bound(self.target_name)
-            if isinstance(receiver, BuiltinSemanticCallable) or (
-                isinstance(receiver, ClassDefinitionValue)
-                and self.source_call_frame is None
-                and not positional
-                and not kw_values
+            # A name bound to a lambda value (``key(item)`` in a function
+            # given ``key=lambda v: ...``) calls that lambda: its own frame,
+            # the one binder and the one application.
+            if (
+                isinstance(receiver, BuiltinSemanticCallable)
+                or (
+                    isinstance(receiver, ClassDefinitionValue)
+                    and self.source_call_frame is None
+                    and not positional
+                    and not kw_values
+                )
+                or (
+                    isinstance(receiver, LambdaCallable)
+                    and self.source_call_frame is None
+                    and self.source_call_frame_table is None
+                    and self.formal_function_sugar is None
+                )
             ):
                 return receiver.callable_application_with(
                     CallableApplication(

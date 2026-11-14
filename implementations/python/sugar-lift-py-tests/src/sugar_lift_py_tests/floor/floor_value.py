@@ -172,7 +172,7 @@ class FloorValue:
         whose identity is not decidable yet" and "I am not a member at all".
         The first is an obligation (emit the typed ``python.*.contains`` atom);
         the second is a gap. Nothing about the carrier's SHAPE separates them
-        -- ``FunctionCallable`` carries a term exactly like ``SymbolicValue``
+        -- ``LambdaCallable`` carries a term exactly like ``SymbolicValue``
         does, and is a callable, never a member -- so this is testimony the
         floor states about itself, not something a caller infers.
 
@@ -994,9 +994,9 @@ class FloorValue:
         """Testimony: does this floor value DENOTE a Python runtime value?
 
         The default is the honest "no". A floor value is not automatically a
-        value: ``LambdaCallable`` and ``FunctionCallable`` denote callables,
+        value: ``LambdaCallable`` denotes a callable,
         ``EffectCoordinate`` denotes a pending effect, exit values denote a
-        halt. Carrying a term is NOT the discriminator -- ``FunctionCallable``
+        halt. Carrying a term is NOT the discriminator -- ``LambdaCallable``
         carries one and is never an operand. Only the class itself can say,
         and a class that has not said stays loud.
         """

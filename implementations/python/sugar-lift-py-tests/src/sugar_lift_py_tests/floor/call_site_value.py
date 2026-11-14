@@ -469,14 +469,13 @@ class CallSiteValue(FloorValue):
     def denotes_a_value(self) -> bool:
         # A call's RESULT is a value; what it is equal to is undecided until
         # the callee floors. That makes membership over it an obligation, not
-        # a gap. A FunctionCallable is the callee itself and stays no.
+        # a gap. A LambdaCallable is the callee itself and stays no.
         return True
 
     def guarded(self, formula):
         """A callsite coordinate rides under a guard unchanged.
 
-        Like FunctionCallable: the authenticated call term is
-        the value. It is not a return or inv that becomes an implication; the
+        The authenticated call term is the value. It is not a return or inv that becomes an implication; the
         branch guard already owns control. Absence of this arm was
         ``write more Floor: implement CallSiteValue.guarded`` (to_dict /
         base_parser residual).

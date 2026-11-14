@@ -92,7 +92,7 @@ def member_equal(left, right):
     # `{List,Tuple,Set}Value.contains x CallSiteValue`. A call's result IS a
     # value of undecided identity, so the honest answer is ``None`` (emit the
     # typed python.*.contains obligation), not NotImplemented (a gap). What it
-    # is NOT is "any value carrying a term": FunctionCallable carries one and is
+    # is NOT is "any value carrying a term": LambdaCallable carries one and is
     # a callable, never a member -- two tests pin that refusal deliberately. So
     # the discriminator is ``FloorValue.denotes_a_value``, testimony each floor
     # states about ITSELF and which defaults to no, never a property a caller

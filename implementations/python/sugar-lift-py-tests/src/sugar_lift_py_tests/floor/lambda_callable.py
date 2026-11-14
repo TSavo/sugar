@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from .floor_value import FloorValue
-from .term_value import TermValue
 
 
 @dataclass(frozen=True)
@@ -25,8 +24,9 @@ class LambdaCallable(FloorValue):
     The enclosing function's locals the body reads are not in ``closure``:
     Python reads them when the lambda is called, so a call binds each from
     its own scope (``Lambda._captured_bindings``, ``Call._closure_cells``,
-    ``ComputedCallSugar.captured``).  ``apply`` (the lambda passed on) knows
-    no such binding and refuses them by name.
+    ``ComputedCallSugar.captured``).  ``callable_application_with`` (the
+    lambda passed on and called there) knows no such binding and refuses
+    them by name.
     """
 
     parameters: tuple[str, ...]
@@ -42,7 +42,7 @@ class LambdaCallable(FloorValue):
 
     @property
     def parameter(self) -> str:
-        # Single-param readers (apply, older tests).
+        # Single-param readers (older tests).
         if len(self.parameters) != 1:
             raise AttributeError(
                 f"LambdaCallable.parameter requires exactly one formal, "
@@ -102,53 +102,77 @@ class LambdaCallable(FloorValue):
             [str_const(self.construction_identity), *encoded_parameters],
         )
 
-    def apply(self, value: TermValue, ctx):
-        del ctx
-        from sugar_lift_py_tests.floor import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor
+    def callable_application_with(self, operation, ctx):
+        """Call the lambda where a value of it is called: a callback.
+
+        ``key(item)`` inside a function given ``key=lambda v: ...``, or
+        ``fs[0](x)`` over a list of lambdas, is the same call as a lambda
+        called where it is written: the frame is entered
+        (``enter_source_frame``), the actuals are bound by the one binder
+        (``bind_call``) and the body is applied by
+        ``CallSiteValue.producer_outcome``, so every face of the body --
+        its raises among them -- is this call's.  The closure the value
+        carries is bound before the body reduces.
+        """
+        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.sugar.call_site_sugar import (
+            bind_source_frame_call,
+            enter_source_frame,
+            require_frame_captures,
+        )
         from sugar_source_tree.panic import SugarNotWritten
 
+        owner = "LambdaCallable.callable_application_with"
         frame = self.source_call_frame
-        if frame is None or len(self.parameters) != 1:
+        if frame is None:
             raise SugarNotWritten(
-                blame=self.construction_identity,
-                owner="LambdaCallable.apply",
-                observed="lambda has no single-actual source frame",
+                blame=operation.site,
+                owner=owner,
+                observed=f"lambda {self.construction_identity} has no source frame",
                 requested="the ordinary SourceCallFrameV1 call door",
-                fix="carry a source-visible frame or keep the callback loud",
+                fix="carry the lambda's source-visible frame or keep the call loud",
             )
-        captured = tuple(getattr(frame, "captured_names", ()) or ())
-        if captured:
-            # The lambda reads enclosing locals (``Lambda._captured_bindings``):
-            # Python reads their cells when the callback runs, and nothing
-            # here knows what the enclosing scope binds then.  Never the
-            # bindings it was made under.
-            raise SugarNotWritten(
-                blame=self.construction_identity,
-                owner="LambdaCallable.apply",
-                observed=(
-                    "lambda passed on reads enclosing locals whose binding at "
-                    f"the call is not known: {captured!r}"
-                ),
-                requested="the enclosing scope's binding of each name at the call",
-                fix=(
-                    "call the lambda where its enclosing scope binds each "
-                    "captured name, or keep the callback loud"
-                ),
-            )
-        return CallSiteValue(
-            target_name="py.call",
-            arg_values=(value,),
-            parameters=frame.parameters,
-            term=ctor(
-                "py.call",
-                [
-                    self.to_term(owner="LambdaCallable"),
-                    value.to_term(owner="LambdaCallable"),
-                ],
-            ),
-            body=frame.body,
-            source_call_frame_cid=frame.frame_cid,
-            formal_coordinate_cids=tuple(item.cid for item in frame.formal_coordinates),
-            closure=self.closure,
+        # The lambda reads enclosing locals (``Lambda._captured_bindings``):
+        # Python reads their cells when the callback runs, and nothing here
+        # knows what the enclosing scope binds then.  Never the bindings it
+        # was made under: refused by name, as any call that does not carry
+        # its callee's captured names is (``require_frame_captures``).
+        require_frame_captures(frame, (), site=operation.site)
+        keyword_count = len(operation.keyword_names)
+        positional = (
+            operation.arguments[:-keyword_count]
+            if keyword_count
+            else operation.arguments
         )
+        keywords = (
+            tuple(zip(operation.keyword_names, operation.arguments[-keyword_count:]))
+            if keyword_count
+            else ()
+        )
+        site = str(operation.site)
+        term = ctor(
+            "py.call",
+            [self.to_term(owner=site)]
+            + [value.to_term(owner=site) for value in positional]
+            + [
+                ctor("py.kwarg", [str_const(name), value.to_term(owner=site)])
+                for name, value in keywords
+            ],
+            symbol_kind="coordinate",
+        )
+        ctx, module_halt = enter_source_frame(
+            frame, ctx, owner=owner, blame=operation.site
+        )
+        if module_halt is not None:
+            return module_halt
+        return bind_source_frame_call(
+            "py.call",
+            tuple(positional),
+            keywords,
+            frame=frame,
+            ctx=ctx,
+            owner=owner,
+            blame=operation.site,
+            term=term,
+            closure=self.closure,
+        ).producer_outcome(ctx)
