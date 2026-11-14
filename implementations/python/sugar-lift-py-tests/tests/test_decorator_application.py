@@ -857,6 +857,72 @@ def test_default():
     )
 
 
+def test_an_init_default_is_the_binding_at_its_class_statement() -> None:
+    """``x = 1; class C: def __init__(self, a=x): self.a = a; x = 2;
+    C().a`` is 1: the class body runs the ``__init__`` statement, which
+    evaluates the default; the class value carries it and the class call
+    binds it, never ``x`` read again at the call."""
+    _binds_the_statements_value(
+        """\
+x = 1
+
+
+class C:
+    def __init__(self, a=x):
+        self.a = a
+
+
+x = 2
+
+
+def test_default():
+    assert C().a == {expected}
+"""
+    )
+
+
+def test_a_source_new_default_is_the_binding_at_its_class_statement() -> None:
+    """The same for a source ``__new__`` the class call runs: its default
+    is the value its ``def`` statement evaluated in the class body."""
+    _binds_the_statements_value(
+        """\
+x = 1
+
+
+class C:
+    def __new__(cls, a=x):
+        obj = super(C, cls).__new__(cls)
+        obj.a = a
+        return obj
+
+
+x = 2
+
+
+def test_default():
+    assert C().a == {expected}
+"""
+    )
+
+
+def test_a_class_call_reads_its_constructors_defaults_off_the_class() -> None:
+    """The constructor frame's default reads the key the class value
+    carries for ``__init__``; it is never the default expression."""
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+    from sugar_lift_py_tests.sugar.default_value_sugar import DefaultValueSugar
+
+    tree = _tree("class Box:\n    def __init__(self, n=3):\n        self.n = n\n")
+    (class_def,) = tuple(node for node in tree.nodes() if isinstance(node, ClassDef))
+    box = (
+        class_def.sugar()
+        .desugar(ReduceContext.root(owner="test"))
+        .completed_value()
+    )
+    (read,) = class_def.source_visible_constructor_frame().default_sugars
+    assert isinstance(read, DefaultValueSugar)
+    assert [key for key, _value in box.constructor_defaults()] == [read.evaluation]
+
+
 def test_no_default_expression_is_evaluated_at_a_call() -> None:
     """The call-time default evaluation is gone: a frame's default is only
     the read of its key, and every definition's defaults are constructed by

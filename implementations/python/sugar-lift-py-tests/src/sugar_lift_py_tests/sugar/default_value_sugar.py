@@ -28,7 +28,9 @@ bound by ``bind_call`` (``bind_carried_defaults``): a lambda value
 (``LambdaSugar``), a decorated ``def``'s function value, which its statement
 built after evaluating the defaults and before applying its decorators
 (``DecoratorApplicationSugar``), and a method's class
-(``ClassDefinitionValue.method_defaults``); and, for a module ``def`` called
+(``ClassDefinitionValue.method_defaults``), which a class call reads for its
+``__init__`` and ``__new__`` from the class statement's one outcome
+(``ClassConstructorBodySugar.bind_class_call``); and, for a module ``def`` called
 after import, the module run that ran its statement, read at the frame entry
 (``call_site_sugar.with_module_final_globals``).  A default expression is
 never evaluated at a call: a call where none of these bound the key is
