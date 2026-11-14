@@ -508,7 +508,7 @@ def test_shadowed_local_raises_does_not_inherit_pytest_provider_contract(tmp_pat
     )
 
     assert row["targetSymbol"] is None
-    assert row["gapKind"] == "runtime-selected"
+    assert row["gapKind"] == "undecided"
     assert "importBindingCid" not in row
 
 

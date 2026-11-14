@@ -46,7 +46,9 @@ class SourceCallPreconstructionGapV1:
         "artifact-resolution",
         "artifact-mismatch",
         "definition-missing",
-        "source-body-gap",
+        # A body nothing decided (#7757 item 4): one statement, whichever
+        # exception was caught.
+        "undecided",
         # The four conditions `opaque-call-target` used to fuse; these ride
         # straight off `ManagerConstructionGapV1.kind`, which owns their
         # definitions.

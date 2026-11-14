@@ -169,7 +169,7 @@ def test_demand_enrollment_uses_typed_with_coordinate_without_spelling_authority
     # _preconstruction_demand_rows joins the separately authenticated lexical
     # ImportBinding at this exact coordinate.
     assert rows[0]["targetSymbol"] is None
-    assert rows[0]["gapKind"] == "runtime-selected"
+    assert rows[0]["gapKind"] == "undecided"
     assert rows[0]["useSite"]["sourceCid"].startswith("blake3-512:")
 
 

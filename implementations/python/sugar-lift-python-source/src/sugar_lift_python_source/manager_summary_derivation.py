@@ -1960,24 +1960,17 @@ def populate_source_derived_resource_refs(
                     top_level, distribution_index=distribution_index
                 )
             except DependencyArtifactAuthenticationError as exc:
-                from .manager_construction import _graph_is_off_population
-
                 # No artifact authenticates the head callee's top-level
                 # module, so the lifter does not have it: not bridged, and the
                 # manager is cited naming its import target, exactly as an
-                # authenticated off-population callee is.  What it is
-                # implemented in is never asked.
+                # authenticated off-population callee is.  That is the one
+                # statement: no label is chosen by the exception or a default,
+                # and what it is implemented in is never asked.
                 _install_derivation_gap(
                     context,
                     coordinate,
                     receipt,
-                    (
-                        "call-target-off-population"
-                        if _graph_is_off_population(
-                            None, session=session, module_name=top_level
-                        )
-                        else "no-derived-contract"
-                    ),
+                    "call-target-off-population",
                     f"dependency artifact authentication failed for {top_level}: {exc}",
                 )
                 continue
@@ -2868,39 +2861,41 @@ def _populate_assigned_partition_manager_uses(
             member_site = arm_coordinate(node)
             try:
                 graph = graph_for(receipt)
-            except DependencyArtifactAuthenticationError as exc:
-                failed = (
-                    "partition-member-no-derived-contract",
-                    f"{receipt.target_symbol}: dependency artifact authentication "
-                    f"failed: {exc}",
+            except DependencyArtifactAuthenticationError:
+                # No artifact authenticates the member's module: the lifter
+                # does not have it, so it is not bridged -- the same one
+                # citation as an authenticated off-population member, never
+                # a label chosen by the exception.
+                graph = None
+            if graph is not None:
+                resolved = resolve_import_binding(
+                    receipt, graph=graph, session=session
                 )
-                break
-            resolved = resolve_import_binding(receipt, graph=graph, session=session)
-            if not isinstance(resolved, ResolvedPythonObjectV1):
-                kind = getattr(resolved, "kind", None) or "no-derived-contract"
-                failed = (f"partition-member-{kind}", receipt.target_symbol)
-                break
-            frame_result = resolve_source_visible_frame(
-                resolved,
-                graph=graph,
-                dependency_graphs=graphs,
-                session=session,
-            )
-            if not isinstance(frame_result, ManagerConstructionGapV1):
-                # An in-population member has a real body. Folding N derived
-                # protocols under one selection is its own law; keep this arm
-                # loud under a name that says so.
-                failed = (
-                    "partition-member-derived-unfolded",
-                    f"{receipt.target_symbol} resolves to an enrolled definition",
+                if not isinstance(resolved, ResolvedPythonObjectV1):
+                    kind = getattr(resolved, "kind", None) or "no-derived-contract"
+                    failed = (f"partition-member-{kind}", receipt.target_symbol)
+                    break
+                frame_result = resolve_source_visible_frame(
+                    resolved,
+                    graph=graph,
+                    dependency_graphs=graphs,
+                    session=session,
                 )
-                break
-            if frame_result.kind != "call-target-off-population":
-                failed = (
-                    f"partition-member-{frame_result.kind}",
-                    f"{receipt.target_symbol}: {frame_result.detail}",
-                )
-                break
+                if not isinstance(frame_result, ManagerConstructionGapV1):
+                    # An in-population member has a real body. Folding N
+                    # derived protocols under one selection is its own law;
+                    # keep this arm loud under a name that says so.
+                    failed = (
+                        "partition-member-derived-unfolded",
+                        f"{receipt.target_symbol} resolves to an enrolled definition",
+                    )
+                    break
+                if frame_result.kind != "call-target-off-population":
+                    failed = (
+                        f"partition-member-{frame_result.kind}",
+                        f"{receipt.target_symbol}: {frame_result.detail}",
+                    )
+                    break
             demand_cid = receipt.demand.get("cid", receipt.use["cid"])
             roster = opaque_source_call_roster_of(
                 OpaqueSourceCallObligationV1(
@@ -6191,30 +6186,28 @@ def _projected_manager_call_uses(source_file, selected_arms=None):
 
 
 def _populate_body_defect_kind_detail(exc: BaseException) -> tuple[str, str]:
-    """Name a populate-path body defect for cite-and-continue.
+    """The one undecided statement for a populate-path body defect.
 
-    SugarNotWritten → ``source-body-gap`` (existing #7063 arm).
-    TypeError → ``source-body-type-error`` (#7062 second costume: construction
-    require_* / IfExpSugar post_init failure that used to abort the open and
-    bank functionsTotal=0).
-    ContextManagerContractError → ``source-body-contract-error`` (a factory
-    body that is not a context manager, such as pytest.raises function form,
-    must stay a typed gap rather than abort populate).
+    A ``SugarNotWritten`` (#7063), a ``TypeError`` (#7062 second costume:
+    construction require_* / IfExpSugar post_init failure that used to abort
+    the open) or a ``ContextManagerContractError`` (a factory body that is not
+    a context manager, such as pytest.raises function form) each leave the
+    body undecided: one kind, ``undecided`` (#7757 item 4).  The exception's
+    class never chooses the label; what was observed rides in the detail.
 
     Callers must catch only these named classes — never bare ``except``.
     """
     from sugar_lift_py_tests.context_manager_contract import (
         ContextManagerContractError,
     )
+    from sugar_lift_py_tests.context_manager_resolution import UNDECIDED_GAP_KIND
     from sugar_source_tree.panic import SugarNotWritten
 
     if isinstance(exc, SugarNotWritten):
         observed = getattr(exc, "observed", None) or str(exc)
-        return "source-body-gap", str(observed)
-    if isinstance(exc, TypeError):
-        return "source-body-type-error", f"TypeError: {exc}"
-    if isinstance(exc, ContextManagerContractError):
-        return "source-body-contract-error", str(exc)
+        return UNDECIDED_GAP_KIND, str(observed)
+    if isinstance(exc, (TypeError, ContextManagerContractError)):
+        return UNDECIDED_GAP_KIND, f"{type(exc).__name__}: {exc}"
     raise TypeError(
         f"_populate_body_defect_kind_detail got unexpected {type(exc).__name__}; "
         f"callers must catch only SugarNotWritten, TypeError, and "

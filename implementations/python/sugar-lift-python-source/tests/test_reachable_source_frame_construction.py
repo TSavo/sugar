@@ -157,7 +157,7 @@ def test_target_that_is_broken_class_stays_loud(tmp_path: Path):
     assert isinstance(result, SourceCallPreconstructionGapV1), type(result)
     # Body gap (Compare leg) or construction gap — never silent green.
     assert result.kind in {
-        "source-body-gap",
+        "undecided",
         "force-floor",
         "call-target-export-unresolved",
         "artifact-resolution",

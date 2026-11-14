@@ -3499,17 +3499,11 @@ def _resolve_source_visible_frame_uncached(
             # No artifact authenticates the callee's top-level module, so the
             # lifter does not have it: not bridged.  It is cited exactly as
             # any other callee the lifter does not have, keyed by its import
-            # target; what it is implemented in is never asked.
+            # target: one statement, never a label chosen by the exception or
+            # a default (#7757 item 4); what it is implemented in is never
+            # asked.
             _install_opaque_call_obligation(
-                context,
-                call,
-                obligation(
-                    "call-target-off-population"
-                    if _graph_is_off_population(
-                        None, session=session, module_name=top_level
-                    )
-                    else "call-target-source-absent"
-                ),
+                context, call, obligation("call-target-off-population")
             )
             continue
         imported = resolve_import_binding(
