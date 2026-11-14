@@ -8,10 +8,7 @@ hit cheap; session ownership makes the ask once per construction session
 
 from __future__ import annotations
 
-from sugar_lift_python_source.manager_construction import (
-    _bind_dependency_graphs,
-    _dependency_graph_for_top,
-)
+from sugar_lift_python_source.manager_construction import _dependency_graph_for_top
 from sugar_lift_python_source.resolution_session import SourceResolutionSession
 
 
@@ -41,16 +38,6 @@ def test_dependency_graph_for_top_asks_auth_once(monkeypatch) -> None:
     assert g1 is g2 is g3
     assert calls == ["warnings"]
     assert session.dependency_graphs["warnings"] is g1
-
-
-def test_bind_dependency_graphs_seeds_from_session() -> None:
-    session = SourceResolutionSession(enrolled_distributions=frozenset())
-    session.dependency_graphs["re"] = object()
-    bound = _bind_dependency_graphs(session, {})
-    assert bound["re"] is session.dependency_graphs["re"]
-    # None binds the session map itself (write-through).
-    direct = _bind_dependency_graphs(session, None)
-    assert direct is session.dependency_graphs
 
 
 def test_five_unique_tops_auth_once_each(monkeypatch) -> None:

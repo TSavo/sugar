@@ -23,8 +23,9 @@ every terminal row. This module is a developer-loop console census over an
 arbitrary package root — no pin, no denominator record, no durable journal.
 Never quote its numbers as the board.
 
-It does open files through the same production door
-(``open_source_file_for_construction`` against an explicit corpus root). A bare
+It walks step 2's file list (``SourceTree(root).paths()``) and opens each file
+through the same production door (``open_source_file_for_construction``
+against an explicit corpus root). A bare
 ``SourceFile.from_path`` here painted every ``with`` as
 ``RuntimeSelectedContextManager`` regardless of resolvability — the two
 instruments then disagreed about With for reasons that were entirely the
@@ -56,8 +57,10 @@ def census(root: Path) -> int:
     )
     from sugar_source_tree.panic import SugarNotWritten
     from sugar_source_tree.reporter import CollectingReporter
+    from sugar_source_tree.tree import SourceTree
 
-    files = sorted(root.rglob("*.py"))
+    # Step 2's file list, the only files any door opens: never a second glob.
+    files = list(SourceTree(root).paths())
     # One demand table for the whole corpus root, exactly like the authoritative
     # recensus. Deriving it per file (or from ``file.parent``) scans a different
     # tree and shifts every With resolution — measurement drift, not signal.

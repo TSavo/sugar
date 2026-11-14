@@ -713,61 +713,6 @@ def test_renamed_pre_yield_branch_and_cleanup_spellings_share_one_resource_path(
     assert resource.exit.native_definition_coordinate == resource.exit_definition
 
 
-@pytest.mark.parametrize("graph_kind", ("missing", "foreign"))
-def test_renamed_generator_requires_its_authenticated_decorator_graph(
-    tmp_path: Path, graph_kind: str
-):
-    """Missing or cross-wired graph testimony never publishes a resource ref."""
-    from sugar_lift_py_tests.context_manager_resolution import (
-        ContextManagerResolutionGapV1,
-    )
-    from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
-    from sugar_lift_python_source.dependency_artifact import DependencyArtifactGraph
-    from sugar_lift_python_source.manager_construction import (
-        ImportValueUseSeatingGap,
-    )
-
-    manager_name = "structural_scope"
-    implementation = (
-        "from contextlib import contextmanager\n\n"
-        "@contextmanager\n"
-        f"def {manager_name}(value):\n"
-        "    yield value\n"
-    )
-    dist = _distribution(tmp_path, implementation, exported=manager_name)
-    graphs = {}
-    if graph_kind == "foreign":
-        graphs["contextlib"] = DependencyArtifactGraph.authenticate(dist)
-        with pytest.raises(
-            ImportValueUseSeatingGap, match="resolution-artifact-module-absent"
-        ):
-            _tree(
-                tmp_path,
-                f"from arbitrary import {manager_name}\n"
-                f"with {manager_name}(7) as entered:\n"
-                "    observed = entered\n",
-                dist=dist,
-                artifact_graph_cache=graphs,
-            )
-        return
-    tree, context, _ = _tree(
-        tmp_path,
-        f"from arbitrary import {manager_name}\n"
-        f"with {manager_name}(7) as entered:\n"
-        "    observed = entered\n",
-        dist=dist,
-        artifact_graph_cache=graphs,
-    )
-
-    assert len(context.source_derived_contract_refs) == 1
-    assert all(
-        isinstance(reference, ContextManagerResolutionGapV1)
-        for reference in context.source_derived_contract_refs.values()
-    )
-    resource = next(node for node in tree.nodes() if node.kind == "With").sugar()
-    assert isinstance(resource, GeneratorWithSugar)
-
-
 def test_unauthenticated_generator_manager_stays_on_generator_path(tmp_path: Path):
     """A source generator without resource coordinates never enters this arm.
 

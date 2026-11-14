@@ -84,10 +84,7 @@ authority is not a session state; an authoritative empty population is
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from .manager_construction import PrefixFallthroughOutcomeV1
+from typing import Any
 
 # (resolved workspace root, authenticated population) -> walk-owned session.
 # Not content-keyed; not a substitute for §4 residency. Cleared only by tests.
@@ -150,13 +147,6 @@ class SourceResolutionSession:
         "enrolled_distributions",
         "export_resolutions",
         "export_terminals",
-        "module_materializations",
-        "module_constants",
-        "prefix_files",
-        "prefix_fallthrough",
-        "import_use_rosters",
-        "import_value_rosters",
-        "lexical_passes",
         "dependency_graphs",
     )
 
@@ -182,30 +172,6 @@ class SourceResolutionSession:
         # Same key -> definition/gap only (no warrants). Shared by reexport hops
         # that carry path warrants and cannot use export_resolutions.
         self.export_terminals: dict[tuple[str, str, str], Any] = {}
-        # Module SourceFile + producer root + pin roster for one authenticated
-        # module under this session. Frame projection is per-definition, but
-        # materializing the whole module per definition multiplied in-population
-        # megamodules (pandas/_config/config.py ×18 in one _json.py open). The
-        # value is live context-bound, so it lives here — never process-global.
-        self.module_materializations: dict[tuple, Any] = {}
-        # source_cid -> (immutable global bindings, the module's Halted arm).
-        # A module constant is reduced from its own source text alone, so it
-        # is reduced once per module; every dependency frame reads this.
-        self.module_constants: dict[str, Any] = {}
-        # Prefix-door SourceFile. Export fallthrough called
-        # _module_prefix_outcome once per export locus and rebuilt config N times.
-        # Separate from module_materializations: different context settings.
-        self.prefix_files: dict[str, Any] = {}
-        # (source_cid, lineno, col_offset) -> PrefixFallthroughOutcomeV1.  The
-        # locus key is complete authority; the closed value prevents refusal
-        # from becoming a memoized ordinary non-fallthrough.
-        self.prefix_fallthrough: dict[tuple, Any] = {}
-        # source_cid -> import-use / value-use receipt tuples (lexical pass once)
-        self.import_use_rosters: dict[str, Any] = {}
-        self.import_value_rosters: dict[str, Any] = {}
-        # source_cid -> full lexical _Pass product (rows + value_rows). One walk
-        # fills both roster doors; avoids a second SourceFile for the same body.
-        self.lexical_passes: dict[str, Any] = {}
         # top_level -> DependencyArtifactGraph for this session (and walk). Call
         # sites used to mint a fresh ``dependency_graphs={}`` per frame /
         # prefix / populate path, re-entering authenticate_dependency_top_level
@@ -232,71 +198,6 @@ class SourceResolutionSession:
     def remember_export_terminal(self, key: tuple[str, str, str], result: Any) -> None:
         if self.enabled:
             self.export_terminals[key] = result
-
-    # -- module materialize memo (shared across definitions in one module) --
-
-    def module_materialize_hit(self, key: tuple) -> Any | None:
-        return self.module_materializations.get(key) if self.enabled else None
-
-    def remember_module_materialize(self, key: tuple, product: Any) -> None:
-        if self.enabled:
-            self.module_materializations[key] = product
-
-    def module_constants_hit(self, source_cid: str) -> Any | None:
-        return self.module_constants.get(source_cid) if self.enabled else None
-
-    def remember_module_constants(self, source_cid: str, product: Any) -> None:
-        if self.enabled:
-            self.module_constants[source_cid] = product
-
-    # -- prefix-door SourceFile + fallthrough (export path) --------------
-
-    def prefix_file_hit(self, source_cid: str, source_seat: str) -> Any | None:
-        return self.prefix_files.get((source_cid, source_seat)) if self.enabled else None
-
-    def remember_prefix_file(
-        self, source_cid: str, source_seat: str, source_file: Any
-    ) -> None:
-        if self.enabled:
-            self.prefix_files[(source_cid, source_seat)] = source_file
-
-    def fallthrough_hit(self, key: tuple) -> PrefixFallthroughOutcomeV1 | None:
-        if not self.enabled:
-            return None
-        return self.prefix_fallthrough.get(key)
-
-    def remember_fallthrough(
-        self, key: tuple, value: PrefixFallthroughOutcomeV1
-    ) -> None:
-        from .manager_construction import PrefixFallthroughOutcomeV1
-
-        if type(value) is not PrefixFallthroughOutcomeV1:
-            raise TypeError("prefix fallthrough memo requires its closed outcome")
-        if self.enabled:
-            self.prefix_fallthrough[key] = value
-
-    # -- lexical import rosters (call / value doors) ---------------------
-
-    def import_use_hit(self, source_cid: str) -> Any | None:
-        return self.import_use_rosters.get(source_cid) if self.enabled else None
-
-    def remember_import_use(self, source_cid: str, receipts: Any) -> None:
-        if self.enabled:
-            self.import_use_rosters[source_cid] = receipts
-
-    def import_value_hit(self, source_cid: str) -> Any | None:
-        return self.import_value_rosters.get(source_cid) if self.enabled else None
-
-    def remember_import_value(self, source_cid: str, receipts: Any) -> None:
-        if self.enabled:
-            self.import_value_rosters[source_cid] = receipts
-
-    def lexical_pass_hit(self, source_cid: str) -> Any | None:
-        return self.lexical_passes.get(source_cid) if self.enabled else None
-
-    def remember_lexical_pass(self, source_cid: str, runner: Any) -> None:
-        if self.enabled:
-            self.lexical_passes[source_cid] = runner
 
 
 def session_or_new(

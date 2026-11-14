@@ -204,31 +204,16 @@ def _resolve_export_uncached(
         and node.name == "__getattr__"
         for node in tree.body
     )
-    # Normal-completion authority for the prefix (statements strictly before
-    # the unique export-binding locus): producer-owned Completed faces, or a
-    # prefix that cannot skip the locus except by aborting the import.
-    # A construction refusal such as SymbolicValue.environ does not dynamize
-    # a later static bind that every successful import still reaches.
-    # A bind inside a decided If still uses that If as the fallthrough
-    # locus, so the prefix is the statements before the If, not the If
-    # itself (which would re-sugar the already-chosen arm).
-    if locus is not None:
-        fallthrough_locus = _top_level_containing(tree.body, locus)
-        if not _prefix_reaches_locus_or_aborts(tree.body, fallthrough_locus):
-            fallthrough = _prefix_has_completed_fallthrough(
-                module,
-                fallthrough_locus,
-                graph=graph,
-                session=session,
-            )
-            # Ordinary non-fallthrough and named construction refusal both
-            # cite through the existing typed dynamic-export membrane when
-            # the prefix may skip the bind.  Their distinct producer
-            # testimony remains recoverable from the session memo.
-            if fallthrough.kind != "completed":
-                return _gap(
-                    "dynamic-export", binding_cid, graph, module_name, exported_name
-                )
+    # The module prefix is never executed to admit an export: that opened the
+    # dependency module a second way (the prefix door), with its own context.
+    # A bind that every successful import reaches is the export.  A prefix
+    # that may skip it leaves the export undecided, named ``dynamic-export``;
+    # it is never admitted on an answer nobody computed.  A bind inside an If
+    # takes that If as the statement to reach.
+    if locus is not None and not _prefix_reaches_locus_or_aborts(
+        tree.body, _top_level_containing(tree.body, locus)
+    ):
+        return _gap("dynamic-export", binding_cid, graph, module_name, exported_name)
     return _resolve_export_binding(
         graph,
         binding_cid,
@@ -1954,22 +1939,6 @@ def _export_statement_with_locus(statement: ast.stmt, name: str, state, prefix=N
         return new_state, (statement if new_state is not state else None)
     new_state = _export_statement(statement, name, state)
     return new_state, (statement if new_state is not state else None)
-
-
-def _prefix_has_completed_fallthrough(
-    module, locus: ast.stmt, *, graph=None, session=None
-) -> bool:
-    """Delegate prefix meaning to the construction producer.
-
-    The dependency adapter owns export recognition only. It must not import
-    the downstream lift-kit test package or suppress a missing producer as a
-    normal dynamic export.
-    """
-    from .manager_construction import prefix_has_completed_fallthrough
-
-    if graph is None and session is None:
-        return prefix_has_completed_fallthrough(module, locus)
-    return prefix_has_completed_fallthrough(module, locus, graph=graph, session=session)
 
 
 def _absolute_import(

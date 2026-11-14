@@ -51,7 +51,7 @@ Both statuses are roster members; sugar **discharge** only splits Blue/Yellow
 and does not change membership for nodes registered at tree materialize.
 
 Production path therefore uses **register-only** roster construction
-(``source_audit_membership_from_registration``), not full ``discharge`` /
+(``minority_report`` over the file the one opener opens), not full ``discharge`` /
 per-root ``sugar()``. Discharge remains available for the identity twin and
 for report feeds that need present-vs-minority.
 
@@ -189,18 +189,27 @@ def format_report(offenders: Sequence[SilentOffender]) -> str:
     return "\n".join(lines)
 
 
+def _root_of(path: Path, rel: str) -> Path:
+    """The root ``rel`` is stated against."""
+    root = path.resolve()
+    for _ in Path(rel).parts:
+        root = root.parent
+    return root
+
+
 def _audit_file_discharge(
     path: Path, *, rel: str
 ) -> tuple[str, tuple[SilentOffender, ...]]:
     """Reference path: full register + sugar discharge (identity twin only)."""
     from sugar_lift_py_tests.idd.lift_coverage_census import census_source
-    from sugar_lift_py_tests.tree_enumerate import source_audit_from_roll_call
+    from sugar_lift_py_tests.lift_rpc import _roll_call_audit_leaf
 
     source = path.read_text(encoding="utf-8", errors="replace")
     census = census_source(source, file=rel)
     if disk_census_empty(census):
         return "completed", ()
-    audit = source_audit_from_roll_call(path, rel)
+    leaf = _roll_call_audit_leaf(path, rel, root=_root_of(path, rel))
+    audit = leaf["auxiliaryRows"]["sourceAudit"]
     return "completed", tuple(silent_offenders(census, audit))
 
 
@@ -209,18 +218,22 @@ def _audit_file(path: Path, *, rel: str) -> tuple[str, tuple[SilentOffender, ...
 
     Does not call ``sugar()`` / discharge. Membership of disk loci in the
     roll-call key set is identical to the discharge path (see twin tests).
+    The file is opened the one way every enumerate level opens it.
     """
     from sugar_lift_py_tests.idd.lift_coverage_census import census_source
-    from sugar_lift_py_tests.tree_enumerate import (
-        source_audit_membership_from_registration,
-    )
+    from sugar_lift_py_tests.lift_rpc import _open_enumerated_file
+    from sugar_lift_py_tests.tree_enumerate import source_audit_from_report
+    from sugar_source_tree.roll_call import minority_report
 
     source = path.read_text(encoding="utf-8", errors="replace")
     census = census_source(source, file=rel)
     # Empty disk census → 0 silent by construction; skip tree work entirely.
     if disk_census_empty(census):
         return "completed", ()
-    audit = source_audit_membership_from_registration(path, rel)
+    source_file = _open_enumerated_file(
+        path, root=_root_of(path, rel), locus_root=None
+    )
+    audit = source_audit_from_report(minority_report(source_file), rel)
     return "completed", tuple(silent_offenders(census, audit))
 
 

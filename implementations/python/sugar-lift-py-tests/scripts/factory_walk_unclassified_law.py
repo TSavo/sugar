@@ -268,18 +268,22 @@ def _roll_call_locus_to_walk_row(locus: Mapping[str, Any]) -> dict[str, Any]:
 
 def _run_live_child(path: Path, rel: str) -> int:
     from sugar_lift_py_tests.audit_only import collect_construction_panic
-    from sugar_lift_py_tests.tree_enumerate import source_audit_from_roll_call
+    from sugar_lift_py_tests.lift_rpc import _roll_call_audit_leaf
 
     # The deleted factory walk is replaced by the reporter's per-file roll-call
-    # partition (present Blue / absent Yellow).
-    audit, panic_gap = collect_construction_panic(
-        rel, lambda: source_audit_from_roll_call(path, rel)
+    # partition (present Blue / absent Yellow), opened the one way.
+    root = path.resolve()
+    for _ in Path(rel).parts:
+        root = root.parent
+    leaf, panic_gap = collect_construction_panic(
+        rel, lambda: _roll_call_audit_leaf(path, rel, root=root)
     )
     if panic_gap is not None:
         category = "factory-panic"
         rows: list[dict[str, Any]] = []
     else:
-        assert audit is not None
+        assert leaf is not None
+        audit = leaf["auxiliaryRows"]["sourceAudit"]
         category = "completed"
         rows = [_roll_call_locus_to_walk_row(locus) for locus in audit["loci"]]
     print(
