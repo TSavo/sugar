@@ -32,16 +32,20 @@ def test_off_population_call_desugars_to_a_callsite_not_a_gap():
     ``UndeterminedRaiseEffect``. A total completion would claim
     ``re.compile`` never raises.
     """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.floor import CallSiteValue, StringValue
     from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
     from sugar_lift_py_tests.outcome.exit_set import complement_guard
     from sugar_lift_py_tests.sugar.string_literal_sugar import StringLiteralSugar
+    from sugar_lift_py_tests.unanswered_calls import UnansweredCallV1, owed_calls
 
     sugar = CallSiteSugar(
         target_name="re.compile",
         args=(StringLiteralSugar("boom", site="raises.py:377"),),
-        site="raises.py:377",
+        site=_CallFragment(),
         contract_resolution_gap="call-target-off-population:python:re.compile",
     )
     outcome = sugar.desugar(None)
@@ -54,6 +58,26 @@ def test_off_population_call_desugars_to_a_callsite_not_a_gap():
     assert halt.guard == complement_guard(done.guard)
     assert isinstance(halt.effect, UndeterminedRaiseEffect)
     assert halt.effect.producer_node_owner == "UnknownCallee:re.compile"
+    # Both arms owe the call at its own source coordinate.
+    site = SourceFragmentCoordinateV1(_SOURCE_CID, 377, 4, 377, 20)
+    assert owed_calls(outcome) == (UnansweredCallV1(None, site),)
+
+
+_SOURCE_CID = "blake3-512:" + "7" * 128
+
+
+class _CallFragment:
+    """The call's fragment: its unit's source CID and its span, the two
+    coordinates an unanswered call is owed at."""
+
+    class _Span:
+        start_line, start_col, end_line, end_col = 377, 4, 377, 20
+
+    source_cid = _SOURCE_CID
+    line_col_span = _Span()
+
+    def __str__(self) -> str:
+        return "raises.py:377"
 
 
 def test_import_demand_enrollment_has_positional_arity_and_module_identity(tmp_path):

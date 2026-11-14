@@ -3194,22 +3194,29 @@ class SourceUnit:
         return False
 
     @staticmethod
-    def source_class_has_plain_source_body(
-        definition: "ClassDef",
-        *,
-        _seen: frozenset[int] | None = None,
-    ) -> bool:
-        """Methods and simple class-body fields only, including local bases.
+    def source_class_has_plain_source_body(definition: "ClassDef") -> bool:
+        """Methods and simple class-body fields only, over bases read by binding.
 
-        Constructor hooks, decorators, keywords, type parameters, and
-        unauthenticated or computed bases stay outside this door.
+        Each base is the binding its read reaches at the base expression,
+        never its spelling (#7757): the one module ``class`` statement
+        (``module_definition_at``) is walked in turn; ``object`` bound through
+        the builtin namespace (``LanguageCallee.BUILTIN_OBJECT``) is the base
+        every class has; a builtin exception class (``name_reference_at``)
+        whose constructor is BaseException's ``(*args)`` law
+        (``builtin_exception_constructor_is_args_total``) is admitted only
+        when no class of the walk writes ``__init__``, so the class call is
+        that construction -- the inherited-exception frame of
+        ``source_visible_constructor_frame``, whose instance carries its
+        ``args``.  ``__new__`` is refused in every body, by ``def`` or by
+        assignment, and an assigned ``__init__`` is refused (the frame reads
+        only a ``def``).  Constructor hooks, decorators, keywords, type
+        parameters, and any other base -- one the lifter cannot read --
+        stay outside this door: that call is the unanswered call.
         """
-        if not isinstance(definition, ClassDef):
-            return False
-        if definition._authenticated_new_constructor_shape() is not None:
-            return True
-        if definition.keywords or definition.decorators or definition.type_params:
-            return False
+        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+            builtin_exception_constructor_is_args_total,
+        )
+
         forbidden_methods = {
             "__new__",
             "__getattr__",
@@ -3220,39 +3227,85 @@ class SourceUnit:
             "__setitem__",
             "__delitem__",
         }
-        for member in definition.body:
-            if isinstance(member, Pass):
-                continue
-            if isinstance(member, FunctionDef):
-                if member.name in forbidden_methods or (
-                    member.decorators
-                    and definition._method_descriptor_kind(member) is None
+        builtins_prefix = "python:builtins."
+        initializer_written = False
+        exception_construction = False
+
+        def field_names(member) -> tuple[str, ...]:
+            if isinstance(member, Assign):
+                return tuple(target.id for target in member.targets)
+            return (member.target.id,)
+
+        def plain(cls, seen: frozenset[int]) -> bool:
+            nonlocal initializer_written, exception_construction
+            if not isinstance(cls, ClassDef):
+                return False
+            if cls._authenticated_new_constructor_shape() is not None:
+                return True
+            if cls.keywords or cls.decorators or cls.type_params:
+                return False
+            for index, member in enumerate(cls.body):
+                if isinstance(member, Pass) or (
+                    index == 0
+                    and isinstance(member, Expr)
+                    and isinstance(member.value, Constant)
+                    and isinstance(member.value.value, str)
                 ):
+                    continue
+                if isinstance(member, FunctionDef):
+                    if member.name in forbidden_methods or (
+                        member.decorators
+                        and cls._method_descriptor_kind(member) is None
+                    ):
+                        return False
+                    if member.name == "__init__":
+                        initializer_written = True
+                    continue
+                if SourceUnit._is_simple_class_field_statement(member):
+                    if any(
+                        name in forbidden_methods or name == "__init__"
+                        for name in field_names(member)
+                    ):
+                        return False
+                    continue
+                return False
+            if id(cls) in seen:
+                return False
+            seen = seen | {id(cls)}
+            unit = cls.unit
+            for base in cls.bases:
+                read = base.value if isinstance(base, Subscript) else base
+                if not isinstance(read, Name):
                     return False
-                continue
-            if SourceUnit._is_simple_class_field_statement(member):
-                continue
+                span = read.line_col_span()
+                source_base = unit.module_definition_at(read.id, span)
+                if isinstance(source_base, ClassDef):
+                    if not plain(source_base, seen):
+                        return False
+                    continue
+                if read is not base:
+                    return False
+                target = unit.name_reference_at(read.id, span)
+                if LanguageCallee.of(target) is LanguageCallee.BUILTIN_OBJECT:
+                    continue
+                if (
+                    target is not None
+                    and target.startswith(builtins_prefix)
+                    and builtin_exception_constructor_is_args_total(
+                        target[len(builtins_prefix) :]
+                    )
+                ):
+                    exception_construction = True
+                    continue
+                return False
+            return True
+
+        if not plain(definition, frozenset()):
             return False
-        seen = set() if _seen is None else set(_seen)
-        if id(definition) in seen:
-            return False
-        seen.add(id(definition))
-        for base in definition.bases:
-            name = None
-            if isinstance(base, Name):
-                name = base.id
-            elif isinstance(base, Subscript) and isinstance(base.value, Name):
-                name = base.value.id
-            else:
-                return False
-            bindings = (definition.unit.module_direct_bindings or {}).get(name, ())
-            if len(bindings) != 1 or not isinstance(bindings[0], ClassDef):
-                return False
-            if not SourceUnit.source_class_has_plain_source_body(
-                bindings[0], _seen=frozenset(seen)
-            ):
-                return False
-        return True
+        # A source ``__init__`` anywhere in the walk may stand before
+        # BaseException's in the MRO, or after it: which runs is not read
+        # here, so that class is not admitted through a builtin exception.
+        return not (initializer_written and exception_construction)
 
     @staticmethod
     def source_class_admits_source_constructor_frame(
@@ -3262,9 +3315,11 @@ class SourceUnit:
 
         Ordinary classes already pass through default-attribute behavior.
         A class whose body is only methods and simple name assignments, and
-        whose bases are the same kind of authenticated local class, may also
-        carry the frame so instance reads can see those class fields.
-        Unauthenticated or computed bases stay outside this door.  A
+        whose bases are the same kind of authenticated local class, ``object``,
+        or a builtin exception class with no source ``__init__`` before it
+        (``source_class_has_plain_source_body``), carries the frame: its
+        constructor is decided, so the call constructs.  Unauthenticated or
+        computed bases stay outside this door.  A
         decorated class binds its name to the decorators' result: a call of
         it calls that value (``DecoratedDefinitionRef``), never this frame.
         """
@@ -10113,7 +10168,9 @@ class ClassDef(Statement):
                 default_fragments=(None,),
                 default_fragment_cids=(None,),
                 body=self._source_visible_body(
-                    {}, constructed_new_method=constructed_new_method
+                    {},
+                    constructed_new_method=constructed_new_method,
+                    exception_args_coordinate_cid=args_coordinate.cid,
                 ),
                 owner=self,
                 constructed_new_method=constructed_new_method,
@@ -10216,7 +10273,12 @@ class ClassDef(Statement):
         )
 
     def _source_visible_body(
-        self, scope, *, constructed_new_method=None, dataclass_fields=None
+        self,
+        scope,
+        *,
+        constructed_new_method=None,
+        dataclass_fields=None,
+        exception_args_coordinate_cid=None,
     ):
         from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
             ClassConstructorBodySugar,
@@ -10305,6 +10367,7 @@ class ClassDef(Statement):
             receiver_coordinate_cid=receiver_coordinate_cid,
             site=self.fragment,
             constructed_new_method=constructed_new_method,
+            exception_args_coordinate_cid=exception_args_coordinate_cid,
         )
 
     def _make_constructed_receiver_ref(self, receiver_coordinate_cid):

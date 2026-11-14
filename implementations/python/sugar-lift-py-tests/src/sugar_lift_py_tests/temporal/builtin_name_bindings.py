@@ -197,6 +197,48 @@ BUILTIN_EXCEPTION_BASES: dict[str, tuple[str, ...]] = {
 }
 
 
+# The builtin exceptions whose own constructor is not BaseException's
+# ``(*args)`` law over every positional actual (CPython Objects/exceptions.c):
+# ``SyntaxError_init`` reads its second actual as a 4..6-tuple,
+# ``UnicodeEncodeError_init`` / ``UnicodeDecodeError_init`` /
+# ``UnicodeTranslateError_init`` parse a fixed typed signature, and
+# ``BaseExceptionGroup_new`` requires ``(message, exceptions)``.  A class
+# under one of them (``IndentationError``, ``TabError``, ``ExceptionGroup``)
+# inherits that constructor.  Every other builtin exception accepts any
+# positional actuals and stores them as ``args`` (``BaseException_new``).
+_PARTIAL_EXCEPTION_CONSTRUCTORS = frozenset(
+    {
+        "BaseExceptionGroup",
+        "SyntaxError",
+        "UnicodeDecodeError",
+        "UnicodeEncodeError",
+        "UnicodeTranslateError",
+    }
+)
+
+
+def builtin_exception_constructor_is_args_total(name: str) -> bool:
+    """Whether the builtin exception class bound to ``name`` constructs by
+    BaseException's law: any positional actuals, stored as ``args``, never a
+    raise.  ``name`` is the builtin namespace member a binding reached
+    (``SourceUnit.name_reference_at``), never a source spelling; a name that
+    is not a builtin exception answers False."""
+    root = canonical_builtin_exception_name(name)
+    if root not in BUILTIN_EXCEPTION_NAMES:
+        return False
+    pending = [root]
+    seen: set[str] = set()
+    while pending:
+        current = pending.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        if current in _PARTIAL_EXCEPTION_CONSTRUCTORS:
+            return False
+        pending.extend(BUILTIN_EXCEPTION_BASES.get(current, ()))
+    return True
+
+
 def builtin_name_temporal():
     """Return the shared immutable lexical floor for Python's builtin names.
 
