@@ -193,26 +193,14 @@ class PositionalUnpackOperation:
         return ExitSet.completed(self.mint_roster(roster))
 
     def _runtime_cardinality(self, value: Any) -> Any:
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        if not self.has_star:
-            demand = f"exactly {self.arity} members for positional targets"
-        else:
-            demand = (
-                f"at least {self.arity} members for starred positional targets "
-                f"(prefix={self.fixed_prefix}, suffix={self.fixed_suffix})"
-            )
-        members, effect, guard = runtime_unpack_faces(
+        return runtime_unpack_faces(
             value,
             prefix=self.fixed_prefix,
             suffix=self.fixed_suffix,
             has_star=self.has_star,
             owner=self.owner,
             blame=self.blame,
-            demand=demand,
-        )
-        return ExitSet.two_faced(
-            self.mint_roster(members), effect, guard=guard, site=self.blame
+            answer=self.mint_roster,
         )
 
     def _arity_mismatch_exit(self, value: Any, members: int, display: str) -> Any:
@@ -259,14 +247,24 @@ def runtime_unpack_faces(
     has_star: bool,
     owner: str,
     blame: object,
-    demand: str,
-) -> tuple:
-    """``(members, effect, guard)``: both faces of unpacking ``value``, which
-    carries no authenticated cardinality (a symbolic term, an object).  The
-    one runtime answer of every unpack operation (``PositionalUnpackOperation``
-    and ``SequenceProjectionOperation``): it completes under ``guard`` with
-    ``members``, one per target leaf in source order, and halts with
-    ``effect`` (too few, too many, not iterable) under its complement.
+    answer,
+) -> Any:
+    """Both faces of unpacking ``value``, which carries no authenticated
+    cardinality (a symbolic term, an object).  The one runtime answer of
+    every unpack operation (``PositionalUnpackOperation`` and
+    ``SequenceProjectionOperation``): ``ExitSet.two_faced`` of
+    ``answer(members)`` -- ``members`` one per target leaf in source order --
+    under the unpack's completes atom, and a raise under its complement.
+
+    The raise is undetermined, not a guarded answer: the completes atom is
+    an opaque coordinate, not a formula over a known length, and what the
+    runtime raises is not one known class -- ``ValueError`` for too few or
+    too many, ``TypeError`` for a value that is not iterable, and whatever
+    the value's own ``__iter__`` / ``__next__`` raise.  So the halt is the
+    one undetermined-raise effect (``UndeterminedRaiseEffect``), and the
+    unpack owes its ``undecided`` member through ``two_faced``.  A decided
+    length (a tuple, a list) never comes here: its mismatch is the ground
+    ``ValueError`` exit (``_arity_mismatch_exit``).
 
     The demand is the coordinate of the unpack's layout:
     ``python:unpack.destructure(term, arity)`` for exactly ``arity`` members,
@@ -281,13 +279,18 @@ def runtime_unpack_faces(
     arity)`` for the star's list, and ``python:unpack.project_end(term,
     distance, arity)`` for a leaf after the star, ``distance`` from the end
     (1 is the last)."""
-    from sugar_lift_py_tests.effect import (
-        SequenceUnpackRuntimeEffect,
-        runtime_effect_evidence_from_terms,
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.effect.runtime_effect import (
+        resolve_runtime_effect_site,
     )
     from sugar_lift_py_tests.floor import SymbolicValue
     from sugar_lift_py_tests.ir import atomic, ctor, num
+    from sugar_lift_py_tests.occurrence import occurrence_key
+    from sugar_lift_py_tests.outcome import ExitSet
 
+    # The unpack's site is its source fragment (or an operation still holding
+    # it); a prose blame is a TypeError here, as it was at the witness door.
+    site = resolve_runtime_effect_site(blame)
     arity = prefix + suffix
     term = value.to_term(owner=f"{owner}.value")
     if has_star:
@@ -318,13 +321,13 @@ def runtime_unpack_faces(
                 for j in range(suffix)
             ),
         )
-    effect = SequenceUnpackRuntimeEffect(
-        "sequence unpack runtime boundary: unpack demands "
-        f"{demand} but the right-hand side "
-        "carries no authenticated cardinality -- iteration count "
-        "belongs to Python's runtime __iter__; "
-        f"arity={arity} starred={has_star} "
-        f"site={blame}",
-        **runtime_effect_evidence_from_terms(operation, operation, blame),
+    return ExitSet.two_faced(
+        answer(members),
+        UndeterminedRaiseEffect(
+            blame=str(site),
+            occurrence=occurrence_key(site),
+            producer_node_owner=f"{owner}.unpack",
+        ),
+        guard=atomic("python:unpack.completes", [operation]),
+        site=site,
     )
-    return members, effect, atomic("python:unpack.completes", [operation])

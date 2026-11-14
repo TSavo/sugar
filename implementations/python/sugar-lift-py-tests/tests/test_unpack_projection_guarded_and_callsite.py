@@ -1,8 +1,9 @@
 """``a, b = <rhs>`` where the reduced RHS is a GuardedValue or a CallSiteValue.
 
 ``SequenceProjectionOperation`` has exactly two lawful answers -- authenticated
-finite members, or a runtime unpack retaining ``SequenceUnpackRuntimeEffect``
-on one arm beside its completed projections -- and tuple,
+finite members, or a runtime unpack retaining an undetermined raise
+(``UndeterminedRaiseEffect``) on one arm beside its completed projections --
+and tuple,
 array, symbolic, object and opaque coordinates all route to one of them. Two
 value categories measured on the installed pandas tree had no arm at all and
 panicked with ``requested='project_sequence_with'``: ``CallSiteValue`` (6 rows)
@@ -36,7 +37,7 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
+from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor.guarded_value import GuardedValue
 from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
 from sugar_lift_py_tests.floor.term_value import TermValue
@@ -162,14 +163,17 @@ GUARDED_SYMBOLIC_ELSE = (
 
 
 def _halted_unpack_exits(outcome):
-    """The halted exits of a partition that carry the retained unpack demand."""
+    """The halted exits of a partition that carry the retained unpack demand:
+    the runtime unpack's undetermined raise (``runtime_unpack_faces``), not
+    another operation's (an opaque call's own raise is undetermined too)."""
     from sugar_lift_py_tests.outcome.exit_set import Halted
 
     return [
         exit_
         for exit_ in outcome.exits
         if isinstance(exit_, Halted)
-        and isinstance(exit_.effect, SequenceUnpackRuntimeEffect)
+        and isinstance(exit_.effect, UndeterminedRaiseEffect)
+        and str(exit_.effect.producer_node_owner).endswith(".unpack")
     ]
 
 
@@ -235,34 +239,31 @@ OPAQUE_CALL_TWO = "def A(o, v):\n    a, b = o.copy()\n    return v\n"
 OPAQUE_CALL_THREE = "def A(o, v):\n    a, b, c = o.copy()\n    return v\n"
 
 
-def _callsite_unpack_effect(outcome):
+def _callsite_unpack_halt(outcome):
     """The retained unpack demand: one halted arm, beside the completed arm
     the runtime unpack never claims away."""
     (halt,) = _halted_unpack_exits(outcome)
     assert len(outcome.halts()) < len(outcome.exits), outcome
-    return halt.effect
+    return halt
 
 
 def test_callsite_rhs_retains_the_typed_unpack_obligation(tmp_path: Path) -> None:
     outcome = _outcome(tmp_path, OPAQUE_CALL_TWO, "callsite_two")
-    effect = _callsite_unpack_effect(outcome)
-    assert isinstance(effect, SequenceUnpackRuntimeEffect), effect
-    assert "exactly 2 members" in effect.reason
-    assert "no authenticated cardinality" in effect.reason
+    halt = _callsite_unpack_halt(outcome)
+    assert isinstance(halt.effect, UndeterminedRaiseEffect), halt.effect
+    assert halt.effect.exception_type_coordinate is None
     # The obligation names the CALLSITE's own term, not a fabricated element.
-    assert "call:copy" in str(effect.witness.operation)
+    assert "python:unpack.destructure" in str(halt.guard)
+    assert "call:copy" in str(halt.guard)
 
 
 def test_callsite_arity_is_the_target_count(tmp_path: Path) -> None:
-    two = _callsite_unpack_effect(_outcome(tmp_path, OPAQUE_CALL_TWO, "callsite_two"))
-    three = _callsite_unpack_effect(
+    two = _callsite_unpack_halt(_outcome(tmp_path, OPAQUE_CALL_TWO, "callsite_two"))
+    three = _callsite_unpack_halt(
         _outcome(tmp_path, OPAQUE_CALL_THREE, "callsite_three")
     )
-    assert "exactly 2 members" in two.reason
-    assert "exactly 3 members" in three.reason
-    # Discrimination: a different arity is a different obligation TERM, not the
-    # same term with different prose.
-    assert str(two.witness.operation) != str(three.witness.operation)
+    # Discrimination: a different arity is a different obligation TERM.
+    assert str(two.guard) != str(three.guard)
 
 
 def test_callsite_with_no_reachable_body_takes_the_opaque_arm(
@@ -291,8 +292,8 @@ def test_callsite_with_no_reachable_body_takes_the_opaque_arm(
         "    return a\n"
     )
     outcome = _outcome(tmp_path, source, "callsite_opaque")
-    effect = _callsite_unpack_effect(outcome)
-    assert isinstance(effect, SequenceUnpackRuntimeEffect), effect
+    halt = _callsite_unpack_halt(outcome)
+    assert isinstance(halt.effect, UndeterminedRaiseEffect), halt.effect
     # The obligation names the callsite coordinate, not an invented element.
-    assert "call:pair" in str(effect.witness.operation)
-    assert "exactly 2 members" in effect.reason
+    assert "call:pair" in str(halt.guard)
+    assert "python:unpack.destructure" in str(halt.guard)

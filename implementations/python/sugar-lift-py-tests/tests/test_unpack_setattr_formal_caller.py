@@ -44,7 +44,10 @@ from sugar_lift_py_tests.caller_parameter_contract import (
     _NATIVE_OPERATION_PROJECTORS,
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.effect import AttributeStoreRuntimeEffect
+from sugar_lift_py_tests.effect import (
+    AttributeStoreRuntimeEffect,
+    UndeterminedRaiseEffect,
+)
 from sugar_lift_py_tests.floor import (
     ObjectField,
     ObjectMethodValue,
@@ -342,22 +345,25 @@ def test_first_store_halt_blocks_later_targets() -> None:
     outcome = fn.sugar().desugar(None)
     halted = [e for e in outcome.exits if isinstance(e, Halted)]
     completed = [e for e in outcome.exits if isinstance(e, Completed)]
-    # Dual-face AttributeStoreRuntimeEffect composition: 2 halt + 1 completed.
+    # Dual-face store composition: 2 halt + 1 completed.
     assert len(halted) == 2
     assert len(completed) == 1
-    # First-halt arm (no prior store) carries no AttributeStore testimony.
-    first = next(
-        h
+    # Each store halts with the one undetermined raise (``store_faces``).
+    assert all(
+        isinstance(h.effect, UndeterminedRaiseEffect)
+        and h.effect.producer_node_owner == "AttributeStoreRuntimeEffect"
         for h in halted
-        if isinstance(h.effect, AttributeStoreRuntimeEffect)
-        and "attr=x" in h.effect.reason
-        and h.state is not None
-        and not any(
+    )
+    # First-halt arm (no prior store) carries no AttributeStore testimony.
+    testimonies = [
+        sum(
             isinstance(getattr(e, "effect", None), AttributeStoreRuntimeEffect)
             for e in getattr(h.state, "entries", ())
         )
-    )
-    assert isinstance(first.effect, AttributeStoreRuntimeEffect)
+        for h in halted
+        if h.state is not None
+    ]
+    assert 0 in testimonies, testimonies
     # No completed-only reading of the body.
     assert not (len(halted) == 0 and len(completed) == 1)
 

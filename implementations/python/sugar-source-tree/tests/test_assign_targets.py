@@ -11,7 +11,10 @@ import tempfile
 
 import pytest
 
-from sugar_lift_py_tests.effect import AttributeStoreRuntimeEffect
+from sugar_lift_py_tests.effect import (
+    AttributeStoreRuntimeEffect,
+    UndeterminedRaiseEffect,
+)
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.panic import SugarNotWritten
@@ -182,10 +185,9 @@ def test_non_display_rhs_constructs_and_retains_its_arity_obligation():
     # The halt is one arm, never the whole answer: under the obligation's
     # `python:unpack.completes` atom the unpack completes and the statements
     # after it run; under its complement it halts, binding nothing.
-    from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
-
     from sugar_lift_py_tests.ir import atomic, num
     from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+    from sugar_lift_py_tests.outcome.exit_set import complement_guard
     from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
     function = _fn(
@@ -203,18 +205,18 @@ def test_non_display_rhs_constructs_and_retains_its_arity_obligation():
     assert isinstance(halted, Halted)
     assert halted.state == _ReducedBlock((), True, ())
 
+    # What the runtime raises is not one known class (ValueError on a count
+    # mismatch, TypeError on a non-iterable, whatever ``__iter__`` raises):
+    # the halt is the one undetermined raise, under the complement of the
+    # completes atom over the exact obligation.
     effect = halted.effect
-    assert isinstance(effect, SequenceUnpackRuntimeEffect)
-    assert "exactly 2 members" in effect.reason
-    assert "(a, b)" in effect.reason
-    assert effect.witness.operation == effect.runtime_operand.term
-    assert effect.witness.operation.name == "python:unpack.destructure"
-    assert effect.witness.operation.args[1] == num(2)
-    assert effect.witness.site.line == 2
-    assert effect.witness.site.col == 4
-    assert completed.guard == atomic(
-        "python:unpack.completes", [effect.witness.operation]
-    )
+    assert isinstance(effect, UndeterminedRaiseEffect)
+    assert effect.exception_type_coordinate is None
+    (operation,) = completed.guard.args
+    assert operation.name == "python:unpack.destructure"
+    assert operation.args[1] == num(2)
+    assert completed.guard == atomic("python:unpack.completes", [operation])
+    assert halted.guard == complement_guard(completed.guard)
 
     # The exact pre-effect state is still empty: neither unpack target bound,
     # and the later name binding never executed.

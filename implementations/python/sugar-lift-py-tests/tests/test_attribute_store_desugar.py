@@ -3,7 +3,8 @@
 Does **not** delete or rewrite store ExitSet composition laws
 (``test_store_outcome_composition``, unpack twins). Those five named laws
 remain the dual-face instrument for undecided formal stores via
-``AttributeStoreRuntimeEffect``.
+``store_faces`` (``AttributeStoreRuntimeEffect`` testimony, or an undetermined
+raise).
 
 Python semantic law made constructible (PARTIAL):
 
@@ -39,7 +40,7 @@ import pytest
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
-from sugar_lift_py_tests.effect import AttributeStoreRuntimeEffect
+from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import (
     BytesValue,
     FloorValue,
@@ -312,7 +313,8 @@ def test_undecided_retains_dual_face_runtime_effect(tmp_path):
     ).desugar()
     assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
     (halt,) = outcome.halts()
-    assert isinstance(halt.effect, AttributeStoreRuntimeEffect)
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
+    assert halt.effect.producer_node_owner == "AttributeStoreRuntimeEffect"
 
 
 def test_formal_parameter_store_mints_setattr_named_carrier(tmp_path):

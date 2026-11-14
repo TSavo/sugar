@@ -6,8 +6,8 @@ Python law:
 
 - Over authenticated tuple/list members: bind head and tail (list) in source
   order; too few fixed positions → named ValueError.
-- Over opaque / runtime-selected members: retain typed
-  ``SequenceUnpackRuntimeEffect`` on one arm, binding nothing; never
+- Over opaque / runtime-selected members: retain an undetermined raise
+  (``UndeterminedRaiseEffect``) on one arm, binding nothing; never
   fabricate arity.  The other arm completes only under the starred layout's
   completes atom, head its projection and the star ``python:unpack.rest``.
 - Later store halt preserves earlier bindings from a completed star unpack
@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
+from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor.list_value import ListValue
 from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
 from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
@@ -194,11 +194,11 @@ def test_opaque_starred_retains_typed_obligation_no_bind(tmp_path: Path) -> None
         SymbolicValue(make_var("xs")), None
     )
     (halt,) = outcome.halts()
-    assert isinstance(halt.effect, SequenceUnpackRuntimeEffect)
-    assert "no authenticated cardinality" in halt.effect.reason
-    assert (
-        "at least" in halt.effect.reason or "starred=True" in halt.effect.reason
-    )
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
+    # No exception class is invented; the halt is the complement of the
+    # starred layout's completes atom.
+    assert halt.effect.exception_type_coordinate is None
+    assert "python:unpack.destructure_starred" in str(halt.guard)
     # The completed arm binds head to its projection and the star to the
     # term's rest, under the starred layout's completes atom.
     (completed,) = [e for e in outcome.exits if isinstance(e, Completed)]
@@ -216,7 +216,7 @@ def test_source_opaque_starred_never_completes(tmp_path: Path) -> None:
         tmp_path, "def f(xs):\n    head, *tail = xs\n    return head\n", "opaque_src"
     ).desugar(None)
     (halt,) = outcome.halts()
-    assert isinstance(halt.effect, SequenceUnpackRuntimeEffect)
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
     with pytest.raises(AssertionError):
         assert outcome.completed_value() is not None
 

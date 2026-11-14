@@ -11,10 +11,11 @@ The categories, and what each one owes:
 - **authenticated finite members** (tuple / array literal). The count is
   lift-time decidable, so each name binds to the member ALREADY IN HAND.
 - **runtime cardinality** (symbolic term, object). `__iter__` owns the count, so
-  the arity demand is RETAINED as a typed effect on one arm, where nothing
-  binds -- exactly as CPython binds nothing when `UNPACK_SEQUENCE` raises --
-  and under the unpack's completes atom each name binds its position's
-  projection.  The halt is never the whole answer.
+  the arity demand is RETAINED as the completes atom of the unpack's layout:
+  under its complement the unpack raises something undetermined
+  (`UndeterminedRaiseEffect`) and nothing binds -- exactly as CPython binds
+  nothing when `UNPACK_SEQUENCE` raises -- and under the atom each name binds
+  its position's projection.  The halt is never the whole answer.
 - **undug callsite coordinate**. Currently loud; see the frontier test at the
   bottom, which names the arm that retires it.
 
@@ -28,7 +29,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
+from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
@@ -71,14 +72,37 @@ def _receivers(source: str) -> tuple[list[str], object]:
 
 
 @dataclass(frozen=True)
+class _TwinSpan:
+    start_line: int = 1
+    start_col: int = 0
+    end_line: int = 1
+    end_col: int = 4
+
+
+@dataclass(frozen=True)
 class _TwinLocus:
     """A genuine runtime locus. `RuntimeEffectSite` is a runtime-checkable
     Protocol, so structure is the whole requirement -- and a locus STRING is
-    correctly refused, which is why this is a real object and not prose."""
+    correctly refused, which is why this is a real object and not prose.
+    It also carries a fragment's two coordinates (its unit's source CID and
+    its span): the unpack's occurrence and its owed ``undecided`` member are
+    keyed on them."""
 
     filename: str = "twin.py"
     line: int = 1
     col: int = 0
+    source_cid: str = "blake3-512:" + "cd" * 64
+    line_col_span: _TwinSpan = _TwinSpan()
+
+
+def _assert_arity(halt, arity: int) -> None:
+    """The halt is the complement of the completes atom over the layout
+    ``python:unpack.destructure(term, arity)``: the arity the source spells."""
+    from sugar_lift_py_tests.ir import num
+
+    guard = str(halt.guard)
+    assert "python:unpack.destructure" in guard, guard
+    assert str(num(arity)) in guard, guard
 
 
 def _answers_when_dig_yields(dug, source: str):
@@ -117,7 +141,8 @@ def _unpack_halt(out):
     claims away."""
     assert isinstance(out, ExitSet), out
     (halt,) = out.halts()
-    assert isinstance(halt.effect, SequenceUnpackRuntimeEffect)
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
+    assert halt.effect.exception_type_coordinate is None
     assert any(isinstance(exit_, Completed) for exit_ in out.exits), out
     return halt
 
@@ -146,8 +171,7 @@ def test_symbolic_receiver_retains_the_arity_demand_and_binds_nothing() -> None:
     seen, out = _receivers("def A(p):\n a, b = p\n return a\n")
     assert seen == ["SymbolicValue"]
     halt = _unpack_halt(out)
-    assert "exactly 2 members" in halt.effect.reason
-    assert "(a, b)" in halt.effect.reason
+    _assert_arity(halt, 2)
     # CPython binds nothing when UNPACK_SEQUENCE raises. Neither does this.
     assert not isinstance(getattr(halt.effect, "value", None), ScopeRebinds)
 
@@ -160,9 +184,9 @@ def test_the_retained_arity_is_the_targets_own_count_not_a_constant() -> None:
     """
     _, two = _receivers("def A(p):\n a, b = p\n return a\n")
     _, three = _receivers("def A(p):\n a, b, c = p\n return a\n")
-    assert "exactly 2 members" in _unpack_halt(two).effect.reason
-    assert "exactly 3 members" in _unpack_halt(three).effect.reason
-    assert "(a, b, c)" in _unpack_halt(three).effect.reason
+    _assert_arity(_unpack_halt(two), 2)
+    _assert_arity(_unpack_halt(three), 3)
+    assert str(_unpack_halt(two).guard) != str(_unpack_halt(three).guard)
 
 
 def test_an_attribute_receiver_is_the_same_category_as_a_name() -> None:
@@ -171,7 +195,7 @@ def test_an_attribute_receiver_is_the_same_category_as_a_name() -> None:
     must not be reading the source shape."""
     seen, out = _receivers("def A(o):\n a, b = o.pair\n return a\n")
     assert seen == ["SymbolicValue"]
-    assert "exactly 2 members" in _unpack_halt(out).effect.reason
+    _assert_arity(_unpack_halt(out), 2)
 
 
 def test_the_obligation_survives_a_guard_as_one_halted_face() -> None:
@@ -191,8 +215,8 @@ def test_the_obligation_survives_a_guard_as_one_halted_face() -> None:
     completed = [exit_ for exit_ in out.exits if isinstance(exit_, Completed)]
     assert len(halted) == 1
     assert len(completed) == 2
-    assert isinstance(halted[0].effect, SequenceUnpackRuntimeEffect)
-    assert "(col, loc)" in halted[0].effect.reason
+    assert isinstance(halted[0].effect, UndeterminedRaiseEffect)
+    _assert_arity(halted[0], 2)
 
 
 # ==========================================================================
@@ -290,15 +314,17 @@ def test_callsite_receiver_answers_like_its_dug_floor() -> None:
     seen, out = _receivers("def A(o):\n a, b = o.split()\n return a\n")
     # Dug to the opaque residual, then re-dispatched on the EUF receiver term.
     assert seen == ["CallSiteValue", "SymbolicValue"], seen
+    # The opaque call raises something undetermined too; the unpack's own
+    # raise is the one its producer names (``runtime_unpack_faces``).
     unpack_halts = [
         halt
         for halt in out.halts()
-        if isinstance(halt.effect, SequenceUnpackRuntimeEffect)
+        if isinstance(halt.effect, UndeterminedRaiseEffect)
+        and str(halt.effect.producer_node_owner).endswith(".unpack")
     ]
     (halt,) = unpack_halts
     assert any(isinstance(exit_, Completed) for exit_ in out.exits), out
-    assert "exactly 2 members" in halt.effect.reason
-    assert "(a, b)" in halt.effect.reason
+    _assert_arity(halt, 2)
     assert not isinstance(getattr(halt.effect, "value", None), ScopeRebinds)
 
 
@@ -372,7 +398,7 @@ def test_comprehension_receiver_retains_the_arity_demand() -> None:
     ):
         seen, out = _receivers(source)
         assert seen == ["ComprehensionValue"], seen
-        assert "exactly 2 members" in _unpack_halt(out).effect.reason
+        _assert_arity(_unpack_halt(out), 2)
 
 
 def test_absent_finite_testimony_is_not_read_as_zero_members() -> None:
@@ -439,7 +465,7 @@ def test_conditional_receiver_partitions_into_one_face_per_arm() -> None:
     halts = out.halts()
     assert len(halts) == 2
     for exit_ in halts:
-        assert isinstance(exit_.effect, SequenceUnpackRuntimeEffect)
+        assert isinstance(exit_.effect, UndeterminedRaiseEffect)
     assert len([exit_ for exit_ in out.exits if isinstance(exit_, Completed)]) == 2
 
 
@@ -449,8 +475,17 @@ def test_each_conditional_face_owes_its_own_operand_not_a_shared_one() -> None:
     shared operand would look identical in arity and be wrong about what the
     caller must satisfy."""
     _, out = _receivers("def A(c, p, q):\n a, b = p if c else q\n return a\n")
+    # Each halt's guard conjoins its branch with the complement of its own
+    # unpack's completes atom; the atom names the operand unpacked.
     operands = {
-        str(exit_.effect.runtime_operand.term.args[0]) for exit_ in out.halts()
+        str(
+            next(
+                conjunct
+                for conjunct in getattr(exit_.guard, "operands", (exit_.guard,))
+                if "python:unpack.completes" in str(conjunct)
+            )
+        )
+        for exit_ in out.halts()
     }
     assert len(operands) == 2, operands
     assert any("p" in operand for operand in operands)

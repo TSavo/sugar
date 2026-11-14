@@ -33,7 +33,7 @@ from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import SymbolicValue, TermValue
 from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
-from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
+from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.ir import atomic, ctor, make_var, not_, num, str_const
 from sugar_lift_py_tests.occurrence import (
     entered,
@@ -1106,13 +1106,17 @@ def test_an_exit_in_the_symbolic_item_reads_a_leaf_of_its_unpack() -> None:
         "python:unpack.completes",
         [ctor("python:unpack.destructure", [item, num(2)], symbol_kind="coordinate")],
     )
-    unpack_halts = [
-        exit_
-        for exit_ in outcome.exits
-        if isinstance(exit_, Halted)
-        and isinstance(exit_.effect, SequenceUnpackRuntimeEffect)
-    ]
+    unpack_halts = [exit_ for exit_ in outcome.exits if _is_unpack_halt(exit_)]
     assert [exit_.guard for exit_ in unpack_halts] == [not_(completes)]
+
+
+def _is_unpack_halt(exit_) -> bool:
+    """The runtime unpack's undetermined raise (``runtime_unpack_faces``)."""
+    return (
+        isinstance(exit_, Halted)
+        and isinstance(exit_.effect, UndeterminedRaiseEffect)
+        and str(exit_.effect.producer_node_owner).endswith(".unpack")
+    )
 
 
 _SYMBOLIC_UNPACK_NO_EXIT = (
@@ -1148,12 +1152,7 @@ def test_a_symbolic_item_with_no_exit_still_unpacks_its_target() -> None:
         "python:unpack.completes",
         [ctor("python:unpack.destructure", [item, num(2)], symbol_kind="coordinate")],
     )
-    unpack_halts = [
-        exit_
-        for exit_ in outcome.exits
-        if isinstance(exit_, Halted)
-        and isinstance(exit_.effect, SequenceUnpackRuntimeEffect)
-    ]
+    unpack_halts = [exit_ for exit_ in outcome.exits if _is_unpack_halt(exit_)]
     assert [exit_.guard for exit_ in unpack_halts] == [not_(completes)]
     assert any(isinstance(exit_, Completed) for exit_ in outcome.exits)
 

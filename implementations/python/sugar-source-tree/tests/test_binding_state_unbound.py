@@ -34,21 +34,25 @@ def _substituted(source: str):
     return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions()).substitute({})
 
 
-def _assert_unpack_effect(effect, *, arity: int, names: tuple[str, ...]):
-    """The typed arity obligation itself: the effect names the count it demands
-    and the targets it demands it for, and it binds nothing."""
-    from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
+def _assert_unpack_effect(halt, *, arity: int):
+    """The arity obligation itself: the halt raises something undetermined
+    (no exception class is invented), under the complement of the completes
+    atom over ``python:unpack.destructure(term, arity)``, and binds nothing."""
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
+    from sugar_lift_py_tests.ir import num
 
-    assert isinstance(effect, SequenceUnpackRuntimeEffect)
-    reason = effect.reason
-    assert f"exactly {arity} members" in reason, reason
-    assert ", ".join(names) in reason, reason
+    effect = halt.effect
+    assert isinstance(effect, UndeterminedRaiseEffect)
+    assert effect.exception_type_coordinate is None
+    guard = str(halt.guard)
+    assert "python:unpack.destructure" in guard, guard
+    assert str(num(arity)) in guard, guard
     assert not isinstance(getattr(effect, "value", None), ScopeRebinds)
     return effect
 
 
-def _assert_unpack_arity_obligation(out, *, arity: int, names: tuple[str, ...]):
+def _assert_unpack_arity_obligation(out, *, arity: int):
     """The typed arity obligation a non-display unpack retains, and NO binding.
 
     `a, b = <name>` has no lift-time cardinality: the count belongs to Python's
@@ -63,17 +67,21 @@ def _assert_unpack_arity_obligation(out, *, arity: int, names: tuple[str, ...]):
     """
     (halt,) = _unpack_halts(out)
     assert any(isinstance(exit_, Completed) for exit_ in out.exits), out
-    return _assert_unpack_effect(halt.effect, arity=arity, names=names)
+    return _assert_unpack_effect(halt, arity=arity)
 
 
 def _unpack_halts(out):
-    from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
+    """The runtime unpack's own undetermined raise (``runtime_unpack_faces``),
+    not another undecided operation's (a comparison or an augmented
+    assignment over a symbolic operand raises something undetermined too)."""
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 
     assert isinstance(out, ExitSet), out
     return [
         exit_
         for exit_ in out.halts()
-        if isinstance(exit_.effect, SequenceUnpackRuntimeEffect)
+        if isinstance(exit_.effect, UndeterminedRaiseEffect)
+        and str(exit_.effect.producer_node_owner).endswith(".unpack")
     ]
 
 
@@ -187,7 +195,7 @@ def test_pandas_blocks_nested_if_augassign_reads_unbound_binding_as_a_node() -> 
     out = _out(source)
     (halt,) = _unpack_halts(out)
     assert any(isinstance(exit_, Completed) for exit_ in out.exits)
-    _assert_unpack_effect(halt.effect, arity=2, names=("col", "loc"))
+    _assert_unpack_effect(halt, arity=2)
 
 
 def test_pandas_html_if_augassign_reads_guarded_binding_as_a_node() -> None:
@@ -244,7 +252,7 @@ def test_pandas_converter_if_augassign_reads_unbound_binding_as_a_node() -> None
     # arity demand is RETAINED as a typed effect carrying the exact obligation.
     # Pinning the replacement is strictly stronger than pinning the refusal --
     # it names the effect, the arity, and that nothing bound.
-    _assert_unpack_arity_obligation(_out(source), arity=2, names=("vmin", "vmax"))
+    _assert_unpack_arity_obligation(_out(source), arity=2)
 
 
 def test_augassign_over_explicitly_unbound_local_builds_guarded_read() -> None:
