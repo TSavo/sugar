@@ -243,8 +243,8 @@ class ObjectValue(FloorValue):
                 )
             return returned(block.statements[0].value)
 
-        return self.call_method_value(
-            dunder, (other,), owner=owner, blame=site, ctx=ctx
+        return self.call_member(
+            dunder, method, (other,), owner=owner, blame=site, ctx=ctx
         ).and_then(
             lambda call: call.retained_source_completion_outcome().and_then(completed)
         )
@@ -303,8 +303,11 @@ class ObjectValue(FloorValue):
 
         Every member read off the class -- a property, a class field, a
         method -- is the one the one class-namespace lookup selects
-        (``class_member``); a lookup it does not decide is the unanswered
-        read (``undecided_attribute``)."""
+        (``class_member``: the binding the class body left last); a lookup
+        it does not decide is the unanswered read (``undecided_attribute``).
+        The member is read once and carried: a property's getter, and the
+        method a ``BoundMethodValue`` binds, are that member, never looked up
+        again by name."""
         from .object_identity import contents_current
 
         current = contents_current(self)
@@ -343,8 +346,9 @@ class ObjectValue(FloorValue):
                 )
 
             return attribute_owned(
-                self.call_method_value(
+                self.call_member(
                     name,
+                    selected,
                     (),
                     owner="ObjectValue.attribute.property",
                     blame=site,
@@ -356,24 +360,17 @@ class ObjectValue(FloorValue):
             from sugar_lift_py_tests.outcome import ExitSet
 
             if isinstance(class_value, LambdaCallable):
-                # A function in the class namespace read off an instance is
-                # what its descriptor binds (``function.__get__``: a method
-                # bound to this receiver), never the bare function: calling
-                # the bare one would bind no ``self``.  That binding of a
-                # class-field function is not constructed here.
-                self._floor_gap(
-                    owner="ObjectValue.attribute",
-                    blame=site,
-                    observed=(
-                        f"{self.class_name}.{name} is a function class field "
-                        "read off an instance"
-                    ),
-                    requested="the method its descriptor binds to this receiver",
-                    fix=(
-                        "bind a class-namespace function read off an instance "
-                        "(function.__get__) or keep the read loud"
-                    ),
+                # A function in the class namespace (``f = lambda self: 1``,
+                # ``m = some_def``) read off an instance is what its
+                # descriptor binds (``function.__get__``): a method bound to
+                # this receiver, never the bare function.  Its call binds
+                # this receiver first and applies the function's own call
+                # (``call_member``).
+                from sugar_lift_py_tests.floor.bound_method_value import (
+                    BoundMethodValue,
                 )
+
+                return ExitSet.completed(BoundMethodValue(self, name, class_value))
             return ExitSet.completed(class_value)
         if selected is not None:
             # A function on the receiver's class, read off the instance, is
@@ -381,17 +378,18 @@ class ObjectValue(FloorValue):
             # instance field shadows it here, the field arm above already
             # answered): a plain function a method bound to this receiver, a
             # ``staticmethod`` the bare function, a ``classmethod`` a method
-            # bound to the receiver's class.  The value is this receiver and
-            # the name; its call dispatches through ``call_method_value`` on
-            # this very receiver, so the one method door binds the implicit
-            # first actual by the descriptor kind (``implicit_arguments``).
+            # bound to the receiver's class.  The value is this receiver, the
+            # name and the method this lookup selected; its call binds that
+            # very method (``call_member``), so the one method door binds the
+            # implicit first actual by the descriptor kind
+            # (``implicit_arguments``) and nothing selects it again by name.
             # ``obj.m()`` is this read, then that call
             # (``method_call_sugar._source_instance_method_call``).  Nothing
             # about the body is decided at the read.
             from sugar_lift_py_tests.floor.bound_method_value import BoundMethodValue
             from sugar_lift_py_tests.outcome import ExitSet
 
-            return ExitSet.completed(BoundMethodValue(self, name))
+            return ExitSet.completed(BoundMethodValue(self, name, selected))
         if current and name in self.deleted_instance_fields:
             # Authenticated delattr removed this instance field — read is
             # AttributeError with delete→read lineage, not an undecided gap.
@@ -565,18 +563,12 @@ class ObjectValue(FloorValue):
             if name in self.deleted_instance_fields
             else (*self.deleted_instance_fields, name)
         )
-        after = ObjectValue(
-            self.class_name,
-            remaining,
-            self.methods,
-            self.class_fields,
-            self.identity,
-            self.deferred_helper_fields,
-            deleted,
-            # The same object: it keeps its ``allocation`` and ``arrival``.
-            allocation=self.allocation,
-            arrival=self.arrival,
-        )
+        from dataclasses import replace
+
+        # The same object: it keeps its class (``defining_class``, which the
+        # one class-namespace lookup reads), its ``allocation`` and
+        # ``arrival``, and its own kind of receiver.
+        after = replace(self, fields=remaining, deleted_instance_fields=deleted)
         if not current:
             return self._undecided_delattr(name, after, site)
         return ExitSet.completed(after)
@@ -624,18 +616,12 @@ class ObjectValue(FloorValue):
         )
 
     def with_deferred_helper_fields(self) -> "ObjectValue":
-        names = self.helper_receiver_field_names()
-        return ObjectValue(
-            self.class_name,
-            self.fields,
-            self.methods,
-            self.class_fields,
-            self.identity,
-            names,
-            self.deleted_instance_fields,
-            # The same object: it keeps its ``allocation`` and ``arrival``.
-            allocation=self.allocation,
-            arrival=self.arrival,
+        from dataclasses import replace
+
+        # The same object: it keeps its class (``defining_class``), its
+        # ``allocation`` and ``arrival``, and its own kind of receiver.
+        return replace(
+            self, deferred_helper_fields=self.helper_receiver_field_names()
         )
 
     def helper_receiver_field_names(self) -> tuple[str, ...]:
@@ -721,33 +707,101 @@ class ObjectValue(FloorValue):
 
         This is the class side only: CPython's implicit special-method call
         (``iter(o)``, ``o == p``, ``o[k]``, ``format``: ``type(o).<name>``,
-        which no instance field shadows), a property's getter, and the call
-        of a ``BoundMethodValue`` the attribute lookup already answered.  An
+        which no instance field shadows) -- a class-field function there is
+        bound to this receiver as on any read (``call_member``).  An
         explicit ``o.m(...)`` never selects here: it is ``o.m`` read through
-        ``attribute`` (instance ``__dict__`` included), then that value
-        called (``method_call_sugar._source_instance_method_call``).
+        ``attribute`` (instance ``__dict__`` included), then that value --
+        the member the read selected -- called
+        (``method_call_sugar._source_instance_method_call``).
 
         The application is the one a plain call ``f(...)`` uses
         (``CallSiteValue.producer_outcome``, as ``CallSiteSugar`` applies it):
         the body runs here and every face it has, raises included, is this
         call's.
 
-        The method is the one the one class-namespace lookup selects
-        (``class_member``); a lookup it does not decide is the unanswered
-        call (``unanswered_method_call``), never a method of the roster
-        found by its name.
+        The member is the one the one class-namespace lookup selects
+        (``class_member``), read once and called (``call_member``); a lookup
+        it does not decide is the unanswered call
+        (``unanswered_method_call``), never a method of the roster found by
+        its name.
         """
-        if self.has_method(name) is None:
+        decided, method, value = self.class_member(name)
+        if not decided:
             return self.unanswered_method_call(name, arguments, keywords, blame)
-        return self.bound_method_call(
+        return self.call_member(
             name,
+            method if method is not None else value,
             arguments,
             owner=owner,
             blame=blame,
             ctx=ctx,
             keywords=keywords,
             required_frame=required_frame,
-        ).producer_outcome(ctx)
+        )
+
+    def call_member(
+        self,
+        name: str,
+        member: object,
+        arguments: tuple[FloorValue, ...],
+        *,
+        owner: str,
+        blame: object,
+        ctx: Any | None = None,
+        keywords: tuple[tuple[str, FloorValue], ...] = (),
+        required_frame: object | None = None,
+    ) -> ExitSet:
+        """``self.<name>(*arguments, **keywords)`` where ``member`` is what
+        the one class-namespace lookup selected for ``name``
+        (``class_member``): read off this receiver its descriptor binds it,
+        and the one application routine applies it.  Nothing selects it
+        again by name.
+
+        - A function the class wrote (``ObjectMethodValue``) is bound with
+          the implicit first actual its descriptor kind binds
+          (``bind_method_call``, ``implicit_arguments``) and applied
+          (``CallSiteValue.producer_outcome``).
+        - A function the class namespace holds as a field (``LambdaCallable``:
+          ``f = lambda self: 1``, ``m = some_def``) is a method bound to this
+          receiver (``function.__get__``): the receiver is its first actual,
+          and the function's own call applies it
+          (``LambdaCallable.callable_application_with``).
+        - Anything else is no callable member here and refuses by name.
+
+        A frame the caller requires must be the selected method's own."""
+        from sugar_lift_py_tests.floor.lambda_callable import LambdaCallable
+
+        if isinstance(member, ObjectMethodValue):
+            return self._bind_member(
+                name,
+                member,
+                arguments,
+                owner=owner,
+                blame=blame,
+                ctx=ctx,
+                keywords=keywords,
+                required_frame=required_frame,
+            ).producer_outcome(ctx)
+        if isinstance(member, LambdaCallable) and required_frame is None:
+            from sugar_lift_py_tests.callable_application import (
+                CallableApplication,
+            )
+
+            return member.callable_application_with(
+                CallableApplication(
+                    (self, *arguments, *(value for _name, value in keywords)),
+                    tuple(keyword for keyword, _value in keywords),
+                    blame,
+                ),
+                ctx,
+            )
+        return self._floor_gap(
+            owner=owner,
+            blame=blame,
+            observed=f"{self.class_name}.{name}",
+            requested="constructor-bound method",
+            fix=f"construct a diggable body for `{self.class_name}.{name}`",
+        )
 
     def bound_method_call(
         self,
@@ -768,6 +822,33 @@ class ObjectValue(FloorValue):
         refuses by name (``call_method_value`` answers it with the
         unanswered call)."""
         _decided, method, _value = self.class_member(name)
+        return self._bind_member(
+            name,
+            method,
+            arguments,
+            owner=owner,
+            blame=blame,
+            ctx=ctx,
+            keywords=keywords,
+            required_frame=required_frame,
+        )
+
+    def _bind_member(
+        self,
+        name: str,
+        method,
+        arguments: tuple[FloorValue, ...],
+        *,
+        owner: str,
+        blame: object,
+        ctx: Any | None = None,
+        keywords: tuple[tuple[str, FloorValue], ...] = (),
+        required_frame: object | None = None,
+    ):
+        """The call of ``method`` -- the function ``class_member`` selected
+        for ``name`` -- bound to this receiver, unapplied.  No method, or a
+        frame the caller requires that is not the method's own, refuses by
+        name."""
         if method is None or (
             required_frame is not None
             and method.source_call_frame_cid != required_frame.frame_cid
@@ -793,32 +874,48 @@ class ObjectValue(FloorValue):
         )
 
     def has_method(self, name: str) -> "bool | None":
-        """Whether the one class-namespace lookup selects a source method for
-        ``name`` on this receiver's type (``class_member``); None when the
-        lookup does not decide it."""
-        decided, method, _value = self.class_member(name)
-        return method is not None if decided else None
+        """Whether the one class-namespace lookup selects a member for
+        ``name`` on this receiver's type (``class_member``): a source method,
+        or a class field (a function there is a method too: ``call_member``
+        binds it); None when the lookup does not decide it.  Never False for
+        a name the class binds by an assignment: an implicit special-method
+        call (``__eq__ = ...``) never falls to the default behaviour."""
+        decided, method, value = self.class_member(name)
+        if not decided:
+            return None
+        return method is not None or value is not None
 
     def class_member(self, name: str) -> tuple:
         """``(decided, method, value)``: the member ``name`` read on this
         receiver's type is -- the one class-namespace lookup
-        (``ClassDef.namespace_owner`` over the receiver's class, #7757).
+        (``ClassDef.namespace_owner`` over the receiver's class, #7757), and
+        the one resolution every reader of the member reads (an attribute
+        read, an explicit or implicit method call, a comparison, a store).
 
-        The class of the MRO that holds ``name`` answers: ``method`` is the
-        source function its body wrote for it (the roster's method whose
-        defining class is that class, the last ``def``: Python's live
-        binding), ``value`` its class-body field of that name; both None when
-        no class binds it, a builtin class does, or the body bound it by
-        something else.  Not decided -- ``(False, None, None)``, the one
-        unanswered form, never a later class's member -- when the lookup is
-        not (an unread base, a decorator, a store, a conditional binding),
-        when the class that holds it holds a value its body did not bind
-        (``ClassDef.namespace_value_is_body``), or when that class has no
-        class value here.
+        The class of the MRO that holds ``name`` answers with the value its
+        namespace holds: the binding its body left last
+        (``ClassDef.body_binder``).  A ``def`` there is ``method``, the
+        roster's function that very statement wrote (its frame's definition
+        is that occurrence); any other binding (an assignment, a nested
+        class) is ``value``, the class-body field it bound -- never both, so
+        a ``def`` after a ``property`` of the same name, or an assignment
+        after a ``def``, is the member, and the earlier binding is gone.
+        Both None when no class binds the name or a builtin class does.
+
+        Not decided -- ``(False, None, None)``, the one unanswered form,
+        never a later class's member -- when the lookup is not (an unread
+        base, a decorator, a store, a conditional binding), when the class
+        that holds it holds a value its body did not bind
+        (``ClassDef.namespace_value_is_body``), when that class has no class
+        value here, when the ``def`` it holds is decorated by anything but a
+        builtin descriptor or an identity decorator (its value is the
+        decorator's result, ``ClassDef.method_value_is_written``), and when
+        the binding's value is not carried here.
 
         A receiver built with no class statement has only its own roster and
         class fields (and its class value's bases' fields): no other class
-        is there to ask.
+        is there to ask, and no order of its bindings either -- a name it
+        holds both as a method and as a field is not decided.
         """
         defining = self.defining_class
         definition = getattr(defining, "class_definition", None)
@@ -840,6 +937,8 @@ class ObjectValue(FloorValue):
                 ),
                 None,
             )
+            if method is not None and value is not None:
+                return False, None, None
             return True, method, value
         decided, owner = definition.namespace_owner(name)
         if not decided:
@@ -851,14 +950,27 @@ class ObjectValue(FloorValue):
         holder = defining.class_value_of_statement(owner)
         if holder is None:
             return False, None, None
-        method = next(
-            (
-                method
-                for method in reversed(self.methods)
-                if method.name == name and method.defining_class is holder
-            ),
-            None,
-        )
+        from sugar_source_tree.nodes import AsyncFunctionDef, FunctionDef
+        from sugar_source_tree.occurrence import SourceOccurrenceIdentityV1
+
+        binder = owner.body_binder(name)
+        if isinstance(binder, (FunctionDef, AsyncFunctionDef)):
+            written = SourceOccurrenceIdentityV1.of(binder)
+
+            def wrote(method) -> bool:
+                statement = getattr(method.source_call_frame, "owner", None)
+                return (
+                    method.defining_class is holder
+                    and isinstance(statement, (FunctionDef, AsyncFunctionDef))
+                    and SourceOccurrenceIdentityV1.of(statement) == written
+                )
+
+            method = next(
+                (method for method in self.methods if wrote(method)), None
+            )
+            if method is None or not owner.method_value_is_written(binder):
+                return False, None, None
+            return True, method, None
         value = next(
             (
                 field.value
@@ -867,7 +979,9 @@ class ObjectValue(FloorValue):
             ),
             None,
         )
-        return True, method, value
+        if value is None:
+            return False, None, None
+        return True, None, value
 
     def unanswered_method_call(self, name, arguments, keywords, site):
         """``self.<name>(...)`` whose member the one class-namespace lookup

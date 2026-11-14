@@ -100,7 +100,10 @@ class MappingObjectValue(ObjectValue):
         """
         definition = getattr(self.defining_class, "class_definition", None)
         if definition is None:
-            return "source" if self.has_method(name) else "dict"
+            held = self.has_method(name)
+            if held is None:
+                return "undecided"
+            return "source" if held else "dict"
         decided, owner = definition.namespace_owner(name)
         if not decided:
             return "undecided"
