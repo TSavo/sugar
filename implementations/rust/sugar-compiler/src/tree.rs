@@ -46,6 +46,7 @@ use sugar_linker::LinkerContract;
 
 use crate::kit::{Kit, KitError};
 use crate::kit_path::LiftTermTable;
+use sugar_proof_envelope::contains_term_ref;
 
 /// On-demand human-readable locus from a self-locating [`SourceMemento`].
 /// Not a primary key and not stored — file/function_name/span/CIDs already
@@ -859,19 +860,6 @@ fn decode_node(value: &Value) -> Result<WireNode, String> {
     })
 }
 
-fn contains_term_ref(value: &Value) -> bool {
-    match value {
-        Value::Array(values) => values.iter().any(contains_term_ref),
-        Value::Object(values) => {
-            if values.get("kind").and_then(Value::as_str) == Some("term-ref") {
-                return true;
-            }
-            values.values().any(contains_term_ref)
-        }
-        _ => false,
-    }
-}
-
 fn decode_export_node(node: WireNode) -> Result<ExportedSymbol, String> {
     let audit = node
         .audit
@@ -934,12 +922,14 @@ fn enumerate_rpc(
 }
 
 /// Request the Phase-3 resume level for one continuation, returning its
-/// contract nodes' `audit` payloads. Reuses the retained universe server-side.
+/// contract nodes. Reuses the retained universe server-side. The answer is an
+/// ordinary enumeration result, decoded by the one decoder: its term DAG is
+/// closed by its own `termTable` and resolved here (#7843).
 fn resume_rows_rpc(
     conn: &KitConn,
     link_unit_cid: &Value,
     resolution_set: &Value,
-) -> Result<Vec<Value>, EnumerateError> {
+) -> Result<Vec<WireNode>, EnumerateError> {
     let plugin = conn.surface.clone();
     let mut resume_options = json!({
         "linkUnitCid": link_unit_cid,
@@ -959,22 +949,15 @@ fn resume_rows_rpc(
             plugin: plugin.clone(),
             reason: error.to_string(),
         })?;
-    let result = response
-        .get("result")
-        .unwrap_or(&response)
-        .as_object()
-        .ok_or_else(|| EnumerateError::Malformed {
-            plugin: plugin.clone(),
-            reason: "resume response result must be an object".into(),
-        })?;
-    result
-        .get("rows")
-        .and_then(Value::as_array)
-        .cloned()
-        .ok_or_else(|| EnumerateError::Malformed {
+    let result = enumerate_result_from_response(&plugin, response)?;
+    if result.get("nodes").and_then(Value::as_array).is_none() {
+        return Err(EnumerateError::Malformed {
             plugin,
-            reason: "resume response missing rows array".into(),
-        })
+            reason: "resume response missing nodes array".into(),
+        });
+    }
+    let (nodes, _gaps) = decode_enumerate_result(&plugin, &result)?;
+    Ok(nodes)
 }
 
 fn enumerate_rpc_with_extra(
@@ -1015,12 +998,23 @@ fn enumerate_rpc_with_extra(
             reason: error.to_string(),
         })?;
     let result = enumerate_result_from_response(&plugin, response)?;
+    decode_enumerate_result(&plugin, &result)
+}
+
+/// Decode one enumeration result: resolve its term DAG through the result's
+/// own `termTable` (a term-ref with no table is malformed), then decode nodes
+/// and gaps. Every kit answer that carries terms goes through here.
+fn decode_enumerate_result(
+    plugin: &str,
+    result: &Value,
+) -> Result<(Vec<WireNode>, Vec<GapInfo>), EnumerateError> {
+    let plugin = plugin.to_string();
     let raw_nodes = result.get("nodes").and_then(Value::as_array);
     let response_has_term_refs = raw_nodes.is_some_and(|nodes| nodes.iter().any(contains_term_ref))
         || result.get("gaps").is_some_and(contains_term_ref);
     let term_table = if result.get("termTable").is_some() {
         Some(
-            LiftTermTable::decode(&result).map_err(|reason| EnumerateError::Malformed {
+            LiftTermTable::decode(result).map_err(|reason| EnumerateError::Malformed {
                 plugin: plugin.clone(),
                 reason,
             })?,
@@ -1472,7 +1466,7 @@ pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Va
             let set_value = serde_json::to_value(&set).unwrap();
             let nodes = resume_rows_rpc(&conn, &cid_value, &set_value)?;
             for node in nodes {
-                if let Some(audit) = node.get("audit") {
+                if let Some(audit) = &node.audit {
                     call_edges.route_audit(&mut ir, audit);
                 }
             }
@@ -2727,6 +2721,38 @@ mod tests {
         .expect("lawful result payload");
 
         assert_eq!(result["nodes"][0]["memento"]["file"], "src/lib.rs");
+    }
+
+    /// #7843: an answer whose audits state terms by reference is resolved
+    /// through its own `termTable` into inline terms; without the table it is
+    /// malformed, never passed on with the references in it.
+    #[test]
+    fn an_answer_with_term_refs_resolves_through_its_own_table() {
+        let out = json!({"kind": "var", "name": "out"});
+        let cid = sugar_canonicalizer::jcs_cid_of_json(&out);
+        let node = json!({
+            "memento": {"file": "idn.py"},
+            "audit": {"post": {"kind": "atomic", "name": "=", "args": [
+                {"kind": "term-ref", "cid": cid}
+            ]}}
+        });
+        let (nodes, _) = decode_enumerate_result(
+            "fixture-kit",
+            &json!({"nodes": [node.clone()], "gaps": [], "termTable": {(cid.clone()): out}}),
+        )
+        .expect("closed answer decodes");
+        let audit = nodes[0].audit.as_ref().expect("audit");
+        assert_eq!(
+            audit["post"]["args"][0],
+            json!({"kind": "var", "name": "out"})
+        );
+        assert!(!sugar_proof_envelope::contains_term_ref(audit));
+
+        let refused = decode_enumerate_result("fixture-kit", &json!({"nodes": [node], "gaps": []}));
+        assert!(
+            matches!(refused, Err(EnumerateError::Malformed { .. })),
+            "a term-ref without its table is malformed"
+        );
     }
 
     #[test]

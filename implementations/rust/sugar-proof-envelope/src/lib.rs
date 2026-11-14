@@ -51,14 +51,15 @@ pub use memento_pool::{
 };
 pub use proof::{build_proof_envelope, ProofEnvelopeInput, ProofEnvelopeOutput};
 pub use proof_graph::{
-    member_body, member_field, member_kind, member_signature, member_signer, recompute_member_cid,
-    verify_member_signature, AnchoredMember, AssertionSurfaceMemento, AtomCid, AtomMemento,
-    AuthorityMemento, AuthorityMementoRef, BridgeMemento, ClaimContractMemento,
-    ContextManagerContractMemento, ContractBody, ContractBodyCid, ContractEntry, ContractMemento,
-    ContractMementoRef, EffectSiteAnnotationMemento, FactoryWalkMemento, FlatAtom,
-    ImplicationMemento, LibrarySugarBindingMemento, MemberView, MementoCid, PlanMemberBytesError,
-    PlanMemento, ProofCatalog, ProofGraph, ProofIdentity, ProofRunMemento, SourceMemento,
-    StageReceiptMemento, StoredMember, UndecidedMemento, WitnessClaimMemento, WitnessMemento,
+    contains_term_ref, member_body, member_field, member_kind, member_signature, member_signer,
+    recompute_member_cid, verify_member_signature, AnchoredMember, AssertionSurfaceMemento,
+    AtomCid, AtomMemento, AuthorityMemento, AuthorityMementoRef, BridgeMemento,
+    ClaimContractMemento, ContextManagerContractMemento, ContractBody, ContractBodyCid,
+    ContractEntry, ContractMemento, ContractMementoRef, EffectSiteAnnotationMemento,
+    FactoryWalkMemento, FlatAtom, ImplicationMemento, LibrarySugarBindingMemento, MemberView,
+    MementoCid, PlanMemberBytesError, PlanMemento, ProofCatalog, ProofGraph, ProofIdentity,
+    ProofRunMemento, SourceMemento, StageReceiptMemento, StoredMember, UndecidedMemento,
+    WitnessClaimMemento, WitnessMemento,
 };
 pub use sign::{
     ed25519_pubkey_string, ed25519_sign_string, ed25519_sign_with_seed, ed25519_verify_bytes,

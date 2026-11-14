@@ -5683,7 +5683,10 @@ fn json_to_cvalue_with_terms(
     if let Some(table) = term_table {
         return table.canonical_value(value);
     }
-    if value.get("kind").and_then(Value::as_str) == Some("term-ref") {
+    // Anywhere in the value, not only at its root: a term-ref nested inside a
+    // formula would otherwise be written into the proof as an opaque node
+    // that nothing can resolve (#7843). A proof states every term inline.
+    if sugar_proof_envelope::contains_term_ref(value) {
         return Err(
             "term-ref arrived without the required ir-document termTable; inline term compatibility is forbidden"
                 .to_string(),
@@ -7023,6 +7026,28 @@ mod tests {
         .expect("merge term tables");
 
         assert_eq!(merged["termTable"].as_object().expect("termTable").len(), 2);
+    }
+
+    /// #7843: a term-ref nested inside a formula, with no table to resolve it,
+    /// is refused; it is never written into the proof as an opaque node.
+    #[test]
+    fn mint_refuses_a_nested_term_ref_without_a_table() {
+        let post = json!({
+            "kind": "atomic",
+            "name": "=",
+            "args": [
+                {"kind": "term-ref", "cid": "blake3-512:0000"},
+                {"kind": "var", "name": "x"}
+            ]
+        });
+        let error = json_to_cvalue_with_terms(&post, None).expect_err("nested term-ref");
+        assert!(error.contains("term-ref"), "{error}");
+        let inline = json!({
+            "kind": "atomic",
+            "name": "=",
+            "args": [{"kind": "var", "name": "out"}, {"kind": "var", "name": "x"}]
+        });
+        json_to_cvalue_with_terms(&inline, None).expect("an inline formula converts");
     }
 
     #[test]
