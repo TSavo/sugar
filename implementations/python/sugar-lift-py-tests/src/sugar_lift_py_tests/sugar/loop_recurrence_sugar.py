@@ -175,12 +175,18 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         a name after the loop is a reference to that key
         (``Statement._substitute_body_tracked``); the iterable ran once,
         before the loop, so the key holds on every exit, the one where no
-        item ran included.  A carried name leaves as the loop's value
-        (``_publish_runtime_bindings``)."""
+        item ran included.  A name carried under its binding coordinate
+        leaves as the loop's value (``_publish_runtime_bindings``); one
+        published through its post-loop key reads the walrus's key on the
+        exit no item wrote it (``nodes._live_loop_publication``)."""
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
 
         runtime = self.construction.loop_runtime
-        carried = frozenset(getattr(runtime, "carried_names", ()))
+        carried = (
+            frozenset()
+            if runtime is None
+            else frozenset(self._coordinate_names(runtime))
+        )
         writes = []
         for bind in binds:
             written = bind.written()
@@ -221,6 +227,12 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             runtime.initial_value_sugars,
             strict=True,
         ):
+            if sugar is None:
+                # A name first bound in the loop: its header starts unbound.
+                # Nothing is bound under it until an item writes the name,
+                # and each item decides its write slot (``_enter_header``).
+                initial_values.append(None)
+                continue
             initial = sugar.desugar(runtime_ctx)
             if isinstance(initial, NativeOperationExitCarrierV1):
                 return runtime_ctx, None, initial
@@ -777,6 +789,15 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         )
 
     @staticmethod
+    def _coordinate_names(runtime):
+        """The carried names the loop publishes under their binding
+        coordinates (``binding_coordinate_cids`` order,
+        ``LiveForRuntimeV1.coordinate_names``); a runtime that names none
+        apart publishes every carried name so.  Every other carried name is
+        published through its post-loop key (``_post_loop_writes``)."""
+        return tuple(getattr(runtime, "coordinate_names", runtime.carried_names))
+
+    @staticmethod
     def _carried_evaluations(runtime):
         """``(header, writes, else_writes)`` per carried name; a runtime that
         names none has no header and no writes for any name."""
@@ -815,23 +836,43 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             ),
         )
 
-    def _enter_header(self, runtime, ctx, carried):
+    def _enter_header(self, runtime, ctx, carried, *, decide=True):
         """Bind the header evaluation of each carried name: the value an item
         begins with (``carried``), under the header's key qualified by where
         it is bound (``evaluation_here``): inside an item (the caller has
         entered it), that item's header; after the last item, the header the
         ``else`` suite reads, outside every item.  The body's and the else's
-        reads of a carried name are references to it (``For.substitute``)."""
+        reads of a carried name are references to it (``For.substitute``).
+
+        A name first bound in the loop (no pre-loop value:
+        ``initial_value_sugars``) is read as ``<header> if <an item wrote
+        it> else <unbound>`` (``nodes._loop_header_bindings``): its header's
+        write slot (``loop_write_slot``) is decided here, true exactly when
+        an earlier item handed it a value, so a read before any write is a
+        ``NameError``.  The recurrence's symbolic item does not know whether
+        an earlier item wrote it (``decide`` false): the slot stays
+        undecided there."""
+        from sugar_lift_py_tests.floor.branch_result_coordinate import (
+            BranchResultDecision,
+        )
         from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
         from sugar_lift_py_tests.temporal import bind_temporal
+        from sugar_source_tree.binding_state import loop_write_slot
 
         carried = self._require_carried(runtime, carried)
         if ctx is None:
             return ctx
-        for (header, _writes, _else_writes), value in zip(
-            self._carried_evaluations(runtime), carried, strict=True
+        starts = tuple(getattr(runtime, "initial_value_sugars", ()))
+        for index, ((header, _writes, _else_writes), value) in enumerate(
+            zip(self._carried_evaluations(runtime), carried, strict=True)
         ):
-            if header is None or value is None:
+            if header is None:
+                continue
+            if decide and len(starts) == len(carried) and starts[index] is None:
+                ctx = BranchResultDecision(
+                    loop_write_slot(header), value is not None, self.site
+                ).extend_scope(ctx)
+            if value is None:
                 continue
             ctx = bind_temporal(
                 ctx,
@@ -925,11 +966,21 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
             ctx = ReduceContext.root(owner="LoopRecurrenceSugar.symbolic-item")
         item = partial(entered, loop_symbolic_item_segment(self.target_cid))
-        starts = tuple(SymbolicValue(head) for head in heads)
+        # The recurrence has a value for each name it carries under a binding
+        # coordinate (``heads``, in coordinate order); a name it carries
+        # through its header alone has none here, so its header is left
+        # unbound and a read of it is refused by name.  Whether an earlier
+        # item wrote a name first bound in the loop is not known here: its
+        # write slot is left undecided (``decide``).
+        by_name = dict(zip(self._coordinate_names(runtime), heads, strict=True))
+        starts = tuple(
+            None if by_name.get(name) is None else SymbolicValue(by_name[name])
+            for name in runtime.carried_names
+        )
         pattern = getattr(runtime, "target_pattern", None)
         if pattern is None:
             with item():
-                header_ctx = self._enter_header(runtime, ctx, starts)
+                header_ctx = self._enter_header(runtime, ctx, starts, decide=False)
             return ExitSet.completed(()), lambda _projections: header_ctx, item
         element = ctor(
             "python:loop.item",
@@ -944,7 +995,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
         with item():
-            header_ctx = self._enter_header(runtime, ctx, starts)
+            header_ctx = self._enter_header(runtime, ctx, starts, decide=False)
             projected = self._project_iteration_target(
                 pattern, SymbolicValue(element), header_ctx
             )
@@ -1219,7 +1270,8 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         items=0,
         else_ran=False,
     ):
-        """Publish each carried name's value as the loop leaves: ``carried``,
+        """Publish the value of each name carried under a binding coordinate
+        (``_coordinate_names``) as the loop leaves: ``carried``,
         what the leaving item (``_latched``) or the ``else`` suite
         (``_after_else``) left it with; handed nothing, refused by name
         (``_require_carried``).  The value is published under the name's
@@ -1228,21 +1280,29 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         name is never written nor read.  The iterable's walrus writes of the
         names the loop does not carry (``iterable_writes``) are published
         first, under their keys: the iterable ran before every item.  Each
-        name the items write that the loop does not carry is published last,
-        under its post-loop key, with its write slot decided on this exit
-        (``_post_loop_writes``): ``items`` items ran, and the ``else`` suite
-        ran when ``else_ran``."""
+        name the items write that the loop does not carry under a binding
+        coordinate (a name first bound in the loop, a module binding) is
+        published last, under its post-loop key, with its write slot decided
+        on this exit (``_post_loop_writes``): ``items`` items ran, and the
+        ``else`` suite ran when ``else_ran``."""
         from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
 
         temporal = getattr(ctx, "temporal", None)
         if temporal is None:
             raise TypeError("loop recurrence omitted its temporal context")
-        carried = self._require_carried(runtime, carried)
+        carried = dict(
+            zip(
+                runtime.carried_names,
+                self._require_carried(runtime, carried),
+                strict=True,
+            )
+        )
         projected = []
-        for value, coordinate_cid in zip(
-            carried, self.binding_coordinate_cids, strict=True
+        for name, coordinate_cid in zip(
+            self._coordinate_names(runtime), self.binding_coordinate_cids, strict=True
         ):
+            value = carried[name]
             if value is None:
                 raise TypeError("loop recurrence omitted a carried binding")
             projected.append(ScopeRebind(coordinate_cid, value))
@@ -1273,7 +1333,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         Each name's write slot (``loop_write_slot``) is decided on the exit
         it is published on (``BranchResultDecision``): true where the
         post-loop key was bound here, false where it was not.  A read after
-        the loop (``nodes._module_live_loop_publication``) takes exactly
+        the loop (``nodes._live_loop_publication``) takes exactly
         that arm: the post-loop key, or the binding before the loop (unbound
         when there was none), and never the name."""
         from sugar_lift_py_tests.floor.branch_result_coordinate import (

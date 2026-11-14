@@ -81,12 +81,13 @@ target's key, bound per item to the item's projection. A read inside the
 items of a live loop nested in the item of the write reads the write's own
 item (``evaluation_read_here``).
 
-A module-level live ``for`` publishes each name its items write that it does
-not carry through its post-loop key (``nodes._module_live_loop_publication``)
-and binds that key, outside every item, to the latest write of the name on
-the path the loop left by (``LoopRecurrenceSugar._post_loop_writes``), as a
-function-level live loop binds its target's and header's keys after its last
-item: a read after the loop reads it through the key.
+A live loop publishes each name its items write that it does not carry
+under a binding coordinate (a name first bound in the loop, a module
+binding) through its post-loop key (``nodes._live_loop_publication``) and
+binds that key, outside every item, to the latest write of the name on the
+path the loop left by (``LoopRecurrenceSugar._post_loop_writes``), as it
+binds its target's and header's keys after its last item: a read after the
+loop reads it through the key.
 
 Every reference resolves through its key only.  A key the temporal never
 received is refused by name (``_unbound``, ``construction_panic_gap`` naming
