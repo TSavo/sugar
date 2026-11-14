@@ -96,6 +96,25 @@ def test_try_import_row_carries_its_gate_fact(tmp_path):
     )
 
 
+def test_importorskip_row_is_in_the_one_table(tmp_path):
+    """The one table holds the importorskip row: an absent provider halts at
+    the call, so the row is bound on every path and every reader reads it."""
+    tree = _tree(
+        tmp_path,
+        "import pytest\n"
+        'pa = pytest.importorskip("pyarrow")\n'
+        "def f():\n"
+        "    return pa.ArrowInvalid\n",
+    )
+    attr = _attribute_named(tree, "ArrowInvalid")
+    unit = tree.root.unit
+    assert unit.import_reference_of(attr) == "python:pyarrow.ArrowInvalid"
+    assert (
+        unit.import_reference_of(attr, admit_provider_gate=True)
+        == "python:pyarrow.ArrowInvalid"
+    )
+
+
 def test_static_import_attribute_exception_identity_still_works(tmp_path):
     """Ordinary static import remains the primary door."""
     tree = _tree(
