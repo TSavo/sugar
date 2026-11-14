@@ -91,14 +91,20 @@ class GroupedExceptionValue(FloorValue):
                 requested="split(condition) with one positional type condition",
                 fix="keep predicate-callable and keyword conditions loud",
             )
-        matched, residual = _split(self.effect, arguments[0], site)
-
         def part(effect):
             if effect is None:
                 return NoneValue()
             return GroupedExceptionValue(effect, site)
 
-        return ExitSet.completed(TupleValue((part(matched), part(residual))))
+        # One completed arm per split, guarded by the retained type tests it
+        # holds under (each with its face): a decided tree is one arm.
+        arms = []
+        for matched, residual, conditions in _split(self.effect, arguments[0], site):
+            arm = ExitSet.completed(TupleValue((part(matched), part(residual))))
+            for formula, face in conditions:
+                arm = arm.guarded(formula, face)
+            arms.append(arm)
+        return ExitSet(()).union(*arms)
 
 
 @dataclass(frozen=True)
@@ -123,66 +129,52 @@ class GroupedExceptionSplitMethod(FloorValue):
         )
 
 
-def _split(effect, condition, site):
-    """CPython ``exceptiongroup_split_recursive`` over an authenticated tree."""
+def _split(effect, condition, site) -> tuple:
+    """CPython ``exceptiongroup_split_recursive`` over an authenticated tree:
+    every ``(matched, residual, conditions)`` split, an empty part ``None``.
+
+    The condition is checked against the group itself first, then each
+    nested group and leaf, each asked of the one matcher ``except`` asks
+    (``match_options`` over ``matches_raise_effect``).  A decided verdict is
+    one face; a retained one (an undetermined leaf, an import-path class)
+    is the two-way split it owns, matched under the obligation and residual
+    under its complement, so a tree splits into every combination of its
+    retained tests.  Nothing is refused, decided by guess or dropped."""
     from sugar_lift_py_tests.effect import GroupedRaiseEffect
+    from sugar_lift_py_tests.effect.grouped_raise_effect import match_options
 
-    if _type_matches(effect, condition, site):
-        return effect, None
-    matched = []
-    residual = []
-    for child in effect.children:
-        if isinstance(child, GroupedRaiseEffect):
-            child_match, child_rest = _split(child, condition, site)
-            if child_match is not None:
-                matched.append(child_match)
-            if child_rest is not None:
-                residual.append(child_rest)
-        elif _type_matches(child, condition, site):
-            matched.append(child)
-        else:
-            residual.append(child)
-    return (
-        effect.derive(tuple(matched)) if matched else None,
-        effect.derive(tuple(residual)) if residual else None,
-    )
-
-
-def _type_matches(effect, condition, site) -> bool:
-    """``isinstance(exc, condition)`` from the raise's own type testimony.
-
-    For a group this is the group's class; for a leaf, the leaf's class. The
-    raised-type law decides only builtin exception classes by MRO membership.
-    """
-    from sugar_lift_py_tests.floor.manager_coordinate import RaisedExitTypeValue
-    from sugar_lift_py_tests.outcome import ExitSet
-    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
-    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
-    from sugar_source_tree.panic import SugarNotWritten
-
-    if effect.exception_type_coordinate is None or effect.exception_type_mro is None:
-        raise SugarNotWritten(
-            blame=site,
-            owner="GroupedExceptionValue.split",
-            observed="group member without authenticated type testimony",
-            requested="class identity and MRO from Raise construction",
-            fix="construct every group through the builtin group coordinate",
+    splits = []
+    for matched, _residual, held in match_options(
+        effect, condition, site, question="exception-group.split"
+    ):
+        if matched:
+            splits.append((effect, None, held))
+            continue
+        if not isinstance(effect, GroupedRaiseEffect):
+            splits.append((None, effect, held))
+            continue
+        parts = [((), (), held)]
+        for child in effect.children:
+            parts = [
+                (
+                    kept + ((child_match,) if child_match is not None else ()),
+                    rest + ((child_rest,) if child_rest is not None else ()),
+                    conditions + child_conditions,
+                )
+                for kept, rest, conditions in parts
+                for child_match, child_rest, child_conditions in _split(
+                    child, condition, site
+                )
+            ]
+        splits.extend(
+            (
+                effect.derive(kept) if kept else None,
+                effect.derive(rest) if rest else None,
+                conditions,
+            )
+            for kept, rest, conditions in parts
         )
-    outcome = RaisedExitTypeValue(
-        effect.exception_type_coordinate, effect.exception_type_mro
-    ).test_python_subtype(condition, site)
-    decided = outcome.completed_value() if isinstance(outcome, ExitSet) else None
-    if isinstance(decided, TrueBoolLiteralSugar):
-        return True
-    if isinstance(decided, FalseBoolLiteralSugar):
-        return False
-    raise SugarNotWritten(
-        blame=site,
-        owner="GroupedExceptionValue.split",
-        observed=type(outcome if decided is None else decided).__name__,
-        requested="closed true/false group-type match",
-        fix="keep a symbolic split condition loud",
-    )
+    return tuple(splits)
 
 
 def _topology(effect) -> str:

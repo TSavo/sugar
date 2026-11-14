@@ -142,13 +142,16 @@ class _Constructed(_Fixed):
 def test_a_grouped_raise_owes_what_every_member_construction_owed() -> None:
     from sugar_lift_py_tests.effect import GroupedRaiseEffect
     from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+    from sugar_lift_py_tests.floor.string_value import StringValue
     from sugar_lift_py_tests.sugar.grouped_raise_sugar import GroupedRaiseSugar
 
     first = _raise("test:child:a:7825")
     second = _raise("test:child:b:7825")
     sugar = GroupedRaiseSugar(
         group_identity="test:group:7825",
-        message=_Fixed(lambda _ctx: ExitSet.completed("g")),
+        # The message is a constructed ``str`` value: the constructor checks
+        # its type (``PyArg_ParseTuple("UO")``) before reading its members.
+        message=_Fixed(lambda _ctx: ExitSet.completed(StringValue("g"))),
         children=(
             _Constructed(
                 lambda _ctx: ExitSet(

@@ -174,3 +174,92 @@ def test_an_undetermined_leaf_is_never_partitioned_by_a_guess():
     assert complement == not_(verdict.obligation)
     assert caught_face.partition == missed_face.partition
     assert caught_face.side != missed_face.side
+
+
+def _builtin_group(children):
+    from sugar_lift_py_tests.effect import GroupedRaiseEffect
+    from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+
+    identity, mro = _builtin_exception_identity("ExceptionGroup")
+    return GroupedRaiseEffect(
+        "group:root",
+        "root",
+        tuple(children),
+        exception_type_coordinate=identity,
+        exception_type_mro=mro,
+    )
+
+
+def test_group_split_asks_the_one_raise_matcher(monkeypatch):
+    """``BaseExceptionGroup.split`` checks the group itself first, then each
+    leaf, and asks each of the one matcher ``except`` asks
+    (``matches_raise_effect``): never a type reader of its own."""
+    from sugar_lift_py_tests import authenticated_exception_matching
+    from sugar_lift_py_tests.floor.grouped_exception_value import (
+        GroupedExceptionValue,
+    )
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+
+    base = _identity("truthful", "Base")
+    leaf_identity = _identity("truthful", "Leaf")
+    base_type = _typed_value(base)
+    leaf = _leaf(leaf_identity, "leaf:truthful", leaf_identity, base)
+    group = _builtin_group((leaf,))
+    calls = []
+    matcher = authenticated_exception_matching.matches_raise_effect
+
+    def recording_matcher(effect, expected):
+        calls.append((effect, expected))
+        return matcher(effect, expected)
+
+    monkeypatch.setattr(
+        authenticated_exception_matching, "matches_raise_effect", recording_matcher
+    )
+
+    exits = GroupedExceptionValue(group, "site").split((base_type,), (), "site")
+
+    assert calls == [(group, base_type), (leaf, base_type)]
+    pair = exits.completed_value()
+    matched, residual = pair.elements
+    assert isinstance(matched, GroupedExceptionValue)
+    assert matched.effect.children == (leaf,)
+    assert isinstance(residual, NoneValue)
+
+
+def test_group_split_of_an_undetermined_leaf_is_two_faces_never_a_refusal():
+    """A leaf whose construction carried no class is retained by the one
+    matcher, so ``split`` is the two-way split it owns: matched under the
+    retained type test, residual under its complement -- each an arm of its
+    own, never a refusal and never a guess."""
+    from sugar_lift_py_tests.authenticated_exception_matching import (
+        matches_raise_effect,
+    )
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.grouped_exception_value import (
+        GroupedExceptionValue,
+    )
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+    from sugar_lift_py_tests.ir import not_
+    from sugar_lift_py_tests.outcome.exit_set import Completed
+
+    other = _identity("truthful", "Other")
+    undecided = UndeterminedRaiseEffect(blame="leaf:undecided", occurrence="leaf:u")
+    decided = _leaf(other, "leaf:other")
+    group = _builtin_group((undecided, decided))
+    handler = _typed_value(_identity("truthful", "Base"))
+    obligation = matches_raise_effect(undecided, handler).obligation
+
+    exits = GroupedExceptionValue(group, "site").split((handler,), (), "site")
+
+    assert all(isinstance(arm, Completed) for arm in exits.exits)
+    assert len(exits.exits) == 2, exits.exits
+    by_match = {type(arm.value.elements[0]): arm for arm in exits.exits}
+    caught = by_match[GroupedExceptionValue]
+    missed = by_match[NoneValue]
+    caught_matched, caught_residual = caught.value.elements
+    assert caught_matched.effect.children == (undecided,)
+    assert caught_residual.effect.children == (decided,)
+    assert missed.value.elements[1].effect.children == (undecided, decided)
+    assert repr(obligation) in repr(caught.guard)
+    assert repr(not_(obligation)) in repr(missed.guard)
+    assert caught.faces and missed.faces and caught.faces != missed.faces

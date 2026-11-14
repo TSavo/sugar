@@ -491,19 +491,79 @@ def test_ordinary_try_except_exceptiongroup_still_refuses_without_split():
     assert gap.observed == "GroupedRaiseEffect"
 
 
-def test_trystar_refuses_ordinary_raise_effect():
-    """except* over a non-group RaiseEffect stays loud (distinct routers)."""
-    with pytest.raises(SugarNotWritten) as excinfo:
+def test_trystar_handles_a_plain_raise_as_its_one_member_group():
+    """CPython wraps a plain raise in ``ExceptionGroup('', [exc])`` for
+    ``except*`` matching: a matching handler consumes it, never a refusal."""
+    outcome = _desugar(
+        "def f():\n"
+        "    try:\n"
+        "        raise ValueError('alone')\n"
+        "    except* ValueError:\n"
+        "        return 1\n",
+        name="star_on_plain.py",
+    )
+    assert outcome.halts() == (), outcome.exits
+    assert "TermValue(value=1)" in repr(outcome.exits)
+
+
+def test_trystar_binds_the_wrapping_group_and_a_bare_reraise_raises_it():
+    """The handler sees the one-member group (message ``''``, class
+    ``ExceptionGroup`` since its member is an ``Exception``); a bare
+    ``raise`` re-raises that group, as CPython does."""
+    from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+    from sugar_lift_py_tests.floor.string_value import StringValue
+
+    effect = _grouped_halt(
         _desugar(
             "def f():\n"
             "    try:\n"
             "        raise ValueError('alone')\n"
             "    except* ValueError:\n"
-            "        pass\n",
-            name="star_on_ordinary.py",
+            "        raise\n",
+            name="star_plain_reraise.py",
         )
-    assert "TryStarSugar" in str(excinfo.value)
-    assert "GroupedRaiseEffect" in str(excinfo.value)
+    )
+    (leaf,) = effect.children
+    assert isinstance(leaf, RaiseEffect)
+    assert leaf.exception_name == "ValueError"
+    assert effect.message == StringValue("")
+    identity, mro = _builtin_exception_identity("ExceptionGroup")
+    assert effect.exception_type_coordinate == identity
+    assert effect.exception_type_mro == mro
+
+
+def test_trystar_reraises_an_unmatched_plain_raise_unwrapped():
+    """An unmatched plain raise leaves as itself (CPython's rest is the
+    naked exception), never wrapped in a group."""
+    effect = _halt_effect(
+        _desugar(
+            "def f():\n"
+            "    try:\n"
+            "        raise ValueError('alone')\n"
+            "    except* TypeError:\n"
+            "        return 1\n",
+            name="star_plain_unmatched.py",
+        )
+    )
+    assert isinstance(effect, RaiseEffect)
+    assert effect.exception_name == "ValueError"
+
+
+def test_trystar_a_handler_raise_over_a_plain_raise_leaves_unwrapped():
+    """Over a plain raise only one handler can run, and CPython raises its
+    one exception as it is (``_PyExc_PrepReraiseStar``)."""
+    effect = _halt_effect(
+        _desugar(
+            "def f():\n"
+            "    try:\n"
+            "        raise ValueError('alone')\n"
+            "    except* ValueError:\n"
+            "        raise KeyError('k')\n",
+            name="star_plain_handler_raise.py",
+        )
+    )
+    assert isinstance(effect, RaiseEffect)
+    assert effect.exception_name == "KeyError"
 
 
 def test_truthful_ordinary_try_still_matches_raise_effect():

@@ -675,6 +675,65 @@ def test_except_of_a_star_imported_class_is_retained_and_owes(tmp_path):
     assert _owed_at(_owed_items(outcome), 5)
 
 
+def test_except_star_of_a_star_imported_class_is_retained_and_owes(tmp_path):
+    """``except* X``: the plain raise is matched as its one-member group, the
+    match against the undecided class is retained (the handler under the
+    type test, the unwrapped raise under its complement), and every face
+    that passed the arm owes the member at the arm's type."""
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, Halted
+
+    function = _function(
+        tmp_path,
+        "except_star_star.py",
+        _STAR
+        + "def f():\n"
+        "    try:\n"
+        "        raise ValueError('v')\n"
+        "    except* ArrowInvalid:\n"
+        "        return 1\n",
+    )
+    outcome = function.sugar().desugar()
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    halted = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert completed and halted, outcome.exits
+    assert all(
+        isinstance(face.effect, RaiseEffect)
+        and face.effect.exception_name == "ValueError"
+        for face in halted
+    )
+    rendered = repr(outcome)
+    assert "adt.is_python_type" in rendered
+    assert "value='undecided'" in rendered
+    assert _owed_at(_owed_items(outcome), 5)
+
+
+def test_except_star_over_a_star_imported_class_call_routes_and_owes(tmp_path):
+    """``raise X('x')`` under ``except* ValueError``: the undetermined raise
+    is a one-member group whose match is retained, so the handler runs under
+    the type test and the raise leaves unwrapped under its complement; the
+    call's debt rides on both."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, Halted
+
+    function = _function(
+        tmp_path,
+        "star_call_under_except_star.py",
+        _STAR
+        + "def f():\n"
+        "    try:\n"
+        "        raise ArrowInvalid('x')\n"
+        "    except* ValueError:\n"
+        "        return 1\n",
+    )
+    outcome = function.sugar().desugar()
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    halted = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert completed and halted, outcome.exits
+    assert all(isinstance(face.effect, UndeterminedRaiseEffect) for face in halted)
+    assert _owed_at(_owed_items(outcome), 4)
+
+
 def test_expected_star_imported_class_is_retained_and_owes(tmp_path):
     """``with pytest.raises(X)``: the expected operand constructs with the
     undecided coordinate, owes the member, and a raise matched against it is

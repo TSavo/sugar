@@ -333,6 +333,79 @@ def test_a_non_instance_member_is_caught_as_the_value_error(tmp_path) -> None:
     assert "TermValue(value=2)" in repr(face.value)
 
 
+# -- the group's message: ``PyArg_ParseTuple("UO")`` (#7757) -----------------
+
+
+@pytest.mark.parametrize(
+    "raised",
+    [
+        "ExceptionGroup(1, [ValueError()])",
+        "BaseExceptionGroup(2.5, [KeyboardInterrupt()])",
+    ],
+)
+def test_a_non_str_group_message_is_the_type_error(tmp_path, raised) -> None:
+    # The constructor parses its message as ``U`` before any member rule:
+    # a decided non-``str`` message is the TypeError, no group exists.
+    effect = _one_halt(_exits(tmp_path, f"def f():\n    raise {raised}\n"))
+    assert isinstance(effect, RaiseEffect)
+    assert effect.exception_type_coordinate == _exception_identity("TypeError")
+
+
+def test_a_group_whose_message_type_is_undecided_is_two_faced(tmp_path) -> None:
+    # ``m`` is known only by its type: the group is raised under
+    # ``isinstance(m, str)`` and the TypeError under its complement, both
+    # owing the one undecided read.
+    from sugar_lift_py_tests.effect import GroupedRaiseEffect
+
+    exits = _exits(
+        tmp_path, "def f(m):\n    raise ExceptionGroup(m, [ValueError('v')])\n"
+    )
+    halts = [face for face in exits.exits if isinstance(face, Halted)]
+    assert halts == list(exits.exits)
+    groups = [face for face in halts if isinstance(face.effect, GroupedRaiseEffect)]
+    type_errors = [
+        face
+        for face in halts
+        if isinstance(face.effect, RaiseEffect)
+        and face.effect.exception_type_coordinate == _exception_identity("TypeError")
+    ]
+    assert len(groups) == 1 and len(type_errors) == 1, halts
+    assert groups[0].effect.exception_type_coordinate == _exception_identity(
+        "ExceptionGroup"
+    )
+    assert "adt.is_python_type" in repr(groups[0].guard)
+    assert groups[0].owed and type_errors[0].owed
+    assert len(owed_calls(exits)) == 1
+
+
+# -- except* over a plain undetermined raise (#7757) -------------------------
+
+
+def test_except_star_routes_an_undetermined_raise_two_ways(tmp_path) -> None:
+    # ``OSError(e, 'x')`` is the one unanswered call: its raise is of no
+    # decided class.  ``except*`` matches it as its one-member group, the
+    # match is retained, so the handler runs under the type test and the
+    # raise leaves unwrapped under its complement -- never refused, and the
+    # call's debt rides on every face.
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
+
+    exits = _exits(
+        tmp_path,
+        "def f(e):\n"
+        "    try:\n"
+        "        raise OSError(e, 'x')\n"
+        "    except* ValueError:\n"
+        "        return 2\n",
+    )
+    completed = [face for face in exits.exits if isinstance(face, Completed)]
+    halted = [face for face in exits.exits if isinstance(face, Halted)]
+    assert completed and halted, exits.exits
+    assert all("TermValue(value=2)" in repr(face.value) for face in completed)
+    assert all(isinstance(face.effect, UndeterminedRaiseEffect) for face in halted)
+    assert all(face.owed for face in exits.exits)
+    assert len(owed_calls(exits)) == 1
+
+
 def test_a_symbolic_actual_to_a_base_exception_law_class_is_stored_as_args(
     tmp_path,
 ) -> None:
