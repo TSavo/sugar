@@ -36,7 +36,10 @@ def test_recensus_projects_construction_panic_as_a_loud_counted_terminal(
     path = tmp_path / "fixture.py"
     path.write_text("def a():\n    return 1\n", encoding="utf-8")
 
+    fired = {"n": 0}
+
     def boom(*_a, **_k):
+        fired["n"] += 1
         raise ConstructionPanic(
             ConstructionGap(
                 owner="renamed-constructor",
@@ -47,14 +50,17 @@ def test_recensus_projects_construction_panic_as_a_loud_counted_terminal(
             )
         )
 
-    import sugar_source_tree.tree as tree_mod
+    # The residency door every open walks (``_open_at_seat`` ->
+    # ``_source_file_from_identity``).
+    import sugar_source_tree.process_resident_file as residency
 
-    monkeypatch.setattr(tree_mod.SourceFile, "__init__", boom)
+    monkeypatch.setattr(residency, "_source_file_from_identity", boom)
     row = CONSUMER.measure_file_via_enumerate(
         workspace_root=tmp_path,
         file_rel="fixture.py",
     )
 
+    assert fired["n"] > 0
     assert row["category"] == "panic"
     assert row["terminalKind"] == "construction-panic"
     assert row["blocking_terminal_count"] == 1

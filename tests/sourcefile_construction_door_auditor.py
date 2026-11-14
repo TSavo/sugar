@@ -7,15 +7,19 @@ Independent, test-owned census over the **SourceFile construction door**,
 
 1. **Sole construction owner** — ``Backend.materialize_module`` (and the
    canonical intake, the one opener's first stage
-   ``lift_rpc._open_at_seat``, through ``SourceFile.__init__``) is the only
-   production work entry. The intake is named by the caller
-   (``source_file_entry``); this auditor locates it in the production graph
-   from the callable itself, never from a hard-coded name. Offender classes:
+   ``lift_rpc._open_at_seat``, through the residency door
+   ``process_resident_file._source_file_from_identity``) is the only
+   production work entry. Since #8102 the intake calls the residency door
+   directly and ``SourceFile.__init__`` is not on an open, so the door this
+   auditor counts, at rest and at run time, is the residency door. The
+   intake is named by the caller (``source_file_entry``); this auditor
+   locates it in the production graph from the callable itself, never from a
+   hard-coded name. Offender classes:
 
    - second ``materialize_module`` override / adapter override
-   - unauthorized ``SourceFile(...)`` construction outside the owner
+   - a caller of the residency door other than the intake
    - dynamic / unresolved edges into the construction door
-   - premature work before ``__init__`` (forbidden intake work edges)
+   - premature work before the residency door (forbidden intake work edges)
    - dual module paths for one production module key
 
 2. **Product-type privacy** — constructed-module product types stay closed:
@@ -60,8 +64,8 @@ Retirement paths (per offender class)
   typed construction door owned by Backend; visibility / factory so a
   second door does not type-check; delete this owner-path axis when
   construction is unrepresentable outside that door.
-- **Premature intake work** → type/protocol that forbids work before
-  ``__init__`` completes; delete the intake-work edge census when
+- **Premature intake work** → type/protocol that forbids work before the
+  residency door is entered; delete the intake-work edge census when
   unrepresentable.
 - **Product aliases / re-exports / wrappers / public constructors /
   pickle doors** → product types private by language visibility + no
@@ -234,6 +238,7 @@ def audit_sourcefile_construction_door(
     from sugar_source_tree.fragment import SourceFragment
     from sugar_source_tree.reporter import AuditReporter, CollectingReporter
     from sugar_source_tree.tree import SourceFile
+    import sugar_source_tree.process_resident_file as residency_module
     import sugar_source_tree.tree as tree_module
 
     discovered = _production_files(repository_root)
@@ -259,14 +264,18 @@ def audit_sourcefile_construction_door(
     assert len(graph_modules) == len(parsed), "cross-root duplicate module identity"
     graph = SymbolGraph(graph_modules)
     contract_reds: list[str] = []
-    door = SourceFile.__init__
+    # The door is the residency door the one entry walks on every open
+    # (#8102): ``_open_at_seat`` calls it and nothing else does.
+    # ``SourceFile.__init__`` is not on an open, so it is not the door.
+    door = residency_module._source_file_from_identity
     door_file = Path(inspect.getsourcefile(door) or "").resolve()
     door_line = inspect.getsourcelines(door)[1]
+    source_file_file = Path(inspect.getsourcefile(SourceFile) or "").resolve()
     source_file_symbol = next(
         (
             symbol
             for symbol in graph.definitions.values()
-            if symbol.path.resolve() == door_file
+            if symbol.path.resolve() == source_file_file
             and symbol.name == SourceFile.__name__
             and symbol.lexical == ()
         ),
@@ -276,8 +285,8 @@ def audit_sourcefile_construction_door(
         symbol
         for symbol in graph.definitions.values()
         if symbol.path.resolve() == door_file
-        and symbol.name == "__init__"
-        and symbol.lexical == (SourceFile.__name__,)
+        and symbol.name == door.__name__
+        and symbol.lexical == ()
     )
     if len(init_symbols) != 1:
         contract_reds.append(
@@ -310,12 +319,13 @@ def audit_sourcefile_construction_door(
     intake_construction_edges = tuple(
         edge
         for edge in intake_edges
-        if source_file_symbol is not None and source_file_symbol in edge.targets
+        if set(edge.targets) & set(init_symbols)
     )
     if len(intake_construction_edges) != 1:
         contract_reds.append(
             "R_intake_constructor_edges="
-            f"{len(intake_construction_edges)}: expected exactly one SourceFile(identity) edge"
+            f"{len(intake_construction_edges)}: expected exactly one "
+            f"{door.__name__}(identity) edge"
         )
     runtime_owner_types = (Backend, Node, AuditReporter, SourceFragment)
     runtime_owner_locations = {
@@ -339,8 +349,8 @@ def audit_sourcefile_construction_door(
         )
 
     # Observe the canonical intake independently. No backend or
-    # materialization work may occur before its one SourceFile(identity) edge
-    # enters SourceFile.__init__.
+    # materialization work may occur before its one edge enters the residency
+    # door.
     observed_work: Counter[str] = Counter()
     premature_work: list[str] = []
     observation_path = temporary_root / "entry-observation.py"
@@ -350,35 +360,35 @@ def audit_sourcefile_construction_door(
         backend_type = type(backend_instance)
         original_root = backend_type.root
         original_materialize = getattr(tree_module, "materialize", None)
-        original_init = SourceFile.__init__
+        observed_door = door
         original_backend_materialize = getattr(
             backend_type, "materialize_module", None
         )
-        entered_init = False
+        entered_door = False
         entered_backend_event = False
 
-        def observed_init(self, *args, **kwargs):
-            nonlocal entered_init
-            entered_init = True
+        def observed_entry(*args, **kwargs):
+            nonlocal entered_door
+            entered_door = True
             observed_work["constructor"] += 1
-            return original_init(self, *args, **kwargs)
+            return observed_door(*args, **kwargs)
 
         def observed_root(self, *args, **kwargs):
-            if not entered_init:
+            if not entered_door:
                 premature_work.append("backend_root")
             if not entered_backend_event:
                 observed_work["legacy_backend_root"] += 1
             return original_root(self, *args, **kwargs)
 
         def observed_materialize(*args, **kwargs):
-            if not entered_init:
+            if not entered_door:
                 premature_work.append("materialize")
             observed_work["legacy_materialize"] += 1
             return original_materialize(*args, **kwargs)
 
         def observed_backend_materialize(self, *args, **kwargs):
             nonlocal entered_backend_event
-            if not entered_init:
+            if not entered_door:
                 premature_work.append("backend_materialize_module")
             observed_work["backend_materialize_module"] += 1
             assert original_backend_materialize is not None
@@ -388,7 +398,7 @@ def audit_sourcefile_construction_door(
             finally:
                 entered_backend_event = False
 
-        observation_patch.setattr(SourceFile, "__init__", observed_init)
+        observation_patch.setattr(residency_module, door.__name__, observed_entry)
         observation_patch.setattr(backend_type, "root", observed_root)
         if original_materialize is not None:
             observation_patch.setattr(
@@ -409,6 +419,13 @@ def audit_sourcefile_construction_door(
         )
         construction_snapshot = observed_work.copy()
 
+    # The observation hook must sit on the path the open walks. If the entry
+    # moves off the residency door, this is red, never a silent green.
+    if construction_snapshot["constructor"] == 0:
+        contract_reds.append(
+            f"R_entry_door_unobserved=1: {door.__module__}.{door.__name__} "
+            "never ran on an open through the intake"
+        )
     expected_entry_work = Counter(
         {"constructor": 1, "backend_materialize_module": 1}
     )
@@ -632,6 +649,7 @@ def audit_sourcefile_construction_door(
         f"R_intake_constructor_edge_gap={abs(1 - len(intake_construction_edges))}",
         f"R_intake_work_edges={len(forbidden_intake_edges)}",
         f"R_intake_premature_work={int(bool(premature_work))}",
+        f"R_entry_door_unobserved={int(construction_snapshot['constructor'] == 0)}",
         f"R_legacy_sourcefile_work_events={sum(legacy_entry_work.values())}",
         "R_backend_materialize_event_unmeasured="
         f"{int(not backend_event_measured)}",
@@ -669,7 +687,7 @@ def audit_sourcefile_construction_door(
 
     projection_file = projection_owner_path
     projection_line = inspect.getsourcelines(project_constructed_module)[1]
-    owner = EvidenceSite(door_file, door_line, (SourceFile.__name__,), door.__name__)
+    owner = EvidenceSite(door_file, door_line, (), door.__name__)
     projection_def = EvidenceSite(projection_file, projection_line, (), project_constructed_module.__name__)
 
     owner_defs = [
@@ -677,14 +695,16 @@ def audit_sourcefile_construction_door(
         for symbol in graph.definitions.values()
         if symbol.path.resolve() == door_file and symbol.line == door_line
     ]
+    # Every production call into the residency door. The one entry is its only
+    # caller (#8102), so any other edge is a second way in.
     door_edges = [
         edge for edge in graph.calls
-        if source_file_symbol is not None and source_file_symbol in edge.targets
+        if set(edge.targets) & set(init_symbols)
     ]
     audited_door_edges = [
         edge
         for edge in door_edges
-        if not edge.dynamic and set(edge.targets) == {source_file_symbol}
+        if not edge.dynamic and set(edge.targets) == set(init_symbols)
     ]
     # Real callers of the test-owned door (owner module). Never self-seed.
     projection_edges = list(owner_projection_edges)
@@ -711,18 +731,25 @@ def audit_sourcefile_construction_door(
             for producers in edge.argument_producers
         )
     )
+    # A SourceFile subclass that overrides how a file is built is an adapter
+    # door beside the residency door.
     overrides = []
     for source_file_type in _subclasses(SourceFile):
-        override = source_file_type.__dict__.get(door.__name__)
-        if override is None:
-            continue
-        override_file = Path(inspect.getsourcefile(override) or "").resolve()
-        override_line = inspect.getsourcelines(override)[1]
-        overrides.append(
-            EvidenceSite(
-                override_file, override_line, (source_file_type.__name__,), door.__name__
+        for built_name in ("__new__", "__init__", "_prepare_uncached"):
+            override = source_file_type.__dict__.get(built_name)
+            if override is None:
+                continue
+            override = getattr(override, "__func__", override)
+            override_file = Path(inspect.getsourcefile(override) or "").resolve()
+            override_line = inspect.getsourcelines(override)[1]
+            overrides.append(
+                EvidenceSite(
+                    override_file,
+                    override_line,
+                    (source_file_type.__name__,),
+                    built_name,
+                )
             )
-        )
     canonical_owner_symbols = set(init_symbols)
     canonical_edge = intake_construction_edges[0]
     forwarder_edges = tuple(
@@ -791,10 +818,12 @@ def audit_sourcefile_construction_door(
 
     monkeypatch.setattr(SourceFragment, "seal", counted_seal)
     original_door = door
-    def counted_door(self, *args, **kwargs):
+    def counted_door(*args, **kwargs):
         work["constructor"] += 1
-        return original_door(self, *args, **kwargs)
-    monkeypatch.setattr(SourceFile, "__init__", counted_door)
+        return original_door(*args, **kwargs)
+    # Counted at the residency door the one entry walks; the asserts on
+    # work["constructor"] below fail if the entry moves off it.
+    monkeypatch.setattr(residency_module, door.__name__, counted_door)
 
     original_backend_door = Backend.materialize_module
     backend_products: list[object] = []
