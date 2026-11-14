@@ -18,7 +18,6 @@ import textwrap
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.backend import BackendCouldNotParse
 from sugar_source_tree.nodes import Expr, Expression, Lambda
-from sugar_source_tree.tree import SourceFile
 
 from .context import ReduceContext
 from .floor import PredicateValue
@@ -28,7 +27,7 @@ from .outcome.exit_set import _require_exit_set
 
 def _contract_body(expr: str, available_names: list[str]) -> Expression:
     """The contract expression as the body of ``lambda <formals>: <expr>``,
-    read through ``SourceFile``.
+    read into a ``SourceFile`` through the one entry (``_open_at_seat``).
 
     The declaration's formals are the lambda's formals, so a read of one is
     bound (by the lambda) and stays the formal's free name; the declaration
@@ -36,12 +35,23 @@ def _contract_body(expr: str, available_names: list[str]) -> Expression:
     not one expression -- it does not parse, or the lambda is not the whole
     statement -- is refused.
     """
+    from .lift_rpc import _open_at_seat
+
     text = textwrap.dedent(expr).strip()
     formals = ", ".join(dict.fromkeys(available_names))
     source = f"lambda {formals}: {text}\n"
     try:
-        tree = SourceFile(
-            (source, "<contract-expression>", blake3_512_of(source.encode("utf-8")))
+        # The one entry (the opener's first stage), with the identity already
+        # in hand: the contract text is not a workspace file, so nothing is
+        # read at a seat.
+        tree = _open_at_seat(
+            None,
+            root=None,
+            seated=(
+                source,
+                "<contract-expression>",
+                blake3_512_of(source.encode("utf-8")),
+            ),
         )
     except (SyntaxError, BackendCouldNotParse) as exc:
         raise ValueError(f"empty or invalid contract expression: {expr!r}") from exc

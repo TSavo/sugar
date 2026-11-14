@@ -18,7 +18,6 @@ if _tree_src.is_dir() and str(_tree_src) not in sys.path:
 
 from sugar_source_tree import nodes as _nodes
 from sugar_source_tree import operators as _operators
-from sugar_source_tree.tree import SourceFile
 
 from .canonical import blake3_512_of
 
@@ -140,8 +139,18 @@ def walk(node: AST):
 
 
 def parse(source: str, *, filename: str) -> Module:
-    """Materialize one authenticated typed module through the sole adapter."""
-    return SourceFile((source, filename, blake3_512_of(source.encode("utf-8")))).root
+    """Materialize one authenticated typed module through the sole adapter.
+
+    Through the one entry (the opener's first stage), with the identity in
+    hand: the text is the caller's, so nothing is read at a seat.
+    """
+    from sugar_lift_py_tests.lift_rpc import _open_at_seat
+
+    return _open_at_seat(
+        None,
+        root=None,
+        seated=(source, filename, blake3_512_of(source.encode("utf-8"))),
+    ).root
 
 
 def iter_child_nodes(node: AST):

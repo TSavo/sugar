@@ -57,6 +57,13 @@ class SourceFile:
     first stage (``_open_at_seat``) reads the file at its seat and constructs
     this from that identity, and which then populates the unit (#7757 item 5).
 
+    ``_open_at_seat`` is the one entry into residency: it alone calls
+    ``process_resident_file._source_file_from_identity``. Calling the class
+    (``SourceFile(identity)``) is that entry with the identity already read
+    (``seated``): it forwards to ``_open_at_seat`` and so cannot pick up a
+    resident unit any other way. No production source calls the class
+    (``test_one_parse_per_file``'s law scans ``src/`` and ``scripts/``).
+
     Parsing happens at construction: a ``SourceFile`` you hold is always
     a parsed file, never a promise of one. ``root`` is the ``Module``;
     ``nodes()`` enumerates every node of the file, pre-order, iterative.
@@ -78,11 +85,14 @@ class SourceFile:
         # L0c / enumeration protocol §4: one prepared shell per content CID.
         # Return the process-resident instance so the same module content is not
         # reconstructed once per dependency seat. MaterializeModule runs only
-        # on the residency miss path inside source_file_from_identity.
-        from .process_resident_file import source_file_from_identity
+        # on the residency miss path, which only the opener's first stage
+        # reaches: this goes through it with the identity already read.
+        from sugar_lift_py_tests.lift_rpc import _open_at_seat
 
-        return source_file_from_identity(
-            identity,
+        return _open_at_seat(
+            None,
+            root=None,
+            seated=identity,
             backend=backend,
             reporter=reporter,
             construction_context=construction_context,
@@ -103,8 +113,8 @@ class SourceFile:
         del identity, backend, construction_context
         if not hasattr(self, "unit"):
             raise RuntimeError(
-                "SourceFile must be prepared by process_resident "
-                "source_file_from_identity before __init__ rebind"
+                "SourceFile must be prepared by the opener's first stage "
+                "(lift_rpc._open_at_seat) before __init__ rebind"
             )
         if reporter is not None and reporter is not NULL_REPORTER:
             self.reporter = reporter
@@ -118,7 +128,8 @@ class SourceFile:
         reporter: AuditReporter = NULL_REPORTER,
         construction_context: object | None = None,
     ) -> "SourceFile":
-        """Full parse + MaterializeModule — only the residency miss path calls this."""
+        """Full parse + MaterializeModule — only ``_source_file_from_identity``
+        (the residency door behind ``lift_rpc._open_at_seat``) calls this."""
         from sugar_lift_py_tests.engine_log import reduction_span
 
         self = object.__new__(cls)

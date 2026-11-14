@@ -183,11 +183,18 @@ def resolve_memento(
         resolve_span_memento,
     )
 
-    from .tree import SourceFile
+    from sugar_lift_py_tests.lift_rpc import _open_at_seat
 
     resolved = resolve_span_memento(memento.to_dict(), project_root)
-    file = SourceFile(
-        (resolved["source"], resolved["filename"], resolved["source_cid"]),
+    # The re-read is of the workspace file itself (on disk now, checked against
+    # the pinned CIDs), not of a sealed historical blob, so it is the same file
+    # the session may open. It goes through the one entry at the seat the
+    # memento names -- the seat the sealing unit was opened at -- so it shares
+    # that unit rather than parsing the file again under another spelling.
+    file = _open_at_seat(
+        None,
+        root=None,
+        seated=(resolved["source"], memento.file, resolved["source_cid"]),
         backend=backend,
     )
     span = Span(memento.start, memento.end)

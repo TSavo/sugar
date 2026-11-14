@@ -109,6 +109,8 @@ def emit_corpus(
     """Enumerate every file, one SourceFile at a time — built, recorded,
     dropped. Nothing retains parsed files across iterations, so peak RSS is
     bounded by the largest file, not the corpus."""
+    from sugar_lift_py_tests.lift_rpc import _open_at_seat
+
     files: list[Path] = []
     for p in paths:
         if p.is_dir():
@@ -137,7 +139,9 @@ def emit_corpus(
                 failures.append((rel, "source_unavailable", str(err)))
                 continue
             try:
-                file = SourceFile(identity)
+                # The one entry (the opener's first stage), with the identity
+                # the oracle just minted.
+                file = _open_at_seat(None, root=None, seated=identity)
                 recs = records_for_file(file, display=rel)
             except BackendCouldNotParse as err:
                 # The BACKEND could not parse the file (not valid input for it).
