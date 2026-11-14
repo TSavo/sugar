@@ -102,7 +102,12 @@ class BuiltinSemanticCallable(FloorValue):
                 construction_panic_gap(
                     owner="BuiltinSemanticCallable.python.super",
                     blame=str(operation.site),
-                    observed="missing __class__ cell or first formal receiver",
+                    observed=(
+                        "zero-argument super() in a generator expression: its "
+                        "frame's first argument is the generator's .0 iterator"
+                        if zero_argument_super_in_generator_frame(operation.site)
+                        else "missing __class__ cell or first formal receiver"
+                    ),
                     requested="authenticated zero-argument super context",
                     fix="carry the defining class and bound first formal into the method body",
                 )
@@ -566,27 +571,46 @@ class BuiltinSemanticCallable(FloorValue):
 
 _POSITIONAL_PARAM_KINDS = frozenset({"positional_only", "positional_or_keyword"})
 
+# The first argument of a generator expression's code: ``.0``, the iterator
+# of its outermost iterable -- a positional argument no source formal names.
+_GENERATOR_ITERATOR_ARGUMENT = ".0"
+
 
 def _super_frame_first_positional(site):
     """``(read, formal)`` for a zero-argument ``super()`` at ``site``: whether
-    the scope its frame runs is read, and that scope's first positional
-    formal (None when it takes none).
+    the frame it runs in is read, and that frame's first positional
+    argument (None when it takes none).
 
-    The frame is the innermost scope whose BODY holds the call
-    (``SourceUnit.scope_holding``): a ``def``, a ``lambda`` -- a function
-    scope of its own, whose code has its own arguments -- a class body, or
-    the module.  Only a function or a lambda takes arguments.  A site with no
-    source unit is not read.
+    The frame is the innermost code object running the call
+    (``SourceUnit.frame_holding``): a ``def``, a ``lambda`` -- a function of
+    its own, whose code has its own arguments -- a generator expression, a
+    class body, or the module.  A function or a lambda takes its declared
+    positional formals; a generator expression takes exactly one, ``.0``
+    (``_GENERATOR_ITERATOR_ARGUMENT``); a list, set or dict comprehension is
+    no frame (inlined, PEP 709).  A site with no source unit is not read.
     """
+    from sugar_source_tree.nodes import GeneratorExp
+
     unit = getattr(site, "unit", None)
     node = getattr(site, "node", None)
     if unit is None or node is None:
         return False, None
-    scope = unit.scope_holding(node.line_col_span())
-    params = tuple(getattr(scope, "params", None) or ())
+    frame = unit.frame_holding(node.line_col_span())
+    if isinstance(frame, GeneratorExp):
+        return True, _GENERATOR_ITERATOR_ARGUMENT
+    params = tuple(getattr(frame, "params", None) or ())
     if not params or params[0].param_kind not in _POSITIONAL_PARAM_KINDS:
         return True, None
     return True, params[0]
+
+
+def zero_argument_super_in_generator_frame(site) -> bool:
+    """Whether a zero-argument ``super()`` at ``site`` runs in a generator
+    expression's own frame, whose first argument -- the object ``super()``
+    binds -- is the generator's ``.0`` iterator, never a formal of the
+    function around it."""
+    _read, formal = _super_frame_first_positional(site)
+    return formal is _GENERATOR_ITERATOR_ARGUMENT
 
 
 def zero_argument_super_has_no_arguments(site) -> bool:
@@ -598,7 +622,8 @@ def zero_argument_super_has_no_arguments(site) -> bool:
     with no positional formal (``*args`` and keyword-only formals do not
     count), a class body, the module.  So ``lambda: super().m()`` inside a
     method raises it, though the method has a ``self``: the frame is the
-    lambda's (``_super_frame_first_positional``).
+    lambda's (``_super_frame_first_positional``).  A generator expression's
+    code takes ``.0``, so it never raises this.
     """
     read, formal = _super_frame_first_positional(site)
     return read and formal is None
@@ -621,7 +646,10 @@ def zero_argument_super_receiver(site, temporal):
     (``zero_argument_super_has_no_arguments``) and has no receiver; neither
     does a site with no source unit, nor a formal the frame has not bound
     (the builtin floor's own binding of the same spelling is not the
-    frame's formal): None.
+    frame's formal): None.  Nor does a generator expression's frame here:
+    its first argument is the ``.0`` iterator, which no temporal binds
+    (``zero_argument_super_in_generator_frame``); the enclosing function's
+    formal is never read in its place.
     """
     from sugar_lift_py_tests.temporal.builtin_name_bindings import (
         is_builtin_floor_binding,
@@ -630,7 +658,7 @@ def zero_argument_super_receiver(site, temporal):
     if temporal is None:
         return None
     _read, formal = _super_frame_first_positional(site)
-    if formal is None:
+    if formal is None or formal is _GENERATOR_ITERATOR_ARGUMENT:
         return None
     binding = temporal.latest(formal.name)
     if binding is None or is_builtin_floor_binding(binding):

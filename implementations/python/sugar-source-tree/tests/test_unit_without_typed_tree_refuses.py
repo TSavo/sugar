@@ -58,6 +58,10 @@ def _unit_without_typed_tree() -> SourceUnit:
             lambda unit: unit.scope_holding(READ),
         ),
         (
+            "SourceUnit.frame_holding",
+            lambda unit: unit.frame_holding(READ),
+        ),
+        (
             "SourceUnit._module_global_rows",
             lambda unit: unit.module_threaded_names(),
         ),

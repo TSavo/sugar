@@ -207,6 +207,23 @@ _INTERPRETER_BOUND_NAMES = frozenset(
 _INTERPRETER_BOUND_TARGETS = {"__builtins__": "python:builtins"}
 
 
+def _scope_body_bounds(node) -> "tuple | None":
+    """``((start_line, start_col), (end_line, end_col))`` of the BODY of a
+    class, function or lambda scope -- the code that runs in it -- or None
+    for any other node (or a body-less def).  A ``def``'s decorators and
+    defaults and a lambda's defaults run in the scope around it."""
+    if isinstance(node, (ClassDef, FunctionDef, AsyncFunctionDef)):
+        if not node.body:
+            return None
+        first = node.body[0].line_col_span()
+        last = node.body[-1].line_col_span()
+    elif isinstance(node, Lambda):
+        first = last = node.body.line_col_span()
+    else:
+        return None
+    return (first.start_line, first.start_col), (last.end_line, last.end_col)
+
+
 class LanguageCallee(_enum.Enum):
     """A callee whose behaviour the Python language fixes, named by identity
     (and ``pytest.importorskip``, fixed by the harness lifted tests run under).
@@ -1222,6 +1239,11 @@ class SourceUnit:
     _scope_body_index: object = field(
         init=False, default=None, repr=False, compare=False
     )
+    # ``(typed module, generator expression rows, answers by position)``:
+    # the code of every generator expression, for ``frame_holding``.
+    _generator_frame_index: object = field(
+        init=False, default=None, repr=False, compare=False
+    )
     # ``(typed module, names some scope binds, names read)``: one walk of the
     # typed tree, rebuilt if the typed root is replaced.
     _module_name_rows_memo: object = field(
@@ -1278,6 +1300,7 @@ class SourceUnit:
         object.__setattr__(self, "_function_symtable_index", None)
         object.__setattr__(self, "_function_span_index", None)
         object.__setattr__(self, "_scope_body_index", None)
+        object.__setattr__(self, "_generator_frame_index", None)
         object.__setattr__(self, "_module_name_rows_memo", None)
         object.__setattr__(self, "_dynamic_global_writer_memo", None)
         object.__setattr__(self, "_module_global_rows_memo", None)
@@ -1374,22 +1397,9 @@ class SourceUnit:
         if index is None or index[0] is not module:
             rows = []
             for node in module.walk():
-                if isinstance(node, (ClassDef, FunctionDef, AsyncFunctionDef)):
-                    if not node.body:
-                        continue
-                    first = node.body[0].line_col_span()
-                    last = node.body[-1].line_col_span()
-                elif isinstance(node, Lambda):
-                    first = last = node.body.line_col_span()
-                else:
-                    continue
-                rows.append(
-                    (
-                        (first.start_line, first.start_col),
-                        (last.end_line, last.end_col),
-                        node,
-                    )
-                )
+                bounds = _scope_body_bounds(node)
+                if bounds is not None:
+                    rows.append((*bounds, node))
             index = (module, tuple(rows), {})
             object.__setattr__(self, "_scope_body_index", index)
         position = (span.start_line, span.start_col)
@@ -1404,6 +1414,68 @@ class SourceUnit:
             ):
                 owner = candidate
                 owner_start = start
+        answers[position] = owner
+        return owner
+
+    def frame_holding(self, span) -> "Node | None":
+        """The innermost frame whose code runs at the position ``span``: the
+        scope ``scope_holding`` answers (a class body, a ``def``, a lambda),
+        or a generator expression whose own code holds the position, or None
+        at module level.
+
+        CPython compiles a generator expression to a function of its own
+        (``<genexpr>``, ``symtable``'s FunctionBlock) taking one positional
+        argument, ``.0``: the iterator of its outermost iterable, which is
+        evaluated in the frame around it and so is not the generator's
+        code.  A list, set or dict comprehension is inlined into the frame
+        around it from CPython 3.12 (PEP 709; this tree requires 3.12), so
+        its code runs in that frame and it is never one here.  Name scoping
+        is ``scope_holding``'s; this is which code object runs.  A unit with
+        no typed root refuses by name (``_require_typed_module``).
+        """
+        module = self._require_typed_module(
+            "SourceUnit.frame_holding", blame=self.filename
+        )
+        scope = self.scope_holding(span)
+        index = self._generator_frame_index
+        if index is None or index[0] is not module:
+            rows = []
+            for node in module.walk():
+                if not isinstance(node, GeneratorExp):
+                    continue
+                whole = node.line_col_span()
+                outermost = node.generators[0].iter.line_col_span()
+                rows.append(
+                    (
+                        (whole.start_line, whole.start_col),
+                        (whole.end_line, whole.end_col),
+                        (outermost.start_line, outermost.start_col),
+                        (outermost.end_line, outermost.end_col),
+                        node,
+                    )
+                )
+            index = (module, tuple(rows), {})
+            object.__setattr__(self, "_generator_frame_index", index)
+        position = (span.start_line, span.start_col)
+        answers = index[2]
+        if position in answers:
+            return answers[position]
+        owner = scope
+        owner_start = None if scope is None else _scope_body_bounds(scope)[0]
+        generator = None
+        generator_start = None
+        for start, end, outer_start, outer_end, candidate in index[1]:
+            if not start <= position <= end or outer_start <= position <= outer_end:
+                continue
+            if generator_start is None or start > generator_start:
+                generator = candidate
+                generator_start = start
+        # A generator expression inside the scope's body is the inner frame;
+        # one around the scope (a lambda in its element) is not.
+        if generator is not None and (
+            owner_start is None or generator_start >= owner_start
+        ):
+            owner = generator
         answers[position] = owner
         return owner
 
@@ -10526,6 +10598,10 @@ class ClassDef(Statement):
         initializer_body = None
         receiver_coordinate_cid = None
         receiver_formal = None
+        # The class statement whose body defines the function the body runs:
+        # its ``__class__`` cell (PEP 3135).  A dataclass's generated
+        # ``__init__`` is no source function and has none.
+        cell_class_definition = None
         if dataclass_fields is not None:
             # ``_init_fn``: one ``__dataclass_self__.f = f`` per field, in
             # field order (the receiver name CPython uses, which no field
@@ -10579,6 +10655,10 @@ class ClassDef(Statement):
                 **scope,
             }
             initializer_body = initializer._source_visible_body(initializer_scope)
+            # The class that wrote the ``__init__`` the call runs: the first
+            # ``__init__`` of the MRO (``initializer_entry``), a base's when
+            # it is inherited.
+            cell_class_definition = self.initializer_entry()
         else:
             new_shape = self._authenticated_new_constructor_shape()
             if new_shape is not None:
@@ -10605,6 +10685,8 @@ class ClassDef(Statement):
                     tuple(statement.sugar() for statement in substituted_body),
                     constructor.fragment,
                 )
+                # This class's own ``__new__``.
+                cell_class_definition = self
         return ClassConstructorBodySugar(
             definition=self.sugar(),
             initializer_body=initializer_body,
@@ -10613,6 +10695,7 @@ class ClassDef(Statement):
             constructed_new_method=constructed_new_method,
             exception_args_coordinate_cid=exception_args_coordinate_cid,
             receiver_formal=receiver_formal,
+            cell_class_definition=cell_class_definition,
         )
 
     def _make_constructed_receiver_ref(self, receiver_coordinate_cid):

@@ -81,34 +81,13 @@ class BuiltinSuperValue(FloorValue):
         ):
             return ExitSet.completed(NoneValue())
         if (
-            name == "__setitem__"
+            name != "__init__"
             and isinstance(base, BuiltinDictClassValue)
-            and len(arguments) == 2
             and not keywords
         ):
-            from sugar_lift_py_tests.floor.mapping_object_value import (
-                MappingObjectValue,
-            )
-            from sugar_lift_py_tests.floor.receiver_owned_mutation_result import (
-                ReceiverOwnedMutationResult,
-            )
-
-            if not isinstance(self.receiver, MappingObjectValue):
-                construction_panic_gap(
-                    owner="BuiltinSuperValue.call_method_value",
-                    blame=blame,
-                    observed=type(self.receiver).__name__,
-                    requested="authenticated mapping receiver for dict.__setitem__",
-                    fix="preserve the source method receiver through zero-arg super",
-                )
-            key, value = arguments
-            return self.receiver.mapping_builtin_setitem(
-                key, value, blame, ctx
-            ).and_then(
-                lambda updated: ExitSet.completed(
-                    ReceiverOwnedMutationResult(self.receiver, updated, NoneValue())
-                )
-            )
+            answered = self._dict_base_call(name, arguments, blame, ctx)
+            if answered is not None:
+                return answered
         from sugar_lift_py_tests.floor.builtin_exception_class_value import (
             BuiltinExceptionClassValue,
         )
@@ -146,6 +125,42 @@ class BuiltinSuperValue(FloorValue):
             observed=f"{type(base).__name__}.{name}",
             requested="authenticated selected-base method semantics",
             fix="model the selected base method or keep it loud",
+        )
+
+    def _dict_base_call(self, name, arguments, blame, ctx):
+        """``super().<name>(...)`` that selects ``dict``: dict's own method
+        on the receiver's base storage, through the mapping's one door per
+        operation (``MappingObjectValue.dict_base_call``) -- the door a call
+        the MRO resolves to ``dict`` takes.  A mutation (``__setitem__``,
+        ``__delitem__``) is the receiver's transition with dict's ``None``
+        result kept apart (``ReceiverOwnedMutationResult``), which the source
+        override's store reads back.  None when dict's ``name`` at this arity
+        is not one of those doors."""
+        from sugar_lift_py_tests.floor.mapping_object_value import (
+            MappingObjectValue,
+        )
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+        from sugar_lift_py_tests.floor.receiver_owned_mutation_result import (
+            ReceiverOwnedMutationResult,
+        )
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        if not isinstance(self.receiver, MappingObjectValue):
+            construction_panic_gap(
+                owner="BuiltinSuperValue.call_method_value",
+                blame=blame,
+                observed=type(self.receiver).__name__,
+                requested=f"authenticated mapping receiver for dict.{name}",
+                fix="preserve the source method receiver through zero-arg super",
+            )
+        answered = self.receiver.dict_base_call(name, arguments, blame, ctx)
+        if answered is None or name not in ("__setitem__", "__delitem__"):
+            return answered
+        return answered.and_then(
+            lambda updated: ExitSet.completed(
+                ReceiverOwnedMutationResult(self.receiver, updated, NoneValue())
+            )
         )
 
     def _type_new(self, arguments, keywords, blame):

@@ -5,6 +5,17 @@ from dataclasses import dataclass, replace
 from .dict_value import DictValue
 from .object_value import ObjectValue
 
+# The arities at which ``MappingObjectValue.dict_base_call`` applies dict's
+# own method of that name to the authenticated base storage.
+_DICT_BASE_ARITIES = {
+    "__getitem__": (1,),
+    "__setitem__": (2,),
+    "__delitem__": (1,),
+    "__contains__": (1,),
+    "get": (1, 2),
+    "items": (0,),
+}
+
 
 @dataclass(frozen=True)
 class MappingObjectValue(ObjectValue):
@@ -146,7 +157,14 @@ class MappingObjectValue(ObjectValue):
     def _source_store(self, name, arguments, site, ctx):
         """``obj[k] = v`` / ``del obj[k]`` through a source ``name`` the MRO
         selects: the method applied under the store statement's context, and
-        the receiver it leaves read off its one receiver-owned mutation."""
+        the receiver it leaves read off its one receiver-owned mutation.
+
+        The method's ``__class__`` cell (PEP 3135) is the class whose body
+        defines it, bound where every method application binds it
+        (``object_value.bind_method_call``: ``lexical_defining_class``) --
+        never the receiver's class, which for an inherited method is not the
+        class a zero-argument ``super()`` in its body searches after (#7757).
+        """
         if ctx is None:
             from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
@@ -157,21 +175,6 @@ class MappingObjectValue(ObjectValue):
                 requested="the store statement's context",
                 fix="thread the caller context; zero-arg super requires its __class__ cell",
             )
-        if self.defining_class is None:
-            from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-            construction_panic_gap(
-                owner="MappingObjectValue.setitem",
-                blame=site,
-                observed="mapping receiver lacks defining class",
-                requested=f"authenticated source class for {name} dispatch",
-                fix="transport the class definition into its constructed receiver",
-            )
-        method_ctx = ctx.with_temporal(
-            ctx.temporal.bind_value(
-                "__class__", self.defining_class, blame=f"{self.class_name}.{name}"
-            )
-        )
         return (
             super()
             .call_method_value(
@@ -179,7 +182,7 @@ class MappingObjectValue(ObjectValue):
                 arguments,
                 owner="MappingObjectValue.setitem",
                 blame=site,
-                ctx=method_ctx,
+                ctx=ctx,
             )
             .and_then(
                 lambda callsite: callsite.retained_source_completion_outcome().and_then(
@@ -259,32 +262,15 @@ class MappingObjectValue(ObjectValue):
         required_frame=None,
     ):
         """Answer a name the MRO resolves to the authenticated dict base from
-        its storage (``protocol_owner``); every other name -- a source
-        override included -- is the source method's."""
-        if required_frame is None and not keywords:
-
-            def builtin():
-                return self.protocol_owner(name, blame) == "dict"
-
-            if name == "__getitem__" and len(arguments) == 1 and builtin():
-                return self._mapping_read(arguments[0], blame, ctx)
-            if name == "__setitem__" and len(arguments) == 2 and builtin():
-                return self.mapping_builtin_setitem(
-                    arguments[0], arguments[1], blame, ctx
-                )
-            if name == "__delitem__" and len(arguments) == 1 and builtin():
-                return self.mapping_builtin_delitem(arguments[0], blame, ctx)
-            if name == "get" and len(arguments) in (1, 2) and builtin():
-                return self._mapping_get(arguments, blame)
-            if name == "items" and not arguments and builtin():
-                from sugar_lift_py_tests.floor.tuple_value import TupleValue
-                from sugar_lift_py_tests.outcome import ExitSet
-
-                return ExitSet.completed(
-                    TupleValue(
-                        tuple(TupleValue((key, value)) for key, value in self.entries)
-                    )
-                )
+        its storage (``protocol_owner``, then ``dict_base_call``); every
+        other name -- a source override included -- is the source method's."""
+        if (
+            required_frame is None
+            and not keywords
+            and len(arguments) in _DICT_BASE_ARITIES.get(name, ())
+            and self.protocol_owner(name, blame) == "dict"
+        ):
+            return self.dict_base_call(name, arguments, blame, ctx)
         return super().call_method_value(
             name,
             arguments,
@@ -293,6 +279,34 @@ class MappingObjectValue(ObjectValue):
             ctx=ctx,
             keywords=keywords,
             required_frame=required_frame,
+        )
+
+    def dict_base_call(self, name, arguments, blame, ctx):
+        """``dict.<name>(self, *arguments)``: the authenticated builtin
+        base's own method on this receiver's storage, one door per
+        operation.  Both readers of dict's method apply it: a call the MRO
+        resolves to ``dict`` (``call_method_value``) and a zero-argument
+        ``super()`` that selects ``dict`` from a source override
+        (``BuiltinSuperValue``).  ``__setitem__``/``__delitem__`` answer
+        the receiver they leave.  None when dict's ``name`` at this arity is
+        not one of these doors (``_DICT_BASE_ARITIES``)."""
+        if len(arguments) not in _DICT_BASE_ARITIES.get(name, ()):
+            return None
+        if name == "__getitem__":
+            return self._mapping_read(arguments[0], blame, ctx)
+        if name == "__setitem__":
+            return self.mapping_builtin_setitem(arguments[0], arguments[1], blame, ctx)
+        if name == "__delitem__":
+            return self.mapping_builtin_delitem(arguments[0], blame, ctx)
+        if name == "__contains__":
+            return self._builtin_dict().contains(arguments[0], blame)
+        if name == "get":
+            return self._mapping_get(arguments, blame)
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        return ExitSet.completed(
+            TupleValue(tuple(TupleValue((key, value)) for key, value in self.entries))
         )
 
     def _mapping_get(self, arguments, blame):
