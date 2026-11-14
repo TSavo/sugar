@@ -2607,7 +2607,9 @@ class SourceUnit:
             )
         return module  # type: ignore[return-value]
 
-    def function_symtable(self, name: str, lineno: int):
+    def _function_symtables(self, name: str, lineno: int) -> tuple:
+        """Every CPython function symtable named ``name`` that starts on
+        ``lineno`` (a lambda's is named ``lambda``)."""
         index = self._function_symtable_index
         if index is None:
             # One walk of the CPython symtable tree, which is fixed for the
@@ -2624,7 +2626,21 @@ class SourceUnit:
 
             visit(self.module_symtable)
             object.__setattr__(self, "_function_symtable_index", index)
-        matches = index.get((name, lineno), ())
+        return tuple(index.get((name, lineno), ()))
+
+    def lambda_symtables(self, lineno: int, parameters: frozenset) -> tuple:
+        """CPython's symtables of the lambdas that start on ``lineno`` with
+        the formals ``parameters``.  A symtable carries no column, so two
+        such lambdas on one line (or one nested in the other) are both
+        answered; a reader takes what any of them says."""
+        return tuple(
+            table
+            for table in self._function_symtables("lambda", lineno)
+            if frozenset(table.get_parameters()) == parameters
+        )
+
+    def function_symtable(self, name: str, lineno: int):
+        matches = self._function_symtables(name, lineno)
         if len(matches) != 1:
             raise SourceTreePanic(
                 blame=f"{self.filename}:{lineno}:0",
@@ -4219,25 +4235,35 @@ def _source_position(node: "Node") -> tuple:
     return (node.kind, node.span.start, node.span.end)
 
 
-def _stored_closures(roots) -> frozenset:
-    """The lambdas an eager comprehension stores unevaluated in what it
-    produces: an element (a dict comprehension's key or value) that is a
-    lambda, a lambda inside a list, tuple, set or dict display there, or a
+def _stored_closures(roots, owner=None) -> frozenset:
+    """The lambdas an eager comprehension (``owner``) stores unevaluated in
+    what it produces: an element (a dict comprehension's key or value) that
+    is a lambda, a lambda inside a list, tuple, set or dict display there, a
     lambda an eager comprehension there stores in its own result
     (``[[lambda: x for _ in ys] for x in xs]``): that result is stored in
-    this one, so the lambda escapes both.
+    this one, so the lambda escapes both -- or a lambda a walrus there binds
+    (``[(f := lambda: x) for x in xs]; f()``): it escapes through the
+    walrus's name as well as the result.
 
     Nothing calls such a lambda before the comprehension is done, so it reads
     the comprehension's final member.  A lambda anywhere else (called in
     place, handed to a call, read by a condition, produced by a lazy
     generator expression) may be called while the comprehension runs, when
-    the cell holds the current member, and is not one of these."""
+    the cell holds the current member, and is not one of these; nor is a
+    lambda a walrus binds to a name the comprehension also reads (or with
+    no comprehension to look in), which may be called through that name
+    while the comprehension runs."""
     found = set()
     pending = list(roots)
     while pending:
         node = pending.pop()
         if isinstance(node, Lambda):
             found.add(_source_position(node))
+        elif isinstance(node, NamedExpr):
+            if isinstance(node.target, Name) and not _comprehension_reads(
+                owner, node.target
+            ):
+                pending.append(node.value)
         elif isinstance(node, (List, Tuple_, Set)):
             pending.extend(node.elts)
         elif isinstance(node, Dict):
@@ -4252,7 +4278,21 @@ def _stored_closures(roots) -> frozenset:
     return frozenset(found)
 
 
-def _closure_cell_scope(scope, roots, cells) -> "BindingMap":
+def _comprehension_reads(owner, target) -> bool:
+    """Whether comprehension ``owner`` reads the name walrus ``target``
+    binds anywhere but at ``target`` itself (its element, key, value,
+    conditions or iterables); True with no comprehension to look in."""
+    if owner is None:
+        return True
+    return any(
+        isinstance(node, Name)
+        and node.id == target.id
+        and (node.span.start, node.span.end) != (target.span.start, target.span.end)
+        for node in owner.walk()
+    )
+
+
+def _closure_cell_scope(scope, roots, cells, owner=None) -> "BindingMap":
     """``scope`` for substituting ``roots`` (an eager comprehension's element,
     or a dict comprehension's key and value) with ``cells``: each name the
     comprehension's targets bind, to what the comprehension's cell for it
@@ -4269,7 +4309,7 @@ def _closure_cell_scope(scope, roots, cells) -> "BindingMap":
     is stored or no name has a cell."""
     if not cells:
         return scope
-    stored = _stored_closures(roots)
+    stored = _stored_closures(roots, owner)
     if not stored:
         return scope
     return {
@@ -4299,10 +4339,10 @@ def _member_closure_scope(owner, inner, roots) -> "BindingMap":
     dissolve substitutes ``roots`` in) with the comprehension's cells: each
     target name, to a member reference to its final member coordinate
     (``_final_member_cells``)."""
-    if not _stored_closures(roots):
+    if not _stored_closures(roots, owner):
         return inner
     return _closure_cell_scope(
-        inner, roots, _final_member_cells(owner, owner.generators, inner)
+        inner, roots, _final_member_cells(owner, owner.generators, inner), owner
     )
 
 
@@ -4797,6 +4837,7 @@ def _bound_module_references(reader, bindings: dict, *, owner: str) -> dict:
     name the module body does not decide there through a key is cited
     ``undecided`` by name; it is never read by name in its place."""
     references = {}
+    reader_name = reader.name if not isinstance(reader, Lambda) else "lambda"
     for name in sorted(bindings):
         binding = bindings[name]
         if binding is UNDECIDED_MODULE_BINDING:
@@ -4805,7 +4846,7 @@ def _bound_module_references(reader, bindings: dict, *, owner: str) -> dict:
                 blame=reader.fragment,
                 observed=(
                     f"undecided module binding of `{name}` where "
-                    f"`{reader.name}` reads it"
+                    f"`{reader_name}` reads it"
                 ),
                 requested=(
                     "the module binding the module body decides where this "
@@ -4818,6 +4859,25 @@ def _bound_module_references(reader, bindings: dict, *, owner: str) -> dict:
             )
         references[name] = binding
     return references
+
+
+def _module_references_where_called(reader, reads, *, owner: str) -> dict:
+    """The module's binding of each global in ``reads`` that the body of
+    function ``reader`` (a ``def`` or a lambda) reads, where the function
+    is called (``_bound_module_references``).  Called while the module body
+    runs (``_MODULE_EXECUTION_SITE``), the binding standing at that call;
+    called from outside its execution (or from another module's body, after
+    this one was imported), the module's final binding.  The one reader of
+    module globals for every function body."""
+    unit = reader.unit
+    site = _MODULE_EXECUTION_SITE.get()
+    if site is not None and site.unit is not unit:
+        # Another module's body calls this one's function after this
+        # module was imported: it reads this module's final binding.
+        site = None
+    return _bound_module_references(
+        reader, unit.module_bindings_at(site, reads), owner=owner
+    )
 
 
 class _Splice:
@@ -7737,15 +7797,8 @@ class FunctionDef(Statement):
         } & candidates
         if not reads:
             return {}
-        site = _MODULE_EXECUTION_SITE.get()
-        if site is not None and site.unit is not unit:
-            # Another module's body calls this one's function after this
-            # module was imported: it reads this module's final binding.
-            site = None
-        return _bound_module_references(
-            self,
-            unit.module_bindings_at(site, reads),
-            owner="FunctionDef._module_global_references",
+        return _module_references_where_called(
+            self, reads, owner="FunctionDef._module_global_references"
         )
 
     def _make_parameter_entry(self, parameter: Param, ordinal: int, scope):
@@ -8414,9 +8467,23 @@ class ClassDef(Statement):
                 bound_here.add(statement.name)
                 continue
             bound_here |= statement.names_bound_within()
-            reads.update(
-                node.id for node in statement.walk() if isinstance(node, Name)
-            )
+            # A lambda's body runs when the lambda is called, and reads a
+            # module global there (``Lambda._module_global_references``), not
+            # when the class statement runs.
+            pending = [statement]
+            seen: set[int] = set()
+            while pending:
+                node = pending.pop()
+                if id(node) in seen:
+                    continue
+                seen.add(id(node))
+                if isinstance(node, Name):
+                    reads.add(node.id)
+                pending.extend(
+                    child
+                    for field_name, _index, child in node._child_edges()
+                    if not (field_name == "body" and isinstance(node, Lambda))
+                )
         reads = (reads & candidates) - bound_here
         if not reads:
             return {}
@@ -15600,6 +15667,37 @@ def _encloses(outer, inner) -> bool:
     return outer.start <= inner.start and inner.end <= outer.end
 
 
+def _body_holds(function, span) -> bool:
+    """Whether source span ``span`` runs in ``function``'s own scope: in a
+    statement of its body, or in a decorator of one."""
+    for statement in function.body:
+        if _encloses(statement.span, span) or any(
+            _encloses(decorator.span, span)
+            for decorator in getattr(statement, "decorators", None) or ()
+        ):
+            return True
+    return False
+
+
+def _function_holding(node):
+    """The innermost function whose own scope ``node`` runs in, or None (the
+    module, or a class body around no function).  A node in a ``def``'s
+    signature -- a default, an annotation, a decorator -- runs where the
+    ``def`` statement does: in the scope around that ``def``, never in it."""
+    unit = node.unit
+    span = node.span
+    owner = unit.innermost_function_containing(node.line_col_span())
+    if owner is None or _body_holds(owner, span):
+        return owner
+    holder = None
+    for candidate in unit.function_nodes:
+        if _body_holds(candidate, span) and (
+            holder is None or _encloses(holder.span, candidate.span)
+        ):
+            holder = candidate
+    return holder
+
+
 def _nearer_bound_names(owner, span) -> set:
     """The names a scope nearer than function ``owner`` binds around source
     span ``span``: the formals of each lambda and the targets of each
@@ -15672,14 +15770,28 @@ class Lambda(Expression):
         which each call binds from the binding the calling scope holds at
         the call (``Call._closure_cells``).  Python reads the cell when the
         lambda runs, so ``x = 1; f = lambda: x; x = 2; f()`` is 2; the
-        binding the lambda was made under is never read."""
+        binding the lambda was made under is never read.  A lambda in a
+        ``def``'s defaults or decorators stands in the scope around the
+        ``def`` (``_function_holding``) and captures that function's locals.
+
+        A module global the body reads is read where the lambda is called,
+        as a ``def``'s body reads one (``_module_global_references``): this
+        substitution holds it out of the body's scope, and the lambda's call
+        frame binds it (``_source_visible_body``).  The binding standing
+        where the lambda was made (at module level, in a class body, or a
+        ``def`` body's own reference) is never read."""
         from .shadow import rewrite, rewrite_with_leaves
 
         layers = scope.get(_CLOSURE_CELLS)
         if layers is not None:
             scope = {k: v for k, v in scope.items() if k is not _CLOSURE_CELLS}
         bound = {p.name for p in self.params}
-        bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
+        held_out = bound | self._module_globals_read()
+        bs = (
+            {k: v for k, v in scope.items() if k not in held_out}
+            if held_out
+            else scope
+        )
         position = _source_position(self)
         held: set = set()
         for stored, cells in layers or ():
@@ -15729,6 +15841,63 @@ class Lambda(Expression):
             self.fragment.seal().cid, self.fragment, ("captured", name)
         )
 
+    def _module_globals_read(self) -> frozenset:
+        """The module globals this body reads that the module body binds
+        through a key (``SourceUnit.module_threaded_names``): each name the
+        body reads that CPython's symtable of this lambda calls global
+        (``SourceUnit.lambda_symtables``), as ``FunctionDef.
+        _module_global_references`` asks of a ``def``'s.  A formal, a name
+        the body binds (a walrus), a comprehension's member or cell and an
+        enclosing function's local are not globals there."""
+        unit = self.unit
+        if unit.typed_module is None:
+            return frozenset()
+        candidates = unit.module_threaded_names()
+        if not candidates:
+            return frozenset()
+        names = {
+            node.id for node in self.body.walk() if isinstance(node, Name)
+        } & candidates
+        if not names:
+            return frozenset()
+        line = self.line_col_span().start_line
+        tables = unit.lambda_symtables(
+            line, frozenset(param.name for param in self.params)
+        )
+        if not tables:
+            raise SourceTreePanic(
+                blame=self.fragment,
+                owner="Lambda._module_globals_read",
+                observed=f"no CPython lambda symtable at line {line}",
+                requested="the CPython symtable of this exact lambda",
+                fix="preserve the source lambda's CPython symtable identity",
+            )
+        reads = set()
+        for table in tables:
+            for name in names:
+                try:
+                    symbol = table.lookup(name)
+                except KeyError:
+                    continue
+                if symbol.is_global() and symbol.is_referenced():
+                    reads.add(name)
+        return frozenset(reads)
+
+    def _module_global_references(self) -> dict:
+        """The module's binding of each global this body reads
+        (``_module_globals_read``), where the lambda is called: at the call's
+        point of the module body when the module body runs the call, the
+        module's final binding when it is called after import
+        (``_module_references_where_called``, the reader a ``def``'s body
+        reads its globals through).  One the module body does not decide
+        there through a key is cited ``undecided`` by name."""
+        reads = self._module_globals_read()
+        if not reads:
+            return {}
+        return _module_references_where_called(
+            self, reads, owner="Lambda._module_global_references"
+        )
+
     def _enclosing_locals_read(self, excluded) -> tuple:
         """The names the body reads (other than ``excluded``: the formals,
         the comprehension cells it reads, the names already captured) that
@@ -15736,11 +15905,17 @@ class Lambda(Expression):
         local, or a name that function itself captures (CPython's symtable
         of that function).
 
+        The function the lambda stands in is the one whose own scope it runs
+        in (``_function_holding``): a lambda in a ``def``'s defaults or
+        decorators stands in the function around that ``def``, and reads
+        that function's cell at its call as any lambda written there does.
+
         Not captured: a name the lambda reads from an enclosing
         comprehension (its member or its cell, ``_closure_cell_scope``) or
         from an enclosing lambda's formals -- the nearer scope binds it --
-        and every name of a lambda that stands in no function body (module
-        level, a ``def``'s defaults or decorators), which reads a global."""
+        and every name of a lambda that stands in no function (module level,
+        a class body, a module-level ``def``'s defaults or decorators),
+        which reads a global (``_module_global_references``)."""
         names = sorted(
             {node.id for node in self.body.walk() if isinstance(node, Name)}
             - set(excluded)
@@ -15752,12 +15927,10 @@ class Lambda(Expression):
         )
         if not names:
             return ()
-        owner = self.unit.innermost_function_containing(self.line_col_span())
+        owner = _function_holding(self)
         if owner is None:
             return ()
         span = self.span
-        if not any(_encloses(statement.span, span) for statement in owner.body):
-            return ()
         table = self.unit.function_symtable(
             owner.name, owner.line_col_span().start_line
         )
@@ -15854,12 +16027,16 @@ class Lambda(Expression):
         )
 
     def _source_visible_body(self, scope):
+        """The body a call of this lambda runs: its formals bound, and each
+        module global it reads bound where it is called
+        (``_module_global_references``), as a ``def``'s body is
+        (``FunctionDef._substitute_body``)."""
         from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
         from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
             SourceVisibleFunctionBodySugar,
         )
 
-        body = self.body.substitute(scope)
+        body = self.body.substitute({**self._module_global_references(), **scope})
         return SourceVisibleFunctionBodySugar(
             (ReturnSugar(value=body.sugar(), site=self.fragment),), self.fragment
         )
@@ -15892,14 +16069,20 @@ class Lambda(Expression):
         from sugar_lift_py_tests.sugar.lambda_sugar import LambdaSugar
 
         frame = self.source_visible_call_frame()
+        # The body reads a module global as its frame does: where it is
+        # called (``_module_global_references``), never by name.
+        body = self.body
+        references = self._module_global_references()
+        if references:
+            body = body.substitute(references)
         return LambdaSugar(
             formals=tuple(param.name for param in self.params),
-            body=self.body.sugar(),
+            body=body.sugar(),
             source_call_frame=frame,
             formal_coordinate_cids=tuple(
                 coordinate.cid for coordinate in frame.formal_coordinates
             ),
-            body_fragment_cid=self.body.fragment.seal().cid,
+            body_fragment_cid=body.fragment.seal().cid,
             site=self.fragment,
             closure_coordinates=self._closure_coordinates(),
         )
@@ -17241,13 +17424,12 @@ class Call(Expression):
             covered=frozenset(names)
         ):
             return ()
-        owner = self.unit.innermost_function_containing(self.line_col_span())
+        # The function this call runs in, and the one the lambda stands in
+        # (``_function_holding``: a lambda in a ``def``'s defaults or
+        # decorators stands in the function around that ``def``).
+        owner = _function_holding(self)
         if isinstance(definition, Lambda) and (
-            owner is None
-            or owner
-            is not self.unit.innermost_function_containing(
-                definition.line_col_span()
-            )
+            owner is None or owner is not _function_holding(definition)
         ):
             return ()
         if owner is not None and _nearer_bound_names(owner, self.span) & set(names):
