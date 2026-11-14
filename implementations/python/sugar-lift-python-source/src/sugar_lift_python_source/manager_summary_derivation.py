@@ -1812,8 +1812,7 @@ def populate_source_derived_resource_refs(
         value_receipts,
         owner="manager_summary_derivation imported manager value receipt pairing",
     )
-    paired_receipts = []
-    paired_keys = set()
+    paired_receipts = {}
     for call_key, selected in uses.items():
         _, call, _ = selected
         source_cid = call.unit.source_cid
@@ -1834,8 +1833,7 @@ def populate_source_derived_resource_refs(
             )
             receipt = value_receipts_by_site.get(callee_key)
         if receipt is not None:
-            paired_receipts.append((receipt, selected))
-            paired_keys.add(call_key)
+            paired_receipts[call_key] = receipt
 
     graphs = {} if artifact_graph_cache is None else artifact_graph_cache
     # Seed from session so tops already resolved in frame/prefix projection
@@ -1843,8 +1841,9 @@ def populate_source_derived_resource_refs(
     if session.enabled:
         for top, graph in session.dependency_graphs.items():
             graphs.setdefault(top, graph)
-    for receipt, selected in paired_receipts:
-        coordinate, call, exit_face_id = selected
+
+    def read_imported_head(receipt, coordinate, call, exit_face_id) -> None:
+        """The import door: a head whose callee carries an import receipt."""
         top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
         graph = graphs.get(top_level)
         if graph is None and session.enabled:
@@ -1875,7 +1874,7 @@ def populate_source_derived_resource_refs(
                     "call-target-off-population",
                     f"dependency artifact authentication failed for {top_level}: {exc}",
                 )
-                continue
+                return
             graphs[top_level] = graph
             if session.enabled:
                 session.dependency_graphs[top_level] = graph
@@ -1894,7 +1893,7 @@ def populate_source_derived_resource_refs(
             else:
                 kind = getattr(resolved, "kind", None) or "no-derived-contract"
             _install_derivation_gap(context, coordinate, receipt, str(kind))
-            continue
+            return
         # An imported call is a coordinate plus an edge: the authenticated
         # definition names the edge's target, and its body is never read.
         # The manager stands cited by that target; the imported proof binds
@@ -1907,51 +1906,23 @@ def populate_source_derived_resource_refs(
             f"{resolved.module_name}.{resolved.definition.name}",
         )
 
-    # ``with open(...)`` first: it depends on no other row, and a same-module
-    # manager whose own body opens a file (``@contextmanager def g(): with
-    # open(p) as f: yield f``) builds its frame from that nested row, so it
-    # must be seated before any same-module reader reads the body (#7732).
-    _populate_builtin_name_manager_uses(context, uses, session=session)
-
-    # A callee Name assigned in every arm of a selection (``m = a.A`` /
-    # ``elif``: ``m = b.B`` / ``with m(...)``) has no receipt at the call, but
-    # each ARM has a value receipt at its own occurrence. Derive the partition
-    # member by member through the same import door; a partition of cited
-    # members is a cited partition.
-    _populate_assigned_partition_manager_uses(
+    _WithReader(
+        source_file.root,
         source_file,
         context,
         uses,
-        paired_keys=paired_keys,
+        session=session,
+        graphs=graphs,
         value_receipts_by_site=value_receipts_by_site,
-        graphs=graphs,
-        session=session,
         distribution_index=distribution_index,
-    )
-
-    # Same-module ClassDef managers have no import receipt. Derive them through
-    # module_direct_bindings → Call.force_floor → protocol → summary — the same
-    # publication door as import-backed ClassDef CMs. Uncovered uses stay empty
-    # for With.require (L3d) to panic.
-    _populate_same_module_class_manager_uses(source_file, context, uses)
-    _populate_same_module_generator_manager_uses(
-        context,
-        uses,
-        session=session,
-        graphs=graphs,
-        distribution_index=distribution_index,
-    )
-    _populate_same_module_factory_manager_uses(
-        context,
-        uses,
-        value_receipts_by_site,
-        graphs=graphs,
-        session=session,
-        distribution_index=distribution_index,
-    )
-    _populate_formal_selected_manager_uses(
-        source_file, context, selected_coordinates=selected_coordinates
-    )
+        selected_arms=selected_arms,
+        selected_coordinates=selected_coordinates,
+        paired_receipts=paired_receipts,
+        read_imported_head=read_imported_head,
+    ).read_all()
+    # The module's own source-defined calls carry their may-raise testimony.
+    # The seat reads only the call receipts and no ``with`` row; it is not a
+    # ``with`` reader.
     _seat_unprojected_source_calls(
         context,
         call_receipts_by_site,
@@ -1960,20 +1931,265 @@ def populate_source_derived_resource_refs(
         session=session,
         distribution_index=distribution_index,
     )
-    _populate_call_bound_module_head_uses(
-        source_file.root,
-        context,
-        value_receipts_by_site,
-        graphs=graphs,
-        session=session,
-        distribution_index=distribution_index,
-        selected_coordinates=selected_coordinates,
-    )
-    _populate_runtime_selected_head_uses(
-        source_file, context, selected_coordinates=selected_coordinates
-    )
     _seat_selected_manager_refs(context, selected_arms, selected_coordinates)
     _rewrite_installed_generator_frames(context)
+
+
+class _WithReader:
+    """The one reader of the ``with`` nodes under ``scope``.
+
+    Every ``with`` item is read once, by the derivation the shape of its head
+    names:
+
+    - a call whose callee carries an import receipt: the import door
+      (``read_imported_head``, which only a module populate holds);
+    - a call of a name the module binds nowhere: ``builtins.<name>``, cited;
+    - a call of a local Name assigned an import value in every arm: the
+      partition of its arms;
+    - a call of a name the module binds to one ClassDef: the class door;
+    - a call of a module generator, or of a module ``async def``: the
+      generator door;
+    - a call of a module plain function: the factory door;
+    - any other head: a head that only reads a parameter, a chain on a
+      call-returned module, or a head a run-time string selects.
+
+    No reader runs over the scope in a fixed order.  The one ordering is a
+    dependency, not a sequence: a same-module definition's own ``with`` nodes
+    are read before the definition is, because a ``@contextmanager`` whose
+    body opens a file builds its frame from that nested row (#7732).
+    """
+
+    def __init__(
+        self,
+        scope,
+        source_file,
+        context,
+        uses,
+        *,
+        session,
+        graphs,
+        value_receipts_by_site,
+        distribution_index=None,
+        selected_arms=None,
+        selected_coordinates=None,
+        paired_receipts=None,
+        read_imported_head=None,
+    ):
+        from sugar_lift_py_tests.context.reduce_context import ReduceContext
+        from sugar_lift_py_tests.temporal import builtin_name_temporal
+
+        self.scope = scope
+        self.source_file = source_file
+        self.context = context
+        self.session = session
+        self.graphs = graphs
+        self.value_receipts_by_site = value_receipts_by_site
+        self.distribution_index = distribution_index
+        self.selected_coordinates = selected_coordinates
+        self.paired_receipts = paired_receipts or {}
+        self.read_imported_head = read_imported_head
+        # One reduction context for every same-module constructor this reader
+        # applies, as one population always had.
+        self.reduce_ctx = ReduceContext(temporal=builtin_name_temporal())
+        arm_owner = {
+            arm: use_site
+            for use_site, arms in (selected_arms or {}).items()
+            for arm in arms
+        }
+        # A head's calls, keyed by the ``with`` item they belong to: the item
+        # itself, or the item a branch-selected arm is an arm of.
+        self.uses_by_item = {}
+        for call_key, (coordinate, call, exit_face_id) in uses.items():
+            item_coordinate = arm_owner.get(coordinate, coordinate)
+            self.uses_by_item.setdefault(item_coordinate, []).append(
+                (call_key, coordinate, call, exit_face_id)
+            )
+        self.items = {}
+        for node, coordinate, item in self._with_items(scope):
+            self.items.setdefault(coordinate, (node, item))
+        self.read_coordinates = set()
+        self.read_definitions = set()
+        self.calls_by_start = None
+
+    @staticmethod
+    def _with_items(root):
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+        )
+        from sugar_source_tree.nodes import AsyncWith, With
+
+        for node in root.walk():
+            if not isinstance(node, (With, AsyncWith)):
+                continue
+            for item in node.items:
+                yield (
+                    node,
+                    SourceFragmentCoordinateV1(
+                        item.context_expr.unit.source_cid,
+                        *item._manager_use_site_span(),
+                    ),
+                    item,
+                )
+
+    def read_all(self) -> None:
+        for coordinate in tuple(self.items):
+            self.read(coordinate)
+        for coordinate in tuple(self.uses_by_item):
+            self.read(coordinate)
+
+    def read_within(self, definition) -> None:
+        """Read the ``with`` nodes inside ``definition`` before it is read."""
+        if id(definition) in self.read_definitions:
+            return
+        self.read_definitions.add(id(definition))
+        for _node, coordinate, _item in self._with_items(definition):
+            if coordinate in self.items or coordinate in self.uses_by_item:
+                self.read(coordinate)
+
+    def read(self, coordinate) -> None:
+        """Read one ``with`` item, by its head's shape."""
+        from sugar_source_tree.nodes import With
+
+        if coordinate in self.read_coordinates:
+            return
+        self.read_coordinates.add(coordinate)
+        for call_key, use_coordinate, call, exit_face_id in self.uses_by_item.get(
+            coordinate, ()
+        ):
+            self._read_call_head(call_key, use_coordinate, call, exit_face_id)
+        entry = self.items.get(coordinate)
+        if entry is not None and isinstance(entry[0], With):
+            self._read_item_head(coordinate, entry[1])
+
+    def _read_call_head(self, call_key, coordinate, call, exit_face_id) -> None:
+        from sugar_source_tree.builtin_reference import module_reads_builtin
+        from sugar_source_tree.nodes import (
+            AsyncFunctionDef,
+            Call,
+            ClassDef,
+            FunctionDef,
+            Name,
+        )
+
+        receipt = self.paired_receipts.get(call_key)
+        if receipt is not None:
+            self.read_imported_head(receipt, coordinate, call, exit_face_id)
+            return
+        context = self.context
+        if coordinate in context.source_derived_contract_refs:
+            return
+        if not isinstance(call, Call) or not isinstance(call.func, Name):
+            return
+        if module_reads_builtin(call.unit.source, call.func.id):
+            _read_builtin_name_head(context, coordinate, call, session=self.session)
+            return
+        if _read_assigned_partition_head(
+            self.source_file,
+            context,
+            coordinate,
+            call,
+            value_receipts_by_site=self.value_receipts_by_site,
+            graphs=self.graphs,
+            session=self.session,
+            distribution_index=self.distribution_index,
+        ):
+            return
+        binds = (call.unit.module_direct_bindings or {}).get(call.func.id, ())
+        if len(binds) != 1:
+            return
+        definition = binds[0]
+        if isinstance(definition, ClassDef):
+            self.read_within(definition)
+            _read_same_module_class_head(
+                context,
+                coordinate,
+                call,
+                exit_face_id,
+                definition,
+                reduce_ctx=self.reduce_ctx,
+            )
+        elif isinstance(definition, AsyncFunctionDef) or (
+            isinstance(definition, FunctionDef)
+            and any(
+                node.kind in ("Yield", "YieldFrom") for node in definition.walk()
+            )
+        ):
+            self.read_within(definition)
+            _read_same_module_generator_head(
+                context,
+                coordinate,
+                call,
+                exit_face_id,
+                definition,
+                session=self.session,
+                graphs=self.graphs,
+                distribution_index=self.distribution_index,
+            )
+        elif type(definition) is FunctionDef:
+            _read_same_module_factory_head(
+                context,
+                coordinate,
+                definition,
+                value_receipts_by_site=self.value_receipts_by_site,
+                graphs=self.graphs,
+                session=self.session,
+                distribution_index=self.distribution_index,
+            )
+
+    def _read_item_head(self, coordinate, item) -> None:
+        from sugar_source_tree.formal_manager_head import (
+            call_bound_local_manager_head,
+            formal_manager_head,
+            runtime_selected_manager_head,
+        )
+
+        context = self.context
+        if coordinate in context.source_derived_contract_refs:
+            return
+        if (
+            self.selected_coordinates is not None
+            and coordinate not in self.selected_coordinates
+        ):
+            return
+        unit = self.scope.unit
+        start_line, start_col, _end_line, _end_col = item._manager_use_site_span()
+        head = formal_manager_head(unit.source, start_line, start_col)
+        if head is not None:
+            _read_formal_selected_head(context, coordinate, head)
+            return
+        if coordinate in context.opaque_source_call_obligations:
+            return
+        head = call_bound_local_manager_head(unit.source, start_line, start_col)
+        if head is not None and _read_call_bound_module_head(
+            context,
+            coordinate,
+            head,
+            calls_by_start=self._calls_by_start(),
+            graphs=self.graphs,
+            session=self.session,
+            distribution_index=self.distribution_index,
+        ):
+            return
+        if (
+            coordinate in context.source_derived_contract_refs
+            or coordinate in context.opaque_source_call_obligations
+        ):
+            return
+        if runtime_selected_manager_head(unit, start_line, start_col) is not None:
+            _read_runtime_selected_head(context, coordinate)
+
+    def _calls_by_start(self) -> dict:
+        from sugar_source_tree.nodes import Call
+
+        if self.calls_by_start is None:
+            self.calls_by_start = {}
+            for candidate in self.scope.walk():
+                if isinstance(candidate, Call):
+                    span = candidate.line_col_span()
+                    self.calls_by_start.setdefault(
+                        (span.start_line, span.start_col), candidate
+                    )
+        return self.calls_by_start
 
 
 def _seat_selected_manager_refs(context, selected_arms, selected_coordinates) -> None:
@@ -2226,17 +2442,17 @@ def _name_binders(function, name: str):
     return assignments, other
 
 
-def _populate_assigned_partition_manager_uses(
+def _read_assigned_partition_head(
     source_file,
     context,
-    uses,
+    coordinate,
+    call,
     *,
-    paired_keys,
     value_receipts_by_site,
     graphs,
     session,
     distribution_index,
-) -> None:
+) -> bool:
     """Derive ``with m(...)`` where ``m`` is assigned an import value per arm.
 
     Reproducer (pandas/_testing/_io.py): ``compress_method`` is bound to
@@ -2252,6 +2468,9 @@ def _populate_assigned_partition_manager_uses(
     a partition whose members are all cited is minted as one
     ``PartitionedOpaqueCitedContextManagerRefV1``. Anything else stays a loud
     typed gap naming the arm that refused -- never ``runtime-selected``.
+
+    Returns False, having read nothing, when no arm of the callee is an import
+    value: the head is not this shape.
     """
     from sugar_lift_py_tests.context_manager_resolution import (
         OpaqueSourceCallObligationV1,
@@ -2260,7 +2479,6 @@ def _populate_assigned_partition_manager_uses(
         mint_partitioned_opaque_cited_context_manager_ref,
         opaque_source_call_roster_of,
     )
-    from sugar_source_tree.nodes import Name
 
     from .dependency_artifact import (
         DependencyArtifactAuthenticationError,
@@ -2268,6 +2486,7 @@ def _populate_assigned_partition_manager_uses(
         authenticate_dependency_top_level,
         resolve_import_binding,
     )
+
     def arm_coordinate(node):
         span = node.value.line_col_span()
         return SourceFragmentCoordinateV1(
@@ -2304,91 +2523,83 @@ def _populate_assigned_partition_manager_uses(
         graphs[top_level] = graph
         return graph
 
-    for call_key, (coordinate, call, _exit_face_id) in uses.items():
-        if call_key in paired_keys:
-            continue
-        if coordinate in context.source_derived_contract_refs:
-            continue
-        if not isinstance(call.func, Name):
-            continue
-        function = _enclosing_function(source_file, call)
-        if function is None:
-            continue
-        name = call.func.id
-        assignments, other_binders = _name_binders(function, name)
-        arms = [(node, arm_receipt(node)) for node in assignments]
-        receipted = [(node, receipt) for node, receipt in arms if receipt is not None]
-        if not receipted:
-            # Not this law's shape: no arm is an import value.
-            continue
-        first_receipt = receipted[0][1]
-        if other_binders:
-            where = ", ".join(
-                f"{type(binder).__name__}@{binder.line_col_span().start_line}"
-                for binder in other_binders
-            )
-            _install_derivation_gap(
-                context,
-                coordinate,
-                first_receipt,
-                "partition-member-unauthenticated",
-                f"{name!r} is also bound by {where}; the assignment arms are not "
-                "its whole reaching value",
-            )
-            continue
-        unreceipted = [node for node, receipt in arms if receipt is None]
-        if unreceipted:
-            where = ", ".join(str(node.line_col_span().start_line) for node in unreceipted)
-            _install_derivation_gap(
-                context,
-                coordinate,
-                first_receipt,
-                "partition-member-unauthenticated",
-                f"{name!r} arm(s) at line {where} are not authenticated import values",
-            )
-            continue
-        members = []
-        failed = None
-        for node, receipt in receipted:
-            member_site = arm_coordinate(node)
-            try:
-                graph = graph_for(receipt)
-            except DependencyArtifactAuthenticationError:
-                # No artifact authenticates the member's module: the lifter
-                # does not have it, so it is not bridged -- the same one
-                # citation as an authenticated off-population member, never
-                # a label chosen by the exception.
-                graph = None
-            if graph is not None:
-                resolved = resolve_import_binding(
-                    receipt, graph=graph, session=session
-                )
-                if not isinstance(resolved, ResolvedPythonObjectV1):
-                    kind = getattr(resolved, "kind", None) or "no-derived-contract"
-                    failed = (f"partition-member-{kind}", receipt.target_symbol)
-                    break
-                # The member is an imported call: cited by its target, its
-                # body never read.
-            demand_cid = receipt.demand.get("cid", receipt.use["cid"])
-            roster = opaque_source_call_roster_of(
-                OpaqueSourceCallObligationV1(
-                    member_site,
-                    str(receipt.target_symbol),
-                    demand_cid,
-                    "call-target-off-population",
-                )
-            )
-            context.opaque_source_call_obligations.setdefault(member_site, roster)
-            members.append(mint_opaque_cited_context_manager_ref(roster=roster))
-        if failed is not None:
-            kind, detail = failed
-            _install_derivation_gap(context, coordinate, first_receipt, kind, detail)
-            continue
-        context.source_derived_contract_refs[coordinate] = (
-            mint_partitioned_opaque_cited_context_manager_ref(
-                use_site=coordinate, members=tuple(members)
+    function = _enclosing_function(source_file, call)
+    if function is None:
+        return False
+    name = call.func.id
+    assignments, other_binders = _name_binders(function, name)
+    arms = [(node, arm_receipt(node)) for node in assignments]
+    receipted = [(node, receipt) for node, receipt in arms if receipt is not None]
+    if not receipted:
+        # Not this law's shape: no arm is an import value.
+        return False
+    first_receipt = receipted[0][1]
+    if other_binders:
+        where = ", ".join(
+            f"{type(binder).__name__}@{binder.line_col_span().start_line}"
+            for binder in other_binders
+        )
+        _install_derivation_gap(
+            context,
+            coordinate,
+            first_receipt,
+            "partition-member-unauthenticated",
+            f"{name!r} is also bound by {where}; the assignment arms are not "
+            "its whole reaching value",
+        )
+        return True
+    unreceipted = [node for node, receipt in arms if receipt is None]
+    if unreceipted:
+        where = ", ".join(str(node.line_col_span().start_line) for node in unreceipted)
+        _install_derivation_gap(
+            context,
+            coordinate,
+            first_receipt,
+            "partition-member-unauthenticated",
+            f"{name!r} arm(s) at line {where} are not authenticated import values",
+        )
+        return True
+    members = []
+    failed = None
+    for node, receipt in receipted:
+        member_site = arm_coordinate(node)
+        try:
+            graph = graph_for(receipt)
+        except DependencyArtifactAuthenticationError:
+            # No artifact authenticates the member's module: the lifter
+            # does not have it, so it is not bridged -- the same one
+            # citation as an authenticated off-population member, never
+            # a label chosen by the exception.
+            graph = None
+        if graph is not None:
+            resolved = resolve_import_binding(receipt, graph=graph, session=session)
+            if not isinstance(resolved, ResolvedPythonObjectV1):
+                kind = getattr(resolved, "kind", None) or "no-derived-contract"
+                failed = (f"partition-member-{kind}", receipt.target_symbol)
+                break
+            # The member is an imported call: cited by its target, its
+            # body never read.
+        demand_cid = receipt.demand.get("cid", receipt.use["cid"])
+        roster = opaque_source_call_roster_of(
+            OpaqueSourceCallObligationV1(
+                member_site,
+                str(receipt.target_symbol),
+                demand_cid,
+                "call-target-off-population",
             )
         )
+        context.opaque_source_call_obligations.setdefault(member_site, roster)
+        members.append(mint_opaque_cited_context_manager_ref(roster=roster))
+    if failed is not None:
+        kind, detail = failed
+        _install_derivation_gap(context, coordinate, first_receipt, kind, detail)
+        return True
+    context.source_derived_contract_refs[coordinate] = (
+        mint_partitioned_opaque_cited_context_manager_ref(
+            use_site=coordinate, members=tuple(members)
+        )
+    )
+    return True
 
 
 
@@ -2410,7 +2621,7 @@ def _constructor_application_from_spread(call_sugar, reduce_ctx):
     bound = getattr(value, "bound_source_actuals", None)
     if not isinstance(value, CallSiteValue) or bound is None:
         raise SugarNotWritten(
-            owner="_populate_same_module_class_manager_uses.collect_application",
+            owner="_read_same_module_class_head.collect_application",
             blame=getattr(call_sugar, "site", None),
             observed=(
                 type(outcome).__name__
@@ -2577,15 +2788,16 @@ def _owned_by_class(receiver, class_value) -> bool:
     )
 
 
-def _populate_same_module_class_manager_uses(source_file, context, uses) -> None:
-    """Derive CM contracts for same-module ClassDef call managers.
+def _read_same_module_class_head(
+    context, coordinate, call, exit_face_id, class_def, *, reduce_ctx
+) -> None:
+    """Derive the CM contract of ``with C(...)`` for a same-module ClassDef.
 
     Import receipts never fire for local constructors. When Call.func Name
     binds to exactly one module ClassDef, construct the instance via the
     ordinary Call floor (force_floor), then protocol + summary + native
     enter/exit publication — one pipeline with the import-backed door.
     """
-    from sugar_lift_py_tests.context.reduce_context import ReduceContext
     from sugar_lift_py_tests.context_manager_resolution import (
         SourceDerivedContextManagerRefV1,
     )
@@ -2595,8 +2807,6 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
         ClassDefinitionValue,
         ReceiverStatePartitionValue,
     )
-    from sugar_lift_py_tests.temporal import builtin_name_temporal
-    from sugar_source_tree.nodes import Call, ClassDef, Name
     from sugar_source_tree.panic import SugarNotWritten
 
     from .canonical import cid_of_json
@@ -2609,8 +2819,6 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
         _completed_object_receivers,
         construct_manager_protocol,
     )
-
-    reduce_ctx = ReduceContext(temporal=builtin_name_temporal())
 
     def collect_application(call_sugar):
         """Collect authenticated call actuals without re-entering Call.sugar()."""
@@ -2626,7 +2834,7 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
             # local derivation gap) rather than crashing with a bare
             # AttributeError that voids the whole file as an instrument failure.
             raise SugarNotWritten(
-                owner="_populate_same_module_class_manager_uses.collect_application",
+                owner="_read_same_module_class_head.collect_application",
                 blame=getattr(call_sugar, "site", None),
                 observed=(
                     f"{type(call_sugar).__name__} exposes no authenticated "
@@ -2666,89 +2874,58 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
 
         return positional(0, ())
 
-    for _key, (coordinate, call, exit_face_id) in uses.items():
-        if coordinate in context.source_derived_contract_refs:
-            continue
-        if not isinstance(call, Call) or not isinstance(call.func, Name):
-            continue
-        binds = (call.unit.module_direct_bindings or {}).get(call.func.id, ())
-        if len(binds) != 1 or not isinstance(binds[0], ClassDef):
-            continue
-        class_def = binds[0]
-        target_symbol = f"python:local:{class_def.name}"
-        try:
-            class_outcome = outcome_to_exitset(class_def.sugar().desugar(reduce_ctx))
-            class_value = class_outcome.completed_value()
-            if type(class_value) is not ClassDefinitionValue:
-                _install_local_derivation_gap(
-                    context,
-                    coordinate,
-                    target_symbol,
-                    "class-definition-not-constructed",
-                    type(class_outcome).__name__,
-                )
-                continue
-            application = outcome_to_exitset(collect_application(call.sugar()))
-            application_value = application.completed_value()
-            # The manager behavior built from these actuals has no arm to
-            # carry an owed item on: an owing application is not constructed.
-            if application_value is None or application.owed_items():
-                _install_local_derivation_gap(
-                    context, coordinate, target_symbol,
-                    "call-arguments-not-constructed", type(application).__name__
-                )
-                continue
-            result_outcome = class_value.callable_application_with(
-                application_value, reduce_ctx
-            )
-            result_exits = outcome_to_exitset(result_outcome)
-            result = _receiver_from_constructor_outcome(result_exits)
-            if isinstance(result, ObjectValue):
-                if not _owned_by_class(result, class_value):
-                    _install_local_derivation_gap(
-                        context,
-                        coordinate,
-                        target_symbol,
-                        "class-definition-provenance-mismatch",
-                        "constructed receiver is not owned by authenticated class_def",
-                    )
-                    continue
-            elif isinstance(result, ReceiverStatePartitionValue):
-                leaves = _completed_object_receivers(result)
-                if not leaves or any(
-                    not _owned_by_class(leaf, class_value)
-                    for leaf in leaves
-                ):
-                    _install_local_derivation_gap(
-                        context,
-                        coordinate,
-                        target_symbol,
-                        "class-definition-provenance-mismatch",
-                        "constructed receiver is not owned by authenticated class_def",
-                    )
-                    continue
-            else:
-                _install_local_derivation_gap(
-                    context,
-                    coordinate,
-                    target_symbol,
-                    "non-manager-result",
-                    type(result).__name__,
-                )
-                continue
-        except (SugarNotWritten, TypeError) as exc:
-            kind, detail = _populate_body_defect_kind_detail(exc)
+    target_symbol = f"python:local:{class_def.name}"
+    try:
+        class_outcome = outcome_to_exitset(class_def.sugar().desugar(reduce_ctx))
+        class_value = class_outcome.completed_value()
+        if type(class_value) is not ClassDefinitionValue:
             _install_local_derivation_gap(
-                context, coordinate, target_symbol, kind, detail
+                context,
+                coordinate,
+                target_symbol,
+                "class-definition-not-constructed",
+                type(class_outcome).__name__,
             )
-            continue
-        result = _floor_tuple_construct_fields(
-            result, tuple(application_value.arguments)
+            return
+        application = outcome_to_exitset(collect_application(call.sugar()))
+        application_value = application.completed_value()
+        # The manager behavior built from these actuals has no arm to
+        # carry an owed item on: an owing application is not constructed.
+        if application_value is None or application.owed_items():
+            _install_local_derivation_gap(
+                context, coordinate, target_symbol,
+                "call-arguments-not-constructed", type(application).__name__
+            )
+            return
+        result_outcome = class_value.callable_application_with(
+            application_value, reduce_ctx
         )
+        result_exits = outcome_to_exitset(result_outcome)
+        result = _receiver_from_constructor_outcome(result_exits)
         if isinstance(result, ObjectValue):
-            receivers = (result,)
+            if not _owned_by_class(result, class_value):
+                _install_local_derivation_gap(
+                    context,
+                    coordinate,
+                    target_symbol,
+                    "class-definition-provenance-mismatch",
+                    "constructed receiver is not owned by authenticated class_def",
+                )
+                return
         elif isinstance(result, ReceiverStatePartitionValue):
-            receivers = _completed_object_receivers(result)
+            leaves = _completed_object_receivers(result)
+            if not leaves or any(
+                not _owned_by_class(leaf, class_value)
+                for leaf in leaves
+            ):
+                _install_local_derivation_gap(
+                    context,
+                    coordinate,
+                    target_symbol,
+                    "class-definition-provenance-mismatch",
+                    "constructed receiver is not owned by authenticated class_def",
+                )
+                return
         else:
             _install_local_derivation_gap(
                 context,
@@ -2757,92 +2934,114 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
                 "non-manager-result",
                 type(result).__name__,
             )
-            continue
-        enter_method = next(
-            (
-                method
-                for receiver in receivers
-                for method in receiver.methods
-                if method.name == "__enter__"
-            ),
-            None,
+            return
+    except (SugarNotWritten, TypeError) as exc:
+        kind, detail = _populate_body_defect_kind_detail(exc)
+        _install_local_derivation_gap(
+            context, coordinate, target_symbol, kind, detail
         )
-        frame = (
-            getattr(enter_method, "source_call_frame", None) if enter_method else None
+        return
+    result = _floor_tuple_construct_fields(
+        result, tuple(application_value.arguments)
+    )
+    if isinstance(result, ObjectValue):
+        receivers = (result,)
+    elif isinstance(result, ReceiverStatePartitionValue):
+        receivers = _completed_object_receivers(result)
+    else:
+        _install_local_derivation_gap(
+            context,
+            coordinate,
+            target_symbol,
+            "non-manager-result",
+            type(result).__name__,
         )
-        frame_cid = getattr(frame, "frame_cid", None) or result.identity
-        actual_values = tuple(application_value.arguments)
-        bindings = _constructor_application_bindings(
+        return
+    enter_method = next(
+        (
+            method
+            for receiver in receivers
+            for method in receiver.methods
+            if method.name == "__enter__"
+        ),
+        None,
+    )
+    frame = (
+        getattr(enter_method, "source_call_frame", None) if enter_method else None
+    )
+    frame_cid = getattr(frame, "frame_cid", None) or result.identity
+    actual_values = tuple(application_value.arguments)
+    bindings = _constructor_application_bindings(
+        call,
+        application_value,
+        owner_cid=class_def.fragment.seal().cid,
+        term_owner=target_symbol,
+    )
+    if bindings is None:
+        actual_values = ()
+        bindings = ()
+    preimage = {
+        "kind": "constructed-manager-behavior",
+        "schemaVersion": "1",
+        "resolvedObjectCid": target_symbol,
+        "receiverStateCid": result.identity,
+        "formalActualBindings": [item.wire() for item in bindings],
+        "sourceCallFrameCid": frame_cid,
+        "factoryPrefixCids": [],
+    }
+    behavior = ConstructedManagerBehaviorV1(
+        resolved_object_cid=target_symbol,
+        manager_construction_cid=cid_of_json(preimage),
+        receiver_state=result,
+        receiver_state_cid=result.identity,
+        formal_actual_bindings=tuple(bindings),
+        source_call_frame_cid=frame_cid,
+        formal_actual_values=tuple(actual_values) if bindings else (),
+        source_call_frame=frame,
+        factory_prefix=(),
+        factory_prefix_cids=(),
+    )
+    try:
+        protocol = construct_manager_protocol(behavior, exit_face_id=exit_face_id)
+    except (SugarNotWritten, TypeError) as exc:
+        kind, detail = _populate_body_defect_kind_detail(exc)
+        _install_local_derivation_gap(
+            context, coordinate, target_symbol, kind, detail
+        )
+        return
+    if not isinstance(protocol, ConstructedManagerProtocolV1):
+        if _publish_proven_non_manager_head(
+            context,
+            coordinate,
             call,
-            application_value,
-            owner_cid=class_def.fragment.seal().cid,
-            term_owner=target_symbol,
+            class_def,
+            protocol,
+            construction_total=not result_exits.owed_items()
+            and isinstance(result_exits.completed_value(), ObjectValue),
+        ):
+            return
+        kind, detail = _gap_kind_and_detail(protocol)
+        _install_local_derivation_gap(
+            context, coordinate, target_symbol, kind, detail
         )
-        if bindings is None:
-            actual_values = ()
-            bindings = ()
-        preimage = {
-            "kind": "constructed-manager-behavior",
-            "schemaVersion": "1",
-            "resolvedObjectCid": target_symbol,
-            "receiverStateCid": result.identity,
-            "formalActualBindings": [item.wire() for item in bindings],
-            "sourceCallFrameCid": frame_cid,
-            "factoryPrefixCids": [],
-        }
-        behavior = ConstructedManagerBehaviorV1(
-            resolved_object_cid=target_symbol,
-            manager_construction_cid=cid_of_json(preimage),
-            receiver_state=result,
-            receiver_state_cid=result.identity,
-            formal_actual_bindings=tuple(bindings),
-            source_call_frame_cid=frame_cid,
-            formal_actual_values=tuple(actual_values) if bindings else (),
-            source_call_frame=frame,
-            factory_prefix=(),
-            factory_prefix_cids=(),
+        return
+    summary = derive_manager_summary(protocol, behavior=behavior)
+    if not isinstance(summary, DerivedManagerSummaryV1):
+        kind, detail = _gap_kind_and_detail(summary)
+        _install_local_derivation_gap(
+            context, coordinate, target_symbol, kind, detail
         )
-        try:
-            protocol = construct_manager_protocol(behavior, exit_face_id=exit_face_id)
-        except (SugarNotWritten, TypeError) as exc:
-            kind, detail = _populate_body_defect_kind_detail(exc)
-            _install_local_derivation_gap(
-                context, coordinate, target_symbol, kind, detail
-            )
-            continue
-        if not isinstance(protocol, ConstructedManagerProtocolV1):
-            if _publish_proven_non_manager_head(
-                context,
-                coordinate,
-                call,
-                class_def,
-                protocol,
-                construction_total=not result_exits.owed_items()
-                and isinstance(result_exits.completed_value(), ObjectValue),
-            ):
-                continue
-            kind, detail = _gap_kind_and_detail(protocol)
-            _install_local_derivation_gap(
-                context, coordinate, target_symbol, kind, detail
-            )
-            continue
-        summary = derive_manager_summary(protocol, behavior=behavior)
-        if not isinstance(summary, DerivedManagerSummaryV1):
-            kind, detail = _gap_kind_and_detail(summary)
-            _install_local_derivation_gap(
-                context, coordinate, target_symbol, kind, detail
-            )
-            continue
-        _publish_class_protocol_native_definitions(context, coordinate, behavior)
-        context.source_derived_contract_refs[coordinate] = (
-            SourceDerivedContextManagerRefV1(
-                coordinate,
-                summary.summary_cid,
-                summary.semantics,
-                summary.import_signature,
-                protocol,
-            )
+        return
+    _publish_class_protocol_native_definitions(context, coordinate, behavior)
+    context.source_derived_contract_refs[coordinate] = (
+        SourceDerivedContextManagerRefV1(
+            coordinate,
+            summary.summary_cid,
+            summary.semantics,
+            summary.import_signature,
+            protocol,
         )
+    )
 
 
 def _same_module_factory_return(function_def):
@@ -2868,11 +3067,12 @@ def _same_module_factory_return(function_def):
     return value if isinstance(value, Call) else None
 
 
-def _populate_same_module_factory_manager_uses(
+def _read_same_module_factory_head(
     context,
-    uses,
-    value_receipts_by_site,
+    coordinate,
+    function_def,
     *,
+    value_receipts_by_site,
     graphs,
     session,
     distribution_index,
@@ -2896,7 +3096,6 @@ def _populate_same_module_factory_manager_uses(
         OpaqueSourceCallRosterV1,
         mint_opaque_cited_context_manager_ref,
     )
-    from sugar_source_tree.nodes import AsyncFunctionDef, Call, FunctionDef, Name
 
     from .dependency_artifact import (
         DependencyArtifactAuthenticationError,
@@ -2908,74 +3107,71 @@ def _populate_same_module_factory_manager_uses(
         _graph_is_off_population,
     )
 
-    for _key, (coordinate, call, _exit_face_id) in uses.items():
-        if coordinate in context.source_derived_contract_refs:
-            continue
-        if not isinstance(call, Call) or not isinstance(call.func, Name):
-            continue
-        binds = (call.unit.module_direct_bindings or {}).get(call.func.id, ())
-        if len(binds) != 1 or type(binds[0]) is not FunctionDef:
-            continue
-        function_def = binds[0]
-        if function_def.decorators or isinstance(function_def, AsyncFunctionDef):
-            continue
-        if any(node.kind in ("Yield", "YieldFrom") for node in function_def.walk()):
-            continue
-        returned = _same_module_factory_return(function_def)
-        if returned is None:
-            continue
-        # The callee's identity does not depend on the operands, so it is
-        # authenticated by the value-occurrence receipt at the callee
-        # expression (``*args, **kwargs`` calls carry no call-target row).
-        span = returned.func.line_col_span()
-        receipt = value_receipts_by_site.get(
-            (
-                returned.unit.source_cid,
-                span.start_line,
-                span.start_col,
-                span.end_line,
-                span.end_col,
-            )
+    if function_def.decorators:
+        return
+    returned = _same_module_factory_return(function_def)
+    if returned is None:
+        return
+    # The callee's identity does not depend on the operands, so it is
+    # authenticated by the value-occurrence receipt at the callee
+    # expression (``*args, **kwargs`` calls carry no call-target row).
+    span = returned.func.line_col_span()
+    receipt = value_receipts_by_site.get(
+        (
+            returned.unit.source_cid,
+            span.start_line,
+            span.start_col,
+            span.end_line,
+            span.end_col,
         )
-        if receipt is None:
-            continue
-        top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
-        try:
-            graph = graphs.get(top_level) or _dependency_graph_for_top(
-                top_level,
-                session=session,
-                dependency_graphs=graphs,
-                distribution_index=distribution_index,
-            )
-        except DependencyArtifactAuthenticationError:
-            continue
-        resolved = resolve_import_binding(receipt, graph=graph, session=session)
-        if not isinstance(resolved, ResolvedPythonObjectV1):
-            continue
-        if not _graph_is_off_population(
-            graph, session=session, module_name=resolved.module_name
-        ):
-            continue
-        roster = OpaqueSourceCallRosterV1(
-            coordinate,
-            receipt.target_symbol,
-            "call-target-off-population",
-            (
-                OpaqueSourceCallObligationV1(
-                    coordinate,
-                    receipt.target_symbol,
-                    resolved.cid,
-                    resolution_kind="call-target-off-population",
-                ),
+    )
+    if receipt is None:
+        return
+    top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
+    try:
+        graph = graphs.get(top_level) or _dependency_graph_for_top(
+            top_level,
+            session=session,
+            dependency_graphs=graphs,
+            distribution_index=distribution_index,
+        )
+    except DependencyArtifactAuthenticationError:
+        return
+    resolved = resolve_import_binding(receipt, graph=graph, session=session)
+    if not isinstance(resolved, ResolvedPythonObjectV1):
+        return
+    if not _graph_is_off_population(
+        graph, session=session, module_name=resolved.module_name
+    ):
+        return
+    roster = OpaqueSourceCallRosterV1(
+        coordinate,
+        receipt.target_symbol,
+        "call-target-off-population",
+        (
+            OpaqueSourceCallObligationV1(
+                coordinate,
+                receipt.target_symbol,
+                resolved.cid,
+                resolution_kind="call-target-off-population",
             ),
-        )
-        context.source_derived_contract_refs[coordinate] = (
-            mint_opaque_cited_context_manager_ref(roster=roster)
-        )
+        ),
+    )
+    context.source_derived_contract_refs[coordinate] = (
+        mint_opaque_cited_context_manager_ref(roster=roster)
+    )
 
 
-def _populate_same_module_generator_manager_uses(
-    context, uses, *, session, graphs, distribution_index
+def _read_same_module_generator_head(
+    context,
+    coordinate,
+    call,
+    exit_face_id,
+    function_def,
+    *,
+    session,
+    graphs,
+    distribution_index,
 ) -> None:
     """Derive ``with g(...)`` where ``g`` is a same-module decorated generator.
 
@@ -2992,123 +3188,108 @@ def _populate_same_module_generator_manager_uses(
     decorator's protocol cannot be cited, the use is a named gap, never a
     seated frame: a local generator is not a manager on its spelling.
     """
-    from sugar_source_tree.nodes import AsyncFunctionDef, Call, FunctionDef, Name
+    from sugar_source_tree.nodes import AsyncFunctionDef
     from sugar_source_tree.panic import SugarNotWritten
 
     from .canonical import cid_of_json
     from .manager_construction import _install_source_call_frame
 
-    for _key, (coordinate, call, exit_face_id) in uses.items():
-        if coordinate in context.source_derived_contract_refs:
-            continue
-        if not isinstance(call, Call) or not isinstance(call.func, Name):
-            continue
-        binds = (call.unit.module_direct_bindings or {}).get(call.func.id, ())
-        if len(binds) != 1 or not isinstance(binds[0], (FunctionDef, AsyncFunctionDef)):
-            continue
-        function_def = binds[0]
-        if isinstance(function_def, AsyncFunctionDef) and function_def.decorators:
-            # What a decorated ``async def`` returns is the decorator's to say;
-            # no generator protocol is read from its spelling.  When the
-            # decorator's source constructs one class whose MRO is proven to
-            # lack ``__enter__``/``__exit__`` (``@asynccontextmanager``), the
-            # With raises the interpreter's TypeError after the call.
-            _publish_decorated_non_manager_head(
-                context,
-                coordinate,
-                call,
-                function_def,
-                session=session,
-                graphs=graphs,
-                distribution_index=distribution_index,
-            )
-            continue
-        target_symbol = f"python:local:{function_def.name}"
-        try:
-            frame, generator_target = _source_visible_frame_for_function(
-                function_def
-            )
-        except (SugarNotWritten, TypeError):
-            # No frame, no generator claim: the require door stays loud.
-            continue
-        if frame is None or frame.generator_steps is None:
-            # Not a generator: another derivation (or the require door) owns it.
-            continue
-        if not getattr(function_def, "decorators", ()):
-            # An undecorated generator function returns the generator object
-            # itself, which has no ``__enter__``: seat the frame so the With
-            # constructs the interpreter's own TypeError (#7595), never a
-            # manager and never a runtime-selected gap.
-            _install_source_call_frame(context, call, frame)
-            context.source_manager_provider_calls[coordinate] = call
-            continue
-        declined: list[str] = []
-        if (
-            _protocol_coords_from_generator_decorators(
-                generator_target,
-                session=session,
-                graph=None,
-                dependency_graphs=graphs,
-                distribution_index=distribution_index,
-                declined=declined,
-            )
-            is None
-        ):
-            if _publish_decorated_non_manager_head(
-                context,
-                coordinate,
-                call,
-                function_def,
-                session=session,
-                graphs=graphs,
-                distribution_index=distribution_index,
-            ):
-                continue
-            _install_local_derivation_gap(
-                context,
-                coordinate,
-                target_symbol,
-                "generator-protocol",
-                "native enter/exit definition coordinates unavailable"
-                + (f" [{'; '.join(declined)}]" if declined else ""),
-            )
-            continue
-        # Seat the frame in the form the installed-frame rewrite leaves it,
-        # so the protocol's frame CID is the CID the provider call allocates.
-        frame = _as_rewriting_generator_frame(
-            _frame_with_nested_manager_steps(frame, ())
+    if isinstance(function_def, AsyncFunctionDef) and function_def.decorators:
+        # What a decorated ``async def`` returns is the decorator's to say;
+        # no generator protocol is read from its spelling.  When the
+        # decorator's source constructs one class whose MRO is proven to
+        # lack ``__enter__``/``__exit__`` (``@asynccontextmanager``), the
+        # With raises the interpreter's TypeError after the call.
+        _publish_decorated_non_manager_head(
+            context,
+            coordinate,
+            call,
+            function_def,
+            session=session,
+            graphs=graphs,
+            distribution_index=distribution_index,
         )
+        return
+    target_symbol = f"python:local:{function_def.name}"
+    try:
+        frame, generator_target = _source_visible_frame_for_function(function_def)
+    except (SugarNotWritten, TypeError):
+        # No frame, no generator claim: the require door stays loud.
+        return
+    if frame is None or frame.generator_steps is None:
+        # Not a generator: the require door owns it.
+        return
+    if not getattr(function_def, "decorators", ()):
+        # An undecorated generator function returns the generator object
+        # itself, which has no ``__enter__``: seat the frame so the With
+        # constructs the interpreter's own TypeError (#7595), never a
+        # manager and never a runtime-selected gap.
         _install_source_call_frame(context, call, frame)
         context.source_manager_provider_calls[coordinate] = call
-        try:
-            _publish_generator_backed_resource_contract(
-                context,
-                coordinate,
-                frame=frame,
-                generator_target=generator_target,
-                exit_face_id=exit_face_id,
-                receipt=None,
-                session=session,
-                graph=None,
-                dependency_graphs=graphs,
-                distribution_index=distribution_index,
-                resolved_cid=cid_of_json(
-                    {
-                        "kind": "same-module-generator-manager",
-                        "schemaVersion": "1",
-                        "definitionCid": function_def.fragment.seal().cid,
-                    }
-                ),
-                local_target_symbol=target_symbol,
-            )
-        except (SugarNotWritten, TypeError) as exc:
-            kind, detail = _populate_body_defect_kind_detail(exc)
-            _install_local_derivation_gap(
-                context, coordinate, target_symbol, kind, detail
-            )
+        return
+    declined: list[str] = []
+    if (
+        _protocol_coords_from_generator_decorators(
+            generator_target,
+            session=session,
+            graph=None,
+            dependency_graphs=graphs,
+            distribution_index=distribution_index,
+            declined=declined,
+        )
+        is None
+    ):
+        if _publish_decorated_non_manager_head(
+            context,
+            coordinate,
+            call,
+            function_def,
+            session=session,
+            graphs=graphs,
+            distribution_index=distribution_index,
+        ):
+            return
+        _install_local_derivation_gap(
+            context,
+            coordinate,
+            target_symbol,
+            "generator-protocol",
+            "native enter/exit definition coordinates unavailable"
+            + (f" [{'; '.join(declined)}]" if declined else ""),
+        )
+        return
+    # Seat the frame in the form the installed-frame rewrite leaves it,
+    # so the protocol's frame CID is the CID the provider call allocates.
+    frame = _as_rewriting_generator_frame(_frame_with_nested_manager_steps(frame, ()))
+    _install_source_call_frame(context, call, frame)
+    context.source_manager_provider_calls[coordinate] = call
+    try:
+        _publish_generator_backed_resource_contract(
+            context,
+            coordinate,
+            frame=frame,
+            generator_target=generator_target,
+            exit_face_id=exit_face_id,
+            receipt=None,
+            session=session,
+            graph=None,
+            dependency_graphs=graphs,
+            distribution_index=distribution_index,
+            resolved_cid=cid_of_json(
+                {
+                    "kind": "same-module-generator-manager",
+                    "schemaVersion": "1",
+                    "definitionCid": function_def.fragment.seal().cid,
+                }
+            ),
+            local_target_symbol=target_symbol,
+        )
+    except (SugarNotWritten, TypeError) as exc:
+        kind, detail = _populate_body_defect_kind_detail(exc)
+        _install_local_derivation_gap(context, coordinate, target_symbol, kind, detail)
 
 
-def _populate_builtin_name_manager_uses(context, uses, *, session) -> None:
+def _read_builtin_name_head(context, coordinate, call, *, session) -> None:
     """``with open(...)``: a head calling a builtin name is not bridged.
 
     Import receipts never fire for a builtin name.  When the head calls a name
@@ -3117,41 +3298,28 @@ def _populate_builtin_name_manager_uses(context, uses, *, session) -> None:
     cited naming ``python:builtins.<name>``, exactly as any other callee the
     lifter does not have.  What it is implemented in is never asked.
     """
-    from sugar_source_tree.builtin_reference import module_reads_builtin
-    from sugar_source_tree.nodes import Call, Name
-
     from .manager_construction import _graph_is_off_population
 
     if not _graph_is_off_population(None, session=session, module_name="builtins"):
         return
-    for _key, (coordinate, call, _exit_face_id) in uses.items():
-        if coordinate in context.source_derived_contract_refs:
-            continue
-        if not isinstance(call, Call) or not isinstance(call.func, Name):
-            continue
-        name = call.func.id
-        if not module_reads_builtin(call.unit.source, name):
-            continue
-        target_symbol = f"python:builtins.{name}"
-        _seat_off_population_citation(
-            context,
-            coordinate,
-            target_symbol,
-            "call-target-off-population",
-            cid_of_json(
-                {
-                    "kind": "builtin-name-callee",
-                    "schemaVersion": "1",
-                    "targetSymbol": target_symbol,
-                    "useSite": coordinate.wire(),
-                }
-            ),
-        )
+    target_symbol = f"python:builtins.{call.func.id}"
+    _seat_off_population_citation(
+        context,
+        coordinate,
+        target_symbol,
+        "call-target-off-population",
+        cid_of_json(
+            {
+                "kind": "builtin-name-callee",
+                "schemaVersion": "1",
+                "targetSymbol": target_symbol,
+                "useSite": coordinate.wire(),
+            }
+        ),
+    )
 
 
-def _populate_formal_selected_manager_uses(
-    source_file, context, *, selected_coordinates=None
-) -> None:
+def _read_formal_selected_head(context, coordinate, head) -> None:
     """Seat the opaque two-faced manager at ``with p.m():`` / ``with self.x:``.
 
     Nothing in the frame knows the type of the object a parameter holds, so no
@@ -3161,34 +3329,11 @@ def _populate_formal_selected_manager_uses(
     and exit are two-faced and suppression is the undecided truth of the
     exit result.
     """
-    from sugar_lift_py_tests.context_manager_resolution import (
-        SourceFragmentCoordinateV1,
-    )
-    from sugar_source_tree.formal_manager_head import formal_manager_head
-    from sugar_source_tree.nodes import With
-
     from .formal_selected_manager import mint_formal_selected_manager_ref
 
-    source = source_file.root.unit.source
-    for node in source_file.root.walk():
-        if not isinstance(node, With):
-            continue
-        for item in node.items:
-            expr = item.context_expr
-            coordinate = SourceFragmentCoordinateV1(
-                expr.unit.source_cid, *item._manager_use_site_span()
-            )
-            if coordinate in context.source_derived_contract_refs:
-                continue
-            if selected_coordinates is not None and coordinate not in selected_coordinates:
-                continue
-            start_line, start_col, _end_line, _end_col = item._manager_use_site_span()
-            head = formal_manager_head(source, start_line, start_col)
-            if head is None:
-                continue
-            context.source_derived_contract_refs[coordinate] = (
-                mint_formal_selected_manager_ref(coordinate, head)
-            )
+    context.source_derived_contract_refs[coordinate] = (
+        mint_formal_selected_manager_ref(coordinate, head)
+    )
 
 
 def _returned_floors(value, depth: int = 0) -> tuple:
@@ -3269,16 +3414,16 @@ def _module_returned_by_call(call) -> str | None:
     return name
 
 
-def _populate_call_bound_module_head_uses(
-    scope,
+def _read_call_bound_module_head(
     context,
-    value_receipts_by_site,
+    coordinate,
+    head,
     *,
+    calls_by_start,
     graphs,
     session,
     distribution_index,
-    selected_coordinates=None,
-) -> None:
+) -> bool:
     """Cite the manager a call-returned off-population module's chain produces.
 
     ``zstd = import_optional_dependency("zstandard", errors="ignore")`` then
@@ -3292,24 +3437,23 @@ def _populate_call_bound_module_head_uses(
     which is not looked at: it is cited over the existing
     ``OpaqueCitedContextManagerRefV1`` naming ``python:M.<attr>`` with kind
     ``call-target-off-population``, exactly as a factory returning an
-    off-population callee's result is (``_populate_same_module_factory_manager_uses``).
+    off-population callee's result is (``_read_same_module_factory_head``).
     Enter and exit stay two-faced, suppression undecided, a body raise still
     propagates, and the head itself still evaluates through its own sugar (its
     roster rides only the citation).  A module on the population, a value that
-    is not a module, or a head any reader seated is left alone.
+    is not a module, or a binder that is not a call of the reader's scope is
+    left alone, and False is returned.
 
-    ``scope`` is the node whose ``with`` statements are read: a consumer
-    module's root.
+    ``head`` is ``call_bound_local_manager_head``'s answer: the binder call's
+    start and the attribute the chain first reads.  ``calls_by_start`` is the
+    reader's scope's calls, keyed by start.
     """
     from sugar_lift_py_tests.context_manager_resolution import (
         OpaqueSourceCallObligationV1,
         OpaqueSourceCallRosterV1,
-        SourceFragmentCoordinateV1,
         _hash_json,
         mint_opaque_cited_context_manager_ref,
     )
-    from sugar_source_tree.formal_manager_head import call_bound_local_manager_head
-    from sugar_source_tree.nodes import Call, With
 
     from .dependency_artifact import DependencyArtifactAuthenticationError
     from .manager_construction import (
@@ -3317,83 +3461,53 @@ def _populate_call_bound_module_head_uses(
         _graph_is_off_population,
     )
 
-    source = scope.unit.source
-    calls_by_start = None
-    for node in scope.walk():
-        if not isinstance(node, With):
-            continue
-        for item in node.items:
-            coordinate = SourceFragmentCoordinateV1(
-                item.context_expr.unit.source_cid, *item._manager_use_site_span()
-            )
-            if coordinate in context.source_derived_contract_refs:
-                continue
-            if coordinate in context.opaque_source_call_obligations:
-                continue
-            if selected_coordinates is not None and coordinate not in selected_coordinates:
-                continue
-            start_line, start_col, _end_line, _end_col = item._manager_use_site_span()
-            head = call_bound_local_manager_head(source, start_line, start_col)
-            if head is None:
-                continue
-            binder_start, attribute = head
-            if calls_by_start is None:
-                calls_by_start = {}
-                for candidate in scope.walk():
-                    if isinstance(candidate, Call):
-                        span = candidate.line_col_span()
-                        calls_by_start.setdefault(
-                            (span.start_line, span.start_col), candidate
-                        )
-            binder = calls_by_start.get(binder_start)
-            if binder is None:
-                continue
-            module_name = _module_returned_by_call(binder)
-            if module_name is None:
-                continue
-            top_level = module_name.split(".", 1)[0]
-            try:
-                graph = graphs.get(top_level) or _dependency_graph_for_top(
-                    top_level,
-                    session=session,
-                    dependency_graphs=graphs,
-                    distribution_index=distribution_index,
-                )
-            except DependencyArtifactAuthenticationError:
-                continue
-            if not _graph_is_off_population(
-                graph, session=session, module_name=module_name
-            ):
-                continue
-            target = f"python:{module_name}.{attribute}"
-            owner_cid = _hash_json(
-                {
-                    "kind": "call-bound-module-head-demand",
-                    "useSite": coordinate.wire(),
-                    "target": target,
-                }
-            )
-            roster = OpaqueSourceCallRosterV1(
+    binder_start, attribute = head
+    binder = calls_by_start.get(binder_start)
+    if binder is None:
+        return False
+    module_name = _module_returned_by_call(binder)
+    if module_name is None:
+        return False
+    top_level = module_name.split(".", 1)[0]
+    try:
+        graph = graphs.get(top_level) or _dependency_graph_for_top(
+            top_level,
+            session=session,
+            dependency_graphs=graphs,
+            distribution_index=distribution_index,
+        )
+    except DependencyArtifactAuthenticationError:
+        return False
+    if not _graph_is_off_population(graph, session=session, module_name=module_name):
+        return False
+    target = f"python:{module_name}.{attribute}"
+    owner_cid = _hash_json(
+        {
+            "kind": "call-bound-module-head-demand",
+            "useSite": coordinate.wire(),
+            "target": target,
+        }
+    )
+    roster = OpaqueSourceCallRosterV1(
+        coordinate,
+        target,
+        "call-target-off-population",
+        (
+            OpaqueSourceCallObligationV1(
                 coordinate,
                 target,
-                "call-target-off-population",
-                (
-                    OpaqueSourceCallObligationV1(
-                        coordinate,
-                        target,
-                        owner_cid,
-                        resolution_kind="call-target-off-population",
-                    ),
-                ),
-            )
-            context.source_derived_contract_refs[coordinate] = (
-                mint_opaque_cited_context_manager_ref(roster=roster)
-            )
+                owner_cid,
+                resolution_kind="call-target-off-population",
+            ),
+        ),
+    )
+    context.source_derived_contract_refs[coordinate] = (
+        mint_opaque_cited_context_manager_ref(roster=roster)
+    )
+    return True
 
 
-def _populate_runtime_selected_head_uses(
-    source_file, context, *, selected_coordinates=None
-) -> None:
+def _read_runtime_selected_head(context, coordinate) -> None:
     """Cite the manager at a head whose value a run-time string selects.
 
     ``klass = getattr(module, klass)`` then ``with klass(path) as f:``: which
@@ -3402,50 +3516,29 @@ def _populate_runtime_selected_head_uses(
     existing opaque citation (enter, exit and suppression open and two-faced;
     the head itself still evaluates through its own sugar).  The citation names
     no callee -- it has none -- only the head's own coordinate and the reason
-    kind ``head-runtime-selected``.  Runs after every reader, so a head any
-    reader seated (a construction or its gap) is never cited over.
+    kind ``head-runtime-selected``.  The reader reaches it only for a head no
+    other derivation seated (a construction or its gap), so it never cites
+    over one.
     """
     from sugar_lift_py_tests.context_manager_resolution import (
         OpaqueSourceCallObligationV1,
-        SourceFragmentCoordinateV1,
         _hash_json,
         mint_opaque_cited_context_manager_ref,
         opaque_source_call_roster_of,
     )
-    from sugar_source_tree.formal_manager_head import runtime_selected_manager_head
-    from sugar_source_tree.nodes import With
 
-    unit = source_file.root.unit
-    for node in source_file.root.walk():
-        if not isinstance(node, With):
-            continue
-        for item in node.items:
-            coordinate = SourceFragmentCoordinateV1(
-                item.context_expr.unit.source_cid, *item._manager_use_site_span()
-            )
-            if coordinate in context.source_derived_contract_refs:
-                continue
-            if coordinate in context.opaque_source_call_obligations:
-                continue
-            if selected_coordinates is not None and coordinate not in selected_coordinates:
-                continue
-            start_line, start_col, _end_line, _end_col = item._manager_use_site_span()
-            if runtime_selected_manager_head(unit, start_line, start_col) is None:
-                continue
-            owner_cid = _hash_json(
-                {
-                    "kind": "runtime-selected-head-demand",
-                    "useSite": coordinate.wire(),
-                }
-            )
-            roster = opaque_source_call_roster_of(
-                OpaqueSourceCallObligationV1(
-                    coordinate, "", owner_cid, "head-runtime-selected"
-                )
-            )
-            context.source_derived_contract_refs[coordinate] = (
-                mint_opaque_cited_context_manager_ref(roster=roster)
-            )
+    owner_cid = _hash_json(
+        {
+            "kind": "runtime-selected-head-demand",
+            "useSite": coordinate.wire(),
+        }
+    )
+    roster = opaque_source_call_roster_of(
+        OpaqueSourceCallObligationV1(coordinate, "", owner_cid, "head-runtime-selected")
+    )
+    context.source_derived_contract_refs[coordinate] = (
+        mint_opaque_cited_context_manager_ref(roster=roster)
+    )
 
 
 def _publish_proven_non_manager_head(
