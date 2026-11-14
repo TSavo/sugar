@@ -15561,6 +15561,32 @@ def _occurrence_keys_of(fragment):
     return keys
 
 
+def _statement_occurrence_keys(statement):
+    """Every key a halt ``statement`` raised is spelled by: each node's
+    ``_occurrence_keys_of``, and the source coordinate
+    (``occurrence.site_coordinate_cid``) of each node the statement
+    evaluates -- the key an opaque call's halt, and a call a halt in its
+    callee's frame went through (``occurrence.call_frame_path``), carry.  A
+    function or lambda body the statement only defines is not evaluated by
+    it: a halt there is raised by the call that runs it."""
+    from sugar_lift_py_tests.occurrence import site_coordinate_cid
+
+    keys = set()
+    for node in statement.walk():
+        keys.update(_occurrence_keys_of(node.fragment))
+    stack = [statement]
+    while stack:
+        node = stack.pop()
+        fragment = node.fragment
+        if hasattr(fragment, "line_col_span") and hasattr(fragment, "source_cid"):
+            keys.add(site_coordinate_cid(fragment))
+        defines = isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda))
+        for name, _index, child in node._child_edges():
+            if isinstance(child, Node) and not (defines and name == "body"):
+                stack.append(child)
+    return tuple(sorted(keys))
+
+
 class _HaltEdgeState(dict):
     """One body halt edge's state: a binding map that also knows which body
     statement (``edge``) it leaves from, so disagreeing edges are joined over
@@ -15682,13 +15708,7 @@ class _HaltEdgeJoin:
             keys.append(
                 (
                     try_edge_slot(self.site_id, edge).slot_id,
-                    tuple(
-                        sorted(
-                            key
-                            for node in statement.walk()
-                            for key in _occurrence_keys_of(node.fragment)
-                        )
-                    ),
+                    _statement_occurrence_keys(statement),
                 )
             )
         return tuple(keys)
@@ -15982,14 +16002,15 @@ class Try(Statement):
         ``(exception_identity, exception_mro, state)`` where ``state`` is the
         block-local net at that occurrence -- what an exit leaving *here*
         carries.  ``exception_identity is None`` means the occurrence is not
-        type-testified (an opaque step), so every handler may receive it."""
-        from .container_mutation import cited_call_cannot_halt
+        type-testified (an opaque step), so every handler may receive it.
 
+        Every statement that is not halt-free by its nodes is an edge: whether
+        it raised is the halt's own testimony at reduce (``try_sugar.
+        _ground_edges``: the halt's occurrence names the statement), never the
+        spelling of what its receiver was given."""
         edges = []
         for index, (statement, pre_statement_scope) in enumerate(edge_states):
             if statement is None:
-                continue
-            if cited_call_cannot_halt(statement, pre_statement_scope):
                 continue
             net = {
                 name: state
@@ -19305,24 +19326,10 @@ class Compare(Expression):
         if not all(supported(op) for op in self.ops):
             return super()._construct_sugar()
 
+        # ``is`` between containers is decided by their values at reduce
+        # (``object_identity.mutable_object_identity``: the construction that
+        # made each object), never by the spelling of the operands.
         operands = (self.left, *self.comparators)
-        if len(self.ops) == 1 and self.ops[0].kind in ("Is", "IsNot"):
-            from .container_mutation import decided_identity
-
-            decided = decided_identity(self.left, self.comparators[0])
-            if decided is not None:
-                # Object identity between decided containers (see
-                # ``decided_identity``); value equality never answers ``is``.
-                from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
-                    FalseBoolLiteralSugar,
-                )
-                from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
-                    TrueBoolLiteralSugar,
-                )
-
-                if decided == (self.ops[0].kind == "Is"):
-                    return TrueBoolLiteralSugar(site=self.fragment)
-                return FalseBoolLiteralSugar(site=self.fragment)
 
         def pair(index):
             op = self.ops[index]
@@ -20249,20 +20256,15 @@ class Call(Expression):
                 )
             from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
 
-            from .container_mutation import decided_container_kind
-
+            # Whether the receiver's contents are current at this call is its
+            # value's (``object_identity.contents_current``), never the spelling
+            # of what it was given.
             return MethodCallSugar(
                 receiver=self.func.value.sugar(),
                 name=self.func.attr,
                 args=tuple(a.sugar() for a in self.args),
                 site=self.fragment,
                 keywords=keyword_sugars,
-                # The receiver's container and its state at this call are the
-                # tree's (a display, a builtin constructor, a cited mutation's
-                # post-state): a method that only reads it is decided there.
-                receiver_contents_testified=(
-                    decided_container_kind(self.func.value) is not None
-                ),
             )
         from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
 

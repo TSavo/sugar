@@ -39,12 +39,6 @@ class MethodCallSugar(ConstructedTermSugar):
     exception_type_coordinate: object = dataclass_field(default=None, compare=False)
     exception_type_mro: tuple | None = dataclass_field(default=None, compare=False)
     native_definition_coordinate: object = dataclass_field(default=None, compare=False)
-    # The tree decided the receiver's container and its state at this call
-    # (``decided_container_kind``: a display, a builtin constructor, a cited
-    # mutation's post-state): its contents are the contents here, so a method
-    # that only reads them is decided by the cited fold
-    # (``container_method_cited_fold``).
-    receiver_contents_testified: bool = False
 
     def __post_init__(self) -> None:
         require_constructed_term_sugar(self.receiver, owner="MethodCallSugar.receiver")
@@ -206,7 +200,6 @@ class MethodCallSugar(ConstructedTermSugar):
             source_call_frame=self.source_call_frame,
             exception_type_coordinate=self.exception_type_coordinate,
             exception_type_mro=self.exception_type_mro,
-            receiver_contents_testified=self.receiver_contents_testified,
         )
 
 
@@ -222,13 +215,13 @@ def dispatch_method_call(
     exception_type_coordinate=None,
     exception_type_mro=None,
     may_defer=True,
-    receiver_contents_testified=False,
 ):
     """``receiver.name(*positional, **kw_values)`` selected by the receiver.
 
-    A ground ``list``/``tuple``/``dict`` receiver whose contents are the
-    contents at this call, with ground arguments, calling a method that does
-    not change it, is decided by the cited fold alone
+    A ground ``list``/``tuple``/``dict`` receiver whose value says its
+    contents are the object's contents at this call
+    (``object_identity.contents_current``), with ground arguments, calling a
+    method that does not change it, is decided by the cited fold alone
     (``container_method_cited_fold``, #7757).  Otherwise a floor of the
     receiver answers first (a source method body, a closed
     builtin method).  When none does and the receiver or an operand is a
@@ -243,9 +236,7 @@ def dispatch_method_call(
             container_method_cited_fold,
         )
 
-        if cited_container_method(
-            receiver, name, testified=receiver_contents_testified
-        ):
+        if cited_container_method(receiver, name):
             folded = container_method_cited_fold(
                 receiver,
                 name,
@@ -391,10 +382,10 @@ _CONTENTS_FREE_METHODS = {
 def _container_method_call(kind, name, receiver, positional, kw_values, site, ctx):
     """A built-in container's method that no floor of the receiver answered.
 
-    This value reached the call by binding (a helper's formal bound to the
-    caller's actual), not through the statement's own mutation path, so its
-    contents are not testified as the contents at this call: an earlier call
-    in the body may have changed the object without rebinding the name.  The
+    Its contents were not decided current at this call (the value arrived
+    by binding: a helper's formal bound to the caller's actual), or the
+    method or an argument is not one the cited fold reads: code this frame
+    does not see may have changed the object without rebinding the name.  The
     container law (#7603) decides only what does not read the contents; every
     other call is two-faced under its ``python:builtin_method`` atom.  The
     receiver's post-state is the statement's or the caller's to apply."""

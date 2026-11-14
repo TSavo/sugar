@@ -259,18 +259,90 @@ def test_pop_of_a_ground_list_takes_its_value_from_the_fold(tmp_path, monkeypatc
     assert "cpython_cited_fold:list.pop" in applied
 
 
-def test_contents_not_testified_at_the_call_are_not_folded():
+def test_contents_not_current_at_the_call_are_not_folded():
     # A list or dict reached by binding may have been changed since it was
-    # built (#7618): only a testified receiver, or an immutable tuple, folds.
+    # built (#7618): only a receiver whose value says its contents are
+    # current (a construction in this frame made it), or an immutable tuple,
+    # folds.
+    from sugar_lift_py_tests.floor.object_identity import arrived
     from sugar_lift_py_tests.floor.tuple_value import TupleValue
     from sugar_lift_py_tests.source_call_resolution import cited_container_method
 
-    xs = ListValue((TermValue(1),))
-    assert cited_container_method(xs, "index", testified=True)
-    assert not cited_container_method(xs, "index", testified=False)
-    assert not cited_container_method(xs, "pop", testified=True)
-    assert cited_container_method(TupleValue((TermValue(1),)), "index", testified=False)
-    assert not cited_container_method(TupleValue((xs,)), "index", testified=False)
+    made = ListValue((TermValue(1),), allocation="made-here")
+    assert cited_container_method(made, "index")
+    assert not cited_container_method(arrived(made), "index")
+    assert not cited_container_method(ListValue((TermValue(1),)), "index")
+    assert not cited_container_method(made, "pop")
+    assert cited_container_method(TupleValue((TermValue(1),)), "index")
+    assert not cited_container_method(TupleValue((made,)), "index")
+
+
+def test_arrived_takes_the_allocation_off_every_container_in_the_value():
+    from sugar_lift_py_tests.floor import DictValue
+    from sugar_lift_py_tests.floor.object_identity import arrived, contents_current
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+    inner = ListValue((TermValue(1),), allocation="inner")
+    outer = TupleValue((DictValue(((StringValue("k"), inner),), allocation="d"),))
+    stripped = arrived(outer)
+    assert stripped == outer
+    ((_key, held),) = stripped.elements[0].entries
+    assert not contents_current(stripped.elements[0])
+    assert not contents_current(held)
+
+
+def test_a_split_result_is_current_and_its_index_folds(tmp_path, monkeypatch):
+    # ``'a b'.split()`` is a new list made in this frame: its contents are
+    # current by its value, not because the source spelled a display.
+    applied = _recording_host_applied(monkeypatch)
+    returns, halts = _returns(
+        tmp_path,
+        "def f():\n    xs = 'a b'.split()\n    return xs.index('b')\n",
+    )
+    assert returns == [TermValue(1)]
+    assert halts == []
+    assert "cpython_cited_fold:list.index" in applied
+
+
+def test_a_parameters_index_does_not_fold(tmp_path, monkeypatch):
+    # ``xs`` reaches ``f`` by binding: even a list the caller made in its own
+    # frame is not current here, so nothing reads its contents.
+    from test_formal_method_call_defers import _carrier, _discharge, _faces
+    from test_unprojected_method_call_faces import _owners
+
+    applied = _recording_host_applied(monkeypatch)
+    carrier = _carrier(tmp_path, "def f(xs):\n    return xs.index(1)\n")
+    actual = ListValue((TermValue(1),), allocation="made-by-the-caller")
+    _completed, halted = _faces(_discharge(carrier, actual))
+    assert "cpython_cited_fold:list.index" not in applied
+    assert _owners(halted) == ["BuiltinMethodCall:list.index"]
+
+
+def test_a_bound_dicts_items_is_not_read_from_its_contents(tmp_path, monkeypatch):
+    # ``DictValue.items()`` was read off a dict that reached the frame by
+    # binding (#8084's flagged hand path): it is the opaque method now.
+    from sugar_lift_py_tests.floor import DictValue
+    from test_formal_method_call_defers import _carrier, _discharge, _faces
+    from test_unprojected_method_call_faces import _owners
+
+    applied = _recording_host_applied(monkeypatch)
+    carrier = _carrier(tmp_path, "def f(d):\n    return d.items()\n")
+    actual = DictValue(
+        ((StringValue("a"), TermValue(1)),), allocation="made-by-the-caller"
+    )
+    _completed, halted = _faces(_discharge(carrier, actual))
+    assert "cpython_cited_fold:dict.items" not in applied
+    # Two-faced under the method's own atom: never the pairs the binding held.
+    assert _owners(halted) == ["BuiltinMethodCall:dict.items"]
+
+
+def test_a_bound_dict_has_no_closed_items():
+    from sugar_lift_py_tests.floor import DictValue
+    from sugar_lift_py_tests.floor.object_identity import arrived
+
+    made = DictValue(((StringValue("a"), TermValue(1)),), allocation="made-here")
+    assert made.supports_closed_method("items")
+    assert not arrived(made).supports_closed_method("items")
 
 
 def test_a_str_method_over_an_opaque_argument_keeps_its_marker():

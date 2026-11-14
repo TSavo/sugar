@@ -233,12 +233,31 @@ def apply(kind, method, receiver, args, site, ctx):
         decided = _dict(method, receiver, args, site, owner)
     else:
         decided = _set(method, receiver, args, site, owner)
-    if cited is None or decided is UNDECIDED:
+    if decided is UNDECIDED:
         return decided
-    value = cited.completed_value()
-    if value is None:
-        return decided
-    return decided.and_then(lambda pair: _with_value(pair, value))
+    value = None if cited is None else cited.completed_value()
+    if value is not None:
+        decided = decided.and_then(lambda pair: _with_value(pair, value))
+    return decided.and_then(lambda pair: _same_object(pair, receiver))
+
+
+def _same_object(pair, receiver):
+    """The post-state is the receiver's own object after the call: it keeps
+    the receiver's ``allocation`` (``object_identity``).  The post-state of
+    an object this frame made is current; of one that arrived by binding it
+    is not, since it was computed from contents that were not."""
+    from dataclasses import replace
+
+    from .tuple_value import TupleValue
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    if type(pair) is not TupleValue or len(pair.elements) != 2:
+        return ExitSet.completed(pair)
+    post, result = pair.elements
+    allocation = getattr(receiver, "allocation", None)
+    if type(post) is not type(receiver) or post.allocation == allocation:
+        return ExitSet.completed(pair)
+    return _pair(replace(post, allocation=allocation), result)
 
 
 def _with_value(pair, value):

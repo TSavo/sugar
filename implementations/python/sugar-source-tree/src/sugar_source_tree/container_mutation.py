@@ -44,19 +44,15 @@ Names are only rebound; nothing here decides what a call does.
 from __future__ import annotations
 
 import functools
-from typing import NamedTuple, Optional
+from typing import NamedTuple
 
 from .construction_cache import AmbientSet
-
-_DISPLAY_KIND = {"List": "list", "Dict": "dict", "Set": "set"}
 
 
 class _CitedBuiltins(NamedTuple):
     """The builtins this law cites, as the ``LanguageCallee`` members their
     binding reaches (CPython "Built-in Functions")."""
 
-    # ``list()``/``dict()``/``set()``: the container each constructor builds.
-    container_kind: dict
     # Never mutates an argument.
     pure: frozenset
     # Pure, and invokes no dunder of its operands: ``isinstance(c, C)`` reads
@@ -99,11 +95,6 @@ def _cited() -> _CitedBuiltins:
         }
     )
     return _CitedBuiltins(
-        container_kind={
-            C.BUILTIN_LIST: "list",
-            C.BUILTIN_DICT: "dict",
-            C.BUILTIN_SET: "set",
-        },
         pure=no_reference
         | {
             C.BUILTIN_DICT,
@@ -207,44 +198,6 @@ def _identity(node):
         node = of
         seen += 1
     return node
-
-
-def decided_container_kind(node) -> Optional[str]:
-    """``list``/``dict``/``set`` when ``node`` builds (or is the post-state of) one.
-
-    Asked only about the object a creation node built: ``is`` between two
-    creations, a source helper's actual, a ``try`` edge.  Never which door a
-    mutation takes, nor whether a call changed an object: the value decides
-    those at reduce (``name_mutation_statement``, ``ReceiverAfterCall``)."""
-    node = _identity(node)
-    kind = getattr(node, "kind", None)
-    if kind == "PathAfterCall":
-        # A name's object after a mutation through the one door: the same
-        # object, whose type no mutation changes.
-        if node.mode == "root" and not node.steps:
-            return decided_container_kind(node.root)
-        return None
-    if kind == "BuiltinContainerProjection":
-        # ``r += x``: the in-place result of a builtin container is the
-        # container itself.
-        call = node.call
-        if node.index == 1 and str(getattr(call, "method", "")).startswith("__i"):
-            return decided_container_kind(call.receiver)
-        return None
-    if kind == "SourceCallActualAfter":
-        # The helper only mutated the object: its type is the actual's.
-        return decided_container_kind(node.state)
-    if kind == "OpaqueObjectStateV1":
-        # ``s = set()``: the call result's identity wrapper over the call.
-        return decided_container_kind(node.base)
-    if kind == "Call":
-        # ``list()``/``dict()``/``set()`` whose callee is bound to the builtin
-        # (``_builtin_callee``): ``from collections import deque as list``
-        # builds no list.
-        if node.keywords or len(node.args) > 1:
-            return None
-        return _cited().container_kind.get(_builtin_callee(node))
-    return _DISPLAY_KIND.get(kind)
 
 
 def _state(value):
@@ -1657,7 +1610,13 @@ def _closed_operand(node) -> bool:
 def source_helper_actual_states(call, bound_refs):
     """``(havoc_targets, [(actual, state, index)])`` for a call to a followable
     source helper, or None when the call is not one (it keeps its havoc).
-    ``havoc_targets`` are ``_rebind``'s ``(object, rules, subject)``."""
+    ``havoc_targets`` are ``_rebind``'s ``(object, rules, subject)``.
+
+    The body is followed for every actual that is a bound object a call may
+    change (``_may_be_changed``, the exposure candidates), whatever it was
+    given: what the helper's mutation of it does is the one door's, decided
+    by the actual's value at reduce (``PathContainerCallSugar``), never by
+    the spelling of the actual's binding."""
     from .nodes import Call, Name, Starred
 
     if (
@@ -1670,7 +1629,7 @@ def source_helper_actual_states(call, bound_refs):
     actuals = [
         (index, arg)
         for index, arg in enumerate(call.args)
-        if decided_container_kind(arg) is not None and _ref(arg) in bound_refs
+        if _ref(arg) in bound_refs and _may_be_changed(arg)
     ]
     if not actuals:
         return None
@@ -1764,150 +1723,3 @@ def _untouched(name, pre_scope, scope, havocked) -> bool:
     if name not in scope or name not in pre_scope:
         return name not in scope
     return scope[name] is pre_scope[name] and havocked.get(name) is scope[name]
-
-
-# ---------------------------------------------------------------------------
-# ``is`` between decided containers: object identity, never value equality.
-#
-# A display or a builtin ``list()``/``dict()``/``set()`` call builds a new
-# object each time it is evaluated, so two different creation nodes are two
-# objects; a post-state (a recorded mutation projection or a helper's actual
-# after its body) is the object it mutated.  Only operands whose evaluation
-# runs no code are decided here: the comparison then reads nothing it would
-# not read anyway.
-_IDENTITY_LEAF_KINDS = frozenset({"Constant", "FormalRef", "BindingCoordinateRef"})
-_IDENTITY_STATE_KINDS = frozenset(
-    {
-        "PathAfterCall",
-        "BuiltinContainerProjection",
-        "SourceCallActualAfter",
-        "OpaqueObjectStateV1",
-    }
-)
-
-
-def _identity_root(node):
-    """The creation node (or formal) whose object ``node`` denotes, else None."""
-    node = _identity(node)
-    kind = getattr(node, "kind", None)
-    if kind == "PathAfterCall":
-        # The object after the one door's call is the object it was called on.
-        if node.mode == "root" and not node.steps:
-            return _identity_root(node.root)
-        return None
-    if kind == "BuiltinContainerProjection":
-        # ``r += x``: a builtin container's in-place result is itself.
-        call = node.call
-        if node.index == 1 and str(getattr(call, "method", "")).startswith("__i"):
-            if decided_container_kind(call.receiver) is not None:
-                return _identity_root(call.receiver)
-        return None
-    if kind == "SourceCallActualAfter":
-        return _identity_root(node.state)
-    if kind == "OpaqueObjectStateV1":
-        return _identity_root(node.base)
-    if kind in _FORMAL_KINDS:
-        return node
-    if decided_container_kind(node) is not None:
-        return node
-    return None
-
-
-def _runs_no_code(node) -> bool:
-    """Evaluating ``node`` (a decided container operand) calls nothing."""
-    kind = getattr(node, "kind", None)
-    if kind == "EvaluationRef":
-        # A read of a key: the value its evaluation already completed with.
-        return True
-    if kind in _IDENTITY_STATE_KINDS:
-        # Answered from the evaluation its statement already recorded.
-        return True
-    if kind in _IDENTITY_LEAF_KINDS:
-        return True
-    if kind == "Call":
-        return decided_container_kind(node) is not None and not node.args
-    if kind in ("List", "Tuple", "Set"):
-        return all(_runs_no_code(element) for element in node.elts)
-    if kind == "Dict":
-        # A dict display hashes its keys: only a key decided as a subscript's
-        # is (``ground_subscript_key``: an ``int``/``str``, whose hash calls
-        # nothing) is decided here.
-        from .nodes import ground_subscript_key
-
-        return all(
-            key is not None and ground_subscript_key(key) is not None
-            for key in node.keys
-        ) and all(_runs_no_code(value) for value in node.values)
-    return False
-
-
-def decided_identity(left, right) -> Optional[bool]:
-    """``left is right`` when both denote decided containers, else None.
-
-    Two different creation sites are two objects: False.  One creation site
-    does not decide: an unrolled loop or a re-entered body evaluates it more
-    than once, and each evaluation is another object, which a node cannot
-    tell apart -- that comparison stays with the reduced values.  A formal may
-    be any caller object: it decides only against its own coordinate."""
-    if decided_container_kind(left) is None or decided_container_kind(right) is None:
-        return None
-    if not (_runs_no_code(left) and _runs_no_code(right)):
-        return None
-    left_root = _identity_root(left)
-    right_root = _identity_root(right)
-    if left_root is None or right_root is None:
-        return None
-    if _is_formal(left_root) or _is_formal(right_root):
-        if _is_formal(left_root) and _is_formal(right_root) and same_object(
-            left_root, right_root
-        ):
-            return True
-        return None
-    if _ref(left_root) is _ref(right_root):
-        return None
-    return False
-# A cited mutation that cannot raise.
-#
-# ``r.append(x)`` on a decided list stores and completes: CPython's
-# ``list.append`` has no exceptional exit for any operand (MemoryError aside,
-# which no lift models).  A statement that is only such a call contributes no
-# halt edge to an enclosing ``try`` -- an edge there would carry the state
-# BEFORE the store into the handler as though the append could have raised.
-# Only methods whose operands are never inspected are listed; an operand
-# that is hashed, compared or iterated can run code and raise.
-_NEVER_RAISING_METHODS = {
-    "list": frozenset({"append", "clear", "reverse", "copy"}),
-    "dict": frozenset({"clear", "copy"}),
-    "set": frozenset({"clear", "copy"}),
-}
-
-
-def cited_call_cannot_halt(statement, scope) -> bool:
-    """``statement`` is ``name.method(operand?)`` on a decided container whose
-    cited method never raises, over an operand whose evaluation cannot."""
-    from .binding_state import UnboundBinding
-    from .nodes import Attribute, Call, Constant, Expr, Name
-
-    if not isinstance(statement, Expr):
-        return False
-    call = statement.value
-    if not isinstance(call, Call) or call.keywords:
-        return False
-    func = call.func
-    if not isinstance(func, Attribute) or not isinstance(func.value, Name):
-        return False
-    if func.value.id not in scope:
-        return False
-    kind = decided_container_kind(_state(scope[func.value.id]))
-    if kind is None or func.attr not in _NEVER_RAISING_METHODS[kind]:
-        return False
-    if func.attr != "append":
-        return not call.args
-    if len(call.args) != 1:
-        return False
-    (operand,) = call.args
-    if isinstance(operand, Constant):
-        return True
-    return isinstance(operand, Name) and operand.id in scope and not isinstance(
-        _state(scope[operand.id]), UnboundBinding
-    )

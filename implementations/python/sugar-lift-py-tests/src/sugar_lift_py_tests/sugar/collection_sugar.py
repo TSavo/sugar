@@ -89,7 +89,14 @@ class ListSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
-        from sugar_lift_py_tests.floor.list_value import ListValue
+        from sugar_lift_py_tests.floor import list_value
+        from sugar_lift_py_tests.floor.object_identity import made_at
+
+        # The display makes a new object here (``made_at``).
+        allocation = made_at(self.site)
+
+        def ListValue(held):  # noqa: N802 -- the owner name the fold reports
+            return list_value.ListValue(held, allocation=allocation)
 
         return _reduce_into(self.elements, ctx, ListValue)
 
@@ -272,7 +279,10 @@ def _built_set(values, site):
         if _hash_decided(member) and _index_of(tuple(kept), member) not in (None, -1):
             continue
         kept.append(member)
-    return ExitSet.completed(SetValue(tuple(kept)))
+    from sugar_lift_py_tests.floor.object_identity import made_at
+
+    # The display makes a new object here (``made_at``).
+    return ExitSet.completed(SetValue(tuple(kept), allocation=made_at(site)))
 
 
 def _built_dict(pairs, site):
@@ -298,7 +308,12 @@ def _built_dict(pairs, site):
             continue
         keys.append(key)
         values.append(value)
-    return ExitSet.completed(DictValue(tuple(zip(keys, values))))
+    from sugar_lift_py_tests.floor.object_identity import made_at
+
+    # The display makes a new object here (``made_at``).
+    return ExitSet.completed(
+        DictValue(tuple(zip(keys, values)), allocation=made_at(site))
+    )
 
 
 def _display_refusal(site, owner):

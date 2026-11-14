@@ -48,7 +48,12 @@ class ReturnSugar(Sugar):
         from sugar_lift_py_tests.floor.named_expression_value import (
             peel_walrus_binds,
         )
+        from sugar_lift_py_tests.floor.object_identity import arrived
 
+        # The caller holds the returned value by binding: what this frame
+        # made is not current in the caller's (``object_identity``).
         return self.value.desugar(ctx).and_then(
-            lambda value: ExitSet.completed(ReturnValue(peel_walrus_binds(value)[1]))
+            lambda value: ExitSet.completed(
+                ReturnValue(arrived(peel_walrus_binds(value)[1]))
+            )
         )

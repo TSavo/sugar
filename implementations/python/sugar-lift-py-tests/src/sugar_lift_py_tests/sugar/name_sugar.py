@@ -78,7 +78,11 @@ class NameSugar(ConstructedTermSugar):
                 and binding.value is not None
                 and not is_builtin_floor_binding(binding)
             ):
-                return ExitSet.completed(binding.value)
+                from sugar_lift_py_tests.floor.object_identity import arrived
+
+                # A formal's actual, a module global, a generator's write:
+                # the value reached this read by binding.
+                return ExitSet.completed(arrived(binding.value))
             # A builtin is read only through the binding at this read
             # (``_builtin_floor_value``): a name a star import, a module or
             # function rebinding, or a parameter may bind is not the builtin.

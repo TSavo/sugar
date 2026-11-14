@@ -1258,6 +1258,14 @@ class YieldEffect:
     resume_coordinate: str
     machine: "GeneratorConstructionV1"
 
+    def __post_init__(self) -> None:
+        from sugar_lift_py_tests.floor.object_identity import arrived
+
+        # The consumer holds the yielded value by binding: what the
+        # generator's frame made is not current in the consumer's
+        # (``object_identity``).
+        object.__setattr__(self, "value", arrived(self.value))
+
 
 @dataclass(frozen=True)
 class GeneratorConstructionV1:
