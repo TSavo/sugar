@@ -170,7 +170,7 @@ if len(script_rows) != 1 or len(output_rows) != 1:
         f"{len(script_rows)} script and {len(output_rows)} output"
     )
 if script_rows[0].get("status") != "unsatisfied" or output_rows[0].get("status") != "unsatisfied":
-    raise SystemExit(f"{suite}: stale proof witness rows must refuse: {build_rows}")
+    raise SystemExit(f"{suite}: the re-minted tampered tree's build rows must refuse: {build_rows}")
 if receipt.get("verdict") == "green":
     raise SystemExit(f"{suite}: a tampered build must not be green: {receipt.get('byStatus')}")
 print(
@@ -178,6 +178,59 @@ print(
     f"verdict={receipt.get('verdict')} byStatus={receipt.get('byStatus')}"
 )
 PY
+}
+
+# Step 9: prove reads the minted .proof (and .sugar/imports) and nothing else;
+# the build-witness package body is in the proof. A proof minted from the clean
+# tree states what that tree was, so after a post-mint tamper its build rows
+# are decided from the proof alone, as they were minted.
+check_stale_proof_receipt() {
+  local suite="$1"
+  local dir="$WORK/$suite"
+  "$VENV/bin/python" - "$dir/.verify.stale.json" "$suite" <<'PY'
+import json
+import sys
+
+path, suite = sys.argv[1:]
+receipt = json.load(open(path, encoding="utf-8"))
+rows = [
+    r
+    for r in receipt.get("rows", [])
+    if (r.get("property") or "").startswith("consistency:build-witness:")
+]
+if len(rows) != 2:
+    raise SystemExit(f"{suite}: expected two build rows in the pre-tamper proof, got {len(rows)}")
+for row in rows:
+    verification = row.get("verification") or {}
+    if row.get("status") != "discharged" or verification.get("resolvedBy") != "proof":
+        raise SystemExit(
+            f"{suite}: the pre-tamper proof's build rows must be decided from the proof "
+            f"as minted: {row}"
+        )
+print(
+    f"{suite}: pre-tamper proof decided from the proof: "
+    f"verdict={receipt.get('verdict')} byStatus={receipt.get('byStatus')}"
+)
+PY
+}
+
+# The tamper is caught where the tree is read: mint. Re-minting the tampered
+# tree states the drift, and prove refuses it.
+prove_stale_then_remint() {
+  local suite="$1"
+  local dir="$WORK/$suite"
+
+  echo "== prove $suite: the proof minted before the tamper =="
+  set +e
+  (cd "$dir" && PATH="$VENV/bin:$PATH" "$BIN" prove . --json) > "$dir/.verify.stale.raw" 2>&1
+  set -e
+  extract_json_receipt "$dir/.verify.stale.raw" "$dir/.verify.stale.json"
+  check_stale_proof_receipt "$suite"
+
+  echo "== re-mint $suite over the tampered tree =="
+  rm -f "$dir"/blake3-512_*.proof "$dir/.verify.raw" "$dir/.verify.json"
+  rm -rf "$dir/.sugar/runs" "$dir/.sugar/witnesses" "$dir/.build"
+  (cd "$dir" && "$BIN" mint --out . --quiet)
 }
 
 write_lying_discharge() {
@@ -275,6 +328,7 @@ run_tampered_script_suite() {
   cat >> "$dir/distributed/configure.py" <<'PY'
 # post-mint script tamper
 PY
+  prove_stale_then_remint "$suite"
 
   echo "== verify $suite after script tamper =="
   set +e
@@ -305,6 +359,7 @@ demo-lib
 message=owned
 version=1
 TXT
+  prove_stale_then_remint "$suite"
 
   echo "== verify $suite after artifact tamper =="
   set +e
