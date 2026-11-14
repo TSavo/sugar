@@ -2708,25 +2708,16 @@ class GeneratorConstructionV1:
 
 
 def _guard_exits(exit_set: ExitSet, face) -> ExitSet:
-    """Conjoin one routing face's guard and partition keys onto every exit."""
-    from sugar_lift_py_tests.outcome.exit_set import (
-        Completed,
-        Halted,
-        _and_guards,
-        owed_union,
-    )
+    """``exit_set`` continuing beneath one routing face, completed or halted.
 
-    out = []
-    for inner in exit_set.exits:
-        guard = _and_guards(face.guard, inner.guard)
-        faces = face.faces | inner.faces
-        # The routing face's debts ride onto every exit under it.
-        owed = owed_union(face.owed, inner.owed)
-        if isinstance(inner, Halted):
-            out.append(Halted(guard, inner.effect, inner.state, faces, owed))
-        else:
-            out.append(Completed(guard, inner.value, faces, owed))
-    return ExitSet(tuple(out)).normalize()
+    Composed through ``ExitSet.sequence`` (``consume=`` for a halted face the
+    routing owns): the face's guard is conjoined onto every exit, both sets of
+    partition testimony ride, and the face's debts ride onto every exit under
+    it.
+    """
+    return ExitSet((face,)).sequence(
+        lambda _value: exit_set, consume=lambda _halt: exit_set
+    )
 
 
 def _step_exits(outcome):

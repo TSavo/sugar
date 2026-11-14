@@ -100,22 +100,39 @@ def _tentative_capture_ctx(ctx, capture_name: str | None, subject):
     )
 
 
-def _after(guard, owed, exits):
-    """``exits`` sequenced after the match step that reached them (#7757).
+def _debt(owed=()):
+    """One completed match step under truth owing ``owed``.
 
-    The step is one completed arm under ``guard`` owing ``owed``: what the
-    patterns, equalities and guards on the path into these arms incurred.
-    ``ExitSet.sequence`` conjoins ``guard`` onto every arm and carries the
-    debt onto every arm, completed and halted alike, so nothing a completed
-    equality or guard face owed is dropped by being read as a formula only.
-    Halted.state and partition faces ride through unchanged.
+    The match's PATH is one such arm: what the patterns, equalities and
+    guards run so far incurred. It grows only by composition --
+    ``path.sequence(lambda _: step)`` for a step that ran after it, and
+    ``ExitSet.union`` for sibling faces of one step, which merges them into
+    one arm owing every sibling's debt -- never by unioning debts by hand.
     """
     from sugar_lift_py_tests.outcome import Completed
     from sugar_lift_py_tests.outcome.exit_set import true_guard
 
-    reached = true_guard() if guard is None else guard
-    step = ExitSet((Completed(reached, None, owed=owed),))
-    return step.sequence(lambda _reached: exits)
+    return ExitSet((Completed(true_guard(), None, owed=owed),))
+
+
+def _then(path, step):
+    """``path`` followed by ``step``: one arm owing both, in that order."""
+    return path.sequence(lambda _reached: step)
+
+
+def _after(guard, path, exits):
+    """``exits`` sequenced after the match ``path`` that reached them (#7757).
+
+    ``path`` is the one-arm match step (``_debt``) owing what the patterns,
+    equalities and guards on the path into these arms incurred, restricted
+    here to ``guard``. ``ExitSet.sequence`` conjoins ``guard`` onto every arm
+    and carries the debt onto every arm, completed and halted alike, so
+    nothing a completed equality or guard face owed is dropped by being read
+    as a formula only. Halted.state and partition faces ride through
+    unchanged.
+    """
+    reached = path if guard is None else path.guarded(guard)
+    return reached.sequence(lambda _reached: exits)
 
 
 def _halted_face(face, prefix_guard):
@@ -178,24 +195,25 @@ def _exceptional_faces_only(exits, prefix_guard):
 def _pattern_match_formula_and_side_exits(subject, alternatives, site, not_prev, ctx):
     """Build match formula; exceptional alt/equality faces ride under not_prev.
 
-    Returns ``(match_formula | None, side_exits: ExitSet, owed)``.
+    Returns ``(match_formula | None, side_exits: ExitSet, pattern_path)``.
     Completed faces of alternative/equality ExitSets feed matching as
-    formulas, and what they OWE is returned as ``owed`` for the caller to
-    sequence onto every arm past this pattern (#7757). They are never
-    unioned wholesale into the Match outcome. An equality halt is sequenced
-    after the alternative that completed into it, so it owes what that
-    alternative (and every alternative tried before it) owed.
+    formulas, and what they OWE is returned as ``pattern_path`` (one
+    ``_debt`` arm) for the caller to sequence every arm past this pattern
+    after (#7757). They are never unioned wholesale into the Match outcome.
+    An equality halt is sequenced after the alternative that completed into
+    it, so it owes what that alternative (and every alternative tried before
+    it) owed.
     """
     from sugar_lift_py_tests.ir import or_
     from sugar_lift_py_tests.outcome import Completed
-    from sugar_lift_py_tests.outcome.exit_set import owed_union, true_guard
+    from sugar_lift_py_tests.outcome.exit_set import true_guard
 
     if not alternatives:
-        return true_guard(), ExitSet(()), ()
+        return true_guard(), ExitSet(()), _debt()
 
     alts = []
     side = ExitSet(())
-    owed: tuple = ()
+    path = _debt()
     for alt in alternatives:
         alt_out = alt.desugar(ctx)
         if not isinstance(alt_out, ExitSet):
@@ -203,7 +221,7 @@ def _pattern_match_formula_and_side_exits(subject, alternatives, site, not_prev,
                 f"match alternative outcome not lifted: {type(alt_out).__name__}"
             )
         # What the alternatives tried before this one incurred.
-        before = owed
+        before = path
         # Exceptional/control faces only — not Completed outcomes.
         side = side.union(
             _after(None, before, _exceptional_faces_only(alt_out, not_prev))
@@ -215,33 +233,37 @@ def _pattern_match_formula_and_side_exits(subject, alternatives, site, not_prev,
             # adds nothing to either).
             eq_prefix = _and_parts(not_prev, face.guard)
             eq_out = subject.equals(face.value, site, ctx)
-            eq_side, formula, eq_owed = _equality_outcome_under(
+            eq_side, formula, eq_path = _equality_outcome_under(
                 eq_out, eq_prefix, site
             )
-            side = side.union(_after(None, owed_union(before, face.owed), eq_side))
-            owed = owed_union(owed, face.owed, eq_owed)
+            # The equality ran after this alternative's face completed.
+            reached_eq = _then(before, _debt(face.owed))
+            side = side.union(_after(None, reached_eq, eq_side))
+            path = _then(_then(path, _debt(face.owed)), eq_path)
             if formula is not None:
                 # When multi-face equality, formula is OR of (face.guard ∧ truth).
                 alts.append(_and_parts(face.guard, formula))
 
     if not alts:
-        return None, side, owed
+        return None, side, path
     match_formula = or_(tuple(alts)) if len(alts) > 1 else alts[0]
-    return match_formula, side, owed
+    return match_formula, side, path
 
 
 def _equality_outcome_under(eq_out, not_prev, site):
-    """Process subject.equals under not_prev; return (side, formula|None, owed).
+    """Process subject.equals under not_prev; return (side, formula|None, path).
 
     ExitSet Completed faces contribute ``face.guard ∧ truth(face.value)`` to
-    the match formula, and their ``owed`` to the returned debt (#7757): the
-    equality ran on every path past it, so the caller sequences that debt
-    onto every such arm. Non-completed faces propagate separately (state and
-    owed preserved). Never wholesale-unions Completed equality faces into side.
+    the match formula, and their ``owed`` to the returned ``path`` (#7757):
+    the equality ran on every path past it, so the caller sequences every
+    such arm after it. The completed faces are siblings of one comparison,
+    so ``path`` is their join (``ExitSet.union`` of one ``_debt`` arm each):
+    one arm owing every face's debt. Non-completed faces propagate
+    separately (state and owed preserved). Never wholesale-unions Completed
+    equality faces into side.
     """
     from sugar_lift_py_tests.ir import or_
     from sugar_lift_py_tests.outcome import Completed, Halted
-    from sugar_lift_py_tests.outcome.exit_set import owed_union
 
     if not isinstance(eq_out, ExitSet):
         raise NotImplementedError(
@@ -249,7 +271,7 @@ def _equality_outcome_under(eq_out, not_prev, site):
         )
     side = ExitSet(())
     formulas = []
-    owed: tuple = ()
+    path = _debt()
     for face in eq_out.exits:
         if isinstance(face, Halted):
             side = side.union(_halted_face(face, not_prev))
@@ -257,39 +279,39 @@ def _equality_outcome_under(eq_out, not_prev, site):
         if isinstance(face, Completed):
             truth = _formula_from_floor_value(face.value, site)
             formulas.append(_and_parts(face.guard, truth))
-            owed = owed_union(owed, face.owed)
+            path = path.union(_debt(face.owed))
             continue
         raise NotImplementedError(
             f"match equality face not lifted: {type(face).__name__}"
         )
     if not formulas:
-        return side, None, owed
+        return side, None, path
     formula = or_(tuple(formulas)) if len(formulas) > 1 else formulas[0]
-    return side, formula, owed
+    return side, formula, path
 
 
-def _guard_faces_under(guard_out, reached, site, body, body_ctx, match_formula, owed):
+def _guard_faces_under(guard_out, reached, site, body, body_ctx, match_formula, path):
     """Fan a guard outcome into ExitSets under ``reached``.
 
-    Returns ``(parts, earlier_bits, guard_owed)``.
+    Returns ``(parts, earlier_bits, guard_path)``.
 
-    ``owed`` is what the path into this guard incurred (patterns and
-    equalities of this and every earlier case); every part owes it.
-    Per Completed face: body sequenced under ``reached ∧ face.guard ∧ truth``,
-    owing ``owed`` and what the face owes. Per Halted face: preserve Halted
-    under ``reached ∧ face.guard``; mark only ``match_formula ∧ face.guard``
-    consumed (not the whole match path). ``guard_owed`` is every completed
-    face's debt, which the paths past a false guard carry too (#7757).
+    ``path`` is the match step owing what the path into this guard incurred
+    (patterns and equalities of this and every earlier case); every part is
+    sequenced after it. Per Completed face: body sequenced under ``reached ∧
+    face.guard ∧ truth``, after ``path`` and then the face. Per Halted face:
+    preserve Halted under ``reached ∧ face.guard``; mark only ``match_formula
+    ∧ face.guard`` consumed (not the whole match path). ``guard_path`` is the
+    join of every completed face's debt (``ExitSet.union``), which the paths
+    past a false guard carry too (#7757).
     """
     from sugar_lift_py_tests.outcome import Completed, Halted
-    from sugar_lift_py_tests.outcome.exit_set import owed_union
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         reduce_block_to_exitset,
     )
 
     parts: list = []
     earlier_bits: list = []
-    guard_owed: tuple = ()
+    guard_path = _debt()
 
     if not isinstance(guard_out, ExitSet):
         raise NotImplementedError(
@@ -297,7 +319,7 @@ def _guard_faces_under(guard_out, reached, site, body, body_ctx, match_formula, 
         )
     for face in guard_out.exits:
         if isinstance(face, Halted):
-            parts.append(_after(None, owed, _halted_face(face, reached)))
+            parts.append(_after(None, path, _halted_face(face, reached)))
             # Only this polarity of the match is consumed by the halt.
             earlier_bits.append(_and_parts(match_formula, face.guard))
             continue
@@ -305,14 +327,16 @@ def _guard_faces_under(guard_out, reached, site, body, body_ctx, match_formula, 
             truth = _formula_from_floor_value(face.value, site)
             selection = _and_parts(reached, face.guard, truth)
             body_exits = reduce_block_to_exitset(body, body_ctx)
-            parts.append(_after(selection, owed_union(owed, face.owed), body_exits))
+            parts.append(
+                _after(selection, _then(path, _debt(face.owed)), body_exits)
+            )
             earlier_bits.append(_and_parts(match_formula, face.guard, truth))
-            guard_owed = owed_union(guard_owed, face.owed)
+            guard_path = guard_path.union(_debt(face.owed))
             continue
         raise NotImplementedError(
             f"match guard ExitSet face not lifted: {type(face).__name__}"
         )
-    return parts, earlier_bits, guard_owed
+    return parts, earlier_bits, guard_path
 
 
 @dataclass(frozen=True)
@@ -375,14 +399,13 @@ class MatchSugar(Sugar):
 
             return ExitSet.completed(BlockValue((), can_fall_through=True))
 
-        from sugar_lift_py_tests.outcome.exit_set import owed_union
-
         accumulated = ExitSet(())
         earlier: list = []  # selection formulas of prior *selected* cases
-        # What every path past the cases so far incurred: the completed faces
-        # of their patterns, equalities and guards (#7757). A case is reached
-        # only after every earlier case's pattern ran, so its arms owe this.
-        running_owed: tuple = ()
+        # The match step every path past the cases so far took: it owes what
+        # the completed faces of their patterns, equalities and guards owed
+        # (#7757). A case is reached only after every earlier case's pattern
+        # ran, so its arms are sequenced after this.
+        running = _debt()
 
         for case in self.cases:
             if not isinstance(case, MatchCaseSpec):
@@ -393,13 +416,13 @@ class MatchSugar(Sugar):
             not_prev = _not_earlier(earlier)
 
             # --- pattern match (all exceptional faces restricted by not_prev) ---
-            match_formula, pattern_side, pattern_owed = (
+            match_formula, pattern_side, pattern_path = (
                 _pattern_match_formula_and_side_exits(
                     subject, case.alternatives, self.site, not_prev, ctx
                 )
             )
-            accumulated = accumulated.union(_after(None, running_owed, pattern_side))
-            running_owed = owed_union(running_owed, pattern_owed)
+            accumulated = accumulated.union(_after(None, running, pattern_side))
+            running = _then(running, pattern_path)
 
             if match_formula is None:
                 # No completed match formula: only exceptional pattern faces.
@@ -415,25 +438,23 @@ class MatchSugar(Sugar):
 
             if case.guard is None:
                 body_exits = reduce_block_to_exitset(case.body, body_ctx)
-                accumulated = accumulated.union(
-                    _after(reached, running_owed, body_exits)
-                )
+                accumulated = accumulated.union(_after(reached, running, body_exits))
                 earlier.append(match_formula)
                 continue
 
             guard_out = case.guard.desugar(guard_ctx)
-            parts, earlier_bits, guard_owed = _guard_faces_under(
+            parts, earlier_bits, guard_path = _guard_faces_under(
                 guard_out,
                 reached,
                 self.site,
                 case.body,
                 body_ctx,
                 match_formula,
-                running_owed,
+                running,
             )
             for part in parts:
                 accumulated = accumulated.union(part)
-            running_owed = owed_union(running_owed, guard_owed)
+            running = _then(running, guard_path)
             # Collapse earlier_bits: any selection of this case for first-case-wins.
             if earlier_bits:
                 # Distinct polarities: later cases see not(OR of selections).
@@ -456,7 +477,7 @@ class MatchSugar(Sugar):
             accumulated = accumulated.union(
                 _after(
                     _not_earlier(earlier),
-                    running_owed,
+                    running,
                     ExitSet.completed(BlockValue((), can_fall_through=True)),
                 )
             )

@@ -159,11 +159,6 @@ class GuardedValue(FloorValue):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import and_, implies, not_
         from sugar_lift_py_tests.outcome import ExitSet
-        from sugar_lift_py_tests.outcome.exit_set import (
-            Completed,
-            owed_union,
-            true_guard,
-        )
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -221,34 +216,29 @@ class GuardedValue(FloorValue):
                     implies(not_(self.guard), false_formula),
                 ]
             )
-        # One arm rebuilt from both: it owes what both owed (#7825, H4).
-        joined = ExitSet(
-            (
-                Completed(
-                    true_guard(),
-                    PredicateValue(
-                        joined_formula,
-                        args[-1],
-                        operand_callsites=(
-                            *(
-                                true_value.operand_callsites
-                                if isinstance(true_value, PredicateValue)
-                                else ()
-                            ),
-                            *(
-                                false_value.operand_callsites
-                                if isinstance(false_value, PredicateValue)
-                                else ()
-                            ),
-                        ),
-                    ),
-                    owed=owed_union(
-                        true_outcome.owed_items(), false_outcome.owed_items()
-                    ),
+        joined = PredicateValue(
+            joined_formula,
+            args[-1],
+            operand_callsites=(
+                *(
+                    true_value.operand_callsites
+                    if isinstance(true_value, PredicateValue)
+                    else ()
                 ),
+                *(
+                    false_value.operand_callsites
+                    if isinstance(false_value, PredicateValue)
+                    else ()
+                ),
+            ),
+        )
+        # Both arms' predicates ran: the joined arm is sequenced after both,
+        # so it owes what both owed (#7825, H4), exactly as ``_map`` rejoins.
+        return true_outcome.sequence(
+            lambda _true_value: false_outcome.sequence(
+                lambda _false_value: ExitSet.completed(joined)
             )
-        ).normalize()
-        return joined
+        )
 
     def less_than_from_left(self, left, site, ctx):
         """Typed Floor obligation: distribute ``left <`` across guarded arms.

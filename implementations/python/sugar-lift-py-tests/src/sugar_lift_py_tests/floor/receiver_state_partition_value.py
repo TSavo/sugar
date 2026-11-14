@@ -82,33 +82,30 @@ class ReceiverStatePartitionValue(FloorValue):
         if any halt carries no typed effect: such a face cannot leave a With
         as itself, so no consumer may seal over it.
         """
-        from sugar_lift_py_tests.outcome import Completed, Halted
-        from sugar_lift_py_tests.outcome.exit_set import _and_guards, owed_union
-        from dataclasses import replace
+        from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+
+        def flattened(partition):
+            # A nested partition is sequenced beneath the completed face that
+            # holds it: ``sequence`` conjoins the enclosing guard, carries both
+            # faces' testimony, and the flattened face owes what its enclosing
+            # face owed too (#7825, H4).
+            return partition.exits.sequence(
+                lambda value: (
+                    flattened(value)
+                    if isinstance(value, ReceiverStatePartitionValue)
+                    else ExitSet.completed(value)
+                )
+            )
 
         halts = []
         completed = []
-
-        def walk(partition, outer, outer_owed):
-            for face in partition.exits.exits:
-                guard = face.guard if outer is None else _and_guards(outer, face.guard)
-                # A flattened face stands for its enclosing face too: it owes
-                # both (#7825, H4).
-                owed = owed_union(outer_owed, face.owed)
-                if isinstance(face, Completed):
-                    if isinstance(face.value, ReceiverStatePartitionValue):
-                        if not walk(face.value, guard, owed):
-                            return False
-                        continue
-                    completed.append(replace(face, guard=guard, owed=owed))
-                    continue
-                if not isinstance(face, Halted) or face.effect is None:
-                    return False
-                halts.append(replace(face, guard=guard, owed=owed))
-            return True
-
-        if not walk(self, None, ()):
-            return None
+        for face in flattened(self).exits:
+            if isinstance(face, Completed):
+                completed.append(face)
+                continue
+            if not isinstance(face, Halted) or face.effect is None:
+                return None
+            halts.append(face)
         return tuple(halts), tuple(completed)
 
     def project_operation_receiver_outcome(self, ctx: object, *, owner: str):

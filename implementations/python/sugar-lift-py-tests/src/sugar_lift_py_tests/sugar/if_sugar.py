@@ -417,7 +417,6 @@ class IfSugar(Sugar):
         from sugar_lift_py_tests.outcome.exit_set import (
             _or_guards,
             false_guard,
-            owed_union,
             true_guard,
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
@@ -444,11 +443,12 @@ class IfSugar(Sugar):
         halted = []
         entries = []
         completed_guard = None
-        # The one completed arm stands for every completed arm of both suites,
-        # so it owes all of their debts (``owed_union``).
-        completed_owed = owed_union(
-            *(exit_.owed for exit_ in exits.exits if isinstance(exit_, Completed))
-        )
+        # The one completed arm stands for every completed arm of both suites
+        # (a join of siblings, not a sequence), so it owes all of their debts:
+        # read through the one join of debts, ``ExitSet.owed_items``.
+        completed_owed = ExitSet(
+            tuple(exit_ for exit_ in exits.exits if isinstance(exit_, Completed))
+        ).owed_items()
         for exit_ in exits.exits:
             if isinstance(exit_, Halted):
                 inner = exit_.state

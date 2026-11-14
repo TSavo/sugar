@@ -13,7 +13,8 @@ two-faced call of ``UnknownCalleeCallV1.faces`` (#7585) and of
 enrolled population). "Not bridged" is stated one way: each puts one
 ``UnansweredCallV1`` on the ``owed`` slot of BOTH its arms (#7825, H4), since
 the call is incurred whether it then completes or raises. ``owed`` rides every
-arm rebuild by union (``outcome.exit_set.owed_union``), so the item reaches
+arm rebuild by union (``ExitSet.sequence`` for a composition, ``ExitSet.union``
+/ ``normalize`` for a merge), so the item reaches
 the reduction's final arms on every path that reached the call. The full scan
 that mint packages reads it there (``owed_calls``); nothing is recorded on the
 side, a seek reads nothing, and a reduction read back from a memo carries its
@@ -61,25 +62,37 @@ def owed_calls(outcome) -> tuple[UnansweredCallV1, ...]:
     ``Complete`` / ``Incomplete`` owes nothing (it has no owed slot, which is
     why ``ExitSet.collapse`` keeps an owing arm an arm).
     """
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    owed = ExitSet(_reduced_arms(outcome)).owed_items()
+    return tuple(item for item in owed if isinstance(item, UnansweredCallV1))
+
+
+def _reduced_arms(outcome) -> tuple:
+    """Every reduced arm of ``outcome``, in arm order, for ``owed_calls``.
+
+    The arms of an ``ExitSet``; for a deferred carrier, the stopping faces of
+    its short circuits, then the arms of its composed prefix, each deferred
+    prefix arm followed by the reduced arms of the carrier beneath it. Their
+    debts are joined by the one reader, ``ExitSet.owed_items``.
+    """
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet, owed_union
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
     if isinstance(outcome, ExitSet):
-        owed = outcome.owed_items()
-    elif isinstance(outcome, NativeOperationExitCarrierV1):
-        parts = [
-            stopped.owed_items() for _g, stopped, _c, _s in outcome.short_circuits
-        ]
-        if outcome.prefix_composition is not None:
-            resolved, deferred = outcome.prefix_composition[:2]
-            parts.extend(exit_.owed for exit_ in resolved)
-            for prefix_exit, carrier in deferred:
-                parts.append(prefix_exit.owed)
-                if carrier is not outcome:
-                    parts.append(owed_calls(carrier))
-        owed = owed_union(*parts)
-    else:
+        return outcome.exits
+    if not isinstance(outcome, NativeOperationExitCarrierV1):
         return ()
-    return tuple(item for item in owed if isinstance(item, UnansweredCallV1))
+    arms = [
+        arm for _g, stopped, _c, _s in outcome.short_circuits for arm in stopped.exits
+    ]
+    if outcome.prefix_composition is not None:
+        resolved, deferred = outcome.prefix_composition[:2]
+        arms.extend(resolved)
+        for prefix_exit, carrier in deferred:
+            arms.append(prefix_exit)
+            if carrier is not outcome:
+                arms.extend(_reduced_arms(carrier))
+    return tuple(arms)
