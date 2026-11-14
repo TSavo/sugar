@@ -5019,7 +5019,7 @@ def _projected_manager_call_uses(source_file, selected_arms=None):
     )
     from sugar_source_tree.nodes import AsyncWith, Call, With
 
-    from sugar_source_tree.nodes import manager_use_projection, selected_manager_calls
+    from sugar_source_tree.nodes import selected_manager_calls
 
     manager_scope_types = (With, AsyncWith)
 
@@ -5121,10 +5121,11 @@ def _projected_manager_call_uses(source_file, selected_arms=None):
             for node in function.walk()
         ):
             continue
-        # No reader has run yet: a ``with ... as`` in the frame exports no
-        # binding here rather than demanding a contract nobody has seated.
-        with manager_use_projection():
-            collect(function.substitute({}), projected_names=True)
+        # No reader has run yet.  A ``with ... as name`` in the frame binds
+        # ``name`` without demanding a row nobody has seated
+        # (``With.substitution_binding``): the projection is substitution as
+        # every caller has it, with no mode of its own.
+        collect(function.substitute({}), projected_names=True)
 
     return uses
 
