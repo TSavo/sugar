@@ -1169,21 +1169,22 @@ _INNER_LOOP_EXIT = (
 def test_an_exit_in_the_symbolic_item_reads_an_inner_loops_publication() -> None:
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
-    # ``xs`` is symbolic, so the outer loop runs as its recurrence and
-    # ``return y`` is reduced in its one symbolic item.  The inner loop
-    # ahead of it on its path runs there first, over ``g()``'s two items,
-    # and publishes ``y`` through its post-loop key with its write slot
-    # decided, so the exit's read decides: the last item, 2.  It is never
-    # refused for want of an inner loop that did not run.
+    # ``xs`` is symbolic, so the outer loop runs as its recurrence and its
+    # body runs once, in its one symbolic item.  The inner loop ahead of
+    # ``return y`` runs there first, over ``g()``'s two items, and publishes
+    # ``y`` through its post-loop key with its write slot decided, so the
+    # exit's read decides: the last item, 2.  It is never refused for want
+    # of an inner loop that did not run.
     function = _function(_INNER_LOOP_EXIT)
     loop = next(
         statement
         for statement in function.sugar().statements
         if isinstance(statement, LoopRecurrenceSugar)
     )
-    (face,) = loop.outward_faces
-    (inner,) = face.prefix_sugars
-    assert isinstance(inner, LoopRecurrenceSugar)
+    (_face,) = loop.outward_faces
+    # The item runs the whole body: the inner loop, then the return.
+    body_sugars, _guard = loop._symbolic_item()
+    assert len(body_sugars) == 2
     outcome = function_universe_outcome(function)
     assert TermValue(2) in _flattened(_returned_values(outcome))
 
@@ -1199,17 +1200,16 @@ _EXIT_AFTER_A_GUARDED_PREFIX = (
 
 
 def test_an_exit_in_an_if_arm_runs_the_statements_ahead_of_the_if() -> None:
-    # ``return z`` sits in an ``if`` arm: the statements ahead of it on its
-    # path are ``y = x`` (ahead of the ``if``) and ``z = y`` (ahead of it in
-    # the arm), in that order; the ``if`` itself is the face's guard.
+    # ``return z`` sits in an ``if`` arm: the body runs once in the symbolic
+    # item, ``y = x`` ahead of the ``if`` and ``z = y`` ahead of the return
+    # in the arm, so the return reads ``z`` as the item; the ``if`` guards
+    # the return's arm.
     loop = next(
         statement
         for statement in _function(_EXIT_AFTER_A_GUARDED_PREFIX).sugar().statements
         if isinstance(statement, LoopRecurrenceSugar)
     )
-    (face,) = loop.outward_faces
-    assert len(face.prefix_sugars) == 2
-    assert all(isinstance(sugar, AssignSugar) for sugar in face.prefix_sugars)
+    (_face,) = loop.outward_faces
     xs = SymbolicValue(make_var("xs"))
     outcome = loop._desugar_with_iterable(
         xs, ReduceContext.root(owner="live-symbolic-prefix")
@@ -1228,6 +1228,35 @@ def test_an_exit_in_an_if_arm_runs_the_statements_ahead_of_the_if() -> None:
         for entry in getattr(exit_.value, "statements", ())
     ]
     assert item in returned
+
+
+_TWO_EXITS_IN_ONE_ITEM = (
+    "def f(xs):\n"
+    "    for x in xs:\n"
+    "        if x:\n"
+    "            return 1\n"
+    "        return 2\n"
+)
+
+
+def test_each_exit_of_the_symbolic_item_is_reported_once() -> None:
+    # ``xs`` is symbolic: the body runs once in the symbolic item, so each
+    # of its two exits is an arm of that one run -- ``return 1`` where ``x``
+    # is truthy, ``return 2`` where it is not -- and each is reported
+    # exactly once.  Replaying the statements ahead of ``return 2`` for it
+    # alone reported ``return 1`` a second time.
+    loop = next(
+        statement
+        for statement in _function(_TWO_EXITS_IN_ONE_ITEM).sugar().statements
+        if isinstance(statement, LoopRecurrenceSugar)
+    )
+    assert len(loop.outward_faces) == 2
+    outcome = loop._desugar_with_iterable(
+        SymbolicValue(make_var("xs")), ReduceContext.root(owner="live-two-exits")
+    )
+    returned = _returned_values(outcome)
+    assert len(returned) == 2, returned
+    assert returned[0] != returned[1], returned
 
 
 def test_each_read_of_an_evaluation_is_spanned_at_its_use() -> None:

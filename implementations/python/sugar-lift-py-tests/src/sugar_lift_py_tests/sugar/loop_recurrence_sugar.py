@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from sugar_lift_py_tests.floor import SymbolicValue
-from sugar_lift_py_tests.ir import atomic, ctor, not_, or_, str_const
+from sugar_lift_py_tests.ir import atomic, ctor, not_, str_const
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
@@ -406,8 +406,8 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             can_fall_through=True,
         )
         # The item's target unpack runs first, whether or not the body has an
-        # outward face: the recurrence (and its faces) are what follows its
-        # completed arm (``ExitSet.sequence``), and its halt (too few, too
+        # outward face: the recurrence (and the item's body) are what follows
+        # its completed arm (``ExitSet.sequence``), and its halt (too few, too
         # many, not iterable) is an arm of the recurrence as it is.  A body
         # with no ``return``/``raise`` still unpacks every item.
         projected, enter, item = self._enter_symbolic_item(
@@ -418,126 +418,101 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 lambda _projections: ExitSet.completed(recurrence)
             )
 
-        halted_guards = [face.guard for face in self.outward_faces]
-        completed_guard = not_(
-            halted_guards[0] if len(halted_guards) == 1 else or_(halted_guards)
-        )
-        # An outward face is a statement of the body (``return x``, ``raise
-        # E(x)``), reduced in the recurrence's one symbolic item after the
-        # body statements ahead of it on its path (``_face_outcome``): its
-        # reads of a carried name and of the target are references to their
-        # keys (``For.substitute``), bound here for that item exactly as for
-        # a concrete one (``_enter_symbolic_item``), and its reads of what
-        # those statements wrote (an inner loop's publication) are bound by
-        # them.
+        # The body has a ``return``/``raise``: the symbolic item runs the
+        # body once, through the one block composition a concrete item and a
+        # function body use (``reduce_block_to_exitset``), in the item's
+        # context.  Its reads of a carried name and of the target are
+        # references to their keys (``For.substitute``), bound here for that
+        # item exactly as for a concrete one (``_enter_symbolic_item``); its
+        # reads of what an earlier statement of the body wrote (an inner
+        # loop's publication) are bound by that statement, which ran ahead of
+        # it.  The loop's exits are the arms of that one run
+        # (``_leave_symbolic_item``).
+        body_sugars, item_guard = self._symbolic_item()
 
-        def faces_in(projections):
-            return self._outward_exits(
-                enter(projections), item, recurrence, completed_guard
+        def run_item(projections):
+            from sugar_lift_py_tests.sugar.function_universe_sugar import (
+                reduce_block_to_exitset,
             )
 
+            item_ctx = enter(projections)
+            with item():
+                body = reduce_block_to_exitset(body_sugars, item_ctx)
+            return self._leave_symbolic_item(body, recurrence, item_guard)
+
         if len(projected.exits) == 1:
-            # One way in (a name target, a ``while``): the faces are exactly
-            # what follows it, a face waiting on its caller's actuals handed on.
-            return projected.and_then(faces_in)
-        return projected.sequence(faces_in)
+            # One way in (a name target, a ``while``): the item is exactly
+            # what follows it, a body waiting on its caller's actuals handed on.
+            return projected.and_then(run_item)
+        return projected.sequence(run_item)
 
-    def _outward_exits(self, item_ctx, item, recurrence, completed_guard):
-        """The recurrence's exits in one entered symbolic item (``item_ctx``):
-        the recurrence under ``completed_guard``, and each outward face's
-        partition under its own guard."""
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
-        from sugar_lift_py_tests.outcome import Completed
+    def _symbolic_item(self):
+        """``(body_sugars, guard)``: the body the recurrence's one symbolic
+        item runs, and the guard under which an item runs at all (the loop's
+        ``BodyFallthrough`` guard: some item is reached, or the ``while``
+        test holds), from the construction
+        (``live_loop_construction.LiveSymbolicItemV1``).  A construction that
+        handed none is refused by name: no body is made up in its place."""
+        symbolic_item = getattr(self.construction, "symbolic_item", None)
+        if symbolic_item is None:
+            from sugar_source_tree.panic import SugarNotWritten
 
-        exits = [Completed(completed_guard, recurrence)]
-        deferred = []
-        for face in self.outward_faces:
-            outcome = self._face_outcome(face, item_ctx, item, recurrence)
-            if isinstance(outcome, NativeOperationExitCarrierV1):
-                # The face's statement waits for the caller's actuals (a
-                # method call on a formal): it contributes its partition
-                # under its own guard once they discharge it.
-                marker = _DeferredOutwardFace(len(deferred))
-                deferred.append(
-                    outcome.after_discharge(
-                        lambda projected, *, face=face: ExitSet(
-                            _outward_face_partition(projected, face)
-                        )
-                    )
-                )
-                exits.append(Completed(face.guard, marker))
-                continue
-            # Every face the statement reduced to, under the outward face's
-            # guard: a return is the face's one block entry, a halt keeps the
-            # face's state, and each arm keeps what it owes. One return value
-            # or one effect is the one-arm case of the same partition; a return
-            # whose expression PARTITIONS (`return d.setdefault(k, v)`), a
-            # guarded return, or a return that owes a parameter contract
-            # (`return p[0]`) is not a missing wire -- each is a partition the
-            # face contributes under its own guard, which is what
-            # `BindingStateWireGap: loop outward face did not construct return
-            # or raise testimony` was refusing to state.
-            exits.extend(_outward_face_partition(outcome, face, guarded=True))
-        if deferred:
+            raise SugarNotWritten(
+                owner="LoopRecurrenceSugar.symbolic-item",
+                blame=self.site,
+                observed="an outward face with no symbolic item to run",
+                requested="the loop body and its item guard from the construction",
+                fix=(
+                    "construct the loop through construct_live_loop_recurrence, "
+                    "which hands its body to the symbolic item"
+                ),
+            )
+        return symbolic_item.body_sugars, symbolic_item.guard
 
-            def select(value):
-                if isinstance(value, _DeferredOutwardFace):
-                    return deferred[value.index]
-                return ExitSet.completed(value)
+    def _leave_symbolic_item(self, body, recurrence, guard):
+        """The loop's exits from the one run of the symbolic item's
+        ``body`` (``reduce_block_to_exitset``'s arms), under ``guard``
+        (an item runs), beside the recurrence under its negation (no item
+        runs: the loop leaves as it began).
 
-            return ExitSet(tuple(exits)).sequence(select)
-        return ExitSet(tuple(exits)).normalize()
-
-    def _face_outcome(self, face, item_ctx, item, recurrence):
-        """One outward face's statement reduced in the symbolic item
-        (``item_ctx``, inside ``item``) after the body statements that run
-        before it on its path (``face.prefix_sugars``), as a concrete item
-        reduces its body: an inner loop among them runs there and publishes
-        what it writes (``_publication``), so the exit's read of it decides.
-
-        The statement runs beneath each arm of the prefix that falls
-        through, in that arm's context, and its return is that arm's
-        entries then its own value (``_ItemLeft``), as a concrete item's
-        is (``_after_iteration_state``).  An arm of the prefix that does not
-        fall through (an earlier ``return``) leaves with its entries; a
-        ``break``/``continue`` of this loop leaves the item as the
-        recurrence (the loop goes on as it does on the completed arm); any
-        other halt (an inner loop's raise, a call's) is an arm as it is.
-        Each runs in the item: an arm a caller's actuals discharge later is
-        reduced at the item's occurrence path."""
+        Each arm leaves as a concrete item's does (``_after_iteration_state``,
+        ``_after_loop_control``): an arm that does not fall through (a
+        ``return``) leaves the loop with its entries; an arm that falls
+        through, and this loop's own ``break``/``continue``, leave the item
+        as the recurrence (the loop goes on); any other halt (a ``raise``, an
+        inner loop's or a call's) is an arm as it is.  An arm that falls
+        through after an earlier guarded ``return`` took its exit where that
+        return's guard held: it is split as the block composition splits a
+        later halt (``_prior_return_face``), the returned arm with its
+        entries, the recurrence under the fall-through guard.  Each exit is
+        an arm of the one run, so each is reported once."""
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
         from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
         from sugar_lift_py_tests.floor.block_value import BlockValue
-        from sugar_lift_py_tests.occurrence import current_path, occurrence_path
+        from sugar_lift_py_tests.ir import and_
         from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            reduce_block_to_exitset,
+            _prior_return_face,
         )
 
-        with item():
-            if not face.prefix_sugars:
-                return face.statement_sugar.desugar(item_ctx)
-            path = current_path()
-            prefix = reduce_block_to_exitset(face.prefix_sugars, item_ctx)
+        def returned(block):
+            return ExitSet.completed(BlockValue(block.entries, can_fall_through=False))
 
-        def exit_after(state):
+        def leave(state):
             if not state.can_fall_through:
-                return ExitSet.completed(
-                    _ItemLeft(BlockValue(state.entries, can_fall_through=False))
-                )
-            with occurrence_path(path):
-                outcome = face.statement_sugar.desugar(state.context)
-            return outcome.and_then(
-                lambda value: ExitSet.completed(
-                    _ItemLeft(
-                        BlockValue((*state.entries, value), can_fall_through=False)
-                    )
-                )
+                return returned(state)
+            goes_on = ExitSet.completed(recurrence)
+            earlier = _prior_return_face(state, state.context)
+            if earlier is None:
+                return goes_on
+            continuation = (
+                state.fall_through[0]
+                if len(state.fall_through) == 1
+                else and_(list(state.fall_through))
             )
+            return goes_on.guarded(continuation).union(earlier.sequence(returned))
 
         def own_control(halt):
             effect = halt.effect
@@ -545,18 +520,27 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 isinstance(effect, LoopControlEffect)
                 and effect.target_cid == self.target_cid
             ):
-                return ExitSet.completed(_ItemLeft(recurrence))
+                return ExitSet.completed(recurrence)
             return None
 
-        if isinstance(prefix, NativeOperationExitCarrierV1):
-            return prefix.after_discharge(
-                lambda projected: _require_exit_set(
-                    projected, owner="LoopRecurrenceSugar.outward_face"
-                ).sequence(exit_after, consume=own_control)
+        def compose(body):
+            left = body.sequence(leave, consume=own_control)
+            return ExitSet.completed(recurrence, not_(guard)).union(left.guarded(guard))
+
+        if isinstance(body, NativeOperationExitCarrierV1):
+            # The body still waits on its caller's actuals: once it
+            # discharges, the loop leaves from it exactly as from a body that
+            # reduced to its arms here.
+            return body.after_discharge(
+                lambda projected: compose(
+                    _require_exit_set(
+                        projected, owner="LoopRecurrenceSugar.symbolic-item"
+                    )
+                )
             )
-        return _require_exit_set(
-            prefix, owner="LoopRecurrenceSugar.outward_face"
-        ).sequence(exit_after, consume=own_control)
+        return compose(
+            _require_exit_set(body, owner="LoopRecurrenceSugar.symbolic-item")
+        )
 
     def _advance_iterator(self, iterator, runtime, ctx, *, entries, carried, index=0):
         """Run item ``index`` of the live loop.
@@ -1089,8 +1073,8 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         """The recurrence's one symbolic item: ``(projected, enter, item)``.
         ``projected`` is the item's target unpack, an ``ExitSet`` whose
         completed arms hold the leaves' projections; ``enter(projections)``
-        is the context the outward faces reduce in on such an arm; ``item``
-        is the item to enter while they do.
+        is the context the item's body reduces in on such an arm; ``item``
+        is the item to enter while it does.
 
         A concrete item binds, inside its own segment, each carried name's
         header to the value the item begins with (``_enter_header``), then
@@ -1100,8 +1084,8 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         (``loop_symbolic_item_segment``): each header to the recurrence's
         value of the name (``heads``, ``python:loop.recurrence``), then the
         item of the symbolic iterable (``python:loop.item``) through the same
-        unpack.  A read in a face decides through its key; the name is never
-        read.
+        unpack.  A read in the body decides through its key; the name is
+        never read.
 
         A name target's unpack is the item whole.  A destructuring target's
         is the item's runtime unpack, two-faced: each leaf's key (a
@@ -1586,55 +1570,3 @@ class _WhileTest:
     formula: object
     ctx: object
     body: object = None
-
-
-@dataclass(frozen=True)
-class _DeferredOutwardFace:
-    """Stands for an outward face whose statement a caller's actuals select."""
-
-    index: int
-
-
-@dataclass(frozen=True)
-class _ItemLeft:
-    """How the symbolic item left by one arm of an outward face reduced
-    after the statements ahead of it (``LoopRecurrenceSugar._face_outcome``):
-    ``block``, what the loop leaves with on that arm -- the item's entries
-    then the face's return, an earlier return's entries, or the recurrence
-    for this loop's own ``break``/``continue``."""
-
-    block: object
-
-
-def _outward_face_partition(outcome, face, *, guarded=False):
-    """The exits one outward face contributes: each return is the face's one
-    block entry (or the item's entries then it: ``_ItemLeft``), each halt
-    keeps the face's state."""
-    from sugar_lift_py_tests.floor.block_value import BlockValue
-    from sugar_lift_py_tests.outcome import Completed, Halted
-    from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
-
-    # A deferred face is enrolled by its caller through ``after_discharge``;
-    # one that reaches here undischarged is refused by name.
-    exits = _require_exit_set(outcome, owner="LoopRecurrenceSugar.outward_face")
-    if guarded:
-        exits = exits.guarded(face.guard)
-    partition = []
-    for exit_ in exits.exits:
-        if isinstance(exit_, Halted):
-            partition.append(
-                Halted(exit_.guard, exit_.effect, face.state, owed=exit_.owed)
-            )
-            continue
-        partition.append(
-            Completed(
-                exit_.guard,
-                (
-                    exit_.value.block
-                    if isinstance(exit_.value, _ItemLeft)
-                    else BlockValue((exit_.value,), can_fall_through=False)
-                ),
-                owed=exit_.owed,
-            )
-        )
-    return tuple(partition)

@@ -803,16 +803,31 @@ def test_loop_else_carrier_publishes_once_it_discharges(monkeypatch):
     assert "owed.else" in arm.owed
 
 
-def test_loop_outward_face_carrier_is_refused_by_name():
-    from sugar_lift_py_tests.sugar.loop_recurrence_sugar import (
-        _outward_face_partition,
+def test_loop_symbolic_item_carrier_composes_through_after_discharge():
+    # The symbolic item's body waits on its caller's actuals. Once it
+    # discharges, the loop leaves from its arms exactly as from a body
+    # reduced here: the return under the item guard, the recurrence under
+    # its negation.
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+    from sugar_lift_py_tests.sugar.loop_recurrence_sugar import LoopRecurrenceSugar
+
+    carrier, left, right = _carrier()
+    body = carrier.and_then(
+        lambda value: ExitSet.completed(_ReducedBlock((value,), False, ()))
+    )
+    loop = SimpleNamespace(target_cid="loop-target:" + "c" * 32)
+    left_by = LoopRecurrenceSugar._leave_symbolic_item(
+        loop, body, "recurrence", atomic("test.item", [])
     )
 
-    carrier, _, _ = _carrier()
-    face = SimpleNamespace(guard=atomic("test.face", []), state=None)
-    with pytest.raises(ConstructionPanic) as excinfo:
-        _outward_face_partition(carrier, face, guarded=True)
-    _refused(excinfo, "LoopRecurrenceSugar.outward_face")
+    assert isinstance(left_by, NativeOperationExitCarrierV1)
+    exits = left_by.discharge(None, _actuals(left, right))
+    assert isinstance(exits, ExitSet)
+    values = [exit_.value for exit_ in exits.exits]
+    assert values.count("recurrence") == 1
+    assert values.count(BlockValue((TermValue(3),), can_fall_through=False)) == 1
+    assert all("test.item" in str(exit_.guard) for exit_ in exits.exits)
 
 
 # --- spread_sugar -----------------------------------------------------------
