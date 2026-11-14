@@ -32,8 +32,8 @@ for line in sys.stdin:
         fs::set_permissions(&script, p).unwrap();
     }
     LiftManifest::resolved(
-        "native".into(),
-        "native-producer".into(),
+        "native",
+        "native-producer",
         Dialect::Other("native".into()),
         vec![script.display().to_string()],
         None,
