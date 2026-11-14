@@ -77,14 +77,17 @@ class LiveForRuntimeV1:
 def _latch_evaluations(statements, scope) -> dict[str, str]:
     """The evaluation key of each name's last top-level binder in a live
     loop body, for the names whose last such binder is a statement
-    evaluation (``x += e``, an unpack's projection: its binding is an
-    ``EvaluationRef``).
+    evaluation (``x += e``, an unpack's projection, a walrus: its binding is
+    an ``EvaluationRef``).
 
     Threaded the way ``_control_guards`` threads the body: a nested loop owns
-    its bindings and is skipped.  A key here is only where the next item's
-    value is looked for first; the recurrence reads it as the latest of the
-    key, the header and the name, so a binder this walk does not see (a
-    nested loop, an arm of an ``if``) still wins when it wrote last.
+    its bindings and is skipped.  A walrus in a statement writes before the
+    statement's own binding does (``y = (x := e)``).  A key here is only
+    where the next item's value is looked for first; the recurrence reads it
+    as the latest of the key, the header and the name, so a binder this walk
+    does not see (a nested loop, an arm of an ``if``) still wins when it
+    wrote last, and a walrus that did not run this item (an untaken arm)
+    left its key unbound in the item.
     """
     from .nodes import EvaluationRef, For, While
 
@@ -93,6 +96,12 @@ def _latch_evaluations(statements, scope) -> dict[str, str]:
     for statement in statements:
         if isinstance(statement, (For, While)):
             continue
+        for walrus in statement.walk():
+            if walrus.kind != "NamedExpr" or walrus.target.kind != "Name":
+                continue
+            evaluation = getattr(walrus, "evaluation", None)
+            if isinstance(evaluation, str):
+                latch[walrus.target.id] = evaluation
         binding = statement.substitution_binding(current)
         if not binding:
             continue
@@ -103,6 +112,43 @@ def _latch_evaluations(statements, scope) -> dict[str, str]:
             latch[name] = node.evaluation if isinstance(node, EvaluationRef) else None
         current.update(binding)
     return {name: key for name, key in latch.items() if key is not None}
+
+
+def _refuse_deferred_carried_writes(loop, carried_names) -> None:
+    """Refuse, by name, a live loop whose body or ``else`` holds a generator
+    expression's walrus (``deferred``) writing a name the loop carries.
+
+    That walrus writes when the generator is consumed, and its write is not
+    carried out of the consumer: the value the next item begins with (the
+    latch, ``_latch_evaluations``) and the value the loop publishes would be
+    the header's or an earlier write's, while Python's may be the
+    generator's.  Undecided, so refused; a read after the generator outside
+    a carried name is refused at the read (``EvaluationRefSugar``)."""
+    carried = set(carried_names)
+    for statement in (*loop.body, *loop.orelse):
+        for walrus in statement.walk():
+            if (
+                walrus.kind == "NamedExpr"
+                and walrus.target.kind == "Name"
+                and walrus.target.id in carried
+                and getattr(walrus, "deferred", False) is True
+            ):
+                from .panic import SugarNotWritten
+
+                raise SugarNotWritten(
+                    owner="live_loop_construction.construct_live_loop_recurrence",
+                    blame=walrus.fragment,
+                    observed=(
+                        "a generator expression's walrus writes "
+                        f"`{walrus.target.id}`, a name the live loop carries: "
+                        "it writes when the generator is consumed"
+                    ),
+                    requested="the generator's write carried out of its consumer",
+                    fix=(
+                        "carry the write of a generator consumed in the item out "
+                        "of its consumer before the latch reads the name"
+                    ),
+                )
 
 
 def _initial_value_sugar_for_loop_prestate(state):
@@ -405,6 +451,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
             if isinstance(scope.get(name), BindingEntryV1)
         )
     )
+    _refuse_deferred_carried_writes(loop, carried_names)
     pre_entries = tuple(scope[name] for name in carried_names)
     pre_state, pre_runtime = _sealed_state(pre_entries)
 

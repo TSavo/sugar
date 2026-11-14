@@ -686,23 +686,24 @@ def test_a_comprehension_substituted_into_a_dict_value_is_constructed():
     assert value.args[0] != outer, f"inner iterable was {value.args[0]!r}"
 
 
-def test_a_walrus_in_a_comprehension_element_stays_loud_in_every_form():
-    # The LYING twin's arm: opening the door to a nested comprehension must
-    # not open it to a walrus. A walrus binds into the enclosing scope: over
-    # finite members each member writes its key, but over a symbolic iterable
-    # the scoped guarded fold has no one value for that write, so every form
-    # stays loud (a generator expression at construction, the others when the
-    # fold would complete).
-    from sugar_source_tree.panic import SugarNotWritten
-
-    for source in (
-        "def f(xs, g):\n    return [(n := g(x)) for x in xs]\n",
-        "def f(xs, g):\n    return {(n := g(x)) for x in xs}\n",
-        "def f(xs, g):\n    return ((n := g(x)) for x in xs)\n",
-        "def f(xs, g):\n    return {x: (n := g(x)) for x in xs}\n",
+def test_a_walrus_in_a_comprehension_element_folds_its_presented_value():
+    # A walrus binds into the enclosing scope, and over a symbolic iterable
+    # its write is carried out as the last member's write, guarded by some
+    # member writing (#7757).  The fold itself folds the value the walrus
+    # PRESENTS: the element is `g(x)`, never the walrus wrapper, and a name
+    # that had no binding before (here `n`) carries no write out at all, so
+    # a read of it after the comprehension is refused by name.
+    for source, kind in (
+        ("def f(xs, g):\n    return [(n := g(x)) for x in xs]\n", "py.listcomp"),
+        ("def f(xs, g):\n    return {(n := g(x)) for x in xs}\n", "py.setcomp"),
+        ("def f(xs, g):\n    return ((n := g(x)) for x in xs)\n", "py.generatorexp"),
+        ("def f(xs, g):\n    return {x: (n := g(x)) for x in xs}\n", "py.dictcomp"),
     ):
-        try:
-            _post_of(source)
-        except SugarNotWritten:
-            continue
-        raise AssertionError(f"walrus constructed silently: {source}")
+        post = _post_of(source)
+        observed, iterable, body = _fold(post)
+        assert observed == kind, f"{source} constructed {observed}"
+        assert iterable == make_var("xs"), f"{source} folded {iterable!r}"
+        element = body.body.args[1] if kind == "py.dictcomp" else body.body
+        assert element == _call_result(
+            _ctor("py.call", [make_var("g"), _coordinate(body)])
+        ), f"{source} folded {element!r}"
