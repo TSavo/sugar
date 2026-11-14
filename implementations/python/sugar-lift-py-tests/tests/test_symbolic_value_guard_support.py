@@ -127,17 +127,35 @@ def test_type_call_result_is_a_type_object() -> None:
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
+    term = ctor(
+        "call:type",
+        [SymbolicValue(make_var("exc")).to_term(owner="type-call")],
+        symbol_kind="builtin",
+    )
+    # The builtin binding's citation (``python_type_coordinate``), never the
+    # spelling ``type``, is what makes the result a type object.
+    spelled = CallSiteValue(
+        target_name="type",
+        arg_values=(SymbolicValue(make_var("exc")),),
+        parameters=(),
+        term=term,
+        body=None,
+        site="type-call",
+    )
+    assert not isinstance(
+        spelled.python_isinstance(
+            "type", ctor("python:type", [str_const("type")]), "site"
+        ).completed_value(),
+        TrueBoolLiteralSugar,
+    )
     result = CallSiteValue(
         target_name="type",
         arg_values=(SymbolicValue(make_var("exc")),),
         parameters=(),
-        term=ctor(
-            "call:type",
-            [SymbolicValue(make_var("exc")).to_term(owner="type-call")],
-            symbol_kind="builtin",
-        ),
+        term=term,
         body=None,
         site="type-call",
+        python_type_coordinate=term,
     )
 
     as_type = result.python_isinstance(

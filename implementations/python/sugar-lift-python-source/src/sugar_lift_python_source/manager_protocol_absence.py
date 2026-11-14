@@ -317,13 +317,6 @@ def _class_scope_names(class_def) -> set[str]:
     return names
 
 
-def _unshadowed_builtin(name: str, unit) -> bool:
-    import builtins
-
-    bindings = unit.module_direct_bindings or {}
-    return not bindings.get(name) and hasattr(builtins, name)
-
-
 def _decorator_keeps_the_function(method, decorator) -> bool:
     """Whether ``decorator`` of the class-body ``method`` binds the method's
     name to a function or a builtin method descriptor of it.
@@ -354,8 +347,12 @@ def _expression_is_inert(expression, unit) -> bool:
         if isinstance(node, NamedExpr):
             return False
         if isinstance(node, Call):
-            if not isinstance(node.func, Name) or not _unshadowed_builtin(
-                node.func.id, unit
+            # The builtin is known by the read's binding at its coordinate
+            # (``SourceUnit.builtin_reference_at``), never a second resolver.
+            if (
+                not isinstance(node.func, Name)
+                or unit.builtin_reference_at(node.func.id, node.func.line_col_span())
+                is None
             ):
                 return False
             if node.func.id in _DYNAMIC_SCOPE_CALLS | _ATTRIBUTE_WRITERS:
