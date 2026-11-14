@@ -1,8 +1,8 @@
 """A slice `lower:upper:step` is the py.slice coordinate; omitted bounds are None.
 
-Projection note: formal-parameter subscript operations leave pending
-parameter-contract candidates. Read the slice term from the conditional
-construction value — never via ``UniverseValue.post`` while demands pend.
+Projection note: a formal's subscript is decided by the caller's actual (the
+``subscript`` carrier).  Read the slice term at the formal's own symbolic
+stand-in — never via ``UniverseValue.post`` while demands pend.
 """
 
 from __future__ import annotations
@@ -18,7 +18,27 @@ def _sub(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(src)
         path = f.name
-    universe = next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions()).sugar().desugar().completed_value()
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.outcome import Completed
+
+    sugar = next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions()).sugar()
+    outcome = sugar.desugar()
+    if isinstance(outcome, NativeOperationExitCarrierV1):
+        outcome = outcome.discharge(
+            None,
+            {
+                coordinate.coordinate_cid: SymbolicValue(
+                    make_var(coordinate.declared_name)
+                )
+                for coordinate in sugar.formal_coordinates
+            },
+        )
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    universe = done.value
     for entry in universe.record.statements:
         if type(entry).__name__ == "ReturnValue":
             return entry.value.term

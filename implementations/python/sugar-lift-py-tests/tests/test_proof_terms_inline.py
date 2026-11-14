@@ -62,11 +62,14 @@ def test_the_identity_post_is_stated_inline(tmp_path: Path) -> None:
 
 
 def test_an_indexing_post_is_stated_inline(tmp_path: Path) -> None:
+    # The receiver is not a formal: a formal's own subscript (``xs[0]``) is
+    # decided by its caller's actual (the ``subscript`` carrier) and states
+    # no post of its own.
     project = tmp_path / "linkunit"
     _stage_cli_project(
         project,
-        "def consume(xs):\n    return xs[0]\n\n\n"
-        "def test_consume():\n    assert consume([1, 2]) == 1\n",
+        "def consume(i):\n    return [1, 2][i]\n\n\n"
+        "def test_consume():\n    assert consume(0) == 1\n",
     )
     mint = mint_project(project)
     assert mint.returncode == 0, mint.stderr

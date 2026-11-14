@@ -611,6 +611,18 @@ def _project_method_call(receiver, name, keyword_names, *operands_site_and_ctx):
     return dispatch_method_call(name.value, receiver, positional, kw_values, site, ctx)
 
 
+def _project_subscript(receiver, index, site, ctx):
+    """``receiver[index]`` re-dispatched on resolved actuals through the one
+    subscript door (``discharge_subscript``), exactly as ``SubscriptSugar``
+    asks it; an actual that is still a formal defers again to its own
+    caller."""
+    from sugar_lift_py_tests.operations.subscript_operation import (
+        discharge_subscript,
+    )
+
+    return discharge_subscript(receiver, index, site, ctx, owner="project_subscript")
+
+
 _NATIVE_OPERATION_PROJECTORS = {
     # Receiver-selected method call (formal receiver or operand).
     "method_call": _project_method_call,
@@ -628,7 +640,9 @@ _NATIVE_OPERATION_PROJECTORS = {
         name, site, ctx
     ),
     # Formal subscript load (#6611): receiver[index] — binary, not the store.
-    "subscript": lambda receiver, index, site, ctx: receiver.subscript(index, site),
+    # The actual answers through the one subscript door a source subscript
+    # takes (``discharge_subscript``), under the caller's context.
+    "subscript": _project_subscript,
     # Binary arithmetic / bitwise (_BINARY_OPERATOR_COORDINATE keys), applied
     # under the caller's context.
     "add": lambda left, right, site, ctx: left.add(right, site, ctx),

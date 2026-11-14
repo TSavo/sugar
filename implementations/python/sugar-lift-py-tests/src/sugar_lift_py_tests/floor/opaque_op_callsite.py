@@ -180,21 +180,12 @@ class OpaqueOpCallsite(FloorValue):
     def next_with(self, operation: Any, ctx: Any) -> Any:
         """``next(opaque_iter)`` (e.g. ``next(df.itertuples(...))``).
 
-        Folded receivers delegate; opaque mints ``call:next(self)`` with
-        ``computed=None`` — never invent the first yielded element.
+        Folded receivers delegate; an opaque one re-dispatches on its symbolic
+        downstream, whose ``next`` is the one two-faced unanswered outcome
+        (``FloorValue.undecided_next``) -- never a completion that cannot
+        raise, never an invented first element.
         """
-        if self.computed is not None:
-            return self.computed.next_with(operation, ctx)
-        del ctx, operation
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        return ExitSet.completed(
-            OpaqueOpCallsite(
-                callee="next",
-                arg=self,
-                computed=None,
-            )
-        )
+        return self._downstream().next_with(operation, ctx)
 
     def subscript_with(self, operation: Any, ctx: Any) -> Any:
         return self._downstream().subscript_with(operation, ctx)

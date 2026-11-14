@@ -129,8 +129,29 @@ def test_no_family_link_unit_owes_a_parameter_contract(family: str) -> None:
     assert unit.to_value()["candidates"] == []
 
 
-def test_a_formal_subscript_still_enrols_its_link_unit() -> None:
+def test_a_formal_still_enrols_its_link_unit() -> None:
     """Positive control: the enrolment row itself survives, owing nothing."""
-    unit = _link_unit_of_f(_FAMILIES["bare"])
+    unit = _link_unit_of_f("def f(p):\n    return p\n")
     assert unit is not None
     assert len(unit.parameter_owned_contract.formal_coordinates) == 1
+    assert unit.candidates == ()
+
+
+def test_a_formal_subscript_owes_the_carrier_demand_instead() -> None:
+    """``p[0]`` on the formal ``p`` is decided by the caller's actual: the
+    function defers as the ``subscript`` carrier, the one form that replaced
+    the owed contract (#6611)."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+    from sugar_source_tree import nodes
+
+    (fn,) = [
+        node
+        for node in _tree(_FAMILIES["bare"]).nodes()
+        if isinstance(node, nodes.FunctionDef) and node.name == "f"
+    ]
+    outcome = function_universe_outcome(fn)
+    assert isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
+    assert outcome.demand.operator == "subscript"

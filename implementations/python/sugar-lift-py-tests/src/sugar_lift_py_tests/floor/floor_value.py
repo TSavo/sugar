@@ -363,12 +363,75 @@ class FloorValue:
         A read that reached the floor with no site is the lifter's own gap:
         it cannot key the completes atom or the debt, so it refuses by name.
         """
+        return self._undecided_protocol_faces(
+            "subscript",
+            (index,),
+            site,
+            owner=owner,
+            read=f"{type(self).__name__}[{type(index).__name__}]",
+            node="Subscript",
+        )
+
+    def undecided_iteration(self, site, *, owner: str):
+        """``iter(self)`` whose ``__iter__`` is not decided here: the two faces.
+
+        The receiver's runtime type and ``__iter__`` (or ``__getitem__``) are
+        not decided here, so ``iter`` may hand back any iterator or raise
+        anything.  It is the same one two-faced unanswered outcome as
+        :meth:`undecided_subscript`: the opaque iterator ``py.iter(<receiver>)``
+        completes only under ``python:iter.completes(python:iter(<term>,
+        <site>))``, the complement halts with an ``UndeterminedRaiseEffect``
+        (producer ``owner``), and both arms owe the ``undecided`` member
+        (reason ``unanswered``) at the call's site.  No ``TypeError`` is
+        guessed.  A live ``for`` over a symbolic iterable never reaches here:
+        it is the loop's recurrence (``LoopRecurrenceSugar``).
+        """
+        return self._undecided_protocol_faces(
+            "iter",
+            (),
+            site,
+            owner=owner,
+            read=f"iter({type(self).__name__})",
+            node="Call",
+        )
+
+    def undecided_next(self, site, *, owner: str):
+        """``next(self)`` whose ``__next__`` is not decided here: the two faces.
+
+        The iterator's runtime type and ``__next__`` are not decided here, so
+        ``next`` may yield any value or raise anything -- ``StopIteration``
+        among them, never named here.  The same one two-faced unanswered
+        outcome as :meth:`undecided_subscript`: the opaque next value
+        ``py.next(<receiver>)`` completes only under
+        ``python:next.completes(python:next(<term>, <site>))``, the
+        complement halts with an ``UndeterminedRaiseEffect`` (producer
+        ``owner``), and both arms owe the ``undecided`` member at the call's
+        site.
+        """
+        return self._undecided_protocol_faces(
+            "next",
+            (),
+            site,
+            owner=owner,
+            read=f"next({type(self).__name__})",
+            node="Call",
+        )
+
+    def _undecided_protocol_faces(
+        self, protocol: str, operands, site, *, owner: str, read: str, node: str
+    ):
+        """The one producer of an undecided protocol read's two faces.
+
+        ``py.<protocol>(<receiver>, *operands)`` completes under
+        ``python:<protocol>.completes(python:<protocol>(<term>, <site>))``,
+        keyed on the exact source site so two reads of the same term are
+        never forced to agree; the complement halts with an
+        ``UndeterminedRaiseEffect`` owned by ``owner``; ``ExitSet.two_faced``
+        owes the read at ``site`` on both arms.  A siteless read is the
+        lifter's own gap and refuses by name.
+        """
         if site is None:
-            _siteless_undecided_read(
-                owner,
-                f"{type(self).__name__}[{type(index).__name__}]",
-                "Subscript",
-            )
+            _siteless_undecided_read(owner, read, node)
         from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import atomic, ctor, str_const
@@ -376,13 +439,16 @@ class FloorValue:
         from sugar_lift_py_tests.outcome import ExitSet
 
         term = ctor(
-            "py.subscript",
-            [self.to_term(owner=owner), index.to_term(owner=owner)],
+            f"py.{protocol}",
+            [
+                self.to_term(owner=owner),
+                *(operand.to_term(owner=owner) for operand in operands),
+            ],
         )
         key = occurrence_key(site)
         completes = atomic(
-            "python:subscript.completes",
-            [ctor("python:subscript", (term, str_const(key)))],
+            f"python:{protocol}.completes",
+            [ctor(f"python:{protocol}", (term, str_const(key)))],
         )
         return ExitSet.two_faced(
             SymbolicValue(term),
