@@ -3012,9 +3012,9 @@ class SourceUnit:
         unrelated frames demand nothing.
 
         Read off this one opened file, once per typed root, and kept on the
-        unit.  Population reads its manager uses from the projected
-        functions (``_projected_manager_call_uses``); a bare-Name head reads
-        its provider Call from the index (``With._provider_manager_call``).
+        unit.  Population reads one manager-use row per use site from the
+        index (``_projected_manager_call_uses``); a bare-Name head reads its
+        provider Call from it at construction (``With._provider_manager_call``).
         The index is keyed by use site: it holds a Call borrowed from another
         locus at every use site it was projected to, so ``m = make(); with m:
         ...; with m: ...`` gives both ``with`` sites the one provider Call.

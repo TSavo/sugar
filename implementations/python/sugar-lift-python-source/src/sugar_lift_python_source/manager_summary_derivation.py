@@ -1018,15 +1018,26 @@ def populate_source_derived_resource_refs(
         owner="manager_summary_derivation imported manager value receipt pairing",
     )
     paired_receipts = {}
-    for call_key, selected in uses.items():
+    for use_key, selected in uses.items():
         _, call, _ = selected
         source_cid = call.unit.source_cid
+        # A row is keyed by its use site; its receipt is the Call's own, at
+        # the Call's span, so every use site one Call reaches pairs with it.
         # The closed call-contract door remains authoritative whenever it
         # admitted the full Call.  Only a keyword-bearing direct Name that it
         # deliberately excludes may fall back to the independently minted
         # value-use receipt at the exact callee occurrence.  No spelling or
         # target-symbol join is admissible here.
-        receipt = call_receipts_by_site.get((source_cid, *call_key))
+        call_span = call.line_col_span()
+        receipt = call_receipts_by_site.get(
+            (
+                source_cid,
+                call_span.start_line,
+                call_span.start_col,
+                call_span.end_line,
+                call_span.end_col,
+            )
+        )
         if receipt is None and call.func.kind == "Name" and call.keywords:
             callee_span = call.func.line_col_span()
             callee_key = (
@@ -1038,7 +1049,7 @@ def populate_source_derived_resource_refs(
             )
             receipt = value_receipts_by_site.get(callee_key)
         if receipt is not None:
-            paired_receipts[call_key] = receipt
+            paired_receipts[use_key] = receipt
 
     graphs = {} if artifact_graph_cache is None else artifact_graph_cache
     # Seed from session so tops already resolved in frame/prefix projection
@@ -1146,10 +1157,10 @@ class _WithReader:
         # A head's calls, keyed by the ``with`` item they belong to: the item
         # itself, or the item a branch-selected arm is an arm of.
         self.uses_by_item = {}
-        for call_key, (coordinate, call, exit_face_id) in uses.items():
+        for use_key, (coordinate, call, exit_face_id) in uses.items():
             item_coordinate = arm_owner.get(coordinate, coordinate)
             self.uses_by_item.setdefault(item_coordinate, []).append(
-                (call_key, coordinate, call, exit_face_id)
+                (use_key, coordinate, call, exit_face_id)
             )
         self.items = {}
         for node, coordinate, item in self._with_items(scope):
@@ -1200,15 +1211,15 @@ class _WithReader:
         if coordinate in self.read_coordinates:
             return
         self.read_coordinates.add(coordinate)
-        for call_key, use_coordinate, call, exit_face_id in self.uses_by_item.get(
+        for use_key, use_coordinate, call, exit_face_id in self.uses_by_item.get(
             coordinate, ()
         ):
-            self._read_call_head(call_key, use_coordinate, call, exit_face_id)
+            self._read_call_head(use_key, use_coordinate, call, exit_face_id)
         entry = self.items.get(coordinate)
         if entry is not None and isinstance(entry[0], With):
             self._read_item_head(coordinate, entry[1])
 
-    def _read_call_head(self, call_key, coordinate, call, exit_face_id) -> None:
+    def _read_call_head(self, use_key, coordinate, call, exit_face_id) -> None:
         from sugar_source_tree.nodes import (
             AsyncFunctionDef,
             Call,
@@ -1217,7 +1228,7 @@ class _WithReader:
             Name,
         )
 
-        receipt = self.paired_receipts.get(call_key)
+        receipt = self.paired_receipts.get(use_key)
         if receipt is not None:
             self.read_imported_head(receipt, coordinate, call, exit_face_id)
             return
@@ -2843,17 +2854,9 @@ def _direct_with_call_uses(root) -> dict:
                 continue
             if hasattr(item, "manager_use_site_start_line"):
                 continue
-            span = expr.line_col_span()
-            start_line, start_col, end_line, end_col = item._manager_use_site_span()
-            coordinate = SourceFragmentCoordinateV1(
-                expr.unit.source_cid,
-                start_line,
-                start_col,
-                end_line,
-                end_col,
-            )
-            uses[(span.start_line, span.start_col, span.end_line, span.end_col)] = (
-                coordinate,
+            use_site = item._manager_use_site_span()
+            uses[use_site] = (
+                SourceFragmentCoordinateV1(expr.unit.source_cid, *use_site),
                 expr,
                 item._source_exit_face_id(),
             )
@@ -2863,6 +2866,10 @@ def _direct_with_call_uses(root) -> dict:
 def _projected_manager_call_uses(source_file, selected_arms=None):
     """Project ordinary reaching assignments into context-manager call uses.
 
+    One row per ``with`` use site, keyed by that site's span.  A bare-Name
+    head's provider Call is read from the tree's one per-use-site index
+    (``SourceUnit.projected_manager_heads``), so ``m = make(); with m: ...;
+    with m: ...`` yields a row at both sites, each over the one Call.
     ``WithItem.substitute`` retains the consumer's immutable use coordinate
     while the existing block substitution transaction replaces a bare Name
     with its reaching value.  Reading that projection preserves shadowing and
@@ -2871,26 +2878,31 @@ def _projected_manager_call_uses(source_file, selected_arms=None):
     from sugar_lift_py_tests.context_manager_resolution import (
         SourceFragmentCoordinateV1,
     )
-    from sugar_source_tree.nodes import AsyncWith, Call, With
-
-    from sugar_source_tree.nodes import selected_manager_calls
+    from sugar_source_tree.nodes import AsyncWith, With, selected_manager_calls
 
     manager_scope_types = (With, AsyncWith)
 
     # Preserve the original direct-call route exactly.
     uses = _direct_with_call_uses(source_file.root)
 
-    def collect(root, *, projected_names: bool) -> None:
+    # The frames that contain a bare-Name manager — single-item ``with m:``
+    # and multi-item ``with m, n:`` alike — projected once, on the tree
+    # (``SourceUnit.projected_manager_heads``).  The multi-item shape was the
+    # first enrolled reproducer (#6489); a returned resource assigned once and
+    # consumed as a single Name is the same projection, not a second binding
+    # mechanism.  The same index answers a bare-Name head's provider Call at
+    # construction (``With._provider_manager_call``) and here, by use site.
+    # No reader has run before it: a ``with ... as name`` in the frame binds
+    # ``name`` without demanding a row nobody has seated
+    # (``With.substitution_binding``).
+    projected, providers = source_file.unit.projected_manager_heads()
+    for root in projected:
         for node in root.walk():
             if not isinstance(node, manager_scope_types):
                 continue
             for item in node.items:
                 expr = item.context_expr
-                if (
-                    projected_names
-                    and item.optional_vars is None
-                    and expr.kind == "IfExp"
-                ):
+                if item.optional_vars is None and expr.kind == "IfExp":
                     leaves = selected_manager_calls(expr)
                     if leaves is not None:
                         # ``with ctx:`` where ``ctx`` was bound in the arms
@@ -2924,55 +2936,19 @@ def _projected_manager_call_uses(source_file, selected_arms=None):
                                 if leaf_coordinate not in arms:
                                     arms.append(leaf_coordinate)
                         continue
-                if not isinstance(expr, Call):
+                # The index holds only a Call borrowed from another locus; an
+                # ordinary direct-call manager in the frame is not in it (its
+                # source node is authoritative, ``_direct_with_call_uses``).
+                use_site = item._manager_use_site_span()
+                call = providers.get(use_site)
+                if call is None:
                     continue
-                if not projected_names and hasattr(item, "manager_use_site_start_line"):
-                    continue
-                span = expr.line_col_span()
-                start_line, start_col, end_line, end_col = item._manager_use_site_span()
-                if projected_names and (
-                    start_line,
-                    start_col,
-                    end_line,
-                    end_col,
-                ) == (
-                    span.start_line,
-                    span.start_col,
-                    span.end_line,
-                    span.end_col,
-                ):
-                    # The projected frame also contains ordinary direct-call
-                    # managers.  Their existing source node is authoritative;
-                    # only a call borrowed from another locus is an assigned
-                    # manager projection.
-                    continue
-                coordinate = SourceFragmentCoordinateV1(
-                    expr.unit.source_cid,
-                    start_line,
-                    start_col,
-                    end_line,
-                    end_col,
-                )
-                object.__setattr__(expr, "_borrowed_manager_call", True)
-                uses[(span.start_line, span.start_col, span.end_line, span.end_col)] = (
-                    coordinate,
-                    expr,
+                object.__setattr__(call, "_borrowed_manager_call", True)
+                uses[use_site] = (
+                    SourceFragmentCoordinateV1(call.unit.source_cid, *use_site),
+                    call,
                     item._source_exit_face_id(),
                 )
-
-
-    # The frames that contain a bare-Name manager — single-item ``with m:``
-    # and multi-item ``with m, n:`` alike — projected once, on the tree
-    # (``SourceUnit.projected_manager_heads``).  The multi-item shape was the
-    # first enrolled reproducer (#6489); a returned resource assigned once and
-    # consumed as a single Name is the same projection, not a second binding
-    # mechanism.  The same projection answers a bare-Name head's provider
-    # Call at construction (``With._provider_manager_call``).  No reader has
-    # run before it: a ``with ... as name`` in the frame binds ``name``
-    # without demanding a row nobody has seated (``With.substitution_binding``).
-    projected, _providers = source_file.unit.projected_manager_heads()
-    for root in projected:
-        collect(root, projected_names=True)
 
     return uses
 
