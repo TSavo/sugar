@@ -50,7 +50,14 @@ class NamedExpressionValue(FloorValue):
         # latest of the two until something rebinds the name.
         temporal = ctx.temporal.bind_value(self.name, self.assigned_value)
         if self.evaluation is not None:
-            temporal = temporal.bind_value(self.evaluation, self.assigned_value)
+            from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
+                evaluation_here,
+            )
+
+            # In a live loop each item's evaluation is its own key.
+            temporal = temporal.bind_value(
+                evaluation_here(self.evaluation), self.assigned_value
+            )
         return self.presented_value.extend_scope(replace(ctx, temporal=temporal))
 
     def as_expression_statement(self):

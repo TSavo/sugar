@@ -64,6 +64,45 @@ class LiveForRuntimeV1:
     initial_value_sugars: tuple[object, ...]
     body_sugars: tuple[object, ...]
     else_sugars: tuple[object, ...]
+    # Per carried name, in ``carried_names`` order: ``(header, latch)``.
+    # ``header`` is the loop header's evaluation key the body reads the name
+    # through (``nodes._loop_header_evaluation_key``), None for a loop target;
+    # ``latch`` is the evaluation key of the body's last top-level binder of
+    # the name when that binder is a statement evaluation (``x += e``), else
+    # None.  Both are construct-time keys; the recurrence qualifies them per
+    # item (``evaluation_here``).
+    carried_evaluations: tuple[tuple[str | None, str | None], ...] = ()
+
+
+def _latch_evaluations(statements, scope) -> dict[str, str]:
+    """The evaluation key of each name's last top-level binder in a live
+    loop body, for the names whose last such binder is a statement
+    evaluation (``x += e``, an unpack's projection: its binding is an
+    ``EvaluationRef``).
+
+    Threaded the way ``_control_guards`` threads the body: a nested loop owns
+    its bindings and is skipped.  A key here is only where the next item's
+    value is looked for first; the recurrence reads it as the latest of the
+    key, the header and the name, so a binder this walk does not see (a
+    nested loop, an arm of an ``if``) still wins when it wrote last.
+    """
+    from .nodes import EvaluationRef, For, While
+
+    current = dict(scope)
+    latch: dict[str, str | None] = {}
+    for statement in statements:
+        if isinstance(statement, (For, While)):
+            continue
+        binding = statement.substitution_binding(current)
+        if not binding:
+            continue
+        for name, state in binding.items():
+            if not isinstance(name, str):
+                continue
+            node = state.state if isinstance(state, BindingEntryV1) else state
+            latch[name] = node.evaluation if isinstance(node, EvaluationRef) else None
+        current.update(binding)
+    return {name: key for name, key in latch.items() if key is not None}
 
 
 def _initial_value_sugar_for_loop_prestate(state):
@@ -762,7 +801,21 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
     records = _conserve_unique_records(records)
     construction = decode_loop_construction_v1({"root": root, "records": records})
     if isinstance(loop, For):
+        from .nodes import _loop_header_evaluation_key
+
         pattern = loop.unit.require_target_pattern(loop, loop.target)
+        target_names = set(pattern.names)
+        latches = _latch_evaluations(loop.body, scope)
+
+        def header(name):
+            # The loop target is bound per item by the recurrence itself.
+            if name in target_names:
+                return None
+            return _loop_header_evaluation_key(loop, name, scope)
+
+        carried_evaluations = tuple(
+            (header(name), latches.get(name)) for name in carried_names
+        )
         construction = replace(
             construction,
             iterable_sugar=loop.iter.sugar(),
@@ -775,6 +828,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
                 ),
                 tuple(statement.sugar() for statement in loop.body),
                 tuple(statement.sugar() for statement in loop.orelse),
+                carried_evaluations,
             ),
         )
 

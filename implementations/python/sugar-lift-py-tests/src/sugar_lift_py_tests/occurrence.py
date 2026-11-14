@@ -63,9 +63,31 @@ def entered(segment: str):
         yield
 
 
+# A live loop iteration's segment (``LoopRecurrenceSugar`` enters one per
+# item).  An unrolled copy's segment is spelled ``loop[start,end)#i``
+# (``shadow.iteration_segment``) and a callee frame's ``call:...``, so this
+# prefix names live iterations alone.
+_LIVE_ITERATION = "loop:"
+
+
 def loop_iteration_segment(target_cid: str, index: int) -> str:
     digest = target_cid.split(":", 1)[-1][:16]
-    return f"loop:{digest}#{index}"
+    return f"{_LIVE_ITERATION}{digest}#{index}"
+
+
+def live_iterations(path: tuple[str, ...] | None = None) -> tuple[str, ...]:
+    """The live loop iterations the reduction running now is inside, outermost
+    first.
+
+    A statement in a live loop's body is constructed once and reduced once per
+    item, so the item is known only here.  An unrolled iteration is not among
+    these: its copy already carries its iteration in its construct-time
+    coordinate.  Nor is a callee frame: a frame's statements are read inside
+    that frame.
+    """
+    if path is None:
+        path = _PATH.get()
+    return tuple(segment for segment in path if segment.startswith(_LIVE_ITERATION))
 
 
 def site_coordinate_cid(site) -> str:

@@ -3050,6 +3050,65 @@ def _evaluation_ref(
     )
 
 
+def _loop_header_evaluation_key(loop, name: str, scope) -> str:
+    """The coordinate of a live loop header's evaluation of ``name``: the
+    value ``name`` holds when an item of ``loop``'s body begins (the pre-loop
+    value at the first item, the previous item's last write after it).
+
+    A live loop is constructed once and reduced once per item, so this key
+    names the header for every item; ``LoopRecurrenceSugar`` binds each item's
+    value under it qualified by that item (``evaluation_here``), as
+    ``Statement._evaluation_key`` is for a statement in the body.  The key is a
+    function of the loop's source occurrence, the name, the iterations the
+    loop is substituted for and the exit path of the clause copy it sits in,
+    so ``For.substitute`` (which rewrites the reads)
+    and ``construct_live_loop_recurrence`` (which hands the key to the
+    recurrence) name the same header without carrying it on the node.
+    """
+    from sugar_lift_python_source.canonical import cid_of_json
+    from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
+
+    from .shadow import occurrence_tags_of
+
+    return EVALUATION_PREFIX + cid_of_json(
+        {
+            "kind": "python-loop-header-evaluation-v1",
+            "loopFragmentCid": loop.fragment.seal().cid,
+            "name": name,
+            "occurrence": [
+                *scope.get(_EVALUATION_OCCURRENCE, ()),
+                *occurrence_tags_of(loop),
+            ],
+            "exitPath": list(scope.get(_EVALUATION_EXIT_PATH, ())),
+        }
+    )
+
+
+def _loop_header_bindings(loop, names, scope) -> dict:
+    """The body scope's binding of each name ``loop`` carries into its body:
+    a reference to the loop header's evaluation of it (temporal choice 1,
+    #7661), never the bare name looked up by spelling.
+
+    A carried name is one the body rebinds that is bound before the loop
+    (a ``BindingEntryV1`` in ``scope``: the same test
+    ``construct_live_loop_recurrence`` uses for the names it carries).  A name
+    bound only inside the body has no value at the header and stays masked, so
+    its read before the body binds it stays the name read.  Each binding keeps
+    the pre-loop binding's coordinate: it is the same variable, read at the
+    header.  Where nothing binds the header key at reduce (a loop reduced as
+    its recurrence, not per item), the reference reads the name, as before.
+    """
+    headers = {}
+    for name in sorted(names):
+        entry = scope.get(name)
+        if not isinstance(entry, BindingEntryV1):
+            continue
+        evaluation = _loop_header_evaluation_key(loop, name, scope)
+        reference = _evaluation_ref(loop, loop.span, evaluation, name)
+        headers[name] = replace(entry, state=reference, sealed_state=None)
+    return headers
+
+
 class _Splice:
     """A substitute result that EXPANDS one statement into several. Returned by
     ``For.substitute`` when a concrete loop unrolls: the loop dissolves into its
@@ -8833,20 +8892,32 @@ class For(Statement):
             # substitution_binding can read the fold; the pre-loop value seeds
             # it from the outer scope. A symbolic loop is not a dead unroll --
             # it is the universal / fold over the hole.
+            #
+            # In the body a carried name (bound before the loop, rebound in the
+            # body) is not masked to the bare name: it reads the loop header's
+            # evaluation of it, the value the item began with, bound per item
+            # by the recurrence (``_loop_header_bindings``).  The loop target is
+            # bound per item by the recurrence itself and stays masked.  The
+            # ``else`` runs once, after every item: it reads names as before.
             with reduction_span(sugar="For.symbolic", role="temporal", site=where):
-                bound = set(
+                target_names = set(
                     self.unit.require_target_pattern(self, self.target).names
-                ) | For._stmts_bound_names(self.body)
+                )
+                bound = target_names | For._stmts_bound_names(self.body)
                 bs = (
                     {k: v for k, v in scope.items() if k not in bound}
                     if bound
                     else scope
                 )
+                body_scope = {
+                    **bs,
+                    **_loop_header_bindings(self, bound - target_names, scope),
+                }
                 changed = {}
                 if iter_changed:
                     changed["iter"] = new_iter
-                for f in ("body", "orelse"):
-                    new, d = self._substitute_body(getattr(self, f), bs)
+                for f, field_scope in (("body", body_scope), ("orelse", bs)):
+                    new, d = self._substitute_body(getattr(self, f), field_scope)
                     if d:
                         changed[f] = new
                 if not changed:
@@ -9234,15 +9305,19 @@ class While(Statement):
             return _Splice(unrolled)
 
         # Symbolic (or unsupported) while: keep the node; mask the carried
-        # names (any name the body rebinds) so the update stays symbolic.
+        # names (any name the body rebinds) so the update stays symbolic.  In
+        # the body a carried name reads the loop header's evaluation of it, as
+        # in a live ``for`` (``_loop_header_bindings``); the test and the
+        # ``else`` read names as before.
         bound = For._stmts_bound_names(self.body)
         bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
+        body_scope = {**bs, **_loop_header_bindings(self, bound, scope)}
         changed = {}
         new_test, d = self._substitute_field(self.test, bs)
         if d:
             changed["test"] = new_test
-        for f in ("body", "orelse"):
-            new, d = self._substitute_body(getattr(self, f), bs)
+        for f, field_scope in (("body", body_scope), ("orelse", bs)):
+            new, d = self._substitute_body(getattr(self, f), field_scope)
             if d:
                 changed[f] = new
         return self if not changed else rewrite(self, **changed)
@@ -15757,12 +15832,25 @@ class Name(Expression):
                     ),
                     self.reporter,
                 )
-            if bound.kind == "EvaluationRef" and bound.span != self.span:
+            if (
+                bound.kind == "EvaluationRef"
+                and bound.name == self.id
+                and bound.span != self.span
+            ):
                 # The same reason: an evaluation reference was minted at its
                 # binding site (the `x += e` target, a walrus target, a
-                # comprehension target), which is not where this read sits.
-                # Re-span to the read; the evaluation key (and a walrus's
-                # unevaluated value) is unchanged.
+                # comprehension target, a live loop's header), which is not
+                # where this read sits.  Re-span to the read; the evaluation
+                # key (and a walrus's unevaluated value) is unchanged.
+                #
+                # An alias is not re-spanned: after ``y = x`` a read of ``y``
+                # is the reference the assignment read, at the assignment's
+                # occurrence.  In a live loop body every assignment records the
+                # value its right-hand side read under that occurrence
+                # (``assigned_value``), and that record is what keeps
+                # ``prev = t; t += v; use(prev)`` reading the value ``prev``
+                # was given; a reference re-spanned at ``use(prev)`` would miss
+                # the record and read the latest write of ``t``.
                 return _evaluation_ref(
                     self,
                     self.span,
@@ -15916,7 +16004,9 @@ class EvaluationRef(Expression):
     under (``ListComp._target_references``, ``ComprehensionSugar._member_ctx``).
     A walrus's reference also carries its substituted value (``unevaluated``,
     a slot, not a child), read only where the temporal never received the
-    evaluation.  Built by ``_evaluation_ref`` only.
+    evaluation.  In a live loop's body a carried name reads the loop
+    header's evaluation of it (``_loop_header_evaluation_key``), which the
+    recurrence binds per item.  Built by ``_evaluation_ref`` only.
     """
 
     evaluation: str
