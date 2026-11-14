@@ -1486,18 +1486,18 @@ def _run_lexical_import_pass(
 ) -> _Pass:
     """One reaching-definition walk: call rows, value rows, and name targets.
 
-    The file is read at its own seat (``_source_file_at_own_seat``), the seat
-    the one opener reads, with no construction context: these rows are what
-    that context's table is built from, so the opener itself cannot be used
-    here. Lexical product is §4-resident so a second open does not re-walk.
+    The file is opened by the opener's first stage (``_open_at_seat``), at the
+    seat the opener reads, with no construction context: these rows are what
+    that context's table is built from, so population cannot run here. Lexical
+    product is §4-resident so a second open does not re-walk.
     """
-    from sugar_lift_py_tests.lift_rpc import _source_file_at_own_seat
+    from sugar_lift_py_tests.lift_rpc import _open_at_seat
     from sugar_source_tree.process_resident_file import (
         get_or_prepare_lexical_import_pass,
     )
 
     _require_source_cid_matches_text(source, source_cid)
-    source_file = _source_file_at_own_seat(Path(path), root=Path(root))
+    source_file = _open_at_seat(Path(path), root=Path(root))
     if source_file.unit.source_cid != source_cid:
         # The seat read different bytes than the claimed text: the claim is
         # stale against the file, refused like any other stale claim.

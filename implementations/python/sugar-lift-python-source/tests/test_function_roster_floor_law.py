@@ -107,6 +107,7 @@ def test_open_path_failure_before_sourcefile_still_raises(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An open that never builds its SourceFile raises, before any populate."""
+    from sugar_lift_py_tests.lift_rpc import _open_at_seat
     from sugar_source_tree.panic import SugarNotWritten
     import sugar_source_tree.tree as tree_mod
 
@@ -114,7 +115,7 @@ def test_open_path_failure_before_sourcefile_still_raises(
     path.write_text("def a():\n    return 1\n", encoding="utf-8")
     seed = tmp_path / "seed.py"
     seed.write_text("x = 1\n", encoding="utf-8")
-    blame = tree_mod.SourceFile.from_path(seed).root.fragment
+    blame = _open_at_seat(seed, root=tmp_path).root.fragment
 
     def boom_init(self, *_a, **_k):
         raise SugarNotWritten(

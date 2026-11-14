@@ -93,9 +93,9 @@ def test_open_snw_preserves_authenticated_ast_function_denominator(
     # make SourceFile.__init__ raise with that coordinate as blame.
     seed = tmp_path / "seed.py"
     seed.write_text("x = 1\n", encoding="utf-8")
-    from sugar_source_tree.tree import SourceFile as SF
+    from sugar_lift_py_tests.lift_rpc import _open_at_seat
 
-    seed_sf = SF.from_path(seed)
+    seed_sf = _open_at_seat(seed, root=tmp_path)
     blame = seed_sf.root.fragment
 
     def boom_init(self, *_a, **_k):

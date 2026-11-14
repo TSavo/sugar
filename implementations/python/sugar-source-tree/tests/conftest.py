@@ -64,15 +64,19 @@ def _isolate_process_resident_files():
 def oracle_source_file(source: str, backend=None, suffix: str = ".py"):
     """Test door that honors the law: text enters only through the oracle.
 
-    Writes the literal to a real file and constructs the SourceFile through
-    the oracle's path-addressed identity — there is no raw-string door to
-    bypass, in tests or anywhere else.
+    Writes the literal to a real file and opens it the one way a file is
+    opened: the opener's first stage, which reads it at its seat through the
+    oracle -- there is no raw-string door and no path door to bypass, in tests
+    or anywhere else. Each file has its own temporary name, so its seat is its
+    own.
     """
-    from sugar_source_tree.tree import SourceFile
+    from pathlib import Path
+
+    from sugar_lift_py_tests.lift_rpc import _open_at_seat
 
     with tempfile.NamedTemporaryFile(
         "w", encoding="utf-8", suffix=suffix, delete=False
     ) as handle:
         handle.write(source)
-        path = handle.name
-    return SourceFile.from_path(path, backend=backend)
+        path = Path(handle.name)
+    return _open_at_seat(path, root=path.parent, backend=backend)

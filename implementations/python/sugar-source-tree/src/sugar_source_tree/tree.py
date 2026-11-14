@@ -51,10 +51,11 @@ class SourceFile:
 
     Constructed from the SourceOracle's identity triple ``(source,
     filename, content CID)`` — the ONE currency exchange; there is no
-    raw-string constructor and no filesystem read here. A workspace file is
-    opened for construction one way only:
-    ``sugar_lift_py_tests.lift_rpc.open_source_file_for_construction``, which
-    seats, contextualizes and populates the unit (#7757 item 5).
+    raw-string constructor and no filesystem read here, and no path door: a
+    file is opened one way only, by
+    ``sugar_lift_py_tests.lift_rpc.open_source_file_for_construction``, whose
+    first stage (``_open_at_seat``) reads the file at its seat and constructs
+    this from that identity, and which then populates the unit (#7757 item 5).
 
     Parsing happens at construction: a ``SourceFile`` you hold is always
     a parsed file, never a promise of one. ``root`` is the ``Module``;
@@ -144,29 +145,6 @@ class SourceFile:
                 constructed_module.construction_event_receipt_cid
             )
         return self
-
-    @classmethod
-    def from_path(
-        cls,
-        path: Path | str,
-        backend: Optional[Backend] = None,
-        reporter: AuditReporter = NULL_REPORTER,
-        construction_context: object | None = None,
-    ) -> "SourceFile":
-        """Through the oracle's path-addressed door. Unreadable/undecodable
-        is the oracle's loud ``SourceUnavailable``, never a swallow."""
-        from sugar_lift_py_tests.engine_log import reduction_span
-        from sugar_lift_python_source.source_oracle import path_source
-
-        path_s = str(path)
-        with reduction_span(sugar="OraclePathSource", role="file", site=path_s):
-            identity = path_source(path_s)
-        return cls(
-            identity,
-            backend=backend,
-            reporter=reporter,
-            construction_context=construction_context,
-        )
 
     @property
     def filename(self) -> str:

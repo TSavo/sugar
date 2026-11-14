@@ -12,15 +12,16 @@ from sugar_lift_py_tests.floor import TermValue, TupleValue
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_source_tree.nodes import Subscript
 from sugar_source_tree.panic import SugarNotWritten
-from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.lift_rpc import _open_at_seat
 
 
 def _subscripts(tmp_path: Path, monkeypatch, source: str):
     path = tmp_path / "tuple_slices.py"
     path.write_text(source, encoding="utf-8")
     monkeypatch.chdir(tmp_path)
-    tree = SourceFile.from_path(
-        path.name,
+    tree = _open_at_seat(
+        path,
+        root=tmp_path,
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )
     return tuple(node for node in tree.nodes() if isinstance(node, Subscript))

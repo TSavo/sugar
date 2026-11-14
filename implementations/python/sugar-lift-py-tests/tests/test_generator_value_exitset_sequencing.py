@@ -40,7 +40,7 @@ from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_source_tree.nodes import Call
 from sugar_source_tree.panic import SugarNotWritten
-from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.lift_rpc import _open_at_seat
 
 
 @dataclass(frozen=True)
@@ -249,7 +249,7 @@ def test_synthetic_all_halted_assign_is_unchanged_and_runs_no_continuation(
     )
     path = tmp_path / "option_undo.py"
     path.write_text(source, encoding="utf-8")
-    tree = SourceFile.from_path(path)
+    tree = _open_at_seat(path, root=tmp_path)
     occurrence = next(node.fragment for node in tree.nodes() if isinstance(node, Call))
     membership_guard = atomic("option.contains", [])
     equality_guard = atomic("option.equals", [])
@@ -389,7 +389,7 @@ def test_nonlinear_continuation_gap_stays_typed_loud(
 def _carrier(tmp_path, *, mixed: bool = False):
     path = tmp_path / "carrier.py"
     path.write_text("def f(left, right):\n    return left == right\n", encoding="utf-8")
-    site = next(SourceFile.from_path(path).functions()).body[0].fragment
+    site = next(_open_at_seat(path, root=tmp_path).functions()).body[0].fragment
     halted = None
     completed_value = None
     operands = (TermValue(1), TermValue(2))

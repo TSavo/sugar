@@ -23,14 +23,17 @@ These twins pin what the coordinate must NOT merge and what it must NOT lose:
 import gc
 import os
 import tempfile
+from pathlib import Path
 
+from sugar_lift_py_tests.lift_rpc import (
+    _open_at_seat,
+    tree_construction_context_for_workspace,
+)
 from sugar_source_tree.backend import materialize
 from sugar_source_tree.nodes import ControlConstructionContextV1, Node
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.reporter import CollectingReporter
 from sugar_source_tree.shadow import rewrite
-from sugar_source_tree.tree import SourceFile
-from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 def _node_classes():
@@ -45,10 +48,13 @@ def _function(src, name=None):
     with open(p, "w") as fh:
         fh.write(src)
     reporter = CollectingReporter()
-    sf = SourceFile.from_path(
-        p,
+    # The seat is stated against ``d``, so a workspace is in hand: construct
+    # against that workspace's table, never the no-workspace claim.
+    sf = _open_at_seat(
+        Path(p),
+        root=Path(d),
         reporter=reporter,
-        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        construction_context=tree_construction_context_for_workspace(Path(d)),
     )
     for fn in sf.functions():
         if name is None or getattr(fn, "name", None) == name:

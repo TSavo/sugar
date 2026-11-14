@@ -14,7 +14,7 @@ merely old vocabulary in a comment, and it is **not** every soft path.
 
 | Shape | Owner |
 | --- | --- |
-| Bare ``SourceFile.from_path`` + ``.sugar()`` without context | ``construction_context_door_law`` |
+| Bare open (``_open_at_seat`` with no context, or the deleted ``SourceFile.from_path``) + ``.sugar()`` | ``construction_context_door_law`` |
 | Manifest membrane / foreign AST / dual-old-lifter | ``construction_side_door_law`` |
 | Private AST evaluator manufacturing floors | ``construction_invariant_law`` SECOND-CONSTRUCTION-PATH |
 | Vendor logo dispatch | ``vendor_special_case_law`` |
@@ -117,6 +117,7 @@ _MEANING_CALL_TAILS = frozenset(
         "sugar",
         "from_path",
         "open_source_file_for_construction",
+        "_open_at_seat",
         "force_floor",
         "build_proof_envelope",
         "_reduce_source_outcome",

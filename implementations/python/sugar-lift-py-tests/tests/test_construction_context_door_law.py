@@ -1,8 +1,9 @@
 """Permanent floor: construction never enters through the bare door.
 
-``SourceFile.from_path`` builds a tree with no construction context. That is a
-legitimate door -- demand scans, roll-call discharge and parse-only corpus emit
-all use it correctly. Constructing through it does not fail; it LIES, because a
+The opener's first stage (``lift_rpc._open_at_seat``) opened without a
+construction context builds a tree with no context; its old spelling,
+``SourceFile.from_path``, is deleted. That is a legitimate door -- the demand
+scans use it correctly. Constructing through it does not fail; it LIES, because a
 context-less tree paints every ``with`` ``RuntimeSelectedContextManager``
 regardless of resolvability.
 
@@ -101,13 +102,26 @@ def test_a_nested_scope_does_not_blame_its_parent() -> None:
 
 
 def test_the_real_demand_scan_and_roll_call_stay_clean() -> None:
-    """Pinned on the live module, not a paraphrase of it."""
+    """Pinned on the live module, not a paraphrase of it.
+
+    The door lives in ``lift_rpc``: the opener's first stage, opened bare by
+    the With-row demand scan and under a context by the opener itself.
+    """
     lift_rpc = (_KIT / "src" / "sugar_lift_py_tests" / "lift_rpc.py").read_text(
         encoding="utf-8"
     )
 
-    assert "SourceFile.from_path" in lift_rpc, "fixture stale: the door moved"
+    assert "def _open_at_seat(" in lift_rpc, "fixture stale: the door moved"
+    assert "_open_at_seat(path, root=Path(root))" in lift_rpc, (
+        "fixture stale: the bare demand scan moved"
+    )
     assert _SCANNER.offenders_in_source(lift_rpc, path="lift_rpc.py") == []
+
+
+def test_the_present_bare_door_is_caught_and_the_contexted_stage_is_not() -> None:
+    """The first stage is the bare door only when opened without a context."""
+    assert len(_offenders(_SCANNER.PRESENT_BARE_DOOR)) == 1
+    assert _offenders(_SCANNER.FIRST_STAGE_UNDER_CONTEXT) == []
 
 
 # -- zero is measured, and a planted offender still trips it ------------------

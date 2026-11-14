@@ -16,6 +16,7 @@ from sugar_lift_py_tests.context.reduce_context import ReduceContext
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor import MutableGlobalValue, StringValue, TermValue
 from sugar_lift_py_tests.ir import atomic
+from sugar_lift_py_tests.lift_rpc import _open_at_seat
 from sugar_lift_py_tests.outcome.exit_set import (
     Completed,
     ExitSet,
@@ -33,7 +34,6 @@ from sugar_lift_py_tests.sugar.match_sugar import (
 from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_source_tree.nodes import Name, Subscript
-from sugar_source_tree.tree import SourceFile
 
 
 def _raised(occurrence: str) -> RaiseEffect:
@@ -84,7 +84,7 @@ def test_with_partition_face_stamps_the_minted_face_and_keeps_every_arm() -> Non
 def _lookup_site(tmp_path):
     filename = "mutable_global_arms_7825.py"
     (tmp_path / filename).write_text("OPTIONS = {}\nvalue = OPTIONS[key]\n")
-    tree = SourceFile.from_path(filename)
+    tree = _open_at_seat(tmp_path / filename, root=tmp_path)
     binding = next(
         node.fragment
         for node in tree.nodes()

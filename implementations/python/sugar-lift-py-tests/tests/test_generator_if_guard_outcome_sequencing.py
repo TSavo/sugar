@@ -27,13 +27,13 @@ from sugar_lift_py_tests.generator_construction import (
     YieldStepV1,
 )
 from sugar_lift_py_tests.ir import and_, atomic, implies, not_
+from sugar_lift_py_tests.lift_rpc import _open_at_seat
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import partition
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_source_tree.panic import SugarNotWritten
-from sugar_source_tree.tree import SourceFile
 
 
 @dataclass(frozen=True)
@@ -303,7 +303,7 @@ def test_guard_carrier_composes_prefix_and_runs_projection_and_transition_once(
 ) -> None:
     path = tmp_path / "guard_carrier.py"
     path.write_text("def f(left, right):\n    return left == right\n", encoding="utf-8")
-    site = next(SourceFile.from_path(path).functions()).body[0].fragment
+    site = next(_open_at_seat(path, root=tmp_path).functions()).body[0].fragment
     halted = _halt("carrier")
     truth_calls: list[object] = []
     truth = _TruthOperand(
@@ -352,7 +352,7 @@ def test_projected_truth_exitset_composes_a_branch_carrier_without_duplication(
 ) -> None:
     path = tmp_path / "projected_truth_carrier.py"
     path.write_text("def f(left, right):\n    return left == right\n", encoding="utf-8")
-    site = next(SourceFile.from_path(path).functions()).body[0].fragment
+    site = next(_open_at_seat(path, root=tmp_path).functions()).body[0].fragment
     branch_carrier = NativeOperationExitCarrierV1.mint(
         site=site,
         operator="equals",

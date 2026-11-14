@@ -341,7 +341,8 @@ class BareConstructionDoor(Exception):
     DELIBERATELY NOT A ``SourceTreePanic``. Every ``SourceTreePanic`` is caught
     by ``Node.sugar`` and recorded as a countable construction gap -- a fact
     about the SOURCE. This is a fact about how the TREE WAS OPENED: the caller
-    used the bare door (``SourceFile.from_path`` / ``SourceFile(...)``) and then
+    used the bare door (the opener's first stage, ``_open_at_seat``, with no
+    construction context, or ``SourceFile(...)`` directly) and then
     drove construction over a tree with ``construction_context is None``.
 
     Folding it into ``SugarNotWritten`` would file a HARNESS defect as a

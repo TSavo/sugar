@@ -1392,11 +1392,18 @@ def _terminal_via_enumerate(
     # the real D3 call, then join it to the audit-open observation afterward.
     # get_resident's LRU touch is the same touch the immediately-following open
     # performs, so this adds no open and leaves the post-open cache order intact.
+    from sugar_lift_py_tests.lift_rpc import _read_at_seat
     from sugar_source_tree.process_resident_file import get_resident
 
     _clear_d3_audit_open_observation(source_cid)
-    d3_present_before_demand = get_resident(source_cid, str(path)) is not None
+    d3_present_before_demand = False
     try:
+        # Residency is keyed by the seat the one opener reads, never the path
+        # spelling. A seat the opener would refuse fails here as it would there.
+        d3_seat = _read_at_seat(
+            path, root=workspace_root, source_workspace_root=source_workspace_root
+        )[1]
+        d3_present_before_demand = get_resident(source_cid, d3_seat) is not None
         audit, construction_gaps = demand_construction_residual(
             workspace_root=workspace_root,
             file_rel=file_rel,

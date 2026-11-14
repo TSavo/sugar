@@ -13,7 +13,7 @@ from sugar_lift_py_tests.sugar.subscript_sugar import SubscriptSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_source_tree.nodes import Subscript
 from sugar_source_tree.panic import SugarNotWritten
-from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.lift_rpc import _open_at_seat
 
 
 @dataclass(frozen=True)
@@ -47,7 +47,7 @@ def _site(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     path = tmp_path / "subscript_refusal.py"
     path.write_text("result = receiver[key]\n")
-    tree = SourceFile.from_path(path.name)
+    tree = _open_at_seat(path, root=tmp_path)
     return next(node.fragment for node in tree.nodes() if isinstance(node, Subscript))
 
 

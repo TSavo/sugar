@@ -86,7 +86,10 @@ def test_measurement_surfaces_planted_construction_panic(tmp_path, monkeypatch) 
             fix="surface this defect",
         )
 
-    monkeypatch.setattr(module.SourceFile, "from_path", planted)
+    # The instrument opens through the one opener; plant the panic there.
+    from sugar_lift_py_tests import lift_rpc
+
+    monkeypatch.setattr(lift_rpc, "open_source_file_for_construction", planted)
 
     result = module.measure(tmp_path)
 

@@ -11,7 +11,6 @@ from pathlib import Path
 
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.reporter import CollectingReporter
-from sugar_source_tree.tree import SourceFile
 
 
 def classify_raise_from(

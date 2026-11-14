@@ -32,10 +32,12 @@ def _file(
         path = Path(directory, filename)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(source, encoding="utf-8")
+        # Seated against the temporary root, so each call's own directory is
+        # part of its seat: two calls never share a resident unit.
         return _direct_source_file_entry(
             path,
-            None,
-            NULL_REPORTER if reporter is None else reporter,
+            root=Path(directory).parent,
+            reporter=NULL_REPORTER if reporter is None else reporter,
         )
 
 

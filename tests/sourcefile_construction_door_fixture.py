@@ -16,17 +16,17 @@ from sourcefile_construction_door_auditor import audit_sourcefile_construction_d
 from sourcefile_construction_door_evidence import SourceFileConstructionDoorEvidence, assert_test_owned_evidence
 
 
-# Static3's test helper imports this historical seam.  It is deliberately a
-# binding to the canonical classmethod, not a wrapper or second work entry.
-from sugar_source_tree.tree import SourceFile as _CanonicalSourceFile
+# The canonical door: the one opener's first stage, which reads a file at its
+# seat and constructs the SourceFile from that identity (#7757 item 5). It is
+# deliberately a binding to that stage, not a wrapper or second work entry.
+from sugar_lift_py_tests.lift_rpc import _open_at_seat as _canonical_open_at_seat
 
-_direct_source_file_entry = _CanonicalSourceFile.from_path
+_direct_source_file_entry = _canonical_open_at_seat
 
 
 @pytest.fixture
 def sourcefile_construction_door_evidence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SourceFileConstructionDoorEvidence:
     from sugar_source_tree.backend import Backend
-    from sugar_source_tree.tree import SourceFile
 
     if "materialize_module" not in Backend.__dict__:
         pytest.skip(
@@ -43,6 +43,6 @@ def sourcefile_construction_door_evidence(tmp_path: Path, monkeypatch: pytest.Mo
         repository_root=repository_root,
         temporary_root=tmp_path,
         monkeypatch=monkeypatch,
-        source_file_entry=SourceFile.from_path,
+        source_file_entry=_canonical_open_at_seat,
     )
     return assert_test_owned_evidence(evidence)

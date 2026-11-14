@@ -348,7 +348,9 @@ def _typed_minted_native_operator_constants(package_root=None) -> frozenset[str]
     )
     found: set[str] = set()
     # Step 2's file list, each opened the one way a file is opened: the same
-    # seated, populated unit the board's door reads (#7757 item 5).
+    # seated, populated unit the board's door reads (#7757 item 5). The opener
+    # remembers what it opened under this root's table and session, so asking
+    # this question again opens no file a second time.
     for path in SourceTree(package_root).paths():
         if path.name == "caller_parameter_contract.py":
             # This module defines projectors and mint plumbing, not producers.
