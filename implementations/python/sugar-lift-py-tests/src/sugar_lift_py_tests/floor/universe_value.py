@@ -20,7 +20,19 @@ class UniverseValue(FloorValue):
     term a caller reads the cell by after the call (#7757 step 7), where the
     value is one the contract's own inputs determine
     (``stated_by_its_inputs``); otherwise it states nothing and the caller's
-    cell stays undecided."""
+    cell stays undecided.
+
+    ``fields`` -- ``((param, attr, value), ...)`` -- is what this arm left in
+    each field the body's quiet tail stores last on a parameter
+    (``FunctionUniverseSugar.fields_after``), and ``plain_stores`` --
+    ``((param, attr), ...)`` -- every store of that tail.  The post states
+    each field as the plain ``__dict__`` entry a read of it afterwards
+    returns, ``attr:<attr>(python:after(out, "<param>")) == <value>`` and
+    that such a read completes, only under the guard that every store of the
+    tail is the plain store: ``python:plain_store(class:<param>, "<attr>")``
+    over the class input the caller binds, which prove decides on the
+    class's namespace row (#7757 step 7).  Where the guard is not decided,
+    nothing is concluded and the caller's read stays undecided."""
 
     name: str
     formals: tuple[str, ...]
@@ -28,6 +40,8 @@ class UniverseValue(FloorValue):
     bridge_source_symbol: str | None = None
     formal_coordinates: tuple = ()
     after: tuple = ()
+    fields: tuple = ()
+    plain_stores: tuple = ()
 
     def guarded(self, formula):
         """Ride under a branch by guarding every body record entry.
@@ -108,7 +122,43 @@ class UniverseValue(FloorValue):
             term = value.to_term(owner="UniverseValue.after")
             if stated_by_its_inputs(term, self.formals):
                 facts.append(eq(object_after_call(make_var("out"), formal), term))
+        stored = self.field_facts()
+        if stored is not None:
+            facts.append(stored)
         return tuple(facts)
+
+    def field_facts(self):
+        """``and(plain_store(class:<p>, "<a>")...) -> and(<field facts>)``:
+        for each field this arm left (``fields``) whose value the contract's
+        inputs determine (``stated_by_its_inputs``), the field of the
+        parameter's object after the call and that a read of it completes
+        (``stored_field_facts``), under the guard that every store of the
+        body's quiet tail is the plain ``__dict__`` store (``plain_stores``,
+        ``receiver_dispatch.plain_store_atom``, #7757 step 7).  None where no
+        field is stated."""
+        from sugar_lift_py_tests.contract_input import CLASS_INPUT, input_formal
+        from sugar_lift_py_tests.ir import and_, implies, make_var
+        from sugar_lift_py_tests.receiver_dispatch import plain_store_atom
+        from sugar_lift_py_tests.source_call_resolution import object_after_call
+        from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
+            stored_field_facts,
+        )
+
+        stated = []
+        for param, attr, value in self.fields:
+            term = value.to_term(owner="UniverseValue.fields")
+            if not stated_by_its_inputs(term, self.formals):
+                continue
+            stored = object_after_call(make_var("out"), param)
+            stated.extend(stored_field_facts(stored, attr, term))
+        guards = [
+            plain_store_atom(make_var(input_formal(CLASS_INPUT, param)), attr)
+            for param, attr in self.plain_stores
+        ]
+        if not stated or not guards:
+            return None
+        guard = guards[0] if len(guards) == 1 else and_(guards)
+        return implies(guard, and_(stated))
 
     def call_edges(self):
         # The record entries project their own call edges (CallSiteValue direct,

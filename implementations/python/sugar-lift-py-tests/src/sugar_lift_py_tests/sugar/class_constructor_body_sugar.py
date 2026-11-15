@@ -843,16 +843,7 @@ class ConstructedInstanceValue(FloorValue):
         not.  Prove binds a caller's dispatch over the result to them."""
         from sugar_lift_py_tests.floor.object_identity import contents_current
         from sugar_lift_py_tests.floor.object_value import ObjectValue
-        from sugar_lift_py_tests.ir import (
-            Int,
-            and_,
-            atomic,
-            ctor,
-            eq,
-            forall,
-            make_var,
-            str_const,
-        )
+        from sugar_lift_py_tests.ir import and_
         from sugar_lift_py_tests.receiver_dispatch import constructed_class_facts
         from sugar_lift_py_tests.source_call_resolution import (
             CALL_RESULT_LABEL,
@@ -876,43 +867,60 @@ class ConstructedInstanceValue(FloorValue):
             term = value.to_term(owner="ConstructedInstanceValue.post")
             if _names_an_object(term):
                 continue
-            facts.append(
-                eq(
-                    ctor(f"attr:{name}", [constructed], symbol_kind="method-coordinate"),
-                    term,
-                )
-            )
+            value_fact, read_completes = stored_field_facts(constructed, name, term)
+            facts.append(value_fact)
             if instance.reads_plain_field(name):
-                facts.append(
-                    forall(
-                        _READ_KEY,
-                        # The key ranges over the sort a site key lowers to
-                        # where it stands: an argument of the
-                        # ``python:attribute`` coordinate, whose string
-                        # constants the SMT backend declares as opaque
-                        # ``Int`` constants (``strlit_*``).  Bound over
-                        # ``String`` the quantified read was another
-                        # function to the solver, and z3 refused the row
-                        # (``unknown constant python:attribute``).
-                        Int(),
-                        atomic(
-                            "python:attribute.completes",
-                            [
-                                ctor(
-                                    "python:attribute",
-                                    (constructed, str_const(name), make_var(_READ_KEY)),
-                                )
-                            ],
-                        ),
-                    )
-                )
+                facts.append(read_completes)
         return and_(facts)
 
 
-# The bound variable of a class contract's field-read fact: the read's site
-# key (``FloorValue.undecided_attribute``'s ``occurrence_key``).  A name no
+# The bound variable of a contract's field-read fact: the read's site key
+# (``FloorValue.undecided_attribute``'s ``occurrence_key``).  A name no
 # contract formal or Python identifier spells.
 _READ_KEY = "python:read_key"
+
+
+def stored_field_facts(obj, name: str, value) -> tuple:
+    """``(value_fact, read_completes)``: the one shape a contract states a field
+    it leaves in an object by -- a class's constructor contract the
+    instance it makes (``ConstructedInstanceValue.post_formula``), a
+    function a field it stores on a parameter (``UniverseValue.
+    field_facts``, #7757 step 7):
+
+    - ``value_fact``: ``attr:<name>(<obj>) == <value>``, ``<obj>`` the object as
+      the call left it (``python:after(out, <label>)``), the one term a
+      caller's read of the field names;
+    - ``read_completes``: ``forall k. python:attribute.completes(
+      python:attribute(<obj>, <name>, k))``, ``k`` the read's site key: a
+      read of it completes, so the caller's read is answered at prove.  The
+      caller states it only where the read is the ``__dict__`` entry."""
+    from sugar_lift_py_tests.ir import (
+        Int,
+        atomic,
+        ctor,
+        eq,
+        forall,
+        make_var,
+        str_const,
+    )
+
+    read = ctor(f"attr:{name}", [obj], symbol_kind="method-coordinate")
+    value_fact = eq(read, value)
+    read_completes = forall(
+        _READ_KEY,
+        # The key ranges over the sort a site key lowers to where it stands:
+        # an argument of the ``python:attribute`` coordinate, whose string
+        # constants the SMT backend declares as opaque ``Int`` constants
+        # (``strlit_*``).  Bound over ``String`` the quantified read was
+        # another function to the solver, and z3 refused the row (``unknown
+        # constant python:attribute``).
+        Int(),
+        atomic(
+            "python:attribute.completes",
+            [ctor("python:attribute", (obj, str_const(name), make_var(_READ_KEY)))],
+        ),
+    )
+    return value_fact, read_completes
 
 
 def _names_an_object(term) -> bool:

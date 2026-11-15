@@ -167,17 +167,16 @@ def test_box():
 
 @pytest.mark.parametrize(
     "change",
-    ["    poke(box)", "    box.n = 9", "    del box.n\n    box.n = 9"],
-    ids=["handed-to-a-call", "stored", "deleted-then-stored"],
+    ["    box.n = 9", "    del box.n\n    box.n = 9"],
+    ids=["stored", "deleted-then-stored"],
 )
 def test_a_changed_instance_is_not_its_constructed_state(
     tmp_path: Path, change: str
 ) -> None:
-    """After code may have changed the instance -- a call it is handed to, a
-    store or a delete on it -- the caller holds another value, never the
-    state the class's contract states (#7757 step 7): the lie that reads the
-    constructed field is never ``sat``, and nothing decides the truth here
-    (what ``poke`` leaves in ``b`` is not stated yet)."""
+    """After code may have changed the instance -- a store or a delete on
+    it -- the caller holds another value, never the state the class's
+    contract states (#7757 step 7): the lie that reads the constructed field
+    is never ``sat``, and nothing decides the truth here."""
     t = run_source_through_real_solver(
         tmp_path / "changed-truthful", _CHANGED.format(change=change, expected=9)
     )
@@ -186,6 +185,107 @@ def test_a_changed_instance_is_not_its_constructed_state(
     )
     print(json.dumps({"truthful": t.verdict, "lying": lie.verdict}, sort_keys=True))
     assert t.verdict != "unsat"
+    assert lie.verdict != "sat"
+
+
+def test_a_field_a_callee_stores_on_the_instance_is_joined_at_prove(
+    tmp_path: Path,
+) -> None:
+    """``poke(box)``, ``poke`` storing ``b.n = 9`` (``[handed-to-a-call]``):
+    ``poke``'s contract takes the class of ``b`` as its ``class:b`` input and
+    states ``python:plain_store(class:b, "n") -> attr:n(python:after(out,
+    "b")) == 9`` and that a read of it completes; the store itself completes
+    where the guard holds (#7757 step 7).  The caller supplies the class of
+    ``Box(3)``'s result (``python:constructed``, #8848) and reads ``box``
+    after the call as ``python:after(<call>, "b")`` (#8796); prove decides
+    the guard on ``Box``'s namespace row (no ``__setattr__``, no data
+    descriptor ``n``, order ``Box, object``).  Truthful ``sat``, the lie
+    that reads the constructed field ``unsat``."""
+    change = "    poke(box)"
+    t = run_source_through_real_solver(
+        tmp_path / "handed-truthful", _CHANGED.format(change=change, expected=9)
+    )
+    lie = run_source_through_real_solver(
+        tmp_path / "handed-lying", _CHANGED.format(change=change, expected=3)
+    )
+    print(json.dumps({"truthful": t.verdict, "lying": lie.verdict}, sort_keys=True))
+    test_line = _CHANGED.splitlines().index("def test_box():") + 1
+    assert t.verdict != "unsat"
+    assert claim_verdict(t.prove_doc, claims_from_line=test_line) == "sat"
+    assert lie.verdict == "unsat"
+
+
+_FILLED = """\
+class Box:
+    pass
+
+
+def fill(b, v):
+    b.n = v
+    b.m = 2
+
+
+def test_box():
+    box = Box()
+    fill(box, 7)
+    assert box.n == {expected}
+"""
+
+
+def test_fields_a_callee_stores_from_its_parameters_are_joined_at_prove(
+    tmp_path: Path,
+) -> None:
+    """``fill(box, 7)`` storing ``b.n = v`` and ``b.m = 2`` on a bare
+    instance: both stores are the body's quiet tail, the guard is both
+    ``plain_store`` atoms, and ``n`` is stated as the formal ``v``, bound to
+    the caller's ``7`` (#7757 step 7).  Truthful ``sat``, lying ``unsat``."""
+    t = run_source_through_real_solver(
+        tmp_path / "filled-truthful", _FILLED.format(expected=7)
+    )
+    lie = run_source_through_real_solver(
+        tmp_path / "filled-lying", _FILLED.format(expected=8)
+    )
+    print(json.dumps({"truthful": t.verdict, "lying": lie.verdict}, sort_keys=True))
+    test_line = _FILLED.splitlines().index("def test_box():") + 1
+    assert t.verdict != "unsat"
+    assert claim_verdict(t.prove_doc, claims_from_line=test_line) == "sat"
+    assert lie.verdict == "unsat"
+
+
+_PROPERTY_STORE = """\
+class Box:
+    @property
+    def n(self):
+        return 5
+
+    @n.setter
+    def n(self, value):
+        pass
+
+
+def poke(b):
+    b.n = 9
+
+
+def test_box():
+    box = Box()
+    poke(box)
+    assert box.n == {expected}
+"""
+
+
+def test_a_store_through_a_data_descriptor_is_never_stated_as_the_field(
+    tmp_path: Path,
+) -> None:
+    """``b.n = 9`` where ``Box`` binds a property ``n`` whose setter drops
+    the value: the store is not the plain ``__dict__`` store, so prove leaves
+    ``python:plain_store(class:b, "n")`` undecided and nothing is concluded
+    from ``poke``'s guarded field (#7757 step 7).  The claim ``box.n == 9``
+    (false in Python: the getter returns 5) is never ``sat``."""
+    lie = run_source_through_real_solver(
+        tmp_path / "property-lying", _PROPERTY_STORE.format(expected=9)
+    )
+    print(json.dumps({"lying": lie.verdict}, sort_keys=True))
     assert lie.verdict != "sat"
 
 

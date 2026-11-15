@@ -7,7 +7,9 @@ from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
-def project_setattr(receiver, attr: str, value, site, ctx) -> ExitSet:
+def project_setattr(
+    receiver, attr: str, value, site, ctx, *, plain_store_input=None
+) -> ExitSet:
     """``receiver.attr = value`` on a receiver that is no instance of a
     source class: the ordinary store, already-evaluated receiver and value.
     The one field store (``ReceiverFieldStoreSugar``) takes it for every
@@ -19,7 +21,10 @@ def project_setattr(receiver, attr: str, value, site, ctx) -> ExitSet:
     1. Formal receiver → undischarged ``setattr_named`` carrier
        (``mint_setattr_named_carrier``): the n-ary projector (#6614) unwraps
        the name and calls ``receiver.setattr(name.value, value, site, ctx)``;
-       an ordinary source caller supplies actuals.
+       an ordinary source caller supplies actuals.  ``plain_store_input``
+       (``receiver_dispatch.stored_class_input``) is the class input of a
+       parameter whose class the contract takes: the store completes where
+       it is the plain store (#7757 step 7).
     2. Decided runtime type → Floor ``setattr``; a raise is its halted arm
        (halted store, not statement green)
     3. Undecided non-formal → the two faces of the store (``store_faces``:
@@ -33,6 +38,7 @@ def project_setattr(receiver, attr: str, value, site, ctx) -> ExitSet:
             receiver=receiver,
             attr=attr,
             value=value,
+            plain_store_input=plain_store_input,
         )
 
     if receiver.runtime_type_is_decided():
@@ -64,14 +70,19 @@ def project_setattr(receiver, attr: str, value, site, ctx) -> ExitSet:
     )
 
 
-def mint_setattr_named_carrier(*, site, receiver, attr: str, value):
+def mint_setattr_named_carrier(
+    *, site, receiver, attr: str, value, plain_store_input=None
+):
     """Producer-side contract for n-ary ``setattr_named`` discharge.
 
     Operand order matches the projector table (#6614):
     ``receiver.setattr(name.value, value, site, ctx)`` after unwrap.
     Coordinates: ``(receiver.formal, None, value.formal)`` — lengths and
-    order are load-bearing (#6613 ``__post_init__``).
+    order are load-bearing (#6613 ``__post_init__``).  ``plain_store_input``
+    rides on the carrier (``NativeOperationExitCarrierV1.plain_store_input``).
     """
+    from dataclasses import replace
+
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )
@@ -81,12 +92,15 @@ def mint_setattr_named_carrier(*, site, receiver, attr: str, value):
     if formal_coordinate is None:
         raise ValueError("setattr_named carrier requires a receiver formal_coordinate")
     value_coordinate = getattr(value, "formal_coordinate", None)
-    return NativeOperationExitCarrierV1.mint(
+    carrier = NativeOperationExitCarrierV1.mint(
         site=site,
         operator="setattr_named",
         operands=(receiver, StringValue(attr), value),
         coordinates=(formal_coordinate, None, value_coordinate),
     )
+    if plain_store_input is None:
+        return carrier
+    return replace(carrier, plain_store_input=plain_store_input)
 
 
 @dataclass(frozen=True)

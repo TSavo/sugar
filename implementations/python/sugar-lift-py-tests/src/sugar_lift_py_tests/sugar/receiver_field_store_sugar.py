@@ -64,6 +64,13 @@ class ReceiverFieldStoreSugar(Sugar):
     # (``nodes._receiver_field_store``); None for a statement never
     # substituted, whose receiver no post-state reads.
     after: str | None = field(default=None, compare=False)
+    # The module the store stands in: what a store on a parameter whose
+    # class is a contract input reads that input off
+    # (``receiver_dispatch.stored_class_input``, #7757 step 7).  A lookup
+    # aid, never testimony; walking it would walk the unit's memos.
+    unit: object = field(
+        default=None, compare=False, repr=False, metadata={"testimony": "lookup"}
+    )
     # Nothing binds before a halt of the value, the receiver or the store:
     # its pre-halt record is the block's prefix.
     halts_at_statement_head: ClassVar[bool] = True
@@ -95,7 +102,16 @@ class ReceiverFieldStoreSugar(Sugar):
 
         receiver = floored_receiver(receiver, ctx)
         if not isinstance(receiver, ObjectValue):
-            return project_setattr(receiver, self.attr, value, self.site, ctx)
+            from sugar_lift_py_tests.receiver_dispatch import stored_class_input
+
+            return project_setattr(
+                receiver,
+                self.attr,
+                value,
+                self.site,
+                ctx,
+                plain_store_input=stored_class_input(receiver, self.attr, self.unit),
+            )
         if not receiver.field_store_runs_code(self.attr):
             return receiver.setattr(self.attr, value, self.site, ctx).and_then(
                 lambda _after: ExitSet.completed(

@@ -1153,6 +1153,17 @@ class FunctionUniverseSugar(Sugar):
     #: left the frame before the statements after that ``return``, and
     #: states nothing (#7757 step 7).
     cells_after_every_arm: bool = dataclass_field(default=True, compare=False)
+    #: ``((param, attr), ...)``: every field store of the body's quiet tail
+    #: on a parameter whose class is a contract input
+    #: (``FunctionDef._fields_where_the_body_ends``): the stores whose being
+    #: the plain ``__dict__`` store guards the fields stated below.
+    plain_stores: tuple = dataclass_field(default=(), compare=False)
+    #: ``((param, attr, read), ...)``: for each field the tail stores last
+    #: on its parameter, the sugar of the stored value read where the body
+    #: ends.  Each arm that ran to the end reads it in the context it left,
+    #: and the universe states it over ``python:after(out, "<param>")``
+    #: under the plain-store guard (``UniverseValue.fields``, #7757 step 7).
+    fields_after: tuple = dataclass_field(default=(), compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -1201,10 +1212,21 @@ class FunctionUniverseSugar(Sugar):
                     bridge_source_symbol=self.bridge_source_symbol,
                     formal_coordinates=formal_coordinates,
                     after=self._after(state),
+                    fields=self._fields(state),
+                    plain_stores=self.plain_stores,
                 )
             )
 
         return reduce_block_to_exitset(self.statements, ctx).and_then(universe)
+
+    def _ran_to_the_end(self, state) -> bool:
+        """Whether the arm whose record is ``state`` left with the scope the
+        body's end reads in: every completed arm where the body's ``return``,
+        if any, is its last statement (``cells_after_every_arm``), else only
+        an arm that fell through with no ``return`` pending in its record."""
+        return self.cells_after_every_arm or (
+            state.can_fall_through and not state.fall_through
+        )
 
     def _after(self, state) -> tuple:
         """``((formal, value), ...)``: each cell the body rebinds
@@ -1214,14 +1236,26 @@ class FunctionUniverseSugar(Sugar):
         (``cells_after_every_arm`` False), only an arm that ran to the end
         -- it falls through, with no ``return`` pending in its record --
         reads it; any other arm states nothing (#7757 step 7)."""
-        if not self.cells_after or not (
-            self.cells_after_every_arm
-            or (state.can_fall_through and not state.fall_through)
-        ):
+        if not self.cells_after or not self._ran_to_the_end(state):
             return ()
         found = []
         for formal, read in self.cells_after:
             value = plain_completed_value(read.desugar(state.context))
             if value is not None:
                 found.append((formal, value))
+        return tuple(found)
+
+    def _fields(self, state) -> tuple:
+        """``((param, attr, value), ...)``: each field the body's quiet tail
+        stores last on a parameter (``fields_after``), its value read in the
+        context the arm whose record is ``state`` left, on an arm that ran to
+        the end (``_ran_to_the_end``); a read that does not complete with one
+        value states nothing (#7757 step 7)."""
+        if not self.fields_after or not self._ran_to_the_end(state):
+            return ()
+        found = []
+        for param, attr, read in self.fields_after:
+            value = plain_completed_value(read.desugar(state.context))
+            if value is not None:
+                found.append((param, attr, value))
         return tuple(found)

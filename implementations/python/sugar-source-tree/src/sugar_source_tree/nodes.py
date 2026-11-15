@@ -1267,6 +1267,98 @@ def _returns_only_last(body) -> bool:
     return True
 
 
+def _class_input_field_store(statement, inputs):
+    """``(param, attr)`` when ``statement`` is a single field store
+    ``param.attr = v`` (or ``param.attr: T = v``) on a parameter in
+    ``inputs`` whose ``attr`` is no dunder name; None for anything else."""
+    from sugar_lift_py_tests.receiver_dispatch import is_dunder
+
+    if isinstance(statement, Assign) and len(statement.targets) == 1:
+        target = statement.targets[0]
+    elif isinstance(statement, AnnAssign) and statement.value is not None:
+        target = statement.target
+    else:
+        return None
+    if (
+        isinstance(target, Attribute)
+        and isinstance(target.value, Name)
+        and target.value.id in inputs
+        and not is_dunder(target.attr)
+    ):
+        return target.value.id, target.attr
+    return None
+
+
+def _runs_no_code(expression) -> bool:
+    """Whether evaluating ``expression`` runs no code but the read itself:
+    none at all, a constant, or a bare name read."""
+    return expression is None or isinstance(expression, (Constant, Name))
+
+
+def _stored_value_read(definition, value, final, inputs):
+    """The sugar of a stored value ``value`` (a field store's right-hand
+    side in ``definition``'s body) that reads the same wherever the body
+    ends, or None: a constant, or a parameter of ``definition`` the body
+    never rebinds and whose class is no input (``inputs``: such a parameter
+    is never read bare), read in ``final`` (``_name_read``: its formal).
+    Anything else is not stated (#7757 step 7)."""
+    if isinstance(value, Constant):
+        return value.sugar()
+    if (
+        not isinstance(value, Name)
+        or value.id in inputs
+        or value.id not in {parameter.name for parameter in definition.params}
+        or _binds_name(definition.body, value.id)
+    ):
+        return None
+    read = _name_read(definition, value.id, final)
+    return None if read is None else read.sugar()
+
+
+def _quiet_store_tail(body, inputs) -> tuple:
+    """``((param, attr, value), ...)``: the field stores on a parameter in
+    ``inputs`` (``_class_input_field_store``) that ``body``'s last
+    top-level statements make, with each one's right-hand side, in source
+    order, where nothing after the first of them runs code (#7757 step 7).
+
+    Read backwards from the end: a last ``return`` of nothing, a constant
+    or a name; then ``pass``, a constant expression statement, and field
+    stores whose value is a constant or a name (``_runs_no_code``); then
+    one more field store whose value is anything (it is evaluated before
+    its own store, so nothing it runs follows that store).  Every store in
+    it is followed only by stores and reads that run no code, so no code
+    the frame does not see changes the stored field before the frame is
+    left -- as long as each of those stores is the plain one, which the
+    contract guards (``python:plain_store``)."""
+    statements = list(body)
+    index = len(statements)
+    if (
+        index
+        and isinstance(statements[-1], Return)
+        and _runs_no_code(statements[-1].value)
+    ):
+        index -= 1
+    while index > 0:
+        statement = statements[index - 1]
+        if isinstance(statement, Pass) or (
+            isinstance(statement, Expr) and isinstance(statement.value, Constant)
+        ):
+            index -= 1
+            continue
+        store = _class_input_field_store(statement, inputs)
+        if store is None or not _runs_no_code(statement.value):
+            break
+        index -= 1
+    if index > 0 and _class_input_field_store(statements[index - 1], inputs):
+        index -= 1
+    stores = []
+    for statement in statements[index:]:
+        store = _class_input_field_store(statement, inputs)
+        if store is not None:
+            stores.append((*store, statement.value))
+    return tuple(stores)
+
+
 # The suites a compound statement holds.
 _SUITE_FIELDS = ("body", "orelse", "handlers", "finalbody", "cases")
 
@@ -10876,6 +10968,69 @@ class FunctionDef(Statement):
             found.append((name, read.sugar()))
         return tuple(found)
 
+    def _fields_where_the_body_ends(self, final) -> tuple:
+        """``(stores, fields)``: what this ``def`` leaves in the fields it
+        stores on its parameters (``self`` included), which the universe
+        states over ``python:after(out, "<param>")`` under the guard that each
+        of those stores is the plain ``__dict__`` store (#7757 step 7,
+        ``UniverseValue.fields``).
+
+        ``stores`` are ``((param, attr), ...)``: every field store of the
+        body's quiet tail (``_quiet_store_tail``) on a parameter whose class
+        is an input of the contract (``_receiver_class_parameters``), in
+        source order.  The guard is the conjunction of
+        ``python:plain_store(class:<param>, "<attr>")`` over all of them: a
+        store that is not the plain one runs code (a ``__setattr__``, a
+        descriptor's ``__set__``) that may change any field.
+
+        ``fields`` are ``((param, attr, read), ...)``: for each field the
+        tail stores last on its parameter, the sugar of the stored value
+        where its value is one no evaluation key holds -- a constant, or a
+        parameter the body never rebinds, read in ``final``
+        (``_stored_value_read``) -- so each arm reads it as it is.  A field
+        another parameter's later store in the tail also stores is not
+        stated: the two may be one object.
+
+        The tail is what runs after the stated store and before the frame
+        is left: no code runs there, so nothing the frame does not see (an
+        alias held by a global, a cell, another argument) changes the field
+        after it.  A store before anything that may run code states
+        nothing.  Read only for a plain ``def`` (a generator or an ``async
+        def`` runs nothing at its call), in a module that gives no object
+        another class and stores no computed name
+        (``receiver_dispatch.module_attribute_names``), for a field that is
+        no dunder name; anywhere else nothing is stated and the caller's
+        read of the field after the call stays undecided."""
+        if type(self) is not FunctionDef or FunctionDef._owns_yield(self.body):
+            return (), ()
+        inputs = frozenset(_receiver_class_parameters(self))
+        if not inputs:
+            return (), ()
+        from sugar_lift_py_tests.receiver_dispatch import module_attribute_names
+
+        if module_attribute_names(self.unit)[1]:
+            return (), ()
+        tail = _quiet_store_tail(self.body, inputs)
+        if not tail:
+            return (), ()
+        stores = tuple((param, attr) for param, attr, _value in tail)
+        stated = []
+        seen = set()
+        for index in range(len(tail) - 1, -1, -1):
+            param, attr, value = tail[index]
+            if (param, attr) in seen:
+                continue
+            seen.add((param, attr))
+            if any(
+                other != param and other_attr == attr
+                for other, other_attr in stores[index + 1 :]
+            ):
+                continue
+            read = _stored_value_read(self, value, final, inputs)
+            if read is not None:
+                stated.append((param, attr, read))
+        return stores, tuple(reversed(stated))
+
     def substitute_in_block(self, scope):
         """The ``def`` statement where a block threads it: Python evaluates
         its decorators, defaults and annotations where the statement runs
@@ -11347,6 +11502,9 @@ class FunctionDef(Statement):
                             site=where,
                         ):
                             substitution_trace = trace_builder.freeze()
+                    # What the body leaves in the fields it stores on its
+                    # parameters, under the plain-store guard (#7757 step 7).
+                    fields = FunctionDef._fields_where_the_body_ends(self, final)
                     # The contract is named by the definition's join symbol
                     # (#7757): ``python:m.B.m`` for a method, never the bare
                     # ``m`` two classes of one file share.
@@ -11363,6 +11521,8 @@ class FunctionDef(Statement):
                             self, final
                         ),
                         cells_after_every_arm=_returns_only_last(self.body),
+                        plain_stores=fields[0],
+                        fields_after=fields[1],
                     )
         finally:
             _FRAMES_UNDER_CONSTRUCTION.discard(definition_cid)
@@ -11580,9 +11740,25 @@ class ClassDef(Statement):
         formals: those of the ``def`` that states its signature
         (``constructor_definition``, ``FunctionDef.contract_inputs``): each
         captured cell, each default, each module global its body reads.
-        None stated where no source ``def`` states the signature."""
+        None stated where no source ``def`` states the signature.
+
+        The class of the ``def``'s receiver (its first parameter's
+        ``class:<param>``, #7757 steps 7 and 8) is no input here: the
+        receiver is the instance this construction makes, of the class the
+        call names, never an argument a caller supplies a class for."""
         constructor = self.constructor_definition()
-        return () if constructor is None else constructor.contract_inputs()
+        if constructor is None:
+            return ()
+        from sugar_lift_py_tests.contract_input import CLASS_INPUT
+
+        receiver = constructor.params[0].name if constructor.params else None
+        kept = []
+        for item in constructor.contract_inputs():
+            coordinate = item.coordinate
+            if coordinate.input_kind == CLASS_INPUT and coordinate.name == receiver:
+                continue
+            kept.append(item)
+        return tuple(kept)
 
     def __post_init__(self):
         # A NODE OFF THE ROLL. `Node.__post_init__` is where registration
@@ -14317,6 +14493,7 @@ def _valued_store_target_sugar(target, value_sugar, site):
             value=value_sugar,
             attr=target.attr,
             site=site,
+            unit=target.unit,
         )
     if isinstance(target, Subscript):
         from sugar_lift_py_tests.sugar.store_effect_sugar import (
@@ -21080,6 +21257,7 @@ class ReceiverFieldStoreStatement(Statement):
             # The key a store that runs code binds the receiver after it
             # under, which the post-state reads (``_receiver_field_store``).
             after=getattr(post_state, "after", None),
+            unit=self.unit,
         )
         # Each distinct state once, bound under the key of every name that
         # reads it.
@@ -26538,7 +26716,10 @@ def _contract_inputs(definition) -> tuple:
       over it (``receiver_dispatch.dispatch_on_receiver``).  A parameter the
       body stores or deletes an item of (``p[k] = v``, ``del p[k]``) takes
       it too: the store is ``type(p).__setitem__``, dispatched the same way
-      (#7757 step 7).
+      (#7757 step 7).  So does a parameter the body stores a field on
+      (``p.f = v``): the field is stated under ``python:plain_store(
+      class:<param>, "<f>")`` (``FunctionDef._fields_where_the_body_ends``,
+      #7757 step 7).
     - ``class:cell:<name>`` for each captured cell whose object the body
       mutates the same way (``_receiver_class_cells``, #7757 step 7): the
       class of the formal ``cell:<name>``, the one input kind, supplied by
@@ -26605,11 +26786,12 @@ def _contract_inputs(definition) -> tuple:
 def _receiver_class_parameters(definition) -> tuple:
     """The parameters of ``definition`` whose class is an input of its
     contract (#7757 step 8), in parameter order: each positional or keyword
-    parameter ``p`` the body calls a method of (``p.m(...)``) or stores or
+    parameter ``p`` the body calls a method of (``p.m(...)``), stores or
     deletes an item of (``p[k] = v``, ``del p[k]``: ``type(p).__setitem__``
-    and ``__delitem__``, #7757 step 7) and uses in no other way that could
-    change the object's ``__dict__`` before such a call without the frame
-    seeing it:
+    and ``__delitem__``, #7757 step 7), or stores a field on (``p.f = v``,
+    ``p.f OP= v``, ``p.f: T = v``: stated under a guard over this input,
+    #7757 step 7) and uses in no other way that could change the object's
+    ``__dict__`` before such a call without the frame seeing it:
 
     - every other read of ``p`` is ``p.<attr>``: ``p`` is never read bare (an
       argument, an assignment's value, a callee, a container, an item read),
@@ -26719,9 +26901,10 @@ def _receiver_uses(definition):
     ``definition``, or None for a generator function or an ``async def``
     (its body runs after its call returned):
 
-    - ``received``: each name the body calls a method of (``n.m(...)``) or
+    - ``received``: each name the body calls a method of (``n.m(...)``),
       stores or deletes an item of as a whole target (``n[k] = v``,
-      ``del n[k]``);
+      ``del n[k]``), or stores a field on (``n.f = v``; its target is also
+      an attribute use, ``read``, so the name is never settled);
     - ``blocked``: each name read any other way -- bare, as an item read,
       through a field's method (``n.x.f()``), or by a nested function,
       lambda or class;
@@ -26757,6 +26940,16 @@ def _receiver_uses(definition):
         for target in node.targets
         if isinstance(target, Subscript) and isinstance(target.value, Name)
     }
+    # ``n.f = v``, ``n.f OP= v``, ``n.f: T = v``: a field store on a name's
+    # object, stated under ``python:plain_store`` over its class input
+    # (#7757 step 7).
+    field_targets = {
+        id(target.value)
+        for node in nodes
+        if isinstance(node, (Assign, AugAssign, AnnAssign))
+        for target in (node.targets if isinstance(node, Assign) else (node.target,))
+        if isinstance(target, Attribute) and isinstance(target.value, Name)
+    }
     received: set = set()
     blocked: set = set()
     read: set = set()
@@ -26790,7 +26983,7 @@ def _receiver_uses(definition):
                 zero_argument_super = True
             continue
         if isinstance(node, Name):
-            if id(node) in item_targets:
+            if id(node) in item_targets or id(node) in field_targets:
                 received.add(node.id)
             elif id(node) not in attribute_receivers:
                 blocked.add(node.id)
