@@ -15122,10 +15122,19 @@ def _receiver_field_store(
             *fields,
             ("after", Leaf(projection_key(evaluation, f".{target.attr}="))),
         )
-    post_state = materialize(
-        statement.unit,
-        ShadowNode("ReceiverFieldStoreState", statement.span, fields),
-        statement.reporter,
+    # The post-state is a binding: the state every name holding the object is
+    # rebound to after the store (``ReceiverFieldStoreStatement._states``).
+    # The store builds its receiver and value, never the state itself; only a
+    # name's write of it or a later read does.  Where no name holds the
+    # object (``a.b.x = v``, ``pd.options.mode.x = v``), nothing reads it, so
+    # it answers the roll where it is minted (``_minted_binding_reference``);
+    # a read that reaches it constructs it and answers again.
+    post_state = _minted_binding_reference(
+        materialize(
+            statement.unit,
+            ShadowNode("ReceiverFieldStoreState", statement.span, fields),
+            statement.reporter,
+        )
     )
     # The store IS its source target ``<receiver>.<attr>``: it builds the
     # receiver (``post_state.receiver``) and makes the one
