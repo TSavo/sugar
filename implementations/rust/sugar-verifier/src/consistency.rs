@@ -7871,9 +7871,27 @@ fn with_exception_ancestry(inv: Json, ancestry: &ExceptionAncestry) -> Json {
 // stated only for a closed namespace, whose metaclass is `type`, so no
 // `__instancecheck__` but `type`'s runs. A class with no row (a metaclass,
 // an open namespace) relates nothing: the term stays undecided, owed by
-// name. Only the `true` direction is stated: where `type(x)` is no subclass
-// of `C`, `type.__instancecheck__` reads `x.__class__`, which nothing here
-// decides.
+// name. This instance states only the `true` direction: where `type(x)` is
+// no subclass of `C`, `type.__instancecheck__` reads `x.__class__`, which
+// only the getter case below decides.
+//
+// The type test's completion is the same law's other conclusion. The lift
+// states the test two-faced: it completes under
+// `python:isinstance.completes(<term>, <key>)` and its complement is the
+// owed halt face, since reading `x.__class__` runs whatever `type(x)`'s
+// order binds for `__class__` (a property) or `__getattribute__`:
+//
+//     python:type_is(<x>, "<D>") and (C in D's order
+//         or x.__class__ is object.__class__'s getter on D) -> completes
+//
+// The getter case holds where every class of `D`'s order has a namespace
+// row binding neither `__class__` nor `__getattribute__`, and the only
+// builtin in it is `object` (a builtin base is not read here: it may bind
+// either, so the test stays owed). There `x.__class__` is `type(x)` itself,
+// which `object_isinstance` (Objects/abstract.c) answers `False` without
+// asking again, so the getter case with `C` not in `D`'s order also states
+// `python:isinstance(<x>, "<C>") == false`. Anywhere else a `False` is not
+// decided.
 
 /// `python:isinstance(<object>, <class symbol>)` (the Python kit's
 /// `receiver_dispatch.ISINSTANCE`).
@@ -7952,7 +7970,123 @@ fn isinstance_law_facts(inv: &Json, namespaces: &BTreeMap<String, ClassNamespace
             facts.push(json!({"kind": "implies", "operands": [type_is, holds]}));
         }
     }
+    let mut completions = Vec::new();
+    collect_isinstance_completions(inv, &mut completions);
+    for completes in &completions {
+        let Some([subject, class]) = completes
+            .get("args")
+            .and_then(|v| v.as_array())
+            .and_then(|args| args.first())
+            .and_then(|term| term.get("args"))
+            .and_then(|v| v.as_array())
+            .map(Vec::as_slice)
+            .and_then(|args| <&[Json; 2]>::try_from(args).ok())
+        else {
+            continue;
+        };
+        let Some(class) = const_str(class) else {
+            continue;
+        };
+        match namespaces.get(class) {
+            Some(namespace) if !namespace.mro.is_empty() => {}
+            _ => continue,
+        }
+        let term = &completes["args"][0];
+        for (symbol, namespace) in namespaces {
+            if namespace.mro.first().map(String::as_str) != Some(symbol.as_str()) {
+                continue;
+            }
+            let subclass = namespace.mro.iter().any(|entry| entry == class);
+            if !subclass && !class_read_runs_no_code(namespaces, symbol) {
+                continue;
+            }
+            let type_is = json!({
+                "kind": "atomic",
+                "name": PYTHON_TYPE_IS,
+                "args": [subject, string_const_term(symbol)],
+            });
+            facts.push(json!({"kind": "implies", "operands": [type_is, completes]}));
+            if !subclass {
+                // `x.__class__` is `type(x)` itself, so the test is `False`.
+                let fails = json!({
+                    "kind": "atomic",
+                    "name": "=",
+                    "args": [term, {"kind": "const", "value": false, "sort": {"kind": "primitive", "name": "Bool"}}],
+                });
+                facts.push(json!({"kind": "implies", "operands": [type_is, fails]}));
+            }
+        }
+    }
     facts
+}
+
+/// `python:isinstance.completes(<term>, <key>)`: the type test whose value
+/// is `<term>` (a `python:isinstance` term) completes (the Python kit's
+/// `receiver_dispatch.ISINSTANCE_COMPLETES`).
+const PYTHON_ISINSTANCE_COMPLETES: &str = "python:isinstance.completes";
+
+/// Every distinct `python:isinstance.completes(python:isinstance(<object>,
+/// "<class>"), <key>)` atom in `node`.
+fn collect_isinstance_completions(node: &Json, out: &mut Vec<Json>) {
+    match node {
+        Json::Object(map) => {
+            if map.get("kind").and_then(|v| v.as_str()) == Some("atomic")
+                && map.get("name").and_then(|v| v.as_str()) == Some(PYTHON_ISINSTANCE_COMPLETES)
+                && map
+                    .get("args")
+                    .and_then(|v| v.as_array())
+                    .is_some_and(|args| {
+                        args.len() == 2
+                            && args[0].get("kind").and_then(|v| v.as_str()) == Some("ctor")
+                            && args[0].get("name").and_then(|v| v.as_str())
+                                == Some(PYTHON_ISINSTANCE)
+                            && args[0]
+                                .get("args")
+                                .and_then(|v| v.as_array())
+                                .is_some_and(|inner| {
+                                    inner.len() == 2 && const_str(&inner[1]).is_some()
+                                })
+                    })
+                && !out.contains(node)
+            {
+                out.push(node.clone());
+            }
+            for value in map.values() {
+                collect_isinstance_completions(value, out);
+            }
+        }
+        Json::Array(items) => {
+            for item in items {
+                collect_isinstance_completions(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Whether `x.__class__`, read off an instance whose class is `symbol`, is
+/// decided to run nothing but `object.__class__`'s getter (which returns
+/// `type(x)` and never raises): `symbol` heads its own order, every class of
+/// that order has a namespace row binding neither `__class__` nor
+/// `__getattribute__` (any kind, `undecided` included), and the only builtin
+/// in it is `object`.
+fn class_read_runs_no_code(namespaces: &BTreeMap<String, ClassNamespace>, symbol: &str) -> bool {
+    let Some(namespace) = namespaces.get(symbol) else {
+        return false;
+    };
+    if namespace.mro.first().map(String::as_str) != Some(symbol) {
+        return false;
+    }
+    namespace.mro.iter().all(|entry| {
+        if let Some(builtin) = entry.strip_prefix(BUILTIN_CLASS_PREFIX) {
+            return builtin == "object";
+        }
+        namespaces.get(entry).is_some_and(|stated| {
+            !stated.mro.is_empty()
+                && !stated.binds.contains_key("__class__")
+                && !stated.binds.contains_key("__getattribute__")
+        })
+    })
 }
 
 /// THE ISINSTANCE LAW: conjoin its ground instances `inv` reads
@@ -14768,6 +14902,99 @@ mod tests {
         let joined = with_isinstance_law(inv.clone(), &namespaces);
         assert_eq!(joined["kind"], json!("and"));
         assert_eq!(with_isinstance_law(inv.clone(), &BTreeMap::new()), inv);
+    }
+
+    #[test]
+    fn the_isinstance_law_decides_the_test_completes_only_where_the_class_read_runs_no_code() {
+        // `isinstance(x, Base)` completes for `type(x)` stated a class whose
+        // order holds `Base` (`True` before anything runs), or one whose
+        // order binds no `__class__` / `__getattribute__` and ends in
+        // `object` alone (`x.__class__` is `object.__class__`'s getter).
+        // Otherwise the halt face stays owed: nothing is stated.
+        let mut namespaces = BTreeMap::new();
+        namespaces.insert(
+            "python:m.Base".to_string(),
+            namespace(&["python:m.Base", "builtins.object"], &[]),
+        );
+        namespaces.insert(
+            "python:m.Derived".to_string(),
+            namespace(&["python:m.Derived", "python:m.Base", "builtins.object"], &[]),
+        );
+        namespaces.insert(
+            "python:m.Plain".to_string(),
+            namespace(&["python:m.Plain", "builtins.object"], &[]),
+        );
+        namespaces.insert(
+            "python:m.Masked".to_string(),
+            namespace(
+                &["python:m.Masked", "builtins.object"],
+                &[("__class__", "property", "python:m.Masked.__class__")],
+            ),
+        );
+        namespaces.insert(
+            "python:m.Hooked".to_string(),
+            namespace(
+                &["python:m.Hooked", "builtins.object"],
+                &[("__getattribute__", "function", "python:m.Hooked.__getattribute__")],
+            ),
+        );
+        namespaces.insert(
+            "python:m.Error".to_string(),
+            namespace(
+                &[
+                    "python:m.Error",
+                    "builtins.Exception",
+                    "builtins.BaseException",
+                    "builtins.object",
+                ],
+                &[],
+            ),
+        );
+        let x = var("x");
+        let tested = json!({"kind": "ctor", "name": "python:isinstance", "args": [
+            x.clone(), string_const("python:m.Base")
+        ]});
+        let completes = json!({"kind": "atomic", "name": "python:isinstance.completes", "args": [
+            tested.clone(), string_const("m.py:3:11")
+        ]});
+        let facts = isinstance_law_facts(&completes, &namespaces);
+        let law = |class: &str| {
+            json!({"kind": "implies", "operands": [
+                {"kind": "atomic", "name": "python:type_is", "args": [x.clone(), string_const(class)]},
+                completes.clone(),
+            ]})
+        };
+        assert!(facts.contains(&law("python:m.Base")), "{facts:?}");
+        assert!(facts.contains(&law("python:m.Derived")), "{facts:?}");
+        assert!(facts.contains(&law("python:m.Plain")), "{facts:?}");
+        // A `__class__` property, a `__getattribute__`, a builtin base that
+        // is not read: the read may run code, so the test may raise.
+        assert!(!facts.contains(&law("python:m.Masked")), "{facts:?}");
+        assert!(!facts.contains(&law("python:m.Hooked")), "{facts:?}");
+        assert!(!facts.contains(&law("python:m.Error")), "{facts:?}");
+        // `True` where the order holds `Base`; `False` only in the getter
+        // case (`x.__class__` is `type(x)`), never where the read may run
+        // code.
+        let is = |class: &str, value: bool| {
+            json!({"kind": "implies", "operands": [
+                {"kind": "atomic", "name": "python:type_is", "args": [x.clone(), string_const(class)]},
+                {"kind": "atomic", "name": "=", "args": [tested.clone(), bool_const(value)]},
+            ]})
+        };
+        assert!(facts.contains(&is("python:m.Base", true)));
+        assert!(facts.contains(&is("python:m.Derived", true)));
+        assert!(facts.contains(&is("python:m.Plain", false)));
+        assert!(!facts.contains(&is("python:m.Plain", true)));
+        assert!(!facts.contains(&is("python:m.Derived", false)));
+        assert!(!facts.contains(&is("python:m.Masked", false)));
+        assert!(!facts.contains(&is("python:m.Error", false)));
+        assert_eq!(facts.len(), 6, "{facts:?}");
+        // A class no row states: nothing, the halt stays owed.
+        let unstated = json!({"kind": "atomic", "name": "python:isinstance.completes", "args": [
+            {"kind": "ctor", "name": "python:isinstance", "args": [x.clone(), string_const("python:m.Meta")]},
+            string_const("m.py:3:11")
+        ]});
+        assert!(isinstance_law_facts(&unstated, &namespaces).is_empty());
     }
 
     #[test]
