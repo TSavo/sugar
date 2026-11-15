@@ -1188,12 +1188,24 @@ class ComprehensionSugar(ConstructedTermSugar):
         value = ComprehensionValue(
             self._fold_term(self.kind, resolved, element_term, owner=owner)
         )
+        # The fold is a constructor prove does not interpret: what it
+        # accumulates (or yields) is decided by no input.  The comprehension
+        # completing with it is its read, which owes the undecided member by
+        # the one rule (``read_of_bound_value``, #7757).  A generator pulled
+        # later carries the debt to its pull (``_generator``).
+        from sugar_lift_py_tests.sugar.loop_recurrence_sugar import (
+            read_of_bound_value,
+        )
+
+        folded = read_of_bound_value(value, self.site)
         if self.kind == "py.generatorexp":
             # A generator's writes wait for it to be consumed.
-            return ExitSet.completed(value)
-        return ExitSet.completed(
-            carry_walrus_binds(
-                self._symbolic_writes(resolved, writes, outer, owner=owner), value
+            return folded
+        return folded.and_then(
+            lambda fold: ExitSet.completed(
+                carry_walrus_binds(
+                    self._symbolic_writes(resolved, writes, outer, owner=owner), fold
+                )
             )
         )
 
