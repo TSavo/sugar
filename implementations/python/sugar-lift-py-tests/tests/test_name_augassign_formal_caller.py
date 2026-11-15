@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
     project_iadd,
@@ -24,6 +25,7 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.effect import CoverageGapEffect
 from sugar_lift_py_tests.floor import ScopeRebind, TermValue
 from sugar_lift_py_tests.floor.floor_value import FloorValue
+from sugar_lift_py_tests.floor.list_value import ListValue
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.augassign_sugar import (
     AttributeAugAssignSugar,
@@ -77,11 +79,18 @@ def _call_outcome(body: str, actuals: str, signature: str = "x"):
 
 
 def _returned_value(outcome):
+    """The value the call returned.
+
+    A completed call carries what its callee's frame left of each object it
+    shares with the caller as writes riding its value
+    (``caller_visible_values``); the call's own value is what they present."""
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+
     assert isinstance(outcome, ExitSet), type(outcome)
     assert len(outcome.exits) == 1
     face = outcome.exits[0]
     assert isinstance(face, Completed), type(face)
-    value = face.value
+    _carried, value = peel_walrus_binds(face.value)
     force = getattr(value, "force_floor", None)
     if callable(force):
         forced = force(None, owner="name_augassign_test")
@@ -101,6 +110,39 @@ def _returned_value(outcome):
         if returns:
             return returns[-1].value
     return value
+
+
+def _left_of_actual(outcome, index: int = 0):
+    """What the completed call carried to its caller for its ``index``-th
+    actual: the caller's object after the call (``caller_visible_values``,
+    the write labelled ``actual:<index>``)."""
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+
+    assert isinstance(outcome, ExitSet), type(outcome)
+    (face,) = outcome.exits
+    assert isinstance(face, Completed), type(face)
+    carried, _value = peel_walrus_binds(face.value)
+    (left,) = [
+        write.assigned_value for write in carried if write.name == f"actual:{index}"
+    ]
+    return left
+
+
+def _caller_returned(source: str):
+    """What the first function of ``source`` returns, reduced as its own
+    universe: the caller of a followed helper, reading after the call."""
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.universe_value import UniverseValue
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    tree = _tree(source, "caller_reads_after.py")
+    caller = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    universe = function_universe_outcome(caller).completed_value()
+    assert isinstance(universe, UniverseValue), universe
+    (returned,) = [
+        entry for entry in universe.record.statements if isinstance(entry, ReturnValue)
+    ]
+    return returned.value
 
 
 @dataclass(frozen=True)
@@ -467,6 +509,68 @@ def test_discrimination_successful_update_is_not_prior_value() -> None:
     assert returned == TermValue(5)
     with pytest.raises(AssertionError):
         assert returned == TermValue(3)
+
+
+# ---------------------------------------------------------------------------
+# A rebind of a formal is the callee's local; a mutation of a shared object
+# is the caller's too (#7757)
+# ---------------------------------------------------------------------------
+
+
+def test_rebinding_an_immutable_formal_leaves_the_callers_actual() -> None:
+    """``f(3)`` with ``x += 2; return x`` is ``5``, and the caller's ``3`` is
+    as it was: ``x += 2`` on an ``int`` binds the callee's local to another
+    object.  The call carries the actual itself, never the local's ``5``."""
+    outcome = _call_outcome("    x += 2\n    return x\n", "3")
+    assert _returned_value(outcome) == TermValue(5)
+    assert _left_of_actual(outcome) == TermValue(3)
+
+
+def test_discrimination_the_callees_rebind_is_not_the_callers_actual() -> None:
+    """Lying twin: the callee's rebound local written onto the caller's
+    actual would leave the caller's ``3`` reading ``5``."""
+    outcome = _call_outcome("    x += 2\n    return x\n", "3")
+    with pytest.raises(AssertionError):
+        assert _left_of_actual(outcome) == TermValue(5)
+
+
+def test_inplace_on_a_shared_list_reaches_the_callers_actual() -> None:
+    """``x += [2]`` on a list changes the one object the two share: the
+    caller's ``[1]`` is ``[1, 2]`` after the call."""
+    outcome = _call_outcome("    x += [2]\n    return x\n", "[1]")
+    assert _left_of_actual(outcome) == fresh(
+        ListValue, (TermValue(1), TermValue(2))
+    )
+
+
+def test_a_caller_name_keeps_its_immutable_value_after_the_call() -> None:
+    """The caller's ``n`` is bound to ``3`` and handed to a helper that
+    rebinds its formal: ``n`` reads ``3`` after the call, never ``5``."""
+    returned = _caller_returned(
+        "def f():\n"
+        "    n = 1 + 2\n"
+        "    g(n)\n"
+        "    return n\n"
+        "def g(x):\n"
+        "    x += 2\n"
+    )
+    assert returned == TermValue(3)
+    with pytest.raises(AssertionError):
+        assert returned == TermValue(5)
+
+
+def test_a_caller_name_reads_the_list_its_helper_extended_in_place() -> None:
+    """The same helper shape on a list: the caller's ``acc`` is the object
+    the helper's ``x += [2]`` changed, so it reads ``[1, 2]``."""
+    returned = _caller_returned(
+        "def f():\n"
+        "    acc = [1]\n"
+        "    g(acc)\n"
+        "    return acc\n"
+        "def g(x):\n"
+        "    x += [2]\n"
+    )
+    assert returned == fresh(ListValue, (TermValue(1), TermValue(2)))
 
 
 def test_arithmetic_halt_is_not_completed_return_of_prior_binding() -> None:

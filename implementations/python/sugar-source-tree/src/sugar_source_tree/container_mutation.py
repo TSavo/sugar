@@ -2873,6 +2873,13 @@ def _mutation_through(
 # - Anything else -- a formal rebound to another object, an object a loop or
 #   a ``with`` left unknown, an object only CONTAINED in an actual -- keeps
 #   the havoc: unknown after the call, never the pre-call contents.
+# - An actual of an immutable builtin type is never changed, whatever the
+#   helper did with its formal: ``x += 2`` on an ``int`` binds the helper's
+#   own local to another object.  The threading here follows ``x += e`` as
+#   the object changed in place, which only its value decides, so the call
+#   carries that actual itself for its label
+#   (``call_site_value._immutable_actuals``) and every name bound to it reads
+#   the value it had.
 #
 # The objects followed are every one the helper reaches that its caller holds:
 # its actuals, the module objects it reads as globals, and the closure cells
