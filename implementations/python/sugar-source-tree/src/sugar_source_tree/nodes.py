@@ -6785,15 +6785,8 @@ def _postponed_annotations(definition) -> Tuple["Node", ...]:
     parameter annotation and the return annotation in a module that
     postpones its annotations (``_annotations_postponed``), and a string
     annotation anywhere.  An annotation Python evaluates where the statement
-    runs is none of them: the statement builds it, or it stays on the roll."""
-    annotations = tuple(
-        annotation
-        for annotation in (
-            *(param.annotation for param in definition.params),
-            definition.returns,
-        )
-        if annotation is not None
-    )
+    runs is none of them: the statement builds it (``_evaluated_annotations``)."""
+    annotations = _definition_annotations(definition)
     if not annotations:
         return ()
     if _annotations_postponed(definition.unit):
@@ -6802,6 +6795,36 @@ def _postponed_annotations(definition) -> Tuple["Node", ...]:
         annotation
         for annotation in annotations
         if isinstance(annotation, Constant) and isinstance(annotation.value, str)
+    )
+
+
+def _definition_annotations(definition) -> Tuple["Node", ...]:
+    """Every annotation of the ``def`` ``definition``, in the order Python
+    evaluates them: each parameter's, then the return annotation."""
+    return tuple(
+        annotation
+        for annotation in (
+            *(param.annotation for param in definition.params),
+            definition.returns,
+        )
+        if annotation is not None
+    )
+
+
+def _evaluated_annotations(definition) -> Tuple["Node", ...]:
+    """The annotations of the ``def`` ``definition`` that Python evaluates
+    when its statement runs, after the defaults and before the function is
+    built: every one that is not postponed (``_postponed_annotations``).
+    Their values are stored on the function and never read by this lift, but
+    each is an evaluation of the statement: ``def f(a: Missing)`` raises
+    NameError where the ``def`` runs.  The statement builds each, every face
+    of it the statement's (``_definition_defaults_sugar``,
+    ``_decorator_application_sugar``)."""
+    postponed = _postponed_annotations(definition)
+    return tuple(
+        annotation
+        for annotation in _definition_annotations(definition)
+        if not any(annotation is item for item in postponed)
     )
 
 
@@ -10975,6 +10998,11 @@ class FunctionDef(Statement):
                 # once, here, and binds it under its key
                 # (``_definition_defaults_sugar``), as the plain body's
                 # statement does; a default that suspends is refused by name.
+                # An annotation Python evaluates here
+                # (``_evaluated_annotations``) is an evaluation the machine
+                # has no step for: refused by name, never dropped.
+                if _evaluated_annotations(statement):
+                    return _GeneratorStepAbsentV1("def whose annotations are evaluated")
                 defaults = tuple(
                     param.default
                     for param in statement.params
@@ -16584,8 +16612,45 @@ class AnnAssign(Statement):
                 store, scope, {**scope, **_store_statement_binding(store, scope)}
             )
             return _Splice((store, self._annotation_statement().substitute(after)))
+        if (
+            isinstance(self.target, Name)
+            and getattr(self, "annotation_spliced", None) is not True
+            and self._evaluates_annotation()
+        ):
+            # ``x: T = v`` / ``x: T`` in a module or class body: Python
+            # stores the value (if any), then evaluates the annotation.  The
+            # statement is the assignment (or nothing, bare), marked as
+            # spliced, and the annotation is the expression statement after
+            # it, in the scope the binding leaves: every face of it the
+            # statement's.  The annotation is substituted only there, so no
+            # second copy of it is made that nothing builds.
+            from .container_mutation import havoc_after
+
+            changed = {}
+            if self.value is not None:
+                new, d = self._substitute_field(self.value, scope)
+                if d:
+                    changed["value"] = new
+            leaves = {"annotation_spliced": True}
+            if self.value is not None:
+                leaves["evaluation"] = self._evaluation_key(scope)
+                leaves["evaluation_exit_path"] = self._evaluation_exit_path(scope)
+            statement = rewrite_with_leaves(
+                rewrite(self, **changed) if changed else self, leaves
+            )
+            after = havoc_after(
+                statement,
+                scope,
+                {**scope, **_store_statement_binding(statement, scope)},
+            )
+            return _Splice(
+                (statement, self._annotation_statement().substitute(after))
+            )
         changed = {}
-        for fld in ("annotation", "value"):
+        # A spliced statement's annotation is the expression statement that
+        # stands after it: never substituted here again.
+        spliced = getattr(self, "annotation_spliced", None) is True
+        for fld in ("value",) if spliced else ("annotation", "value"):
             new, d = self._substitute_field(getattr(self, fld), scope)
             if d:
                 changed[fld] = new
@@ -16670,13 +16735,20 @@ class AnnAssign(Statement):
 
     def _evaluates_annotation(self) -> bool:
         """Whether Python evaluates this statement's annotation when it
-        runs: an attribute/subscript target with a value, or a bare
-        attribute target (``o.f: T``, whose receiver is evaluated first), in
-        a module body (no class, function or lambda body holds it,
-        ``scope_holding``), in a module that does not postpone its
-        annotations (``from __future__ import annotations``).  A function
-        body never evaluates it; a class body refuses a non-Name annotated
-        target; a bare subscript target stays loud (``_construct_sugar``)."""
+        runs, in a module that does not postpone its annotations (``from
+        __future__ import annotations``): a Name target's (``x: T`` or ``x:
+        T = v``) in a module or class body (no function or lambda body holds
+        it, ``scope_holding``), after the value is stored; an
+        attribute/subscript target with a value, or a bare attribute target
+        (``o.f: T``, whose receiver is evaluated first), in a module body.
+        A function body never evaluates it; a class body refuses a non-Name
+        annotated target; a bare subscript target stays loud
+        (``_construct_sugar``)."""
+        if isinstance(self.target, Name):
+            return not _annotations_postponed(self.unit) and not isinstance(
+                self.unit.scope_holding(self.line_col_span()),
+                (FunctionDef, AsyncFunctionDef, Lambda),
+            )
         if not isinstance(self.target, (Attribute, Subscript)):
             return False
         if self.value is None and not isinstance(self.target, Attribute):
@@ -16752,8 +16824,29 @@ class AnnAssign(Statement):
         Attribute reuses the ordinary expression-statement path for its
         receiver; in a module body its annotation is evaluated after it
         (``_evaluates_annotation``), spliced by substitution the same way,
-        and never substituted there it refuses by name.  Other bare non-Name
+        and never substituted there it refuses by name.  A Name target in a
+        module or class body is the same: its annotation is evaluated after
+        the store (or alone, bare), spliced by substitution, and never
+        substituted there it refuses by name.  Other bare non-Name
         annotations stay loud."""
+        if (
+            isinstance(self.target, Name)
+            and getattr(self, "annotation_spliced", None) is not True
+            and self._evaluates_annotation()
+        ):
+            raise SugarNotWritten(
+                blame=self.fragment,
+                owner="AnnAssign._construct_sugar",
+                observed=(
+                    "a module- or class-body annotated name constructed "
+                    "without substitution"
+                ),
+                requested=(
+                    "the assignment, then the annotation's evaluation, spliced "
+                    "into the block by substitution"
+                ),
+                fix="construct the statement through its block's substitution",
+            )
         if isinstance(self.target, Name) and self.value is not None:
             from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
 
@@ -25497,13 +25590,19 @@ def _definition_defaults_sugar(statement):
     afterwards, so a decorator is never left unbuilt because nothing here
     applies it.  The defaults are the statement's own, substituted in the
     scope the statement runs in, so ``x = 1; def f(a=x): ...; x = 2`` binds
-    1.  A statement with neither reduces nothing (``InertSugar``)."""
+    1.  After the defaults, each annotation Python evaluates here
+    (``_evaluated_annotations``) is evaluated, its value bound under no key:
+    ``def f(a: Missing)`` halts where it runs.  A statement with none of
+    these reduces nothing (``InertSugar``)."""
     decorators = tuple(
         _decorator_step(statement, decorator, None)
         for decorator in statement.decorators
     )
     defaults = _definition_default_evaluations(statement)
-    if not defaults and not decorators:
+    annotations = tuple(
+        annotation.sugar() for annotation in _evaluated_annotations(statement)
+    )
+    if not defaults and not decorators and not annotations:
         from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
 
         return InertSugar(site=statement.fragment)
@@ -25511,7 +25610,7 @@ def _definition_defaults_sugar(statement):
 
     return DefinitionDefaultsSugar(
         decorators=decorators,
-        values=tuple(sugar for _key, sugar in defaults),
+        values=tuple(sugar for _key, sugar in defaults) + annotations,
         evaluations=tuple(
             (key, position) for position, (key, _sugar) in enumerate(defaults)
         ),
@@ -25821,7 +25920,18 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
             if isinstance(definition, ClassDef) or not definition.decorators
             else _definition_default_evaluations(definition)
         )
-        return decorators, defaults
+        # Then the annotations Python evaluates where the statement runs
+        # (``_evaluated_annotations``), likewise only the statement's own:
+        # an undecorated ``def`` read as a value evaluates none.
+        annotations = (
+            ()
+            if isinstance(definition, ClassDef) or not definition.decorators
+            else tuple(
+                annotation.sugar()
+                for annotation in _evaluated_annotations(definition)
+            )
+        )
+        return decorators, defaults, annotations
 
     frame = None
     class_sugar = None
@@ -25829,7 +25939,7 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
     uncarried = False
     _FRAMES_UNDER_CONSTRUCTION.add(key)
     try:
-        decorators, defaults = (
+        decorators, defaults, annotations = (
             construct_statement()
             if module_site is None
             else construct_at_module_execution_site(module_site, construct_statement)
@@ -25857,6 +25967,7 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
         evaluation=evaluation,
         uncarried=uncarried,
         defaults=defaults,
+        annotations=annotations,
         module_run=module_run,
     )
 
