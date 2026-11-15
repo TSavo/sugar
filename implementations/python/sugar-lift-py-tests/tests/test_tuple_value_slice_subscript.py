@@ -82,20 +82,21 @@ def test_source_tuple_zero_slice_step_is_exact_value_error(
     assert halt.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
 
-def test_source_tuple_symbolic_slice_bound_is_the_two_faced_unanswered_read(
+def test_source_tuple_slice_bound_by_an_unbound_name_is_the_name_error(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-    from sugar_lift_py_tests.outcome import Completed, Halted
-    from sugar_lift_py_tests.unanswered_calls import owed_calls
+    """``start`` is bound nowhere in the module: reading it raises
+    ``NameError`` before any slice is built, so the read is that one halt and
+    no arm completes. (It is not an unanswered read: nothing is undecided
+    about an unbound name.)"""
+    from sugar_lift_py_tests.effect import NameErrorEffect
 
     (subscript,) = _subscripts(tmp_path, monkeypatch, "result = (0, 1, 2)[start:]\n")
 
     outcome = _desugar(subscript)
 
-    (halt,) = [arm for arm in outcome.exits if isinstance(arm, Halted)]
-    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
-    assert type(halt.effect) is UndeterminedRaiseEffect
-    assert halt.effect.producer_node_owner == "TupleValue.subscript"
-    assert "python:subscript.completes" in repr(done.guard)
-    assert any(item.site is not None for item in owed_calls(outcome))
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, NameErrorEffect)
+    assert halt.effect.exception_name == "NameError"
+    assert halt.effect.name == "start"
