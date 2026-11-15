@@ -713,10 +713,18 @@ def resumed(state, ctx, *, owner: str, blame: object) -> _ReducedBlock:
 
 
 def _is_return_entry(entry) -> bool:
-    """A record entry that is a ``return`` (guarded by its arm or not)."""
+    """A record entry that is a ``return`` (guarded by its arm or not), or
+    what a followed frame's ``return`` laid beside it of an object the frame
+    shares with a caller (``CallerVisibleStateValue.at_return``): it lives
+    and is set aside with its ``return``."""
     from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
     from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
+        CallerVisibleStateValue,
+    )
 
+    if isinstance(entry, CallerVisibleStateValue):
+        return entry.at_return
     return isinstance(entry, (GuardedReturn, ReturnValue))
 
 

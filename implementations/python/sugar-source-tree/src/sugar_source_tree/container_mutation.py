@@ -2674,11 +2674,16 @@ def _mutation_through(
 #   one the helper changed; every name bound to it reads the value the call
 #   carried for its label (``SourceCallActualAfter``), never a node of the
 #   callee's frame.  A cell the helper rebinds is that name alone.
-# - Anything else -- a body with control flow the substitution cannot follow
-#   on every path (loops, try, with, an early return, a non-raising branch),
-#   a formal rebound to another object, an object only CONTAINED in an
-#   actual -- keeps the havoc: unknown after the call, never the pre-call
-#   contents.
+# - A body with control flow is followed as a straight one is: its threading
+#   joins each object over the branches (an ``if``'s, a ``try``'s or a
+#   ``match``'s phi), and the object is changed where some arm changed it
+#   (``_changed_state``).  Each arm of the callee's reduction carries what
+#   its frame left of the object where that arm ended: a ``return`` its read
+#   where the ``return`` stands (``nodes.FrameReturn``), every other arm the
+#   read where the body ends; undecided where that arm does not decide it.
+# - Anything else -- a formal rebound to another object, an object a loop or
+#   a ``with`` left unknown, an object only CONTAINED in an actual -- keeps
+#   the havoc: unknown after the call, never the pre-call contents.
 #
 # The objects followed are every one the helper reaches that its caller holds:
 # its actuals, the module objects it reads as globals, and the closure cells
@@ -2697,52 +2702,28 @@ def _mutation_through(
 # it does not, since then the call never ran (``at_halt``).
 # ---------------------------------------------------------------------------
 
-_HELPER_STATEMENT_KINDS = frozenset(
-    {
-        "Expr",
-        "Assign",
-        "AnnAssign",
-        "AugAssign",
-        "Pass",
-        "Raise",
-        "Assert",
-        # A declaration: the body's writes of the name are the enclosing
-        # cell's, followed as the caller's binding (``_callee_reach``).
-        "Nonlocal",
-    }
-)
 # Ambient to memo rows: a row that asked is served only where the helper is
 # in progress or not as it was.
 _HELPERS_IN_PROGRESS: AmbientSet = AmbientSet("helpers_in_progress")
 
 
-def _straight_line_helper(definition) -> bool:
-    """Every path through ``definition``'s body is the one substitution threads:
-    straight-line statements, a trailing ``return``, and guards that only raise."""
-    from .nodes import FunctionDef, If, Raise, Return
+def _followable_helper(definition) -> bool:
+    """``definition`` is a frame a call by name runs as written: a plain
+    ``def`` (no decorator: the name is bound to the function itself), no
+    generator (a call runs none of its body), every formal positional or
+    keyword (each actual binds one formal).  Its body may branch, loop,
+    ``try`` and ``return`` anywhere: the threading follows every path, and
+    each arm of its reduction carries what it left (``nodes._exit_reads``,
+    ``nodes.FrameReturn``)."""
+    from .nodes import FunctionDef
 
     if type(definition) is not FunctionDef or definition.decorators:
         return False
     if FunctionDef._owns_yield(definition.body):
         return False
-    if any(param.param_kind != "positional_or_keyword" for param in definition.params):
-        return False
-    body = definition.body
-    for index, statement in enumerate(body):
-        kind = statement.kind
-        if kind in _HELPER_STATEMENT_KINDS:
-            continue
-        if isinstance(statement, Return) and index == len(body) - 1:
-            continue
-        if (
-            isinstance(statement, If)
-            and not statement.orelse
-            and len(statement.body) == 1
-            and isinstance(statement.body[0], Raise)
-        ):
-            continue
-        return False
-    return True
+    return all(
+        param.param_kind == "positional_or_keyword" for param in definition.params
+    )
 
 
 def _same_read(node, actual) -> bool:
@@ -2810,7 +2791,7 @@ def source_helper_actual_states(call, bound_refs, scope):
     if not actuals and not reach.module and not cells:
         return None
     definition = reach.definition
-    if not _straight_line_helper(definition):
+    if not _followable_helper(definition):
         return None
     params = definition.params
     if len(params) != len(call.args):
@@ -2873,18 +2854,19 @@ def source_helper_actual_states(call, bound_refs, scope):
         )
     for name, actual, label, rebinds in followed:
         state = _state(net[name]) if name in net else actual
-        written = _read_of(net[name]) if rebinds and name in net else None
-        if (
-            written is not None
-            and getattr(written, "kind", None) not in _MUTATED_BINDINGS
-            and not _same_read(written, actual)
-        ):
-            # The helper rebound the caller's cell (``n += 1``, ``n = v``):
-            # its write is the caller's binding, which the call carries out
-            # of its frame.  Only the cell's name reads it -- another name
-            # bound to the object it held keeps it.  Only a binding the one
-            # door's mutation left (never a write's reference, ``r += x``
-            # included) is a mutation.
+        rebound = (
+            _rebinds(_read_of(net[name]), actual) if rebinds and name in net else False
+        )
+        if rebound is None:
+            # One arm rebound the cell and another changed the object it
+            # held: no one set of names reads one value after the call.
+            havoc_targets.append((actual, None, None))
+            continue
+        if rebound:
+            # The helper rebound the caller's cell (``n += 1``, ``n = v``) on
+            # some arm: its write is the caller's binding, which the call
+            # carries out of its frame.  Only the cell's name reads it --
+            # another name bound to the object it held keeps it.
             states.append((actual, call, label, name))
             continue
         changed = _changed_state(state, actual)
@@ -2897,7 +2879,7 @@ def source_helper_actual_states(call, bound_refs, scope):
     return havoc_targets, states
 
 
-def _changed_state(state, actual):
+def _changed_state(state, actual, depth=0):
     """Whether ``state`` (a followed holder's binding after the helper's
     body) is ``actual``'s object as the helper changed it: True for a chain
     of mutations through the one door (``name_mutation_statement``), or of
@@ -2905,7 +2887,10 @@ def _changed_state(state, actual):
     begun from the actual itself; False for the actual itself, left as it
     was; None for anything else -- a formal the body rebound to another
     object, a value some unfollowed call left of it (``ReceiverAfterCall``),
-    which keeps the havoc.  What the state holds is never read here: the
+    which keeps the havoc.  A join the body's threading built over its
+    branches (an ``if``'s, a ``try``'s or a ``match``'s phi, ``IfExp``) is
+    asked of every arm: changed where some arm changed it and every arm is
+    the object, else None.  What the state holds is never read here: the
     call carries it (``source_helper_actual_states``)."""
     from .nodes import PathAfterCall, PathContainerCall
 
@@ -2919,12 +2904,69 @@ def _changed_state(state, actual):
             node = _identity(call.receiver)
         elif getattr(node, "kind", None) == "SourceCallActualAfter":
             node = _identity(node.prior)
+        elif getattr(node, "kind", None) == "IfExp":
+            if depth >= _JOIN_DEPTH:
+                return None
+            arms = (
+                _changed_state(node.body, actual, depth + 1),
+                _changed_state(node.orelse, actual, depth + 1),
+            )
+            if any(arm is None for arm in arms):
+                return None
+            return changed or any(arms)
         else:
             break
         changed = True
     if not _same_read(node, actual):
         return None
     return changed
+
+
+# The joins nested in one binding a follower asks arm by arm.
+_JOIN_DEPTH = 16
+
+
+def _binding_arms(written, depth=0):
+    """The bindings ``written`` (a name's binding after a body) is on each
+    path: ``written`` itself where it is no join, else every arm of the join
+    the threading built over the body's branches (``IfExp``), each asked
+    again; None past ``_JOIN_DEPTH`` nested joins."""
+    if written is None:
+        return ()
+    if getattr(_identity(written), "kind", None) != "IfExp":
+        return (written,)
+    if depth >= _JOIN_DEPTH:
+        return None
+    node = _identity(written)
+    body = _binding_arms(node.body, depth + 1)
+    orelse = _binding_arms(node.orelse, depth + 1)
+    if body is None or orelse is None:
+        return None
+    return (*body, *orelse)
+
+
+def _rebinds(written, actual):
+    """Whether ``written`` (a ``nonlocal`` cell's binding after a body that
+    began with the cell bound to ``actual``) is the body's rebinding of the
+    cell: True where some path rebinds it (``n += 1``, ``n = v``: a write's
+    reference, never a binding the one door's mutation left) and none
+    changed the object it held; False where no path rebinds it; None where
+    one path rebinds it and another changed the object (no one set of names
+    reads one value after the call), or where the join is past asking."""
+    arms = _binding_arms(written)
+    if arms is None:
+        return None
+    rebound = mutated = False
+    for arm in arms:
+        if _same_read(arm, actual):
+            continue
+        if getattr(arm, "kind", None) in _MUTATED_BINDINGS:
+            mutated = True
+        else:
+            rebound = True
+    if rebound and mutated:
+        return None
+    return rebound
 
 
 # A binding the one door's mutation (or a source helper's such mutations)

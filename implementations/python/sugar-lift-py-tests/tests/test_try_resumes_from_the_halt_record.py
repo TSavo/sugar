@@ -348,10 +348,84 @@ def test_a_callee_appending_to_a_module_list_is_seen_after_it_raises() -> None:
     assert _returned_value(outcome) == _ONE
 
 
+def test_a_callee_appending_under_an_if_is_seen_where_the_branch_ran() -> None:
+    # ``g`` appends only under ``if c``: its frame joins the list over both
+    # branches, the arm that reaches the end carries the join read there,
+    # and ``f``, which passed ``True``, reads ``[1]`` (#7757).
+    outcome = function_universe_outcome(
+        _function(
+            "def f():\n"
+            "    acc = []\n"
+            "    g(acc, True)\n"
+            "    return acc\n"
+            "def g(a, c):\n"
+            "    if c:\n"
+            "        a.append(1)\n"
+        )
+    )
+    assert _returned_value(outcome) == _ONE
+
+
+def test_a_callee_appending_under_an_if_is_not_seen_where_it_did_not_run() -> None:
+    # The same callee handed ``False``: the join reads the list as it came
+    # in, so ``f`` reads ``[]``.
+    outcome = function_universe_outcome(
+        _function(
+            "def f():\n"
+            "    acc = []\n"
+            "    g(acc, False)\n"
+            "    return acc\n"
+            "def g(a, c):\n"
+            "    if c:\n"
+            "        a.append(1)\n"
+        )
+    )
+    assert _returned_value(outcome) == _EMPTY
+
+
+def test_an_early_return_before_the_append_leaves_the_list_as_it_was() -> None:
+    # ``g`` returns before its append when ``c`` holds: the arm leaving by
+    # that ``return`` carries the list read where the ``return`` stands
+    # (``FrameReturn``), never the read after the append, so ``f`` reads
+    # ``[]`` (#7757).
+    outcome = function_universe_outcome(
+        _function(
+            "def f():\n"
+            "    acc = []\n"
+            "    g(acc, True)\n"
+            "    return acc\n"
+            "def g(a, c):\n"
+            "    if c:\n"
+            "        return\n"
+            "    a.append(1)\n"
+        )
+    )
+    assert _returned_value(outcome) == _EMPTY
+
+
+def test_an_early_return_not_taken_leaves_the_append() -> None:
+    # The same callee handed ``False``: the arm that goes on to the end
+    # carries the list after the append, so ``f`` reads ``[1]``.
+    outcome = function_universe_outcome(
+        _function(
+            "def f():\n"
+            "    acc = []\n"
+            "    g(acc, False)\n"
+            "    return acc\n"
+            "def g(a, c):\n"
+            "    if c:\n"
+            "        return\n"
+            "    a.append(1)\n"
+        )
+    )
+    assert _returned_value(outcome) == _ONE
+
+
 def test_a_module_list_a_callee_may_change_unfollowed_is_not_its_old_value() -> None:
-    # ``g``'s body loops, so it is not followed: the module list it reaches
-    # takes the exposure every operand handed to such a call takes, an
-    # unknown after the call, never the ``[]`` the module bound.
+    # ``g`` appends inside a loop, which leaves the list unknown in its
+    # frame: the module list takes the exposure every operand handed to a
+    # call takes, an unknown after the call, never the ``[]`` the module
+    # bound.
     returned = _read_after(
         "def f():\n"
         "    g()\n"

@@ -2019,7 +2019,13 @@ def caller_visible_values(entries, call) -> tuple:
       (``SourceCallActualAfterSugar``).  Where the callee's frame did not
       decide it on this arm, the value is an unknown minted at the call,
       never the object as it was before the call.  The callee's own keys
-      never reach the caller."""
+      never reach the caller.
+
+    A record that holds several paths -- each ``return`` taken under its
+    branch's guards beside the path that went on to the body's end -- holds
+    each path's value under that path's guards (``CallerVisibleStateValue
+    .guards``): the call carries the one value that selects among them by
+    those guards (``GuardedValue``), each undecided one an unknown."""
     from sugar_lift_py_tests.floor.named_expression_value import (
         CallerStoreValue,
         NamedExpressionValue,
@@ -2034,26 +2040,56 @@ def caller_visible_values(entries, call) -> tuple:
     from sugar_source_tree.nodes import Call, carried_evaluation
 
     carried = [CallerStoreValue("", store) for store in caller_visible_stores(entries)]
+    body = call.body
     labels = tuple(
-        label for label, _read, _keys in getattr(call.body, "exit_reads", ()) or ()
+        label for label, _read, _keys in getattr(body, "exit_reads", ()) or ()
     )
     node = getattr(call.site, "node", None)
     if not labels or not isinstance(node, Call):
         return tuple(carried)
-    left = {
-        entry.label: entry.value
+    frame = getattr(body, "frame", None)
+    left = [
+        entry
         for entry in entries
-        if isinstance(entry, CallerVisibleStateValue) and entry.frame is call.body
-    }
+        if isinstance(entry, CallerVisibleStateValue)
+        and frame is not None
+        and entry.frame == frame
+    ]
     key = carried_evaluation(node)
     for label in labels:
-        value = left.get(label)
-        if value is None:
-            value = _unknown_after(call.site, label)
+        value = _selected(
+            [entry for entry in left if entry.label == label],
+            lambda: _unknown_after(call.site, label),
+        )
         carried.append(
             NamedExpressionValue(label, value, evaluation=projection_key(key, label))
         )
     return tuple(carried)
+
+
+def _selected(laid, unknown):
+    """The one value ``laid`` (what a callee's frame left of one object on
+    each path one record holds, ``CallerVisibleStateValue``) states: the
+    unguarded one's value (the path no guarded ``return`` took), each
+    guarded one's selected under its guards before it (``GuardedValue``).
+    An undecided value is ``unknown()``; a record with no unguarded one, or
+    with more than one, leaves the rest of its paths unknown."""
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.ir import and_
+
+    unguarded = [entry for entry in laid if not entry.guards]
+    value = (
+        unguarded[0].value
+        if len(unguarded) == 1 and unguarded[0].value is not None
+        else unknown()
+    )
+    for entry in reversed([entry for entry in laid if entry.guards]):
+        guard = (
+            entry.guards[0] if len(entry.guards) == 1 else and_(list(entry.guards))
+        )
+        arm = entry.value if entry.value is not None else unknown()
+        value = GuardedValue(guard, arm, value)
+    return value
 
 
 def _unconditional(guard) -> bool:
