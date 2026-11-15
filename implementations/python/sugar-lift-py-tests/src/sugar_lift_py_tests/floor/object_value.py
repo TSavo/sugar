@@ -355,16 +355,7 @@ class ObjectValue(FloorValue):
                     ),
                 )
 
-            return attribute_owned(
-                self.call_member(
-                    name,
-                    selected,
-                    (),
-                    owner="ObjectValue.attribute.property",
-                    blame=site,
-                    ctx=ctx,
-                )
-            )
+            return attribute_owned(self._property_read(name, site))
         if class_value is not None:
             from sugar_lift_py_tests.floor.lambda_callable import LambdaCallable
             from sugar_lift_py_tests.outcome import ExitSet
@@ -389,10 +380,10 @@ class ObjectValue(FloorValue):
             # answered): a plain function a method bound to this receiver, a
             # ``staticmethod`` the bare function, a ``classmethod`` a method
             # bound to the receiver's class.  The value is this receiver, the
-            # name and the method this lookup selected; its call binds that
-            # very method (``call_member``), so the one method door binds the
-            # implicit first actual by the descriptor kind
-            # (``implicit_arguments``) and nothing selects it again by name.
+            # name and the method this lookup selected; its call is the one
+            # dispatched call over this receiver's class (``call_member``),
+            # bound at prove by the kind the class's namespace row states,
+            # and nothing here selects which function runs.
             # ``obj.m()`` is this read, then that call
             # (``method_call_sugar._source_instance_method_call``).  Nothing
             # about the body is decided at the read.
@@ -1061,26 +1052,26 @@ class ObjectValue(FloorValue):
         - On an instance that arrived by binding (``receiver_class_decided``
           False) which function runs is not decided: the unanswered call
           (``unanswered_method_call``).
-        - A plain function the class wrote (``ObjectMethodValue``, no
-          descriptor kind) on an instance whose class is decided here is
-          the one dispatch of a method call (#7757 step 8,
-          ``receiver_dispatch.dispatch_edge_call``): the coordinate plus the
-          dispatched edge carrying the instance's class
-          (``receiver_dispatch.class_value``), resolved at prove on the
-          order the class's own proof states.  Nothing here names which
-          function runs: the lookup above selected the member only to know
-          that a method call is what this is.
-        - A ``staticmethod``, ``classmethod`` or ``property`` the class wrote
-          is bound with the implicit first actual its descriptor kind binds
-          (``bind_method_call``, ``implicit_arguments``) and stands as its
-          coordinate and edge (``method_edge_call``); so does a plain
-          function where the instance's class names no join symbol (no
-          workspace root: the edge names none either, owed).
-        - A function the class namespace holds as a field (``LambdaCallable``:
-          ``f = lambda self: 1``, ``m = some_def``) is a method bound to this
-          receiver (``function.__get__``): the receiver is its first actual,
-          and the function's own call applies it
-          (``LambdaCallable.callable_application_with``).
+        - Every function the class holds for ``name`` on an instance whose
+          class is decided here -- a plain function it wrote, a
+          ``staticmethod`` or ``classmethod`` it wrote (``ObjectMethodValue``),
+          a function it holds as a field (``LambdaCallable``: ``f = lambda
+          self: 1``, ``m = some_def``) -- is the one dispatch of a method
+          call (#7757 step 8, ``receiver_dispatch.dispatch_edge_call``): the
+          coordinate plus the dispatched edge carrying this instance and its
+          class (``receiver_dispatch.class_value``), resolved at prove on the
+          order the class's own proof states, and bound there as the kind
+          its namespace row states binds (``consistency::dispatched_target``:
+          the instance first, nothing, or the class).  Nothing here names
+          which function runs or binds an implicit actual: the lookup above
+          selected the member only to know that a method call is what this
+          is.  Where no class can be named (no workspace root, a call with no
+          site, contents this frame no longer holds) it is the one
+          unanswered call (``unanswered_method_call``), owed.
+        - A ``property`` is read, never called here: its getter answers the
+          read (``attribute``, ``_property_read``).  Reached as a call (an
+          implicit special-method call of a name the class binds to a
+          property) it is the unanswered call, owed.
         - Anything else is no callable member here and refuses by name.
 
         A frame the caller requires must be the selected method's own."""
@@ -1108,35 +1099,11 @@ class ObjectValue(FloorValue):
                     requested="constructor-bound method",
                     fix=f"construct a diggable body for `{self.class_name}.{name}`",
                 )
-            if member.descriptor_kind is None:
-                dispatched = self._dispatched_call(name, arguments, keywords, blame)
-                if dispatched is not None:
-                    return dispatched
-            return method_edge_call(
-                self,
-                member,
-                arguments,
-                keywords,
-                class_name=self.class_name,
-                ctx=ctx,
-                owner=owner,
-                blame=blame,
-                refuse=self._floor_gap,
-                required_frame=required_frame,
-            )
+            if member.descriptor_kind == "property":
+                return self.unanswered_method_call(name, arguments, keywords, blame)
+            return self._dispatched_or_owed(name, arguments, keywords, blame)
         if isinstance(member, LambdaCallable) and required_frame is None:
-            from sugar_lift_py_tests.callable_application import (
-                CallableApplication,
-            )
-
-            return member.callable_application_with(
-                CallableApplication(
-                    (self, *arguments, *(value for _name, value in keywords)),
-                    tuple(keyword for keyword, _value in keywords),
-                    blame,
-                ),
-                ctx,
-            )
+            return self._dispatched_or_owed(name, arguments, keywords, blame)
         return self._floor_gap(
             owner=owner,
             blame=blame,
@@ -1145,15 +1112,38 @@ class ObjectValue(FloorValue):
             fix=f"construct a diggable body for `{self.class_name}.{name}`",
         )
 
-    def _dispatched_call(self, name, arguments, keywords, site):
-        """``self.<name>(...)`` on this instance, whose class is decided
-        here, as the one dispatched method call (#7757 step 8): its
-        coordinate plus the edge whose receiver class is this instance's
-        class and every field its ``__dict__`` may hold now
-        (``receiver_dispatch.class_value``: ``python:instance(<class>,
+    def _dispatched_or_owed(self, name, arguments, keywords, site):
+        """``self.<name>(...)``: the dispatched call (``_dispatched_call``),
+        or, where it names no class, the one unanswered call, owed -- never
+        a function chosen here."""
+        dispatched = self._dispatched_call(name, arguments, keywords, site)
+        if dispatched is not None:
+            return dispatched
+        return self.unanswered_method_call(name, arguments, keywords, site)
+
+    def _property_read(self, name, site):
+        """``self.<name>`` where the one class-namespace lookup selected a
+        ``property`` the class wrote: on an instance whose class is decided
+        here, the dispatched read (``_dispatched_call(read=True)``), its
+        getter called with this instance at prove (#7757 step 8); otherwise,
+        or where it names no class, the one unanswered call of the name,
+        owed."""
+        if receiver_class_decided(self):
+            dispatched = self._dispatched_call(name, (), (), site, read=True)
+            if dispatched is not None:
+                return dispatched
+        return self.unanswered_method_call(name, (), (), site)
+
+    def _dispatched_call(self, name, arguments, keywords, site, *, read=False):
+        """``self.<name>(...)`` -- ``read``: ``self.<name>`` -- on this
+        instance, whose class is decided here, as the one dispatched method
+        call (#7757 step 8): its coordinate plus the edge whose receiver
+        class is this instance's class and every field its ``__dict__`` may
+        hold now (``receiver_dispatch.class_value``: ``python:instance(<class>,
         <field>...)``).  Prove resolves ``name`` on the order the class's own
-        proof states (``consistency::dispatched_symbol``), the same
-        resolution a call on a parameter whose class a caller supplies gets.
+        proof states and binds it by the kind its row states
+        (``consistency::dispatched_target``), the same resolution a call on a
+        parameter whose class a caller supplies gets.
 
         The instance a class's constructor contract makes
         (``tree_enumerate.class_universe_outcome``) is the instance a call of
@@ -1173,7 +1163,13 @@ class ObjectValue(FloorValue):
         if receiver_class is None:
             return None
         return dispatch_edge_call(
-            name, self, receiver_class, tuple(arguments), tuple(keywords), site
+            name,
+            self,
+            receiver_class,
+            tuple(arguments),
+            tuple(keywords),
+            site,
+            read=read,
         )
 
     def has_method(self, name: str) -> "bool | None":
@@ -1535,9 +1531,13 @@ def method_edge_call(
     required_frame=None,
     call_occurrence=None,
 ):
-    """``receiver.m(*arguments, **keywords)`` whose function the one
-    class-namespace lookup selected (``method``) on a receiver whose class
-    is decided (``receiver_class_decided``): its coordinate and an edge to
+    """``receiver.m(*arguments, **keywords)`` whose function a class named
+    explicitly selects (``method``): ``Cls.m(...)`` on the class value, and
+    ``super().m(...)`` on the class after ``__class__`` in the order.  A
+    method called on an instance is never selected here: it is the one
+    dispatched call over the instance's class (``ObjectValue.call_member``,
+    ``receiver_dispatch.dispatch_edge_call``, #7757 step 8).  Its coordinate
+    and an edge to
     the method's join symbol (``python:<module>.<Class>.<m>``,
     ``lambda_callable.definition_edge_call``), joined at prove to the
     method's contract as a call of a ``def`` is (#7757 step 6).  The method's

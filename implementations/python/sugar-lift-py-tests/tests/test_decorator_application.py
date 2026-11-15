@@ -715,10 +715,14 @@ def test_a_classmethod_read_off_its_class_binds_the_class(tmp_path) -> None:
 
 def test_an_instance_lookup_binds_by_descriptor_kind(tmp_path) -> None:
     """Read off an instance: a ``staticmethod`` binds nothing and a
-    ``classmethod`` binds the instance's class, never the instance.  Each is
-    the method's edge over what its descriptor binds (#7757 step 6)."""
+    ``classmethod`` binds the instance's class, never the instance.  The
+    call is the one dispatched call over the instance's class (#7757 step
+    8): the instance and the written actual, the method chosen and bound at
+    prove by the kind the class's namespace row states -- never an edge to
+    the method chosen here."""
     from sugar_lift_py_tests.floor import TermValue
     from sugar_lift_py_tests.ir import num
+    from sugar_lift_py_tests.tree_enumerate import _class_namespace_facts
 
     for decorator, formals in (("staticmethod", "n"), ("classmethod", "cls, n")):
         box, ctx = _rooted_class_value(
@@ -733,14 +737,18 @@ def test_an_instance_lookup_binds_by_descriptor_kind(tmp_path) -> None:
         outcome = receiver.call_method_value(
             "pick", (TermValue(3),), owner="test", blame="pick-site", ctx=ctx
         )
-        actuals = _positional(_edge_term(outcome, f"{decorator}.Box.pick"))
-        if decorator == "staticmethod":
-            assert actuals == (num(3),), decorator
-        else:
-            implicit, written = actuals
-            assert written == num(3), decorator
-            assert implicit != receiver.to_term(owner="test"), decorator
+        term = _edge_term(outcome, "dispatch:pick")
+        _instance, written = _positional(term)
+        assert written == num(3), decorator
+        assert any(
+            getattr(arg, "name", None) == "py.class" for arg in term.args
+        ), decorator
         assert "ValueError" not in _halt_names(outcome), decorator
+        _symbol, _mro, binds, class_object = _class_namespace_facts(
+            box.class_definition
+        )
+        assert ("pick", decorator, f"python:{decorator}.Box.pick") in binds, decorator
+        assert (class_object is not None) == (decorator == "classmethod")
 
 
 def test_the_implicit_arguments_of_each_lookup() -> None:
@@ -1703,9 +1711,10 @@ def test_a_call_into_a_frame_reaches_its_nested_def_through_the_call(
 
 def test_a_descriptor_read_off_an_instance_is_a_callable_value(tmp_path) -> None:
     """``m = obj.sm; m(3)``: the read is the value the descriptor binds, and
-    its call binds by the descriptor kind (nothing for a ``staticmethod``,
-    the class for a ``classmethod``).  Before, the read was refused.  The
-    call is ``pick``'s edge over those actuals (#7757 step 6, #8738); the
+    its call is the one dispatched call over the instance's class: the
+    instance and the written actual, bound at prove by the kind the class's
+    namespace row states (nothing for a ``staticmethod``, the class for a
+    ``classmethod``, #7757 step 8).  Before, the read was refused.  The
     body's raise is its contract's halt, joined at prove."""
     from sugar_lift_py_tests.callable_application import CallableApplication
     from sugar_lift_py_tests.floor import TermValue
@@ -1727,9 +1736,9 @@ def test_a_descriptor_read_off_an_instance_is_a_callable_value(tmp_path) -> None
         outcome = read.callable_application_with(
             CallableApplication((TermValue(3),), (), "pick-site", owner="test"), ctx
         )
-        actuals = _positional(_edge_term(outcome, f"{decorator}.Box.pick"))
+        actuals = _positional(_edge_term(outcome, "dispatch:pick"))
         assert actuals[-1] == num(3), decorator
-        assert len(actuals) == (1 if decorator == "staticmethod" else 2), decorator
+        assert len(actuals) == 2, decorator
         assert "ValueError" not in _halt_names(outcome), decorator
 
 

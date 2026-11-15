@@ -395,7 +395,7 @@ pub(crate) fn is_consistency_candidate(body: &Json) -> bool {
     // A class's stated ancestry is a fact its module's proof states, joined
     // into a consumer's obligation (`with_exception_ancestry`), never a claim
     // checked on its own. So is a class's stated namespace, read by the
-    // dispatch of a method call (`dispatched_symbol`, step 8).
+    // dispatch of a method call (`dispatched_target`, step 8).
     !is_setup_binding_name(name)
         && !name.ends_with(EXCEPTION_ANCESTRY_SUFFIX)
         && !name.ends_with(CLASS_NAMESPACE_SUFFIX)
@@ -3626,6 +3626,11 @@ struct AmbientPost {
     /// stands, answered at a read that binds its receiver's class
     /// (`dispatch_answer`).
     dispatch: Option<Arc<DispatchEdge>>,
+    /// How the call's arguments bind the answering contract
+    /// (`post_arguments`): as they stand for every post but a dispatched
+    /// answer, which binds them by the kind of function it resolved to
+    /// (step 8).
+    receiver: DispatchReceiver,
 }
 
 #[derive(Debug, Clone)]
@@ -3851,7 +3856,7 @@ const PYTHON_CLASS: &str = "py.class";
 
 /// The formal prefix of a receiver-class input (step 8, #7757): the class of
 /// the object a parameter binds, whose namespace a method call on that
-/// parameter reads (`dispatched_symbol`). The function's own proof states no
+/// parameter reads (`dispatched_target`). The function's own proof states no
 /// value for it; a caller that knows the class supplies it (`py.class`).
 const CLASS_INPUT_PREFIX: &str = "class:";
 
@@ -4240,11 +4245,35 @@ pub(crate) const CLASS_NAMESPACE_SUFFIX: &str = "::namespace";
 const PYTHON_CLASS_MRO: &str = "python:class_mro";
 /// `python:class_binds(<class>, <name>, <kind>, <symbol>)`: a name the class's
 /// own namespace holds, with the kind of value it holds and, for a function
-/// its body wrote, that function's join symbol.
+/// it holds, that function's join symbol.
 const PYTHON_CLASS_BINDS: &str = "python:class_binds";
-/// The one kind of namespace value the dispatch joins: a plain function the
-/// class body wrote, which a read off an instance binds to the instance.
+/// `python:class_object(<class>, <class term>)`: the term the class object
+/// is spelled by wherever a reduction reads it (the kit's
+/// `python:class-definition(<cid>)`), the first actual a `classmethod` read
+/// off an instance of the class binds.
+const PYTHON_CLASS_OBJECT: &str = "python:class_object";
+/// The kinds of namespace value the dispatch joins (the kit's
+/// `tree_enumerate._class_namespace_facts`), each with the function's join
+/// symbol and bound as Python's descriptor protocol binds it read off an
+/// instance (`DispatchReceiver`):
+///
+/// - a plain function the class body wrote: a method bound to the instance;
 const DISPATCH_FUNCTION_KIND: &str = "function";
+/// - a function the class holds as a field (`m = lambda self: ...`): a
+///   method bound to the instance, as a plain function is;
+const DISPATCH_FIELD_KIND: &str = "field";
+/// - a `def` under the builtin `staticmethod`: the function, nothing bound;
+const DISPATCH_STATIC_KIND: &str = "staticmethod";
+/// - a `def` under the builtin `classmethod`: bound to the instance's class;
+const DISPATCH_CLASS_KIND: &str = "classmethod";
+/// - a `def` under the builtin `property`: its getter, called with the
+///   instance where the attribute is read (a data descriptor: it wins over
+///   the instance's `__dict__`).
+const DISPATCH_PROPERTY_KIND: &str = "property";
+/// The mark of a dispatched attribute read after the dispatch prefix:
+/// `python:dispatch:.<name>` is the read `obj.<name>`; `python:dispatch:<m>`
+/// the call `obj.<m>(...)`. No Python name starts with `.`.
+const DISPATCH_READ_MARK: &str = ".";
 /// The prefix of a builtin class's entry in an order.
 const BUILTIN_CLASS_PREFIX: &str = "builtins.";
 /// A decided instance's class, as a caller binds a class input:
@@ -4262,8 +4291,11 @@ struct ClassNamespace {
     /// state the class differently: then nothing about it is decided.
     mro: Vec<String>,
     /// Each name the class's own namespace holds: the kind of value, and the
-    /// join symbol of a function its body wrote.
+    /// join symbol of a function it holds.
     binds: BTreeMap<String, (String, String)>,
+    /// The term the class object is spelled by (`python:class_object`):
+    /// what a `classmethod` read off an instance of it binds first.
+    object: Option<Json>,
 }
 
 /// A string constant's value.
@@ -4291,6 +4323,14 @@ fn class_namespace_of(body: &Json) -> Option<(String, ClassNamespace)> {
         let Some(args) = fact.get("args").and_then(|v| v.as_array()) else {
             continue;
         };
+        if fact.get("name").and_then(|v| v.as_str()) == Some(PYTHON_CLASS_OBJECT) {
+            if let [subject, term] = args.as_slice() {
+                if const_str(subject) == Some(symbol.as_str()) && term.is_object() {
+                    namespace.object = Some(term.clone());
+                }
+            }
+            continue;
+        }
         let Some(strings) = args
             .iter()
             .map(|arg| const_str(arg).map(str::to_string))
@@ -4345,46 +4385,79 @@ fn collect_class_namespaces(pool: &MementoPool) -> BTreeMap<String, ClassNamespa
     namespaces
 }
 
-/// The join symbol of the function a call of `method` on an instance runs,
-/// the instance's class input bound to `class` (step 8, #7757).
+/// How a dispatched call's arguments bind the function its class's
+/// namespace holds (step 8): Python's descriptor protocol for the kind of
+/// value it is, read off an instance (`object.__getattribute__`, then
+/// `__get__(obj, type(obj))`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+enum DispatchReceiver {
+    /// The call's arguments as they stand: the instance first (a plain
+    /// function, a function held as a field), or a property getter's read.
+    /// Every post that is no dispatched answer binds this way.
+    #[default]
+    AsCalled,
+    /// A `staticmethod`: the instance is not passed.
+    Static,
+    /// A `classmethod`: the instance's class (its `python:class_object`
+    /// term) is passed in the instance's place.
+    Class(Json),
+}
+
+/// What a dispatched call or read resolves to (step 8): the join symbol of
+/// the function that runs, and how the call's arguments bind it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DispatchTarget {
+    symbol: String,
+    receiver: DispatchReceiver,
+}
+
+/// The function a call of `method` on an instance runs -- or, `read`, the
+/// getter a read of the attribute `method` runs -- the instance's class input
+/// bound to `class` (step 8, #7757).
 ///
 /// `class` is read as `python:instance(<class symbol>, <field>...)`, and
-/// `method` is looked up as Python's `object.__getattribute__` looks up a
-/// name a class binds to a plain function (a non-data descriptor): the
-/// instance's `__dict__` first, then each class of the order its own proof
-/// states. `None` -- the call stays owed -- whenever that lookup is not
-/// decided by what the proofs state:
+/// `method` is looked up as Python's `object.__getattribute__` looks it up:
+/// the first class of the order its own proof states that binds it; a data
+/// descriptor there (a property) wins over the instance's `__dict__`, any
+/// other value is shadowed by a field of that name. The value found binds by
+/// its kind (`DispatchReceiver`). `None` -- the call stays owed -- whenever
+/// that lookup is not decided by what the proofs state:
 ///
 /// - `class` is not a decided instance (a free input, anything else);
-/// - the instance's `__dict__` may hold `method`;
 /// - a class of the order has no namespace row (its namespace is not
 ///   closed, or no proof here states it), or two proofs state it differently;
-/// - a class of the order binds `__getattribute__`;
+/// - a class of the order binds `__getattribute__`, or, for a read (a getter
+///   that raises `AttributeError` falls to it), `__getattr__`;
 /// - a builtin class comes before the class that binds `method` (it may
 ///   bind it), or a builtin class other than `object` stands in the order;
-/// - the class that binds `method` binds it to anything but a plain
-///   function its body wrote (a descriptor, a field, a generator, an
-///   `async def`), or no class binds it.
-fn dispatched_symbol(
+/// - no class binds `method`, or binds it with no join symbol;
+/// - a call: the instance's `__dict__` may hold `method`, or the value is a
+///   property (the getter's result is called, which nothing here states) or
+///   any kind but a plain function, a function field, a `staticmethod` or a
+///   `classmethod`; a `classmethod` of a class no proof states the object of;
+/// - a read: the value is anything but a property.
+fn dispatched_target(
     namespaces: &BTreeMap<String, ClassNamespace>,
     method: &str,
+    read: bool,
     class: &Json,
-) -> Option<String> {
+) -> Option<DispatchTarget> {
     if class.get("kind")?.as_str()? != "ctor" || class.get("name")?.as_str()? != PYTHON_INSTANCE {
         return None;
     }
     let (subject, fields) = class.get("args")?.as_array()?.split_first()?;
     let subject = const_str(subject)?;
+    let mut shadowed = false;
     for field in fields {
         if const_str(field)? == method {
-            return None;
+            shadowed = true;
         }
     }
     let order = &namespaces.get(subject)?.mro;
     if order.first().map(String::as_str) != Some(subject) {
         return None;
     }
-    let mut found: Option<String> = None;
+    let mut found: Option<(String, String)> = None;
     for entry in order {
         if let Some(builtin) = entry.strip_prefix(BUILTIN_CLASS_PREFIX) {
             if found.is_none() || builtin != "object" {
@@ -4393,19 +4466,96 @@ fn dispatched_symbol(
             continue;
         }
         let namespace = namespaces.get(entry)?;
-        if namespace.mro.is_empty() || namespace.binds.contains_key("__getattribute__") {
+        if namespace.mro.is_empty()
+            || namespace.binds.contains_key("__getattribute__")
+            || (read && namespace.binds.contains_key("__getattr__"))
+        {
             return None;
         }
         if found.is_none() {
             if let Some((kind, target)) = namespace.binds.get(method) {
-                if kind != DISPATCH_FUNCTION_KIND || target.is_empty() {
+                if target.is_empty() {
                     return None;
                 }
-                found = Some(target.clone());
+                found = Some((kind.clone(), target.clone()));
             }
         }
     }
-    found
+    let (kind, symbol) = found?;
+    let receiver = match kind.as_str() {
+        DISPATCH_PROPERTY_KIND if read => DispatchReceiver::AsCalled,
+        _ if read || shadowed => return None,
+        DISPATCH_FUNCTION_KIND | DISPATCH_FIELD_KIND => DispatchReceiver::AsCalled,
+        DISPATCH_STATIC_KIND => DispatchReceiver::Static,
+        DISPATCH_CLASS_KIND => DispatchReceiver::Class(namespaces.get(subject)?.object.clone()?),
+        _ => return None,
+    };
+    Some(DispatchTarget { symbol, receiver })
+}
+
+/// Whether `arg` is a positional argument of a call term: no named argument
+/// (`py.kwarg`, a contract input's) and no `py.class`.
+fn is_positional_argument(arg: &Json) -> bool {
+    class_argument(arg).is_none() && named_argument(arg).is_none()
+}
+
+/// A dispatched call's arguments as the function it resolved to takes them
+/// (`DispatchReceiver`), for the one binder (step 8). The instance is the
+/// call's first positional argument and its class `py.class("0", ...)`:
+///
+/// - `AsCalled`: as they stand;
+/// - `Static`: the instance and its class dropped, every other positional
+///   `py.class` key one lower;
+/// - `Class(term)`: the instance replaced by the class object `term`, and
+///   the instance's class dropped (the class of a class is its metaclass,
+///   which nothing here states: a `class:` input of that formal stays free).
+///
+/// `None` when the call names no instance (no positional argument).
+fn dispatched_arguments(receiver: &DispatchReceiver, args: &[Json]) -> Option<Vec<Json>> {
+    if *receiver == DispatchReceiver::AsCalled {
+        return Some(args.to_vec());
+    }
+    let instance = args.iter().position(is_positional_argument)?;
+    let mut rebound = Vec::with_capacity(args.len());
+    for (index, arg) in args.iter().enumerate() {
+        if index == instance {
+            if let DispatchReceiver::Class(term) = receiver {
+                rebound.push(term.clone());
+            }
+            continue;
+        }
+        match class_argument(arg) {
+            Some(Ok((ClassKey::Position(0), _))) => continue,
+            Some(Ok((ClassKey::Position(position), _)))
+                if *receiver == DispatchReceiver::Static =>
+            {
+                let mut shifted = arg.clone();
+                let key = shifted
+                    .get_mut("args")
+                    .and_then(|v| v.as_array_mut())
+                    .and_then(|parts| parts.first_mut())
+                    .and_then(|key| key.as_object_mut())?;
+                key.insert("value".to_string(), json!((position - 1).to_string()));
+                rebound.push(shifted);
+            }
+            _ => rebound.push(arg.clone()),
+        }
+    }
+    Some(rebound)
+}
+
+/// The arguments the one binder binds `post`'s contract with at a call
+/// whose arguments are `args`: a dispatched answer's as the function it
+/// resolved to takes them (`dispatched_arguments`), any other post's as they
+/// stand.
+fn post_arguments<'a>(
+    post: &AmbientPost,
+    args: &'a [Json],
+) -> Option<std::borrow::Cow<'a, [Json]>> {
+    if post.receiver == DispatchReceiver::AsCalled {
+        return Some(std::borrow::Cow::Borrowed(args));
+    }
+    dispatched_arguments(&post.receiver, args).map(std::borrow::Cow::Owned)
 }
 
 /// Everything the join reads to resolve a dispatched method call (step 8):
@@ -4428,7 +4578,15 @@ fn dispatch_table(pool: &MementoPool) -> DispatchTable {
     let mut answers: BTreeMap<String, Option<BridgeAnswer>> = BTreeMap::new();
     for namespace in namespaces.values() {
         for (kind, symbol) in namespace.binds.values() {
-            if kind != DISPATCH_FUNCTION_KIND || symbol.is_empty() || answers.contains_key(symbol) {
+            let dispatched = matches!(
+                kind.as_str(),
+                DISPATCH_FUNCTION_KIND
+                    | DISPATCH_FIELD_KIND
+                    | DISPATCH_STATIC_KIND
+                    | DISPATCH_CLASS_KIND
+                    | DISPATCH_PROPERTY_KIND
+            );
+            if !dispatched || symbol.is_empty() || answers.contains_key(symbol) {
                 continue;
             }
             let bridges: Vec<&sugar_proof_envelope::StoredMember> = pool
@@ -4463,23 +4621,26 @@ fn dispatch_table(pool: &MementoPool) -> DispatchTable {
     }
 }
 
-/// A dispatched method call's member (step 8): the method it names, and the
-/// table the join resolves it through.
+/// A dispatched member (step 8): the name it looks up, whether it is a read
+/// of that attribute (`python:dispatch:.<name>`) or a call of it
+/// (`python:dispatch:<name>`), and the table the join resolves it through.
 #[derive(Debug)]
 struct DispatchEdge {
     method: String,
+    read: bool,
     table: Arc<DispatchTable>,
 }
 
-/// The contract that answers a dispatched method call at this read (step 8):
-/// the class the read binds the receiver's input to (the call's `py.class`
-/// for its first positional argument) resolved by `dispatched_symbol`, and
-/// the answer of that function's bridge, bound to the call's arguments by
-/// the one binder. `None` -- the call stays owed -- when `post` is no
-/// dispatched member, when nothing decides the method, or when the call's
-/// arguments do not bind the function's formals (the call was spelled for
-/// whatever runs, so a misfit is Python's `TypeError`, which nothing here
-/// states).
+/// The contract that answers a dispatched method call or attribute read at
+/// this read (step 8): the class the read binds the receiver's input to (the
+/// call's `py.class` for its first positional argument) resolved by
+/// `dispatched_target`, and the answer of that function's bridge, bound to
+/// the call's arguments as the function's kind takes them
+/// (`dispatched_arguments`) by the one binder. `None` -- the call stays owed
+/// -- when `post` is no dispatched member, when nothing decides the method,
+/// or when the call's arguments do not bind the function's formals (the call
+/// was spelled for whatever runs, so a misfit is Python's `TypeError`, which
+/// nothing here states).
 fn dispatch_answer(post: &AmbientPost, call: &Json) -> Option<AmbientPost> {
     let dispatch = post.dispatch.as_ref()?;
     let args = call.get("args")?.as_array()?;
@@ -4487,10 +4648,16 @@ fn dispatch_answer(post: &AmbientPost, call: &Json) -> Option<AmbientPost> {
         Some(Ok((ClassKey::Position(0), class))) => Some(class),
         _ => None,
     })?;
-    let symbol = dispatched_symbol(&dispatch.table.namespaces, &dispatch.method, &class)?;
+    let target = dispatched_target(
+        &dispatch.table.namespaces,
+        &dispatch.method,
+        dispatch.read,
+        &class,
+    )?;
     let (binding, answer, halt_guards, every_halt_guarded, typed_halts) =
-        dispatch.table.answers.get(&symbol)?.clone()?;
-    bind_call_arguments(&binding.formals, &binding.stated_inputs, args)?;
+        dispatch.table.answers.get(&target.symbol)?.clone()?;
+    let rebound = dispatched_arguments(&target.receiver, args)?;
+    bind_call_arguments(&binding.formals, &binding.stated_inputs, &rebound)?;
     Some(AmbientPost {
         binding,
         post: answer,
@@ -4501,6 +4668,7 @@ fn dispatch_answer(post: &AmbientPost, call: &Json) -> Option<AmbientPost> {
         site_cid: post.site_cid.clone(),
         refusal: None,
         dispatch: None,
+        receiver: target.receiver,
     })
 }
 
@@ -4537,7 +4705,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
         // A dispatched method call (step 8): no bridge states its symbol.
         // It is owed as it stands; a read that binds its receiver's class
         // resolves it (`dispatch_answer`).
-        if let Some(method) = edge.symbol.strip_prefix(DISPATCH_SYMBOL_PREFIX) {
+        if let Some(member) = edge.symbol.strip_prefix(DISPATCH_SYMBOL_PREFIX) {
             let table = table.get_or_insert_with(|| Arc::new(dispatch_table(pool)));
             let mut post = owed_post(
                 &edge.symbol,
@@ -4545,8 +4713,13 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                 &edge.site_cid,
                 DroppedAmbientPostReason::Unanswered,
             );
+            let (method, read) = match member.strip_prefix(DISPATCH_READ_MARK) {
+                Some(attribute) => (attribute, true),
+                None => (member, false),
+            };
             post.dispatch = Some(Arc::new(DispatchEdge {
                 method: method.to_string(),
+                read,
                 table: Arc::clone(table),
             }));
             owed.push(post);
@@ -4592,6 +4765,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                     site_cid: edge.site_cid.clone(),
                     refusal: None,
                     dispatch: None,
+                    receiver: DispatchReceiver::AsCalled,
                 })
             }
             Ok(None) => owed.push(owed_post(
@@ -4617,6 +4791,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                 site_cid: edge.site_cid.clone(),
                 refusal: Some(reason),
                 dispatch: None,
+                receiver: DispatchReceiver::AsCalled,
             }),
         }
     }
@@ -4680,6 +4855,7 @@ fn owed_post(
         site_cid: site_cid.to_string(),
         refusal: Some(reason),
         dispatch: None,
+        receiver: DispatchReceiver::AsCalled,
     }
 }
 
@@ -4804,12 +4980,11 @@ impl JoinedHalts {
                 // inputs by the one binder the join binds the post with
                 // (step 4). A call that does not fit is refused at the join
                 // (`import-signature-mismatch`), so no halt is stated through
-                // it here either.
-                let Some(bindings) = bind_call_arguments(
-                    &post.binding.formals,
-                    &post.binding.stated_inputs,
-                    args,
-                ) else {
+                // it here either. A dispatched answer binds them as the kind
+                // of function it resolved to takes them (`post_arguments`).
+                let Some(bindings) = post_arguments(post, args).and_then(|args| {
+                    bind_call_arguments(&post.binding.formals, &post.binding.stated_inputs, &args)
+                }) else {
                     continue;
                 };
                 // What the callee's formals are bound to as the reads that
@@ -5474,12 +5649,12 @@ fn linked_ambient_post_instances_for_inv(
                 continue;
             };
             // Positional and named arguments bound to the contract's
-            // parameters and inputs (step 4): one binder for every call.
-            let Some(bindings) = bind_call_arguments(
-                &post.binding.formals,
-                &post.binding.stated_inputs,
-                args,
-            ) else {
+            // parameters and inputs (step 4): one binder for every call. A
+            // dispatched answer binds them as the kind of function it
+            // resolved to takes them (`post_arguments`, step 8).
+            let Some(bindings) = post_arguments(post, args).and_then(|args| {
+                bind_call_arguments(&post.binding.formals, &post.binding.stated_inputs, &args)
+            }) else {
                 dropped.push(DroppedAmbientPost {
                     source_symbol: post.binding.source_symbol.clone(),
                     target_cid: post.binding.target_cid.clone(),
@@ -11229,6 +11404,7 @@ mod tests {
             site_cid: site_cid.to_string(),
             refusal: None,
             dispatch: None,
+            receiver: DispatchReceiver::AsCalled,
         }
     }
 
@@ -12048,7 +12224,125 @@ mod tests {
                     (name.to_string(), (kind.to_string(), symbol.to_string()))
                 })
                 .collect(),
+            object: None,
         }
+    }
+
+    /// The symbol a call of `method` resolves to (`dispatched_target`).
+    fn dispatched_symbol(
+        namespaces: &BTreeMap<String, ClassNamespace>,
+        method: &str,
+        class: &Json,
+    ) -> Option<String> {
+        dispatched_target(namespaces, method, false, class).map(|target| target.symbol)
+    }
+
+    fn class_object(cid: &str) -> Json {
+        json!({"kind": "ctor", "name": "python:class-definition", "args": [string_const(cid)]})
+    }
+
+    #[test]
+    fn each_kind_binds_as_its_descriptor_binds_read_off_an_instance() {
+        // Step 8: `class C` holds a plain def, a function field, a
+        // staticmethod, a classmethod and a property.
+        let mut c = namespace(
+            &["python:m.C", "builtins.object"],
+            &[
+                ("get", "function", "python:m.C.get"),
+                ("f", "field", "python:m.C.<lambda>@3:8"),
+                ("s", "staticmethod", "python:m.C.s"),
+                ("k", "classmethod", "python:m.C.k"),
+                ("p", "property", "python:m.C.p"),
+            ],
+        );
+        c.object = Some(class_object("cid-c"));
+        let mut namespaces = BTreeMap::new();
+        namespaces.insert("python:m.C".to_string(), c);
+        let obj = instance("python:m.C", &[]);
+        let target = |method: &str, read: bool, class: &Json| {
+            dispatched_target(&namespaces, method, read, class)
+        };
+        let to = |symbol: &str, receiver: DispatchReceiver| {
+            Some(DispatchTarget {
+                symbol: symbol.to_string(),
+                receiver,
+            })
+        };
+        assert_eq!(target("get", false, &obj), to("python:m.C.get", DispatchReceiver::AsCalled));
+        assert_eq!(
+            target("f", false, &obj),
+            to("python:m.C.<lambda>@3:8", DispatchReceiver::AsCalled)
+        );
+        assert_eq!(target("s", false, &obj), to("python:m.C.s", DispatchReceiver::Static));
+        assert_eq!(
+            target("k", false, &obj),
+            to("python:m.C.k", DispatchReceiver::Class(class_object("cid-c")))
+        );
+        // A property is read, never called: its getter answers the read; a
+        // call of what it returns is not stated here.
+        assert_eq!(target("p", true, &obj), to("python:m.C.p", DispatchReceiver::AsCalled));
+        assert_eq!(target("p", false, &obj), None);
+        // A read of anything but a property is no call of a getter.
+        assert_eq!(target("get", true, &obj), None);
+        // A field shadows a non-data descriptor, never a property.
+        let shadowing = instance("python:m.C", &["p", "s"]);
+        assert_eq!(target("p", true, &shadowing), to("python:m.C.p", DispatchReceiver::AsCalled));
+        assert_eq!(target("s", false, &shadowing), None);
+        // A classmethod of a class no proof states the object of.
+        namespaces.get_mut("python:m.C").unwrap().object = None;
+        assert_eq!(dispatched_target(&namespaces, "k", false, &obj), None);
+        // `__getattr__` answers a getter's `AttributeError`: a read is not
+        // decided; a call of a method is.
+        namespaces
+            .get_mut("python:m.C")
+            .unwrap()
+            .binds
+            .insert(
+                "__getattr__".to_string(),
+                ("function".to_string(), "python:m.C.__getattr__".to_string()),
+            );
+        assert_eq!(dispatched_target(&namespaces, "p", true, &obj), None);
+        assert!(dispatched_target(&namespaces, "s", false, &obj).is_some());
+    }
+
+    #[test]
+    fn a_dispatched_call_s_arguments_bind_as_its_kind_takes_them() {
+        let d = instance("python:m.D", &[]);
+        let args = vec![
+            var("obj"),
+            int(4),
+            named_arg("py.class", "0", instance("python:m.C", &[])),
+            named_arg("py.class", "1", d.clone()),
+            named_arg("py.kwarg", "k", int(5)),
+        ];
+        assert_eq!(dispatched_arguments(&DispatchReceiver::AsCalled, &args), Some(args.clone()));
+        // A staticmethod: no instance, its class dropped, the next argument's
+        // class keyed one lower.
+        assert_eq!(
+            dispatched_arguments(&DispatchReceiver::Static, &args),
+            Some(vec![
+                int(4),
+                named_arg("py.class", "0", d.clone()),
+                named_arg("py.kwarg", "k", int(5)),
+            ])
+        );
+        // A classmethod: the class object in the instance's place, the
+        // instance's class dropped.
+        assert_eq!(
+            dispatched_arguments(&DispatchReceiver::Class(class_object("cid-c")), &args),
+            Some(vec![
+                class_object("cid-c"),
+                int(4),
+                named_arg("py.class", "1", d),
+                named_arg("py.kwarg", "k", int(5)),
+            ])
+        );
+        // The one binder binds the staticmethod's formals from them.
+        let rebound = dispatched_arguments(&DispatchReceiver::Static, &args).unwrap();
+        assert_eq!(
+            bind_call_arguments(&formals(&["n", "k"]), &[], &rebound),
+            Some(vec![("n".to_string(), int(4)), ("k".to_string(), int(5))])
+        );
     }
 
     #[test]
@@ -12144,18 +12438,34 @@ mod tests {
                     fact(PYTHON_CLASS_MRO, &["python:m.C", "python:m.C", "builtins.object"]),
                     fact(PYTHON_CLASS_BINDS, &["python:m.C", "get", "function", "python:m.C.get"]),
                     fact(PYTHON_CLASS_BINDS, &["python:m.Other", "get", "function", "python:m.Other.get"]),
+                    json!({
+                        "kind": "atomic",
+                        "name": PYTHON_CLASS_OBJECT,
+                        "args": [string_const("python:m.C"), class_object("cid-c")],
+                    }),
                 ],
             },
         });
         let (symbol, stated) = class_namespace_of(&body).expect("a namespace row");
         assert_eq!(symbol, "python:m.C");
-        assert_eq!(
-            stated,
-            namespace(
-                &["python:m.C", "builtins.object"],
-                &[("get", "function", "python:m.C.get")],
-            )
+        let mut expected = namespace(
+            &["python:m.C", "builtins.object"],
+            &[("get", "function", "python:m.C.get")],
         );
+        // The class object is the term the row states, as the row's `inv`
+        // reads canonically.
+        let object = stated.object.clone().expect("the class object");
+        assert_eq!(object.get("name").and_then(|v| v.as_str()), Some("python:class-definition"));
+        assert_eq!(
+            object
+                .get("args")
+                .and_then(|v| v.as_array())
+                .and_then(|args| args.first())
+                .and_then(const_str),
+            Some("cid-c")
+        );
+        expected.object = Some(object);
+        assert_eq!(stated, expected);
         // A namespace row is a statement of fact, never a claim to check.
         assert!(!is_consistency_candidate(&body));
     }

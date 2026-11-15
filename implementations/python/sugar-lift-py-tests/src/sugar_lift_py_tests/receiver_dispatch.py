@@ -34,6 +34,12 @@ from __future__ import annotations
 #: spelled with (``consistency::DISPATCH_SYMBOL_PREFIX``).
 DISPATCH_TARGET_PREFIX = "dispatch:"
 
+#: The mark of a dispatched attribute read after the prefix:
+#: ``dispatch:.<name>`` is the read ``obj.<name>`` a property's getter
+#: answers at prove, ``dispatch:<m>`` the call ``obj.<m>(...)``
+#: (``consistency::DISPATCH_READ_MARK``).  No Python name starts with ``.``.
+DISPATCH_READ_MARK = "."
+
 #: ``python:instance(<class symbol>, <field>...)``: a decided instance's
 #: class, as a caller binds a class input to it; the fields are every name
 #: its ``__dict__`` may hold at the call (``consistency::PYTHON_INSTANCE``).
@@ -404,7 +410,9 @@ def initializer_receiver_formals(unit) -> dict:
     return found
 
 
-def dispatch_edge_call(name, receiver, receiver_class, positional, kw_values, site):
+def dispatch_edge_call(
+    name, receiver, receiver_class, positional, kw_values, site, *, read=False
+):
     """THE dispatched method call (#7757 step 8): the coordinate
     ``call:dispatch:<name>(<receiver>, <positional>..., py.kwarg(...)...,
     py.class("0", <receiver_class>), py.class(...)...)`` sent down the path
@@ -414,15 +422,20 @@ def dispatch_edge_call(name, receiver, receiver_class, positional, kw_values, si
     positional argument, as a plain function a lookup binds to an instance
     takes it; each other actual's class rides as its own ``py.class`` where
     it is decided (``class_arguments``).  Nothing here names which function
-    runs: prove resolves it where a read binds the receiver's class
-    (``consistency::dispatch_answer``)."""
+    runs, nor how its descriptor binds the receiver: prove resolves both on
+    the class's namespace row (the kind each binding states) where a read
+    binds the receiver's class (``consistency::dispatch_answer``).
+
+    ``read``: the attribute read ``receiver.<name>`` a property's getter
+    answers, ``call:dispatch:.<name>(<receiver>, py.class("0", ...))``
+    (``DISPATCH_READ_MARK``), with no other actual."""
     from sugar_lift_py_tests.call_symbol import call_symbol
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.ir import ctor, str_const
     from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
 
     owner = str(site)
-    target = DISPATCH_TARGET_PREFIX + name
+    target = DISPATCH_TARGET_PREFIX + (DISPATCH_READ_MARK if read else "") + name
     arguments = (
         [receiver.to_term(owner=owner)]
         + [value.to_term(owner=owner) for value in positional]

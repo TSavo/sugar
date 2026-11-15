@@ -12,9 +12,10 @@ class BoundMethodValue(FloorValue):
     Python's attribute read of a function in the receiver's class namespace
     yields what its descriptor binds (a bound method; for a ``staticmethod``
     the bare function, for a ``classmethod`` a method bound to the class);
-    calling it is ``receiver.name(*args, **kwargs)``, whose implicit first
-    actual the one method door reads off the descriptor kind
-    (``object_value.implicit_arguments``).
+    calling it is ``receiver.name(*args, **kwargs)``: on a source instance
+    the one dispatched call over the receiver's class, whose implicit first
+    actual prove binds by the kind the class's namespace row states
+    (``ObjectValue.call_member``, #7757 step 8).
 
     ``member`` is what the one class-namespace lookup selected when the read
     was made (``ObjectValue.class_member``): a function the class wrote

@@ -254,3 +254,64 @@ def test_an_init_that_hands_self_keeps_its_method_call_undispatched() -> None:
     outcome = function_universe_outcome(initializer)
     owners = {halt.effect.producer_node_owner for halt in outcome.halts()}
     assert "UnknownCallee:dispatch:setup" not in owners
+
+
+_KINDS = """\
+def helper(self):
+    return 0
+
+
+class Box:
+    def get(self):
+        return 1
+
+    @staticmethod
+    def make(n):
+        return n
+
+    @classmethod
+    def build(cls, n):
+        return n
+
+    @property
+    def size(self):
+        return 2
+
+    pick = lambda self: 3
+
+    alias = helper
+
+    def counted(self):
+        yield 1
+"""
+
+
+def test_a_namespace_row_states_each_binding_s_kind(tmp_path) -> None:
+    """The class's namespace row states each binding's kind with its
+    function's join symbol (#7757 step 8): a plain ``def``, a
+    ``staticmethod``, a ``classmethod``, a ``property`` getter and a lambda
+    field, each bound at prove as its descriptor binds it.  A field holding
+    a name, and a generator, are ``other``: a dispatched call of them stays
+    owed.  A ``classmethod`` brings the class object's term."""
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+    from sugar_lift_py_tests.tree_enumerate import _class_namespace_facts
+    from sugar_source_tree.nodes import ClassDef
+
+    path = tmp_path / "subject.py"
+    path.write_text(_KINDS)
+    tree = open_source_file_for_construction(path, root=tmp_path)
+    (box,) = tuple(node for node in tree.nodes() if isinstance(node, ClassDef))
+    symbol, mro, binds, class_object = _class_namespace_facts(box)
+    assert symbol == "python:subject.Box"
+    assert mro == ("python:subject.Box", "builtins.object")
+    kinds = {name: (kind, target) for name, kind, target in binds}
+    assert kinds["get"] == ("function", "python:subject.Box.get")
+    assert kinds["make"] == ("staticmethod", "python:subject.Box.make")
+    assert kinds["build"] == ("classmethod", "python:subject.Box.build")
+    assert kinds["size"] == ("property", "python:subject.Box.size")
+    assert kinds["pick"][0] == "field"
+    assert "<lambda>" in kinds["pick"][1]
+    assert kinds["alias"] == ("other", "")
+    assert kinds["counted"] == ("other", "")
+    assert class_object is not None
+    assert class_object.name == "python:class-definition"

@@ -727,10 +727,18 @@ The verifier reads the class symbol off the row name by this suffix, and the
 row is a statement of fact, never a claim to check (``consistency.rs``,
 ``CLASS_NAMESPACE_SUFFIX``)."""
 
-#: A namespace value the dispatch joins: a plain function the class body
-#: wrote, which a read off an instance binds to it (``consistency::
-#: DISPATCH_FUNCTION_KIND``).
+#: The kinds of namespace value the dispatch joins, each stated with the join
+#: symbol of the function it holds and bound at prove as Python's descriptor
+#: protocol binds it read off an instance (``consistency::
+#: DISPATCH_*_KIND``, ``DispatchReceiver``): a plain ``def`` the body wrote
+#: (bound to the instance); a function the class holds as a field
+#: (``m = lambda self: ...``, bound to the instance); a ``def`` under the
+#: builtin ``staticmethod`` (nothing bound), ``classmethod`` (the instance's
+#: class bound) or ``property`` (its getter, called with the instance where
+#: the attribute is read).
 _FUNCTION_KIND = "function"
+_FIELD_KIND = "field"
+_DESCRIPTOR_KINDS = frozenset({"staticmethod", "classmethod", "property"})
 
 
 def class_namespace_rows(sf: SourceFile, file_rel: str) -> list:
@@ -746,12 +754,22 @@ def class_namespace_rows(sf: SourceFile, file_rel: str) -> list:
       (``ClassDef.method_resolution_order``), a source class by its join
       symbol, a builtin class as ``builtins.<name>``;
     - ``python:class_binds(<C>, <name>, <kind>, <symbol>)`` for each name its
-      own namespace may hold (``ClassDef.namespace_binds`` not False): kind
-      ``function`` with the function's join symbol for a plain ``def`` the
-      body wrote and holds (``namespace_value_is_body``: undecorated, not a
-      generator, not ``async``), ``undecided`` where the lookup does not
-      decide whether it holds it, ``other`` for anything else (a descriptor,
-      a field, a nested class).
+      own namespace may hold (``ClassDef.namespace_binds`` not False), with
+      the join symbol of the function it holds where its kind is one the
+      dispatch binds (``_namespace_value_kind``): ``function`` for a plain
+      ``def`` the body wrote and holds (``namespace_value_is_body``:
+      undecorated, not a generator, not ``async``); ``staticmethod``,
+      ``classmethod`` or ``property`` for such a ``def`` under that one
+      builtin decorator (``ClassDef._method_descriptor_kind``); ``field``
+      for a lambda the body assigns to the name; ``undecided`` where the
+      lookup does not decide whether it holds it; ``other`` for anything
+      else (another decorator, a field of any other value, a nested class);
+    - ``python:class_object(<C>, <class term>)``, where a ``classmethod`` is
+      bound: the term the class object is spelled by
+      (``class_definition_value.class_definition_term``), what a
+      ``classmethod`` read off an instance binds first.  A class whose
+      statement is refused by name states none, and its ``classmethod``s
+      stay owed at prove.
 
     A class whose order is not read, one with a source class of no join
     symbol in it, or one whose namespace is open (a keyword, a decorator the
@@ -782,7 +800,7 @@ def class_namespace_rows(sf: SourceFile, file_rel: str) -> list:
             continue
         if facts is None:
             continue
-        symbol, mro, binds = facts
+        symbol, mro, binds, class_object = facts
         statements = [
             atomic(
                 "python:class_mro",
@@ -800,6 +818,10 @@ def class_namespace_rows(sf: SourceFile, file_rel: str) -> list:
             )
             for name, kind, target in binds
         ]
+        if class_object is not None:
+            statements.append(
+                atomic("python:class_object", [str_const(symbol), class_object])
+            )
         memento = statement_memento(cls, cls.name, file_rel)
         locus = ConstructionSite(
             path=file_rel, line=memento.span.start_line, column=memento.span.start_col
@@ -824,9 +846,11 @@ def class_namespace_rows(sf: SourceFile, file_rel: str) -> list:
 
 
 def _class_namespace_facts(cls):
-    """``(symbol, mro, binds)`` for ``class_namespace_rows``, or None when the
-    class states no namespace row."""
-    from sugar_source_tree.nodes import ClassDef, FunctionDef
+    """``(symbol, mro, binds, class_object)`` for ``class_namespace_rows``,
+    or None when the class states no namespace row.  ``class_object`` is the
+    class object's term where a ``classmethod`` is bound and the class
+    statement constructs (``_class_object_term``), else None."""
+    from sugar_source_tree.nodes import ClassDef
 
     symbol = cls.bridge_source_symbol()
     order = cls.method_resolution_order()
@@ -863,20 +887,78 @@ def _class_namespace_facts(cls):
         if held is None:
             binds.append((name, "undecided", ""))
             continue
-        binder = cls.body_binder(name)
-        function = (
-            cls.namespace_value_is_body(name)
-            and type(binder) is FunctionDef
-            and any(item is binder for item in cls.body)
-            and not binder.decorators
-            and not FunctionDef._owns_yield(binder.body)
-        )
-        target = binder.bridge_source_symbol() if function else None
+        kind, target = _namespace_value_kind(cls, name)
         if target is None:
             binds.append((name, "other", ""))
         else:
-            binds.append((name, _FUNCTION_KIND, target))
-    return symbol, tuple(mro), tuple(binds)
+            binds.append((name, kind, target))
+    class_object = None
+    if any(kind == "classmethod" for _name, kind, _target in binds):
+        class_object = _class_object_term(cls)
+    return symbol, tuple(mro), tuple(binds), class_object
+
+
+def _namespace_value_kind(cls, name: str) -> tuple:
+    """``(kind, join symbol)`` of the value the class ``cls`` holds for
+    ``name``, read off the class statement alone, when it is a function the
+    dispatch binds (``_FUNCTION_KIND``, ``_FIELD_KIND``,
+    ``_DESCRIPTOR_KINDS``); ``(None, None)`` for anything else.
+
+    The value is the one its body bound (``namespace_value_is_body``) by a
+    statement of the body itself (never one under an ``if``): a ``def`` that
+    is neither a generator nor ``async``, undecorated or under exactly one
+    builtin descriptor decorator (``ClassDef._method_descriptor_kind``, the
+    kind the one method door binds by); or a single-target assignment of a
+    lambda to the name, whose function is that lambda.  Its join symbol is
+    the function's own (``bridge_source_symbol``), whose contract is the
+    function's body: a descriptor decorator wraps the function without
+    changing what a call of it runs."""
+    from sugar_source_tree.nodes import Assign, FunctionDef, Lambda, Name
+
+    if not cls.namespace_value_is_body(name):
+        return None, None
+    binder = cls.body_binder(name)
+    if not any(item is binder for item in cls.body):
+        return None, None
+    if type(binder) is FunctionDef:
+        if FunctionDef._owns_yield(binder.body):
+            return None, None
+        if not binder.decorators:
+            kind = _FUNCTION_KIND
+        else:
+            kind = cls._method_descriptor_kind(binder)
+            if kind not in _DESCRIPTOR_KINDS:
+                return None, None
+        return kind, binder.bridge_source_symbol()
+    if (
+        isinstance(binder, Assign)
+        and len(binder.targets) == 1
+        and isinstance(binder.targets[0], Name)
+        and binder.targets[0].id == name
+        and isinstance(binder.value, Lambda)
+    ):
+        return _FIELD_KIND, binder.value.bridge_source_symbol()
+    return None, None
+
+
+def _class_object_term(cls):
+    """The term the class object of ``cls`` is spelled by
+    (``class_definition_value.class_definition_term``), off the class
+    statement's one construction (step 5; the cached sugar every reading of
+    the class reads), or None when the statement is refused by name."""
+    from sugar_lift_py_tests.floor.class_definition_value import (
+        class_definition_term,
+    )
+    from sugar_source_tree.panic import BackendDefect, LifterRefusal
+
+    try:
+        sugar = cls.sugar()
+    except BackendDefect:
+        raise
+    except LifterRefusal:
+        return None
+    cid = getattr(sugar, "class_definition_cid", None)
+    return None if cid is None else class_definition_term(cid)
 
 
 def as_its_own_proof_states(outcome, ctx):

@@ -180,6 +180,49 @@ def test_method_raising_on_one_branch_carries_that_raise(tmp_path: Path) -> None
     )
 
 
+# The same branch through a ``staticmethod`` and a ``classmethod`` read off
+# the bare instance: the dispatch binds each as its descriptor binds it at
+# prove (#7757 step 8, the kind the class's namespace row states) -- the
+# instance not passed, or the class passed in its place -- and the actual
+# selects the arm.
+_DESCRIPTOR_BRANCH = """\
+class Limit:
+    @{decorator}
+    def check({formals}):
+        if n > 5:
+            raise ValueError('too big')
+        return n
+
+
+def test_limit():
+    limit = Limit()
+    value = limit.check(n={actual})
+    assert value == {actual}
+"""
+
+
+@pytest.mark.parametrize(
+    ("decorator", "formals"),
+    [("staticmethod", "n"), ("classmethod", "cls, n")],
+)
+def test_a_descriptor_method_on_a_bare_instance_is_dispatched_by_its_kind(
+    tmp_path: Path, decorator: str, formals: str
+) -> None:
+    """``limit.check(n=...)`` where ``check`` is a ``staticmethod`` or a
+    ``classmethod``: dispatched at prove on ``Limit``'s namespace, which
+    states the kind, and bound as Python binds it read off an instance.
+    Before, prove dispatched only plain functions and the lift chose the
+    method itself.  Truthful ``sat``, lying ``unsat``."""
+
+    _pair(
+        tmp_path,
+        f"{decorator}-branch",
+        _DESCRIPTOR_BRANCH.format(decorator=decorator, formals=formals, actual=3),
+        _DESCRIPTOR_BRANCH.format(decorator=decorator, formals=formals, actual=9),
+        expected=("sat", "unsat"),
+    )
+
+
 # The test function spreads a dict it made into the method applied on a
 # receiver it made.
 _SPREAD_CALL = """\
