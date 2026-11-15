@@ -180,6 +180,62 @@ def test_an_outer_handler_reads_what_a_nested_try_stored_before_the_raise() -> N
     assert _returned_value(outcome) == TermValue(2)
 
 
+# The inner ``try`` never completes: its body always raises and its one arm
+# returns.  What its halt carries out of it is the state at the raise
+# (``_HaltEdgeJoin.escaping_state``, ``_Splice.halted``), never the state its
+# completion would have left -- which binds nothing, so the outer handler
+# used to read the key of ``x = 1``.
+_NESTED_TRY_STORES_THEN_RAISES = (
+    "def f():\n"
+    "    x = 0\n"
+    "    try:\n"
+    "        x = 1\n"
+    "        try:\n"
+    "            x = 2\n"
+    "            raise ValueError()\n"
+    "        except KeyError:\n"
+    "            return 3\n"
+    "    except ValueError:\n"
+    "        return x\n"
+)
+
+
+def test_the_truthful_half_reads_the_store_the_raising_path_bound() -> None:
+    # TRUTHFUL: Python returns 2, the value ``x = 2`` bound before the raise.
+    outcome = function_universe_outcome(_function(_NESTED_TRY_STORES_THEN_RAISES))
+    assert _returned_value(outcome) == TermValue(2)
+
+
+def test_the_lying_half_reads_the_store_before_the_nested_try() -> None:
+    # LYING: 1, the binding standing before the nested try, read as if the
+    # nested try's halt carried what its (never reached) completion left.
+    outcome = function_universe_outcome(_function(_NESTED_TRY_STORES_THEN_RAISES))
+    assert _returned_value(outcome) != TermValue(1)
+
+
+def test_an_outer_handler_reads_a_nested_try_store_through_an_if() -> None:
+    # The same nested try beneath an ``if``: the ``if`` passes on what the
+    # halt leaving the nested try carries (``_compound_halt_state``), so the
+    # outer handler still reads 2.
+    outcome = function_universe_outcome(
+        _function(
+            "def f():\n"
+            "    x = 0\n"
+            "    try:\n"
+            "        x = 1\n"
+            "        if True:\n"
+            "            try:\n"
+            "                x = 2\n"
+            "                raise ValueError()\n"
+            "            except KeyError:\n"
+            "                return 3\n"
+            "    except ValueError:\n"
+            "        return x\n"
+        )
+    )
+    assert _returned_value(outcome) == TermValue(2)
+
+
 def test_a_handler_after_a_loop_that_raised_carries_what_the_items_did() -> None:
     # Item 0 appended 1 and went on; item 1 appended 2 and raised.  The raise
     # leaves the loop with both items' appends (#8089), and the handler that
