@@ -135,13 +135,23 @@ def test_box():
 
 
 def test_self_method_call_carries_the_method_raise(tmp_path: Path) -> None:
-    """A method call inside a method: ``m`` completes vs ``m`` always raises."""
+    """A method call inside a method: ``m`` completes vs ``m`` always raises.
+
+    ``Box()`` runs no source code, so ``box`` and ``inner`` are bare ``Box``
+    instances: ``box.run()`` is dispatched at prove on ``Box``'s namespace to
+    ``Box.run``, and inside ``run``'s contract ``inner.check()`` is the one
+    dispatched edge to ``Box.check`` (#7757 step 8).  ``check``'s contract
+    states its completion (``return None``) or its halt (always raises), and
+    the completion fact carries it through ``run`` to the test function's
+    claim.  Decided: truthful ``sat`` (scorecard run 43745139407 measured the
+    test function's claim ``sat``), lying ``unsat`` (measured ``unsat``)."""
 
     _pair(
         tmp_path,
         "self-call",
         _SELF_CALL.format(body="        return None"),
         _SELF_CALL.format(body="        raise ValueError('bad box')"),
+        expected=("sat", "unsat"),
     )
 
 
