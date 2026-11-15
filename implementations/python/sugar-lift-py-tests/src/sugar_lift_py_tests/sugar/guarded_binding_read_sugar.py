@@ -25,11 +25,14 @@ def _guarded_projection_faces(state: GuardedProjection):
 
 
 def _projection_guard(state: GuardedProjection, ctx, site):
-    """The guard a branch-result projection's true arm is read under: the
-    test's own condition where the path reads the slot as it (a symbolic
-    ``if``'s, ``branch_result_reading``), else the slot's guard, as the live
-    loop item running now decides it (``branch_slot_here``).  The one guard
-    a read and a ``del`` of the projection select by (#7757)."""
+    """``(guard, undecided)``: the guard a branch-result projection's true
+    arm is read under, and whether the read owes the undecided member.  The
+    guard is the test's own condition where the path reads the slot as it (a
+    symbolic ``if``'s, ``branch_result_reading``), owing nothing; else the
+    slot's guard, as the live loop item running now decides it
+    (``branch_slot_here``), which no input decides, so the read owes the
+    undecided member (``owing_undecided_slot``).  The one guard a read and
+    a ``del`` of the projection select by (#7757)."""
     from sugar_lift_py_tests.floor.branch_result_coordinate import (
         branch_result_reading,
     )
@@ -37,8 +40,8 @@ def _projection_guard(state: GuardedProjection, ctx, site):
 
     reading = branch_result_reading(state.slot, ctx)
     if reading is not None:
-        return reading
-    return branch_result_guard(branch_slot_here(state.slot), site)
+        return reading, False
+    return branch_result_guard(branch_slot_here(state.slot), site), True
 
 
 def _loop_exit_faces(state: LoopGuardedProjection):
@@ -164,9 +167,9 @@ def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
         # live loop's write slot: ``BranchResultDecision``): the read is that
         # arm's, whole; the other arm is not taken here.
         return read_binding(decided, read_name=read_name, read_site=read_site, ctx=ctx)
-    guard = _projection_guard(state, ctx, read_site)
+    guard, undecided = _projection_guard(state, ctx, read_site)
     true_face, false_face = _guarded_projection_faces(state)
-    return (
+    joined = (
         _read_arm(
             state.when_true,
             read_name=read_name,
@@ -183,6 +186,13 @@ def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
             ).guarded(not_(guard), false_face)
         )
     )
+    if not undecided:
+        return joined
+    from sugar_lift_py_tests.floor.branch_result_coordinate import (
+        owing_undecided_slot,
+    )
+
+    return owing_undecided_slot(joined, read_site)
 
 
 def _projection_term(state, *, owner: str):
