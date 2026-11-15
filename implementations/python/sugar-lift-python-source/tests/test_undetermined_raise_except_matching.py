@@ -9,7 +9,10 @@ site is not admissible as one.
 
 The effect now carries its own exception value, ``UndeterminedExceptionValue``
 (term ``python:undetermined_exception(occurrence, producer)``): the one
-exception object that occurrence threw. ``except T`` splits the halt into a
+exception object that occurrence threw.  A call whose edge names its callee
+(an import-bound call or construction) names that object by the call,
+``python:raised(<call term>, <occurrence>)``, the one term a same-file
+definition's call raises too (#7757 step 7). ``except T`` splits the halt into a
 caught face under ``adt.is_python_type(<that exception>, T)`` and the original
 halt under the complement. ``except BaseException`` and bare ``except`` catch
 it totally; ``except Exception`` does not (a C call or a Python callee can
@@ -95,7 +98,25 @@ def _returns_one(exits):
     return [row for row in _entries(exits) if row[0] == "return" and "value=1)" in repr(row[1])]
 
 
-def _subject(producer: str) -> str:
+# An import-bound call's edge names its callee (the one import table's target
+# symbol), so the exception it raised is named by the call, as a same-file
+# definition's is: ``python:raised(<call term>, <occurrence>)`` (#7757 step
+# 7), typed at prove by the callee's contract where one is joined.  Keyed by
+# the producer, the call term each raises from.
+_RAISED_BY_CALL = {
+    SOURCE_CALL[2]: "call:textwrap.dedent",
+    "UnknownCallee:json.JSONDecodeError": "call:json.JSONDecodeError",
+}
+
+
+def _subject(producer: str) -> tuple[str, str]:
+    """The head of the handler's test over the raised exception, and the
+    text that names which operation raised it."""
+    call = _RAISED_BY_CALL.get(producer)
+    if call is not None:
+        return (
+            "_Atomic(name='adt.is_python_type', args=(_Ctor(name='python:raised', "
+        ), f"_Ctor(name='{call}'"
     return (
         "_Atomic(name='adt.is_python_type', args=(_Ctor(name='python:undetermined_exception', "
     ), f"value='{producer}'"

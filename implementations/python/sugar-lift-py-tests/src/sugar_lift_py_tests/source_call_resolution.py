@@ -941,12 +941,14 @@ class UnknownCalleeCallV1:
 
     callee_name: str
 
-    def faces(self, callsite, site, *, names_its_raise: bool = False):
-        """``names_its_raise``: the call is a same-file definition's edge
-        (``lambda_callable.definition_edge_call``), so the exception it
-        raises is named by the call (``python:raised``) and typed at prove
-        by the callee's contract (#7757 step 7).  An imported call keeps
-        ``python:undetermined_exception`` here."""
+    def faces(self, callsite, site):
+        """A call whose edge names its callee (a ``target_symbol``: a
+        same-file definition's edge, ``lambda_callable.definition_edge_call``,
+        or an import-bound callee the one import table names) raises the
+        exception named by the call, ``python:raised(<call term>,
+        <occurrence>)``, typed at prove by the callee's contract wherever one
+        is joined (#7757 step 7).  One term for every such call, same-file or
+        imported."""
         from .effect.raise_effect import UndeterminedRaiseEffect
         from .ir import atomic, ctor
         from .occurrence import occurrence_key, occurrence_term
@@ -974,7 +976,7 @@ class UnknownCalleeCallV1:
         # is named by the call it came from, ``python:raised(<call term>,
         # <occurrence>)``, so prove types it under each stated halt's guard.
         raised_by_call = None
-        if names_its_raise and symbol is not None and hasattr(callsite, "term"):
+        if symbol is not None and hasattr(callsite, "term"):
             raised_by_call = ctor(
                 "python:raised", (callsite.term, occurrence_term(site))
             )
