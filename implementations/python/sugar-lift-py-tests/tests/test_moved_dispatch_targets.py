@@ -191,13 +191,32 @@ def test_static_join_folds_at_any_cardinality() -> None:
 
 
 def test_an_opaque_join_iterable_still_only_coordinates() -> None:
-    """Discriminating face: removing the cap did not make the fold greedy."""
+    """Discriminating face: removing the cap did not make the fold greedy.
+
+    Expected shape changed (#8898): ``sep.join`` over an iterable the cited
+    fold does not decide iterates it through the one iterator path and
+    checks each member to be a ``str`` (``string_value._joined``), so an
+    opaque formal's ``iter``, ``next`` and member check are halt faces at the
+    call's source site (``test_str_join_states_its_iteration``), which this
+    operation's prose blame cannot address.  The iterable here is the one
+    whose iteration cannot raise and whose member is known to be a ``str``
+    but is not ground -- an earlier join's coordinate in a tuple -- so the
+    fold still answers only the ``STR_JOIN`` coordinate, never a computed
+    string."""
     from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
     from sugar_lift_py_tests.floor.string_value import _fold_string_method
+    from sugar_source_tree.nodes import LanguageCallee
 
+    inner = OpaqueOpCallsite(
+        callee="join",
+        arg=StringValue(","),
+        computed=None,
+        extra_args=(SymbolicValue(make_var("xs")),),
+        language_callee=LanguageCallee.STR_JOIN,
+    )
     outcome = _fold_string_method(
         StringValue(","),
-        _MethodCallOperation("join", (SymbolicValue(make_var("xs")),)),
+        _MethodCallOperation("join", (TupleValue((inner,)),)),
     )
 
     assert outcome.completed_value() is not None
