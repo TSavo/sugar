@@ -172,6 +172,12 @@ class _CallSite:
     source_cid = "blake3-512:" + "b" * 128
     line_col_span = _Span()
 
+    def __str__(self) -> str:
+        # What a real fragment spells (``file:line:col``): the halt's blame
+        # reads it, so two builds of one site state the same blame, never
+        # two object addresses.
+        return "spread.py:1:0"
+
 
 def _call_sugar(elements):
     """``f(*a, *b, ...)`` — every argument is a starred operand."""
