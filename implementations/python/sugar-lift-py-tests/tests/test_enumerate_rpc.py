@@ -253,8 +253,18 @@ def test_rpc_roll_call_silently_unaccounted_twin_stays_loud(
     leaf = _audit_leaf(project)
     assert leaf["status"] == "failed"
     assert len(leaf["panics"]) == 1
-    assert leaf["panics"][0]["gap"]["kind"] == "UnaccountedConstruction"
+    gap = leaf["panics"][0]["gap"]
+    assert gap["kind"] == "UnaccountedConstruction"
     assert leaf["sourceAudit"]["totals"]["source_unresolved"] == 1
+    # The absentee reaches the board as an authenticated refusal, the same
+    # payload every refusal by name carries, so the board decodes it as a
+    # construction-panic terminal at the absentee's own coordinate.
+    assert gap["observedEventType"] == "sugar_source_tree.panic.UnaccountedConstruction"
+    assert gap["coordinate"] == gap["blame"]
+    assert gap["blame"].endswith(f"[{gap['nodeKind']}]")
+    for field in ("owner", "observed", "requested", "fix", "entrance"):
+        assert isinstance(gap[field], str) and gap[field], field
+    assert isinstance(gap["construction_trace"], list) and gap["construction_trace"]
 
 
 def test_roll_call_audit_uses_one_construction_and_one_discharge(
