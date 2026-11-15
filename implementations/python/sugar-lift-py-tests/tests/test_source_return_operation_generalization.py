@@ -675,8 +675,11 @@ def test_nested_shadowed_function_does_not_cross_wire_outer_same_name() -> None:
         if isinstance(node, FunctionDef) and node.name == "inner"
     ]
     assert len(nested) == 2
-    # Deliberately seat the outer same-name frame at the nested call: the
-    # authenticated coordinate must reject this cross-wired testimony.
+    # Seat the module's same-name frame at the nested call after the tree is
+    # built.  A lexical call's frame is read once, at construction, and the
+    # call carries it (#8210): this late seat is never read, so it cannot
+    # cross-wire the call.  Python: ``outer()`` calls the nested ``inner``,
+    # 3 + 1 == 4, never the module's 3 + 10 == 13.
     nested_call = next(
         node
         for node in tree.nodes()
@@ -686,10 +689,9 @@ def test_nested_shadowed_function_does_not_cross_wire_outer_same_name() -> None:
         0
     ].source_visible_call_frame()
 
-    with pytest.raises((AssertionError, ConstructionPanic, SugarNotWritten)):
-        call.sugar().desugar(None).completed_value()._dig_floor_or_none(
-            None, owner="nested-shadow-cross-wire"
-        )
+    assert call.sugar().desugar(None).completed_value()._dig_floor_or_none(
+        None, owner="nested-shadow-cross-wire"
+    ) == TermValue(4)
 
 
 def test_lambda_inside_nested_function_composes_with_source_return_projection() -> None:
@@ -803,12 +805,15 @@ def test_foreign_same_signature_nested_frame_refuses_loudly(
     foreign_definition = (
         module_definition if foreign_owner == "module" else wrong_scope_definition
     )
+    # A foreign frame seated after the tree is built is never read: the call
+    # carries the frame read once at construction (#8210).  Python:
+    # ``outer()`` is its own nested ``inner(3)``, 4 -- never the module's 13
+    # nor ``foreign``'s 21.
     context.source_call_frames[_coordinate(outer_call)] = (
         foreign_definition.source_visible_call_frame()
     )
     public_call = _calls_named(tree, "outer")[0]
 
-    with pytest.raises((AssertionError, ConstructionPanic, SugarNotWritten)):
-        public_call.sugar().desugar(None).completed_value()._dig_floor_or_none(
-            None, owner=f"foreign-nested-{foreign_owner}"
-        )
+    assert public_call.sugar().desugar(None).completed_value()._dig_floor_or_none(
+        None, owner=f"foreign-nested-{foreign_owner}"
+    ) == TermValue(4)
