@@ -154,11 +154,36 @@ def _class_sugar(tmp_path: Path, source: str, name: str):
     return node.sugar()
 
 
-def _class_value(tmp_path: Path, name: str):
-    sugar = _class_sugar(tmp_path / name, "", name)
-    value = sugar.desugar().completed_value()
-    assert isinstance(value, ClassDefinitionValue)
-    return value
+_W = "class W(A):\n    pass\n"
+
+
+def _w_and_classes(tmp_path: Path, *names: str):
+    """``W``'s class sugar and the class value of each prelude class in
+    ``names``, all read off ONE opened source.
+
+    The ``__init__`` a call of a class runs is the one the class-namespace
+    lookup selects over the statement's own source (``ClassDef.
+    initializer_entry``), found among the class value and its bases by the
+    class statement's occurrence (``ClassDefinitionValue.
+    class_value_of_statement``: file, source CID, span).  A base value built
+    from another source text is a different occurrence, which no lookup over
+    ``W``'s source names; the base ``W`` is built over here is the class its
+    own source binds."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    tree = _open(_corpus(tmp_path, _PRELUDE + _W))
+
+    def sugar_of(name: str):
+        node = next(
+            n for n in tree.nodes() if isinstance(n, ClassDef) and n.name == name
+        )
+        return node.sugar()
+
+    values = []
+    for name in names:
+        value = sugar_of(name).desugar().completed_value()
+        assert isinstance(value, ClassDefinitionValue)
+        values.append(value)
+    return sugar_of("W"), tuple(values)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -170,14 +195,19 @@ class _BaseOperand:
 
     def desugar(self, ctx=None):
         del ctx
-        if isinstance(self.outcome, Exception):
+        # A refusal is a ``LifterRefusal``, a ``BaseException``: it is never
+        # an ``Exception`` a handler for ordinary errors could swallow.
+        if isinstance(self.outcome, BaseException):
             raise self.outcome
         return self.outcome
 
 
-def _with_base(tmp_path: Path, outcome):
-    sugar = _class_sugar(tmp_path, "class W(A):\n    pass\n", "W")
+def _over(sugar, outcome):
     return dataclasses.replace(sugar, base_sugars=(_BaseOperand(outcome),))
+
+
+def _with_base(tmp_path: Path, outcome):
+    return _over(_class_sugar(tmp_path, _W, "W"), outcome)
 
 
 def _halt(owner: str):
@@ -220,14 +250,14 @@ def test_a_base_with_one_completion_builds_the_class_over_it(tmp_path: Path):
     (so it inherits ``A.__init__``), and the halt is still a face.
     """
     completes = _atom("once")
-    value = _class_value(tmp_path, "A")
+    w, (value,) = _w_and_classes(tmp_path, "A")
     two_faced = ExitSet(
         (
             Completed(completes, value),
             Halted(complement_guard(completes), _halt("base"), None),
         )
     )
-    assert _rows(_with_base(tmp_path / "w", two_faced).desugar()) == [
+    assert _rows(_over(w, two_faced).desugar()) == [
         ("class", ("A",), "__init__"),
         ("halt", "base"),
     ]
@@ -236,16 +266,24 @@ def test_a_base_with_one_completion_builds_the_class_over_it(tmp_path: Path):
 def test_a_base_with_several_completions_builds_one_class_per_completion(
     tmp_path: Path,
 ):
+    """One class per completed face of the base, each built over the base it
+    completed with.  ``W``'s source names ``A``: over ``A`` the class runs
+    ``A.__init__``, the ``__init__`` the lookup over its source selects.
+    Over ``B``, a class its source does not name, that lookup finds no class
+    among the bases it was built over, so no source ``__init__`` is assumed
+    for it (``ClassDefinitionValue.initializer_class``): the class is built
+    over ``B`` all the same."""
     completes = _atom("which")
+    w, (a, b) = _w_and_classes(tmp_path, "A", "B")
     two_classes = ExitSet(
         (
-            Completed(completes, _class_value(tmp_path / "a", "A")),
-            Completed(complement_guard(completes), _class_value(tmp_path / "b", "B")),
+            Completed(completes, a),
+            Completed(complement_guard(completes), b),
         )
     )
-    assert _rows(_with_base(tmp_path / "w", two_classes).desugar()) == [
+    assert _rows(_over(w, two_classes).desugar()) == [
         ("class", ("A",), "__init__"),
-        ("class", ("B",), "__init__"),
+        ("class", ("B",), None),
     ]
 
 
