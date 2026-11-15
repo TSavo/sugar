@@ -103,19 +103,10 @@ CODEX3_OWNER = (
 @pytest.mark.parametrize(
     "competing_exit",
     (
-        ExitSet.halted(
-            RaiseEffect.for_builtin(
-                "TypeError",
-                occurrence="implementations/python/sugar-lift-py-tests/tests/test_source_return_operation_generalization.py:138:0",
-            ),
-            guard=and_([TermValue(True).to_term(owner="guard")]),
-        ),
-        ExitSet.halted(
-            RaiseEffect.for_builtin(
-                "TypeError",
-                occurrence="implementations/python/sugar-lift-py-tests/tests/test_source_return_operation_generalization.py:135:0",
-            )
-        ),
+        # The control exits a block's record can hold.  A halt is not one of
+        # them: a halt is an arm of the body's ExitSet (#7826), never an
+        # entry in a completed record, so no record with an ExitSet inside
+        # it reaches this projection.
         LoopControlValue("break", "helper.py:3"),
     ),
 )
