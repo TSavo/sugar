@@ -6,8 +6,8 @@ is read at the call (#7757 item 7, residue of #7975).
    (``FunctionDef._module_global_references``): through the module's binding
    where the lambda is called (``Lambda._module_global_references``,
    ``_module_references_where_called``), the module's final binding when it
-   is called after import, refused by name where the module body does not
-   decide it.  The lambda's substitution holds the global out of its body
+   is called after import, its undecided key (the free ``global:`` input with
+   no stated value, #8704) where the module body does not decide it.  The lambda's substitution holds the global out of its body
    (``Lambda._module_globals_read``, CPython's symtable of the lambda); the
    binding standing where the lambda was made is never read.
 2. A lambda in a ``def``'s defaults or decorators stands in the function
@@ -206,10 +206,14 @@ def test_a_global_unbound_at_the_lambda_call_is_undecided() -> None:
     tree = _source("g = lambda: X\ny = g()\nX = 1\n")
     _call, site = _site_of(tree, "y")
     lam = _assigned(tree.root.substitute({}).body, "g")
-    with pytest.raises(
-        SugarNotWritten, match="undecided module binding of `X` where `lambda`"
-    ):
-        _returned_at(lam, site)
+    # Read through its undecided key, which the module's run never binds:
+    # the lambda's free ``global:X`` input with no stated value (#8704),
+    # never the name and never a refusal of the file.
+    from sugar_source_tree.nodes import undecided_module_binding_key
+
+    read = _returned_at(lam, site)
+    assert isinstance(read, EvaluationRefSugar)
+    assert read.evaluation == undecided_module_binding_key(lam.unit, "X")
 
 
 def test_a_formal_of_the_globals_name_is_not_the_global() -> None:

@@ -7,9 +7,9 @@ state, and the post-binding projection carries exactly the two exit routes,
 each under its own guard.
 
 The loop was CPython ``enum.py:304``.  The function that holds it reads the
-module's ``Flag`` where the module body does not decide it, and is refused
-by that name (``_bound_module_references``) before its loop is reached: a true
-refusal, never traded for the loop.  The loop is now the shape it had --
+module's ``Flag`` where the module body does not decide it, through its
+undecided key (``_bound_module_references``): its free ``global:Flag`` input
+with no stated value (#8704).  The loop is kept in the shape it had --
 a name carried across a ``for`` that can ``break``, read after the loop --
 in a file of its own (``test_loop_exit_partition_carrier.FIXTURE``).
 """

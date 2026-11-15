@@ -102,6 +102,24 @@ def test_a_def_reading_a_module_global_states_it_as_an_input(tmp_path):
     assert "3" in repr(term)
 
 
+def test_an_undecided_global_is_an_input_with_no_stated_value(tmp_path):
+    row = _rows(
+        tmp_path,
+        "X = []\n\n\ndef add():\n    X.append(1)\n\n\nadd()\n\n\n"
+        "def f():\n    return X\n",
+        lambda tree: [fn for fn in tree.functions() if fn.name == "f"][0],
+    )
+
+    # ``add()`` may have changed the list ``X`` names, so the module's run
+    # leaves ``X`` undecided where ``f`` reads it.  ``f`` is built and its
+    # contract is stated over the free ``global:X`` input with no stated
+    # value (#8704): a claim that reads it is undecidable by name at prove.
+    # Never a refusal of the file, never a value the run does not determine.
+    assert row.formals == ["global:X"]
+    assert "global:X" in repr(row.post.ir_formula)
+    assert row.input_values == ()
+
+
 def test_a_class_is_a_definition_never_an_input(tmp_path):
     row = _rows(
         tmp_path,

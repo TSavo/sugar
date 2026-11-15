@@ -954,35 +954,43 @@ def test_a_global_the_callee_stored_before_its_raise_is_read_as_on_completion() 
 ):
     # ``g`` stores the module global ``G`` and raises.  The handler's read of
     # ``G`` is what a read after ``g`` completing is -- the module binding a
-    # nested scope writes is cited undecided where ``f`` reads it -- never
-    # the ``0`` the module bound before the call.
-    from sugar_source_tree.panic import SugarNotWritten
-
-    halted = _read_after(
-        "def f():\n"
-        "    try:\n"
-        "        g()\n"
-        "    except ValueError:\n"
-        "        return G\n"
-        "G = 0\n"
-        "def g():\n"
-        "    global G\n"
-        "    G = 1\n"
-        "    raise ValueError()\n"
+    # nested scope writes is undecided, so ``f`` reads it through its
+    # undecided key: its free ``global:G`` input, for which its row states
+    # no value (#8704) -- never the ``0`` the module bound before the call.
+    halted = _returns(
+        function_universe_outcome(
+            _function(
+                "def f():\n"
+                "    try:\n"
+                "        g()\n"
+                "    except ValueError:\n"
+                "        return G\n"
+                "G = 0\n"
+                "def g():\n"
+                "    global G\n"
+                "    G = 1\n"
+                "    raise ValueError()\n"
+            )
+        )
     )
-    completed = _read_after(
-        "def f():\n"
-        "    g()\n"
-        "    return G\n"
-        "G = 0\n"
-        "def g():\n"
-        "    global G\n"
-        "    G = 1\n"
+    completed = _returns(
+        function_universe_outcome(
+            _function(
+                "def f():\n"
+                "    g()\n"
+                "    return G\n"
+                "G = 0\n"
+                "def g():\n"
+                "    global G\n"
+                "    G = 1\n"
+            )
+        )
     )
-    assert halted != TermValue(0)
-    assert isinstance(halted, SugarNotWritten) == isinstance(
-        completed, SugarNotWritten
-    ), (halted, completed)
+    assert halted and completed, (halted, completed)
+    assert TermValue(0) not in halted, halted
+    assert TermValue(0) not in completed, completed
+    assert "global:G" in repr(halted), halted
+    assert "global:G" in repr(completed), completed
 
 
 def test_a_call_halt_keeps_what_the_caller_did_before_the_call() -> None:

@@ -3135,7 +3135,7 @@ def _module_reads(call, functions):
     names no object the caller holds: it is not a reach, and what the
     callee may change of the caller's objects takes the exposure rule
     (``_unfollowed_reach``, ``_ambient_targets``).  The callee's own frame
-    cites it ``undecided`` by name where it is built."""
+    reads it through its undecided key (``undecided_module_binding_key``)."""
     from .nodes import (
         UNDECIDED_MODULE_BINDING,
         _site_where_called,

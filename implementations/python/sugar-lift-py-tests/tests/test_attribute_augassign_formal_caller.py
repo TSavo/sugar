@@ -520,18 +520,20 @@ def test_authenticated_discharge_get_iadd_setattr_updates_field() -> None:
         assert {f.name: f.value for f in stored.fields}["field"] == TermValue(11)
 
 
-def test_enum_attribute_augassign_owner_is_refused_for_its_undecided_global() -> None:
+def test_enum_attribute_augassign_owner_reads_its_undecided_global_as_its_input() -> (
+    None
+):
     """CPython ``enum.py:292`` (``enum_class._flag_mask_ |= value``) sits in
     ``_proto_member.__set_name__``, which reads the module global ``Flag``.
 
     ``enum.py`` binds ``Flag`` twice (``Flag = None``, then ``class Flag``),
     and the module body's threading does not decide which binding stands
     where ``__set_name__`` runs.  A name the module body does not decide is
-    never read by name in its place (``_bound_module_references``), so
-    building the function is refused by name.  This row used to expect the
-    function to reduce and to observe a read/operate/store chain at line 292:
-    a completion for a function the lifter does not build.  The chain itself
-    is asserted on a source it does build
+    never read by name in its place: it is read through its undecided key
+    (``undecided_module_binding_key``), the function's free ``global:Flag``
+    input with no stated value (#8704), and the function is built, never
+    refused for it.  The read/operate/store chain at line 292 is asserted on
+    a source whose globals the module decides
     (``test_unrelated_source_attribute_augassign_uses_the_same_projection``).
     """
     from sugar_lift_python_source.dependency_artifact import DependencyArtifactGraph
@@ -554,11 +556,15 @@ def test_enum_attribute_augassign_owner_is_refused_for_its_undecided_global() ->
         key=lambda node: node.line_col_span().end_line
         - node.line_col_span().start_line,
     )
-    with pytest.raises(SugarNotWritten) as refused:
-        owner.sugar()
+    from sugar_source_tree.nodes import EvaluationRef, undecided_module_binding_key
 
-    assert refused.value.owner == "FunctionDef._module_global_references"
-    assert "undecided module binding of `Flag`" in refused.value.observed
+    read = owner._module_global_references()["Flag"]
+    assert isinstance(read, EvaluationRef)
+    assert read.evaluation == undecided_module_binding_key(owner.unit, "Flag")
+    try:
+        owner.sugar()
+    except SugarNotWritten as refused:
+        assert "undecided module binding" not in refused.observed, refused
 
 
 def test_unrelated_source_attribute_augassign_uses_the_same_projection() -> None:
