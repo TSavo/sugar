@@ -42,8 +42,28 @@ def test_a_class_states_the_fields_its_initializer_sets(tmp_path):
     assert row.formals == ["n"]
     post = repr(row.post.ir_formula)
     assert "attr:n" in post
+    # The field is stated of the instance as the construction left it
+    # (#7757 step 7), the term a caller's read of ``Box(3).n`` names, and a
+    # read of it completes (a plain ``__dict__`` entry).
+    assert "python:after" in post
+    assert "python:attribute.completes" in post
     # The instance's identity is fresh per call: never stated.
     assert "py.object.identity" not in post
+
+
+def test_a_field_a_class_member_shadows_states_no_read(tmp_path):
+    """A class that binds the field's name (here a method) decides the read
+    by its member, not the ``__dict__`` entry alone: the value is stated, a
+    completed read is not (#7757 step 7)."""
+    row = _contract_row(
+        tmp_path,
+        "class Box:\n    def __init__(self, n):\n        self.n = n\n\n"
+        "    def n(self):\n        return 0\n",
+        "Box",
+    )
+
+    post = repr(row.post.ir_formula)
+    assert "python:attribute.completes" not in post
 
 
 def test_a_class_whose_initializer_raises_states_the_halt(tmp_path):

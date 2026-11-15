@@ -799,10 +799,12 @@ class ConstructedInstanceValue(FloorValue):
     The post states what the construction left, never which object it is:
     each call makes a fresh object, so ``out`` is never equated to the one
     receiver this reduction allocated (``post_formula``).  It states each
-    field the construction set (``attr:<name>(out) == <value>``) whose value
-    names no object of this reduction: a field holding an object made here
-    (the receiver itself, another instance) is not stated, since that
-    object's identity is fresh per call as well."""
+    field the construction set (``attr:<name>(python:after(out, "out")) ==
+    <value>``, the instance as the construction left it,
+    ``source_call_resolution.object_after_call``) whose value names no
+    object of this reduction: a field holding an object made here (the
+    receiver itself, another instance) is not stated, since that object's
+    identity is fresh per call as well."""
 
     instance: FloorValue
 
@@ -814,19 +816,46 @@ class ConstructedInstanceValue(FloorValue):
         return self
 
     def post_formula(self, out):
-        """``attr:<name>(out) == <value>`` for each field the construction
-        left on the instance where it is the instance's field now
-        (``object_identity.contents_current``, or a store of this frame),
-        the last binding of each name, in field order; truth where none
-        is stated."""
+        """For each field the construction left on the instance where it is
+        the instance's field now (``object_identity.contents_current``, or a
+        store of this frame), the last binding of each name, in field order:
+
+        - ``attr:<name>(python:after(out, "out")) == <value>``: the field of
+          the instance as the construction left it
+          (``source_call_resolution.object_after_call``), the one term a
+          caller's read of a field of the call's result names
+          (``CallSiteValue.attribute``, #7757 step 7);
+        - where a read of the name is the ``__dict__`` entry by Python's own
+          rule (``ObjectValue.reads_plain_field``), that every such read
+          completes: ``forall k. python:attribute.completes(
+          python:attribute(python:after(out, "out"), <name>, k))``, ``k``
+          the read's site key, so the caller's read is answered at prove.
+
+        Truth where none is stated.  A field the construction did not
+        decide, or one whose value names an object of this reduction, is not
+        stated: a read of it stays owed."""
         from sugar_lift_py_tests.floor.object_identity import contents_current
         from sugar_lift_py_tests.floor.object_value import ObjectValue
-        from sugar_lift_py_tests.ir import and_, ctor, eq
+        from sugar_lift_py_tests.ir import (
+            String,
+            and_,
+            atomic,
+            ctor,
+            eq,
+            forall,
+            make_var,
+            str_const,
+        )
+        from sugar_lift_py_tests.source_call_resolution import (
+            CALL_RESULT_LABEL,
+            object_after_call,
+        )
 
         instance = self.instance
         if not isinstance(instance, ObjectValue):
             return and_([])
         current = contents_current(instance)
+        constructed = object_after_call(out, CALL_RESULT_LABEL)
         latest = {}
         for item in instance.fields:
             latest[item.name] = item.value
@@ -840,9 +869,34 @@ class ConstructedInstanceValue(FloorValue):
             if _names_an_object(term):
                 continue
             facts.append(
-                eq(ctor(f"attr:{name}", [out], symbol_kind="method-coordinate"), term)
+                eq(
+                    ctor(f"attr:{name}", [constructed], symbol_kind="method-coordinate"),
+                    term,
+                )
             )
+            if instance.reads_plain_field(name):
+                facts.append(
+                    forall(
+                        _READ_KEY,
+                        String(),
+                        atomic(
+                            "python:attribute.completes",
+                            [
+                                ctor(
+                                    "python:attribute",
+                                    (constructed, str_const(name), make_var(_READ_KEY)),
+                                )
+                            ],
+                        ),
+                    )
+                )
         return and_(facts)
+
+
+# The bound variable of a class contract's field-read fact: the read's site
+# key (``FloorValue.undecided_attribute``'s ``occurrence_key``).  A name no
+# contract formal or Python identifier spells.
+_READ_KEY = "python:read_key"
 
 
 def _names_an_object(term) -> bool:

@@ -32,6 +32,29 @@ def _occurrence_result(callsite, site):
     )
 
 
+def object_after_call(result_term, label: str):
+    """``python:after(<call result>, <label>)``: the object a call's contract
+    names ``label`` (one of its binders: ``out`` for the call's own result,
+    a parameter, ``cell:<n>``, ``global:<n>``) as the call left it when it
+    returned (#7757 step 7).
+
+    The one spelling of an object's state after a call: a callee's contract
+    states its post terms over ``python:after(out, <label>)`` and the join
+    substitutes ``out`` by the caller's ``python:call_result(...)``, so the
+    caller reads exactly the term the contract states, and nothing else
+    does.  It is a state, not an identity: a reader that holds the object
+    after code may have changed it (a call it is handed to, a store or a
+    delete on it) holds another value, never this term."""
+    from .ir import ctor, str_const
+
+    return ctor("python:after", (result_term, str_const(label)))
+
+
+# The label of a call's own result in ``object_after_call``: a contract's
+# ``outBinding``.
+CALL_RESULT_LABEL = "out"
+
+
 def _constant_str(value):
     from .floor.string_value import StringValue
     from .floor.term_value import TermValue

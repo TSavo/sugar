@@ -288,6 +288,17 @@ class CallSiteValue(FloorValue):
     first_actual_stated_by_stores: bool = dataclass_field(
         default=False, compare=False, repr=False
     )
+    # True only on the result of a call of a same-file class that is its
+    # coordinate and edge (``ClassDefinitionValue.callable_application_with``,
+    # #7757 step 7): the instance as its construction left it, whose fields
+    # the class's contract states (``python:after(out, "out")``,
+    # ``ConstructedInstanceValue.post_formula``).  A reader that holds the
+    # object after code may have changed it holds another value
+    # (``builtin_container_call_sugar._may_change``,
+    # ``ReceiverFieldStoreStateSugar``), never this one.
+    constructed_by_edge: bool = dataclass_field(
+        default=False, compare=False, repr=False
+    )
     _retained_source_completion: object | None = dataclass_field(
         default=None, init=False, compare=False, repr=False
     )
@@ -439,6 +450,28 @@ class CallSiteValue(FloorValue):
                         return ExitSet.completed(field.value)
             return self.undecided_attribute(
                 name, site, owner="CallSiteValue.attribute"
+            )
+        if self.constructed_by_edge:
+            # A field of a same-file class call's result, as its construction
+            # left it (#7757 step 7): the read names the object by the state
+            # the class's contract states, ``python:after(<call result>,
+            # "out")``, so the join decides it at prove where the contract
+            # states the field (its value and that the read completes,
+            # ``ConstructedInstanceValue.post_formula``) and leaves it owed
+            # where it does not.  Still the one two-faced read: nothing is
+            # decided here.
+            from sugar_lift_py_tests.source_call_resolution import (
+                CALL_RESULT_LABEL,
+                object_after_call,
+            )
+
+            return self.undecided_attribute(
+                name,
+                site,
+                owner="CallSiteValue.attribute",
+                receiver_term=object_after_call(
+                    self.to_term(owner=str(site)), CALL_RESULT_LABEL
+                ),
             )
         # Any other member -- of an opaque call result or of an authenticated
         # exception instance (``__context__``) -- is not decided here.

@@ -13,10 +13,15 @@ caller through the join (#8690).
 Solver twins: the lying source makes the constructor raise, so the assertion
 after the class call is never reached (``unsat``: a certain halt in a callee
 refutes the lie).  The truthful source's claim reads ``box.n``, a field of a
-call's result, which no contract decides until the post-call object state is
-stated (#7757 step 7): ``open``, never ``sat`` for the lie.  Before step 6
-the truthful claim was decided ``sat`` at the reduction by following
-``Box.__init__``'s body.
+call's result: the read names the instance as its construction left it
+(``python:after(<call result>, "out")``), and the class's contract states
+that field's value and that a read of it completes (#7757 step 7), so the
+join decides it at prove: ``sat``.  Between step 6 and step 7 it was
+``open``; before step 6 it was decided ``sat`` at the reduction by following
+``Box.__init__``'s body.  The whole source may still owe members of the
+methods' own proofs (``self.check(n)`` in ``__init__``'s own row), so the
+truthful half is read on the test function's claims
+(``witness_harness.claim_verdict``).
 """
 
 from __future__ import annotations
@@ -42,8 +47,8 @@ def _pair(tmp_path: Path, name: str, truthful: str, lying: str) -> None:
         for number, line in enumerate(truthful.splitlines(), start=1)
         if line.startswith("def test_")
     )
-    assert t.verdict == "open"
-    assert claim_verdict(t.prove_doc, claims_from_line=test_line) == "open"
+    assert t.verdict != "unsat"
+    assert claim_verdict(t.prove_doc, claims_from_line=test_line) == "sat"
     assert lie.verdict == "unsat"
 
 
@@ -87,6 +92,74 @@ def test_constructor_halt_on_one_face_reaches_the_class_call(tmp_path: Path) -> 
         _CONSTRUCTOR.format(body=_ONE_FACE, actual=3),
         _CONSTRUCTOR.format(body=_ONE_FACE, actual=9),
     )
+
+
+_FIELD = """\
+class Box:
+    def __init__(self, n):
+        self.n = n
+
+
+def test_box():
+    assert Box({actual}).n == 3
+"""
+
+
+def test_field_of_a_class_call_result_is_joined_at_prove(tmp_path: Path) -> None:
+    """``Box(3).n``: the class's contract states the field the construction
+    set and that its read completes (#7757 step 7)."""
+    t = run_source_through_real_solver(
+        tmp_path / "field-truthful", _FIELD.format(actual=3)
+    )
+    lie = run_source_through_real_solver(tmp_path / "field-lying", _FIELD.format(actual=4))
+    print(json.dumps({"truthful": t.verdict, "lying": lie.verdict}, sort_keys=True))
+    # ``__init__``'s own row stores on a formal with no actual and may owe
+    # it: the truthful half is read on the test function's claims.
+    test_line = _FIELD.splitlines().index("def test_box():") + 1
+    assert t.verdict != "unsat"
+    assert claim_verdict(t.prove_doc, claims_from_line=test_line) == "sat"
+    assert lie.verdict == "unsat"
+
+
+_CHANGED = """\
+class Box:
+    def __init__(self, n):
+        self.n = n
+
+
+def poke(b):
+    b.n = 9
+
+
+def test_box():
+    box = Box(3)
+{change}
+    assert box.n == {expected}
+"""
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["    poke(box)", "    box.n = 9", "    del box.n\n    box.n = 9"],
+    ids=["handed-to-a-call", "stored", "deleted-then-stored"],
+)
+def test_a_changed_instance_is_not_its_constructed_state(
+    tmp_path: Path, change: str
+) -> None:
+    """After code may have changed the instance -- a call it is handed to, a
+    store or a delete on it -- the caller holds another value, never the
+    state the class's contract states (#7757 step 7): the lie that reads the
+    constructed field is never ``sat``, and nothing decides the truth here
+    (what ``poke`` leaves in ``b`` is not stated yet)."""
+    t = run_source_through_real_solver(
+        tmp_path / "changed-truthful", _CHANGED.format(change=change, expected=9)
+    )
+    lie = run_source_through_real_solver(
+        tmp_path / "changed-lying", _CHANGED.format(change=change, expected=3)
+    )
+    print(json.dumps({"truthful": t.verdict, "lying": lie.verdict}, sort_keys=True))
+    assert t.verdict != "unsat"
+    assert lie.verdict != "sat"
 
 
 # ---------------------------------------------------------------------------

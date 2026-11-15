@@ -1494,6 +1494,15 @@ def _call_targets(call, scope, bound_refs):
             return []
         rules, subject = _field_store_rules(call, operand=True)
         return [(node, rules, subject) for node in _exposed(call.value, bound_refs)]
+    if call.kind == "DeleteAttribute":
+        # ``del o.<attr>`` is ``type(o).__delattr__``: it changes the object
+        # it deletes from (#7757 step 7).  The receiver's value decides at
+        # reduce whether a name bound to it still holds it as it was
+        # (``_may_change`` under ``FIELD_DELETE_METHOD``).
+        if builtin_typed(call.receiver, scope):
+            return []
+        rules = ((FIELD_DELETE_METHOD, False, False),)
+        return [(node, rules, None) for node in _exposed(call.receiver, bound_refs)]
     if not isinstance(call, Call):
         return []
     targets = []
@@ -2496,6 +2505,9 @@ def holder_states(
 # ``:``, so no method a source spells is read as one.
 _FIELD_STORE_METHOD = "__setattr__:"
 _FIELD_STORE_OPERAND = "__setattr__:value:"
+# The method a rule names for ``del o.<attr>`` (``_call_targets``):
+# ``type(o).__delattr__``.
+FIELD_DELETE_METHOD = "__delattr__"
 
 
 def field_store_method(attr: str, *, operand: bool = False) -> str:
@@ -3635,6 +3647,10 @@ def _sites_at(node, headers=()):
         # operation that may run code, as an item store is.
         state = node.post_state
         yield _FieldStore(state.receiver, node.value, state.attr)
+    elif node.kind == "DeleteAttribute":
+        # ``del o.<attr>`` is ``type(o).__delattr__``: an operation on the
+        # object it deletes from, which may run code (#7757 step 7).
+        yield node
 
 
 def _import_member(node) -> bool:
@@ -3666,6 +3682,8 @@ def _site_operands(site):
         return (site.node,)
     if kind == "FieldStore":
         return (site.receiver, site.value)
+    if kind == "DeleteAttribute":
+        return (site.receiver,)
     if kind == "BinOp":
         return (site.left, site.right)
     if kind == "UnaryOp":

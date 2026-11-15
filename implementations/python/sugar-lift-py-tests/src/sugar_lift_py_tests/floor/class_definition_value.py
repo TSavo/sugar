@@ -219,6 +219,10 @@ class ClassDefinitionValue(GuardStableValue):
                 operation, "exception_type_coordinate", None
             ),
             exception_type_mro=getattr(operation, "exception_type_mro", None),
+            # The instance as its construction left it: its fields are read
+            # through the class's contract (``CallSiteValue.attribute``,
+            # #7757 step 7).
+            constructed_by_edge=True,
         )
 
     def _unanswered_call(self, target, positional, keywords, site):

@@ -598,8 +598,13 @@ class FloorValue:
             )
         return self.attribute(name_value.value, site, ctx)
 
-    def undecided_attribute(self, name, site, *, owner: str):
+    def undecided_attribute(self, name, site, *, owner: str, receiver_term=None):
         """``self.name`` whose behaviour is not decided here: the two faces.
+
+        ``receiver_term`` names the object the read reads when the receiver's
+        own value names a state another proof states (a class call's result
+        as its construction left it, ``CallSiteValue.attribute``); by default
+        the receiver's identity (``identity_term``).
 
         The receiver's runtime type and ``__getattribute__`` / ``__getattr__``
         are not decided here, so the read may complete with any member or
@@ -629,7 +634,8 @@ class FloorValue:
         from sugar_lift_py_tests.occurrence import occurrence_key
         from sugar_lift_py_tests.outcome import ExitSet
 
-        receiver_term = identity_term(self, site, "receiver", owner=str(site))
+        if receiver_term is None:
+            receiver_term = identity_term(self, site, "receiver", owner=str(site))
         member = CallSiteValue(
             target_name=name,
             arg_values=(self,),
