@@ -2573,6 +2573,108 @@ mod tests {
         );
     }
 
+    // ── Builtin lists and dicts (#7757 step 7) ────────────────────────────
+    // A list is an SMT sequence of Int-universe values, a dict its keys and
+    // an array; `len`, an item, and the laws prove's builtin answers state.
+
+    fn py_list(items: &[i64]) -> serde_json::Value {
+        ctor("array", items.iter().map(|n| int_const(*n)).collect())
+    }
+
+    fn py_len(operand: serde_json::Value) -> serde_json::Value {
+        ctor("call:len", vec![operand])
+    }
+
+    fn py_item(container: serde_json::Value, key: serde_json::Value) -> serde_json::Value {
+        ctor("py.subscript", vec![container, key])
+    }
+
+    #[test]
+    fn python_list_len_items_and_laws_are_smt_sequences() {
+        assert_twin(
+            py_eq(py_len(py_list(&[4, 5])), int_const(2)),
+            py_eq(py_len(py_list(&[4, 5])), int_const(3)),
+            "len([4, 5])",
+        );
+        let appended = ctor("python:list.append", vec![py_list(&[]), int_const(1)]);
+        assert_twin(
+            py_eq(py_len(appended.clone()), int_const(1)),
+            py_eq(py_len(appended.clone()), int_const(0)),
+            "len([] after append(1))",
+        );
+        assert_twin(
+            py_eq(py_item(appended.clone(), int_const(-1)), int_const(1)),
+            py_eq(py_item(appended, int_const(-1)), int_const(0)),
+            "the appended item",
+        );
+        // IndexError: an item out of range does not complete.
+        assert_twin(
+            py_completes("subscript", py_item(py_list(&[4, 5]), int_const(1)), "k"),
+            py_completes("subscript", py_item(py_list(&[4, 5]), int_const(2)), "k"),
+            "[4, 5][2] completes",
+        );
+        let stored = |index: i64| {
+            ctor(
+                "python:list.setitem",
+                vec![py_list(&[1, 2]), int_const(index), int_const(5)],
+            )
+        };
+        assert_twin(
+            py_eq(py_item(stored(0), int_const(0)), int_const(5)),
+            py_eq(py_item(stored(0), int_const(0)), int_const(1)),
+            "[1, 2] after [0] = 5",
+        );
+        assert_twin(
+            atomic("python:list.setitem.completes", vec![stored(-2)]),
+            atomic("python:list.setitem.completes", vec![stored(2)]),
+            "[1, 2][2] = 5 completes",
+        );
+        let deleted = ctor("python:list.delitem", vec![py_list(&[1, 2]), int_const(0)]);
+        assert_twin(
+            py_eq(py_item(deleted.clone(), int_const(0)), int_const(2)),
+            py_eq(py_len(deleted), int_const(2)),
+            "[1, 2] after del [0]",
+        );
+        // An undecided value an `=` binds to a law is that list.
+        let after = ctor("python:after", vec![ctor("r", vec![]), string_const("0")]);
+        let bound = atomic(
+            "=",
+            vec![
+                after.clone(),
+                ctor("python:list.append", vec![py_list(&[]), int_const(1)]),
+            ],
+        );
+        assert_twin(
+            all_of(vec![bound.clone(), py_eq(py_len(after.clone()), int_const(1))]),
+            all_of(vec![bound, py_eq(py_len(after), int_const(0))]),
+            "len of a value stated by append",
+        );
+    }
+
+    #[test]
+    fn python_dict_keys_and_values_are_an_smt_sequence_and_array() {
+        let stored = ctor(
+            "python:dict.setitem",
+            vec![ctor("python:dict", vec![]), string_const("k"), int_const(5)],
+        );
+        assert_twin(
+            py_eq(py_item(stored.clone(), string_const("k")), int_const(5)),
+            py_eq(py_item(stored.clone(), string_const("k")), int_const(1)),
+            "{}['k'] = 5",
+        );
+        // KeyError: a key never stored does not complete.
+        assert_twin(
+            py_completes("subscript", py_item(stored.clone(), string_const("k")), "k"),
+            py_completes("subscript", py_item(stored.clone(), string_const("j")), "k"),
+            "{'k': 5}['j'] completes",
+        );
+        assert_twin(
+            py_eq(py_len(stored.clone()), int_const(1)),
+            py_eq(py_len(stored), int_const(0)),
+            "len({'k': 5})",
+        );
+    }
+
     #[test]
     fn python_ord_and_chr_are_smt_code_points() {
         let ord = |s: &str| ctor("py.ord", vec![string_const(s)]);
