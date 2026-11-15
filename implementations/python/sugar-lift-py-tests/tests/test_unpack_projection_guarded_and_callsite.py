@@ -289,20 +289,15 @@ def _callsite_unpack_halt(outcome):
 
 
 def _discharged_at_an_opaque_receiver(tmp_path: Path, source: str, stem: str):
-    """``o.copy()`` on a formal waits for the caller's actual to select the
-    method (``NativeOperationExitCarrierV1``, operator ``method_call``): the
-    function alone is never a completion.  The caller hands an opaque
-    receiver; the call it selects is the callsite the unpack reads."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    """``o.copy()`` on a formal whose class is the function's ``class:o``
+    input is the dispatched call (#7757 step 8): its coordinate and edge,
+    whichever class a caller binds at prove.  The function alone is never a
+    completion of it: the call is the callsite the unpack reads."""
+    from sugar_lift_py_tests.outcome import ExitSet
 
-    carrier = _outcome(tmp_path, source, stem)
-    assert isinstance(carrier, NativeOperationExitCarrierV1), type(carrier)
-    assert carrier.demand.operator == "method_call"
-    (receiver, *_rest) = carrier.demand.operand_coordinate_cids
-    return carrier.discharge(None, {receiver: SymbolicValue(make_var("o"))})
+    outcome = _outcome(tmp_path, source, stem)
+    assert isinstance(outcome, ExitSet), type(outcome)
+    return outcome
 
 
 def test_callsite_rhs_retains_the_typed_unpack_obligation(tmp_path: Path) -> None:
@@ -314,7 +309,7 @@ def test_callsite_rhs_retains_the_typed_unpack_obligation(tmp_path: Path) -> Non
     assert halt.effect.exception_type_coordinate is None
     # The obligation names the CALLSITE's own term, not a fabricated element.
     assert "python:unpack.destructure" in str(halt.guard)
-    assert "call:copy" in str(halt.guard)
+    assert "call:dispatch:copy" in str(halt.guard)
 
 
 def test_callsite_arity_is_the_target_count(tmp_path: Path) -> None:

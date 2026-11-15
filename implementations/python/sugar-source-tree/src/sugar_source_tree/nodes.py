@@ -25309,6 +25309,7 @@ class Call(Expression):
                 args=tuple(a.sugar() for a in self.args),
                 site=self.fragment,
                 keywords=keyword_sugars,
+                unit=self.unit,
             )
             # The method coordinate absorbs the callee ``o.m``: its receiver
             # is built above and ``m`` is read through the one attribute
@@ -26921,11 +26922,18 @@ def _contract_inputs(definition) -> tuple:
       binds an input no call supplies to that value (step 5).  A ``class``
       or a decorated ``def`` is a definition, never an input: the body reads
       it at the value the module's run left (decision (c), #7757).
+    - ``class:<param>`` for each parameter whose class a method call on it
+      reads (``_receiver_class_parameters``, #7757 step 8): the body calls
+      ``<param>.m(...)`` and does nothing else with the object that could
+      change what its ``__dict__`` holds before such a call.  The function's
+      own proof states no value for it; ``self.m()`` is the dispatched edge
+      over it (``receiver_dispatch.dispatch_on_receiver``).
 
     The caller supplies each at the call (``py.closure``, ``py.default``,
-    ``py.global``), as it supplies an actual for a parameter."""
+    ``py.global``, ``py.class``), as it supplies an actual for a parameter."""
     from sugar_lift_py_tests.contract_input import (
         CELL_INPUT,
+        CLASS_INPUT,
         DEFAULT_INPUT,
         GLOBAL_INPUT,
         ContractInputV1,
@@ -26959,7 +26967,109 @@ def _contract_inputs(definition) -> tuple:
         )
         for name in sorted(_global_input_names(definition))
     )
-    return cells + defaults + globals_
+    classes = tuple(
+        ContractInputV1.mint(
+            owner_definition_cid=owner_cid,
+            input_kind=CLASS_INPUT,
+            name=name,
+        )
+        for name in _receiver_class_parameters(definition)
+    )
+    return cells + defaults + globals_ + classes
+
+
+def _receiver_class_parameters(definition) -> tuple:
+    """The parameters of ``definition`` whose class is an input of its
+    contract (#7757 step 8), in parameter order: each positional or keyword
+    parameter ``p`` the body calls a method of (``p.m(...)``) and uses in no
+    other way that could change the object's ``__dict__`` before such a call
+    without the frame seeing it:
+
+    - every other read of ``p`` is ``p.<attr>``: ``p`` is never read bare (an
+      argument, an assignment's value, a callee, a container), so no code is
+      handed the object; a method call on it is itself the dispatched call,
+      after which the exposure rule holds the object as changed;
+    - no call reaches the object through a field (``p.x.f()``);
+    - no nested function, lambda or class reads ``p`` at all (code that runs
+      when the frame does not see it);
+    - for the first parameter, the body makes no zero-argument ``super()``
+      call (the base's method runs on the object).
+
+    A generator function or an ``async def`` has none: its body runs after
+    its call returned, where the caller's class of the object says nothing
+    about its ``__dict__``.  A field store ``p.<m> = v`` is guarded where the
+    call is dispatched (``receiver_dispatch.module_attribute_names``).
+
+    Read once per definition (its construction-cache row): every call of the
+    definition asks its contract's inputs."""
+    row = definition._coordinate()[2]
+    held = row.get("__receiver_class_parameters__")
+    if held is not None:
+        return held
+    answer = _read_receiver_class_parameters(definition)
+    row["__receiver_class_parameters__"] = answer
+    return answer
+
+
+def _read_receiver_class_parameters(definition) -> tuple:
+    """``_receiver_class_parameters``, read off the definition's body."""
+    if isinstance(definition, AsyncFunctionDef):
+        return ()
+    body = definition.body
+    statements = tuple(body) if isinstance(body, (list, tuple)) else (body,)
+    if isinstance(definition, FunctionDef) and FunctionDef._owns_yield(body):
+        return ()
+    parameters = tuple(
+        parameter.name
+        for parameter in definition.params
+        if parameter.param_kind
+        in ("positional_only", "positional_or_keyword", "keyword_only")
+    )
+    if not parameters:
+        return ()
+    nodes = []
+    for statement in statements:
+        nodes.extend(statement.walk())
+    attribute_receivers = {
+        id(node.value)
+        for node in nodes
+        if isinstance(node, Attribute) and isinstance(node.value, Name)
+    }
+    received: set = set()
+    blocked: set = set()
+    zero_argument_super = False
+    for node in nodes:
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
+            blocked.update(
+                inner.id for inner in node.walk() if isinstance(inner, Name)
+            )
+            continue
+        if isinstance(node, Call):
+            func = node.func
+            if isinstance(func, Attribute):
+                root = func.value
+                if isinstance(root, Name):
+                    received.add(root.id)
+                else:
+                    while isinstance(root, Attribute):
+                        root = root.value
+                    if isinstance(root, Name):
+                        blocked.add(root.id)
+            elif (
+                isinstance(func, Name)
+                and func.id == "super"
+                and not node.args
+                and not getattr(node, "keywords", ())
+            ):
+                zero_argument_super = True
+            continue
+        if isinstance(node, Name) and id(node) not in attribute_receivers:
+            blocked.add(node.id)
+    if zero_argument_super:
+        blocked.add(parameters[0])
+    return tuple(
+        name for name in parameters if name in received and name not in blocked
+    )
 
 
 def _global_input_names(definition) -> frozenset:

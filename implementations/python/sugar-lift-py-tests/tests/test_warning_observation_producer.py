@@ -172,12 +172,9 @@ def test_a_shadowed_head_is_not_a_warning_occurrence(tmp_path):
     source = """def f(warnings):
     warnings.warn("m", UserWarning, stacklevel=2)
 """
-    # The formal receiver's method waits for the caller's actual: the
-    # ``method_call`` carrier, never a warning observation.
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-
+    # The formal receiver's class is ``f``'s ``class:warnings`` input: the
+    # call is the dispatched edge (#7757 step 8), resolved at prove where a
+    # caller binds the class, never a warning observation.
     path = tmp_path / "warn_case.py"
     path.write_text(source, encoding="utf-8")
     function = next(
@@ -187,11 +184,11 @@ def test_a_shadowed_head_is_not_a_warning_occurrence(tmp_path):
         ).functions()
     )
     outcome = function.sugar().desugar(None)
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
-    assert outcome.demand.operator == "method_call"
-    assert outcome.operands[1].value == "warn"
+    owners = {halt.effect.producer_node_owner for halt in outcome.halts()}
+    assert "UnknownCallee:dispatch:warn" in owners
     assert not any(
-        isinstance(operand, WarningObservationValue) for operand in outcome.operands
+        isinstance(getattr(exit_, "value", None), WarningObservationValue)
+        for exit_ in outcome.exits
     )
 
 

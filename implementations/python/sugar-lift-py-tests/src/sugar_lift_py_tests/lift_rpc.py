@@ -2328,6 +2328,11 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # the imported class is decided at prove through the join
                 # (#7757).
                 scan_rows.extend(_tree.exception_ancestry_rows(sf, file_rel))
+                # Each class whose namespace is closed states its order and
+                # what its namespace holds, named by its target symbol, so a
+                # method call on an instance of it whose class a call binds
+                # is dispatched at prove (#7757 step 8).
+                scan_rows.extend(_tree.class_namespace_rows(sf, file_rel))
 
                 nodes = [
                     {

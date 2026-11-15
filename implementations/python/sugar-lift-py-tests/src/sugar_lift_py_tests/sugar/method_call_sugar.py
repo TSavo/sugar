@@ -39,6 +39,10 @@ class MethodCallSugar(ConstructedTermSugar):
     exception_type_coordinate: object = dataclass_field(default=None, compare=False)
     exception_type_mro: tuple | None = dataclass_field(default=None, compare=False)
     native_definition_coordinate: object = dataclass_field(default=None, compare=False)
+    # The module the call stands in: what a dispatched call on a parameter
+    # reads the names its fields may be stored under off
+    # (``receiver_dispatch.dispatch_on_receiver``, #7757 step 8).
+    unit: object = dataclass_field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         require_constructed_term_sugar(self.receiver, owner="MethodCallSugar.receiver")
@@ -227,6 +231,7 @@ class MethodCallSugar(ConstructedTermSugar):
             source_call_frame=self.source_call_frame,
             exception_type_coordinate=self.exception_type_coordinate,
             exception_type_mro=self.exception_type_mro,
+            unit=self.unit,
         )
 
 
@@ -242,6 +247,7 @@ def dispatch_method_call(
     exception_type_coordinate=None,
     exception_type_mro=None,
     may_defer=True,
+    unit=None,
 ):
     """``receiver.name(*positional, **kw_values)`` selected by the receiver.
 
@@ -341,6 +347,18 @@ def dispatch_method_call(
         exception_type_coordinate,
         exception_type_mro,
     )
+    if exception_type_coordinate is None:
+        # A receiver whose class is a class input here (a parameter of the
+        # function whose own proof this is), or a same-file class's bare
+        # instance: the dispatched edge, resolved at prove where a read binds
+        # the class (#7757 step 8).
+        from sugar_lift_py_tests.receiver_dispatch import dispatch_on_receiver
+
+        dispatched = dispatch_on_receiver(
+            name, receiver, positional, kw_values, site, unit=unit
+        )
+        if dispatched is not None:
+            return dispatched
     if may_defer:
         deferred = _defer_formal_method_call(name, receiver, positional, kw_values, site)
         if deferred is not None:
