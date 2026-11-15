@@ -449,6 +449,34 @@ def test_a_nested_unpack_whose_inner_arity_fails_keeps_the_outer_binding(
     assert returned("(3, 4, 5)") == returned("(3, 4)")
 
 
+# The unpack's statement holds only names, tuples and the assignment, so it
+# was read as a statement that cannot halt: it gave the ``try`` no halt edge,
+# and the handler began from the bindings standing before the whole
+# statement, where ``a`` is unbound.  It is a halt edge now
+# (``Try._statement_cannot_halt``, ``_unpack_may_raise``), carrying the read
+# of ``a`` at the halt, which the inner level's record binds.
+_NESTED_UNPACK_RAISES = _nested_unpack("(3, 4, 5)", "a")
+
+
+def test_the_truthful_half_reads_the_outer_leaf_bound_before_the_raise() -> None:
+    # TRUTHFUL: Python stores ``a = 1`` and ``b = 2``, then unpacking
+    # ``(3, 4, 5)`` into ``(c, d)`` raises; the handler returns 1.
+    outcome = function_universe_outcome(_function(_NESTED_UNPACK_RAISES))
+    assert _returned_value(outcome) == TermValue(1)
+
+
+def test_the_lying_half_raises_name_error_for_the_outer_leaf() -> None:
+    # LYING: every arm a ``NameError`` for ``a``, read where the handler
+    # began from the bindings before the unpack.
+    from sugar_lift_py_tests.effect import NameErrorEffect
+
+    outcome = function_universe_outcome(_function(_NESTED_UNPACK_RAISES))
+    assert not any(
+        isinstance(exit_, Halted) and isinstance(exit_.effect, NameErrorEffect)
+        for exit_ in outcome.exits
+    ), outcome
+
+
 # -- a walrus binds before a later operand halts ---------------------------------
 
 _WALRUS_KEY = EVALUATION_PREFIX + "every-halt-record.walrus.a"

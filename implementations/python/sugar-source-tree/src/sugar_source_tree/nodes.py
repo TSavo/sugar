@@ -19787,6 +19787,29 @@ def _compound_halt_state(
     )
 
 
+def _unpack_may_raise(target, value) -> bool:
+    """Whether assigning ``value`` to ``target`` may raise as Python unpacks
+    it: ``target`` is a Tuple/List pattern and ``value`` is not a display of
+    its arity (a name, a call, any other expression: its unpack at reduce,
+    ``DynamicUnpackAssignSugar``, ``NestedDynamicUnpackAssignSugar``), or a
+    nested pattern's member may raise so.  A Name (or any other) target
+    unpacks nothing.  A starred member on either side is answered as may
+    raise: its arity is not counted here."""
+    if not isinstance(target, (Tuple_, List)):
+        return False
+    if not isinstance(value, (Tuple_, List)):
+        return True
+    elements, members = tuple(target.elts), tuple(value.elts)
+    if len(elements) != len(members) or any(
+        isinstance(node, Starred) for node in (*elements, *members)
+    ):
+        return True
+    return any(
+        _unpack_may_raise(element, member)
+        for element, member in zip(elements, members, strict=True)
+    )
+
+
 def _loop_item_halt_names(loop, header, item_scope, edge_states, net) -> set:
     """The names a halt inside one item (or the ``else``) of an unrolled
     loop may carry changed against ``header``: what the items before it left
@@ -20189,10 +20212,12 @@ class Try(Statement):
 
     #: Node classes whose evaluation cannot itself raise.  A statement built
     #: only from these leaves the block by completing -- it contributes no
-    #: halt edge.  Everything else (a call, an attribute, a subscript, an
-    #: operator, a comprehension, a nested block) may halt at an occurrence
-    #: this layer cannot name, so it contributes an UNTYPED halt edge that
-    #: every handler must be prepared to receive.
+    #: halt edge -- unless an assignment among them unpacks a value that may
+    #: not fit its pattern (``_statement_cannot_halt``,
+    #: ``_unpack_may_raise``).  Everything else (a call, an attribute, a
+    #: subscript, an operator, a comprehension, a nested block) may halt at
+    #: an occurrence this layer cannot name, so it contributes an UNTYPED
+    #: halt edge that every handler must be prepared to receive.
     _HALT_FREE_NODES = ("Assign", "Name", "Constant", "Tuple_", "List", "Pass")
 
     # The halt-edge reading below (``_body_halt_edges`` and the steps it
@@ -20209,8 +20234,25 @@ class Try(Statement):
         )
 
     def _statement_cannot_halt(self, statement) -> bool:
+        """Whether no node of ``statement`` can raise: every node is one of
+        ``_HALT_FREE_NODES``, and no assignment among them unpacks a value
+        Python may fail to unpack (``_unpack_may_raise``).  An unpack of a
+        non-display (``(a, b), (c, d) = pairs``) raises ``ValueError`` or
+        ``TypeError`` at reduce, after the leaves of every level before the
+        failing one were stored: it is a halt edge, which carries those
+        leaves' reads at the halt (``_mid_statement_state``), never a
+        statement no handler can be reached from."""
         allowed = Try._halt_free_classes(self)
-        return all(isinstance(node, allowed) for node in statement.walk())
+        return all(
+            isinstance(node, allowed)
+            and not (
+                isinstance(node, Assign)
+                and any(
+                    _unpack_may_raise(target, node.value) for target in node.targets
+                )
+            )
+            for node in statement.walk()
+        )
 
     def _raise_testimony_of(self, statement):
         """The (identity, mro) a single ``raise`` occurrence testifies to, or
