@@ -1136,9 +1136,9 @@ class SourceCallActualAfterSugar(ConstructedTermSugar):
             if temporal is None
             else evaluation_read_here(temporal, self.evaluation)
         )
-        carried = temporal.value_read(key) if temporal is not None else None
+        carried = temporal.key_read(key) if temporal is not None else None
         if carried is not None:
-            return ExitSet.completed(carried)
+            return carried
         if self.prior is not None and temporal is not None:
             return self.prior.desugar(ctx)
         from sugar_lift_py_tests.gap.panic import construction_panic_gap

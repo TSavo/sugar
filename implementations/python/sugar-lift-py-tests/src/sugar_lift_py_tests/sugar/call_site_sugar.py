@@ -1340,7 +1340,7 @@ def with_module_final_globals(ctx, readers, *, site):
 
     Each key is bound to its ``ModuleFinalValue``, and each slot to its
     ``ModuleFinalDecision``: the module run is asked for only where a key
-    is read (``TemporalContext.value_read``) or a slot selects an arm
+    is read (``TemporalContext.key_read``) or a slot selects an arm
     (``branch_result_read``), never at the frame entry.  A body that reads
     no key and selects by no slot on the path it takes never asks for the
     run, so a module whose run refuses refuses only the reads of its final
@@ -1428,10 +1428,11 @@ class ModuleFinalValue:
     ``read`` asks for the run (``tree_enumerate.module_end_contexts``, run
     once per unit, its refusal remembered as loudly as its answer): the
     arms that bound the key joined by the one rule (``_module_end_value``),
-    else None, and the run's refusal raised at this read.  Every read of a
-    bound value reads it through ``bound_value_read``: a read of a key
-    (``TemporalContext.value_read``) and a scan over every binding (a
-    store's alias advance, ``ReceiverFieldStoreValue.extend_scope``) alike,
+    one completed arm owing every debt of each of them, else None, and the
+    run's refusal raised at this read.  Every read of a bound value reads it
+    through ``bound_read``: a read of a key (``TemporalContext.key_read``)
+    and a scan over every binding (a store's alias advance,
+    ``ReceiverFieldStoreValue.extend_scope``, ``bound_value_read``) alike,
     so what a binding holds never depends on whether the run was asked for
     before.
     """
@@ -1451,21 +1452,40 @@ class ModuleFinalValue:
         return _module_end_value(module_end_contexts(self.unit), self.key)
 
 
-def bound_value_read(value):
+def bound_read(value):
     """``value``, held by a binding of a temporal, as a read of it reads it:
-    a ``ModuleFinalValue`` asked for here (``ModuleFinalValue.read``: the
-    module run demanded, its refusal raised), anything else as it is.
+    one completed arm holding what the read reads, owing what the read owes
+    (an ``ExitSet``), or None where it reads no value.  A
+    ``ModuleFinalValue`` is asked for here (``ModuleFinalValue.read``: the
+    module run demanded, its refusal raised, every debt of the arms that
+    bound the key owed); anything else is itself, owing nothing.
 
     The one read of a bound value.  A read of a key
-    (``TemporalContext.value_read``) and a scan over every binding (a
-    store's or a mutation's alias advance, ``ReceiverFieldStoreValue`` /
-    ``ReceiverOwnedMutationResult.extend_scope``) both read here, so a
+    (``TemporalContext.key_read``) reads here, and a scan over every
+    binding reads the value of the same read (``bound_value_read``), so a
     module-final binding answers one value wherever it is read and
     whatever was read before: a scan that skipped an unasked run and used
     an answered one gave one file two answers by order (#7757, entry 4)."""
     if isinstance(value, ModuleFinalValue):
         return value.read()
-    return value
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    return ExitSet.completed(value)
+
+
+def bound_value_read(value):
+    """The value ``bound_read`` reads off ``value``, or None: what a scan
+    over every binding compares (a store's or a mutation's alias advance,
+    ``ReceiverFieldStoreValue`` / ``ReceiverOwnedMutationResult.
+    extend_scope``).  The scan rebinds a binding that names the receiver's
+    object, and that binding was read to reach the receiver, so the read's
+    debts are already owed on this path; only the value is compared here.
+    Anything but a ``ModuleFinalValue`` is itself, so the scan builds no
+    read per binding."""
+    if not isinstance(value, ModuleFinalValue):
+        return value
+    read = value.read()
+    return None if read is None else read.completed_value()
 
 
 class ModuleFinalDecision:
@@ -1504,9 +1524,18 @@ def branch_result_read(table, slot_id):
 
 
 def _module_end_value(ends, key):
-    """The value the module run bound ``key`` to, read off ``ends`` (the
-    run's completed arms, each holding the context it ended with under its
-    own guard and faces, ``ModuleBlockSugar.run``), else None.
+    """The read of the value the module run bound ``key`` to, off ``ends``
+    (the run's completed arms, each holding the context it ended with under
+    its own guard, faces and debts, ``ModuleBlockSugar.run``): one completed
+    arm holding the value, owing every debt of every arm that bound the key;
+    else None.
+
+    Each arm owes what its route through the module body left unanswered
+    (``Completed.owed``: an imported decorator's application, a module-level
+    call nothing here answers), and the value is what those arms made, so a
+    read of it owes every debt of each (``ExitSet.owed_items``, the one join
+    of debts): a function called after import that reads the value owes
+    them, and never reads a value whose making its proof silently lacks.
 
     The arms that bound the key are joined by the one rule a join of a key
     over arms has (``if_sugar._joined_evaluation``, the rule an ``if``
@@ -1519,17 +1548,20 @@ def _module_end_value(ends, key):
     arm did not take) binds nothing under the key, and a read of the key
     stands only on the route that wrote it (the phi over that route,
     ``IfExp`` on a ``BranchResultRef``)."""
-    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
     from sugar_lift_py_tests.sugar.if_sugar import _joined_evaluation
 
     bound = []
     for end in ends:
         value = end.value.temporal.value_if_bound(key)
         if value is not None:
-            bound.append(Completed(end.guard, value, end.faces))
+            bound.append(Completed(end.guard, value, end.faces, end.owed))
     if not bound:
         return None
-    return _joined_evaluation(bound)
+    joined = _joined_evaluation(bound)
+    if joined is None:
+        return None
+    return ExitSet.completed(joined, owed=ExitSet(tuple(bound)).owed_items())
 
 
 def _module_end_decision(ends, slot_id):

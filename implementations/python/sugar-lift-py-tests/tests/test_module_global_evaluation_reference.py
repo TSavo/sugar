@@ -1335,7 +1335,7 @@ def test_a_name_a_live_loop_carries_binds_only_the_evaluation_too() -> None:
 # entry binds the key of each module-final binding its body reads
 # (``call_site_sugar.with_module_final_globals``), to the value the module
 # body's one run bound it to (``tree_enumerate.module_end_contexts``),
-# demanded where the key is read (``TemporalContext.value_read``).  A
+# demanded where the key is read (``TemporalContext.key_read``).  A
 # module-level ``def`` statement never reduces its body, so a function that
 # raises or refuses is no face of that run.
 
@@ -1375,7 +1375,7 @@ def test_a_call_after_import_binds_the_final_key_at_frame_entry() -> None:
         blame=function.fragment,
     )
     assert halt is None
-    assert ctx.temporal.value_read(second) == TermValue(2)
+    assert ctx.temporal.key_read(second).completed_value() == TermValue(2)
     assert ctx.temporal.value_if_bound(first) is None
     # The key only: the name is never bound.
     assert ctx.temporal.value_if_bound("X") is None
@@ -1430,7 +1430,9 @@ def test_a_final_binding_reading_another_key_binds_the_module_runs_value() -> No
     (n_key,) = _assignment_keys(tree, "N")
     (x_key,) = _assignment_keys(tree, "X")
     ctx = _entered(tree)
-    assert ctx.temporal.value_read(x_key) == _module_end_value(tree, x_key)
+    assert ctx.temporal.key_read(x_key).completed_value() == _module_end_value(
+        tree, x_key
+    )
     assert ctx.temporal.value_if_bound(n_key) is None
 
 
@@ -1441,7 +1443,9 @@ def test_a_final_binding_to_a_list_display_is_the_module_runs_list() -> None:
     (key,) = _assignment_keys(tree, "X")
     ctx = _entered(tree)
     assert ctx is not None
-    assert ctx.temporal.value_read(key) == _module_end_value(tree, key)
+    assert ctx.temporal.key_read(key).completed_value() == _module_end_value(
+        tree, key
+    )
 
 
 def test_an_undecided_global_still_refuses_a_function_reduced_on_its_own() -> None:
@@ -1500,7 +1504,8 @@ def test_a_function_reduced_on_its_own_reads_a_module_loops_publication() -> Non
         branch_result_read(ctx.ground_branch_results, final.slot.slot_id),
         TrueBoolLiteralSugar,
     )
-    assert ctx.temporal.value_read(final.when_true.evaluation) == TermValue(2)
+    read = ctx.temporal.key_read(final.when_true.evaluation)
+    assert read.completed_value() == TermValue(2)
     assert ctx.temporal.value_if_bound("last") is None
     outcome = function_universe_outcome(_function(tree))
     assert _returned_value(outcome) == TermValue(2)
@@ -1777,7 +1782,7 @@ def test_a_module_if_read_by_a_function_gives_each_value_under_its_guard(
     )
     runs = _module_run_ending_on(monkeypatch, lambda _sf: ends)
     ctx = _entered(tree)
-    assert ctx.temporal.value_read(key) == GuardedValue(
+    assert ctx.temporal.key_read(key).completed_value() == GuardedValue(
         guard, TermValue(1), TermValue(2)
     )
     assert len(runs) == 1
@@ -1799,7 +1804,7 @@ def test_a_module_key_overlapping_arms_bound_differently_is_not_read(
     )
     _module_run_ending_on(monkeypatch, lambda _sf: ends)
     ctx = _entered(tree)
-    assert ctx.temporal.value_read(key) is None
+    assert ctx.temporal.key_read(key) is None
 
 
 def test_a_module_key_its_arms_agree_on_reads_the_one_value(monkeypatch) -> None:
@@ -1813,7 +1818,7 @@ def test_a_module_key_its_arms_agree_on_reads_the_one_value(monkeypatch) -> None
     )
     _module_run_ending_on(monkeypatch, lambda _sf: ends)
     ctx = _entered(tree)
-    assert ctx.temporal.value_read(key) == TermValue(1)
+    assert ctx.temporal.key_read(key).completed_value() == TermValue(1)
 
 
 # -- an alias scan reads a module-final key as any read does -------------------
@@ -1861,8 +1866,8 @@ def test_an_alias_scan_answers_the_same_with_and_without_a_prior_run(
     ctx = _entered(tree)
     if warm:
         # A read asked for the run before the scan.
-        assert ctx.temporal.value_read(key) == receiver
+        assert ctx.temporal.key_read(key).completed_value() == receiver
     after = scan.extend_scope(ctx)
     assert after.temporal.value_if_bound(key) == advanced
-    assert after.temporal.value_read(key) == advanced
+    assert after.temporal.key_read(key).completed_value() == advanced
     assert len(runs) == 1

@@ -259,7 +259,7 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
         # application itself: its function, no decorator to apply.
         bound = self._bound_by_statement(ctx)
         if bound is not None:
-            return ExitSet.completed(bound)
+            return bound
         if self.refusal is not None:
             _refuse(self.site, self.refusal)
         if not self.runs_statement and (
@@ -343,9 +343,10 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
         return ExprStatementSugar(value=self, site=self.site)
 
     def _bound_by_statement(self, ctx):
-        """The value the statement bound the name to under its evaluation
-        key (``AssignSugar`` over the statement's own application), or None
-        where nothing bound it.
+        """The read of the value the statement bound the name to under its
+        evaluation key (``AssignSugar`` over the statement's own
+        application): one completed arm owing what the read owes
+        (``TemporalContext.key_read``), or None where nothing bound it.
 
         The binding the reduction this read stands in made, first: the
         statement ran in it (a function's own ``class`` statement, the
@@ -357,8 +358,10 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
         of the module body runs in, and the value is the one that run bound
         the key to on its completed arms (``ModuleFinalValue.read``,
         ``tree_enumerate.module_end_contexts``: asked for here, at the read,
-        its refusal this read's).  Empty while that run is under way: the
-        statement has not run where this read stands."""
+        its refusal this read's, and every debt of those arms this read's:
+        an imported decorator's application the run left unanswered is
+        owed by every function that reads the name).  Empty while that run
+        is under way: the statement has not run where this read stands."""
         if self.evaluation is None:
             return None
         temporal = getattr(ctx, "temporal", None) if ctx is not None else None
@@ -367,7 +370,7 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
                 evaluation_read_here,
             )
 
-            bound = temporal.value_read(
+            bound = temporal.key_read(
                 evaluation_read_here(temporal, self.evaluation)
             )
             if bound is not None:

@@ -41,14 +41,17 @@ class ModuleBlockSugar(Sugar):
         import reads (``tree_enumerate.module_end_contexts``).  The guard
         and faces are the arm's, so a key two arms bound to different values
         is decided by the one join of a key over arms
-        (``if_sugar._joined_evaluation``), never by the values alone.  A
+        (``if_sugar._joined_evaluation``), never by the values alone.  The
+        arm's debts ride with it (``Completed.owed``), so a read of a key
+        owes what the route that bound it left unanswered
+        (``call_site_sugar._module_end_value``).  A
         halted arm ends no import, so it has no end here.  A run still
         waiting on a caller's actuals (a deferred native operation) has no
         end either.
         """
         exits = reduce_block_to_exitset(self.statements, ctx)
         ends = tuple(
-            Completed(exit_.guard, exit_.value.context, exit_.faces)
+            Completed(exit_.guard, exit_.value.context, exit_.faces, exit_.owed)
             for exit_ in (exits.exits if isinstance(exits, ExitSet) else ())
             if isinstance(exit_, Completed)
             and isinstance(exit_.value, _ReducedBlock)

@@ -52,19 +52,22 @@ class TemporalContext:
                 return binding.value
         return None
 
-    def value_read(self, name: str) -> FloorValue | None:
-        """The value a read of the key ``name`` reads, or None where it reads
-        none.  A module-final key a frame entry bound
+    def key_read(self, name: str):
+        """The read of the key ``name``: one completed arm holding the value
+        it reads, owing what the read owes (an ``ExitSet``), or None where it
+        reads none.  A module-final key a frame entry bound
         (``call_site_sugar.ModuleFinalValue``) is demanded here, at its read:
-        the module run is asked for by a read of one of its keys only, and
-        its refusal is this read's (``call_site_sugar.bound_value_read``, the
-        one read of a bound value).  Anything else is ``value_if_bound``."""
+        the module run is asked for by a read of one of its keys only, its
+        refusal is this read's, and every debt of the run's arms that bound
+        the key is this read's (``call_site_sugar.bound_read``, the one read
+        of a bound value).  Anything else is ``value_if_bound``, owing
+        nothing."""
         value = self.value_if_bound(name)
         if value is None:
             return None
-        from sugar_lift_py_tests.sugar.call_site_sugar import bound_value_read
+        from sugar_lift_py_tests.sugar.call_site_sugar import bound_read
 
-        return bound_value_read(value)
+        return bound_read(value)
 
     def latest(self, *names: str) -> TemporalBinding | None:
         """The binding of whichever of ``names`` was bound last, or None."""

@@ -2228,6 +2228,18 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # One `undecided` row per unanswered call site in this file: a
                 # call inlined into several functions' reductions is one call.
                 recorded_calls: set = set()
+
+                def record_calls(memento, calls) -> None:
+                    # Every call a reduction's final arms owe is written
+                    # once, as an `undecided` row (step 8; PR B on #7766).
+                    for row in _tree.unanswered_call_rows(calls, file_rel):
+                        key = json.dumps(
+                            row.to_rpc_with_term_table(None), sort_keys=True
+                        )
+                        if key not in recorded_calls:
+                            recorded_calls.add(key)
+                            scan_rows.append((memento, row))
+
                 # Every function's rows, refused member and undecided members
                 # come from this one scan (#7757): no function is skipped for
                 # another door to state.
@@ -2236,8 +2248,6 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         def_memento, rows = _tree.function_contract_rows(
                             fn, file_rel
                         )
-                        # Every call the reduction's final arms owe is written
-                        # once, as an `undecided` row (step 8; PR B on #7766).
                         calls = _unanswered.owed_calls(
                             _tree.owner_reduction(fn).outcome
                         )
@@ -2262,16 +2272,30 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                             )
                         )
                         continue
-                    for row in _tree.unanswered_call_rows(calls, file_rel):
-                        key = json.dumps(
-                            row.to_rpc_with_term_table(None), sort_keys=True
-                        )
-                        if key not in recorded_calls:
-                            recorded_calls.add(key)
-                            scan_rows.append((def_memento.to_rpc(), row))
+                    record_calls(def_memento.to_rpc(), calls)
                     if rows is None:
                         continue  # an effect, not a contract
                     scan_rows.extend((def_memento.to_rpc(), row) for row in rows)
+                # The module body's one run owes what its arms left unanswered
+                # exactly as a function's reduction does (step 8): a
+                # module-level call nothing here answers is stated whether or
+                # not any function reads what it made. A refusal by name of
+                # the run is the module's one `undecided` row, by the rule a
+                # function's refusal follows; the proof never silently lacks it.
+                module_memento = _tree.module_run_memento(sf, file_rel).to_rpc()
+                try:
+                    module_calls = _tree.module_run_owed_calls(sf)
+                except BackendDefect:
+                    raise
+                except LifterRefusal as refusal:
+                    scan_rows.append(
+                        (
+                            module_memento,
+                            _tree.refused_module_row(sf, file_rel, refusal),
+                        )
+                    )
+                    module_calls = ()
+                record_calls(module_memento, module_calls)
                 # Each exception class the module defines states its ancestry,
                 # named by its target symbol, so a consumer's `except` against
                 # the imported class is decided at prove through the join

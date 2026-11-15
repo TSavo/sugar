@@ -80,7 +80,7 @@ class ReceiverFieldStoreStateSugar(ConstructedTermSugar):
             receiver = floored_receiver(receiver, ctx)
             if isinstance(receiver, ObjectValue):
                 if receiver.field_store_runs_code(self.attr):
-                    return ExitSet.completed(self._left(ctx))
+                    return self._left(ctx)
                 # The store the one class lookup decides
                 # (``ObjectValue.field_store_route``), answered by the
                 # receiver's own store: the plain store completes with the
@@ -114,7 +114,9 @@ class ReceiverFieldStoreStateSugar(ConstructedTermSugar):
         state before its store ran (``KeyedStoreSugar.writes``), a statement
         never substituted, a read outside the frame that ran the store -- an
         unknown minted at the store: the object after code this read does
-        not see."""
+        not see.  Either is one completed arm, the key's read owing what it
+        owes (``TemporalContext.key_read``)."""
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
             _unknown_after,
         )
@@ -125,7 +127,7 @@ class ReceiverFieldStoreStateSugar(ConstructedTermSugar):
                 evaluation_read_here,
             )
 
-            left = temporal.value_read(evaluation_read_here(temporal, self.after))
+            left = temporal.key_read(evaluation_read_here(temporal, self.after))
             if left is not None:
                 return left
-        return _unknown_after(self.site, f".{self.attr}")
+        return ExitSet.completed(_unknown_after(self.site, f".{self.attr}"))
