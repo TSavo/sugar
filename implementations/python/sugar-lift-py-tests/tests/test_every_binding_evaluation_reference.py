@@ -364,7 +364,11 @@ def test_the_nested_frame_reads_the_name_through_a_captured_coordinate() -> None
     )
 
 
-def test_a_nonlocal_closure_carries_no_cells() -> None:
+def test_a_nonlocal_closure_carries_its_cell_at_the_call() -> None:
+    # A ``nonlocal`` name is carried as a read one is (``Call._cells_at_call``):
+    # the body reads the cell's binding at the call through its coordinate
+    # and writes it in its frame (``nonlocal y; y += 1`` needs it), and the
+    # caller reads what the call carries out for it.
     source = (
         "def f():\n"
         "    y = 1\n"
@@ -374,9 +378,18 @@ def test_a_nonlocal_closure_carries_no_cells() -> None:
         "        return y\n"
         "    return g()\n"
     )
-    ret = _function(source).substitute({}).body[-1]
+    body = _function(source).substitute({}).body
+    binding = next(
+        node
+        for node in body
+        if isinstance(node, Assign) and node.targets[0].id == "y"
+    )
+    ret = body[-1]
     assert isinstance(ret.value, Call)
-    assert not getattr(ret.value, "closure_cells", ())
+    ((name, cell),) = ret.value.closure_cells
+    assert name == "y"
+    assert isinstance(cell, EvaluationRef)
+    assert cell.evaluation == projection_key(binding.evaluation, "y")
 
 
 def test_a_nested_call_reads_the_binding_at_the_call(tmp_path: Path) -> None:
