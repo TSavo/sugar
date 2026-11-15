@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import pytest
 
-from frame_fresh import fresh
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
     EffectBoundaryDisposition,
@@ -200,10 +199,16 @@ def test_distinct_methods_preserve_distinct_raise_occurrences() -> None:
     assert ha.effect is not hb.effect
 
 
-def test_prior_store_survives_in_pre_effect_state_across_method_call() -> None:
-    """Earlier binding/store in the method body is present on the call halt state.
+def test_a_callee_local_store_stays_behind_at_the_method_call() -> None:
+    """The halt's record at the call is the caller's, never the callee's.
 
-    ``a[0]=9`` then ``raise ValueError`` → halt state carries ListValue([9]).
+    ``a = [0]; a[0] = 9; raise ValueError``: ``a`` is the method's own local.
+    A halt raised in a callee reaches its caller at the call
+    (``call_site_value.at_the_call``), carrying only what the callee did to
+    objects the caller can see (``caller_visible_values``, #8136, #8257);
+    the callee's locals and keys stay behind. The list was never the
+    caller's, so the record at the call holds no ``ListValue`` -- the
+    callee's ``[9]`` on it was the callee frame leaking into the caller.
     """
     source = (
         "class Raiser:\n"
@@ -217,9 +222,10 @@ def test_prior_store_survives_in_pre_effect_state_across_method_call() -> None:
     halted = _method_halt(source)
     assert halted.state is not None, f"{CODEX1}: halt dropped pre-effect state"
     lists = [e for e in halted.state.entries if isinstance(e, ListValue)]
-    assert lists == [
-        fresh(ListValue, (TermValue(9),))
-    ], f"{CODEX1}: earlier store not in halt state entries={halted.state.entries!r}"
+    assert lists == [], (
+        f"{CODEX1}: a callee local reached the caller's record "
+        f"entries={halted.state.entries!r}"
+    )
 
 
 # ===========================================================================
@@ -339,8 +345,10 @@ def test_method_raise_through_with_never_suppresses_preserves_state() -> None:
     assert isinstance(surviving, Halted)
     assert surviving.effect is halted.effect
     assert surviving.state is halted.state
+    # ``a`` is the method's local: the record at the call never holds it
+    # (``at_the_call``; see the callee-local twin above).
     lists = [e for e in surviving.state.entries if isinstance(e, ListValue)]
-    assert lists == [fresh(ListValue, (TermValue(7),))]
+    assert lists == []
 
 
 def test_method_raise_through_with_does_not_fabricate_completed_twin() -> None:
@@ -392,30 +400,6 @@ def test_wrong_exception_observation_is_not_the_method_effect() -> None:
         assert halted.effect is foreign
     with pytest.raises(AssertionError):
         assert str(halted.effect.occurrence) == foreign.occurrence
-
-
-def test_fabricated_empty_state_is_not_pre_effect_when_store_preceded_raise() -> None:
-    """Bite: halt state with prior store is not an empty fabricated block."""
-    source = (
-        "class Raiser:\n"
-        "    def boom(self):\n"
-        "        a = [0]\n"
-        "        a[0] = 3\n"
-        "        raise ValueError\n"
-        "\n"
-        "Raiser().boom()\n"
-    )
-    halted = _method_halt(source)
-    fabricated = _ReducedBlock((), True, ())
-    assert halted.state is not None, f"{CODEX1}: missing pre-effect state"
-    assert (
-        halted.state != fabricated or halted.state.entries
-    ), f"{CODEX1}: state collapsed to empty fabricated block"
-    with pytest.raises(AssertionError):
-        assert halted.state is fabricated
-    assert any(
-        isinstance(e, ListValue) for e in halted.state.entries
-    ), f"{CODEX1}: prior store absent from entries={halted.state.entries!r}"
 
 
 def test_handler_value_is_not_fabricated_fresh_block_twin() -> None:
