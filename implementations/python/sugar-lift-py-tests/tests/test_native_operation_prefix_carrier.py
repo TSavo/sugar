@@ -206,10 +206,11 @@ def test_spread_operands_before_a_carrier_keep_their_halts_guard_and_debts() -> 
 
     assert isinstance(collected, NativeOperationExitCarrierV1)
     exits = collected.discharge(
+        None,
         {
             left.coordinate_cid: TermValue(1),
             right.coordinate_cid: TermValue(2),
-        }
+        },
     )
 
     assert [arm for arm in exits.exits if isinstance(arm, Halted)] == [
