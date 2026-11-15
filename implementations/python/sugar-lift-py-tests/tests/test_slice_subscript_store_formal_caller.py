@@ -132,7 +132,7 @@ def test_slice_sugar_builds_floor_slice_value() -> None:
 def test_slice_sugar_omitted_bounds_are_none() -> None:
     site = _site()
     out = SliceSugar(None, None, None, site).desugar(None)
-    assert out.value == SliceValue(None, None, None)
+    assert out.completed_value() == SliceValue(None, None, None)
 
 
 def test_slice_lower_halt_skips_upper_and_step_desugar() -> None:
@@ -226,7 +226,7 @@ def test_list_slice_assignment_can_change_length() -> None:
     )
     index = SliceValue(TermValue(1), TermValue(3), None)
     out = receiver.setitem(index, fresh(ListValue, (TermValue(8),)), site, None)
-    assert out.value == fresh(ListValue, (TermValue(0), TermValue(8), TermValue(3)))
+    assert out.completed_value() == fresh(ListValue, (TermValue(0), TermValue(8), TermValue(3)))
 
 
 def test_list_full_slice_replaces_all() -> None:
@@ -238,7 +238,7 @@ def test_list_full_slice_replaces_all() -> None:
         site,
         None,
     )
-    assert out.value == fresh(ListValue, (TermValue(7), TermValue(8)))
+    assert out.completed_value() == fresh(ListValue, (TermValue(7), TermValue(8)))
 
 
 def test_discrimination_slice_store_is_not_scalar_index_overwrite() -> None:
@@ -252,10 +252,10 @@ def test_discrimination_slice_store_is_not_scalar_index_overwrite() -> None:
         site,
         None,
     )
-    assert out.value.elements[1] == TermValue(9)
+    assert out.completed_value().elements[1] == TermValue(9)
     with pytest.raises(AssertionError):
         # Lying: scalar setitem at 1 would leave index 2 as TermValue(2).
-        assert out.value == fresh(
+        assert out.completed_value() == fresh(
             ListValue, (TermValue(0), TermValue(9), TermValue(2), TermValue(3))
         )
 
@@ -307,7 +307,7 @@ def test_tuple_rhs_is_accepted_for_slice_store() -> None:
         site,
         None,
     )
-    assert out.value == fresh(ListValue, (TermValue(8), TermValue(8), TermValue(2)))
+    assert out.completed_value() == fresh(ListValue, (TermValue(8), TermValue(8), TermValue(2)))
 
 
 def test_string_rhs_projects_authenticated_characters() -> None:
@@ -644,8 +644,13 @@ def test_per_phase_occurrence_identity_setitem_vs_delitem() -> None:
     del_out = fresh(ListValue, (TermValue(0),)).delitem(
         SliceValue(None, None, TermValue(0)), site, None
     )
-    set_e = set_out.effect
-    del_e = del_out.effect
+    # A step-zero slice is a ground halt: every exit of each is the one halt.
+    assert set_out.halts() == set_out.exits
+    assert del_out.halts() == del_out.exits
+    (set_halt,) = set_out.halts()
+    (del_halt,) = del_out.halts()
+    set_e = set_halt.effect
+    del_e = del_halt.effect
     assert set_e.exception_name == del_e.exception_name == "ValueError"
     assert set_e.producer_node_owner == "ListValue.setitem"
     assert del_e.producer_node_owner == "ListValue.delitem"

@@ -53,8 +53,8 @@ def _coord_of_with_manager(sf: SourceFile) -> SourceFragmentCoordinateV1:
 
 
 class _Protocol:
-    def enter_resource_outcome(self, ctx=None):
-        del ctx
+    def enter_resource_outcome_for(self, manager, ctx=None):
+        del manager, ctx
         return ExitSet.completed(SimpleNamespace(enter_value=TermValue(1)))
 
     def exit_outcome_for(self, entered, ctx=None):

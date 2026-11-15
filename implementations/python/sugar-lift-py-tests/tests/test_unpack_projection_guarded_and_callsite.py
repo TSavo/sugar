@@ -104,8 +104,9 @@ def test_guarded_rhs_does_not_join_at_the_rebinds_layer() -> None:
         TupleLiteralValue((TermValue(3), TermValue(4))),
     )
     outcome = _operation("a", "b").submit(value, None)
-    assert isinstance(outcome.value, ScopeRebinds), outcome.value
-    for _, bound in outcome.value.bindings:
+    rebinds = outcome.completed_value()
+    assert isinstance(rebinds, ScopeRebinds), outcome
+    for _, bound in rebinds.bindings:
         assert not isinstance(bound, ScopeRebinds), bound
 
 
@@ -115,7 +116,7 @@ def test_guarded_rejoin_is_positional_within_and_across_arms() -> None:
         TupleLiteralValue((TermValue(1), TermValue(2))),
         TupleLiteralValue((TermValue(3), TermValue(4))),
     )
-    bindings = dict(_operation("a", "b").submit(value, None).value.bindings)
+    bindings = dict(_operation("a", "b").submit(value, None).completed_value().bindings)
     # Discrimination: not transposed across arms, not the same member twice,
     # and not the arms' members swapped within one name.
     assert bindings["a"] != GuardedValue(GUARD, TermValue(3), TermValue(1))
@@ -134,7 +135,7 @@ def test_guarded_rejoin_threads_to_the_rest_of_the_block() -> None:
         TupleLiteralValue((TermValue(3), TermValue(4))),
     )
     outcome = _operation("a", "b").submit(value, None)
-    ctx = outcome.value.extend_scope(ReduceContext(TemporalContext.empty()))
+    ctx = outcome.completed_value().extend_scope(ReduceContext(TemporalContext.empty()))
     assert ctx.temporal.value_if_bound("a") == GuardedValue(
         GUARD, TermValue(1), TermValue(3)
     )
@@ -247,8 +248,27 @@ def _callsite_unpack_halt(outcome):
     return halt
 
 
+def _discharged_at_an_opaque_receiver(tmp_path: Path, source: str, stem: str):
+    """``o.copy()`` on a formal waits for the caller's actual to select the
+    method (``NativeOperationExitCarrierV1``, operator ``method_call``): the
+    function alone is never a completion.  The caller hands an opaque
+    receiver; the call it selects is the callsite the unpack reads."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+    carrier = _outcome(tmp_path, source, stem)
+    assert isinstance(carrier, NativeOperationExitCarrierV1), type(carrier)
+    assert carrier.demand.operator == "method_call"
+    (receiver, *_rest) = carrier.demand.operand_coordinate_cids
+    return carrier.discharge(None, {receiver: SymbolicValue(make_var("o"))})
+
+
 def test_callsite_rhs_retains_the_typed_unpack_obligation(tmp_path: Path) -> None:
-    outcome = _outcome(tmp_path, OPAQUE_CALL_TWO, "callsite_two")
+    outcome = _discharged_at_an_opaque_receiver(
+        tmp_path, OPAQUE_CALL_TWO, "callsite_two"
+    )
     halt = _callsite_unpack_halt(outcome)
     assert isinstance(halt.effect, UndeterminedRaiseEffect), halt.effect
     assert halt.effect.exception_type_coordinate is None
@@ -258,9 +278,13 @@ def test_callsite_rhs_retains_the_typed_unpack_obligation(tmp_path: Path) -> Non
 
 
 def test_callsite_arity_is_the_target_count(tmp_path: Path) -> None:
-    two = _callsite_unpack_halt(_outcome(tmp_path, OPAQUE_CALL_TWO, "callsite_two"))
+    two = _callsite_unpack_halt(
+        _discharged_at_an_opaque_receiver(tmp_path, OPAQUE_CALL_TWO, "callsite_two")
+    )
     three = _callsite_unpack_halt(
-        _outcome(tmp_path, OPAQUE_CALL_THREE, "callsite_three")
+        _discharged_at_an_opaque_receiver(
+            tmp_path, OPAQUE_CALL_THREE, "callsite_three"
+        )
     )
     # Discrimination: a different arity is a different obligation TERM.
     assert str(two.guard) != str(three.guard)

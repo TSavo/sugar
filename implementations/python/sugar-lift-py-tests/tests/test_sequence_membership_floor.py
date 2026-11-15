@@ -29,9 +29,9 @@ def test_finite_list_membership_is_decided_from_constructed_members():
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
     finite = _list(1, 2)
-    assert isinstance(finite.contains(TermValue(2), "site").value, TrueBoolLiteralSugar)
+    assert isinstance(finite.contains(TermValue(2), "site").completed_value(), TrueBoolLiteralSugar)
     assert isinstance(
-        finite.contains(TermValue(3), "site").value, FalseBoolLiteralSugar
+        finite.contains(TermValue(3), "site").completed_value(), FalseBoolLiteralSugar
     )
 
 
@@ -40,7 +40,7 @@ def test_empty_list_membership_is_false():
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 
     empty = fresh(ListValue, ())
-    assert isinstance(empty.contains(TermValue(1), "site").value, FalseBoolLiteralSugar)
+    assert isinstance(empty.contains(TermValue(1), "site").completed_value(), FalseBoolLiteralSugar)
 
 
 def test_finite_tuple_membership_is_decided_from_constructed_members():
@@ -49,9 +49,9 @@ def test_finite_tuple_membership_is_decided_from_constructed_members():
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
     finite = _tuple(1, 2)
-    assert isinstance(finite.contains(TermValue(2), "site").value, TrueBoolLiteralSugar)
+    assert isinstance(finite.contains(TermValue(2), "site").completed_value(), TrueBoolLiteralSugar)
     assert isinstance(
-        finite.contains(TermValue(3), "site").value, FalseBoolLiteralSugar
+        finite.contains(TermValue(3), "site").completed_value(), FalseBoolLiteralSugar
     )
 
 
@@ -62,7 +62,7 @@ def test_symbolic_list_membership_emits_typed_obligation():
     result = (
         fresh(ListValue, (TermValue(1),))
         .contains(SymbolicValue(make_var("member")), "site")
-        .value
+        .completed_value()
     )
     assert isinstance(result.formula, _Atomic)
     assert result.formula.name == "python.list.contains"
@@ -75,7 +75,7 @@ def test_symbolic_tuple_membership_emits_typed_obligation():
     result = (
         TupleValue((TermValue(1),))
         .contains(SymbolicValue(make_var("member")), "site")
-        .value
+        .completed_value()
     )
     assert isinstance(result.formula, _Atomic)
     assert result.formula.name == "python.tuple.contains"
@@ -105,8 +105,8 @@ def test_nested_list_membership_is_decided_from_constructed_members():
     )
     needle = fresh(ListValue, (TermValue(1),))
     missing = fresh(ListValue, (TermValue(3),))
-    assert isinstance(container.contains(needle, "site").value, TrueBoolLiteralSugar)
-    assert isinstance(container.contains(missing, "site").value, FalseBoolLiteralSugar)
+    assert isinstance(container.contains(needle, "site").completed_value(), TrueBoolLiteralSugar)
+    assert isinstance(container.contains(missing, "site").completed_value(), FalseBoolLiteralSugar)
 
 
 def test_nested_tuple_membership_is_decided_from_constructed_members():
@@ -122,8 +122,8 @@ def test_nested_tuple_membership_is_decided_from_constructed_members():
     )
     needle = TupleValue((TermValue(1),))
     missing = TupleValue((TermValue(9),))
-    assert isinstance(container.contains(needle, "site").value, TrueBoolLiteralSugar)
-    assert isinstance(container.contains(missing, "site").value, FalseBoolLiteralSugar)
+    assert isinstance(container.contains(needle, "site").completed_value(), TrueBoolLiteralSugar)
+    assert isinstance(container.contains(missing, "site").completed_value(), FalseBoolLiteralSugar)
 
 
 def test_string_substring_membership_is_decided():
@@ -133,10 +133,10 @@ def test_string_substring_membership_is_decided():
 
     haystack = StringValue("pandas")
     assert isinstance(
-        haystack.contains(StringValue("and"), "site").value, TrueBoolLiteralSugar
+        haystack.contains(StringValue("and"), "site").completed_value(), TrueBoolLiteralSugar
     )
     assert isinstance(
-        haystack.contains(StringValue("xyz"), "site").value, FalseBoolLiteralSugar
+        haystack.contains(StringValue("xyz"), "site").completed_value(), FalseBoolLiteralSugar
     )
 
 
@@ -145,7 +145,7 @@ def test_symbolic_string_membership_emits_py_in():
     from sugar_lift_py_tests.ir import _Atomic, make_var
 
     result = (
-        StringValue("abc").contains(SymbolicValue(make_var("needle")), "site").value
+        StringValue("abc").contains(SymbolicValue(make_var("needle")), "site").completed_value()
     )
     assert isinstance(result.formula, _Atomic)
     assert result.formula.name == "py.in"
@@ -202,7 +202,7 @@ def test_callsite_container_emits_py_in():
         body=None,
         site="site",
     )
-    result = container.contains(TermValue(1), "site").value
+    result = container.contains(TermValue(1), "site").completed_value()
     assert isinstance(result.formula, _Atomic)
     assert result.formula.name == "py.in"
 
@@ -218,4 +218,4 @@ def test_comparison_op_routes_membership_to_list_contains():
     member = TermValue(2)
     # Direct floor path used by ComparisonOpSugar for In/NotIn.
     outcome = container.contains(member, "site")
-    assert isinstance(outcome.value, TrueBoolLiteralSugar)
+    assert isinstance(outcome.completed_value(), TrueBoolLiteralSugar)

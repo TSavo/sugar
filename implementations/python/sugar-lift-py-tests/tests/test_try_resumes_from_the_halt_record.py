@@ -82,6 +82,8 @@ def _returned_value(outcome):
 
 
 _ONE = fresh(ListValue, (TermValue(1),))
+# The ``[]`` a module or frame bound; a list compares by its elements alone.
+_EMPTY = fresh(ListValue, ())
 
 
 def test_a_handler_reads_an_append_made_before_the_raise() -> None:
@@ -359,7 +361,7 @@ def test_a_module_list_a_callee_may_change_unfollowed_is_not_its_old_value() -> 
         "    for _ in (1,):\n"
         "        L.append(1)\n"
     )
-    assert returned != ListValue(())
+    assert returned != _EMPTY
 
 
 def test_a_method_call_then_a_read_of_a_module_list_is_not_stale() -> None:
@@ -377,7 +379,7 @@ def test_a_method_call_then_a_read_of_a_module_list_is_not_stale() -> None:
         "        L.append(1)\n"
         "O = C()\n"
     )
-    assert returned != ListValue(())
+    assert returned != _EMPTY
 
 
 def test_an_imported_call_then_a_read_of_a_module_list_is_not_stale() -> None:
@@ -391,7 +393,7 @@ def test_an_imported_call_then_a_read_of_a_module_list_is_not_stale() -> None:
         "    return L\n"
         "L = []\n"
     )
-    assert returned != ListValue(())
+    assert returned != _EMPTY
 
 
 def test_a_lambda_call_then_a_read_of_a_module_list_is_not_stale() -> None:
@@ -404,7 +406,7 @@ def test_a_lambda_call_then_a_read_of_a_module_list_is_not_stale() -> None:
         "    return L\n"
         "L = []\n"
     )
-    assert returned != ListValue(())
+    assert returned != _EMPTY
 
 
 def test_a_nested_append_to_a_cell_is_seen_by_the_enclosing_function() -> None:
@@ -456,7 +458,7 @@ def test_a_nested_nonlocal_append_is_never_the_old_list() -> None:
         "    inner()\n"
         "    return acc\n"
     )
-    assert returned != ListValue(())
+    assert returned != _EMPTY
 
 
 def test_a_nested_nonlocal_rebind_is_never_the_old_value() -> None:
@@ -510,7 +512,7 @@ def test_an_operator_on_a_source_object_then_a_module_list_is_not_stale() -> Non
         "        return self\n"
         "O = C()\n"
     )
-    assert returned != ListValue(())
+    assert returned != _EMPTY
 
 
 def _substituted_return_read(source: str):
@@ -570,7 +572,7 @@ def test_exec_of_a_constant_string_runs_code_then_a_module_list_is_not_stale() -
     source = "def f():\n    exec('L.append(1)')\n    return L\nL = []\n"
     (call,) = [node for node in _function(source).walk() if isinstance(node, Call)]
     assert _code_subjects(call, {}) is None
-    assert _read_after(source) != ListValue(())
+    assert _read_after(source) != _EMPTY
 
 
 def test_exec_in_a_function_reaches_the_object_a_local_list_is() -> None:
@@ -647,7 +649,7 @@ def test_a_callable_handed_out_reaches_the_cell() -> None:
         "    list(map(inner, (1,)))\n"
         "    return acc\n"
     )
-    assert returned != ListValue(())
+    assert returned != _EMPTY
 
 
 def test_a_callee_local_is_not_carried_beside_the_callers_list() -> None:

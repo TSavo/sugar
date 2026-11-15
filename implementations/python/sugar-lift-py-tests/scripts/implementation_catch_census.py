@@ -555,15 +555,23 @@ def _handler_reachability(
     return "outside-construction", []
 
 
-def _snw_prior_reraise(
-    handler: ast.ExceptHandler, parents: Mapping[ast.AST, ast.AST]
+def _prior_reraise(
+    handler: ast.ExceptHandler,
+    parents: Mapping[ast.AST, ast.AST],
+    caught: frozenset[str],
 ) -> bool:
+    """Whether an earlier sibling catches this hierarchy and pure re-raises.
+
+    Except handlers are ordered: an earlier handler naming one of ``caught``
+    that re-raises on every path makes this later handler unreachable for
+    that hierarchy. One rule for both hierarchies.
+    """
     parent = parents.get(handler)
     if not isinstance(parent, (ast.Try, ast.TryStar)):
         return False
     index = parent.handlers.index(handler)
     for prior in parent.handlers[:index]:
-        if _handler_names(prior) & _SNW_TYPES and _CP_AUTHORITY._pure_reraise(prior):
+        if _handler_names(prior) & caught and _CP_AUTHORITY._pure_reraise(prior):
             return True
     return False
 
@@ -831,10 +839,8 @@ def measure_declared_roots(
             site["constructionPanicCandidate"] = bool(names & _CP_TYPES)
             site["sugarNotWrittenCandidate"] = bool(names & _SNW_TYPES)
             site_members.append(site)
-            if site["constructionPanicCandidate"] and not (
-                _CP_AUTHORITY._prior_pure_reraise_intercepts_construction_panic(
-                    handler, file_info["parents"]
-                )
+            if site["constructionPanicCandidate"] and not _prior_reraise(
+                handler, file_info["parents"], _CP_TYPES
             ):
                 cp_rows.append(
                     _candidate_row(
@@ -845,8 +851,8 @@ def measure_declared_roots(
                         function_index=function_index,
                     )
                 )
-            if site["sugarNotWrittenCandidate"] and not _snw_prior_reraise(
-                handler, file_info["parents"]
+            if site["sugarNotWrittenCandidate"] and not _prior_reraise(
+                handler, file_info["parents"], _SNW_TYPES
             ):
                 snw_rows.append(
                     _candidate_row(

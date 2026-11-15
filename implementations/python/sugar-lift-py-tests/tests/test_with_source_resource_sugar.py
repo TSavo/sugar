@@ -61,8 +61,8 @@ class _CompletedProtocol:
         self.enter_value = enter_value
         self.exit_value = exit_value or BlockValue((), can_fall_through=True)
 
-    def enter_resource_outcome(self, ctx=None):
-        del ctx
+    def enter_resource_outcome_for(self, manager, ctx=None):
+        del manager, ctx
         self.enter_calls += 1
         return ExitSet.completed(SimpleNamespace(enter_value=self.enter_value))
 

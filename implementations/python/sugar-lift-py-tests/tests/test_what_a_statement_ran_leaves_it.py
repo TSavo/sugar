@@ -103,7 +103,9 @@ def _caller_holding_a_receiver():
         TermValue,
     )
 
-    receiver = ObjectValue("Box", (), identity="box-1")
+    from frame_fresh import FRAME_FRESH
+
+    receiver = ObjectValue("Box", (), identity="box-1", allocation=FRAME_FRESH)
     ctx = ReduceContext.root(owner="statement-leaves").with_temporal(
         ReduceContext.root(owner="statement-leaves-seed").temporal.bind_value(
             "box", receiver

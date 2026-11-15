@@ -104,8 +104,8 @@ class _RecordingProtocol:
         self._exit_outcome = exit_outcome
         self.enter_value = TermValue(f"enter-{name}")
 
-    def enter_resource_outcome(self, ctx=None):
-        del ctx
+    def enter_resource_outcome_for(self, manager, ctx=None):
+        del manager, ctx
         self.enter_calls += 1
         self.order.append(f"enter:{self.name}")
         return ExitSet.completed(SimpleNamespace(enter_value=self.enter_value))

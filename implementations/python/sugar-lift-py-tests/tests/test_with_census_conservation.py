@@ -225,7 +225,7 @@ def test_known_constructed_with_item_shows_constructed_gt_zero(tmp_path: Path):
     use_site = next(iter(refs.by_use_site))
 
     class _Protocol:
-        def enter_resource_outcome(self, _ctx=None):
+        def enter_resource_outcome_for(self, _manager, _ctx=None):
             return ExitSet.completed(SimpleNamespace(enter_value=None))
 
         def exit_outcome_for(self, _entered, _ctx=None):

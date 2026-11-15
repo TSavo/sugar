@@ -286,7 +286,7 @@ def _measure_constructed(module, path: Path, workspace: Path) -> dict[str, Any]:
         use_site = next(iter(refs.by_use_site))
 
         class _Protocol:
-            def enter_resource_outcome(self, _ctx=None):
+            def enter_resource_outcome_for(self, _manager, _ctx=None):
                 return ExitSet.completed(SimpleNamespace(enter_value=None))
 
             def exit_outcome_for(self, _entered, _ctx=None):

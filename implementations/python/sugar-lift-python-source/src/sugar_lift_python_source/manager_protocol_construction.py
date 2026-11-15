@@ -122,14 +122,6 @@ class ConstructedManagerProtocolV1:
             )
         )
 
-    def enter_resource_outcome(self, ctx: object = None):
-        """Run enter once and carry each face's exact receiver into resource exit."""
-        if isinstance(self.receiver_state, ObjectValue):
-            return self.enter_resource_outcome_for(self.receiver_state, ctx)
-        return _completed_receiver_exits(self.receiver_state).sequence(
-            lambda receiver: self.enter_resource_outcome_for(receiver, ctx)
-        )
-
     def enter_resource_outcome_for(self, receiver, ctx: object = None):
         """Run enter on the exact receiver value produced by the manager face."""
         enter = _call_protocol_method(receiver, "__enter__", (), self.exit_face_id, ctx)
@@ -597,7 +589,7 @@ def _resource_enter_transitions(receiver: ObjectValue, enter_outcome, *, blame: 
         if not isinstance(block, BlockValue):
             raise SugarNotWritten(
                 blame=blame,
-                owner="ConstructedManagerProtocolV1.enter_resource_outcome",
+                owner="ConstructedManagerProtocolV1.enter_resource_outcome_for",
                 observed=type(block).__name__,
                 requested="completed enter block carrying exact acquisition stores",
                 fix="preserve the ordinary enter block or keep resource state loud",
@@ -627,7 +619,7 @@ def _apply_receiver_store(
     if statement.receiver.identity != receiver.identity:
         raise SugarNotWritten(
             blame=blame,
-            owner="ConstructedManagerProtocolV1.enter_resource_outcome",
+            owner="ConstructedManagerProtocolV1.enter_resource_outcome_for",
             observed="receiver coordinate mismatch",
             requested="acquisition store from the exact authenticated receiver",
             fix="preserve ObjectValue.identity across the enter transition",

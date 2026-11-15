@@ -193,7 +193,8 @@ def test_tuple_helper_authenticated_call_projects_container_return() -> None:
     floor = (
         call.sugar()
         .desugar(None)
-        .value.force_floor(None, owner="tuple-return-floor", project_callsite=False)
+        .completed_value()
+        .force_floor(None, owner="tuple-return-floor", project_callsite=False)
     )
     assert isinstance(floor.statements[0], ReturnValue)
     assert floor.statements[0].value == TupleValue(
@@ -210,7 +211,8 @@ def test_symbolic_helper_authenticated_call_projects_formal_return() -> None:
     floor = (
         call.sugar()
         .desugar(None)
-        .value.force_floor(None, owner="symbolic-return-floor", project_callsite=False)
+        .completed_value()
+        .force_floor(None, owner="symbolic-return-floor", project_callsite=False)
     )
     assert isinstance(floor.statements[0], ReturnValue)
     # Bound formal projects the actual TermValue(7).
@@ -278,7 +280,8 @@ def test_tampered_wrong_body_is_not_the_authenticated_return() -> None:
     floor = (
         call.sugar()
         .desugar(None)
-        .value.force_floor(None, owner="tamper-probe", project_callsite=False)
+        .completed_value()
+        .force_floor(None, owner="tamper-probe", project_callsite=False)
     )
     assert floor.statements[0].value == TermValue(99)
     with pytest.raises(AssertionError):
@@ -534,7 +537,8 @@ def test_authenticated_lambda_return_flows_into_binop() -> None:
     value = (
         call.sugar()
         .desugar(None)
-        .value._dig_floor_or_none(None, owner="authenticated-lambda-return")
+        .completed_value()
+        ._dig_floor_or_none(None, owner="authenticated-lambda-return")
     )
 
     assert value == TermValue(6)
@@ -551,7 +555,8 @@ def test_renamed_keyword_lambda_return_flows_into_binop() -> None:
     value = (
         call.sugar()
         .desugar(None)
-        .value._dig_floor_or_none(None, owner="renamed-keyword-lambda-return")
+        .completed_value()
+        ._dig_floor_or_none(None, owner="renamed-keyword-lambda-return")
     )
 
     assert value == TermValue(6)
@@ -627,7 +632,8 @@ def test_nested_function_source_return_projects_into_outer_caller() -> None:
     value = (
         call.sugar()
         .desugar(None)
-        .value._dig_floor_or_none(None, owner="nested-function-return")
+        .completed_value()
+        ._dig_floor_or_none(None, owner="nested-function-return")
     )
 
     assert value == TermValue(6)
