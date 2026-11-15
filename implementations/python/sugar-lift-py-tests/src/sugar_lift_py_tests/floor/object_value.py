@@ -61,9 +61,9 @@ class ObjectValue(FloorValue):
     identity: str = ""
     deferred_helper_fields: tuple[str, ...] = dataclass_field(default=(), compare=False)
     # Instance field names removed by an authenticated delattr.  Reading one
-    # of these is AttributeError (delete readback), without inventing
-    # AttributeError for unenrolled members of a partial construction
-    # (those require deferred-helper coordinates or a construction panic).
+    # of these is AttributeError (delete readback).  Any other name no field
+    # holds is AttributeError only by Python's absence rule
+    # (``_absence_raises``), else the undecided member.
     deleted_instance_fields: tuple[str, ...] = dataclass_field(
         default=(), compare=False
     )
@@ -307,7 +307,11 @@ class ObjectValue(FloorValue):
         it does not decide is the unanswered read (``undecided_attribute``).
         The member is read once and carried: a property's getter, and the
         method a ``BoundMethodValue`` binds, are that member, never looked up
-        again by name."""
+        again by name.
+
+        A name nothing answers -- no field, no class member, no delete, no
+        helper deferral -- raises ``AttributeError`` only by Python's absence
+        rule (``_absence_raises``); otherwise it is the undecided read."""
         from .object_identity import contents_current
 
         current = contents_current(self)
@@ -406,25 +410,62 @@ class ObjectValue(FloorValue):
             )
 
             return getattr_coordinate(self, name, owner=str(site))
-        # This receiver already owns a constructed object-state floor. An
-        # unenrolled member is missing construction testimony, not an unknown
-        # receiver-type Sugar case. Without a field, helper deferral, or cited
-        # absence, neither completion nor AttributeError is justified. Keep
-        # that missing Floor arm outside ordinary Exception handlers, including
-        # on guarded states.
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+        # No recorded field, delete or helper deferral answers the name, and
+        # the one class-namespace lookup selected no member for it.  Python
+        # decides the read only by its absence rule (``_absence_raises``):
+        # ``AttributeError``, a halt at the read's fragment.  Every other
+        # receiver is the one undecided member.
+        if self._absence_raises(name):
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
-        construction_panic_gap(
-            owner="ObjectValue.attribute",
-            blame=site,
-            observed=f"{type(self).__name__}.{name}",
-            requested="a source-authenticated field projection or exceptional exit",
-            fix=(
-                "carry field construction, helper deferral, or authenticated "
-                "absence testimony for this receiver state to the attribute floor; "
-                "do not guess AttributeError or borrow another guard's fields"
-            ),
-        )
+            return ground_exceptional_exit(
+                exception_name="AttributeError",
+                site=site,
+                owner="ObjectValue.attribute",
+            )
+        return self.undecided_attribute(name, site, owner="ObjectValue.attribute")
+
+    def _absence_raises(self, name: str) -> bool:
+        """Whether reading ``name`` off this instance raises ``AttributeError``
+        by Python's own rule (``object.__getattribute__``,
+        ``_PyObject_GenericGetAttrWithDict``; no ``__getattr__`` to fall to).
+
+        All of: the instance's fields are its fields now (the one currency
+        rule, ``contents_current``) and lack ``name`` -- the caller already
+        read them; the instance's MRO is read (``method_resolution_order``)
+        and every class of it is a source class or ``object``; the one
+        class-namespace lookup decides no class of it binds ``name``
+        (``namespace_owner``: not even ``object``); none binds
+        ``__getattr__``; and the ``__getattribute__`` the lookup selects is
+        ``object``'s.  The ``AttributeError`` is the builtin by binding: the
+        interpreter raises it, no name is read.
+
+        Anything else -- an instance that arrived, no class statement, an MRO
+        not read, a builtin base other than ``object`` (its ``__dict__`` and
+        slots are not read here), either hook bound or not decided -- is
+        False: the read is the one undecided member."""
+        from sugar_source_tree.nodes import ClassDef
+
+        from .object_identity import contents_current
+
+        if not contents_current(self):
+            return False
+        definition = getattr(self.defining_class, "class_definition", None)
+        if definition is None:
+            return False
+        order = definition.method_resolution_order()
+        if order is None or any(
+            not isinstance(entry, ClassDef) and entry != "object" for entry in order
+        ):
+            return False
+        decided, owner = definition.namespace_owner(name)
+        if not decided or owner is not None:
+            return False
+        decided, owner = definition.namespace_owner("__getattr__")
+        if not decided or owner is not None:
+            return False
+        decided, owner = definition.namespace_owner("__getattribute__")
+        return decided and isinstance(owner, str) and owner == "object"
 
     def guarded(self, formula):
         # A constructed state is not an unconditional field-store statement.
