@@ -2116,20 +2116,43 @@ class _WhileItemTestV1:
             _require_exit_set(outcome, owner="LoopRecurrenceSugar.while-test"),
             halt_record(ctx),
         )
-        return test.sequence(
-            lambda value: ExitSet.completed(
-                _WhileTest(self._formula(value), value.extend_scope(ctx))
-            )
-        )
+        return test.sequence(lambda value: self._truth_faces(value, ctx))
 
-    def _formula(self, value):
-        """The truth of the test's value as a guard (``predicate_formula``),
-        or None when its truth is not one value."""
+    def _truth_faces(self, value, ctx) -> ExitSet:
+        """The test's value's truth, taken through the one truth rule
+        (``bool_op_sugar.truth_of``), as ``_WhileTest`` faces.
+
+        A plain truth is one face whose guard is its formula.  An undecided
+        call result or bare symbolic value is its two faces: each completed
+        truth face is a ``_WhileTest`` under its own guard, and a halted truth
+        halted where this item began, so it carries that record
+        (``halts_recorded``), as a halt of the test itself does.  A truth that
+        is not one value here (a formal's, deferred on the caller's actual)
+        has no guard (None)."""
+        from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            halt_record,
+            halts_recorded,
             plain_completed_value,
         )
-        from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
+        from sugar_lift_py_tests.sugar.if_sugar import truth_formula
 
-        if plain_completed_value(value.truth(self.site)) is None:
-            return None
-        return predicate_formula(value, self.site)
+        scope = value.extend_scope(ctx)
+        truth = truth_of(
+            value,
+            self.site,
+            operator="while",
+            owner="LoopRecurrenceSugar.while-test",
+            floor="truth_exception_floor",
+        )
+        if not isinstance(truth, ExitSet):
+            return ExitSet.completed(_WhileTest(None, scope))
+        if plain_completed_value(truth) is not None:
+            return ExitSet.completed(_WhileTest(truth_formula(truth, value), scope))
+        return halts_recorded(truth, halt_record(ctx)).sequence(
+            lambda truth_value: ExitSet.completed(
+                _WhileTest(
+                    truth_formula(ExitSet.completed(truth_value), value), scope
+                )
+            )
+        )

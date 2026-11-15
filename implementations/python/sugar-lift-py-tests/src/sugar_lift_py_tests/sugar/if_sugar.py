@@ -285,26 +285,9 @@ class IfSugar(Sugar):
         return self._desugar_condition(condition, ctx)
 
     def _select_on_face(self, value, ctx):
-        """One completed condition face selects its suites.
-
-        A face whose truth is not one value (a guarded raise folded into its
-        truth) keeps the face's own value, as every condition face did before
-        faces selected suites: that gap is the truth law's, not this one's.
-        """
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
-        from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            plain_completed_value,
-        )
-
-        truth = value.truth(self.site)
-        if isinstance(truth, NativeOperationExitCarrierV1):
-            # A deferred truth is carried (``_desugar_condition``), never
-            # taken for the face's own completion.
-            return self._desugar_condition(value, ctx)
-        if plain_completed_value(truth) is None:
-            return ExitSet.completed(value)
+        """One completed condition face selects its suites: its truth is
+        taken by the one truth rule (``_desugar_condition``), whose faces
+        each select under their own guard."""
         return self._desugar_condition(value, ctx)
 
     def _ground_branch_result(self, ctx, observed_formula) -> None:
@@ -337,11 +320,37 @@ class IfSugar(Sugar):
         # with no formula and is not lifted yet -- LOUD, never guard by nothing.
         # A condition expression that raised never gets here: its halted arm
         # is handed back before any branch is selected.
+        #
+        # ``bool(condition)`` is taken through the one truth rule
+        # (``bool_op_sugar.truth_of``): an undecided call result or bare
+        # symbolic value is its two faces, and each completed truth face
+        # selects the suites under its own guard; a halted truth halted at
+        # the ``if``'s head, before either suite ran (``halts_recorded``).
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
+        from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            halt_record,
+            halts_recorded,
+            plain_completed_value,
+        )
 
-        truth = condition.truth(self.site)
+        truth = truth_of(
+            condition,
+            self.site,
+            operator="if",
+            owner="IfSugar.test",
+            floor="truth_exception_floor",
+        )
+        if isinstance(truth, ExitSet) and plain_completed_value(truth) is None:
+            return halts_recorded(truth, halt_record(ctx)).sequence(
+                lambda truth_value: self._select_suites(
+                    condition,
+                    truth_formula(ExitSet.completed(truth_value), condition),
+                    ctx,
+                )
+            )
         if isinstance(truth, NativeOperationExitCarrierV1):
             # The truth of a formal waits on its caller's actual: the
             # deferred ``truth`` operation (``SymbolicValue.truth``) is

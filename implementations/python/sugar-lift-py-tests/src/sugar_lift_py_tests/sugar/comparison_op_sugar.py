@@ -69,6 +69,12 @@ _LAW_BY_OP: dict[str, CompareLaw] = {
     "IsNot": CompareLaw.IDENTITY,
 }
 
+# The negated comparisons whose result's truth is negated (``_negated_truth``).
+_NEGATED_OPERATOR_SPELLING = {
+    "NotEq": "!=",
+    "NotIn": "not in",
+}
+
 _DISPATCH_RAISE_COORDINATE = {
     "Eq": "python.eq_dispatch_raises",
     "NotEq": "python.eq_dispatch_raises",
@@ -464,24 +470,25 @@ class ComparisonOpSugar(ConstructedTermSugar):
         )
 
     def _negated_truth(self, result):
-        """``not result`` for the equality result ``a != b`` negates.
+        """``not result`` for the result ``a != b`` (``a == b``'s) or ``a not
+        in b`` (``a in b``'s) negates.
 
-        The result is whatever ``a == b`` completed with: a decided boolean,
-        or -- for an equality its caller left unanswered, or one whose
-        operands' types are undecided -- a value whose ``bool`` may run
-        code.  Its truth is taken through the one truth rule
-        (``bool_op_sugar.truth_of``) and only the completed truth is negated;
+        The result is whatever the positive comparison completed with: a
+        decided boolean, or -- for a comparison its caller left unanswered,
+        or one whose operands' types are undecided -- a value whose ``bool``
+        may run code.  Its truth is taken through the one truth rule and only
+        the completed truth is negated (``bool_op_sugar.negated_truth_of``);
         the value is never asked to negate itself.
         """
-        from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
+        from sugar_lift_py_tests.sugar.bool_op_sugar import negated_truth_of
 
-        return truth_of(
+        return negated_truth_of(
             result,
             self.site,
-            operator="!=",
-            owner="ComparisonOpSugar.NotEq",
+            operator=_NEGATED_OPERATOR_SPELLING[self.op_kind],
+            owner=f"ComparisonOpSugar.{self.op_kind}",
             floor="comparison_operation_exception_floor",
-        ).and_then(lambda truth: truth.negate())
+        )
 
     def _apply(self, left, right, ctx):
         if self.op_kind == "NotEq":
@@ -522,8 +529,7 @@ class ComparisonOpSugar(ConstructedTermSugar):
             # a in b: the CONTAINER (right) owns membership -- b.contains(a).
             return self._membership(right, left)
         if self.op_kind == "NotIn":
-            # a not in b is not (a in b): membership floor, negated.
-            return self._membership(right, left).and_then(
-                lambda predicate: predicate.negate()
-            )
+            # a not in b is not (a in b): membership floor, then the truth of
+            # its result negated.
+            return self._membership(right, left).and_then(self._negated_truth)
         return self._ordering(left, right, ctx)

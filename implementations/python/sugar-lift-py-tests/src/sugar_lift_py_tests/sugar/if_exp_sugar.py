@@ -23,7 +23,7 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
-from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
+from sugar_lift_py_tests.sugar.if_sugar import truth_formula
 
 
 @dataclass(frozen=True)
@@ -121,14 +121,39 @@ class IfExpSugar(ConstructedTermSugar):
         return self.test.desugar(ctx).and_then(join)
 
     def _join(self, cond_value, ctx) -> ExitSet:
+        # The guard is the test's TRUTHINESS as a predicate, taken through
+        # the one truth rule (``bool_op_sugar.truth_of``): a predicate test
+        # (`5 if a == b else 6`) stands as its formula; an undecided call
+        # result or bare symbolic test (`5 if c else 6`) is its two faces,
+        # each completed truth face selecting the arms under its own guard
+        # and a halted truth halting the expression before either arm ran.
+        from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            plain_completed_value,
+        )
+
+        truth = truth_of(
+            cond_value,
+            self.site,
+            operator="if-expression",
+            owner="IfExpSugar.test",
+            floor="truth_exception_floor",
+        )
+        if isinstance(truth, ExitSet) and plain_completed_value(truth) is None:
+            return truth.sequence(
+                lambda truth_value: self._join_on(
+                    truth_formula(ExitSet.completed(truth_value), cond_value), ctx
+                )
+            )
+        return self._join_on(truth_formula(truth, cond_value), ctx)
+
+    def _join_on(self, observed_formula, ctx) -> ExitSet:
+        """The arms joined on the test whose truth states
+        ``observed_formula``: a ground formula selects one arm, any other
+        joins both."""
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
 
-        # The guard is the test's TRUTHINESS as a predicate -- uniform via
-        # `.truth`: a predicate test (`5 if a == b else 6`) stands as its formula,
-        # a bare value (`5 if c else 6`) emits `py.truthy(c)`. A ground-bool test
-        # folds to a literal with no formula and is not lifted yet -- LOUD.
-        observed_formula = predicate_formula(cond_value, self.site)
         formula = observed_formula
         if self.branch_slot is not None:
             from sugar_lift_py_tests.floor.branch_result_coordinate import (

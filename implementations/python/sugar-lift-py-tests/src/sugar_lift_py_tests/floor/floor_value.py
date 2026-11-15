@@ -597,88 +597,6 @@ class FloorValue:
             )
         return self.attribute(name_value.value, site, ctx)
 
-    def unary_truth(self, unit, site):
-        """Carrier adapter for ``bool(operand)`` under UnaryOp ``not`` after discharge.
-
-        ``NativeOperationDemandV1`` records two ordered Floor values.  Unary
-        ``not`` has one operand; the second slot is an inert unit (``NoneValue``)
-        with a null coordinate so discharge does not invent a second actual.
-        The producer then negates only a *completed* truth face — never a halt
-        (``ExitSet.and_then`` / ``ExitSet.sequence`` already skip halted tails).
-
-        An undecided actual must not emit ``py.truthy`` here: that would invent
-        a total ``bool`` completion after the formal door deferred honestly.
-        """
-        del unit
-        denotes = getattr(self, "denotes_value", None)
-        decided = getattr(self, "runtime_type_is_decided", None)
-        if callable(denotes) and callable(decided) and denotes() and not decided():
-            from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-            from sugar_source_tree.panic import SugarNotWritten
-
-            if not isinstance(self, CallSiteValue):
-                raise SugarNotWritten(
-                    blame=site,
-                    owner="unary_operation_exception_floor",
-                    observed=f"{type(self).__name__} not",
-                    requested=(
-                        "source-visible native truth testimony selecting completion "
-                        "or an authenticated exceptional exit"
-                    ),
-                    fix=(
-                        "preserve the undecided third value at unary_truth discharge; "
-                        "resolve the actual's runtime type and __bool__/__len__ from "
-                        "source before completing or halting"
-                    ),
-                )
-        return self.truth(site)
-
-    def boolop_truth(self, site):
-        """Truth-test once while retaining the actual operand BoolOp returns.
-
-        This unary carrier adapter is deliberately distinct from ``truth``:
-        ``a and b`` / ``a or b`` select using ``bool(a)`` but return ``a`` on
-        the stopping face.  After formal-coordinate discharge, ``self`` is the
-        authenticated caller actual, so packaging it here prevents the
-        definition-time formal from leaking into the result.
-
-        An actual whose runtime type remains undecided stays a named refusal;
-        neither a generic halt nor a total symbolic truth is invented.
-        """
-        denotes = getattr(self, "denotes_value", None)
-        decided = getattr(self, "runtime_type_is_decided", None)
-        if callable(denotes) and callable(decided) and denotes() and not decided():
-            from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-            from sugar_source_tree.panic import SugarNotWritten
-
-            if not isinstance(self, CallSiteValue):
-                raise SugarNotWritten(
-                    blame=site,
-                    owner="boolean_operation_exception_floor",
-                    observed=f"{type(self).__name__} BoolOp truth",
-                    requested=(
-                        "source-visible native truth testimony selecting completion "
-                        "or an authenticated exceptional exit"
-                    ),
-                    fix=(
-                        "preserve the undecided third value at boolop_truth discharge; "
-                        "resolve the actual's runtime type and __bool__/__len__ from "
-                        "source before completing or halting"
-                    ),
-                )
-
-        from sugar_lift_py_tests.floor.boolop_truth_selection import (
-            BoolOpTruthSelection,
-        )
-
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        return self.truth(site).and_then(
-            lambda truth_value: ExitSet.completed(
-                BoolOpTruthSelection(self, truth_value)
-            )
-        )
-
     def undecided_attribute(self, name, site, *, owner: str):
         """``self.name`` whose behaviour is not decided here: the two faces.
 
@@ -908,9 +826,18 @@ class FloorValue:
         )
 
     def stated(self, site):
-        # Default: ask truth, then the standing states itself. Base cases
-        # (True/False literals, PredicateValue) override.
-        return self.truth(site).and_then(lambda standing: standing.stated(site))
+        # Default: ``assert value`` takes ``bool(value)`` through the one
+        # truth rule (``bool_op_sugar.truth_of``), then the standing states
+        # itself. Base cases (True/False literals, PredicateValue) override.
+        from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
+
+        return truth_of(
+            self,
+            site,
+            operator="assert",
+            owner="AssertSugar.test",
+            floor="truth_exception_floor",
+        ).and_then(lambda standing: standing.stated(site))
 
     def negate(self):
         # Default: this value does not stand on the negate floor -- it cannot flip.

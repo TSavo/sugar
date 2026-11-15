@@ -19,8 +19,10 @@ Python semantic law for ``not`` (distinct from BoolOp):
      enclosing ``pytest.raises`` expectation (the boundary verifies, it cannot
      create).
 
-Formal operands ride the existing ``NativeOperationExitCarrierV1`` via the
-``unary_truth`` adapter (#6583 three-way resolution; #6591 caller discharge).
+Formal operands ride the existing ``NativeOperationExitCarrierV1`` as the
+``unary_truth`` operation (#6583 three-way resolution; #6591 caller
+discharge), whose discharge takes the actual's truth through the one truth
+rule (``bool_op_sugar.truth_of``).
 """
 
 from __future__ import annotations
@@ -89,6 +91,27 @@ class UnaryOpSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
+    def _truth(self, value):
+        """``bool(value)`` through the one truth rule ``a and b`` and ``a !=
+        b`` take it by (``bool_op_sugar.truth_of``): an undecided value is
+        its two faces (the truth completes under its guard or halts
+        undetermined).
+
+        A formal's ``unary_truth`` carrier completes, after discharge, with
+        the actual's truth (taken by this rule at discharge; a decided truth
+        is its own truth) or, when the caller has no actual, with the
+        unanswered result: a value whose truth is taken here too, so it is
+        never asked to negate itself."""
+        from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
+
+        return truth_of(
+            value,
+            self.site,
+            operator="not",
+            owner="UnaryOpSugar.not",
+            floor="unary_operation_exception_floor",
+        )
+
     def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
@@ -130,6 +153,8 @@ class UnaryOpSugar(ConstructedTermSugar):
                     # Defer bool(value) until authenticated actuals arrive.
                     # Second operand is an inert unit (null coordinate) so the
                     # existing two-slot carrier can record a one-operand op.
+                    # Its discharge takes the actual's truth through the one
+                    # truth rule (``unary_truth``).
                     from sugar_lift_py_tests.caller_parameter_contract import (
                         NativeOperationExitCarrierV1,
                     )
@@ -139,21 +164,9 @@ class UnaryOpSugar(ConstructedTermSugar):
                         operator="unary_truth",
                         operands=(value, NoneValue()),
                         coordinates=(formal_coordinate, None),
-                    )
+                    ).and_then(self._truth)
 
-                # ``bool(value)`` through the one truth rule ``a and b`` and
-                # ``a != b`` take it by: an undecided value is its two faces
-                # (the truth completes under its guard or halts
-                # undetermined), never a separate refusal here.
-                from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
-
-                return truth_of(
-                    value,
-                    self.site,
-                    operator="not",
-                    owner="UnaryOpSugar.not",
-                    floor="unary_operation_exception_floor",
-                )
+                return self._truth(value)
 
             # Negate only completed truth faces.  A raise (a Halted exit)
             # bypasses this step (no bool to flip).  The operand goes through

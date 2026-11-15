@@ -188,8 +188,8 @@ def test_an_assert_halts_at_the_head_of_its_statement() -> None:
 
 @dataclass(frozen=True)
 class _NoTruth:
-    """A completed condition face whose truth is not one value: it selects
-    no suite (``IfSugar._select_on_face``) and carries the block on."""
+    """A completed condition face whose truth has no arm: taken through the
+    one truth rule (``IfSugar._desugar_condition``), it selects no suite."""
 
     def truth(self, site):
         return ExitSet(())
