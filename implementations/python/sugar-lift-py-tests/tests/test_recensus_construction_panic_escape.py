@@ -50,6 +50,18 @@ def _planted_panic(owner: str) -> ConstructionPanic:
     )
 
 
+def _imported_consumer() -> ModuleType:
+    """The consumer module the recensus imports when it runs.
+
+    The recensus reads the consumer with a function-level ``from
+    recensus_enumerate_consumer import ...``, which resolves through
+    ``sys.modules`` at call time.  Every test module that loads the consumer
+    seats its own copy there, and the last one collected wins, so a stub set
+    on this module's ``CONSUMER`` may never be the function the recensus
+    calls.  A stub for the recensus goes on the module it will import."""
+    return sys.modules["recensus_enumerate_consumer"]
+
+
 def _raise(error: BaseException):
     def boom(*_args, **_kwargs):
         raise error
@@ -86,7 +98,9 @@ def test_outer_roster_escape_purely_reraises_construction_panic(
 ) -> None:
     path = _fixture_file(tmp_path)
     planted = _planted_panic("outer-roster-escape")
-    monkeypatch.setattr(CONSUMER, "demand_function_roster", _raise(planted))
+    monkeypatch.setattr(
+        _imported_consumer(), "demand_function_roster", _raise(planted)
+    )
 
     with pytest.raises(ConstructionPanic) as caught:
         RECENSUS.terminal_after_measure_escape(
@@ -132,7 +146,9 @@ def test_main_file_producer_purely_reraises_construction_panic(
     RECENSUS._PANDAS_3_0_3_AGGREGATE_HASH = observed.aggregate_hash
     RECENSUS._PANDAS_3_0_3_MANIFEST_SHAPE_CID = corpus_cid(list(observed.paths))
     planted = _planted_panic("main-file-producer")
-    monkeypatch.setattr(CONSUMER, "measure_file_via_enumerate", _raise(planted))
+    monkeypatch.setattr(
+        _imported_consumer(), "measure_file_via_enumerate", _raise(planted)
+    )
     monkeypatch.setattr(
         sys,
         "argv",
