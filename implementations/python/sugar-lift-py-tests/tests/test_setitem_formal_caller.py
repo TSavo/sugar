@@ -41,7 +41,7 @@ from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.store_effect_sugar import SubscriptStoreEffectSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.nodes import Call, FunctionDef
+from sugar_source_tree.nodes import FunctionDef
 from sugar_source_tree.tree import SourceFile
 
 
@@ -59,13 +59,62 @@ def _helper_definition():
     return function, function.sugar().desugar(None)
 
 
-def _call_outcome(signature: str, actuals: str):
+def _caller_edge(signature: str, actuals: str):
+    """``helper({actuals})`` in a caller's body, read off the caller's
+    contract row (``function_universe_outcome``).
+
+    A same-file call is its coordinate and edge, joined at prove (#7757
+    steps 5 and 6, #8705): the lifter never discharges the helper's
+    ``setitem`` carrier at the call.  The call completes under its
+    ``completes`` atom and halts under the complement (the halts the
+    helper's contract states reach the caller at prove, #8690, #8749).
+    Returns the call value the row's one completed face returns."""
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
     source = (
-        f"def helper({signature}):\n" "    obj[key] = value\n\n" f"helper({actuals})\n"
+        f"def helper({signature}):\n"
+        "    obj[key] = value\n\n"
+        f"def caller():\n    return helper({actuals})\n"
     )
     tree = _tree(source)
-    call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
-    return call.sugar().desugar(None)
+    caller = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name == "caller"
+    )
+    outcome = function_universe_outcome(caller)
+    assert [face for face in outcome.exits if isinstance(face, Halted)], outcome
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert len(completed) == 1, outcome
+    returns = [
+        s for s in completed[0].value.record.statements if isinstance(s, ReturnValue)
+    ]
+    assert returns, completed[0].value
+    edge = returns[-1].value
+    assert isinstance(edge, CallSiteValue), type(edge)
+    return edge
+
+
+def _int(edge, value: int):
+    return TermValue(value).to_term(owner=str(edge.site))
+
+
+def _named(edge, kind: str, name: str, value: int):
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    return ctor(kind, [str_const(name), _int(edge, value)])
+
+
+def _discharged(receiver, key, value):
+    """The helper's own contract row discharged with ``receiver``, ``key``
+    and ``value``: what prove binds its carrier with at a call."""
+    _, pending = _helper_definition()
+    obj_cid, key_cid, value_cid = pending.demand.operand_coordinate_cids
+    return pending.discharge(
+        None, {obj_cid: receiver, key_cid: key, value_cid: value}
+    )
 
 
 def _assert_named_halt(outcome, name: str) -> Halted:
@@ -272,23 +321,29 @@ def test_mutable_receiver_completes_store_via_setitem() -> None:
 
 
 def test_positional_keyword_and_default_callers_complete_same_demand() -> None:
-    faces = tuple(
-        _call_outcome(sig, actuals).exits[0]
-        for sig, actuals in (
-            ("obj, key, value", "[0], 0, 9"),
-            ("obj, key, value", "obj=[0], key=0, value=9"),
-            ("obj, key=0, value=9", "[0]"),
-        )
-    )
-    assert all(isinstance(face, Completed) for face in faces)
-    # The completed value is the Call, carrying what the helper did to the
-    # list its caller passed as a write the caller's statement applies
-    # (``CallSiteValue.project_producer_outcome``, ``carry_walrus_binds``).
-    peeled = tuple(peel_walrus_binds(face.value) for face in faces)
-    assert all(binds for binds, _call in peeled), peeled
-    calls = tuple(call for _binds, call in peeled)
-    # Same bound actuals across presentation forms.
-    assert calls[0].arg_values == calls[1].arg_values == calls[2].arg_values
+    # Expected value changed (#7757 steps 5 and 6, #8705): the call no
+    # longer carries what the followed helper did to the caller's list; it is
+    # its coordinate and edge, and each form carries the same binding in the
+    # form prove's one binder reads it in.
+    positional = _caller_edge("obj, key, value", "[0], 0, 9")
+    keyword = _caller_edge("obj, key, value", "obj=[0], key=0, value=9")
+    default = _caller_edge("obj, key=0, value=9", "[0]")
+    for edge in (positional, keyword, default):
+        _binds, receiver = peel_walrus_binds(edge.arg_values[0])
+        assert isinstance(receiver, ListValue), receiver
+        assert receiver.elements == (TermValue(0),)
+    assert list(positional.term.args[1:]) == [
+        _int(positional, 0),
+        _int(positional, 9),
+    ]
+    assert list(keyword.term.args[1:]) == [
+        _named(keyword, "py.kwarg", "key", 0),
+        _named(keyword, "py.kwarg", "value", 9),
+    ]
+    assert list(default.term.args[1:]) == [
+        _named(default, "py.default", "key", 0),
+        _named(default, "py.default", "value", 9),
+    ]
 
 
 def test_discrimination_wrong_cell_is_not_the_completed_store() -> None:
@@ -360,23 +415,35 @@ def test_immutable_receiver_halts_with_named_typeerror() -> None:
     readable = TupleValue((TermValue(0),)).subscript(TermValue(0), "read.py:1")
     assert readable.completed_value() == TermValue(0)
 
+    # The helper's contract row, discharged with the tuple a caller passes,
+    # halts with the named TypeError; at a call that halt is the helper's
+    # panic locus, joined at prove (#7757 steps 5 and 6, #8690).
     halted = _assert_named_halt(
-        _call_outcome("obj, key, value", "(0,), 0, 9"), "TypeError"
+        _discharged(TupleValue((TermValue(0),)), TermValue(0), TermValue(9)),
+        "TypeError",
     )
     assert "assertion" not in halted.effect.occurrence_id
 
 
 def test_discrimination_list_receiver_is_not_typeerror() -> None:
     """Positive twin of immutable TypeError: list completes."""
-    face = _call_outcome("obj, key, value", "[0], 0, 9").exits[0]
+    face = _discharged(
+        fresh(ListValue, (TermValue(0),)), TermValue(0), TermValue(9)
+    ).exits[0]
     assert isinstance(face, Completed)
     assert not isinstance(face, Halted)
 
 
 def test_source_caller_indexerror_halts_with_named_identity() -> None:
-    # ``[0][4] = 9`` raises IndexError. The helper used to assert TypeError
-    # for every call, so this row contradicted itself.
-    _assert_named_halt(_call_outcome("obj, key, value", "[0], 4, 9"), "IndexError")
+    # ``[0][4] = 9`` raises IndexError: the helper's row discharged with
+    # what the source caller passes.  The call itself is the edge carrying
+    # ``[0], 4, 9`` and owes its halt (#8705); prove joins the IndexError.
+    _assert_named_halt(
+        _discharged(fresh(ListValue, (TermValue(0),)), TermValue(4), TermValue(9)),
+        "IndexError",
+    )
+    edge = _caller_edge("obj, key, value", "[0], 4, 9")
+    assert list(edge.term.args[1:]) == [_int(edge, 4), _int(edge, 9)]
 
 
 # ---------------------------------------------------------------------------
@@ -530,7 +597,7 @@ def test_wrong_expected_type_leaves_setitem_exception_unconsumed() -> None:
         ExpectationNotMetEffect,
     )
 
-    produced = _call_outcome("obj, key, value", "(0,), 0, 9")
+    produced = _discharged(TupleValue((TermValue(0),)), TermValue(0), TermValue(9))
     original = produced.exits[0]
     assert isinstance(original, Halted)
     assert original.effect.exception_type_coordinate == _identity("TypeError")
