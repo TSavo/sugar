@@ -268,12 +268,56 @@ def _test_function_outcome(source: str):
     return function_universe_outcome(function)
 
 
+# Inside a method, ``self`` is a formal: the receiver reaches the body by
+# binding (``object_identity.arrived``), so its fields are not current there
+# and an explicit ``self.<name>`` -- a field or a method, read through
+# ``ObjectValue.attribute`` -- is the undecided read: a completion under
+# ``python:attribute.completes`` and an undetermined raise (#8151, #8153).
+#
+# - ``obj-call``: ``gauge.read()`` is selected in the test function, where
+#   ``gauge`` is current, so the lying body's ``KeyError`` reaches the caller;
+#   the truthful body's ``return self.n`` is the undecided read.
+# - ``self-call``, ``one-branch``, ``spread-call``: the call that raises is
+#   itself ``self.check(...)`` / ``self.open(...)`` on the arrived receiver,
+#   so neither half selects the method: both are the undecided call, and no
+#   named raise is decided for either.
+# - ``super-call``: the method is selected through ``super()``, not read off
+#   the receiver; the truthful half completes alone and the lying half
+#   carries the base method's ``ValueError``.
+_SELECTED_ON_THE_CALLER = ("obj-call",)
+_SELECTED_THROUGH_AN_ARRIVED_SELF = ("one-branch", "self-call", "spread-call")
+
+
+def _undecided_faces(outcome) -> None:
+    """A completed face under an undecided read's guard, and every halt an
+    undetermined raise: nothing about the read is decided, no exception is
+    named."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+
+    assert isinstance(outcome, ExitSet), outcome
+    assert outcome.completed_value() is None, outcome
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    halted = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert completed and halted, outcome
+    for halt in halted:
+        assert isinstance(halt.effect, UndeterminedRaiseEffect), halt.effect
+        assert halt.effect.exception_name is None, halt.effect
+
+
 @pytest.mark.parametrize("form", sorted(_IN_PROCESS_PAIRS))
 def test_method_raise_reaches_the_caller_in_process(form: str) -> None:
     from sugar_lift_py_tests.outcome import ExitSet, Halted
 
     truthful, lying, exception = _IN_PROCESS_PAIRS[form]
-    assert _test_function_outcome(truthful).completed_value() is not None
+    if form in _SELECTED_THROUGH_AN_ARRIVED_SELF:
+        _undecided_faces(_test_function_outcome(truthful))
+        _undecided_faces(_test_function_outcome(lying))
+        return
+    if form in _SELECTED_ON_THE_CALLER:
+        _undecided_faces(_test_function_outcome(truthful))
+    else:
+        assert _test_function_outcome(truthful).completed_value() is not None
     outcome = _test_function_outcome(lying)
     assert isinstance(outcome, ExitSet), outcome
     assert [type(face) for face in outcome.exits] == [Halted]
