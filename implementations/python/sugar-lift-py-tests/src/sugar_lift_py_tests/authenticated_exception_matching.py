@@ -125,8 +125,14 @@ def _matches_single_raise_effect(effect, expected) -> "MessageVerdict":
         # key that keeps two such objects apart; the predicate is about the
         # raised value, never about the span. An effect with no occurrence key
         # has no such value and still refuses here.
+        #
+        # The blame is where the raise halted: the one answer
+        # (``tree_enumerate.halt_site``) the proof's panic locus reads. A halt
+        # that states none is refused there by name, naming the halt itself.
+        from sugar_lift_py_tests.tree_enumerate import halt_site
+
         raise SugarNotWritten(
-            blame=halt_locus(effect),
+            blame=halt_site(effect, blame=effect),
             owner="matches_raise_effect",
             observed="handler or raised exception has no term to state the test over",
             requested="an authenticated exception identity or an emittable VALUE term",
@@ -139,21 +145,6 @@ def _matches_single_raise_effect(effect, expected) -> "MessageVerdict":
             ),
         )
     return MatchRetained(atomic("adt.is_python_type", [raised_term, handler_term]))
-
-
-def halt_locus(effect):
-    """Where a raise halted: the address a refusal about the halt states.
-
-    The halt's ``site`` is that address (#7766): an ``UndeterminedRaiseEffect``
-    states it at construction (required), and a ``RaiseEffect`` minted
-    without one is spelled by its ``occurrence``, which it always carries.
-    The occurrence KEY is not the address: an undetermined halt with no key
-    (no exception object to tell apart) still halted somewhere, and a refusal
-    blamed on its absent key is a ``TypeError`` in place of the refusal.
-    Never the matcher's subject (see ``_matches_single_raise_effect``).
-    """
-    site = getattr(effect, "site", None)
-    return site if site is not None else effect.occurrence_id
 
 
 def _authenticated_ancestry(effect, raised_identity):
@@ -301,8 +292,10 @@ def _message_term(effect, *, owner):
 
     raised_term = _operand_term(raised, owner=owner, role="raised exception")
     if raised_term is None:
+        from sugar_lift_py_tests.tree_enumerate import halt_site
+
         raise SugarNotWritten(
-            blame=halt_locus(effect),
+            blame=halt_site(effect, blame=effect),
             owner="authenticated_exception_matching._message_term",
             observed="raised exception has no value term to render as a message",
             requested="a message operand or an emittable raised VALUE term",

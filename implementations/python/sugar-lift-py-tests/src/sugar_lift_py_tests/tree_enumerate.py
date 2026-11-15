@@ -104,63 +104,55 @@ def _stated_fragment(holder):
     return None
 
 
-def halt_locus(arm, *, formals, def_memento, blame):
-    """One halted arm of a reduction, as its panic-locus row (#7766, ruling 3).
+def halt_site(effect, *, blame):
+    """Where a halt happened: the one answer (#7766, #7757).
 
-    Filled from the reduction: the site, the raised type, and the guard as
-    path condition. Read off the arm's own halt record, never off the source.
+    Both readers of the question read this: the proof's panic locus
+    (``halt_locus``) and every refusal about a halt that states where it
+    halted (the raise matcher, ``_message_term``, ``TrySugar``'s except-type
+    refusal). Read off the halt record, never off the source:
 
-    * site: the fragment the halt left at, stated on its effect (``site``: the
+    * the fragment the halt left at, stated on its effect (``site``: the
       ``raise`` statement, the operation whose two faces it is, the ground
       exit, the ``with`` item whose manager step or exit raised, the
       ``break``/``continue``, the ``warnings.warn`` call, the unmet
-      expectation); a raise built before that carried it states it on the
-      exception value it threw. A runtime effect's witness carries the
-      fragment of its boundary.
-    * term: the raised type's coordinate for a raise (``None`` when the type is
-      undetermined) and the failing operation for a runtime effect.
-    * guard: the arm's guard, in the contract's claim form
-      (``universe_value.contract_claim``), scoped to ``formals``.
+      expectation); a runtime effect's witness carries the fragment of its
+      boundary;
+    * then, for a raise built before its effect carried the fragment, the
+      fragment of the exception value it threw.
 
-    A halt whose record states no site is refused by name: two such loci
-    would be indistinguishable, so the halt cannot be stated as its own row.
+    The occurrence key is not an answer: it keys the exception object, it is
+    not where the halt happened. A halt whose record states no fragment is
+    refused by name, blamed on ``blame``: two such halts would be
+    indistinguishable, so neither can be stated by where it happened.
     """
     from sugar_lift_py_tests.effect import (
-        GroupedRaiseEffect,
         RaiseEffect,
         RuntimeEffect,
         UndeterminedRaiseEffect,
     )
     from sugar_lift_py_tests.floor import ExceptionValue
-    from sugar_lift_py_tests.floor.universe_value import contract_claim
-    from sugar_lift_py_tests.ir import Term
-    from sugar_lift_py_tests.kit_rpc import PanicLocusDto
 
-    effect = arm.effect
-    term = None
     if isinstance(effect, RuntimeEffect):
         fragment = _stated_fragment(effect.witness.site)
-        term = effect.witness.operation
     else:
         # Every other halt states the fragment on its own ``site``.
         fragment = _stated_fragment(effect)
-        if isinstance(effect, (RaiseEffect, UndeterminedRaiseEffect)):
-            if fragment is None and isinstance(effect.raised_value, ExceptionValue):
-                fragment = _stated_fragment(effect.raised_value.site)
-            term = effect.exception_type_coordinate
-        elif isinstance(effect, GroupedRaiseEffect) and isinstance(
-            effect.exception_type_coordinate, Term
+        if (
+            fragment is None
+            and isinstance(effect, (RaiseEffect, UndeterminedRaiseEffect))
+            and isinstance(effect.raised_value, ExceptionValue)
         ):
-            term = effect.exception_type_coordinate
+            fragment = _stated_fragment(effect.raised_value.site)
     if fragment is None:
         from sugar_source_tree.panic import SugarNotWritten
 
         producer = getattr(effect, "producer_node_owner", None)
         raise SugarNotWritten(
-            owner="halt_locus",
+            owner="tree_enumerate.halt_site",
             blame=blame,
             observed=(
-                f"a halted arm whose {type(effect).__name__} states no source "
+                f"a halt whose {type(effect).__name__} states no source "
                 f"fragment (producer {producer!r})"
             ),
             requested="the fragment the halt left at",
@@ -169,6 +161,43 @@ def halt_locus(arm, *, formals, def_memento, blame):
                 f"{type(effect).__name__} it builds (its ``site``)"
             ),
         )
+    return fragment
+
+
+def halt_locus(arm, *, formals, def_memento, blame):
+    """One halted arm of a reduction, as its panic-locus row (#7766, ruling 3).
+
+    Filled from the reduction: the site, the raised type, and the guard as
+    path condition. Read off the arm's own halt record, never off the source.
+
+    * site: where the halt happened (``halt_site``, which refuses by name a
+      halt that states none).
+    * term: the raised type's coordinate for a raise (``None`` when the type is
+      undetermined) and the failing operation for a runtime effect.
+    * guard: the arm's guard, in the contract's claim form
+      (``universe_value.contract_claim``), scoped to ``formals``.
+    """
+    from sugar_lift_py_tests.effect import (
+        GroupedRaiseEffect,
+        RaiseEffect,
+        RuntimeEffect,
+        UndeterminedRaiseEffect,
+    )
+    from sugar_lift_py_tests.floor.universe_value import contract_claim
+    from sugar_lift_py_tests.ir import Term
+    from sugar_lift_py_tests.kit_rpc import PanicLocusDto
+
+    effect = arm.effect
+    fragment = halt_site(effect, blame=blame)
+    term = None
+    if isinstance(effect, RuntimeEffect):
+        term = effect.witness.operation
+    elif isinstance(effect, (RaiseEffect, UndeterminedRaiseEffect)):
+        term = effect.exception_type_coordinate
+    elif isinstance(effect, GroupedRaiseEffect) and isinstance(
+        effect.exception_type_coordinate, Term
+    ):
+        term = effect.exception_type_coordinate
     return PanicLocusDto(
         file=fragment.filename,
         line=fragment.line,

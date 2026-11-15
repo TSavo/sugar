@@ -78,7 +78,6 @@ pub enum Level {
     SourceFiles,
     Universe,
     Exports,
-    ProviderContractMembers,
     ParameterContractLinkUnits,
     ParameterContractResume,
 }
@@ -89,7 +88,6 @@ impl Level {
             Level::SourceFiles => "source_files",
             Level::Universe => "universe",
             Level::Exports => "exports",
-            Level::ProviderContractMembers => "provider-contract-members",
             Level::ParameterContractLinkUnits => "parameter-contract-link-units",
             Level::ParameterContractResume => "parameter-contract-resume",
         }
