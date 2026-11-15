@@ -1819,6 +1819,58 @@ def test_a_bare_mutation_statement_writes_its_receiver_under_a_key() -> None:
     assert receiver.evaluation == header
 
 
+_FIELD_STORE_LOOP = (
+    "def f():\n"
+    "    o = C()\n"
+    "    for i in {iterable}:\n"
+    "        o.n = i\n"
+    "    return o.n\n"
+    "class C:\n"
+    "    pass\n"
+    "def g():\n"
+    "    return (1, 2)\n"
+)
+
+
+@pytest.mark.parametrize("iterable", ["(1, 2)", "g()"])
+def test_each_item_stores_into_the_object_the_item_before_it_left(
+    iterable: str,
+) -> None:
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # ``o.n = i`` assigns no name, yet it writes ``o`` to the object after
+    # the store under its key, so the live loop (``g()``) carries it: the
+    # read after the loop is the object the last item left, ``o.n == 2`` as
+    # Python has it, never the pre-loop object.  The literal is unrolled and
+    # reads the same.
+    function = _function(_FIELD_STORE_LOOP.format(iterable=iterable))
+    returned = _flattened(_returned_values(function_universe_outcome(function)))
+    assert TermValue(2) in returned, returned
+    assert TermValue(1) not in returned, returned
+
+
+def test_a_field_store_writes_its_receiver_under_a_key() -> None:
+    from sugar_lift_py_tests.sugar.assign_sugar import KeyedStoreSugar
+
+    # The live loop's body statement reports ``o`` among the names it
+    # writes, under a key, and the loop carries ``o`` through it.
+    runtime = _live_runtime(_FIELD_STORE_LOOP.format(iterable="g()"))
+    assert "o" in runtime.carried_names
+    (header, writes, _else_writes) = runtime.carried_evaluations[
+        runtime.carried_names.index("o")
+    ]
+    [store] = runtime.body_sugars
+    assert isinstance(store, KeyedStoreSugar)
+    assert writes, runtime.carried_evaluations
+    written = {key for _state, keys in store.writes for key in keys}
+    assert set(writes) <= written
+    # The body stores into ``o`` read through the header the item begins
+    # with.
+    receiver = store.store.receiver
+    assert isinstance(receiver, EvaluationRefSugar)
+    assert receiver.evaluation == header
+
+
 def test_a_symbolic_items_append_before_its_break_leaves_with_it() -> None:
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 

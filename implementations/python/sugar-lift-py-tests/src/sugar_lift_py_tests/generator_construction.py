@@ -634,6 +634,11 @@ class DefinitionDefaultsStepV1:
     the function reads (``DefaultValueSugar``).  A default that halts halts
     the step: its faces are arms of the machine.  The body runs only at a
     call.  The same statement in a plain body is ``DefinitionDefaultsSugar``.
+
+    It is the machine's one step of values bound under keys with no name:
+    ``o.x OP= yield v`` evaluates its receiver and reads the field with it,
+    before the suspension, as Python does (``nodes.FunctionDef``'s
+    ``read_modify_store_steps``); the resume's store reads both keys.
     """
 
     values: tuple
