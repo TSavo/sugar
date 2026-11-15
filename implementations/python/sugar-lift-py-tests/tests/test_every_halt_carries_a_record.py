@@ -833,6 +833,37 @@ def test_a_handler_sees_the_walrus_a_statements_test_bound_before_it_raised(
     assert returned("g()") == returned("2")
 
 
+# A compound statement's halt in its header carried the state the header left
+# with every name unbound before the statement dropped
+# (``Try._mid_statement_state`` read a compound statement's names as unknown
+# at its halts), so the walrus the ``if`` test bound before ``g()`` raised was
+# lost and the handler read ``a`` unbound.  The header is an expression run
+# before any suite: its walrus is read at the halt through its key
+# (``_compound_halt_state``, ``at_header``), as a simple statement's is.
+_IF_TEST_WALRUS_RAISES = _walrus_test("        if {test}:\n            pass\n", "g()")
+
+
+def test_the_truthful_half_reads_the_if_tests_walrus_bound_before_the_raise() -> (
+    None
+):
+    # TRUTHFUL: Python binds ``a = 1``, then ``g()`` raises; the handler
+    # returns 1.
+    outcome = function_universe_outcome(_function(_IF_TEST_WALRUS_RAISES))
+    assert _returned_value(outcome) == TermValue(1)
+
+
+def test_the_lying_half_raises_name_error_for_the_if_tests_walrus() -> None:
+    # LYING: every arm a ``NameError`` for ``a``, the walrus dropped at the
+    # ``if``'s halt.
+    from sugar_lift_py_tests.effect import NameErrorEffect
+
+    outcome = function_universe_outcome(_function(_IF_TEST_WALRUS_RAISES))
+    assert not any(
+        isinstance(exit_, Halted) and isinstance(exit_.effect, NameErrorEffect)
+        for exit_ in outcome.exits
+    ), outcome
+
+
 # -- an unpack carries the walrus bound in its right-hand side -------------------
 
 
