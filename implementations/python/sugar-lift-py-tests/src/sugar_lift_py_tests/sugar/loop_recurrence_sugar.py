@@ -503,26 +503,35 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         # on, under its guard and owing what it owes
         # (``ExitSet.and_then``); the face it raises on leaves the loop
         # before any item.  The recurrence stays over the iterable's own
-        # term.
-        iterated = halts_recorded(
-            iterator_operation.submit(iterable, ctx), halt_record(ctx)
+        # term, and steps the iterator ``iter`` completed with
+        # (``_recurrence``).  It is the one iterator path a comprehension's
+        # symbolic fold takes too (``iterator_operation.iterated``): where
+        # the iteration is decided never to raise
+        # (``iterator_operation.iteration_total``) no ``iter`` is submitted.
+        from sugar_lift_py_tests.operations.iterator_operation import iterated
+
+        iteration = halts_recorded(
+            iterated(iterable, ctx, owner="LoopRecurrenceSugar", site=self.site),
+            halt_record(ctx),
         )
 
-        def after_iter(_iterator):
-            return self._recurrence(iterable, ctx)
+        def after_iter(iterator):
+            return self._recurrence(iterable, ctx, iterator=iterator)
 
-        if isinstance(iterated, NativeOperationExitCarrierV1):
-            return iterated.and_then(after_iter)
-        return _require_exit_set(iterated, owner="LoopRecurrenceSugar.iter").and_then(
+        if isinstance(iteration, NativeOperationExitCarrierV1):
+            return iteration.and_then(after_iter)
+        return _require_exit_set(iteration, owner="LoopRecurrenceSugar.iter").and_then(
             after_iter
         )
 
-    def _recurrence(self, iterable, ctx):
+    def _recurrence(self, iterable, ctx, *, iterator=None):
         """The loop as its recurrence over ``iterable`` (None: a ``while``):
         one symbolic item beside the loop exhausted, each name the loop
         writes its fixed point of the loop's step.  For a ``for`` this is
         what follows the completed face of the iterable's ``iter``
-        (``_desugar_with_iterable``), never the loop's whole outcome."""
+        (``_desugar_with_iterable``), never the loop's whole outcome, and
+        each item is what follows the faces its ``next`` of ``iterator``
+        goes on by (``iterator_operation.stepped``)."""
         runtime = self.construction.loop_runtime
 
         from sugar_lift_py_tests.floor import InvValue
@@ -707,11 +716,43 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
         from sugar_lift_py_tests.outcome import Completed
 
-        if len(projected.exits) == 1 and isinstance(projected.exits[0], Completed):
-            # One way in (a name target, a ``while``): the item is exactly
-            # what follows it, a body waiting on its caller's actuals handed on.
-            return projected.and_then(run_item)
-        return projected.and_then(run_item, consume=lambda halt: recurrence(halt=halt))
+        def items():
+            if len(projected.exits) == 1 and isinstance(projected.exits[0], Completed):
+                # One way in (a name target, a ``while``): the item is exactly
+                # what follows it, a body waiting on its caller's actuals
+                # handed on.
+                return projected.and_then(run_item)
+            return projected.and_then(
+                run_item, consume=lambda halt: recurrence(halt=halt)
+            )
+
+        if iterable is None:
+            # A ``while`` steps no iterator: its test decides each item.
+            return items()
+        # Each item is what follows its ``next`` (the one iterator path a
+        # comprehension's fold takes too, ``iterator_operation.stepped``):
+        # the item runs on its value face, the loop leaves exhausted on its
+        # ``StopIteration``, and its halt -- an undecided raise of an
+        # iterator whose ``__next__`` is not decided here, on any step --
+        # leaves the loop with what the items before it did
+        # (``recurrence``), as the live loop's ``next`` halt does
+        # (``_advance_iterator``).  Where the iteration's type is decided
+        # and its ``__next__`` cannot raise there is no step: the items
+        # alone.
+        from sugar_lift_py_tests.operations.iterator_operation import stepped
+        from sugar_lift_py_tests.sugar.function_universe_sugar import halt_record
+
+        return stepped(
+            iterable,
+            iterator,
+            ctx,
+            items,
+            owner="LoopRecurrenceSugar",
+            site=self.site,
+            exhausted=exhausted,
+            record=halt_record(ctx),
+            left=lambda halt: recurrence(halt=halt),
+        )
 
     def _symbolic_item(self):
         """``(body_sugars, guard)``: the body the recurrence's one symbolic
