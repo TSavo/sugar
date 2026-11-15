@@ -5232,16 +5232,32 @@ class SourceUnit:
         participates in identity admission.  A unit with no typed root
         refuses by name (``_require_typed_module``): a call is read only
         through the door that binds its tree.
+
+        A substituted call whose callee read the module threading bound
+        (``DecoratedDefinitionRef``: every read of a module class's name is
+        its statement's key, #7757 item 21) is the same read: its name, at
+        the call, reaching that same class statement.  The callee's spelling
+        never decides the allocation.
         """
         self._require_typed_module(
             "SourceUnit.source_allocation_definition_for_call", blame=self.filename
         )
-        if not isinstance(call.func, Name):
+        if isinstance(call.func, Name):
+            name = call.func.id
+        elif isinstance(call.func, DecoratedDefinitionRef):
+            name = call.func.definition_name
+        else:
             return None
         span = call.line_col_span()
-        definition = self.module_definition_at(call.func.id, span)
+        definition = self.module_definition_at(name, span)
         if not isinstance(definition, ClassDef):
             return None
+        if isinstance(call.func, DecoratedDefinitionRef):
+            # The statement the threading bound the name to, at its source
+            # span (a substituted copy of the statement keeps it).
+            bound = getattr(call.func, "definition", None)
+            if not isinstance(bound, ClassDef) or bound.span != definition.span:
+                return None
         # Constructing the allocation definition requires constructing its
         # methods. A call occurrence inside that same definition therefore
         # cannot use the definition as already-constructed testimony without a
