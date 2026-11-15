@@ -488,6 +488,37 @@ class ClassDefinitionValue(GuardStableValue):
             fix="preserve unique method resolution or keep the call loud",
         )
 
+    def test_python_type(self, value, site):
+        """``isinstance(value, Cls)`` for this source class.
+
+        CPython answers ``True`` before any ``__instancecheck__`` when
+        ``type(value) is Cls``.  ``value`` is that when it is an instance a
+        call of this very class value made in the frame reading it
+        (``fresh_receiver``'s ``defining_class``; its class is the one it was
+        made with while its contents are current) and no store in this frame
+        reassigned its ``__class__``.  The class is this value itself, never
+        another run of the same statement (a ``class`` in a function called
+        twice is two classes).  Every other operand -- an instance of another
+        class or of a subclass, one that arrived by binding, a value whose
+        type is not read here -- is not decided here: the one undecided type
+        test (``FloorValue.test_python_type``)."""
+        from sugar_lift_py_tests.floor.object_identity import contents_current
+        from sugar_lift_py_tests.floor.object_value import ObjectValue
+        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        instance = _instance_held_by(value)
+        if (
+            isinstance(instance, ObjectValue)
+            and contents_current(instance)
+            and "__class__" not in (field.name for field in instance.fields)
+            and instance.defining_class is self
+        ):
+            return ExitSet.completed(TrueBoolLiteralSugar(site=site))
+        return super().test_python_type(value, site)
+
     def to_term(self, *, owner: str):
         del owner
         from sugar_lift_py_tests.ir import ctor, str_const
@@ -591,6 +622,26 @@ class ClassDefinitionValue(GuardStableValue):
             seen.add(id(base))
             pending.extend(base.base_classes)
         return False
+
+
+def _instance_held_by(value):
+    """The object ``value`` holds: itself, or -- for a call that already ran
+    its body (a class call: the receiver its constructor left) -- the floor
+    that call completed with (``CallSiteValue._dig_floor_or_none``), under
+    the callee stores it carries.  None where a call's floor is not one
+    completed value, and where the call has not run: the type test never
+    applies a body again."""
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+
+    _binds, held = peel_walrus_binds(value)
+    if isinstance(held, CallSiteValue):
+        if held.retained_source_completion_outcome() is None:
+            return None
+        return held._dig_floor_or_none(
+            None, owner="ClassDefinitionValue.test_python_type"
+        )
+    return held
 
 
 def _written_by(method, binder) -> bool:
