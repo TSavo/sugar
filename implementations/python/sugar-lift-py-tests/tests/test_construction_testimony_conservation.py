@@ -217,6 +217,37 @@ def test_repeated_sugar_reraises_the_memoized_panic_without_new_roll_mass():
         cls._construct_sugar = original
 
 
+def test_a_reporter_that_refused_a_served_row_is_refused_it_on_every_ask():
+    # The constant's row was computed at the open, under a roll that builds
+    # no testimony, and holds a present answer.  The testimony reporter is
+    # served that row and refuses its testimony: it has not heard the row,
+    # so no later ask serves it the present answer.  The same refusal comes
+    # back every time, and nothing is said to the roll again.
+    cls, original = _unsupported_constructing("Constant")
+    try:
+        root, reporter, collector = _testimony_tree("x = 1\n")
+        node = _first(root, "Constant")
+        raised = []
+        for _ in range(3):
+            try:
+                node.sugar()
+            except ConstructedValueTestimonyNotWritten as panic:
+                raised.append(panic)
+        assert len(raised) == 3, "a refused row was served green"
+        assert raised[0] is raised[1] is raised[2]
+        assert len(collector.gaps) == 1, collector.gaps
+        assert [n for n in collector.present if n.ref is node.ref] == []
+        # The refusal is that reporter's: a roll that builds no testimony is
+        # served the same row present, with no gap.
+        plain = CollectingReporter()
+        other = _first(materialize(root.unit, root.ref, plain), "Constant")
+        assert isinstance(other.sugar(), Unserializable)
+        assert plain.gaps == []
+        assert [n for n in plain.present if n.ref is node.ref] != []
+    finally:
+        cls._construct_sugar = original
+
+
 def test_no_reporter_silently_returns_from_failed_testimony_construction():
     # Every reporter that CAN build testimony must have no silent-return door.
     # ``NullReporter`` / ``CollectingReporter`` build none at all (nothing can

@@ -19,6 +19,8 @@ import weakref
 from contextvars import ContextVar
 from typing import Any
 
+from .panic import LifterRefusal
+
 # Kinds whose constructed answer reads ControlConstructionContextV1.
 # Everyone else resolves identically inside or outside a loop/handler.
 CONTROL_SENSITIVE_KINDS: frozenset[str] = frozenset(("Break", "Continue", "Raise"))
@@ -202,7 +204,9 @@ def remember_constructed_value_cid_v2(value: object, cid: str) -> None:
 #
 # The row also stores the testimony its computation gave (``testify``), with
 # every row it read nested in order, and replays it on a hit into an asking
-# reporter that has not heard it.  So no memo key names the reporter.
+# reporter that has not heard it.  So no memo key names the reporter.  A
+# reporter that refuses that testimony by name has not heard the row, and is
+# refused the row's answer by that same refusal on every ask (``_replay``).
 # ---------------------------------------------------------------------------
 
 
@@ -370,7 +374,7 @@ class MemoRow:
     as loudly as a value and re-raised on every hit.
     """
 
-    __slots__ = ("reads", "value", "panic", "testimony", "heard")
+    __slots__ = ("reads", "value", "panic", "testimony", "heard", "refused")
 
     def __init__(self, reads, value, panic, testimony, reporter) -> None:
         self.reads: dict[tuple, Any] = reads
@@ -379,6 +383,10 @@ class MemoRow:
         self.testimony: tuple = testimony
         # id -> reporter, held so the id cannot be recycled under the row.
         self.heard: dict[int, object] = {id(reporter): reporter}
+        # id -> (reporter, refusal): a reporter that refused this row's
+        # testimony by name as it heard it (``_replay``).  The row's answer
+        # is absent for that reporter, by that same refusal, on every ask.
+        self.refused: dict[int, tuple[object, BaseException]] = {}
 
     def holds(self) -> bool:
         """Every ambient value this row read is the same now."""
@@ -393,7 +401,12 @@ def has_testified(computation: _Computation, method: str, subject: object) -> bo
     ``subject`` (one of its arguments, by identity): its own, a row's nested
     in it (a child that closed, a row it was served), or that of a
     computation opened under it and never closed, whose testimony is this
-    one's when it closes (``_pop``)."""
+    one's when it closes (``_pop``).
+
+    A refusal a reporter raised as it heard a row nested here (``_replay``,
+    ``MemoRow.refused``) is ``report_gap`` testimony about that refusal: the
+    reporter reported it as it raised it, and a later ask re-raises it with
+    nothing said again."""
     seen: set[int] = set()
     pending = [computation.testimony]
     for index, opened in enumerate(_OPEN):
@@ -405,6 +418,11 @@ def has_testified(computation: _Computation, method: str, subject: object) -> bo
             if type(entry) is MemoRow:
                 if id(entry) not in seen:
                     seen.add(id(entry))
+                    if method == "report_gap" and any(
+                        refusal is subject
+                        for _held, refusal in entry.refused.values()
+                    ):
+                        return True
                     pending.append(entry.testimony)
             elif entry[0] == method and any(arg is subject for arg in entry[1]):
                 return True
@@ -412,15 +430,37 @@ def has_testified(computation: _Computation, method: str, subject: object) -> bo
 
 
 def _replay(row: MemoRow, reporter: object) -> None:
+    """``row``'s testimony, given to ``reporter`` once.
+
+    A reporter that refuses the testimony by name as it hears it -- a
+    testimony reporter that cannot content-address a value the row holds
+    (``ConstructionTestimonyReporterV1._testimony_gap``) -- has not heard the
+    row, and the row's answer is absent for it.  It stays absent: the
+    refusal is remembered beside the row and re-raised, the same object, on
+    every later ask by that reporter, with no testimony given again.  A gap
+    stays a gap on every call, here as for a row that holds a panic; it is
+    never a present answer the second time.
+
+    Anything else a reporter raises is a property of this traversal: the
+    reporter has not heard the row, and its next ask hears it again."""
+    refused = row.refused.get(id(reporter))
+    if refused is not None and refused[0] is reporter:
+        raise refused[1]
     if id(reporter) in row.heard:
         return
     row.heard[id(reporter)] = reporter
-    for entry in row.testimony:
-        if type(entry) is MemoRow:
-            _replay(entry, reporter)
-        else:
-            method, args = entry
-            getattr(reporter, method)(*args)
+    try:
+        for entry in row.testimony:
+            if type(entry) is MemoRow:
+                _replay(entry, reporter)
+            else:
+                method, args = entry
+                getattr(reporter, method)(*args)
+    except BaseException as raised:
+        del row.heard[id(reporter)]
+        if isinstance(raised, LifterRefusal):
+            row.refused[id(reporter)] = (reporter, raised)
+        raise
 
 
 def serve(table: dict, key: tuple, reporter: object) -> MemoRow | None:
