@@ -867,8 +867,10 @@ fn pool_json_storage_is_zero() {
         .parent()
         .expect("workspace root")
         .to_path_buf();
-    let types_path = workspace.join("sugar-verifier/src/types.rs");
-    let src = std::fs::read_to_string(&types_path).expect("read verifier types");
+    // MementoPool lives in sugar-proof-envelope (moved out of
+    // sugar-verifier/src/types.rs by #4367).
+    let types_path = workspace.join("sugar-proof-envelope/src/memento_pool.rs");
+    let src = std::fs::read_to_string(&types_path).expect("read memento pool");
     let mut offenders = Vec::new();
     let mut saw_typed_storage = false;
     for (i, line) in src.lines().enumerate() {
