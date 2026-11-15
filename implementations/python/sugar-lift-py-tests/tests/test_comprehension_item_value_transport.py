@@ -20,7 +20,6 @@ from sugar_source_tree.nodes import (
     Return,
     TargetPatternConstructionGapV1,
 )
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.effect import RaiseEffect
 
@@ -147,13 +146,52 @@ def test_tuple_target_coordinate_swap_is_refused_by_source_owner() -> None:
         )
 
 
-def test_nonfinite_iterable_with_undecided_filter_stays_loud() -> None:
+def test_nonfinite_iterable_with_undecided_filter_owes_the_filter_read() -> None:
+    """Over an iterable that is no finite container the comprehension is the
+    symbolic fold, and its condition ``item.keep`` reads an attribute of the
+    symbolic member: the one two-faced undecided read (#7757 item 13, #8090),
+    never a decided keep or drop.
+
+    Until #8090 (``eef6b95e5``) that read refused the whole run by name
+    (``SugarNotWritten``: "undecided receiver runtime type or member
+    semantics: SymbolicValue.keep"), which this test pinned as "stays loud".
+    #8090 made "not decided here" one way: the read completes only under its
+    ``python:attribute.completes`` atom, halts with an undetermined raise under
+    the complement, and both arms owe the ``undecided`` member at the read's
+    site (step 8's one member kind).  Still loud, by that member: the filter
+    is undecided, nothing is projected, and no exception is named."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
     source = "def build(items):\n    return [item for item in items if item.keep]\n"
     comprehension = _source_list_comprehension(source)
 
-    with pytest.raises(SugarNotWritten, match="finite|filter|undecided"):
-        comprehension.desugar(
-            _context_with_items(
-                source, ObjectValue("UnknownIterable", (), allocation=FRAME_FRESH)
-            )
+    outcome = comprehension.desugar(
+        _context_with_items(
+            source, ObjectValue("UnknownIterable", (), allocation=FRAME_FRESH)
         )
+    )
+
+    assert isinstance(outcome, ExitSet), outcome
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    halts = [arm for arm in outcome.exits if isinstance(arm, Halted)]
+    # The filter read may raise: its halt is kept, naming no exception.
+    assert halts, outcome
+    assert all(type(arm.effect) is UndeterminedRaiseEffect for arm in halts), outcome
+    # The completed arm stands only under the read's completes atom.
+    assert "python:attribute.completes" in repr(done.guard), done.guard
+    # Nothing is projected: the value is the symbolic fold, the filter a guard
+    # over the undecided read.
+    value = peel_walrus_binds(done.value)[1]
+    assert isinstance(value, ComprehensionValue), value
+    assert value.finite_elements is None
+    term = repr(value.term)
+    assert "python:loop.filter_guard" in term and "attr:keep" in term, term
+    # Every arm owes the read as the one ``undecided`` member (no symbol: a
+    # read is not an import-bound call).
+    owed = owed_calls(outcome)
+    assert owed and all(item.symbol is None for item in owed), owed
+    assert all(arm.owed for arm in outcome.exits), outcome
