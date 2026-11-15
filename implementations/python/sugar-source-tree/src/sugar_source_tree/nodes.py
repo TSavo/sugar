@@ -6888,9 +6888,12 @@ def _evaluated_annotations(definition) -> Tuple["Node", ...]:
 
 def _discharge_binding_references(statement, binding) -> None:
     """Answer the roll for each evaluation reference ``statement`` bound a
-    name to that is no node of the statement (``Assign.target_evaluations``:
-    ``y = e`` binds ``y`` to its projection of the statement's evaluation,
-    minted at the target's span; a live loop's post-loop keys).
+    name to that is no node of the statement (``x += e``'s reference to its
+    evaluation, minted at the target's span; a live loop's post-loop keys).
+    An assignment's target references (``_keyed_target_binding``) and a
+    mutation statement's written name (``container_mutation._name_write``)
+    answer where they are minted, since readers other than this threading
+    ask for them; answering one again here changes nothing.
 
     The reference is the binding, a value of the block's scope, never an
     occurrence any construction reaches: a read of the name is re-spanned to
@@ -15145,7 +15148,15 @@ def _keyed_target_binding(statement, binding, keys: dict, targets) -> dict:
     with every name in ``keys`` bound instead to a reference to its key, at
     its target leaf: the one way an assignment's target is read after it
     (``Assign``, ``AnnAssign``).  The value node rides on the reference as
-    the object the name denotes (``_evaluation_ref``, ``of``)."""
+    the object the name denotes (``_evaluation_ref``, ``of``).
+
+    Each reference is a binding, a value of the block's scope, minted here
+    afresh every time the statement's binding is asked -- by the block
+    threading, and by every reader that asks it again (a target list's
+    store threading, a loop's iteration, a ``with``'s lowered store).  A
+    read of the name is re-spanned to its own site (``Name.substitute``)
+    and answers for itself, so nothing constructs the reference: it answers
+    where it is minted (``_minted_binding_reference``)."""
     if not binding or not keys:
         return binding
     leaves = {}
@@ -15153,12 +15164,14 @@ def _keyed_target_binding(statement, binding, keys: dict, targets) -> dict:
         leaves.update(_unpack_target_names(target))
     return {
         name: (
-            _evaluation_ref(
-                statement,
-                leaves[name].span if name in leaves else statement.span,
-                keys[name],
-                name,
-                of=state if isinstance(state, Node) else None,
+            _minted_binding_reference(
+                _evaluation_ref(
+                    statement,
+                    leaves[name].span if name in leaves else statement.span,
+                    keys[name],
+                    name,
+                    of=state if isinstance(state, Node) else None,
+                )
             )
             if name in keys
             else state

@@ -2667,8 +2667,15 @@ def _name_write(statement, target_name, result, evaluated, evaluation, *, in_pla
     the object it denotes), and a live loop carries it
     (``ContainerMutationStatement.written_keys``).  Where the statement has
     no key, the name is the result itself and nothing is written under a
-    key."""
-    from .nodes import _evaluation_ref
+    key.
+
+    The reference is the name's binding, held in the statement's ``states``
+    but never among the values it evaluates (``_statement`` skips the
+    assigned name; ``ContainerMutationStatement.storing_sugar`` builds
+    ``evaluated`` only), and a read of the name is re-spanned to its own
+    site (``Name.substitute``): nothing constructs it, so it answers where
+    it is minted (``nodes._minted_binding_reference``)."""
+    from .nodes import _evaluation_ref, _minted_binding_reference
 
     if not isinstance(evaluation, str):
         return result, None
@@ -2682,7 +2689,9 @@ def _name_write(statement, target_name, result, evaluated, evaluation, *, in_pla
     targets = getattr(statement, "targets", None)
     target = targets[0] if targets else statement.target
     return (
-        _evaluation_ref(statement, target.span, key, target_name, of=of),
+        _minted_binding_reference(
+            _evaluation_ref(statement, target.span, key, target_name, of=of)
+        ),
         (target_name, len(evaluated) - 1, key),
     )
 
