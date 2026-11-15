@@ -54,18 +54,13 @@ class PlaceAssignSugar(Sugar):
                 )
 
             def with_value(value):
-                if self.selector_kind == "attribute":
-                    selector = self.selector
-                elif self.selector_kind == "subscript":
-                    return self.selector.desugar(ctx).and_then(
-                        lambda selector: ExitSet.completed(
-                            PlaceAssignValue(receiver, "subscript", selector, value)
-                        )
-                    )
-                else:
+                # An item store is the one container-mutation door's
+                # statement (``container_mutation.name_mutation_statement``),
+                # never a place assign.
+                if self.selector_kind != "attribute":
                     raise ValueError("typed place selector mismatch")
                 return ExitSet.completed(
-                    PlaceAssignValue(receiver, "attribute", selector, value)
+                    PlaceAssignValue(receiver, "attribute", self.selector, value)
                 )
 
             return self.value.desugar(ctx).and_then(with_value)

@@ -83,7 +83,6 @@ from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
 )
 from sugar_lift_py_tests.sugar.collection_sugar import DictSugar
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
-from sugar_lift_py_tests.sugar.place_assign_sugar import PlaceAssignSugar
 from sugar_lift_py_tests.sugar.receiver_field_store_state_sugar import (
     ReceiverFieldStoreStateSugar,
 )
@@ -96,6 +95,7 @@ from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.nodes import (
     AnnAssign,
     Assign,
+    Attribute,
     ContainerMutationStatement,
     FunctionDef,
     Name,
@@ -335,7 +335,15 @@ def test_a_coordinate_receiver_field_read_is_the_stores_key() -> None:
         context=TreeConstructionContextV1.for_test_without_workspace(),
     )
     body = initializer.substitute({}).body
-    annotated = next(node for node in body if isinstance(node, AnnAssign))
+    # ``self.x: int = x`` is the store ``self.x = x`` (#7757): the
+    # single-target ``Assign`` its substitution makes.
+    annotated = next(
+        node
+        for node in body
+        if isinstance(node, Assign)
+        and isinstance(node.targets[0], Attribute)
+        and node.targets[0].attr == "x"
+    )
     assert isinstance(annotated.evaluation, str)
     # ``self.y = self.x``: its right-hand side reads what ``self.x: int = x``
     # stored, through that statement's key, never ``x`` (rebound since).
@@ -506,18 +514,26 @@ def test_an_object_place_reads_its_assignments_key() -> None:
 
 
 def test_an_object_place_field_read_is_the_stores_key() -> None:
+    # ``box.size: int = x`` is the store ``box.size = x`` (#7757): the one
+    # receiver field store, whose post-state every later read of ``box``
+    # reads.
     body = _place_body()
-    store = next(node for node in body if isinstance(node, AnnAssign))
+    store = next(node for node in body if isinstance(node, ReceiverFieldStoreStatement))
     assert isinstance(store.evaluation, str)
     # The statement evaluates ``x`` itself, once.
     assert store.value.kind == "EvaluationRef"
     assert not getattr(store.value, "place", False)
     ret = body[-1]
     assert isinstance(ret, Return)
-    # The read holds the store's key, never ``x``'s reference.
-    assert ret.value.kind == "EvaluationRef"
-    assert ret.value.place is True
-    assert ret.value.evaluation == store.evaluation
+    states = [
+        node for node in ret.value.walk() if isinstance(node, ReceiverFieldStoreState)
+    ]
+    assert states
+    for state in states:
+        # The read holds the store's key, never ``x``'s reference.
+        assert state.value.kind == "EvaluationRef"
+        assert state.value.place is True
+        assert state.value.evaluation == store.evaluation
 
 
 def test_an_object_place_store_binds_its_key() -> None:
@@ -525,8 +541,7 @@ def test_an_object_place_store_binds_its_key() -> None:
     keyed = [sugar for sugar in statements if isinstance(sugar, KeyedStoreSugar)]
     assert len(keyed) == 1
     (store,) = keyed
-    assert isinstance(store.store, PlaceAssignSugar)
-    stored = store.store.value
+    stored = store.store.value.value
     assert isinstance(stored, EvaluationRefSugar)
     assert stored.place
     assert stored.evaluation == store.evaluation
@@ -571,20 +586,24 @@ def test_an_object_read_after_a_field_store_folds_the_store() -> None:
         and isinstance(node.targets[0], Name)
         and node.targets[0].id == "box"
     )
-    store = next(node for node in body if isinstance(node, AnnAssign))
+    store = next(node for node in body if isinstance(node, ReceiverFieldStoreStatement))
     ret = body[-1]
     assert isinstance(ret, Return)
-    assert isinstance(ret.value, ObjectPlaceStateV1)
-    sugar = ret.value.sugar()
-    # The store's field, read through the store's key, over the object as
-    # its constructor call left it, read through the assignment's key.
-    assert isinstance(sugar, ReceiverFieldStoreStateSugar)
-    assert sugar.attr == "size"
-    assert isinstance(sugar.value, EvaluationRefSugar)
-    assert sugar.value.place
-    assert sugar.value.evaluation == store.evaluation
-    assert isinstance(sugar.receiver, EvaluationRefSugar)
-    assert sugar.receiver.evaluation == projection_key(assign.evaluation, "box")
+    states = [
+        node for node in ret.value.walk() if isinstance(node, ReceiverFieldStoreState)
+    ]
+    assert states
+    for state in states:
+        sugar = state.sugar()
+        # The store's field, read through the store's key, over the object as
+        # its constructor call left it, read through the assignment's key.
+        assert isinstance(sugar, ReceiverFieldStoreStateSugar)
+        assert sugar.attr == "size"
+        assert isinstance(sugar.value, EvaluationRefSugar)
+        assert sugar.value.place
+        assert sugar.value.evaluation == store.evaluation
+        assert isinstance(sugar.receiver, EvaluationRefSugar)
+        assert sugar.receiver.evaluation == projection_key(assign.evaluation, "box")
 
 
 def test_an_object_read_after_a_field_store_carries_the_field(
@@ -666,7 +685,7 @@ def test_no_constructor_call_is_reduced_at_substitution() -> None:
         and isinstance(node.targets[0], Name)
         and node.targets[0].id == "box"
     )
-    store = next(node for node in body if isinstance(node, AnnAssign))
+    store = next(node for node in body if isinstance(node, ReceiverFieldStoreStatement))
     states = [
         node
         for statement in body
@@ -685,11 +704,9 @@ def test_no_constructor_call_is_reduced_at_substitution() -> None:
             == _occurrence_testimony(state.base).cid
         )
         state.validate_identity()
-        for value, testimony in zip(state.values, state.value_testimonies):
-            # A stored value is named by the stored expression itself.
-            assert value.span == store.value.span
-            assert testimony.cid == _occurrence_testimony(value).cid
-    assert any(state.selectors for state in states)
+    # The stored value is the store statement's own key reference: nothing
+    # was reduced for it at substitution.
+    assert store.value.kind == "EvaluationRef"
 
 
 # ---------------------------------------------------------------------------
@@ -894,3 +911,96 @@ def test_a_chained_store_is_the_single_store_statement() -> None:
     # Discrimination: the same store alone threads the same kind of state.
     single = _function(FIELD).substitute({}).body
     assert any(isinstance(node, ReceiverFieldStoreStatement) for node in single)
+
+
+# ---------------------------------------------------------------------------
+# 13. ``o[k]: int = v`` and ``o.f: int = v`` (#7757): an annotated store with
+#     a value is the store ``o[k] = v`` / ``o.f = v`` -- the same statement,
+#     through the one door each store target takes (the container-mutation
+#     door for an item, the receiver field store for a field), decided by
+#     value at reduce.  The annotation of such a target is never stored and,
+#     in a function body, never evaluated.
+# ---------------------------------------------------------------------------
+
+# 2.'s item store, annotated.
+SUBSCRIPT_ANNOTATED = (
+    "def f():\n"
+    "    d = {}\n"
+    "    x = 1\n"
+    "    d['k']: int = x\n"
+    "    x += 1\n"
+    "    return d['k']\n"
+)
+# 10.'s item store on an object place, annotated.
+PLACE_ITEM_ANNOTATED = (
+    "class Box:\n"
+    "    pass\n"
+    "\n"
+    "def f():\n"
+    "    box = Box()\n"
+    "    box['a']: int = 1\n"
+    "    return box['a']\n"
+)
+# 1.'s field store, annotated.
+FIELD_ANNOTATED = (
+    "class C:\n"
+    "    pass\n"
+    "\n"
+    "def f():\n"
+    "    o = C()\n"
+    "    x = 1\n"
+    "    o.x: int = x\n"
+    "    x += 1\n"
+    "    return o.x\n"
+)
+
+
+def _same_statements(annotated: str, plain: str) -> list:
+    """The annotated function's substituted body, after asserting it is the
+    plain one's statement for statement: the same kinds, no ``AnnAssign``
+    left, the same sugar."""
+    body = _function(annotated).substitute({}).body
+    assert not any(isinstance(node, AnnAssign) for node in body)
+    assert [node.kind for node in body] == [
+        node.kind for node in _function(plain).substitute({}).body
+    ]
+    annotated_sugar = _function(annotated).sugar().statements
+    plain_sugar = _function(plain).sugar().statements
+    assert [type(sugar).__name__ for sugar in annotated_sugar] == [
+        type(sugar).__name__ for sugar in plain_sugar
+    ]
+    return list(body)
+
+
+def test_an_annotated_item_store_is_the_item_store(tmp_path: Path) -> None:
+    body = _same_statements(SUBSCRIPT_ANNOTATED, SUBSCRIPT)
+    ((store, _call),) = _item_stores(body)
+    assert isinstance(store.evaluation, str)
+    ret = body[-1]
+    assert isinstance(ret, Return)
+    _reads_after(ret.value, store)
+    annotated = _returned(_outcome(tmp_path, SUBSCRIPT_ANNOTATED, "subscript_ann"))
+    plain = _returned(_outcome(tmp_path, SUBSCRIPT, "subscript_plain"))
+    assert annotated == plain == [ONE], (annotated, plain)
+
+
+def test_an_annotated_item_store_on_an_object_place_takes_the_door() -> None:
+    # The store the deleted object-place subscript arm took: the one
+    # container-mutation door's statement, as ``box['a'] = 1`` is.
+    body = _same_statements(PLACE_ITEM_ANNOTATED, PLACE_ITEM)
+    ((store, call),) = _item_stores(body)
+    assert isinstance(store.evaluation, str)
+    key, _value = call.args
+    assert key.kind == "Constant"
+    ret = body[-1]
+    assert isinstance(ret, Return)
+    _reads_after(ret.value, store)
+
+
+def test_an_annotated_field_store_is_the_field_store(tmp_path: Path) -> None:
+    body = _same_statements(FIELD_ANNOTATED, FIELD)
+    store = next(node for node in body if isinstance(node, ReceiverFieldStoreStatement))
+    assert isinstance(store.evaluation, str)
+    annotated = _returned(_outcome(tmp_path, FIELD_ANNOTATED, "field_ann"))
+    plain = _returned(_outcome(tmp_path, FIELD, "field_plain"))
+    assert annotated == plain == [ONE], (annotated, plain)

@@ -200,14 +200,31 @@ def rewrite_with_leaves(origin: Node, leaves: dict, /, **children: object) -> No
         if name not in present and name not in leaves
     )
     new_slots.extend((name, Leaf(value)) for name, value in leaves.items())
+    return _shadow_of(origin, desc.kind, tuple(new_slots))
+
+
+def recast(origin: Node, kind: str, /, **children: object) -> Node:
+    """The statement ``origin`` is, spelled as ``kind`` with exactly the
+    child slots ``children`` names (each as ``rewrite`` takes it): the same
+    occurrence -- its span and the evaluations it stands for -- under the
+    node kind that owns what it does.  ``o[k]: T = v`` is the store ``o[k]
+    = v`` (``AnnAssign._store_assignment``): its annotation is no slot of
+    the store."""
+    slots = tuple((name, _child_slot(child)) for name, child in children.items())
+    return _shadow_of(origin, kind, slots)
+
+
+def _shadow_of(origin: Node, kind: str, slots: Tuple[Tuple[str, Slot], ...]) -> Node:
+    """A shadow node of ``kind`` holding ``slots`` over ``origin``'s
+    occurrence: its span, and the iterations it stands for."""
+    desc = origin.ref.describe()  # type: ignore[attr-defined]
+    span = desc.raw_span or origin.span
     tags = occurrence_tags_of(origin)
     if tags:
         # A rewrite of one evaluation is still that evaluation.
-        shadow = OccurrenceShadowNode(
-            desc.kind, desc.raw_span or origin.span, tuple(new_slots), tags
-        )
+        shadow = OccurrenceShadowNode(kind, span, slots, tags)
     else:
-        shadow = ShadowNode(desc.kind, desc.raw_span or origin.span, tuple(new_slots))
+        shadow = ShadowNode(kind, span, slots)
     # Same materialize door as source backends: shadow ref is another memoized
     # backend identity; field data is interned on the unit, shells are free.
     return materialize(origin.unit, shadow, origin.reporter, origin.control_context)

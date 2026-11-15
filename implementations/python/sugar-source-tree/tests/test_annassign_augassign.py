@@ -2,8 +2,9 @@
 INERT at the meaning layer for a plain Name target, because their binding (if
 any) already threaded via substitute/substitution_binding before sugar runs;
 an annotation states nothing at runtime either way. Attribute/subscript
-augmented targets and valued annotations build one typed runtime-store effect;
-bare non-Name annotations remain loud gaps."""
+augmented targets build one typed runtime-store effect; a valued annotation of
+an attribute/subscript target is the plain store ``Assign`` (#7757); bare
+non-Name annotations remain loud gaps."""
 
 import tempfile
 
@@ -237,6 +238,63 @@ def test_valued_attribute_annotation_does_not_enter_bare_declaration_arm():
     sugar = function.body[0].sugar()
     assert isinstance(sugar, AttributeStoreEffectSugar)
     assert not isinstance(sugar, ExprStatementSugar)
+
+
+def _outcome_shape(outcome):
+    """What an outcome is, without the source coordinates two spellings of
+    one store cannot share: its kind, the operation a carrier demands, and
+    the kind of each exit."""
+    demand = getattr(outcome, "demand", None)
+    exits = getattr(outcome, "exits", ())
+    return (
+        type(outcome).__name__,
+        getattr(demand, "operator", None),
+        tuple(type(exit_).__name__ for exit_ in exits),
+    )
+
+
+@pytest.mark.parametrize(
+    ("annotated", "plain"),
+    [
+        (
+            "def A(o, k, v):\n    o[k]: int = v\n    return v\n",
+            "def A(o, k, v):\n    o[k] = v\n    return v\n",
+        ),
+        (
+            "def A(o, v):\n    o.f: int = v\n    return v\n",
+            "def A(o, v):\n    o.f = v\n    return v\n",
+        ),
+        (
+            "def A(v):\n    o = {}\n    o['k']: int = v\n    return o\n",
+            "def A(v):\n    o = {}\n    o['k'] = v\n    return o\n",
+        ),
+    ],
+    ids=["item-on-formal", "field-on-formal", "item-on-local-dict"],
+)
+def test_annotated_store_is_the_assign_store(annotated, plain):
+    """``o[k]: int = v`` / ``o.f: int = v`` is the store ``o[k] = v`` /
+    ``o.f = v`` (#7757): substitution makes it that statement, through the
+    one door each store target takes, so the two spellings give the same
+    statements, the same sugar and the same outcome."""
+    annotated_body = _fn(annotated).substitute({}).body
+    plain_body = _fn(plain).substitute({}).body
+    assert not any(statement.kind == "AnnAssign" for statement in annotated_body)
+    assert [statement.kind for statement in annotated_body] == [
+        statement.kind for statement in plain_body
+    ]
+    assert [type(sugar).__name__ for sugar in _fn(annotated).sugar().statements] == [
+        type(sugar).__name__ for sugar in _fn(plain).sugar().statements
+    ]
+    assert _outcome_shape(_fn(annotated).sugar().desugar()) == _outcome_shape(
+        _fn(plain).sugar().desugar()
+    )
+
+
+def test_bare_annotated_store_target_stores_nothing():
+    """``o[k]: int`` with no value stores nothing: it never becomes a
+    store."""
+    function = _fn("def A(o, k):\n    o[k]: int\n    return k\n").substitute({})
+    assert function.body[0].kind == "AnnAssign"
 
 
 def test_aug_assign_with_no_prior_binding_is_sound():

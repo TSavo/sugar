@@ -31,7 +31,8 @@ Residue of #7991 (#7757):
 * ``throw`` / ``close`` of a frame delegating to a source generator reach the
   delegate, so its except arms and its ``finally`` run;
 * ``o.x: T = yield v`` on an object place threads a read of the store's key,
-  never the yield node, to the later read of ``o.x``.
+  never the yield node, to the later read of ``o.x``; it is the store ``o.x
+  = yield v`` (#7757), whose receiver field store keeps the same property.
 """
 
 from __future__ import annotations
@@ -68,14 +69,21 @@ from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
     PathContainerCallSugar,
 )
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
-from sugar_lift_py_tests.sugar.place_assign_sugar import PlaceAssignSugar
+from sugar_lift_py_tests.sugar.expr_statement_sugar import ExprStatementSugar
 from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
 from sugar_lift_py_tests.temporal.temporal_context import (
     EVALUATION_PREFIX,
     projection_key,
 )
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.nodes import AnnAssign, Call, FunctionDef, Return
+from sugar_source_tree.nodes import (
+    AnnAssign,
+    Call,
+    FunctionDef,
+    ReceiverFieldStoreState,
+    ReceiverFieldStoreStatement,
+    Return,
+)
 from sugar_source_tree.tree import SourceFile
 
 
@@ -740,28 +748,36 @@ PLACE_YIELD = (
 
 
 def test_an_object_place_field_after_a_yield_store_reads_the_stores_key() -> None:
-    # Substitution never reduces the yield to version the field.
+    # ``box.size: int = yield 5`` is the store ``box.size = yield 5`` (#7757):
+    # the one receiver field store.  Substitution never reduces the yield to
+    # version the field.
     body = _function(PLACE_YIELD).substitute({}).body
-    store = next(node for node in body if isinstance(node, AnnAssign))
+    assert not any(isinstance(node, AnnAssign) for node in body)
+    store = next(node for node in body if isinstance(node, ReceiverFieldStoreStatement))
     assert isinstance(store.evaluation, str)
     ret = body[-1]
     assert isinstance(ret, Return)
-    # The later read of ``box.size`` is a reference to the store's key,
-    # which the resume binds the sent value under.
-    assert ret.value.kind == "EvaluationRef"
-    assert ret.value.place is True
-    assert ret.value.evaluation == store.evaluation
-    # The object it denotes is the store's own read of its key, never the
-    # yield node.
-    denoted = getattr(ret.value, "of", None)
-    assert denoted is None or denoted.kind != "Yield"
+    # The later read of ``box.size`` reads the store's key, which the resume
+    # binds the sent value under.
+    states = [
+        node for node in ret.value.walk() if isinstance(node, ReceiverFieldStoreState)
+    ]
+    assert states
+    for state in states:
+        assert state.value.kind == "EvaluationRef"
+        assert state.value.place is True
+        assert state.value.evaluation == store.evaluation
+        # The object it denotes is never the yield node.
+        denoted = getattr(state.value, "of", None)
+        assert denoted is None or denoted.kind != "Yield"
 
 
-def test_an_object_place_yield_store_is_the_keyed_place_store() -> None:
+def test_an_object_place_yield_store_is_the_keyed_field_store() -> None:
     steps = _steps(PLACE_YIELD)
     assert not any(isinstance(item, OpaqueStepV1) for item in steps)
     step = steps[1]
     assert isinstance(step, YieldAssignStepV1)
     assert isinstance(step.store, KeyedStoreSugar)
-    assert isinstance(step.store.store, PlaceAssignSugar)
+    # ``ReceiverFieldStoreStatement.keyed_store``: the object's post-state.
+    assert isinstance(step.store.store, ExprStatementSugar)
     assert step.store.evaluation == step.store_evaluation

@@ -13649,11 +13649,14 @@ def _valued_store_target_sugar(target, value_sugar, site, evaluation=None):
 
     ``o.x = v`` and ``o.x: T = v`` are the SAME runtime store — an annotation
     is never checked at runtime, so it states nothing and may not move the
-    store to a different arm. Both spellings therefore construct through this
-    one ladder: an authenticated object place is a place assign, a constructed
-    receiver is a receiver field store, and any other receiver is the typed
-    runtime store effect. Returns ``None`` for a target this ladder does not
-    own, so the caller stays loud.
+    store to a different arm: ``o.x: T = v`` is the statement ``o.x = v``
+    (``AnnAssign._store_assignment``).  An authenticated object place's field
+    is a place assign, a constructed receiver is a receiver field store, and
+    any other receiver is the typed runtime store effect.  A subscript store
+    on a name or a path from one never reaches here: it is the one
+    container-mutation door's statement (``Assign._container_mutation``).
+    Returns ``None`` for a target this ladder does not own, so the caller
+    stays loud.
 
     ``evaluation`` is the statement's key when a later read of the place
     reads it (``_store_evaluation``): the store then evaluates ``v`` once,
@@ -13710,17 +13713,6 @@ def _valued_store_target_sugar(target, value_sugar, site, evaluation=None):
             site=site,
         )
     if isinstance(target, Subscript):
-        if isinstance(target.value, ObjectPlaceStateV1):
-            return _keyed_place_assign_sugar(
-                PlaceAssignSugar,
-                receiver=target.value.store_receiver_sugar(),
-                selector_kind="subscript",
-                selector=target.slice_.sugar(),
-                value_sugar=value_sugar,
-                site=site,
-                evaluation=evaluation,
-                label="[]",
-            )
         from sugar_lift_py_tests.sugar.store_effect_sugar import (
             SubscriptStoreEffectSugar,
         )
@@ -13774,19 +13766,23 @@ def _keyed_place_assign_sugar(
 
 
 def _store_target_binding(statement, target, scope):
-    """Thread an authenticated object place forward across a store.
+    """Thread an authenticated object place forward across a field store.
 
-    ``o.x = v`` and ``o.x: T = v`` update the same place, so both report the
-    same binding: every name bound to that exact object identity carries the
-    stored field onward. A receiver that is not an authenticated place threads
-    nothing — the store is an effect, not a lexical binding.
+    Every name bound to that exact object identity carries the stored field
+    onward. A receiver that is not an authenticated place threads nothing —
+    the store is an effect, not a lexical binding.  An item store
+    (``o[k] = v``, ``o[k]: T = v``) is never here: it is the one
+    container-mutation door's statement, whose binding rebinds every holder
+    of the object (``Assign._container_mutation``).
 
     The store carries its statement's key (``_store_evaluation``): the
     statement evaluates the value once and binds it there, and a later read
     of the field reads that key (``ObjectPlaceStateV1.attribute_read``).  A
     statement never substituted carries no key and threads nothing.
     """
-    if not isinstance(target.value, ObjectPlaceStateV1):
+    if not isinstance(target, Attribute) or not isinstance(
+        target.value, ObjectPlaceStateV1
+    ):
         return None
     evaluation = _store_evaluation(statement, target)
     if evaluation is None:
@@ -13794,14 +13790,9 @@ def _store_target_binding(statement, target, scope):
     stored = statement.value
     if isinstance(stored, (Yield, YieldFrom)):
         stored = _resumed_place_value(statement, target, evaluation)
-    if isinstance(target, Attribute):
-        updated = target.value.with_attribute_store(
-            target.attr, stored, statement.fragment, evaluation
-        )
-    else:
-        updated = target.value.with_subscript_store(
-            target.slice_, stored, statement.fragment, evaluation
-        )
+    updated = target.value.with_attribute_store(
+        target.attr, stored, statement.fragment, evaluation
+    )
     if updated is None:
         return None
     return {
@@ -13822,26 +13813,24 @@ def _resumed_place_value(statement, target, evaluation):
     node itself: threaded into the place, it would ride every later read of
     ``o`` (the field's ``of``, the object's ``values``) as a suspension that
     statement does not own."""
-    label = f".{target.attr}" if isinstance(target, Attribute) else "[]"
     return _evaluation_ref(
-        statement, statement.value.span, evaluation, label, place=True
+        statement, statement.value.span, evaluation, f".{target.attr}", place=True
     )
 
 
 def _keyed_store_target(target) -> bool:
     """Whether substitution threads a store to ``target`` into later reads
     of the same place: ``o.attr`` on a coordinate receiver
-    (``_receiver_field_projection_binding``), ``o.attr`` or ``o[k]`` on an
-    authenticated object place (``_store_target_binding``).  Such a store
-    carries its statement's evaluation key, and every later read of the
-    place is a reference to it."""
-    if isinstance(target, (Attribute, Subscript)) and isinstance(
-        target.value, ObjectPlaceStateV1
-    ):
-        return True
+    (``_receiver_field_projection_binding``) or on an authenticated object
+    place (``_store_target_binding``).  Such a store carries its statement's
+    evaluation key, and every later read of the place is a reference to it.
+    An item store is the one container-mutation door's statement, keyed by
+    that door (``Assign._container_mutation``)."""
+    if not isinstance(target, Attribute):
+        return False
     return (
-        isinstance(target, Attribute)
-        and _receiver_coordinate_cid(target.value) is not None
+        isinstance(target.value, ObjectPlaceStateV1)
+        or _receiver_coordinate_cid(target.value) is not None
     )
 
 
@@ -14438,7 +14427,10 @@ class Assign(Statement):
         # The statement evaluates ``value`` once and binds it under its key;
         # the receiver's post-state, which every later read of the name
         # reads, holds a reference to that key, never ``value`` itself
-        # (``KeyedStoreSugar``).
+        # (``KeyedStoreSugar``).  ``o.x = yield v`` puts the value the resume
+        # brings there (``YieldAssignStepV1``), read through the same key:
+        # never the yield node, which would ride every later read of ``o`` as
+        # a suspension this statement does not own (``_resumed_place_value``).
         evaluation = self._evaluation_key(scope)
         stored = _evaluation_ref(
             self,
@@ -14446,7 +14438,7 @@ class Assign(Statement):
             evaluation,
             f".{target.attr}",
             place=True,
-            of=new_value,
+            of=None if isinstance(new_value, (Yield, YieldFrom)) else new_value,
         )
         post_state = materialize(
             self.unit,
@@ -14839,8 +14831,7 @@ class Assign(Statement):
         and value). Subscript leaves qualify the same way after #6599:
         ``SubscriptStoreEffectSugar`` carries receiver, index, and value, so
         ``a[i], b[j] = p, q`` and ``a[i], b[j] = q, p`` construct *differently*
-        and the pairing is retained. Object-place subscripts still prefer
-        ``PlaceAssignSugar`` at construction. Undecided receivers stay loud
+        and the pairing is retained. Undecided receivers stay loud
         at *desugar* time through the store law — never by refusing the leaf
         at admission.
         """
@@ -15102,9 +15093,9 @@ class Assign(Statement):
         # ``o`` (``ObjectPlaceStateV1``) reads.  ``o.x = v`` keeps ``v``: the
         # statement evaluates it once and binds it under its key, which every
         # later read of ``o.x`` reads (``ObjectPlaceStateV1.attribute_read``).
-        if len(self.targets) != 1 or not isinstance(
-            self.targets[0], (Attribute, Subscript)
-        ):
+        # ``o[k] = v`` is the one container-mutation door's statement, never
+        # an ``Assign`` with an item target (``_container_mutation``).
+        if len(self.targets) != 1 or not isinstance(self.targets[0], Attribute):
             return self
         prior = self.targets[0].value
         if not isinstance(prior, ObjectPlaceStateV1):
@@ -15124,12 +15115,7 @@ class Assign(Statement):
         from .shadow import rewrite
 
         target = self.targets[0]
-        projected = (
-            updated.attribute_field(target.attr)
-            if isinstance(target, Attribute)
-            else updated.subscript_field(target.slice_)
-        )
-        if projected is None:
+        if updated.attribute_field(target.attr) is None:
             return self
         return rewrite(self, targets=(rewrite(target, value=updated),))
 
@@ -15624,33 +15610,39 @@ class AnnAssign(Statement):
     def substitute(self, scope):
         """`<target>: <ann> = <value>` -- substitute the annotation and value.
 
-        A plain Name target is a binding site and is never substituted. An
-        attribute/subscript target is a STORE, exactly as a plain Assign's is:
-        its receiver is an ordinary expression and is substituted, so an
-        authenticated object place or a constructed receiver reaches the store
-        the same way through either spelling.
+        A plain Name target is a binding site and is never substituted.  An
+        attribute/subscript target with a value is the store ``<target> =
+        <value>`` (``_store_assignment``), substituted by ``Assign.substitute``
+        itself: ``o[k]: T = v`` takes the one container-mutation door
+        (``container_mutation.name_mutation_statement`` /
+        ``path_item_statement``) and ``o.f: T = v`` the receiver field store,
+        decided by value at reduce exactly as ``o[k] = v`` and ``o.f = v``
+        are.  There is no annotated store of its own.  Python evaluates the
+        annotation of such a target only in a module or class body, after the
+        store, and never stores it; in a function body it is not evaluated at
+        all, so the store is the whole statement.
 
         A Name target with a value is ``y = e``: the statement evaluates ``e``
         once, here, and carries its key, so every later read of ``y`` is a
         reference to ``y``'s projection of it (``target_evaluations``).  A
-        keyed store (``o.x: T = e`` on a coordinate receiver,
-        ``_keyed_store_target``) carries its key the same way: a later
-        ``o.x`` reads what the store put there."""
+        bare annotation (no value) stores nothing."""
         from .shadow import rewrite, rewrite_with_leaves
 
+        if self.value is not None and isinstance(self.target, (Attribute, Subscript)):
+            return self._store_assignment().substitute(scope)
         changed = {}
         for fld in ("annotation", "value"):
             new, d = self._substitute_field(getattr(self, fld), scope)
             if d:
                 changed[fld] = new
         if isinstance(self.target, (Attribute, Subscript)):
+            # ``o.f: T`` with no value: its receiver is an expression the
+            # statement evaluates (``_construct_sugar``).
             new_target = _substituted_store_target(self, self.target, scope)
             if new_target is not None:
                 changed["target"] = new_target
         rewritten = self if not changed else rewrite(self, **changed)
-        if self.value is None or not (
-            isinstance(self.target, Name) or _keyed_store_target(rewritten.target)
-        ):
+        if self.value is None or not isinstance(self.target, Name):
             return rewritten
         return rewrite_with_leaves(
             rewritten,
@@ -15684,27 +15676,32 @@ class AnnAssign(Statement):
             return ()
         return _assignment_written_keys(self, (self.target,))
 
+    def _store_assignment(self):
+        """``<target>: <ann> = <value>`` on an attribute/subscript target as
+        the store it is: the single-target ``Assign`` ``<target> = <value>``
+        over this same occurrence (``shadow.recast``).  Its substitution,
+        binding and sugar are that ``Assign``'s, through the one door every
+        store target takes; the annotation is no part of it."""
+        from .shadow import recast
+
+        return recast(self, "Assign", targets=(self.target,), value=self.value)
+
     def substitution_binding(self, scope):
         # Only an annotated assignment WITH a value binds; a bare `x: int` is a
         # declaration and binds nothing. A Name target binds to its own
-        # projection of this statement's evaluation, as Assign's does; an
-        # attribute/subscript target over an authenticated object place threads
-        # that place forward, the same store Assign reports.
-        if self.value is None:
+        # projection of this statement's evaluation, as Assign's does.  An
+        # attribute/subscript target with a value never stays an AnnAssign
+        # once substituted (``substitute``: it is the store ``Assign``, whose
+        # statement reports its binding); before that it binds nothing, as
+        # ``o.f = v`` never substituted binds nothing.
+        if self.value is None or not isinstance(self.target, Name):
             return None
-        if isinstance(self.target, Name):
-            return _keyed_target_binding(
-                self,
-                {self.target.id: self.value},
-                dict(self.target_evaluations()),
-                (self.target,),
-            )
-        if isinstance(self.target, (Attribute, Subscript)):
-            threaded = _store_target_binding(self, self.target, scope)
-            if threaded is not None:
-                return threaded
-            return _receiver_field_projection_binding(self, self.target, scope)
-        return None
+        return _keyed_target_binding(
+            self,
+            {self.target.id: self.value},
+            dict(self.target_evaluations()),
+            (self.target,),
+        )
 
     def _construct_sugar(self):
         """`<target>: <annotation> [= <value>]` -- a plain Name target with a
@@ -15720,10 +15717,12 @@ class AnnAssign(Statement):
         The annotation itself is NEVER a fact the meaning layer states either
         way: Python does not check it at runtime (no TypeError on mismatch),
         so an annotation asserts nothing -- it is documentation the tree
-        passes through, never a stated post. A valued attribute/subscript target
-        is the same runtime store owned by Assign.  A bare Attribute therefore
-        reuses the ordinary expression-statement path for its receiver only.
-        Other bare non-Name annotations stay loud."""
+        passes through, never a stated post. A valued attribute/subscript
+        target is the store ``Assign`` (``_store_assignment``): substitution
+        makes it that statement, and never substituted its sugar is that
+        statement's.  A bare Attribute reuses the ordinary
+        expression-statement path for its receiver only.  Other bare non-Name
+        annotations stay loud."""
         if isinstance(self.target, Name) and self.value is not None:
             from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
 
@@ -15747,14 +15746,7 @@ class AnnAssign(Statement):
                 site=self.fragment,
             )
         if self.value is not None and isinstance(self.target, (Attribute, Subscript)):
-            store = _valued_store_target_sugar(
-                self.target,
-                self.value.sugar(),
-                self.fragment,
-                evaluation=_store_evaluation(self, self.target),
-            )
-            if store is not None:
-                return store
+            return self._store_assignment().sugar()
         return super()._construct_sugar()
 
 
@@ -24036,15 +24028,6 @@ class ObjectPlaceStateV1(Expression):
         )
         return SubscriptFieldCoordinateV1.mint(self.object_coordinate, key_coordinate)
 
-    def with_subscript_store(self, key, value, occurrence, evaluation):
-        """The state after ``o[key] = value``.  A key that is not ground may
-        name any field, so after the store every field is unknown
-        (``invalidate``): never the fields as they were before it."""
-        selector = self._subscript_coordinate(key)
-        if selector is None:
-            return self.invalidate(occurrence)
-        return self._with_store(selector, value, occurrence, evaluation)
-
     def _with_store(self, selector, value, occurrence, evaluation):
         """The state after the store statement ``occurrence`` (keyed
         ``evaluation``) put ``value`` in ``selector``.  The stored
@@ -24126,10 +24109,6 @@ class ObjectPlaceStateV1(Expression):
 
         return self.field(AttributeFieldCoordinateV1.mint(self.object_coordinate, name))
 
-    def subscript_field(self, key):
-        selector = self._subscript_coordinate(key)
-        return None if selector is None else self.field(selector)
-
     def attribute_read(self, name: str, read):
         """``read`` (``o.name``) of a field a store put there: a reference to
         that store statement's key, or None."""
@@ -24202,21 +24181,6 @@ class ObjectPlaceStateV1(Expression):
         ):
             raise BindingProvenanceGap("field version CID mismatch")
         return stored
-
-    def invalidate(self, occurrence):
-        self.validate_identity()
-        return self._replace_state(
-            span=occurrence.node.span,
-            selectors=self.selectors,
-            values=self.values,
-            value_testimonies=self.value_testimonies,
-            version_cids=self.version_cids,
-            version_records=self.version_records,
-            prior_version_cids=self.prior_version_cids,
-            store_occurrence_cids=self.store_occurrence_cids,
-            store_evaluations=self._store_evaluations(),
-            invalidated=True,
-        )
 
     def _replace_state(
         self,
