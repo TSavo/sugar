@@ -58,6 +58,13 @@ CONSTRUCTED = "python:constructed"
 #: contract states it of the instance it makes.
 TYPE_IS = "python:type_is"
 
+#: ``python:isinstance(<object>, <class symbol>)``: the ``bool``
+#: ``isinstance(<object>, <class>)`` returns, for a source class whose
+#: metaclass is ``type`` (``ClassDefinitionValue.test_python_type``).  Prove
+#: states it ``true`` where a contract states ``python:type_is(<object>, D)``
+#: and ``D``'s order contains the class (``consistency::with_isinstance_law``).
+ISINSTANCE = "python:isinstance"
+
 #: ``python:may_hold(<object>, <name>)``: the object's ``__dict__`` may hold
 #: ``<name>`` (``consistency::PYTHON_MAY_HOLD``), one fact per name.
 MAY_HOLD = "python:may_hold"

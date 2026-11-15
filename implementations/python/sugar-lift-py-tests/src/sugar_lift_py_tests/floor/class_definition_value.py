@@ -580,10 +580,23 @@ class ClassDefinitionValue(GuardStableValue):
         made with while its contents are current) and no store in this frame
         reassigned its ``__class__``.  The class is this value itself, never
         another run of the same statement (a ``class`` in a function called
-        twice is two classes).  Every other operand -- an instance of another
+        twice is two classes).
+
+        Every other operand -- a class call's result, an instance of another
         class or of a subclass, one that arrived by binding, a value whose
-        type is not read here -- is not decided here: the one undecided type
-        test (``FloorValue.test_python_type``)."""
+        type is not read here -- is the term ``python:isinstance(<x>,
+        "<class symbol>")`` (#7757), where this class has a join symbol and
+        its metaclass is ``type`` (``_metaclass_is_type``: no
+        ``__instancecheck__`` but ``type``'s runs).  Prove relates it to the
+        class a contract states of ``<x>`` by one law
+        (``consistency::with_isinstance_law``): ``python:type_is(<x>, D)``
+        and ``D``'s order, read off its namespace row, containing this class
+        give ``python:isinstance(<x>, "<C>") == true``.  A class call's
+        result is named by the state its class's contract states the class
+        of, ``python:after(<call result>, "out")`` (as a field read of it
+        is, ``CallSiteValue.attribute``).  A class whose metaclass is not
+        decided to be ``type`` (its ``__instancecheck__`` may be anything)
+        keeps the one refusal (``FloorValue.test_python_type``)."""
         from sugar_lift_py_tests.floor.object_identity import contents_current
         from sugar_lift_py_tests.floor.object_value import ObjectValue
         from sugar_lift_py_tests.outcome import ExitSet
@@ -599,7 +612,37 @@ class ClassDefinitionValue(GuardStableValue):
             and instance.defining_class is self
         ):
             return ExitSet.completed(TrueBoolLiteralSugar(site=site))
+        tested = self._isinstance_term(value, site)
+        if tested is not None:
+            return ExitSet.completed(tested)
         return super().test_python_type(value, site)
+
+    def _isinstance_term(self, value, site):
+        """``python:isinstance(<value>, "<class symbol>")`` as a value
+        (``test_python_type``), or None where this class has no join symbol
+        or its metaclass is not decided to be ``type``."""
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.receiver_dispatch import ISINSTANCE
+        from sugar_lift_py_tests.source_call_resolution import (
+            CALL_RESULT_LABEL,
+            object_after_call,
+        )
+
+        definition = self.class_definition
+        if definition is None or not self._metaclass_is_type():
+            return None
+        symbol = definition.bridge_source_symbol()
+        if symbol is None:
+            return None
+        _binds, held = peel_walrus_binds(value)
+        owner = str(site)
+        subject = value.to_term(owner=owner)
+        if isinstance(held, CallSiteValue) and held.constructed_by_edge:
+            subject = object_after_call(held.to_term(owner=owner), CALL_RESULT_LABEL)
+        return SymbolicValue(ctor(ISINSTANCE, [subject, str_const(symbol)]))
 
     def to_term(self, *, owner: str):
         del owner

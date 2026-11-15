@@ -52,15 +52,14 @@ def _test_line(module: str) -> int:
 # contract states ``python:type_is`` and ``python:may_hold`` on every
 # completed face, a method call and a ``with``'s ``__enter__``/``__exit__``
 # on the result are dispatched over it (``python:constructed``), and
-# ``__exit__(self, *exc)`` fits the one binder (#8838).  Each twin below is
-# still ``open``, by a named reason that is not the class of the result:
+# ``__exit__(self, *exc)`` fits the one binder (#8838).  The type test is
+# decided at prove (``isinstance(Marker(), Marker)``: the term
+# ``python:isinstance`` related to ``python:type_is`` by the isinstance law,
+# #7757).  The other twins are still ``open``, by a named reason that is not
+# the class of the result:
 # - ``with Box(3) as box``: ``box`` is ``__enter__``'s result, and
 #   ``box.value`` reads a field of it, which no contract states
 #   (``__enter__`` returns ``self``, a receiver that arrived by binding).
-# - ``isinstance(Marker(), Marker)``: a type test reads no object off a call
-#   (``class_definition_value._instance_held_by``).  The class's contract
-#   states ``python:type_is`` as an atom, but the ``bool`` the test returns
-#   is a term, which the solver does not relate to that atom.
 # - ``raise Boom()`` / ``except Boom``: the lie is refuted (#8831).  The
 #   raise already carries ``Boom``'s class (``Raise._raised_operand_sugar``
 #   stamps the call with it), so the truthful half is not held open by the
@@ -68,8 +67,7 @@ def _test_line(module: str) -> int:
 #   handler does not take a raise) is not traced here.
 _OPEN_UNTIL_STEP_8 = (
     "the claim reads something step 8 does not state: a field of "
-    "__enter__'s result, a type test's bool as a term, or (Boom) an arm the "
-    "handler does not take"
+    "__enter__'s result, or (Boom) an arm the handler does not take"
 )
 
 
@@ -137,8 +135,22 @@ _ISINSTANCE_SAME_MODULE_CLASS = (
 def test_isinstance_of_a_same_module_class_reads_the_class(tmp_path: Path) -> None:
     """``isinstance(Marker(), Marker)`` in ``f``: both reads of ``Marker``
     denote the one class statement, so the instance is the class's and the
-    test is True."""
-    _assert_open_pair(tmp_path, _ISINSTANCE_SAME_MODULE_CLASS, "True", "False")
+    test is True.
+
+    The test is the term ``python:isinstance(python:after(<Marker()>,
+    "out"), "<Marker>")`` (#7757); ``Marker``'s constructor contract states
+    ``python:type_is`` of the instance it makes, and prove's isinstance law
+    (``Marker`` in ``Marker``'s own order, read off its namespace row) makes
+    the term ``true``: truthful ``sat``, lying ``unsat``."""
+    told = run_source_through_real_solver(
+        tmp_path / "t", _ISINSTANCE_SAME_MODULE_CLASS.format(claim="True")
+    )
+    lied = run_source_through_real_solver(
+        tmp_path / "l", _ISINSTANCE_SAME_MODULE_CLASS.format(claim="False")
+    )
+    line = _test_line(_ISINSTANCE_SAME_MODULE_CLASS)
+    assert claim_verdict(told.prove_doc, claims_from_line=line) == "sat"
+    assert lied.verdict == "unsat"
 
 
 _RAISE_AND_HANDLE_SAME_MODULE_CLASS = (

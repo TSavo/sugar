@@ -4587,6 +4587,7 @@ fn claim_holds_for_every_value(
     body: &Json,
     ambient: &[AmbientPost],
     exception_ancestry: &ExceptionAncestry,
+    class_namespaces: &BTreeMap<String, ClassNamespace>,
     plan: &SolverPlan,
     registry: &HashMap<SolverSeat, SolverHandle>,
     compilers: &CompilerRegistry,
@@ -4614,6 +4615,7 @@ fn claim_holds_for_every_value(
     operands.extend(conjuncts);
     let counter = with_raised_types(IrFormula::And(operands).to_value(), ambient);
     let counter = with_exception_ancestry(counter, exception_ancestry);
+    let counter = with_isinstance_law(counter, class_namespaces);
     let counter = fold_decided_python_atoms(&counter);
     joined_goal_has_verdict(
         IrFormula::Not(counter).to_value(),
@@ -7767,6 +7769,125 @@ fn with_exception_ancestry(inv: Json, ancestry: &ExceptionAncestry) -> Json {
     IrFormula::And(operands).to_value()
 }
 
+// ── The isinstance law (step 9; #7757) ────────────────────────────────────
+//
+// The Python kit states `isinstance(x, C)`, for a source class `C` whose
+// metaclass is `type`, as the term `python:isinstance(<x>, "<C>")`
+// (`ClassDefinitionValue.test_python_type`), and a class's constructor
+// contract states the class of the instance it makes as the atom
+// `python:type_is(<x>, "<D>")` (#8848). They are two names, never one name
+// declared twice: this law relates them. `type.__instancecheck__` answers
+// `True` where `type(x)` is a subclass of `C`, before anything else runs:
+//
+//     python:type_is(<x>, "<D>") and C in D's order -> python:isinstance(<x>, "<C>") == true
+//
+// with `D`'s order read off its namespace row (`<D>::namespace`, the order
+// its own proof states). Only where `C` has a namespace row itself: a row is
+// stated only for a closed namespace, whose metaclass is `type`, so no
+// `__instancecheck__` but `type`'s runs. A class with no row (a metaclass,
+// an open namespace) relates nothing: the term stays undecided, owed by
+// name. Only the `true` direction is stated: where `type(x)` is no subclass
+// of `C`, `type.__instancecheck__` reads `x.__class__`, which nothing here
+// decides.
+
+/// `python:isinstance(<object>, <class symbol>)` (the Python kit's
+/// `receiver_dispatch.ISINSTANCE`).
+const PYTHON_ISINSTANCE: &str = "python:isinstance";
+
+/// Every distinct `python:isinstance(<object>, "<class>")` term in `node`.
+fn collect_isinstance_terms(node: &Json, out: &mut Vec<Json>) {
+    match node {
+        Json::Object(map) => {
+            if map.get("kind").and_then(|v| v.as_str()) == Some("ctor")
+                && map.get("name").and_then(|v| v.as_str()) == Some(PYTHON_ISINSTANCE)
+                && map
+                    .get("args")
+                    .and_then(|v| v.as_array())
+                    .is_some_and(|args| args.len() == 2 && const_str(&args[1]).is_some())
+                && !out.contains(node)
+            {
+                out.push(node.clone());
+            }
+            for value in map.values() {
+                collect_isinstance_terms(value, out);
+            }
+        }
+        Json::Array(items) => {
+            for item in items {
+                collect_isinstance_terms(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The ground instances of the isinstance law `inv` reads: for each
+/// `python:isinstance(<x>, "<C>")` in it, where `C` has a namespace row, and
+/// each class `D` whose order (its own row, headed by `D`) contains `C`:
+/// `python:type_is(<x>, "<D>") -> python:isinstance(<x>, "<C>") == true`.
+fn isinstance_law_facts(inv: &Json, namespaces: &BTreeMap<String, ClassNamespace>) -> Vec<Json> {
+    if namespaces.is_empty() {
+        return Vec::new();
+    }
+    let mut terms = Vec::new();
+    collect_isinstance_terms(inv, &mut terms);
+    let mut facts = Vec::new();
+    for term in &terms {
+        let Some([subject, class]) = term
+            .get("args")
+            .and_then(|v| v.as_array())
+            .map(Vec::as_slice)
+            .and_then(|args| <&[Json; 2]>::try_from(args).ok())
+        else {
+            continue;
+        };
+        let Some(class) = const_str(class) else {
+            continue;
+        };
+        match namespaces.get(class) {
+            Some(namespace) if !namespace.mro.is_empty() => {}
+            _ => continue,
+        }
+        for (symbol, namespace) in namespaces {
+            if namespace.mro.first().map(String::as_str) != Some(symbol.as_str())
+                || !namespace.mro.iter().any(|entry| entry == class)
+            {
+                continue;
+            }
+            let type_is = json!({
+                "kind": "atomic",
+                "name": PYTHON_TYPE_IS,
+                "args": [subject, string_const_term(symbol)],
+            });
+            let holds = json!({
+                "kind": "atomic",
+                "name": "=",
+                "args": [term, {"kind": "const", "value": true, "sort": {"kind": "primitive", "name": "Bool"}}],
+            });
+            facts.push(json!({"kind": "implies", "operands": [type_is, holds]}));
+        }
+    }
+    facts
+}
+
+/// THE ISINSTANCE LAW: conjoin its ground instances `inv` reads
+/// (`isinstance_law_facts`). Each is true of every object whatever its
+/// class, so it is conjoined at the top, as the ancestry join's facts are.
+fn with_isinstance_law(inv: Json, namespaces: &BTreeMap<String, ClassNamespace>) -> Json {
+    let facts = isinstance_law_facts(&inv, namespaces);
+    if facts.is_empty() {
+        return inv;
+    }
+    debug!(
+        facts = facts.len(),
+        "verifier/linker: conjoining the isinstance law into obligation"
+    );
+    let mut operands = Vec::with_capacity(facts.len() + 1);
+    operands.push(inv);
+    operands.extend(facts);
+    IrFormula::And(operands).to_value()
+}
+
 fn with_local_forall_instances(inv: Json, property_name: &str) -> Json {
     let mut foralls = Vec::new();
     collect_ambient_foralls(&inv, &mut foralls);
@@ -7971,6 +8092,9 @@ struct ConsistencyIndex {
     /// The class ancestry this pool's proofs state, by class symbol: the
     /// facts the ancestry join conjoins (`with_exception_ancestry`).
     exception_ancestry: ExceptionAncestry,
+    /// The class namespaces this pool's proofs state (`collect_class_namespaces`):
+    /// the orders the isinstance law reads (`with_isinstance_law`).
+    class_namespaces: BTreeMap<String, ClassNamespace>,
     /// Raw (contract/property name, locus, optional speaker role) triples in
     /// pool iteration order. The project-local preference merge (consumer
     /// file beats vendor file for the squiggle anchor) happens at solve time
@@ -8035,6 +8159,7 @@ fn build_consistency_index(pool: &MementoPool) -> ConsistencyIndex {
     }
     let ambient_posts = collect_ambient_posts(pool);
     let exception_ancestry = collect_exception_ancestry(pool);
+    let class_namespaces = collect_class_namespaces(pool);
 
     // Pool-wide assertion-locus entries, keyed by contract/property name. The
     // callsite-keyed consistency candidate is a coalesced claim whose OWN body
@@ -8075,6 +8200,7 @@ fn build_consistency_index(pool: &MementoPool) -> ConsistencyIndex {
         ambient_ground_callsite_facts,
         ambient_posts,
         exception_ancestry,
+        class_namespaces,
         locus_entries,
         witness_bodies: witness_bodies_in_pool(pool),
     }
@@ -8097,6 +8223,7 @@ fn verify_consistency_from_index(
     let ambient_ground_callsite_facts = &index.ambient_ground_callsite_facts;
     let ambient_posts = &index.ambient_posts;
     let exception_ancestry = &index.exception_ancestry;
+    let class_namespaces = &index.class_namespaces;
 
     info!(
         candidates = candidates.len(),
@@ -8175,6 +8302,7 @@ fn verify_consistency_from_index(
                 members,
                 ambient_posts,
                 exception_ancestry,
+                class_namespaces,
                 ambient_ground_callsite_facts,
                 ambient_foralls,
                 &locus_by_name,
@@ -8219,6 +8347,7 @@ fn process_consistency_group(
     members: &[ConsistencyCandidate],
     ambient_posts: &[AmbientPost],
     exception_ancestry: &ExceptionAncestry,
+    class_namespaces: &BTreeMap<String, ClassNamespace>,
     ambient_ground_callsite_facts: &[AmbientGroundCallsiteFact],
     ambient_foralls: &[Json],
     locus_by_name: &HashMap<String, SourceLocus>,
@@ -8341,6 +8470,7 @@ fn process_consistency_group(
             settle_owed_operations(&mut ambient_partition, plan, registry, compilers);
             let inv = with_raised_types(inv, ambient_posts);
             let inv = with_exception_ancestry(inv, exception_ancestry);
+            let inv = with_isinstance_law(inv, class_namespaces);
             let linked_posts = ambient_partition.kept.clone();
             let dropped_ambient_posts = ambient_partition.dropped.clone();
             let (inv, skipped_same_kind_duplicate, vendor_facts) =
@@ -8404,6 +8534,7 @@ fn process_consistency_group(
                             &candidate.body,
                             ambient_posts,
                             exception_ancestry,
+                            class_namespaces,
                             plan,
                             registry,
                             compilers,
@@ -8424,6 +8555,7 @@ fn process_consistency_group(
                 settle_owed_operations(&mut ambient_partition, plan, registry, compilers);
                 let inv = with_raised_types(inv, ambient_posts);
                 let inv = with_exception_ancestry(inv, exception_ancestry);
+                let inv = with_isinstance_law(inv, class_namespaces);
                 let linked_posts = ambient_partition.kept.clone();
                 let dropped_ambient_posts = ambient_partition.dropped.clone();
                 let (inv, skipped_same_kind_duplicate, vendor_facts) =
@@ -8482,6 +8614,7 @@ fn process_consistency_group(
                             &candidate.body,
                             ambient_posts,
                             exception_ancestry,
+                            class_namespaces,
                             plan,
                             registry,
                             compilers,
@@ -14453,6 +14586,52 @@ mod tests {
             "name": PYTHON_PLAIN_STORE,
             "args": [class, string_const(field)],
         })
+    }
+
+    #[test]
+    fn the_isinstance_law_relates_a_stated_class_to_each_class_of_its_order() {
+        // `isinstance(x, Base)` with `type(x)` stated `Derived(Base)`: the
+        // law's instance for every class whose order contains `Base`.
+        let mut namespaces = BTreeMap::new();
+        namespaces.insert(
+            "python:m.Base".to_string(),
+            namespace(&["python:m.Base", "builtins.object"], &[]),
+        );
+        namespaces.insert(
+            "python:m.Derived".to_string(),
+            namespace(&["python:m.Derived", "python:m.Base", "builtins.object"], &[]),
+        );
+        namespaces.insert(
+            "python:m.Other".to_string(),
+            namespace(&["python:m.Other", "builtins.object"], &[]),
+        );
+        let x = var("x");
+        let tested = json!({"kind": "ctor", "name": "python:isinstance", "args": [
+            x.clone(), string_const("python:m.Base")
+        ]});
+        let inv = json!({"kind": "atomic", "name": "=", "args": [
+            tested.clone(), bool_const(true)
+        ]});
+        let facts = isinstance_law_facts(&inv, &namespaces);
+        let law = |class: &str| {
+            json!({"kind": "implies", "operands": [
+                {"kind": "atomic", "name": "python:type_is", "args": [x.clone(), string_const(class)]},
+                {"kind": "atomic", "name": "=", "args": [tested.clone(), bool_const(true)]},
+            ]})
+        };
+        assert_eq!(facts.len(), 2, "{facts:?}");
+        assert!(facts.contains(&law("python:m.Base")));
+        assert!(facts.contains(&law("python:m.Derived")));
+        assert!(!facts.contains(&law("python:m.Other")));
+        // A class no row states (a metaclass, an open namespace): nothing.
+        let unstated = json!({"kind": "ctor", "name": "python:isinstance", "args": [
+            x.clone(), string_const("python:m.Meta")
+        ]});
+        assert!(isinstance_law_facts(&unstated, &namespaces).is_empty());
+        // Conjoined at the top.
+        let joined = with_isinstance_law(inv.clone(), &namespaces);
+        assert_eq!(joined["kind"], json!("and"));
+        assert_eq!(with_isinstance_law(inv.clone(), &BTreeMap::new()), inv);
     }
 
     #[test]
