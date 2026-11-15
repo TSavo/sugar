@@ -1274,12 +1274,12 @@ _SUITE_FIELDS = ("body", "orelse", "handlers", "finalbody", "cases")
 def _rebound_in_branches_and_loops(body, name: str) -> bool:
     """Whether every binding of ``name`` in ``body`` is a statement that
     binds it by itself -- an assignment, an augmented or annotated
-    assignment, a ``for`` target, a ``del``, the ``nonlocal`` declaration --
-    standing at the body's top level or inside ``if`` and loop suites only
-    (``If``, ``For``, ``While``, at any depth): none in an expression (a
-    walrus), a ``try``, a ``with`` or a ``match``, and none by a ``def``,
-    ``class`` or ``import`` statement, whose value is an object made by the
-    call.  The read of ``name`` where the body ends is then the read any
+    assignment, a ``for`` target, a ``del``, the ``nonlocal`` or ``global``
+    declaration -- standing at the body's top level or inside ``if`` and
+    loop suites only (``If``, ``For``, ``While``, at any depth): none in an
+    expression (a walrus), a ``try``, a ``with`` or a ``match``, and none by
+    a ``def``, ``class`` or ``import`` statement, whose value is an object
+    made by the call.  The read of ``name`` where the body ends is then the read any
     statement after the body's last would make, and each completed arm
     reads it in the context it left (``FunctionUniverseSugar._after``): a
     branch's binding through its join, a loop's through the loop's own
@@ -1294,7 +1294,9 @@ def _rebound_in_branches_and_loops(body, name: str) -> bool:
         bound = node.names_bound_here()
         if (name in bound or "*" in bound) and not (
             enclosing
-            and isinstance(node, (Assign, AugAssign, AnnAssign, For, Delete, Nonlocal))
+            and isinstance(
+                node, (Assign, AugAssign, AnnAssign, For, Delete, Nonlocal, Global)
+            )
         ):
             return False
         if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
@@ -10675,28 +10677,44 @@ class FunctionDef(Statement):
         (``_returns_only_last``), else only an arm that fell off the end
         (``FunctionUniverseSugar.cells_after_every_arm``,
         ``FunctionUniverseSugar._after``).  Anywhere else nothing is read,
-        and a caller's cell after the call stays undecided."""
+        and a caller's cell after the call stays undecided.
+
+        Each module global the ``def`` declares ``global`` is read so too,
+        under its contract formal ``global:<name>``: what the body left in
+        it, which the universe states over ``python:after(out,
+        "global:<name>")``, the term a caller reads the global by after the
+        call (``container_mutation._global_targets``).  A global the body
+        neither binds nor reads has nothing bound to it there and states
+        nothing."""
         if type(self) is not FunctionDef or FunctionDef._owns_yield(self.body):
             return ()
         names, _coordinates = self._captured_bindings()
-        if not names:
-            return ()
         table = self.unit.function_symtable(self.name, self.line_col_span().start_line)
         rebound = {
             symbol.get_name() for symbol in table.get_symbols() if symbol.is_nonlocal()
         }
-        from sugar_lift_py_tests.contract_input import CELL_INPUT, input_formal
+        declared = sorted(
+            symbol.get_name()
+            for symbol in table.get_symbols()
+            if symbol.is_declared_global()
+        )
+        from sugar_lift_py_tests.contract_input import (
+            CELL_INPUT,
+            GLOBAL_INPUT,
+            input_formal,
+        )
 
         found = []
-        for name in names:
-            if name not in rebound or not _rebound_in_branches_and_loops(
-                self.body, name
-            ):
+        for kind, name in (
+            *((CELL_INPUT, name) for name in names if name in rebound),
+            *((GLOBAL_INPUT, name) for name in declared),
+        ):
+            if not _rebound_in_branches_and_loops(self.body, name):
                 continue
             read = _name_read(self, name, final)
             if read is None:
                 continue
-            found.append((input_formal(CELL_INPUT, name), read.sugar()))
+            found.append((input_formal(kind, name), read.sugar()))
         return tuple(found)
 
     def substitute_in_block(self, scope):

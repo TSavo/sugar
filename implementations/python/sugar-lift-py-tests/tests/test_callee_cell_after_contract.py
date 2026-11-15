@@ -186,3 +186,28 @@ def test_a_rebinding_in_a_decided_loop_is_stated() -> None:
         assert "python:after" in post, post
         assert "cell:n" in post, post
         assert "+=" in post, post
+
+
+_GLOBAL = """\
+G = 0
+
+
+def reset():
+    global G
+    G = 5
+
+
+def test_reset():
+    reset()
+    assert G == 5
+"""
+
+
+def test_a_global_rebinding_is_stated_over_the_global_after_the_call() -> None:
+    # A module global the ``def`` declares ``global`` is read where the body
+    # ends, as a cell is, under its formal ``global:G``.
+    posts = _posts(_GLOBAL, "reset")
+    assert posts, posts
+    for post in posts:
+        assert "python:after" in post, post
+        assert "global:G" in post, post
