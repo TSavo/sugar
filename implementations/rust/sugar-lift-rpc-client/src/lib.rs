@@ -72,7 +72,7 @@ impl QuestionCache {
     }
 
     fn spill_path(&self, question_cid: &MementoCid) -> Option<PathBuf> {
-        let filename = question_cid.to_string().replace(':', "_").replace('/', "_");
+        let filename = sugar_proof_envelope::cid_filename_stem(question_cid.as_str());
         self.spill_dir.as_ref().map(|dir| dir.join(filename))
     }
 

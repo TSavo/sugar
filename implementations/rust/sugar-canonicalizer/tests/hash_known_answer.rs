@@ -9,7 +9,7 @@
 // The output is BLAKE3 in XOF mode (default-hash key); we take the
 // first 64 bytes (128 hex chars) for the spec's 512-bit output.
 
-use sugar_canonicalizer::{blake3_512_of, BLAKE3_512_PREFIX};
+use sugar_canonicalizer::{blake3_512_of, cid_hex, BLAKE3_512_PREFIX};
 
 /// Construct an `input_len`-byte input filled with the repeating
 /// 0..251 sequence (matches the test_vectors.json convention).
@@ -24,8 +24,7 @@ fn vector_input(input_len: usize) -> Vec<u8> {
 fn assert_known_answer(input_len: usize, expected_hex_first_64_bytes: &str) {
     let input = vector_input(input_len);
     let h = blake3_512_of(&input);
-    assert!(h.starts_with(BLAKE3_512_PREFIX), "missing prefix");
-    let hex = h.trim_start_matches(BLAKE3_512_PREFIX);
+    let hex = cid_hex(&h).expect("missing prefix");
     assert_eq!(
         hex, expected_hex_first_64_bytes,
         "BLAKE3-512 KAT mismatch for input_len={input_len}"
@@ -112,8 +111,8 @@ fn single_bit_flip_changes_most_output_bits() {
     assert_ne!(h0, h1);
     // First-byte difference catches most common bugs (reused state /
     // returned constant).
-    let hex0 = h0.trim_start_matches(BLAKE3_512_PREFIX);
-    let hex1 = h1.trim_start_matches(BLAKE3_512_PREFIX);
+    let hex0 = cid_hex(&h0).expect("blake3-512 CID");
+    let hex1 = cid_hex(&h1).expect("blake3-512 CID");
     assert_ne!(&hex0[..2], &hex1[..2]);
 }
 
