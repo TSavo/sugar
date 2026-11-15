@@ -82,6 +82,15 @@ class _PrivateOperand(Sugar):
 
 
 def test_private_operand_cannot_claim_real_literal_construction() -> None:
+    from sugar_source_tree.panic import SugarNotWritten
+
     node = _unary("~3.5\n", "private.py")
-    with pytest.raises(TypeError, match="requires ConstructedTermSugar"):
-        UnaryOpSugar("Invert", _PrivateOperand(node.operand.fragment), node.fragment)
+    operand_site = node.operand.fragment
+    with pytest.raises(SugarNotWritten) as refused:
+        UnaryOpSugar("Invert", _PrivateOperand(operand_site), node.fragment)
+    assert refused.value.owner == "UnaryOpSugar.operand"
+    assert refused.value.observed == (
+        "UnaryOpSugar.operand is _PrivateOperand, not ConstructedTermSugar"
+    )
+    # The refused child carries its own occurrence, and that is what is blamed.
+    assert refused.value.blame is operand_site

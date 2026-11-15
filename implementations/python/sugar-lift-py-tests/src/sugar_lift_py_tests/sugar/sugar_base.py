@@ -231,13 +231,14 @@ class ConstructedTermSugar(Sugar):
 
 
 def require_constructed_term_sugar(
-    value: object, *, owner: str
+    value: object, *, owner: str, site: object = None
 ) -> ConstructedTermSugar:
     """Close a nested construction payload before canonical projection.
 
     ONE codomain law for every nested term slot (CallSiteSugar.args /
     keywords, MethodCallSugar.args / keywords, IfExp arms, BinOpSugar
-    left/right, UnaryOpSugar.operand, EqualityOpSugar, Subscript index, …).
+    left/right, UnaryOpSugar.operand, EqualityOpSugar, Subscript index, a
+    generator step's payload, …).
     Admission is hierarchy: ConstructedTermSugar + to_term — including:
 
     - L2a: SpreadCollectionSugar, SpreadDictSugar, SpreadCallSugar, StarredSugar
@@ -246,9 +247,32 @@ def require_constructed_term_sugar(
 
     Do not special-case species at individual call sites; promote the mint,
     keep this door.
+
+    A child that is not a term is refused by name (``SugarNotWritten``), the
+    refusal every other construction door gives, so ``Node.sugar()`` testifies
+    it at the node that refused: ``owner`` is the slot, ``observed`` what the
+    slot was handed.  It blames ``site`` (the holder's own occurrence) where
+    the holder gives one, else the refused child's occurrence, else the slot
+    by its name.  This is the ONE spelling of the refusal: no slot raises a
+    bare ``TypeError`` for it and none words its own.
     """
-    if not isinstance(value, ConstructedTermSugar):
-        raise TypeError(
-            f"{owner} requires ConstructedTermSugar, got {type(value).__name__}"
-        )
-    return value
+    if isinstance(value, ConstructedTermSugar):
+        return value
+    from sugar_source_tree.panic import SugarNotWritten
+
+    blame = site
+    if blame is None:
+        blame = getattr(value, "site", None)
+    if blame is None:
+        blame = owner
+    raise SugarNotWritten(
+        blame=blame,
+        owner=owner,
+        observed=f"{owner} is {type(value).__name__}, not ConstructedTermSugar",
+        requested="a ConstructedTermSugar child, so its holder can project to_term",
+        fix=(
+            f"write {type(value).__name__} as a term (promote it to "
+            "ConstructedTermSugar with to_term), or keep this coordinate loud "
+            "until that sugar exists; never hand a term slot a bare Sugar"
+        ),
+    )

@@ -376,10 +376,16 @@ def test_raw_expr_statement_sugar_payload_refused_by_finally_step() -> None:
     from sugar_lift_py_tests.sugar.expr_statement_sugar import ExprStatementSugar
     from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 
-    with pytest.raises(TypeError, match="ConstructedTermSugar"):
+    from sugar_source_tree.panic import SugarNotWritten
+
+    with pytest.raises(SugarNotWritten) as refused:
         FinallyStepV1(
             (ExprStatementSugar(value=IntLiteralSugar(1, site="x"), site="s"),)
         )
+    assert refused.value.owner == "FinallyStepV1.statements"
+    assert refused.value.observed == (
+        "FinallyStepV1.statements is ExprStatementSugar, not ConstructedTermSugar"
+    )
 
 
 def test_try_finally_source_order_body_then_finally_then_return() -> None:

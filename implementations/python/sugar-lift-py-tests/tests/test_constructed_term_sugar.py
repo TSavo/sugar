@@ -110,10 +110,32 @@ def test_missing_constructed_term_obligation_refuses_at_instantiation():
 
 
 def test_generator_payload_admission_refuses_arbitrary_sugar():
-    with pytest.raises(
-        TypeError, match="YieldStepV1.value requires ConstructedTermSugar"
-    ):
+    """A step's payload is a nested term slot, closed by the one door: the
+    refusal names the slot and what it was handed, never a bare TypeError."""
+    from sugar_source_tree.panic import SugarNotWritten
+
+    assert YieldStepV1(_Operand("good")).value == _Operand("good")
+    with pytest.raises(SugarNotWritten) as refused:
         YieldStepV1(_ArbitrarySugar())
+    assert refused.value.owner == "YieldStepV1.value"
+    assert refused.value.observed == (
+        "YieldStepV1.value is _ArbitrarySugar, not ConstructedTermSugar"
+    )
+
+
+def test_if_expression_arm_is_refused_by_the_one_door_at_its_site():
+    """An ``IfExpSugar`` arm is refused by the same door as every other
+    nested term slot, blaming the expression's own site."""
+    from sugar_source_tree.panic import SugarNotWritten
+
+    site = _call_sites()[0]
+    with pytest.raises(SugarNotWritten) as refused:
+        IfExpSugar(_ArbitrarySugar(), _Operand("body"), _Operand("else"), site)
+    assert refused.value.owner == "IfExpSugar.test"
+    assert refused.value.blame is site
+    assert refused.value.observed == (
+        "IfExpSugar.test is _ArbitrarySugar, not ConstructedTermSugar"
+    )
 
 
 @pytest.mark.parametrize(
@@ -211,17 +233,15 @@ def test_constructed_term_nested_children_are_closed_at_construction(build):
     from sugar_source_tree.panic import SugarNotWritten
 
     assert isinstance(build(_Operand("good"), site), ConstructedTermSugar)
-    # Every nested child is closed at construction: a sugar with no term is
-    # refused before the parent exists.  ``IfExpSugar`` refuses by name, as
-    # its construction door (``IfExp._construct_sugar``) does -- its arm, what
-    # it was, what it needs; the others raise the shared TypeError.
-    with pytest.raises((TypeError, SugarNotWritten)) as refused:
+    # Every nested child is closed at construction by the one door
+    # (``require_constructed_term_sugar``): a sugar with no term is refused by
+    # name before the parent exists -- the slot, and what it was handed.  No
+    # slot raises a bare TypeError for it and none words its own refusal.
+    with pytest.raises(SugarNotWritten) as refused:
         build(_ArbitrarySugar(), site)
-    if isinstance(refused.value, SugarNotWritten):
-        assert refused.value.owner == "IfExpSugar.test"
-        assert "_ArbitrarySugar, not ConstructedTermSugar" in refused.value.observed
-    else:
-        assert "requires ConstructedTermSugar" in str(refused.value)
+    assert refused.value.observed == (
+        f"{refused.value.owner} is _ArbitrarySugar, not ConstructedTermSugar"
+    )
 
 
 def test_equivalent_call_reconstruction_has_the_same_term():

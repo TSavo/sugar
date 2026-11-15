@@ -8,14 +8,7 @@ from sugar_lift_python_source.canonical import cid_of_json
 
 from .effect import Effect, require_effect
 from .outcome import ExitSet
-from .sugar.sugar_base import ConstructedTermSugar
-
-
-def _require_constructed_term(value: object, *, owner: str) -> None:
-    if not isinstance(value, ConstructedTermSugar):
-        raise TypeError(
-            f"{owner} requires ConstructedTermSugar, got {type(value).__name__}"
-        )
+from .sugar.sugar_base import ConstructedTermSugar, require_constructed_term_sugar
 
 
 class FormalFloorBindingGap(ValueError):
@@ -83,7 +76,7 @@ class YieldStepV1:
 
     def __post_init__(self) -> None:
         if self.value is not None:
-            _require_constructed_term(self.value, owner="YieldStepV1.value")
+            require_constructed_term_sugar(self.value, owner="YieldStepV1.value")
 
 
 @dataclass(frozen=True)
@@ -238,7 +231,7 @@ class YieldFromStepV1:
     occurrence_cid: str
 
     def __post_init__(self) -> None:
-        _require_constructed_term(self.iterable, owner="YieldFromStepV1.iterable")
+        require_constructed_term_sugar(self.iterable, owner="YieldFromStepV1.iterable")
         if self.occurrence.seal().cid != self.occurrence_cid:
             raise TypeError(
                 "YieldFromStepV1 occurrence must match its authenticated CID"
@@ -251,7 +244,7 @@ class ReturnStepV1:
 
     def __post_init__(self) -> None:
         if self.value is not None:
-            _require_constructed_term(self.value, owner="ReturnStepV1.value")
+            require_constructed_term_sugar(self.value, owner="ReturnStepV1.value")
 
 
 @dataclass(frozen=True)
@@ -333,7 +326,7 @@ class AssignStepV1:
     evaluation: str | None = None
 
     def __post_init__(self) -> None:
-        _require_constructed_term(self.value, owner="AssignStepV1.value")
+        require_constructed_term_sugar(self.value, owner="AssignStepV1.value")
 
 
 @dataclass(frozen=True)
@@ -348,8 +341,10 @@ class AttributeAssignStepV1:
     occurrence: object = field(compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        _require_constructed_term(self.receiver, owner="AttributeAssignStepV1.receiver")
-        _require_constructed_term(self.value, owner="AttributeAssignStepV1.value")
+        require_constructed_term_sugar(
+            self.receiver, owner="AttributeAssignStepV1.receiver"
+        )
+        require_constructed_term_sugar(self.value, owner="AttributeAssignStepV1.value")
         try:
             observed_target_cid = self.occurrence.seal().cid
         except (AttributeError, TypeError) as exc:
@@ -492,7 +487,7 @@ class WhileStepV1:
             SourceFragmentCoordinateV1,
         )
 
-        _require_constructed_term(self.guard, owner="WhileStepV1.guard")
+        require_constructed_term_sugar(self.guard, owner="WhileStepV1.guard")
         try:
             span = self.occurrence.line_col_span
             observed = SourceFragmentCoordinateV1(
@@ -527,7 +522,7 @@ class FinallyStepV1:
 
     def __post_init__(self) -> None:
         for statement in self.statements:
-            _require_constructed_term(statement, owner="FinallyStepV1.statements")
+            require_constructed_term_sugar(statement, owner="FinallyStepV1.statements")
 
 
 @dataclass(frozen=True)
@@ -547,7 +542,7 @@ class ForStepV1:
     occurrence: object = field(compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        _require_constructed_term(self.iterable, owner="ForStepV1.iterable")
+        require_constructed_term_sugar(self.iterable, owner="ForStepV1.iterable")
         if not self.target_coordinates:
             raise TypeError("ForStepV1 requires authenticated target coordinates")
         from sugar_source_tree.binding_provenance import BindingCoordinateV1
@@ -619,7 +614,7 @@ class TermStepV1:
     fragment_cid: str
 
     def __post_init__(self) -> None:
-        _require_constructed_term(self.term, owner="TermStepV1.term")
+        require_constructed_term_sugar(self.term, owner="TermStepV1.term")
 
 
 @dataclass(frozen=True)
@@ -651,7 +646,9 @@ class DefinitionDefaultsStepV1:
                 "DefinitionDefaultsStepV1 requires one evaluation key per default"
             )
         for value in self.values:
-            _require_constructed_term(value, owner="DefinitionDefaultsStepV1.values")
+            require_constructed_term_sugar(
+                value, owner="DefinitionDefaultsStepV1.values"
+            )
 
 
 @dataclass(frozen=True)
@@ -739,7 +736,7 @@ class IfStepV1:
     guard_site: object = field(compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        _require_constructed_term(self.guard, owner="IfStepV1.guard")
+        require_constructed_term_sugar(self.guard, owner="IfStepV1.guard")
 
 
 GeneratorStepV1 = (

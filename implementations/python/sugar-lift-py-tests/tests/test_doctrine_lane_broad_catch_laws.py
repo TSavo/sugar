@@ -69,7 +69,7 @@ def _constant_entry():
 
 
 def _int(value: int) -> IntLiteralSugar:
-    """A step's value is constructed sugar (``_require_constructed_term``),
+    """A step's value is constructed sugar (``require_constructed_term_sugar``),
     never a bare IR term."""
     return IntLiteralSugar(value, site=f"literal:{value}")
 
