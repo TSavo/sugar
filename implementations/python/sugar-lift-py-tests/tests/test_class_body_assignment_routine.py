@@ -36,7 +36,10 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
+from sugar_lift_py_tests.witness_harness import (
+    claim_verdict,
+    run_source_through_real_solver,
+)
 
 _PRELUDE = (
     "import os\n"
@@ -634,11 +637,17 @@ _TWIN_WITH_INITIALIZER = (
 
 
 def test_a_field_of_an_object_of_a_class_that_exists_is_sat(tmp_path: Path) -> None:
+    # ``Box(1)`` is an edge (#7757 step 6) and ``a.n`` is read through the
+    # class's contract, joined at prove (step 7, #8746).  ``__init__``'s own
+    # row stores on a formal with no actual and may owe it, so the truthful
+    # half is read on the test function's claims.
     truthful = run_source_through_real_solver(
         tmp_path / "t", _TWIN_WITH_INITIALIZER.format(field="3")
     )
 
-    assert truthful.verdict == "sat"
+    test_line = _TWIN_WITH_INITIALIZER.splitlines().index("def test_box():") + 1
+    assert truthful.verdict != "unsat"
+    assert claim_verdict(truthful.prove_doc, claims_from_line=test_line) == "sat"
 
 
 def test_a_raising_class_with_an_initializer_is_unsat(tmp_path: Path) -> None:
