@@ -178,11 +178,15 @@ def test_production_positional_bind_actuals_floor_reaches_guard_by_identity() ->
     assert isinstance(bound_floors.actuals[0], FloorValue)
 
     caller = ReduceContext.root(owner="production-positional-guard")
+    # A call carrying a source frame names the definition that owns it, as
+    # ``Call._construct_sugar`` does (``expected_definition_ref``): a frame
+    # never rides beside a claim that no definition was resolved.
     sugar = CallSiteSugar(
         target_name="option_context",
         args=(true_arg,),
         site=call.fragment,
         source_call_frame=frame,
+        expected_definition_ref=frame.owner,
     )
     outcome = sugar.desugar(caller)
     machine = outcome.completed_value()
@@ -238,6 +242,7 @@ def test_production_keyword_and_default_bind_actuals_floor_by_identity() -> None
         keywords=(("enabled", enabled_floor),),
         site=call.fragment,
         source_call_frame=frame,
+        expected_definition_ref=frame.owner,
     )
     outcome = sugar.desugar(caller)
     machine = outcome.completed_value()
