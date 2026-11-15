@@ -40,10 +40,13 @@ def _write(tmp: Path, name: str, source: str) -> Path:
 
 def test_supervised_scan_completes_clean_and_typed_gap(tmp_path: Path) -> None:
     clean = _write(tmp_path, "clean.py", "def a(z):\n    return z\n")
+    # A construction refusal by name: ``del`` of a tuple target is not lowered
+    # and ``Delete`` refuses it.  (``with open('x'):``, this row's old fixture,
+    # constructs since a with's manager is what its head reduces to, #8280.)
     gap = _write(
         tmp_path,
         "gap.py",
-        "def a():\n    with open('x'):\n        pass\n",
+        "def a():\n    b = 1\n    c = 2\n    del (b, c)\n",
     )
     rows = _SUP.scan_paths([clean, gap], root=tmp_path, file_timeout=30.0)
     assert [r.file for r in rows] == ["clean.py", "gap.py"]
