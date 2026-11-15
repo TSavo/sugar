@@ -32,19 +32,24 @@ def _tree(source: str) -> SourceFile:
 
 
 def _call_outcome(signature: str, actuals: str):
-    source = (
-        f"def helper({signature}):\n"
-        "    return left + right\n\n"
-        f"helper({actuals})\n"
-    )
-    tree = _tree(source)
-    call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
-    return call.sugar().desugar(None)
+    (outcome,) = _call_outcomes(signature, actuals)
+    return outcome
 
 
 def _call_outcomes(signature: str, *actuals: str):
-    calls = "".join(f"helper({value})\n" for value in actuals)
-    source = f"def helper({signature}):\n    return left + right\n\n{calls}"
+    """Each ``helper(<actuals>)`` reduced where it runs: in ``caller``'s
+    body, so after import. A default is evaluated once, by the ``def``
+    statement (#8031): a call reads the value the module run bound under
+    its key (``with_module_final_globals``, ``DefaultValueSugar``). A
+    module-level call reduced alone is no part of any module run -- no
+    statement bound the key -- and is refused by name; it was the deleted
+    call-time evaluation of the default that let it complete."""
+    calls = "".join(f"    helper({value})\n" for value in actuals)
+    source = (
+        f"def helper({signature}):\n"
+        "    return left + right\n\n\n"
+        f"def caller():\n{calls}"
+    )
     tree = _tree(source)
     nodes = tuple(node for node in tree.nodes() if isinstance(node, Call))
     return tuple(node.sugar().desugar(None) for node in nodes)
