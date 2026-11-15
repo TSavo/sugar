@@ -8049,11 +8049,16 @@ def _bound_module_references(reader, bindings: dict) -> dict:
     for name in sorted(bindings):
         binding = bindings[name]
         if binding is UNDECIDED_MODULE_BINDING:
-            binding = _evaluation_ref(
-                reader,
-                reader.span,
-                undecided_module_binding_key(reader.unit, name),
-                name,
+            # Minted at the reader's span, no source occurrence: each read is
+            # re-spanned to its own site (``Name.substitute``) and answers
+            # for itself, so this one answers the roll where it is minted.
+            binding = _minted_binding_reference(
+                _evaluation_ref(
+                    reader,
+                    reader.span,
+                    undecided_module_binding_key(reader.unit, name),
+                    name,
+                )
             )
         references[name] = binding
     return references
