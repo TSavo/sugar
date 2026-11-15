@@ -54,6 +54,21 @@ def _atom(name: str):
     return atomic(name, [make_var("state")])
 
 
+# One distinct language-owned exception class per element position, so each
+# element's halt is its own effect (largest arity below is 8).  None is an
+# alias of another (``IOError`` is ``OSError``), so no two collapse.
+_DISTINCT_BUILTIN_EXCEPTIONS = (
+    "ValueError",
+    "TypeError",
+    "KeyError",
+    "IndexError",
+    "ZeroDivisionError",
+    "OverflowError",
+    "AttributeError",
+    "LookupError",
+)
+
+
 class _TwoFacedElement:
     """One spread element whose value depends on a guard, and which can halt.
 
@@ -68,7 +83,7 @@ class _TwoFacedElement:
         self.guard = _atom(f"g{index}")
         self.halt_guard = _atom(f"h{index}")
         self.effect = RaiseEffect.for_builtin(
-            f"E{index}",
+            _DISTINCT_BUILTIN_EXCEPTIONS[index],
             occurrence="implementations/python/sugar-lift-py-tests/tests/test_spread_exit_factoring.py:72:0",
         )
 

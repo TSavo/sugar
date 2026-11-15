@@ -113,7 +113,7 @@ def _mixed_faces():
     completed_right_face, right_face = partition("generator-value-right")
     halted_left = Halted(
         left_guard,
-        RaiseEffect.for_builtin("LeftError", occurrence="value:halted:left"),
+        RaiseEffect.for_builtin("KeyError",occurrence="value:halted:left"),
         state=_ReducedBlock((TermValue("left"),), True, ()),
         faces=frozenset({left_face}),
     )
@@ -124,7 +124,7 @@ def _mixed_faces():
     )
     halted_right = Halted(
         right_guard,
-        RaiseEffect.for_builtin("RightError", occurrence="value:halted:right"),
+        RaiseEffect.for_builtin("IndexError",occurrence="value:halted:right"),
         state=_ReducedBlock((TermValue("right"),), True, ()),
         faces=frozenset({right_face}),
     )
@@ -397,7 +397,7 @@ def _carrier(tmp_path, *, mixed: bool = False):
         halted_face, completed_face = partition("carrier-discharge")
         halted = Halted(
             atomic("carrier:halted", []),
-            RaiseEffect.for_builtin("CarrierError", occurrence="carrier:halted"),
+            RaiseEffect.for_builtin("RuntimeError",occurrence="carrier:halted"),
             state=_ReducedBlock((TermValue("carrier"),), True, ()),
             faces=frozenset({halted_face}),
         )
