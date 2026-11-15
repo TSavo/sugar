@@ -23047,13 +23047,15 @@ class ListComp(Expression):
             # Each member is its own evaluation of the element expression.
             (member,) = _iteration_copies(self, index, (new_elt if _d else self.elt,))
             results.append(member)
-        evaluations = ListComp._dissolved_iterable(self, it)
+        evaluations = ListComp._dissolved_iterable(
+            self, it, elements, (self.elt,) if not results else (), gen.ifs
+        )
         return ListComp._make_list(self, tuple(results), evaluations)
 
-    def _dissolved_iterable(self, iterable):
+    def _dissolved_iterable(self, iterable, elements, unevaluated, filters):
         """What the display this comprehension dissolved into over
-        ``iterable`` (substituted) evaluates before its first member
-        (``iterable_evaluations``).
+        ``iterable`` (substituted) and its ``elements`` evaluates before its
+        first member (``iterable_evaluations``).
 
         The unroll takes the same step a ``for`` does before its items
         (``For._iterable_evaluations``): ``range(n)`` is evaluated once,
@@ -23061,7 +23063,17 @@ class ListComp(Expression):
         whose faces its sugar carries before it holds the members
         (``collection_sugar._reduce_into``) -- never a dropped evaluation.
         A display iterable is consumed member by member and answers with
-        it."""
+        it.
+
+        A template Python never evaluates answers with the display, as a
+        structural part does (``unevaluated_parts``): ``unevaluated`` (the
+        element, or a dict comprehension's key and value, where no member
+        passed its filters), and ``filters`` too where there was no item
+        (``[0 for i in range(0)]``).  Nothing is evaluated there, so no
+        evaluation is dropped."""
+        for root in (*unevaluated, *(() if elements else filters)):
+            for node in root.walk():
+                node.discharge_by_substitution()
         return For._iterable_evaluations(self, iterable)
 
     def _ground_filters_pass(self, filters, scope) -> "Optional[bool]":
@@ -23681,7 +23693,9 @@ class SetComp(Expression):
             if key not in seen:
                 seen.add(key)
                 results.append(result)
-        evaluations = ListComp._dissolved_iterable(self, iterable)
+        evaluations = ListComp._dissolved_iterable(
+            self, iterable, elements, (self.elt,) if not results else (), gen.ifs
+        )
         return SetComp._make_set(self, tuple(results), evaluations)
 
     def _make_set(self, elements: tuple, evaluations: tuple = ()) -> "Node":
@@ -23805,7 +23819,13 @@ class DictComp(Expression):
                 pairs.append(pair)
             else:
                 pairs[prior] = pair
-        evaluations = ListComp._dissolved_iterable(self, iterable)
+        evaluations = ListComp._dissolved_iterable(
+            self,
+            iterable,
+            elements,
+            (self.key, self.value) if not pairs else (),
+            gen.ifs,
+        )
         return DictComp._make_dict(self, tuple(pairs), evaluations)
 
     def _make_dict(self, pairs: tuple, evaluations: tuple = ()) -> "Node":
