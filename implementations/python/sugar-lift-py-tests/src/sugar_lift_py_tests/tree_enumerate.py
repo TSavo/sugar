@@ -62,6 +62,7 @@ def unreached_assertion_sites(definition, halted_arms) -> tuple:
         ClassDef,
         FunctionDef,
         Lambda,
+        Node,
     )
 
     passed = {
@@ -72,7 +73,10 @@ def unreached_assertion_sites(definition, halted_arms) -> tuple:
     }
     sites = []
     seen_nodes: set = set()
-    stack = list(reversed(tuple(getattr(definition, "body", ()) or ())))
+    body = getattr(definition, "body", ()) or ()
+    # A ``def``'s body is its statements; a lambda's is one expression,
+    # which holds no ``assert``.
+    stack = [body] if isinstance(body, Node) else list(reversed(tuple(body)))
     while stack:
         node = stack.pop()
         if id(node) in seen_nodes:
@@ -476,17 +480,24 @@ def _module_run_reduction(unit):
     return held
 
 
+LAMBDA_NAME = "<lambda>"
+"""The source name a lambda is stated under, Python's own name for it
+(``__name__``, ``co_name``): a lambda binds no name of its own."""
+
+
 def function_def_memento(fn, file_rel: str):
-    """The function's own SourceMemento (the def warrant payload_rows needs)."""
+    """The function's own SourceMemento (the def warrant payload_rows needs):
+    a ``def`` under its name, a ``lambda`` under ``LAMBDA_NAME``."""
     from sugar_lift_py_tests.kit_rpc.source_memento_dto import SourceMementoDto
     from sugar_lift_py_tests.kit_rpc.source_span_dto import SourceSpanDto
+    from sugar_source_tree.nodes import Lambda
 
     lc = fn.line_col_span()
     return SourceMementoDto(
         file=file_rel,
         span=SourceSpanDto(lc.start_line, lc.start_col, lc.end_line, lc.end_col),
         source_cid=fn.fragment.seal().cid,
-        source_function_name=fn.name,
+        source_function_name=LAMBDA_NAME if isinstance(fn, Lambda) else fn.name,
         param_names=[p.name for p in fn.params],
     )
 
@@ -737,7 +748,9 @@ def as_its_own_proof_states(outcome, ctx):
 def function_universe_outcome(fn):
     """Construct one function universe through its authenticated entrance.
 
-    Ordinary functions reduce with symbolic formals.  The active ``__init__``
+    ``fn`` is a ``def``, ``async def`` or ``lambda``; its universe is its own
+    contract (``contract_universe``).  Ordinary functions reduce with
+    symbolic formals.  The active ``__init__``
     of a source class is different: its first parameter is the receiver that
     the class call itself creates.  The backend's exact lexical-owner relation
     selects the class, and its one constructor
@@ -773,7 +786,7 @@ def function_universe_outcome(fn):
     from sugar_lift_py_tests.sugar.call_site_sugar import with_module_final_globals
     from sugar_source_tree.nodes import current_module_execution_site
 
-    sugar = fn.sugar()
+    sugar = fn.contract_universe()
     site = current_module_execution_site()
     owner = fn._active_initializer_owner()
     if owner is None:
@@ -923,7 +936,10 @@ def reduction_rows(outcome, *, owner, blame, def_memento, definition):
 def function_contract_rows(fn, file_rel: str):
     """A function's contract DTO rows, read off EVERY arm of its one reduction.
 
-    `fn.sugar()` constructs the FunctionUniverseSugar; desugar reduces the body
+    ``fn`` is a ``def``, ``async def`` or ``lambda``: a lambda is a function
+    and states its contract the same way (``Lambda.contract_universe``: the
+    universe of ``return <body>`` over its formals).
+    `fn.contract_universe()` constructs the FunctionUniverseSugar; desugar reduces the body
     to an ``ExitSet`` of completed and halted arms. ``exit_arms_payload_rows``
     projects all of them: the post over every completed arm, one panic locus
     per halted arm (``halt_locus``), and one row per assertion site (see
@@ -941,7 +957,7 @@ def function_contract_rows(fn, file_rel: str):
     def_memento = function_def_memento(fn, file_rel)
     return def_memento, reduction_rows(
         owner_reduction(fn).outcome,
-        owner=fn.sugar(),
+        owner=fn.contract_universe(),
         blame=fn.fragment,
         def_memento=def_memento,
         definition=fn,

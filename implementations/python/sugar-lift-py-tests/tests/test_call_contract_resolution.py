@@ -380,3 +380,34 @@ def test_a_class_states_its_join_symbol(tmp_path):
         "python:producer.Box",
         "python:producer.make.<locals>.Local@5:4",
     ]
+
+
+def test_a_lambda_states_its_contract_under_its_join_symbol(tmp_path):
+    """A lambda is a function: it states one contract row like a ``def``,
+    its universe's post over its formals, named by its join symbol (#7757).
+    Its warrant names it as Python does, ``<lambda>``."""
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+    from sugar_lift_py_tests.tree_enumerate import function_contract_rows
+
+    producer = tmp_path / "producer.py"
+    producer.write_text(
+        "identity = lambda value: value\n"
+        "def outer():\n    return lambda x: 1\n"
+    )
+    tree = open_source_file_for_construction(producer, root=tmp_path)
+    lambdas = list(tree.lambdas())
+    assert len(lambdas) == 2
+
+    stated = []
+    for node in lambdas:
+        memento, rows = function_contract_rows(node, "producer.py")
+        (row,) = rows
+        assert row.kind == "function-contract"
+        assert row.name == row.bridge_source_symbol
+        assert memento.source_function_name == "<lambda>"
+        stated.append((row.name, row.formals))
+
+    assert stated == [
+        ("python:producer.<lambda>@1:11", ["value"]),
+        ("python:producer.outer.<locals>.<lambda>@3:11", ["x"]),
+    ]

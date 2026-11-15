@@ -508,6 +508,9 @@ class _ConstructedModuleV1(_SealedBackendRelation):
     root: object
     closed_roll_call: object
     function_nodes: tuple[object, ...]
+    # Every ``lambda`` occurrence, in pre-order: each states its own contract
+    # beside the ``def``s (``SourceFile.lambdas``).
+    lambda_nodes: tuple[object, ...]
     # Keyed by SourceOccurrenceIdentityV1, never by the producer's Node shell:
     # a rewritten shell over the same occurrence must join this row (#7346-A).
     function_class_owners: tuple[tuple[object, object | None], ...]
@@ -814,6 +817,7 @@ class Backend:
         # parent a node is (a ``def``'s body, or its defaults).
         parent_edges: list[tuple[str, int | None] | None] = []
         function_nodes_list: list[Node] = []
+        lambda_nodes_list: list[Node] = []
         # (node, parent_position, edge) — same pre-order as Node.walk().
         walk_stack: list[tuple[Node, int | None, tuple[str, int | None] | None]] = [
             (root, None, None)
@@ -826,6 +830,8 @@ class Backend:
             parent_edges.append(edge)
             if isinstance(node, (FunctionDef, AsyncFunctionDef)):
                 function_nodes_list.append(node)
+            elif isinstance(node, Lambda):
+                lambda_nodes_list.append(node)
             # _child_edges: one getattr of fields + memo for later walk/children.
             child_edges = node._child_edges()
             # Parent of each child is this position; reverse for left-first order.
@@ -833,6 +839,7 @@ class Backend:
                 walk_stack.append((child, position, (field_name, index)))
         constructed_nodes = tuple(constructed_nodes_list)
         function_nodes = tuple(function_nodes_list)
+        lambda_nodes = tuple(lambda_nodes_list)
         positions = {
             id(node): position for position, node in enumerate(constructed_nodes)
         }
@@ -1144,6 +1151,7 @@ class Backend:
             root=root,
             closed_roll_call=closed_roll_call,
             function_nodes=function_nodes,
+            lambda_nodes=lambda_nodes,
             function_class_owners=function_class_owners,
             definition_qualnames=definition_qualnames,
             lexical_call_rows=lexical_call_rows,
