@@ -12464,25 +12464,35 @@ mod tests {
     /// propositional constant names no symbol, so satisfiable means true and
     /// unsatisfiable means false. Twin: the constant and its negation.
     ///
-    /// The boundary is pinned too: a lone ground atom over an uninterpreted
-    /// symbol stays refused. `py.eq` is uninterpreted in the SMT encoding, so
-    /// admitting `py.eq(6, 7)` would come back satisfiable and discharge a
-    /// false claim. (FOL `=` of two literals of one sort is interpreted:
-    /// `a_lone_equality_of_two_string_literals_is_decided_not_vacuous`.)
+    /// A `py.eq` of two `int` literals is decided by Python before the guard
+    /// (#8748, `fold_decided_python_atoms`): it folds to truth or falsity, so
+    /// the truthful twin is consistent and the lying twin contradictory.
+    ///
+    /// The boundary is pinned too: a lone atom over an opaque operand stays
+    /// refused. `py.eq(call:f(6), 7)` names `call:f`, which the SMT encoding
+    /// leaves uninterpreted, so admitting it would come back satisfiable and
+    /// discharge a claim nothing forces. (FOL `=` of two literals of one sort
+    /// is interpreted: `a_lone_equality_of_two_string_literals_is_decided_not_vacuous`.)
     #[test]
     fn lone_atom_free_claim_reaches_the_solver_and_a_ground_atom_does_not() {
         let truth = json!({"kind":"and","operands":[]});
         let falsity = json!({"kind":"not","operands":[truth.clone()]});
-        let py_eq = |left: i64, right: i64| json!({"kind":"atomic","name":"py.eq","args":[int(left), int(right)]});
+        let py_eq = |left: Json, right: Json| json!({"kind":"atomic","name":"py.eq","args":[left, right]});
+        let opaque = json!({"kind":"ctor","name":"call:f","args":[int(6)]});
         for (name, inv, expected) in [
             ("constant_true", truth, ObligationVerdict::Discharged),
             ("constant_false", falsity, ObligationVerdict::Unsatisfied),
             (
-                "ground_atom_truthful",
-                py_eq(6, 6),
-                ObligationVerdict::Refused,
+                "decided_atom_truthful",
+                py_eq(int(6), int(6)),
+                ObligationVerdict::Discharged,
             ),
-            ("ground_atom_lying", py_eq(6, 7), ObligationVerdict::Refused),
+            (
+                "decided_atom_lying",
+                py_eq(int(6), int(7)),
+                ObligationVerdict::Unsatisfied,
+            ),
+            ("opaque_atom", py_eq(opaque, int(7)), ObligationVerdict::Refused),
         ] {
             let pool = pool_with_contract(name, inv);
             let (plan, registry) = z3_plan_and_registry();
