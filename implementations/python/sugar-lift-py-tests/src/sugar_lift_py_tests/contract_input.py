@@ -16,8 +16,17 @@ states each as a formal of its own, spelled ``<kind>:<name>``:
 
 Prove's one binder (``consistency::bind_call_arguments``) binds each from
 the caller's named argument exactly as it binds an actual to a parameter. In
-the function's own proof no caller supplies it: the body reads it as the
+the function's own proof no caller supplies it: the body reads a cell as the
 free input, as it reads a parameter (``FormalRefSugar``).
+
+A module global is the one input the function's own row binds: the row is
+decided as a root is called, after import (pytest calls a test function so),
+with each ``global:<name>`` at the value the module's one run left for the
+name. The frame entry binds the keys the body reads the global through to
+that value (``call_site_sugar.with_module_final_globals``), so the row reads
+exactly what it read before the contract named the input, decided or
+undecided as the run left it (#8018, #8501). A caller binds the input at the
+call, with the value the global holds there (``py.global``, step 5).
 """
 
 from __future__ import annotations
@@ -95,8 +104,10 @@ class ContractInputCoordinateV1:
 class ContractInputV1:
     """One input of a function's contract: its coordinate, and the key the
     body reads it through (``read_cid``: a captured cell's coordinate), or
-    ``None`` for an input the binder alone reads (a default: the body reads
-    the parameter it binds)."""
+    ``None`` for an input the function's own universe does not bind free: a
+    default (the body reads the parameter it binds) and a module global
+    (the root row's frame entry binds its keys to the module-final value,
+    ``with_module_final_globals``)."""
 
     coordinate: ContractInputCoordinateV1
     read_cid: str | None = None

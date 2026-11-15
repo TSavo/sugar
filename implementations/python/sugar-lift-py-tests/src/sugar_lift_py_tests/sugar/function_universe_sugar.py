@@ -1154,8 +1154,8 @@ class FunctionUniverseSugar(Sugar):
     formal_coordinates: tuple = ()
     #: What the body reads that the caller supplies at the call beside its
     #: parameters (``contract_input.ContractInputV1``: a captured cell, a
-    #: default), each a formal of the contract after the parameters (#7757
-    #: step 4).
+    #: default, a module global), each a formal of the contract after the
+    #: parameters (#7757 step 4).
     inputs: tuple = ()
 
     @classmethod

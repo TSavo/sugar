@@ -5,7 +5,9 @@ A captured cell is read when the function is called, from the enclosing
 scope the call sees, so the caller supplies it as it supplies an actual: the
 contract states it as the formal ``cell:<name>`` after the parameters. A
 default the ``def`` statement bound is the formal ``default:<param>``, which
-prove's binder binds to a parameter the call omits. Before this, a lambda or
+prove's binder binds to a parameter the call omits. A module global the body
+reads is the formal ``global:<name>``; the function's own row is decided at
+the module-final value, as a root is called after import. Before this, a lambda or
 local ``def`` reading an enclosing local was refused by name and its row was
 ``undecided`` (#8687).
 """
@@ -77,6 +79,34 @@ def test_a_function_reading_only_its_parameters_states_no_input(tmp_path):
     )
 
     assert row.formals == ["x"]
+
+
+def test_a_def_reading_a_module_global_states_it_as_an_input(tmp_path):
+    row = _rows(
+        tmp_path,
+        "G = 3\n\n\ndef f(x):\n    return G\n",
+        lambda tree: next(iter(tree.functions())),
+    )
+
+    # The body reads ``G`` when ``f`` runs, so the caller supplies it at the
+    # call (``py.global``): the contract names it after the parameters.
+    assert row.formals == ["x", "global:G"]
+    assert len(row.formal_sorts) == 2
+    # The row itself is decided as a root is called, after import: at
+    # ``global:G`` := the module-final value, so the post reads the value
+    # the module's run left, never the free input.
+    assert "global:G" not in repr(row.post.ir_formula)
+
+
+def test_global_inputs_follow_the_defaults_in_name_order(tmp_path):
+    row = _rows(
+        tmp_path,
+        "B = 2\nA = 1\n\n\ndef f(k=0):\n    b = B\n    return A\n",
+        lambda tree: next(iter(tree.functions())),
+    )
+
+    assert row.formals == ["k", "default:k", "global:A", "global:B"]
+    assert len(row.formal_sorts) == 4
 
 
 def test_an_input_is_spelled_by_its_kind_and_name():
