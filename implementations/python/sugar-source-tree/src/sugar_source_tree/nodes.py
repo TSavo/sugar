@@ -4085,16 +4085,18 @@ class SourceUnit:
 
     def module_unthreaded_names(self) -> frozenset:
         """The ``module_threaded_names`` no point of the module body decides
-        for a reader: every one, when a star import may bind any name or the
-        module reaches a dynamic global writer by its binding (``globals``,
-        ``exec``, ..., ``_module_reaches_dynamic_global_writer``); and one a function or class body
-        writes through a ``global`` declaration (it changes whenever that
-        body runs).  Every reader cites these ``undecided`` by name.  A
-        binding the threading does not carry past one statement (a binding
-        in a ``match`` case or a live loop's body that neither the match's
-        route merge nor the loop's publication carries out, a ``try ...
-        except*`` write) is undecided only from that statement on
-        (``_module_uncarried_names``)."""
+        for a reader: every one, when the module reaches a dynamic global
+        writer by its binding (``globals``, ``exec``, ...,
+        ``_module_reaches_dynamic_global_writer``); and one a function or
+        class body writes through a ``global`` declaration (it changes
+        whenever that body runs).  Every reader cites these ``undecided`` by
+        name.  A binding the threading does not carry past one statement (a
+        binding in a ``match`` case or a live loop's body that neither the
+        match's route merge nor the loop's publication carries out, a ``try
+        ... except*`` write) is undecided only from that statement on
+        (``_module_uncarried_names``), and so is every name a star import may
+        bind (``_module_import_binding``): before it, each name keeps the
+        binding its own statements gave it."""
         return self._module_global_rows()[1]
 
     def _module_global_rows(self) -> Tuple[frozenset, frozenset]:
@@ -4129,10 +4131,12 @@ class SourceUnit:
             if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
                 continue
             stack.extend(child for _name, _index, child in node._child_edges())
-        bound, _read = self._module_name_rows()
         reads, writes = self._nested_scope_global_rows()
         threaded = frozenset((keyed | loop_bound) & reads)
-        if "*" in bound or self._module_reaches_dynamic_global_writer():
+        # A star import is a binding statement like any other: the threading
+        # binds what it may bind from that statement on
+        # (``_module_import_binding``), never every name at every site.
+        if self._module_reaches_dynamic_global_writer():
             unthreaded = threaded
         else:
             unthreaded = threaded & writes
@@ -8156,14 +8160,29 @@ def _module_import_binding(statement, scope):
     ``ImportBindingRef``.  A binding the table rows nothing for is
     ``UNDECIDED_MODULE_BINDING`` from here on.  Anywhere else an import
     binds nothing in the threading: its reads resolve through the table at
-    their own coordinate."""
+    their own coordinate.
+
+    A star import (``from m import *``) is a binding statement like any
+    other: from it on, every module name it may bind is
+    ``UNDECIDED_MODULE_BINDING``, and before it each name keeps the binding
+    its own statements gave it.  The names it may bind are the imported
+    module's export list where the lifter reads it; the lifter reads no
+    imported module's ``__all__`` or names, so it may bind any name: every
+    name a reader reads (``_module_threads``).  A statement after it that
+    binds a name decides that name again."""
     from .backend import Leaf, materialize
     from .shadow import ShadowNode
 
     binding = {}
     for alias in statement.names:
         for local in alias.names_bound_here():
-            if local == "*" or not _module_threads(scope, local):
+            if local == "*":
+                record = scope.get(_MODULE_STATEMENT_STATES)
+                if record is not None and record.open:
+                    for name in sorted(record.names):
+                        binding[name] = UNDECIDED_MODULE_BINDING
+                continue
+            if not _module_threads(scope, local):
                 continue
             reference = statement.unit.import_binding_reference(statement, local)
             if reference is None:

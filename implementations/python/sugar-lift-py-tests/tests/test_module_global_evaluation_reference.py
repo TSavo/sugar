@@ -859,11 +859,57 @@ def test_a_deleted_global_read_is_a_name_error_halt() -> None:
     assert halted[0].effect.name == "X"
 
 
-def test_a_star_import_leaves_every_global_undecided() -> None:
-    tree = _source("from os import *\nX = 1\ndef f():\n    return X\n")
-    assert _function(tree).unit.module_unthreaded_names() == frozenset({"X"})
+# A star import is a binding statement like any other: from it on, every name
+# it may bind is undecided; before it, each name keeps what its own
+# statements bound.  The lifter reads no imported module's export list, so
+# ``from opaque import *`` may bind any name.
+STAR_AFTER_A_CALL = (
+    "X = 1\ndef f():\n    return X\nY = f()\nfrom opaque import *\n"
+    "def g():\n    return Y\n"
+)
+
+
+def test_a_star_import_leaves_every_global_undecided_from_it_on() -> None:
+    tree = _source(STAR_AFTER_A_CALL)
+    unit = _function(tree).unit
+    assert unit.module_unthreaded_names() == frozenset()
+    (key,) = _assignment_keys(tree, "X")
+    (call,) = _calls(tree)
+    # ``Y = f()`` runs before the star import: ``f`` reads ``X = 1``'s key.
+    at_call = _returned_at(call, _function(tree))
+    assert isinstance(at_call, EvaluationRef)
+    assert at_call.evaluation == key
+    # After the module body, the star import may have rebound both.
+    assert unit.module_bindings_at(None, {"X"})["X"] is UNDECIDED_MODULE_BINDING
+    assert unit.module_bindings_at(None, {"Y"})["Y"] is UNDECIDED_MODULE_BINDING
     with pytest.raises(SugarNotWritten, match="undecided module binding of `X`"):
         _returned(_function(tree))
+    with pytest.raises(SugarNotWritten, match="undecided module binding of `Y`"):
+        _returned(_function(tree, "g"))
+
+
+@pytest.mark.parametrize(
+    ("half", "claim", "holds"), [("truthful", 1, True), ("lying", 2, False)]
+)
+def test_a_read_before_a_star_import_is_decided_by_the_module_run(
+    half: str, claim: int, holds: bool
+) -> None:
+    # Python runs ``Y = f()`` before ``from opaque import *``: ``f`` returns
+    # ``X = 1``'s value, 1, whatever the star import binds later.  The module
+    # run binds ``Y``'s key to it; the truthful claim holds, the lying one
+    # does not.
+    tree = _source(STAR_AFTER_A_CALL)
+    (key,) = _assignment_keys(tree, "Y")
+    assert (_module_end_value(tree, key) == TermValue(claim)) is holds, half
+
+
+def test_a_name_bound_after_a_star_import_is_decided_again() -> None:
+    tree = _source("from os import *\nX = 1\ndef f():\n    return X\n")
+    assert _function(tree).unit.module_unthreaded_names() == frozenset()
+    (key,) = _assignment_keys(tree, "X")
+    read = _returned(_function(tree))
+    assert isinstance(read, EvaluationRef)
+    assert read.evaluation == key
 
 
 def test_a_dynamic_global_writer_leaves_every_global_undecided() -> None:
