@@ -6,9 +6,14 @@ and carries every face of it: completions and raises.  A bound method call
 actual (``object_value.apply_bound_method``), so a method that raises leaves its
 caller raising.
 
-Each pair differs in exactly one thing and goes through the real solver:
-the truthful source's claim holds (``sat``); the lying source makes the method
-raise, so the assertion after the call is never reached (``unsat``).
+Each pair differs in exactly one thing and goes through the real solver.  The
+lying source makes the method raise, so the assertion after the call is never
+reached (``unsat``).  The truthful source's claim is not decided (``open``):
+every truthful method body reads its arrived ``self`` (``return self.n``) or
+calls a method on it (``self.check()``, ``self.open(...)``), and a receiver
+that reached a frame by binding is read undecided there -- a subclass may
+override the method or the field may be anything (#8151, #8153).  ``open`` is
+the truthful verdict, not a missing ``sat``.
 """
 
 from __future__ import annotations
@@ -52,7 +57,9 @@ def _pair(tmp_path: Path, name: str, truthful: str, lying: str) -> None:
     t = run_source_through_real_solver(tmp_path / f"{name}-truthful", truthful)
     lie = run_source_through_real_solver(tmp_path / f"{name}-lying", lying)
     print(json.dumps({"truthful": t.verdict, "lying": lie.verdict}, sort_keys=True))
-    assert t.verdict == "sat"
+    # The truthful body reads the arrived ``self``: the undecided read or
+    # call (#8153), so its claim is ``open``.  See the module docstring.
+    assert t.verdict == "open"
     assert lie.verdict == "unsat"
 
 
@@ -336,17 +343,25 @@ def test_method_raise_reaches_the_caller_in_process(form: str) -> None:
 # true claim after the call is not decided (``open``): nothing proves the call
 # completes.  A false claim is refuted on every face (``unsat``).  Before this
 # change the call completed alone and the true claim came back ``sat``: a
-# verdict for a program whose call may raise (and, with an undefined receiver,
-# does).  ``open`` is this twin stating "not bridged"; it is not a green
-# truthful half, and it becomes ``sat`` only when something decides the call.
+# verdict for a program whose call may raise.  ``open`` is this twin stating
+# "not bridged"; it is not a green truthful half, and it becomes ``sat`` only
+# when something decides the call.
 #
 # The call's other face is a raise.  A raise is not a refutation, and the
 # solver gives no verdict on it until halted arms are emitted from the
 # reduction (#7766), so the raise face is shown at the reduction level below
 # and no ``unsat`` is asserted for it.
+#
+# The receiver is a name only a star import the lifter cannot read may bind:
+# a free operand nothing decides, the receiver this rule is about.  A name the
+# module binds nowhere is no free operand: its read halts with ``NameError``
+# (``NameSugar``, #7854) before the call, so no assertion is reached.
 # ---------------------------------------------------------------------------
 
 _UNKNOWN_RECEIVER = """\
+from unread_module import *
+
+
 def test_lookup():
     registry = undefined_registry
     value = registry.lookup(3)
