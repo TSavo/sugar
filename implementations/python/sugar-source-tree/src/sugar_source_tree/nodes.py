@@ -18145,7 +18145,27 @@ class For(Statement):
                 if v is None:
                     return None
                 ints.append(v)
-            return [For._int_constant(self, i) for i in range(*ints)]
+            if not 1 <= len(ints) <= 3 or (len(ints) == 3 and ints[2] == 0):
+                # ``range()``, ``range(1, 2, 3, 4)`` and a zero step raise:
+                # an effect, not a concrete iterable.
+                return None
+            items = range(*ints)
+            try:
+                count = len(items)
+            except OverflowError:  # more items than an index holds
+                return None
+            if count > For._UNROLL_FUEL:
+                # Past the unroll budget the live loop stands: decided before
+                # any item is minted, never after minting them all.
+                return None
+            # Each item is the int the range yields, no source occurrence:
+            # minting registered it, so it answers where it is minted
+            # (``_minted_binding_reference``), whether or not the unroll
+            # that asked goes on (a refused filter or key, a target no
+            # element reads).  A read that reaches it builds it again.
+            return [
+                _minted_binding_reference(For._int_constant(self, i)) for i in items
+            ]
         return None
 
     def _concrete_int(self, arg: "Expression") -> "Optional[int]":
