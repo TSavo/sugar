@@ -303,9 +303,12 @@ class ContainerMutationStatementSugar(Sugar):
     # (``PathAfterCall``, ``BuiltinContainerProjection``), never the call
     # evaluated again.
     evaluation: str | None = None
-    # ``r += x``: ``(key, index)``, the in-place result ``evaluated[index]``
-    # bound under ``key``, the one every later read of ``r`` reads.
-    result_evaluation: tuple | None = None
+    # ``(key, index)`` per name the statement writes: ``evaluated[index]``
+    # bound under ``key`` -- ``r += x``'s in-place result, the one every
+    # later read of ``r`` reads, first, then every other name's state after
+    # the call, bare statement or assigned (``ContainerMutationStatement.
+    # written_keys``), which a live loop carries to its next item.
+    result_evaluations: tuple = ()
     # ``d.setdefault(k, v).append(x)``: ``(key, index)`` for each later
     # call's pair ``evaluated[index]``, bound under ``key`` as it completes.
     pair_evaluations: tuple = ()
@@ -368,18 +371,16 @@ class ContainerMutationStatementSugar(Sugar):
         # post-state, every holder's, a later call on the call's value
         # (``PathAfterCall``, ``BuiltinContainerProjection``) -- so it is
         # bound under its key as soon as it completes (``as_completed``).
-        # ``r += x``'s in-place result is the write of ``r``, a target: bound
-        # once every value has completed.
+        # ``r += x``'s in-place result is the write of ``r``, a target, and
+        # every other name's state after the call is that name's write: each
+        # bound once every value has completed.
         pairs = ((self.evaluation, 0),) if self.evaluation else ()
         pairs = (*pairs, *self.pair_evaluations)
-        evaluations = ()
-        if self.result_evaluation is not None:
-            evaluations = (self.result_evaluation,)
         return evaluate_assignment_values(
             self.evaluated,
             ctx,
             tail=record,
-            evaluations=evaluations,
+            evaluations=tuple(self.result_evaluations),
             as_completed=pairs,
         )
 

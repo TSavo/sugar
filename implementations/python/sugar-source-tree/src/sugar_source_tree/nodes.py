@@ -7177,7 +7177,7 @@ def _loop_header_start(loop, name: str, scope):
     return UnboundBinding(name=name, cause=loop.fragment)
 
 
-def _loop_header_bindings(loop, names, scope) -> dict:
+def _loop_header_bindings(loop, names, scope, kept=frozenset()) -> dict:
     """The body scope's binding of each name ``loop`` carries into its body
     (and into its ``else`` suite, and a ``while``'s test): a reference to the
     loop header's evaluation of it (temporal choice 1, #7661), never the bare
@@ -7195,8 +7195,20 @@ def _loop_header_bindings(loop, names, scope) -> dict:
     nothing binds the header key at reduce (a loop reduced as its recurrence,
     not per item: an outward face's statement), the read is refused by name,
     naming the key (``EvaluationRefSugar``); it never reads the name.
+
+    ``kept`` are the names no item rebinds: the loop writes each only where
+    a mutation statement changes the object it is bound to
+    (``ContainerMutationStatement.written_keys``), so on every item it
+    denotes the object it denoted before the loop.  Its header reads the
+    value the item begins with and denotes that object as earlier items may
+    have changed it (``of``, ``container_mutation.object_across_items``): a
+    mutation through one name in the body changes every other name bound to
+    it, as before the loop, and no shape is decided from the value it had
+    before the loop.
     """
     import functools
+
+    from .container_mutation import _read_of, object_across_items
 
     headers = {}
     for name in sorted(names):
@@ -7204,7 +7216,18 @@ def _loop_header_bindings(loop, names, scope) -> dict:
         if start is None:
             continue
         evaluation = _loop_header_evaluation_key(loop, name, scope)
-        reference = _evaluation_ref(loop, loop.span, evaluation, name)
+        before = (
+            _read_of(start)
+            if name in kept and not isinstance(start, UnboundBinding)
+            else None
+        )
+        reference = _evaluation_ref(
+            loop,
+            loop.span,
+            evaluation,
+            name,
+            of=None if before is None else object_across_items(loop, name, before),
+        )
         if isinstance(start, BindingEntryV1):
             headers[name] = replace(start, state=reference, sealed_state=None)
         elif isinstance(start, UnboundBinding):
@@ -15976,27 +15999,58 @@ class For(Statement):
                 )
                 bound = target_names | For._stmts_bound_names(self.body)
                 else_bound = bound | For._stmts_bound_names(self.orelse)
-                bs = (
-                    {k: v for k, v in scope.items() if k not in bound}
-                    if bound
-                    else scope
-                )
+                # The names an item rebinds (an assignment, a walrus, a
+                # nested loop's target, this loop's own): every other name
+                # the loop writes, it writes only through a mutation of the
+                # object it denotes (``_loop_header_bindings``' ``kept``).
+                rebound = frozenset(bound)
                 targets = _loop_target_bindings(self, target_names, scope)
-                body_scope = {
-                    **bs,
-                    **_loop_header_bindings(self, bound - target_names, scope),
-                    **targets,
-                }
-                else_scope = {
-                    **bs,
-                    **_loop_header_bindings(self, else_bound - target_names, scope),
-                    **targets,
-                }
+                while True:
+                    bs = (
+                        {k: v for k, v in scope.items() if k not in bound}
+                        if bound
+                        else scope
+                    )
+                    kept = (bound | else_bound) - rebound
+                    body_scope = {
+                        **bs,
+                        **_loop_header_bindings(
+                            self, bound - target_names, scope, kept
+                        ),
+                        **targets,
+                    }
+                    else_scope = {
+                        **bs,
+                        **_loop_header_bindings(
+                            self, else_bound - target_names, scope, kept
+                        ),
+                        **targets,
+                    }
+                    suites = {
+                        f: self._substitute_body(getattr(self, f), field_scope)
+                        for f, field_scope in (
+                            ("body", body_scope),
+                            ("orelse", else_scope),
+                        )
+                    }
+                    # A mutation statement writes every name bound to the
+                    # object it changes (``ContainerMutationStatement.
+                    # written_keys``), which the source does not spell as a
+                    # write (``acc.append(x)``): a name the substituted body
+                    # writes is carried too, read through the header, so the
+                    # next item begins with the object as this one left it.
+                    written = For._stmts_bound_names(suites["body"][0]) - bound
+                    else_written = (
+                        For._stmts_bound_names(suites["orelse"][0]) - else_bound
+                    )
+                    if not written and not else_written:
+                        break
+                    bound = bound | written
+                    else_bound = else_bound | bound | else_written
                 changed = {}
                 if iter_changed:
                     changed["iter"] = new_iter
-                for f, field_scope in (("body", body_scope), ("orelse", else_scope)):
-                    new, d = self._substitute_body(getattr(self, f), field_scope)
+                for f, (new, d) in suites.items():
                     if d:
                         changed[f] = new
                 if not changed:
@@ -16028,12 +16082,12 @@ class For(Statement):
                         bind(t)
                 elif n.kind in ("AugAssign", "AnnAssign", "NamedExpr"):
                     bind(n.target)
-                elif n.kind == "ContainerMutationStatement" and isinstance(
-                    getattr(n, "rebinds", None), str
-                ):
-                    # ``x += e`` or ``x = x.m()`` substituted: the one
-                    # mutation door writes ``x`` to the call's result.
-                    names.add(n.rebinds)
+                elif n.kind == "ContainerMutationStatement":
+                    # The one mutation door, substituted: ``x += e`` and ``x
+                    # = r.m()`` write ``x``, and every statement of the door,
+                    # bare (``r.append(e)``) or assigned, writes each name
+                    # bound to the object it changes (``written_keys``).
+                    names.update(name for name, _key in n.written_keys())
                 elif n.kind in ("For", "AsyncFor"):
                     # A nested loop's target rebinds its names on every item:
                     # a loop around it carries them like any other write.
@@ -16632,39 +16686,62 @@ class While(Statement):
         # through its key (``_scope_after``), never the name as it stood
         # before the test.  A name the test's walrus writes is carried too:
         # each item's test reads what the previous item handed on.
-        bound = For._stmts_bound_names((self.test, *self.body))
-        else_bound = bound | For._stmts_bound_names(self.orelse)
-        bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
-        header_scope = {**bs, **_loop_header_bindings(self, bound, scope)}
-        changed = {}
-        new_test, d = self._substitute_field(self.test, header_scope)
-        if d:
-            changed["test"] = new_test
-        # An object the test's calls changed is read after them too
-        # (``container_mutation.thread_header``): the test runs again before
-        # every item, so its calls take the loop's rule.
         from .container_mutation import thread_header
 
-        body_scope = thread_header(
-            new_test,
-            header_scope,
-            _scope_after(header_scope, self.test, new_test),
-            repeated=True,
-            operated=True,
-        )
-        else_header = {**bs, **_loop_header_bindings(self, else_bound, scope)}
-        else_scope = thread_header(
-            new_test,
-            else_header,
-            _scope_after(else_header, self.test, new_test),
-            repeated=True,
-            operated=True,
-        )
-        for f, field_scope in (
-            ("body", body_scope),
-            ("orelse", else_scope),
-        ):
-            new, d = self._substitute_body(getattr(self, f), field_scope)
+        bound = For._stmts_bound_names((self.test, *self.body))
+        else_bound = bound | For._stmts_bound_names(self.orelse)
+        # The names an item rebinds; every other name the loop writes, it
+        # writes only through a mutation of the object it denotes
+        # (``_loop_header_bindings``' ``kept``).
+        rebound = frozenset(bound)
+        while True:
+            bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
+            kept = (bound | else_bound) - rebound
+            header_scope = {**bs, **_loop_header_bindings(self, bound, scope, kept)}
+            changed = {}
+            new_test, d = self._substitute_field(self.test, header_scope)
+            if d:
+                changed["test"] = new_test
+            # An object the test's calls changed is read after them too
+            # (``container_mutation.thread_header``): the test runs again
+            # before every item, so its calls take the loop's rule.
+            body_scope = thread_header(
+                new_test,
+                header_scope,
+                _scope_after(header_scope, self.test, new_test),
+                repeated=True,
+                operated=True,
+            )
+            else_header = {
+                **bs,
+                **_loop_header_bindings(self, else_bound, scope, kept),
+            }
+            else_scope = thread_header(
+                new_test,
+                else_header,
+                _scope_after(else_header, self.test, new_test),
+                repeated=True,
+                operated=True,
+            )
+            suites = {
+                f: self._substitute_body(getattr(self, f), field_scope)
+                for f, field_scope in (
+                    ("body", body_scope),
+                    ("orelse", else_scope),
+                )
+            }
+            # A mutation statement writes every name bound to the object it
+            # changes (``ContainerMutationStatement.written_keys``), which
+            # the source does not spell as a write: a name the substituted
+            # body writes is carried too, as a live ``for`` carries it
+            # (``For.substitute``).
+            written = For._stmts_bound_names(suites["body"][0]) - bound
+            else_written = For._stmts_bound_names(suites["orelse"][0]) - else_bound
+            if not written and not else_written:
+                break
+            bound = bound | written
+            else_bound = else_bound | bound | else_written
+        for f, (new, d) in suites.items():
             if d:
                 changed[f] = new
         return self if not changed else rewrite(self, **changed)
@@ -24407,23 +24484,25 @@ class ContainerMutationStatement(Statement):
     v).append(x)``) are ``(key, index)``: a later call's pair
     ``evaluated[index]``, bound under ``key``.  ``rebinds`` (``r += x``,
     ``x = r.m()``, any statement of the door that assigns a name) is the
-    name the statement writes to the result ``evaluated[rebinds_index]``,
-    under ``rebinds_evaluation`` (``container_mutation._name_write``): the
-    write every later read of the name reads and a live loop carries
-    (``written_keys``)."""
+    name the statement assigns.  ``writes`` are ``(name, index, key)``:
+    every name the statement writes -- the name it assigns, to its result
+    (``container_mutation._name_write``), and, bare or assigned, every other
+    name it binds, to that name's state after the call -- the value
+    ``evaluated[index]`` bound under ``key`` (``container_mutation.
+    _statement``): what a live loop carries (``written_keys``)."""
 
     names: Tuple[str, ...]
     states: Tuple[Expression, ...]
     evaluated: Tuple[Expression, ...]
     _child_fields = ("states", "evaluated")
 
+    def _writes(self) -> tuple:
+        writes = getattr(self, "writes", None)
+        return tuple(writes) if isinstance(writes, (tuple, list)) else ()
+
     def written_keys(self) -> tuple:
-        """The name the statement assigns, under its key of it."""
-        name = getattr(self, "rebinds", None)
-        key = getattr(self, "rebinds_evaluation", None)
-        if isinstance(name, str) and isinstance(key, str):
-            return ((name, key),)
-        return ()
+        """Every name the statement writes, under its key of it."""
+        return tuple((name, key) for name, _index, key in self._writes())
 
     def substitute(self, scope):
         del scope
@@ -24460,17 +24539,10 @@ class ContainerMutationStatement(Statement):
         evaluation = getattr(self, "pair_evaluation", None)
         if not isinstance(evaluation, str):
             evaluation = getattr(self, "evaluation", None)
-        index = getattr(self, "rebinds_index", None)
-        key = getattr(self, "rebinds_evaluation", None)
-        result_evaluation = None
-        if (
-            isinstance(getattr(self, "rebinds", None), str)
-            and isinstance(index, int)
-            and isinstance(key, str)
-        ):
-            # The name the statement assigns: its result, bound under the
-            # statement's key of the name once every value has completed.
-            result_evaluation = (key, index)
+        # Every name the statement writes (the name it assigns first): its
+        # value, bound under the statement's key of the name once every
+        # value has completed.
+        result_evaluations = tuple((key, index) for _name, index, key in self._writes())
         # ``d.setdefault(k, v).append(x)``: the later operation's pair, bound
         # under its own key after the first's.
         pairs = getattr(self, "pair_evaluations", None)
@@ -24478,7 +24550,7 @@ class ContainerMutationStatement(Statement):
             evaluated=evaluated,
             site=self.fragment,
             evaluation=evaluation if isinstance(evaluation, str) else None,
-            result_evaluation=result_evaluation,
+            result_evaluations=result_evaluations,
             pair_evaluations=(
                 tuple((key, index) for key, index in pairs)
                 if isinstance(pairs, (tuple, list))

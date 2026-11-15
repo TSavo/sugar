@@ -1231,14 +1231,14 @@ def _aug(evaluation: str) -> ContainerMutationStatementSugar:
     statement = _function(tree).sugar().statements[0]
     assert isinstance(statement, ContainerMutationStatementSugar)
     call, *rest = statement.evaluated
-    _key, index = statement.result_evaluation
+    _key, index = statement.result_evaluations[0]
     return replace(
         statement,
         evaluated=(
             replace(call, receiver=_Ground(TermValue(3)), args=(_Ground(TermValue(2)),)),
             *rest,
         ),
-        result_evaluation=(evaluation, index),
+        result_evaluations=((evaluation, index),),
     )
 
 
