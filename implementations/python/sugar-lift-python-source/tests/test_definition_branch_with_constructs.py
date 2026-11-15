@@ -15,7 +15,6 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
 from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithReducedManagerSugar
 from sugar_source_tree.nodes import With
 from sugar_source_tree.roll_call import discharge
@@ -53,7 +52,9 @@ def test_a_reachable_branch_with_is_constructed_by_the_discharge(tmp_path):
     with_node = next(n for n in source_file.nodes() if isinstance(n, With))
     line = with_node.line_col_span().start_line
     assert [e for e in report.present if e.kind == "With" and e.start_line == line]
-    assert type(with_node.sugar()) is GeneratorWithSugar
+    # Verdict moved (#7757 step 6): the head's call is its edge, so the
+    # With is the reduced manager, not the generator run to its yield.
+    assert type(with_node.sugar()) is WithReducedManagerSugar
 
 
 def test_a_branch_with_over_an_unread_manager_is_constructed(tmp_path):

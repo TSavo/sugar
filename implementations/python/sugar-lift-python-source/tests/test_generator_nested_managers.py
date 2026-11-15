@@ -1,4 +1,4 @@
-"""Nested ``@contextmanager`` generators build through the frame the call keeps.
+"""Nested ``@contextmanager`` generators: the call at the head is its edge.
 
 Shape:
 
@@ -12,17 +12,20 @@ Shape:
         with inner():
             yield 'outer'
 
-A same-module ``@contextmanager`` call keeps its own frame
-(``call_applies_own_frame``, #7757): the frame is seated at the head and the
-With is built as ``GeneratorWithSugar`` over it, the nested ``with inner()``
-being one more statement of that frame.
+A same-module ``@contextmanager`` call has its frame seated by the callee's
+name (``call_applies_own_frame``, #7757), and the call is the definition's
+coordinate and edge (#7757 step 6): the With enters the value the head
+reduced to (``WithReducedManagerSugar``), never ``outer``'s frame run to its
+first yield.  Verdict moved: before, the With was ``GeneratorWithSugar``.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+    WithReducedManagerSugar,
+)
 from sugar_source_tree.nodes import With
 
 import test_contextlib_suppress_source_exit_faces as opener
@@ -59,5 +62,5 @@ def _consumer_with(tmp_path: Path) -> With:
     )
 
 
-def test_outer_generator_manager_builds_over_its_own_frame(tmp_path: Path) -> None:
-    assert type(_consumer_with(tmp_path).sugar()) is GeneratorWithSugar
+def test_outer_generator_manager_head_is_its_edge(tmp_path: Path) -> None:
+    assert type(_consumer_with(tmp_path).sugar()) is WithReducedManagerSugar

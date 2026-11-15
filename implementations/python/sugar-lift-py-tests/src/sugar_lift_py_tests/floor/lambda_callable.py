@@ -174,7 +174,6 @@ class LambdaCallable(FloorValue):
         ``arguments``, the call's actuals as operation receivers."""
         from sugar_lift_py_tests.ir import ctor, str_const
         from sugar_lift_py_tests.sugar.call_site_sugar import (
-            bind_source_frame_call,
             enter_source_frame,
             with_captured_values,
         )
@@ -228,24 +227,13 @@ class LambdaCallable(FloorValue):
         )
         if module_halt is not None:
             return module_halt
-        if _applies_its_own_frame(frame):
-            return bind_source_frame_call(
-                "py.call",
-                tuple(positional),
-                keywords,
-                frame=frame,
-                ctx=ctx,
-                owner=owner,
-                blame=operation.site,
-                term=term,
-                closure=self.closure,
-                defaults=self.defaults,
-                call_occurrence=operation.call_occurrence,
-            ).producer_outcome(ctx)
         # The one binder binds the call (a call that does not fit the
         # signature is refused by name there), and each formal the call
         # omits reads the default its ``def`` statement or lambda expression
-        # bound: what the edge supplies as ``py.default``.  No body is bound.
+        # bound: what the edge supplies as ``py.default``.  No body is bound,
+        # a generator function's and an ``async def``'s no more than any
+        # other's: what its call returns is what its contract states, joined
+        # at prove (#7757 step 6).
         from sugar_lift_py_tests.floor.object_value import bind_call
 
         bound = bind_call(
@@ -432,20 +420,6 @@ def definition_edge_call(
 
 # The namespace a join symbol is spelled under (``SourceUnit.definition_symbol``).
 _PYTHON_NAMESPACE = "python:"
-
-
-def _applies_its_own_frame(frame) -> bool:
-    """A generator function's or an ``async def``'s frame: its call builds a
-    generator or a coroutine, which the one application of a frame still
-    builds (``CallSiteSugar._apply_bound``, ``producer_outcome``); steps 5
-    and 6 switch only the definitions whose call runs their body (a
-    function, a method, a class) to the edge (``definition_edge_call``)."""
-    from sugar_source_tree.nodes import AsyncFunctionDef
-
-    return (
-        getattr(frame, "generator_steps", None) is not None
-        or isinstance(getattr(frame, "owner", None), AsyncFunctionDef)
-    )
 
 
 def _refuse(*, owner, blame, observed, requested, fix):

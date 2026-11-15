@@ -99,11 +99,12 @@ def _off_population_unanswered_call(sugar):
     return UnknownCalleeCallV1(sugar.spelled_target)
 
 
-def _unknown_callee_call(sugar, source_call_frame, callsite):
+def _unknown_callee_call(sugar, callsite):
     """The may-raise testimony for a bodiless call nothing answered.
 
-    Reached once every answer has declined: no source frame (so no body the
-    lifter applies) and no builtin law answers the call
+    Reached once every answer has declined: no source frame (a seated frame
+    is the definition's edge, ``CallSiteSugar._definition_edge``) and no
+    builtin law answers the call
     (``_builtin_law_answers``).  Whatever the name is bound to -- nothing, a
     value (``len = 5; len(x)``), a class whose constructor frame was not
     built, any name a star import may rebind (``from m import *; int('x')``),
@@ -111,8 +112,6 @@ def _unknown_callee_call(sugar, source_call_frame, callsite):
     -- what runs was not looked at, so the call is the one unanswered
     citation, two-faced and owed, never a completion (#7757: a raise is never
     a completion; a halt is never dropped)."""
-    if source_call_frame is not None:
-        return None
     if _builtin_law_answers(sugar, callsite):
         return None
     from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
@@ -139,7 +138,7 @@ def _builtin_law_answers(sugar, callsite) -> bool:
     )
 
 
-def _builtin_exception_construction(sugar, callsite, ctx):
+def _builtin_exception_construction(sugar, callsite):
     """A bodiless call of a builtin exception class (``callsite.
     builtin_exception_class``, by the callee's binding): its construction.
 
@@ -182,9 +181,9 @@ def _builtin_exception_construction(sugar, callsite, ctx):
         )
     from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
-    return replace(
-        callsite, constructed_args=TupleValue(tuple(callsite.arg_values))
-    ).producer_outcome(ctx)
+    return ExitSet.completed(
+        replace(callsite, constructed_args=TupleValue(tuple(callsite.arg_values)))
+    )
 
 
 def _builtin_exception_keyword_call(sugar, callsite):
@@ -841,160 +840,157 @@ class CallSiteSugar(ConstructedTermSugar):
                     fix="retain the authenticated frame at the exact call coordinate or keep loud",
                 )
         if source_call_frame is not None:
-            ctx, module_halt = enter_source_frame(
-                source_call_frame,
-                ctx,
-                owner="CallSiteSugar.desugar",
-                blame=self.site,
-                covered=frozenset(name for name, _cid, _value in captured_values),
+            return self._definition_edge(
+                source_call_frame, positional, kw_values, captured_values, term, ctx
             )
-            ctx = self._with_captured_values(ctx, source_call_frame, captured_values)
-            if module_halt is not None:
-                return module_halt
-        # The one binder (``object_value.bind_call``): every call form binds
-        # its actuals there, and ``_apply_bound`` applies the body.  The frame
-        # a call by name carries is a ``def``'s (``Call._construct_call_sugar``
-        # seats one only for a function definition): a class call is the call
-        # of the class statement's value
-        # (``ClassDefinitionValue.callable_application_with``), never this
-        # frame, so the body here is never a class constructor's.
-        body = (
-            None
-            if source_call_frame is None
-            else source_frame_body(
-                source_call_frame, owner="CallSiteSugar.desugar", blame=self.site
-            )
-        )
+        # The one binder (``object_value.bind_call``): a call with no frame
+        # binds bodyless.  No call by name applies a body (#7757 step 6): a
+        # seated frame is a ``def``'s, and its call is its coordinate and
+        # edge (``_definition_edge``).
         callsite = bind_source_frame_call(
             self.target_name,
             positional,
             kw_values,
-            frame=source_call_frame,
+            frame=None,
             ctx=ctx,
             owner="CallSiteSugar.desugar",
             blame=self.site,
             term=term,
-            body=body,
             defaults=(),
             call_occurrence=self.call_occurrence,
             authenticated_target_symbol=self.import_target_symbol,
             exception_type_coordinate=self.exception_type_coordinate,
             exception_type_mro=self.exception_type_mro,
-            builtin_exception_class=self._applied_builtin_exception_class(
-                source_call_frame
-            ),
+            builtin_exception_class=self._applied_builtin_exception_class(None),
             python_type_coordinate=self._applied_builtin_type_of(
-                source_call_frame, positional, kw_values, term
+                None, positional, kw_values, term
             ),
             language_callee=self.language_callee,
         )
-        return self._apply_bound(callsite, source_call_frame, ctx)
+        return self._apply_bound(callsite)
 
-    def _apply_bound(self, callsite, source_call_frame, ctx):
-        """Apply the call ``callsite`` the one binder bound into
-        ``source_call_frame`` (None for a frameless call): a generator's
-        construction, a pending native operation's discharge, an unanswered
-        callee's faces, or the body's application
-        (``CallSiteValue.producer_outcome``)."""
-        bound_source_actuals = callsite.bound_source_actuals
-        if (
-            source_call_frame is not None
-            and source_call_frame.generator_steps is not None
-        ):
-            from sugar_lift_py_tests.generator_construction import (
-                FormalFloorBindingV1,
-                GeneratorConstructionV1,
+    def _definition_edge(
+        self, frame, positional, kw_values, captured_values, term, ctx
+    ):
+        """The call of the ``def`` whose frame ``Call._construct_sugar``
+        seated by the callee's name -- a generator function, an ``async
+        def``, a ``contextmanager`` generator -- as its coordinate and edge
+        (#7757 step 6, the owner's ruling of 2026-11-15, "Edge, join at
+        prove"), through the one edge every call of a same-file definition
+        stands as (``lambda_callable.definition_edge_call``).
+
+        The frame is entered and the call bound by the one binder
+        (``object_value.bind_call``, no body) only to read what the edge
+        supplies; a call that does not fit the signature is refused by name
+        there.  The body is never applied: what the call returns (a
+        generator, a coroutine, a manager) and what iterating, awaiting or
+        entering it does are what the callee's contract states, joined at
+        prove, and otherwise undecided and owed."""
+        from sugar_lift_py_tests.floor.lambda_callable import definition_edge_call
+        from sugar_lift_py_tests.floor.object_value import bind_call
+
+        caller_ctx = ctx
+        ctx, module_halt = enter_source_frame(
+            frame,
+            ctx,
+            owner="CallSiteSugar.desugar",
+            blame=self.site,
+            covered=frozenset(name for name, _cid, _value in captured_values),
+        )
+        ctx = self._with_captured_values(ctx, frame, captured_values)
+        if module_halt is not None:
+            return module_halt
+        bound = bind_call(
+            self.target_name,
+            positional,
+            kw_values,
+            frame=frame,
+            parameters=frame.parameters,
+            body=None,
+            frame_cid=frame.frame_cid,
+            formal_coordinate_cids=tuple(
+                item.cid for item in frame.formal_coordinates
+            ),
+            ctx=ctx,
+            owner="CallSiteSugar.desugar",
+            blame=self.site,
+            refuse=_refuse_loud,
+            term=term,
+        )
+        return definition_edge_call(
+            symbol_definition=frame.owner,
+            signature=frame.owner,
+            parameters=tuple(frame.parameters),
+            packed=any(
+                kind in ("vararg", "kwarg")
+                for kind in getattr(frame, "parameter_kinds", ())
+            ),
+            positional=positional,
+            keywords=kw_values,
+            captured=captured_values,
+            actuals=tuple(bound.arg_values),
+            site=self.site,
+            call_occurrence=self.call_occurrence,
+            caller_ctx=caller_ctx,
+            fallback_target=self.target_name,
+        )
+
+    def _apply_bound(self, callsite):
+        """The bodiless call ``callsite`` the one binder bound: a builtin
+        exception's construction, a law the lifter models, or an unanswered
+        callee's faces; else the call itself, completed."""
+        if callsite.builtin_exception_class is not None:
+            return _builtin_exception_construction(self, callsite)
+        unprojected = _import_bound_unanswered_call(self)
+        if unprojected is None:
+            unprojected = _off_population_unanswered_call(self)
+        if unprojected is None and self.contract_resolution_gap is None:
+            from sugar_lift_py_tests.source_call_resolution import (
+                builtin_dunder_call,
             )
 
-            # Binder boundary: pair each formal coordinate with the exact
-            # Floor actual bind_actuals already produced (object identity).
-            # Guard temporal installs these Floors; it never rebuilds from
-            # runtime_entries Nodes via sugar()/desugar().
-            formal_floor_bindings = tuple(
-                FormalFloorBindingV1(coordinate.cid, floor)
-                for coordinate, floor in zip(
-                    source_call_frame.formal_coordinates,
-                    callsite.arg_values,
-                    strict=True,
-                )
-            ) + tuple(
-                FormalFloorBindingV1(
-                    pair.coordinate.cid,
-                    pair.actual,
-                    coordinate=pair.coordinate,
-                )
-                for pair in bound_source_actuals.projected_pairs
+            unprojected = builtin_dunder_call(
+                self.language_callee,
+                callsite.arg_values,
+                getattr(callsite, "keyword_names", ()) or (),
             )
-            from sugar_lift_py_tests.occurrence import site_coordinate_cid
-
-            return ExitSet.completed(
-                GeneratorConstructionV1.allocate(
-                    allocation_coordinate=site_coordinate_cid(self.site),
-                    frame_coordinate=source_call_frame.frame_cid,
-                    binding_state=source_call_frame.runtime_entries,
-                    steps=source_call_frame.generator_steps,
-                    formal_floor_bindings=formal_floor_bindings,
-                    reduction_context=ctx,
-                    source_frame=source_call_frame,
-                )
-            )
-        # The body is applied by ``producer_outcome`` alone (#7757): a frame's
-        # deferred native operation discharges there against the bound
-        # actuals, and a call with no frame applies no body -- the callee's
-        # universe (``formal_function_sugar``) is never reduced at the call.
-        if callsite.body is None:
-            if callsite.builtin_exception_class is not None:
-                return _builtin_exception_construction(self, callsite, ctx)
-            unprojected = _import_bound_unanswered_call(self)
             if unprojected is None:
-                unprojected = _off_population_unanswered_call(self)
-            if unprojected is None and self.contract_resolution_gap is None:
                 from sugar_lift_py_tests.source_call_resolution import (
-                    builtin_dunder_call,
+                    builtin_list_construct,
                 )
 
-                unprojected = builtin_dunder_call(
+                constructed = builtin_list_construct(
                     self.language_callee,
                     callsite.arg_values,
                     getattr(callsite, "keyword_names", ()) or (),
-                )
-                if unprojected is None:
-                    from sugar_lift_py_tests.source_call_resolution import (
-                        builtin_list_construct,
-                    )
-
-                    constructed = builtin_list_construct(
-                        self.language_callee,
-                        callsite.arg_values,
-                        getattr(callsite, "keyword_names", ()) or (),
-                        site=self.site,
-                    )
-                    if constructed is not None:
-                        return constructed
-            if unprojected is not None:
-                # What CPython's own source decides: an import-bound stdlib
-                # call, or a builtin over ground operands (``int('3')`` is
-                # ``3``, ``int('x')`` the one ``ValueError`` halt).  Anything
-                # else stays the one unanswered call.
-                from sugar_lift_py_tests.source_call_resolution import (
-                    cpython_cited_fold,
-                )
-
-                folded = cpython_cited_fold(
-                    unprojected,
-                    callsite.arg_values,
-                    getattr(callsite, "keyword_names", ()) or (),
                     site=self.site,
-                    language_callee=self.language_callee,
-                    callsite=callsite,
                 )
-                if folded is not None:
-                    return folded
-            if unprojected is None:
-                unprojected = _unknown_callee_call(self, source_call_frame, callsite)
-            if unprojected is not None:
-                return unprojected.faces(callsite, self.site)
-        return callsite.producer_outcome(ctx)
+                if constructed is not None:
+                    return constructed
+        if unprojected is not None:
+            # What CPython's own source decides: an import-bound stdlib
+            # call, or a builtin over ground operands (``int('3')`` is
+            # ``3``, ``int('x')`` the one ``ValueError`` halt).  Anything
+            # else stays the one unanswered call.
+            from sugar_lift_py_tests.source_call_resolution import (
+                cpython_cited_fold,
+            )
+
+            folded = cpython_cited_fold(
+                unprojected,
+                callsite.arg_values,
+                getattr(callsite, "keyword_names", ()) or (),
+                site=self.site,
+                language_callee=self.language_callee,
+                callsite=callsite,
+            )
+            if folded is not None:
+                return folded
+        if unprojected is None:
+            unprojected = _unknown_callee_call(self, callsite)
+        if unprojected is not None:
+            return unprojected.faces(callsite, self.site)
+        return ExitSet.completed(callsite)
 
 
 def read_captured_values(captured, ctx, *, site) -> tuple:

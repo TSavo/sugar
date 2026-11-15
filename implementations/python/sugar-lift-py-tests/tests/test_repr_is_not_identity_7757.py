@@ -8,18 +8,13 @@ whose spelling and identity disagree, so the seat must follow identity.
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.effect import RaiseEffect
-from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
-from sugar_lift_py_tests.generator_manager_exit import _is_stop_iteration
 from sugar_lift_py_tests.ir import (
     PrimitiveSort,
     _Lambda,
     _intern_term,
     atomic,
-    ctor,
     forall,
     num,
-    str_const,
     term_intern_scope,
 )
 from sugar_lift_py_tests.proofir.sorts import IntSort, Sort
@@ -81,27 +76,3 @@ def test_proofir_sort_hash_follows_its_equality_not_its_spelling() -> None:
     assert loud == plain
     assert hash(loud) == hash(plain)
     assert len({loud, plain}) == 1
-
-
-def _raise_with_ancestry(*ancestry):
-    return RaiseEffect.for_builtin(
-        "ValueError",
-        blame="repr-is-not-identity",
-        exception_type_mro=tuple(ancestry),
-    )
-
-
-def _class_identity(module: str, name: str):
-    return ctor("python:exception_type_identity", [str_const(module), str_const(name)])
-
-
-def test_a_class_named_like_stop_iteration_is_not_stop_iteration() -> None:
-    lookalike = _class_identity("user.module", "NotStopIteration")
-    assert "StopIteration" in repr(lookalike)
-    assert not _is_stop_iteration(_raise_with_ancestry(lookalike))
-
-
-def test_a_subclass_of_stop_iteration_converts_by_its_ancestry() -> None:
-    stop_iteration, _ = _builtin_exception_identity("StopIteration")
-    subclass = _class_identity("source-class", "Halt")
-    assert _is_stop_iteration(_raise_with_ancestry(subclass, stop_iteration))

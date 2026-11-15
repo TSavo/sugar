@@ -1574,13 +1574,12 @@ def method_edge_call(
     The call is bound by the one method door (``bind_method_call``: the
     implicit first actual its descriptor kind binds, the defaults its class
     carries) only to read what the edge supplies; the implicit actual is the
-    edge's first positional actual.  A generator method or an ``async def``
-    builds its generator or coroutine through its frame's own application
-    (``lambda_callable._applies_its_own_frame``), as a function's does."""
-    from sugar_lift_py_tests.floor.lambda_callable import (
-        _applies_its_own_frame,
-        definition_edge_call,
-    )
+    edge's first positional actual.  A generator method and an ``async def``
+    method are calls like any other: what the call returns (a generator, a
+    coroutine) is what the method's contract states, never its body here.
+    A method with no source frame names no definition to join: the one
+    unanswered call of its name, owed."""
+    from sugar_lift_py_tests.floor.lambda_callable import definition_edge_call
 
     bound = bind_method_call(
         receiver,
@@ -1595,8 +1594,8 @@ def method_edge_call(
         required_frame=required_frame,
     )
     frame = required_frame or method.source_call_frame
-    if frame is None or _applies_its_own_frame(frame):
-        return bound.producer_outcome(ctx)
+    if frame is None:
+        return _frameless_method_call(bound, blame)
     implicit = implicit_arguments(
         receiver,
         method,
@@ -1623,6 +1622,42 @@ def method_edge_call(
         caller_ctx=ctx,
         fallback_target=bound.target_name,
     )
+
+
+def _frameless_method_call(bound, site):
+    """A method call ``bind_method_call`` bound for a method no source frame
+    states (``ObjectMethodValue.source_call_frame`` None): no definition
+    names a join symbol, so it is the one unanswered call of its name
+    (``UnknownCalleeCallV1``), two-faced and owed, its completion the call's
+    own result coordinate.  Its body is never applied (#7757 step 6)."""
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
+
+    target = bound.target_name
+    owner = str(site)
+    keyword_names = tuple(bound.keyword_names or ())
+    count = len(bound.arg_values) - len(keyword_names)
+    positional = bound.arg_values[:count]
+    keyword_values = bound.arg_values[count:]
+    callsite = CallSiteValue(
+        target_name=target,
+        arg_values=tuple(bound.arg_values),
+        parameters=(),
+        term=ctor(
+            call_symbol(target),
+            [value.to_term(owner=owner) for value in positional]
+            + [
+                ctor("py.kwarg", [str_const(name), value.to_term(owner=owner)])
+                for name, value in zip(keyword_names, keyword_values)
+            ],
+            symbol_kind="coordinate",
+        ),
+        body=None,
+        keyword_names=keyword_names,
+        site=site,
+    )
+    return UnknownCalleeCallV1(target).faces(callsite, site)
 
 
 def implicit_arguments(receiver, method, *, target_name, owner, blame, refuse):

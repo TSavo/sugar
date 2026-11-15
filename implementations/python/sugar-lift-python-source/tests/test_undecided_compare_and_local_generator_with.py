@@ -8,20 +8,19 @@
    ``UndeterminedRaiseEffect`` (owner ``UndecidedCompare:<op>``) under the
    complement.  Two decided builtin operands still complete outright.
 
-2. A same-module undecorated generator function (``def`` or ``async def``) at
-   a sync ``with`` head returns a generator object, which has no
-   ``__enter__``: the ``with`` raises the interpreter's own observed
-   ``TypeError`` before enter and body (#7595's law, now in the single-file
-   setup), never a runtime-selected gap.
+2. A same-module generator function (``def``, ``async def`` or a
+   ``@contextmanager`` generator) at a sync ``with`` head: its call is its
+   coordinate and edge, joined at prove (#7757 step 6), so what it returns is
+   what its contract states and the ``with`` enters an undecided manager,
+   owed.  Verdict moved: an undecorated generator head was decided to raise
+   the interpreter's ``TypeError`` (``GeneratorObjectWithSugar``), and a
+   ``@contextmanager`` head ran the generator to its first yield.
 """
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.effect.raise_effect import RaiseEffect, UndeterminedRaiseEffect
+from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import PredicateValue, TermValue
-from sugar_lift_py_tests.generator_object_with_refusal import (
-    observed_generator_object_with_refusal,
-)
 
 from test_assignment_evaluates_rhs import _rows
 from test_undetermined_raise_except_matching import _exits
@@ -84,57 +83,40 @@ def test_decided_builtin_operands_complete_outright(tmp_path):
     assert "UndecidedCompare:Eq" not in _owners(halts)
 
 
-def _with_halts(tmp_path, source):
+def _undecided_manager(tmp_path, source):
+    """The With over a same-module generator function's call: the call is
+    its coordinate and edge (#7757 step 6), so the head's value is undecided
+    and the With enters an undecided manager.  No ``TypeError`` is decided,
+    and the call and the manager steps owe their undecided halts."""
     returns, halts = _split(tmp_path, source)
-    assert returns == []
-    (halt,) = halts
-    assert isinstance(halt, RaiseEffect)
-    assert halt.producer_node_owner == "GeneratorObjectWithSugar"
-    return halt
+    assert not [h for h in halts if getattr(h, "exception_name", None) == "TypeError"]
+    assert any(isinstance(h, UndeterminedRaiseEffect) for h in halts)
+    return returns, halts
 
 
-def test_a_local_generator_at_a_with_head_raises_type_error(tmp_path):
-    halt = _with_halts(
+def test_a_local_generator_at_a_with_head_is_the_undecided_manager(tmp_path):
+    returns, _halts = _undecided_manager(
         tmp_path,
         "def gen():\n    yield 1\ndef f():\n    with gen():\n        return 1\n",
     )
-    refusal = observed_generator_object_with_refusal("generator")
-    assert refusal.exception_name == "TypeError"
-    assert halt.raised_value == refusal.message
+    assert TermValue(1) in returns
 
 
-def test_a_local_async_generator_at_a_with_head_raises_its_own_type_error(tmp_path):
-    halt = _with_halts(
+def test_a_local_async_generator_at_a_with_head_is_the_undecided_manager(tmp_path):
+    returns, _halts = _undecided_manager(
         tmp_path,
         "async def agen():\n    yield 1\n"
         "def f():\n    with agen():\n        return 1\n",
     )
-    refusal = observed_generator_object_with_refusal("async_generator")
-    assert refusal.exception_name == "TypeError"
-    assert "async_generator" in refusal.message
-    assert halt.raised_value == refusal.message
+    assert TermValue(1) in returns
 
 
-def test_the_with_body_and_handlers_never_run(tmp_path):
-    source = (
-        "def gen():\n"
-        "    try:\n"
-        "        yield 1\n"
-        "    except ValueError:\n"
-        "        pass\n"
-        "def f():\n"
-        "    with gen():\n"
-        "        raise ValueError('v')\n"
-    )
-    _with_halts(tmp_path, source)
-
-
-def test_a_local_contextmanager_is_still_a_manager(tmp_path):
+def test_a_local_contextmanager_is_the_undecided_manager(tmp_path):
     source = (
         "import contextlib\n"
         "@contextlib.contextmanager\n"
         "def cm():\n    yield 1\n"
         "def f():\n    with cm():\n        return 1\n"
     )
-    returns, _halts = _split(tmp_path, source)
-    assert returns == [TermValue(1)]
+    returns, _halts = _undecided_manager(tmp_path, source)
+    assert TermValue(1) in returns

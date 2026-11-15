@@ -19104,10 +19104,9 @@ class With(Statement):
     def _reduced_manager_sugar(self, item: WithItem, binds_enter_result: bool):
         """``with <head>:`` whose manager is the value the head reduces to.
 
-        The head is reduced once, as any expression is: a same-file call is
-        followed at reduce like any call and its returned value is the
-        manager; an imported call answers from the import table and the
-        imported proofs only.  ``__enter__`` and ``__exit__`` are then read
+        The head is reduced once, as any expression is: a call, same-file
+        or imported, is its coordinate and edge, and its result is the
+        manager (#7757 steps 5 and 6).  ``__enter__`` and ``__exit__`` are then read
         on that value's own type (``ReducedManagerProtocolV1``): a type the
         one class-namespace lookup decides runs its own methods, or raises
         the interpreter's TypeError where it lacks them; any other value is
@@ -19142,96 +19141,6 @@ class With(Statement):
             exit_face_id=exit_face,
             site=self.fragment,
         )
-
-    def _provider_manager_call(self, item: WithItem):
-        """The Call that authenticates this manager item, by binding not spelling.
-
-        A direct Call head is already the provider, and so is the base Call of
-        a branch-selected arm's opaque call-result identity
-        (``selected_manager_calls``: it constructs as its base call).  Any
-        other head reaches no Call here: what a name holds is what the head
-        reduces to (``_reduced_manager_sugar``).  Same spelling elsewhere never
-        authorizes a manager.
-        """
-        expr = item.context_expr
-        if isinstance(expr, Call):
-            return expr
-        if (
-            hasattr(item, "selected_arm_of_start_line")
-            and expr.kind == "OpaqueObjectStateV1"
-            and isinstance(expr.base, Call)
-        ):
-            return expr.base
-        return None
-
-    def _generator_manager_frame(self, item: WithItem):
-        context = self._require_construction_context(
-            owner="With._generator_manager_frame"
-        )
-        call = self._provider_manager_call(item)
-        if call is None:
-            return None
-        from sugar_lift_py_tests.context_manager_resolution import (
-            TreeConstructionContextV1,
-        )
-
-        if not isinstance(context, TreeConstructionContextV1):
-            return None
-        frame = None
-        if isinstance(
-            call.unit.lexical_call_enrollment(call), LexicalCallEnrolledV1
-        ):
-            # The frame the call itself applies, as its own construction reads
-            # it (``Call._construct_sugar``): its lexical row's definition,
-            # when the call runs that definition's own frame
-            # (``call_applies_own_frame``).  A definition whose frame is under
-            # construction up the stack applies none here.
-            definition = call.unit.source_function_definition_for_call(call)
-            if definition is not None:
-                try:
-                    frame = definition.source_visible_call_frame()
-                except SourceCallFrameCycle:
-                    frame = None
-        if frame is None or frame.generator_steps is None:
-            return None
-        return frame
-
-    def _generator_manager_is_bare_generator_object(self, item: WithItem) -> bool:
-        """True when the head calls an authenticated, undecorated generator function.
-
-        The seated frame is the callee's own authenticated FunctionDef body.
-        With no decorator between the definition and the binding, calling it
-        returns the generator object itself -- never a wrapper -- so the head's
-        value is decided: a generator, which has no ``__enter__``. A decorated
-        callee is not decided here: its call returns whatever the decorator
-        returned.
-        """
-        return self._bare_generator_object_kind(item) is not None
-
-    def _bare_generator_object_kind(self, item: WithItem):
-        """``"generator"`` / ``"async_generator"`` for an undecorated generator
-        function head (``def`` / ``async def``), else None."""
-        frame = self._generator_manager_frame(item)
-        if frame is None:
-            return None
-        owner = getattr(frame, "owner", None)
-        if getattr(owner, "decorators", None):
-            return None
-        if isinstance(owner, FunctionDef):
-            return "generator"
-        if isinstance(owner, AsyncFunctionDef):
-            return "async_generator"
-        return None
-
-    def _generator_manager_sugar(self, item: WithItem):
-        if self._generator_manager_frame(item) is None:
-            return None
-        call = self._provider_manager_call(item)
-        if call is None:
-            return None
-        # Always sugar the provider Call (with its installed frame), never the
-        # bare Name spelling at the With head.
-        return call.sugar()
 
     def _selected_manager_sugar(self, expr):
         """``with ctx:`` where the arms of an ``if`` each bound ``ctx = cm()``.
@@ -19305,9 +19214,8 @@ class With(Statement):
         Nothing about exit routing is special-cased -- the store is simply the
         first thing the body does.
 
-        Every manager binds its enter result the same way: a generator-based
-        one (the first yield, ``GeneratorWithSugar``) and the head's reduced
-        value (``WithReducedManagerSugar``) both bind the enter slot, so the
+        Every manager binds its enter result the same way: the head's reduced
+        value (``WithReducedManagerSugar``) binds the enter slot, so the
         store is always lowered onto it: ``a``/``b`` read their projections of
         that store, never their prior state by spelling.  No row is read.
 
@@ -19344,8 +19252,8 @@ class With(Statement):
         """Build from the head alone (#7757).
 
         ``with a, b:`` nests; a branch-selected head is the ``if`` over its
-        arms; a same-file generator head runs the frame its call applies; any
-        other head is the manager it reduces to (``_reduced_manager_sugar``).
+        arms; any other head is the manager it reduces to
+        (``_reduced_manager_sugar``).
         No table is read, so no row is required and none can be missing."""
         if len(self.items) != 1:
             return self._nest_items()._construct_sugar()
@@ -19370,39 +19278,12 @@ class With(Statement):
         # a target, which is what `binds_enter_result` decides.
         binds_enter_result = item.optional_vars is not None
 
-        generator_manager = self._generator_manager_sugar(item)
-        if generator_manager is not None:
-            from sugar_lift_py_tests.sugar.generator_with_sugar import (
-                GeneratorObjectWithSugar,
-                GeneratorWithSugar,
-            )
-
-            object_kind = self._bare_generator_object_kind(item)
-            if object_kind is not None:
-                # An undecorated generator function returns a generator
-                # object (an async generator object for ``async def``), which
-                # is not a context manager: the With raises TypeError after
-                # the call, before enter and body.
-                return GeneratorObjectWithSugar(
-                    manager=generator_manager,
-                    site=self.fragment,
-                    object_kind=object_kind,
-                )
-
-            enter_slot = (
-                f"{item._manager_slot_id()}#enter_result"
-                if binds_enter_result
-                else None
-            )
-            return GeneratorWithSugar(
-                manager=generator_manager,
-                body=tuple(_body_statement_sugar(stmt) for stmt in self.body),
-                enter_slot_id=enter_slot,
-                site=self.fragment,
-            )
-
-        # Every other head: the manager is the value the head reduces to,
-        # entered through that value's own type.
+        # Every head, a same-file generator function's call included: the
+        # manager is the value the head reduces to, entered through that
+        # value's own type.  A call of a generator function or a
+        # ``contextmanager`` generator is its coordinate and edge (#7757
+        # step 6): its body is never run here to its first yield, so what
+        # entering and exiting it do is undecided and owed.
         return self._reduced_manager_sugar(item, binds_enter_result)
 
     def substitute(self, scope):
@@ -19560,7 +19441,7 @@ class With(Statement):
         The ``Assign`` is minted only so the one seam reads the binding off
         it: it is no statement of any block, and nothing constructs it.  The
         ``with`` itself binds the enter slot its value reads
-        (``_reduced_manager_sugar``, ``GeneratorWithSugar``); its target is
+        (``_reduced_manager_sugar``); its target is
         the source ``as`` name, a binding spelling, and its value the
         minted ``ObservationRef``, which answers where it is minted.  Minting
         registered the store, so it answers the roll here, by the one
@@ -27139,9 +27020,8 @@ def call_applies_own_frame(definition) -> bool:
 
     An undecorated ``def`` does; so does a generator function whose one
     decorator is ``contextlib.contextmanager`` (read through the one builtin
-    door, ``SourceUnit.language_callee_of``): calling it builds
-    ``_GeneratorContextManager(f, args, kwds)``, whose ``gen`` is the
-    generator the frame allocates (``GeneratorWithSugar``).  Every other
+    door, ``SourceUnit.language_callee_of``): its call is the definition's
+    coordinate and edge (``CallSiteSugar._definition_edge``).  Every other
     decorated definition binds its name to the decorators' result
     (``DecoratedDefinitionRef``), and a call of it calls that value.
 
@@ -27162,8 +27042,10 @@ def call_applies_own_frame(definition) -> bool:
     ``LambdaCallable.callable_application_with``, #7757).  Only a generator
     function, an ``async def`` and a ``contextmanager`` generator, whose
     values that application does not yet carry, still have their frame
-    seated by the call's name (``Call._construct_sugar``).  Anything that
-    is not a definition applies no decoration.
+    seated by the call's name (``Call._construct_sugar``), and that call is
+    the definition's coordinate and edge too (#7757 step 6): no call applies
+    the frame's body.  Anything that is not a definition applies no
+    decoration.
     """
     if isinstance(definition, ClassDef):
         return False
