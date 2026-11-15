@@ -8184,6 +8184,13 @@ class Node(Typed):
     # ClassVar on purpose: never a dataclass field, never instance state.
     _child_fields: ClassVar[Tuple[str, ...]] = ()
 
+    # True on a node kind that is a STRUCTURAL PART of its parent: a grammar
+    # piece the parent's construction consumes and never constructs as a value
+    # (a keyword, a dict item, a comprehension clause).  It answers the roll
+    # when its parent constructs (``structural_parts``); what it holds that
+    # Python evaluates is an ordinary child and answers for itself.
+    _structural_part: ClassVar[bool] = False
+
     def __post_init__(self) -> None:
         # THE construction event IS the registration. Registering here, in the
         # constructor, means calling ``cls(...)`` at all is showing up on the
@@ -8463,8 +8470,23 @@ class Node(Typed):
         node that replaced it answers separately for what it constructs. Without
         this the replaced node stays registered with no answer at all, which the
         minority report reads (correctly) as a silent unaccounted construction.
+
+        Its structural parts (``structural_parts``) answer with it: the rewrite
+        that replaced or absorbed it consumed them as it consumed it.
         """
         testify(self.reporter, "present_inert", self)
+        self._discharge_structural_parts()
+
+    def _discharge_structural_parts(self) -> None:
+        """Answer the roll for each structural part of this node, and each
+        name it binds through, where this node answered present: a part
+        constructs nothing of its own (``_structural_part``).  What a part
+        holds that Python evaluates is an ordinary node and answers for
+        itself, built or refused; this never answers for it."""
+        for part in self.structural_parts():
+            part.discharge_by_substitution()
+            for spelling in part.binding_spellings():
+                spelling.discharge_by_substitution()
 
     def _substitute_children(self, scope: BindingMap) -> "Node":
         """The structural recurse a NON-binding compound opts into: substitute
@@ -9064,6 +9086,15 @@ class Node(Typed):
                 # where the binder refused: that refusal explains it.
                 for spelling in self.binding_spellings():
                     spelling.discharge_by_substitution()
+                # A structural part (a call's keyword, a dict display's item,
+                # a comprehension's clause; ``_structural_part``) is consumed
+                # by its parent's construction and constructs nothing of its
+                # own: it answers here, where its parent constructed, by the
+                # same discharge, and so do the names it binds through.  What
+                # it holds that Python evaluates answers for itself, built or
+                # refused -- this never answers for that.  Never where the
+                # parent refused: that refusal explains it.
+                self._discharge_structural_parts()
             except (SourceTreePanic, ConstructionPanic) as panic:
                 # A refusal by name is the ABSENT answer of the node whose
                 # construction raised it, and the roll hears every absent
@@ -9350,6 +9381,21 @@ class Node(Typed):
             for target in value if isinstance(value, tuple) else (value,):
                 _collect_binding_spellings(target, spellings)
         return tuple(spellings)
+
+    def structural_parts(self) -> Tuple["Node", ...]:
+        """This node's children that are structural parts of it (their class
+        declares ``_structural_part``): the grammar pieces its construction
+        consumes without constructing them as values -- a call's or class's
+        keyword, a dict display's item, a comprehension's clause.  Each answers
+        the roll when this node constructs (``Node.sugar``).  Every other node
+        has none."""
+        parts: list = []
+        for field_name in type(self)._child_fields:
+            value = getattr(self, field_name)
+            for child in value if isinstance(value, tuple) else (value,):
+                if isinstance(child, Node) and type(child)._structural_part:
+                    parts.append(child)
+        return tuple(parts)
 
     def names_bound_within(self) -> frozenset:
         """Every name this node or any node under it binds, in any scope."""
@@ -9644,6 +9690,7 @@ class Keyword(Node):
     arg: Optional[str]
     value: Expression
     _child_fields = ("value",)
+    _structural_part = True
 
     def substitute(self, scope):
         """Binds nothing: recurse into children and reassemble."""
@@ -9657,6 +9704,7 @@ class DictItem(Node):
     key: Optional[Expression]
     value: Expression
     _child_fields = ("key", "value")
+    _structural_part = True
 
     def substitute(self, scope):
         """Binds nothing: recurse into children and reassemble."""
@@ -9672,6 +9720,7 @@ class Comprehension(Node):
     is_async: bool
     _child_fields = ("target", "iter", "ifs")
     _bound_target_fields = ("target",)
+    _structural_part = True
 
     def substitute(self, scope):
         """One `for <target> in <iter> [if ...]` clause: iter in the given
@@ -25695,9 +25744,8 @@ def _decorator_step(definition, decorator, bound):
             # statement's); the factory and what it returned are applied by
             # nothing here.
             _discharge_absorbed(decorator.func)
+            # Its keywords answer with it (``_discharge_structural_parts``).
             decorator.discharge_by_substitution()
-            for keyword in decorator.keywords:
-                keyword.discharge_by_substitution()
             return DecoratorStepV1.unanswered(
                 builtin.site,
                 builtin.spelling,
