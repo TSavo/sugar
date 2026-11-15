@@ -274,26 +274,64 @@ def _settled(value):
 
 
 def _call_outcome(source: str):
-    """``source``'s last call, reduced through the production door."""
+    """The contract row of ``f``, the function ``source``'s last call calls,
+    reduced through the one door a function's universe takes
+    (``function_universe_outcome``).
+
+    A same-file call is its coordinate ``call:<target>(...)`` and an edge to
+    the callee's join symbol, joined at prove (#7757 steps 5 and 6, the
+    owner's ruling "Edge, join at prove", #8705): the lifter no longer
+    applies the callee's body at the call.  What the body returns is stated
+    by the callee's own contract row, which is what these tests read."""
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
     tree = SourceFile(
         (source, "walrus_call.py", blake3_512_of(source.encode())),
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )
-    call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
-    return call.sugar().desugar(None)
+    callee = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name == "f"
+    )
+    return function_universe_outcome(callee)
+
+
+def _edge_call(outcome):
+    """The call coordinate ``f``'s contract row returns: a same-file call in
+    the body is ``call:<target>(...)`` with its edge, completing under its
+    ``completes`` atom and halting under the complement (#8705), so the row
+    has one completed face, whose return is the call's value."""
+    from sugar_lift_py_tests.floor import CallSiteValue
+
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert len(completed) == 1, outcome
+    returns = _decided_returns(completed[0].value.record.statements)
+    assert returns, completed[0].value
+    call = returns[-1].value
+    assert isinstance(call, CallSiteValue), type(call)
+    return call
+
+
+def _presented(values) -> list:
+    """Each value as it presents beneath the walrus binds it carries."""
+    return [peel_walrus_binds(value)[1] for value in values]
 
 
 def test_read_after_a_walrus_nested_in_an_assignment_is_its_value() -> None:
     # `x += 1` wrote the name; the walrus nested in `y = ...` is the later
-    # write, and the read resolves through its key.
+    # write, and the read resolves through its key.  (`x` is a local, not a
+    # formal: the contract row reduces a formal symbolically, and this test
+    # is about which write the read takes, not about `+` on an input.)
     returned = _returned_value(
         _call_outcome(
-            "def f(x):\n"
+            "def f():\n"
+            "    x = 3\n"
             "    x += 1\n"
             "    y = (x := 5)\n"
             "    return x\n"
             "\n"
-            "f(3)\n"
+            "f()\n"
         )
     )
     assert returned == TermValue(5)
@@ -1159,15 +1197,6 @@ _SUM = "def g(p, q):\n    return p + q\n\n\n"
             "\nf()\n",
             TermValue(5),
         ),
-        # a call's later positional and keyword actuals
-        (
-            _SUM + "def f():\n    a = 9\n    return g((a := 1), a)\n\nf()\n",
-            TermValue(2),
-        ),
-        (
-            _SUM + "def f():\n    a = 9\n    return g((a := 1), q=a)\n\nf()\n",
-            TermValue(2),
-        ),
         # a display's later element
         (
             "def f():\n    b = 9\n    return ((b := 2), b)\n\nf()\n",
@@ -1183,6 +1212,25 @@ def test_a_later_operand_reads_an_earlier_operands_walrus(
     source: str, expected
 ) -> None:
     assert _returned_value(_call_outcome(source)) == expected
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        # a call's later positional and keyword actuals
+        "g((a := 1), a)",
+        "g((a := 1), q=a)",
+    ],
+)
+def test_a_later_actual_reads_an_earlier_actuals_walrus(call: str) -> None:
+    # `g(1, 1)` was 2 when the lifter applied `g`'s body at the call.  The
+    # call is now its coordinate and edge, joined at prove (#7757 steps 5
+    # and 6, #8705): what the lifter states is the actuals the edge carries,
+    # and the later actual reads the walrus, not the `a = 9` before it.
+    edge = _edge_call(
+        _call_outcome(_SUM + "def f():\n    a = 9\n    return " + call + "\n\nf()\n")
+    )
+    assert _presented(edge.arg_values) == [TermValue(1), TermValue(1)]
 
 
 def test_the_operand_fold_reduces_each_operand_after_the_ones_before_it() -> None:
@@ -1222,10 +1270,19 @@ def test_a_call_reads_its_closure_cell_after_its_arguments() -> None:
 
 
 def test_a_called_closure_reads_the_arguments_walrus() -> None:
-    returned = _returned_value(
-        _call_outcome(_CAPTURED_REBOUND_BY_ARGUMENT + "\nf()\n")
-    )
-    assert returned == TermValue(4)
+    # `g(2)` reading `y` was 4 when the lifter applied `g`'s body at the
+    # call.  The call is now its coordinate and edge, joined at prove (#7757
+    # steps 5 and 6, #8705); the edge carries the captured cell as
+    # `py.closure("y", <value>)`, the binding the call read after its
+    # argument's walrus wrote it.
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    edge = _edge_call(_call_outcome(_CAPTURED_REBOUND_BY_ARGUMENT + "\nf()\n"))
+    assert _presented(edge.arg_values) == [TermValue(2)]
+    owner = str(edge.site)
+    assert ctor(
+        "py.closure", [str_const("y"), TermValue(2).to_term(owner=owner)]
+    ) in list(edge.term.args)
 
 
 def test_a_live_loop_starts_a_carried_name_from_its_iterables_walrus() -> None:
