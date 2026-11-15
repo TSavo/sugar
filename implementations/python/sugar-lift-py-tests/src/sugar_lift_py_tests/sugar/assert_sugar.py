@@ -63,17 +63,16 @@ class AssertSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
-        # Desugar the test, and the result states itself. The outcome is
-        # recorded for the readers of this assert (item 28, #7757): they read
-        # it off the owner's one reduction and never reduce the assert alone.
+        # Desugar the test, and the result states itself. The stated fact
+        # reaches the proof only as a row of the owner's one reduction
+        # (item 28, #7757); the assert is never reduced alone.
         #
         # The test is this statement's header: a walrus bind or callee store
         # its value carried reaches what follows the assert, and a failure
         # after it, by the one header rule (``header_applied``), the stores
         # laid in the record.  There the assert runs again on the value the
-        # test presents (``header_ran``), and that run records its own
-        # outcome: the stated fact, in the context the test's writes left.
-        from sugar_lift_py_tests import assert_reductions
+        # test presents (``header_ran``): the stated fact, in the context the
+        # test's writes left.
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             header_applied,
         )
@@ -84,9 +83,7 @@ class AssertSugar(Sugar):
         # Where the test stated False, the message runs before the
         # ``AssertionError``, in the context the test's writes left (this
         # run's ``ctx``: ``header_ran`` ran it there) (``_stated``).
-        outcome = tested.and_then(lambda value: self._stated(value, ctx))
-        assert_reductions.record(self.site, outcome)
-        return outcome
+        return tested.and_then(lambda value: self._stated(value, ctx))
 
     def _stated(self, presented, ctx):
         """``presented`` (the test's value) stated, and beneath the assert's
