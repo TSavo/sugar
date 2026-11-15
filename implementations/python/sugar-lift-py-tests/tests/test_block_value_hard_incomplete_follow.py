@@ -56,9 +56,18 @@ def test_guarded_incomplete_raise_preserves_the_complementary_tail():
     )
     log: list[str] = []
 
-    exits = reduce_block_to_exitset(
-        (_Fixed(ExitSet.halted(effect).guarded(condition)), _tail(log))
+    # A statement that raises under a condition states both of its faces, as
+    # ``if condition: raise ...`` does: the halt under the condition and the
+    # fall-through under its complement.  The block invents no completion
+    # for a statement that stated none; the tail runs beneath the completed
+    # face the statement gave.
+    guarded_raise = ExitSet(
+        (
+            Halted(condition, effect),
+            Completed(not_(condition), BlockValue((), can_fall_through=True)),
+        )
     )
+    exits = reduce_block_to_exitset((_Fixed(guarded_raise), _tail(log)))
 
     # The tail continues on the complementary face.
     assert log == ["tail"]
