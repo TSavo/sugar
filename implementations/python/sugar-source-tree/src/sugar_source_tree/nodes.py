@@ -10067,6 +10067,23 @@ class Comprehension(Node):
         return self if not changed else rewrite(self, **changed)
 
 
+def _discharge_consumed_handler_tuple(handler) -> None:
+    """Answer the roll for ``handler``'s type where it is a tuple display
+    (``except (A, B):``), which the ``try`` consumes member by member.
+
+    Python evaluates the display when an exception reaches the arm: each
+    member in order, then the tuple of them, which can do nothing but hold
+    them.  The ``try`` builds each member as one matcher of the arm, in that
+    order (``Try._authenticated_handler_specs``, ``TryStar._construct_
+    sugar``), every face of it the arm's, and never builds the display as a
+    whole.  That consumption is its discharge, as a loop's iterable display
+    (``For._iterable_evaluated``) and an unpack's display
+    (``Assign._unpacked_displays``) are; its members answer for themselves,
+    built or refused by name."""
+    if handler.type_ is not None and handler.type_.kind == "Tuple":
+        handler.type_.discharge_by_substitution()
+
+
 class ExceptHandler(Node):
     """One ``except [type [as name]]:`` clause of a ``try``: a grammar piece
     the ``try``'s construction consumes (``Try._authenticated_handler_specs``,
@@ -20699,6 +20716,7 @@ class Try(Statement):
             )
             if not type_nodes:
                 return None  # empty tuple: no honest matcher
+            _discharge_consumed_handler_tuple(handler)
             for type_node in type_nodes:
                 # The one lookup at the arm type's position, the same one
                 # ``raise`` operands go through: a local class, a builtin
@@ -20978,6 +20996,7 @@ class TryStar(Statement):
                     requested="one authenticated exception type operand",
                     fix="keep unsupported native handler behavior loud",
                 )
+            _discharge_consumed_handler_tuple(handler)
             matchers = []
             for type_node in type_nodes:
                 identity = self.unit.exception_type_identity(type_node)
