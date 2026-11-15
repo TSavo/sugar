@@ -72,7 +72,7 @@ def test_completed_prefix_arms_stay_deferred_and_retain_all_testimony() -> None:
     first_face, second_face = partition("test:prefix-arms")
     stopped_state = _ReducedBlock((TermValue("stopped"),), True, ())
     stopped_effect = UndeterminedRaiseEffect(
-        blame="prefix-halt", occurrence="prefix-halt"
+        blame="prefix-halt", occurrence="prefix-halt", site="prefix-halt"
     )
     prefix = ExitSet(
         (
@@ -186,7 +186,9 @@ def test_spread_operands_before_a_carrier_keep_their_halts_guard_and_debts() -> 
     carrier, left, right = _carrier()
     completes = atomic("test:spread-first-completes", [])
     halts = atomic("test:spread-first-halts", [])
-    effect = UndeterminedRaiseEffect(blame="spread-first", occurrence="spread-first")
+    effect = UndeterminedRaiseEffect(
+        blame="spread-first", occurrence="spread-first", site="spread-first"
+    )
     debt = ("test:spread-first-debt",)
     first = ExitSet(
         (

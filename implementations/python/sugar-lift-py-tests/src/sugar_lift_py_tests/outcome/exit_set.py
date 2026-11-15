@@ -590,17 +590,16 @@ class ExitSet(Generic[T]):
         completes or raises. No producer can build the pair and forget it.
 
         The halt leaves at ``site``, so its effect states that site (#7766):
-        a raise built without one is given the operation's, never another.
+        an ``UndeterminedRaiseEffect`` states it at construction (its
+        ``site`` is required); a ``RaiseEffect`` built without one is given
+        the operation's, never another.
         """
         from dataclasses import replace
 
-        from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
+        from sugar_lift_py_tests.effect import RaiseEffect
         from sugar_lift_py_tests.unanswered_calls import unanswered_call
 
-        if (
-            isinstance(raise_effect, (RaiseEffect, UndeterminedRaiseEffect))
-            and raise_effect.site is None
-        ):
+        if isinstance(raise_effect, RaiseEffect) and raise_effect.site is None:
             raise_effect = replace(raise_effect, site=site)
         debts = _owed_union(owed, (unanswered_call(symbol, site),))
         return cls(

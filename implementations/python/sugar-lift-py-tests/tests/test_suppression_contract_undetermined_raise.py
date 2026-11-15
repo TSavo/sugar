@@ -41,6 +41,7 @@ def _undetermined(occurrence=_SITE):
     return UndeterminedRaiseEffect(
         blame=occurrence,
         occurrence=AuthenticatedRaiseLocus.of(occurrence) if occurrence else None,
+        site=_SITE,
     )
 
 
@@ -121,5 +122,9 @@ def test_a_raise_with_no_subject_term_stays_loud():
         exit_disposition_effect(
             ExitSuppressionContract.suppresses(("ValueError",)),
             # ``raise thing`` whose operand renders no term: no subject exists.
-            _halted(UndeterminedRaiseEffect(blame=_SITE, raised_value=object())),
+            _halted(
+                UndeterminedRaiseEffect(
+                    blame=_SITE, raised_value=object(), site=_SITE
+                )
+            ),
         )

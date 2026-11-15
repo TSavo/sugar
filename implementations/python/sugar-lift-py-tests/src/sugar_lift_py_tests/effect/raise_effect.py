@@ -130,6 +130,11 @@ class UndeterminedRaiseEffect:
     Distinct from RaiseEffect so a nameless halt cannot impersonate an
     authenticated exceptional exit. Locus may be AuthenticatedRaiseLocus,
     UndeterminedRaiseLocus, or absent — type-undetermined is the primary noun.
+
+    ``site`` is required (#7766): every producer is an operation written in
+    the source, so it states the fragment it halted at. A producer with no
+    site does not build this effect; it refuses by name where the site went
+    missing (``occurrence.site_coordinate_cid``).
     """
 
     blame: str | None = None
@@ -141,7 +146,17 @@ class UndeterminedRaiseEffect:
     producer_node_owner: str | None = None
     exception_name: str | None = None
     # The source fragment the raise halted at (see ``RaiseEffect.site``).
-    site: object | None = field(default=None, compare=False, repr=False)
+    # Required, keyword-only, no default: no producer can omit it.
+    site: object = field(compare=False, repr=False, kw_only=True)
+
+    def __post_init__(self) -> None:
+        if self.site is None:
+            raise TypeError(
+                "UndeterminedRaiseEffect refuses site=None. Every undetermined "
+                "halt states the source fragment it halted at (#7766): carry "
+                "the halting operation's fragment to the effect, or refuse by "
+                f"name where it went missing (producer {self.producer_node_owner!r})."
+            )
 
     @property
     def occurrence_id(self) -> str | None:

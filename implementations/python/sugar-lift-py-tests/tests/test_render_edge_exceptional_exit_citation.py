@@ -304,7 +304,7 @@ def test_nameless_face_cannot_reach_fol_emission() -> None:
                           "<unknown raise locus>#source-sha256=unavailable")
     which is indistinguishable from a genuinely cited exit.
     """
-    nameless = UndeterminedRaiseEffect()
+    nameless = UndeterminedRaiseEffect(site=_LOCUS)
 
     with pytest.raises(ConstructionPanic) as raised:
         _exceptional_exit_term(nameless)
@@ -351,7 +351,7 @@ def test_name_without_blame_cannot_cite_unknown_locus() -> None:
 
 def test_fabricated_reraise_string_is_not_authenticated_bare_raise() -> None:
     """Nameless face with locus+sha (historical path that became 'reraise')."""
-    effect = UndeterminedRaiseEffect(blame=_LOCUS, source_sha256=_SHA)
+    effect = UndeterminedRaiseEffect(blame=_LOCUS, source_sha256=_SHA, site=_LOCUS)
 
     with pytest.raises(ConstructionPanic) as raised:
         _exceptional_exit_term(effect)

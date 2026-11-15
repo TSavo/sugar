@@ -76,7 +76,7 @@ def test_enrollment_coordinate_refuses_unqualifiable_workspace_root(tmp_path):
 
 
 def _nameless_raise_value():
-    return ExitSet.halted(UndeterminedRaiseEffect())
+    return ExitSet.halted(UndeterminedRaiseEffect(site="nameless-raise"))
 
 
 def _call_owned_raise_value():

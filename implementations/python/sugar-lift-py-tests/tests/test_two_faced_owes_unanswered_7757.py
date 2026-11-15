@@ -58,9 +58,18 @@ def _assert_two_faced_and_owed(faces, owner: str) -> None:
 
 
 def test_the_one_constructor_cannot_be_called_without_a_site() -> None:
-    effect = UndeterminedRaiseEffect(blame="t", occurrence="t")
+    effect = UndeterminedRaiseEffect(blame="t", occurrence="t", site=_Site())
     with pytest.raises(TypeError, match="site"):
         ExitSet.two_faced(TermValue(1), effect, guard=atomic("t:completes", []))
+
+
+def test_an_undetermined_halt_cannot_be_built_without_its_site() -> None:
+    """#7766: every undetermined halt states the fragment it halted at, so
+    the effect has no siteless constructor: omitted or ``None`` is refused."""
+    with pytest.raises(TypeError, match="site"):
+        UndeterminedRaiseEffect(blame="t", occurrence="t")
+    with pytest.raises(TypeError, match="site=None"):
+        UndeterminedRaiseEffect(blame="t", occurrence="t", site=None)
 
 
 def test_the_one_constructor_owes_after_what_the_path_already_owed() -> None:
@@ -68,7 +77,7 @@ def test_the_one_constructor_owes_after_what_the_path_already_owed() -> None:
     prior = UnansweredCallV1("python:m.g", earlier)
     faces = ExitSet.two_faced(
         TermValue(1),
-        UndeterminedRaiseEffect(blame="t", occurrence="t"),
+        UndeterminedRaiseEffect(blame="t", occurrence="t", site=_Site()),
         guard=atomic("t:completes", []),
         site=_Site(),
         owed=(prior,),
@@ -81,7 +90,9 @@ def test_a_siteless_operation_is_owed_and_refused_by_name_at_the_member_door() -
 
     faces = ExitSet.two_faced(
         TermValue(1),
-        UndeterminedRaiseEffect(blame="t", occurrence="t"),
+        UndeterminedRaiseEffect(
+            blame="t", occurrence="t", site="a-synthetic-slot-id"
+        ),
         guard=atomic("t:completes", []),
         site="a-synthetic-slot-id",
     )
@@ -275,7 +286,9 @@ def test_a_formal_selected_manager_step_owes_the_with_item(step: str) -> None:
         FormalSelectedManagerValue,
     )
 
-    protocol = FormalSelectedManagerProtocol("p.open", "with-key", _COORDINATE)
+    protocol = FormalSelectedManagerProtocol(
+        "p.open", "with-key", _COORDINATE, fragment=_Site()
+    )
     manager = FormalSelectedManagerValue("p.open", "with-key")
     if step == "construct":
         faces = protocol.construct_manager(manager)
@@ -293,6 +306,8 @@ def test_the_formal_head_select_step_owes_the_with_item() -> None:
         FormalSelectedManagerProtocol,
     )
 
-    protocol = FormalSelectedManagerProtocol("p.open", "with-key", _COORDINATE)
+    protocol = FormalSelectedManagerProtocol(
+        "p.open", "with-key", _COORDINATE, fragment=_Site()
+    )
     faces = protocol.step_faces("select", None)
     _assert_two_faced_and_owed(faces, "FormalSelectedManager:p.open.select")

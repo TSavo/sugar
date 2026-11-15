@@ -49,7 +49,7 @@ def _call_arms(item, value=1):
             Completed(completes, TermValue(value), owed=(item,)),
             Halted(
                 complement_guard(completes),
-                UndeterminedRaiseEffect(blame="test", occurrence="test"),
+                UndeterminedRaiseEffect(blame="test", occurrence="test", site="test"),
                 None,
                 owed=(item,),
             ),

@@ -238,9 +238,10 @@ def select_boolop_operand(
             tested = ExitSet.two_faced(
                 selection,
                 UndeterminedRaiseEffect(
-                    blame=str(site) if site is not None else None,
-                    occurrence=key if site is not None else None,
+                    blame=str(site),
+                    occurrence=key,
                     producer_node_owner="BoolOpSugar.truth",
+                    site=site,
                 ),
                 guard=atomic("python:truth.completes", [truth]),
                 site=site,

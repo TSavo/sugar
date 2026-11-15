@@ -53,7 +53,7 @@ def test_for_builtin_mints_authenticated_coordinate() -> None:
 
 
 def test_undetermined_cannot_impersonate_raise_effect() -> None:
-    undetermined = UndeterminedRaiseEffect(blame="t.py:1:0")
+    undetermined = UndeterminedRaiseEffect(blame="t.py:1:0", site="t.py:1:0")
     assert undetermined.exception_type_coordinate is None
     assert not isinstance(undetermined, RaiseEffect)
     assert type(undetermined) is UndeterminedRaiseEffect

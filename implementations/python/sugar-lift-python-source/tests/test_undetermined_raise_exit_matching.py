@@ -202,11 +202,14 @@ def test_exception_type_is_derived_never_named() -> None:
 
 def test_exit_face_binding_names_the_exception_and_its_type() -> None:
     effect = UndeterminedRaiseEffect(
-        occurrence="e.py:3:8", producer_node_owner="UnprojectedSourceCall:m.g"
+        occurrence="e.py:3:8",
+        producer_node_owner="UnprojectedSourceCall:m.g",
+        site="e.py:3:8",
     )
     binding = ExitFaceBinding.from_body_exit("X", Halted(None, effect))
     assert binding.kind == "undetermined"
     rows = repr([fact.formula for fact in binding.to_facts()])
     assert "python:type_of" in rows
     assert repr(effect.exception_value.to_term(owner="t")) in rows
-    assert ExitFaceBinding.from_body_exit("X", Halted(None, UndeterminedRaiseEffect())).kind == "open"
+    nameless = UndeterminedRaiseEffect(site="e.py:3:8")
+    assert ExitFaceBinding.from_body_exit("X", Halted(None, nameless)).kind == "open"

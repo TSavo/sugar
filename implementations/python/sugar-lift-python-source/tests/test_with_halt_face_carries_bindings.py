@@ -102,7 +102,7 @@ def test_prepend_rides_on_halt_state_and_keeps_completed_fields():
     guard = atomic("g", ())
     halted = Halted(
         guard,
-        UndeterminedRaiseEffect(blame="b", occurrence="b"),
+        UndeterminedRaiseEffect(blame="b", occurrence="b", site="b"),
         _ReducedBlock(entries=(prior,), can_fall_through=False, fall_through=()),
     )
     done = Completed(
@@ -125,7 +125,7 @@ def test_prepend_refuses_a_halt_with_no_record():
     from sugar_source_tree.panic import SugarNotWritten
 
     stateless = Halted(
-        true_guard(), UndeterminedRaiseEffect(blame="c", occurrence="c")
+        true_guard(), UndeterminedRaiseEffect(blame="c", occurrence="c", site="c")
     )
     with pytest.raises(SugarNotWritten) as refused:
         prepend_facts_to_exitset(ExitSet((stateless,)), (object(),))

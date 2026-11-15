@@ -232,8 +232,13 @@ def test_each_call_site_raises_its_own_exception(tmp_path) -> None:
 
 
 def test_occurrence_less_halt_has_no_exception_value() -> None:
-    assert UndeterminedRaiseEffect().exception_value is None
-    assert UndeterminedRaiseEffect(occurrence="e.py:1:0", raised_value=object()).exception_value is None
+    assert UndeterminedRaiseEffect(site="e.py:1:0").exception_value is None
+    assert (
+        UndeterminedRaiseEffect(
+            occurrence="e.py:1:0", raised_value=object(), site="e.py:1:0"
+        ).exception_value
+        is None
+    )
 
 
 def test_formal_raise_keeps_its_operand_as_the_subject(tmp_path) -> None:
