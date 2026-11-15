@@ -142,7 +142,7 @@ def _start(site_text):
 
 
 def _call_start(atom):
-    # ``python:unknown_callee_call(<callee>, python:occurrence(<site CID>, …))``
+    # ``python:call_result(<call term>, python:occurrence(<site CID>, …))``
     (call,) = atom.args
     occurrence = call.args[-1]
     return _start(occurrence.args[0].value)

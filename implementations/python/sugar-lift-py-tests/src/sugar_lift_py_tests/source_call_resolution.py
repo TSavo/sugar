@@ -923,11 +923,20 @@ class UnknownCalleeCallV1:
     anything
     (``NameError`` when the name is unbound, ``TypeError`` when the value is
     not callable, or whatever the callee raises).  It completes only under
-    ``python:unknown_callee_call.completes(python:unknown_callee_call(callee,
-    site))`` with the value ``python:call_result(<call term>, <occurrence>)``,
+    ``python:unknown_callee_call.completes(python:call_result(<call term>,
+    <occurrence>))``, with that same ``python:call_result`` as its value,
     and halts with an ``UndeterminedRaiseEffect`` (owner
     ``UnknownCallee:<callee>``) under the complement -- the #7585 law.  It
     never names what the callee does.
+
+    One form for every call, whether its value is read or discarded (#7757
+    step 5): the completion names the call by its call term at its
+    occurrence, the term the edge's ``target_symbol`` joins, so a statement
+    call (``f()``) states the call prove joins the callee's contract and
+    halts at (#8690), exactly as ``a = f(); assert a == 1`` does.  The bare
+    name and occurrence (``python:unknown_callee_call(<callee>, <site>)``)
+    named no call prove could join, so a callee that certainly raises left
+    the claim vacuous instead of refuted; it is deleted.
     """
 
     callee_name: str
@@ -939,16 +948,24 @@ class UnknownCalleeCallV1:
         by the callee's contract (#7757 step 7).  An imported call keeps
         ``python:undetermined_exception`` here."""
         from .effect.raise_effect import UndeterminedRaiseEffect
-        from .ir import atomic, ctor, str_const
+        from .ir import atomic, ctor
         from .occurrence import occurrence_key, occurrence_term
         from .outcome.exit_set import ExitSet
 
         key = occurrence_key(site)
         # The call term names its occurrence by coordinate (#7808); `key`
         # stays the raise effect's own occurrence (listed on #7808).
-        call = ctor(
-            "python:unknown_callee_call",
-            (str_const(self.callee_name), occurrence_term(site)),
+        result = _occurrence_result(callsite, site)
+        call = (
+            result.term
+            if result is not callsite
+            else ctor(
+                "python:call_result",
+                (
+                    callsite.to_term(owner=f"UnknownCallee:{self.callee_name}"),
+                    occurrence_term(site),
+                ),
+            )
         )
         completes = atomic("python:unknown_callee_call.completes", [call])
         symbol = getattr(callsite, "authenticated_target_symbol", None)
@@ -966,7 +983,7 @@ class UnknownCalleeCallV1:
         # `undecided` member (step 8), with the one import table's target
         # symbol when the callee is import-bound, else none (Q5).
         return ExitSet.two_faced(
-            _occurrence_result(callsite, site),
+            result,
             UndeterminedRaiseEffect(
                 blame=str(site),
                 occurrence=key,
