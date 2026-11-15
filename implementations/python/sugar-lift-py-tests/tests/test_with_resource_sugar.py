@@ -29,7 +29,13 @@ from sugar_lift_py_tests.floor.inv_value import InvValue
 from sugar_lift_py_tests.ir import atomic, make_var, not_
 from sugar_lift_py_tests.outcome import exit_disposition as exit_disposition_module
 from sugar_lift_py_tests.outcome.exit_disposition import exit_disposition_effect
-from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted, true_guard
+from sugar_lift_py_tests.outcome.exit_set import (
+    Completed,
+    ExitSet,
+    Halted,
+    _and_guards,
+    true_guard,
+)
 from sugar_lift_py_tests.outcome.resource_bindings import ExitFaceBinding
 from sugar_lift_py_tests.sugar.function_universe_sugar import halt_record
 from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
@@ -144,18 +150,44 @@ class _FloorValue:
         return str_const(self.label)
 
 
+# The with-item's source fragment. The tree builds ``M.__exit__(...)`` and its
+# refs at the item's own span (``withitem._make_parametric_exit_call``), so
+# every call it makes has a source coordinate; a siteless call is refused by
+# name (``occurrence.site_coordinate_cid``, #7808, #8206).
+_ITEM_SITE = SourceFragmentCoordinateV1("blake3-512:" + "c" * 128, 3, 9, 3, 21)
+
+# The manager as a constructed instance, and what its ``__enter__`` returns:
+# the manager itself, as a file or a lock does. Both are floor values.
+_MANAGER = ObjectValue("native-resource", (), allocation=FRAME_FRESH, identity="mgr")
+
+
 def _parametric_exit(face_id="X", manager_slot="M", probe=None):
-    """Prebuilt tree-shaped exit: M.__exit__(ExitTypeRef(X), …)."""
+    """Prebuilt tree-shaped exit: M.__exit__(ExitTypeRef(X), …).
+
+    Nothing here answers a native resource's ``__exit__`` body, so the call
+    is the one unanswered call (``UnknownCalleeCallV1``): it completes under
+    its ``completes`` atom and halts with an undetermined raise beneath the
+    complement, which supersedes the body's exit (#7585)."""
     return MethodCallSugar(
-        receiver=ManagerRefSugar(slot_id=manager_slot, site=None),
+        receiver=ManagerRefSugar(slot_id=manager_slot, site=_ITEM_SITE),
         name="__exit__",
         args=(
-            ExitTypeRefSugar(face_id=face_id, site=None),
-            ExitValueRefSugar(face_id=face_id, site=None),
-            ExitTracebackRefSugar(face_id=face_id, site=None),
+            ExitTypeRefSugar(face_id=face_id, site=_ITEM_SITE),
+            ExitValueRefSugar(face_id=face_id, site=_ITEM_SITE),
+            ExitTracebackRefSugar(face_id=face_id, site=_ITEM_SITE),
         ),
-        site=None,
+        site=_ITEM_SITE,
     )
+
+
+def _exit_completes(face_id="X", manager_slot="M"):
+    """The guard under which the parametric exit completes."""
+    (completes,) = [
+        exit_.guard
+        for exit_ in _parametric_exit(face_id, manager_slot).desugar().exits
+        if isinstance(exit_, Completed)
+    ]
+    return completes
 
 
 def _resource(
@@ -201,10 +233,9 @@ def _resource(
         exit_sugar = replace(exit_sugar, native_definition_coordinate=exit_definition)
 
     return WithResourceSugar(
-        manager=manager
-        or _FixedSugar(ExitSet.completed(ObjectValue("native-resource", (), allocation=FRAME_FRESH, identity="mgr"))),
+        manager=manager or _FixedSugar(ExitSet.completed(_MANAGER)),
         manager_slot_id=manager_slot_id,
-        enter=enter or _FixedSugar(ExitSet.completed(_FloorValue("entered"))),
+        enter=enter or _FixedSugar(ExitSet.completed(_MANAGER)),
         exit=exit_sugar,
         exit_face_id=exit_face_id,
         body=body if body is not None else (_Pass(),),
@@ -491,7 +522,9 @@ def test_typed_never_suppresses_preserves_conditional_raise_and_normal_face():
     ).desugar()
     raises = [halt for halt in _halts(out) if halt.effect == effect]
     assert len(raises) == 1
-    assert raises[0].guard == guard
+    # The body's raise leaves exactly where it was raised and ``__exit__``
+    # then completed; where ``__exit__`` raised, its own raise supersedes.
+    assert raises[0].guard == _and_guards(guard, _exit_completes())
     assert _falls_through(out)
     assert exit_runs == [1]
     assert all(entry is not None for entry in _completed_entries(out))
