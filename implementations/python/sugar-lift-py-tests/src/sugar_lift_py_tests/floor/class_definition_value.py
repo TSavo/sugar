@@ -194,7 +194,6 @@ class ClassDefinitionValue(GuardStableValue):
             )
 
         return body.bind_class_call(
-            ctx,
             lambda defaults, body: bind_call(
                 self.class_name,
                 positional,
@@ -212,7 +211,6 @@ class ClassDefinitionValue(GuardStableValue):
                 refuse=refuse,
                 defaults=defaults,
             ).producer_outcome(ctx),
-            site=operation.site,
         )
 
     def _unanswered_call(self, target, positional, keywords, site):

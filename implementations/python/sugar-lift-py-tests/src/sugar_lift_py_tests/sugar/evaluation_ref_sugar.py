@@ -173,6 +173,34 @@ def evaluation_read_here(temporal, evaluation: str) -> str:
     return f"{evaluation}@{'/'.join(segments)}"
 
 
+def refuse_unbound_evaluation(*, name: str, key, evaluation, site):
+    """THE refusal of a read of a statement's key no reduction bound where
+    the read reduces: by name, naming the key ``key`` the read took
+    (``evaluation_read_here``) and its construct-time key ``evaluation``.
+
+    Every read that resolves through a statement's key refuses here: a
+    reference to an assignment's, an unpack's or an augmented assignment's
+    evaluation (``EvaluationRefSugar._unbound``), and a read of a ``class``
+    statement's value (``DecoratorApplicationSugar``).  The name is never
+    read in the key's place and the statement is never evaluated again."""
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+    construction_panic_gap(
+        owner="EvaluationRefSugar",
+        blame=site,
+        observed=(
+            f"read of `{name}` with its evaluation {key} unbound "
+            f"(construct-time key {evaluation})"
+        ),
+        requested="the statement's completed value bound under its key",
+        fix=(
+            "reduce the read after the statement in the block that ran it, "
+            "or bind the key where the read is reduced; never read the "
+            "name in its place"
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class EvaluationRefSugar(ConstructedTermSugar):
     evaluation: str
@@ -268,21 +296,8 @@ class EvaluationRefSugar(ConstructedTermSugar):
         Refused by name, naming the key: the name is never read in its place
         (it may hold nothing, or a write older than the statement), and the
         statement is never evaluated again."""
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-        construction_panic_gap(
-            owner="EvaluationRefSugar",
-            blame=self.site,
-            observed=(
-                f"read of `{self.name}` with its evaluation {key} unbound "
-                f"(construct-time key {self.evaluation})"
-            ),
-            requested="the statement's completed value bound under its key",
-            fix=(
-                "reduce the read after the statement in the block that ran it, "
-                "or bind the key where the read is reduced; never read the "
-                "name in its place"
-            ),
+        refuse_unbound_evaluation(
+            name=self.name, key=key, evaluation=self.evaluation, site=self.site
         )
 
     def _unreached_walrus(self) -> ExitSet:

@@ -135,8 +135,7 @@ def test_a_class_body_that_always_raises_halts_the_class_statement(
         assert len(halts) == 1
 
 
-# What a function that uses the raising class reduces to.  ``halted`` is one
-# halted face, the ``ZeroDivisionError``, and no completion.
+# What a function that uses the raising class reduces to.
 _USES_OF_A_RAISING_CLASS = {
     "bare-call": "    Box(1)\n    return 3\n",
     "assign-and-read": "    a = Box(1)\n    assert a.n == 1\n",
@@ -146,28 +145,43 @@ _USES_OF_A_RAISING_CLASS = {
 }
 
 
-@pytest.mark.parametrize("use", sorted(_USES_OF_A_RAISING_CLASS))
-def test_a_function_that_calls_the_raising_class_halts_with_its_raise(use: str) -> None:
-    """The class statement's halt is a face of the function that calls it.
+def _refused_for_the_unbound_class(reduce) -> None:
+    """``reduce()`` reads ``Box`` through its class statement's key, and
+    nothing bound it: the module's one run completed on no arm (its class
+    statement halted), so the read is refused by name, the one refusal of a
+    read of an unbound key.  The class statement is never reduced again for
+    the reader, so its halt is the module run's, never a face of a function
+    that calls the class (#7757 item 21; before, #7794 landed it on each
+    call)."""
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
-    That it lands on the call, once per call, and not at the class statement,
-    is #7794 and is not changed here.
-    """
-    completed, halts = _faces(
-        _function(_ALWAYS_RAISES["only-field"], _USES_OF_A_RAISING_CLASS[use])
+    with pytest.raises(ConstructionPanic, match="read of `Box`.*unbound"):
+        reduce()
+
+
+@pytest.mark.parametrize("use", sorted(_USES_OF_A_RAISING_CLASS))
+def test_a_function_that_calls_the_raising_class_is_undecided_by_name(
+    use: str,
+) -> None:
+    """The class statement halts where it runs, in the module's run.  A
+    function that calls the class reads the class that run bound, and it
+    bound none: the function is refused by name (undecided), never handed
+    the statement's halt by a second reduction of it."""
+    _refused_for_the_unbound_class(
+        lambda: _function(
+            _ALWAYS_RAISES["only-field"], _USES_OF_A_RAISING_CLASS[use]
+        )
     )
 
-    assert completed == 0
-    assert len(halts) == 1 and "ZeroDivisionError" in halts[0]
 
-
-def test_a_read_through_the_raising_class_call_is_its_raise() -> None:
-    """``assert Box(1).n == 1``: the call is the assert's own operand, so the
-    assert is that effect, not a completion and not an ``AssertionError``."""
-    outcome = _function(_ALWAYS_RAISES["only-field"], "    assert Box(1).n == 1\n")
-
-    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits, outcome
-    assert "ZeroDivisionError" in repr(outcome.halts()[0].effect)
+def test_a_read_through_the_raising_class_call_is_undecided_by_name() -> None:
+    """``assert Box(1).n == 1``: the call's callee is the read of ``Box``,
+    which no run bound."""
+    _refused_for_the_unbound_class(
+        lambda: _function(
+            _ALWAYS_RAISES["only-field"], "    assert Box(1).n == 1\n"
+        )
+    )
 
 
 def test_naming_the_raising_class_without_calling_it_completes() -> None:
@@ -284,42 +298,41 @@ def _initializer_universe(source: str):
     return function_universe_outcome(initializer)
 
 
-def test_the_initializer_universe_of_a_may_raise_class_carries_its_halt() -> None:
+def test_the_initializer_universe_of_a_may_raise_class_runs_on_the_class_it_built() -> (
+    None
+):
     """An ``__init__`` universe runs on the receiver its class call makes
-    (``ClassConstructorBodySugar.enter_initializer``), so the class
-    statement's halt is the universe's halt.  With a field call that may
-    raise (``limit = os.getcwd()``) it is one completed face and that halt."""
+    (``ClassConstructorBodySugar.enter_initializer``), on the class its
+    statement bound in the module's one run.  With a field call that may
+    raise (``limit = os.getcwd()``) that run binds the class on its
+    completed arm, and the statement's halt is the run's, not this
+    universe's: the universe is one completed face."""
     completed, halts = _faces(
         _initializer_universe("class Box:\n    limit = os.getcwd()\n" + _INIT)
     )
 
-    assert completed == 1
-    assert len(halts) == 1
+    assert (completed, halts) == (1, ())
 
 
-def test_the_initializer_universe_of_a_decided_raising_call_is_its_halt() -> None:
+def test_the_initializer_universe_of_a_decided_raising_call_is_undecided() -> None:
     """``limit = int("x")`` always raises ``ValueError`` (a builtin over a
-    ground operand, decided): no class exists, so ``__init__`` never runs and
-    its universe is that one halt, as for ``limit = 1 // 0`` below."""
-    outcome = _initializer_universe('class Box:\n    limit = int("x")\n' + _INIT)
-    completed, halts = _faces(outcome)
-
-    assert completed == 0
-    assert len(halts) == 1
-    assert [
-        getattr(effect, "exception_name", None) for effect in _halt_effects(outcome)
-    ] == ["ValueError"]
-
-
-def test_the_initializer_universe_of_a_raising_class_is_its_halt() -> None:
-    """``limit = 1 // 0``: no class exists, so ``__init__`` never runs; its
-    universe is the class statement's one halt and no completion."""
-    completed, halts = _faces(
-        _initializer_universe("class Box:\n" + _ALWAYS_RAISES["only-field"] + _INIT)
+    ground operand, decided): the module's run bound no class, so the
+    ``__init__`` universe has no class to run on and is refused by name, as
+    for ``limit = 1 // 0`` below."""
+    _refused_for_the_unbound_class(
+        lambda: _initializer_universe('class Box:\n    limit = int("x")\n' + _INIT)
     )
 
-    assert completed == 0
-    assert len(halts) == 1 and "ZeroDivisionError" in halts[0]
+
+def test_the_initializer_universe_of_a_raising_class_is_undecided() -> None:
+    """``limit = 1 // 0``: the module's run bound no class, so ``__init__``
+    has none to run on; its universe is refused by name, never the class
+    statement's halt read off a second reduction of it."""
+    _refused_for_the_unbound_class(
+        lambda: _initializer_universe(
+            "class Box:\n" + _ALWAYS_RAISES["only-field"] + _INIT
+        )
+    )
 
 
 def test_the_initializer_universe_under_an_unrun_source_new_refuses() -> None:
@@ -481,17 +494,16 @@ def test_a_class_body_that_reads_an_undefined_name_halts_with_name_error(
 
 
 @pytest.mark.parametrize("use", sorted(_USES_OF_A_RAISING_CLASS))
-def test_a_function_that_calls_a_class_reading_an_undefined_name_halts(
+def test_a_function_that_calls_a_class_reading_an_undefined_name_is_undecided(
     use: str,
 ) -> None:
-    outcome = _function(
-        _READS_AN_UNDEFINED_NAME["only-field"], _USES_OF_A_RAISING_CLASS[use]
+    """The ``NameError`` is the class statement's, in the module's run: that
+    run bound no class, so the function that calls it is refused by name."""
+    _refused_for_the_unbound_class(
+        lambda: _function(
+            _READS_AN_UNDEFINED_NAME["only-field"], _USES_OF_A_RAISING_CLASS[use]
+        )
     )
-    completed, halts = _faces(outcome)
-
-    assert completed == 0
-    assert len(halts) == 1
-    assert _the_name_error(outcome).name == "nope"
 
 
 # ---------------------------------------------------------------------------

@@ -168,20 +168,22 @@ class ClassDefinitionSugar(Sugar):
 
     def desugar(self, ctx: object = None) -> ExitSet:
         # A class statement runs once: Python binds the class it builds, and
-        # every ``Cls(...)`` reads that one class.  So a module-level statement
-        # is reduced once and its outcome kept with its sugar; every class call
-        # (``ClassConstructorBodySugar``) and every other read of the statement
-        # answers with that one outcome, never a second reduction (#7794).  A
-        # statement nested in a function runs at each call of that function,
-        # against that call's bindings, so it is reduced at each read.
+        # every ``Cls(...)`` reads that one class.  The statement is reduced
+        # where it runs (the block that holds it, an enclosing class body's
+        # field), and its name is bound to the class under its evaluation
+        # key there; every read of the name -- a class call, a base, a
+        # decorator, an ``__init__``'s own universe -- reads that key
+        # (``DecoratorApplicationSugar``) and never reduces the statement
+        # again (#7757 item 21).  A module-level statement's outcome is kept
+        # with its sugar (``_ran``).  A statement nested in a function runs
+        # at each call of that function, against that call's bindings.
         #
         # A halt of a base or of the class body leaves the statement before
         # any class exists: what the body bound is the class namespace, gone
         # with it, and nothing of the enclosing block was bound by the
-        # statement. So each read records it where it halted, in the context
-        # the statement is read in (``halt_record``), onto which the block
-        # composition splices what ran before the ``class`` statement; a call
-        # reading the statement re-seats it at the call (``at_the_call``).
+        # statement. So the run records it where it halted, in the context
+        # the statement runs in (``halt_record``), onto which the block
+        # composition splices what ran before the ``class`` statement.
         #
         # The body runs once, at the statement: what its callees stored is
         # the statement's, laid in its record (``as_statement``), never the

@@ -13415,6 +13415,20 @@ class ClassDef(Statement):
             self.reporter,
         )
 
+    def statement_value_ref(self):
+        """The one read of the value this class statement bound, by a reader
+        outside the block that ran it: its evaluation key
+        (``DecoratedDefinitionRef``, ``_definition_evaluation_key`` with no
+        scope), the key a call by name, a base and a decorator read a module
+        class through, and the key the statement binds where no substitution
+        bound it a reference (``_decorated_statement_sugar``).  An
+        ``__init__``'s own universe reads the class its constructor is
+        entered on through it (``tree_enumerate.function_universe_outcome``),
+        never the class statement reduced again."""
+        return _decorated_definition_ref(
+            self, self.span, evaluation=_definition_evaluation_key(self, {})
+        )
+
     def source_visible_constructor_frame(self):
         """The class call projected through its already-constructed definition."""
         from sugar_lift_py_tests.context_manager_resolution import (
@@ -24842,8 +24856,11 @@ class DecoratedDefinitionRef(Expression):
     as an assignment binds its value, ``AssignSugar``), and every read and
     call of the name reads that key (``DecoratorApplicationSugar``), never
     applies the decorators again.  Where no reduction running the statement
-    bound the key (a module function's read after import), the read is the
-    application itself.
+    bound the key (a module function's read after import), a ``def``'s read
+    is the application itself; a ``class``'s read is what the module's one
+    run bound the key to, and is refused by name where that run bound
+    nothing: a class statement is never reduced at a read of its name
+    (``DecoratorApplicationSugar._bound_by_statement``).
     """
 
     definition_name: str
@@ -24858,7 +24875,6 @@ class DecoratedDefinitionRef(Expression):
             getattr(self, "decorator_bindings", ()) or (),
             self.fragment,
             evaluation=getattr(self, "evaluation", None),
-            reference=self,
         )
 
 
@@ -25156,14 +25172,25 @@ def _decorated_statement_sugar(statement):
     ``class`` statement's body runs there, once, and what its callees stored
     is laid in the statement's record before what the decorators' calls
     stored, exactly as an undecorated ``class`` statement lays it
-    (``ClassDefinitionSugar.as_statement``).  A statement substitution bound
-    no reference for reduces as that application alone, in statement
-    position (``DecoratorApplicationSugar.as_statement``)."""
+    (``ClassDefinitionSugar.as_statement``).
+
+    A ``class`` statement substitution bound no reference for (a module
+    body's: no reader outside the module block is threaded for its name)
+    binds its name all the same, under its own key
+    (``ClassDef.statement_value_ref``): the key every read of a module
+    class's name reads, so the module's one run leaves the class a frame
+    called after import reads (#7757 item 21).  A decorated ``def``
+    substitution bound no reference for reduces as that application alone,
+    in statement position (``DecoratorApplicationSugar.as_statement``)."""
     import copy
 
     value = getattr(statement, "decorated_value", None)
     if not isinstance(value, DecoratedDefinitionRef):
-        value = _decorated_definition_ref(statement, statement.span)
+        value = (
+            statement.statement_value_ref()
+            if isinstance(statement, ClassDef)
+            else _decorated_definition_ref(statement, statement.span)
+        )
     application = value.sugar()
     # The statement's own application: a shallow copy (stamps kept, as
     # ``_as_evaluation_of`` keeps them) that never reads the key it binds
@@ -25171,9 +25198,6 @@ def _decorated_statement_sugar(statement):
     own = copy.copy(application)
     object.__setattr__(own, "evaluation", None)
     object.__setattr__(own, "runs_statement", True)
-    # It is the statement, never a read of the name asked for again where it
-    # reduces (``DecoratorApplicationSugar.reference``).
-    object.__setattr__(own, "reference", None)
     evaluation = getattr(value, "evaluation", None)
     if not isinstance(evaluation, str):
         return own
@@ -25188,14 +25212,11 @@ def _decorated_statement_sugar(statement):
     )
 
 
-def _decorator_application_sugar(
-    definition, bindings, site, *, evaluation=None, reference=None
-):
+def _decorator_application_sugar(definition, bindings, site, *, evaluation=None):
     """The one decorator application: ``definition``'s value with each of its
     decorators applied, innermost first (``DecoratorApplicationSugar``),
     read through the statement's evaluation key ``evaluation`` wherever the
-    statement bound it.  ``reference`` is the ``DecoratedDefinitionRef`` this
-    is the sugar of.
+    statement bound it.
 
     Each decorator is decided from its binding where the statement runs:
 
@@ -25237,18 +25258,23 @@ def _decorator_application_sugar(
     construction failure (the application reading its own result, a
     definition with no frame) refuses.
 
+    A read of a ``class``'s name is the statement's key and nothing else:
+    where the reduction the read stands in bound it, and, for a class
+    statement the module body runs (``SourceUnit.module_execution_site``,
+    carried as ``module_run``), where the module's one run bound it
+    (``DecoratorApplicationSugar._bound_by_statement``).  It never reduces
+    the class statement again; a key neither bound is refused by name.
+
     A read constructed while this statement's application is under
     construction up the stack holds no application.  It reads the
-    statement's key where a reduction bound it.  Where none did:
+    statement's key the same way:
 
-    - a ``class``'s name is the application, asked for again where the read
-      reduces (``DecoratorApplicationSugar._application_read_again``, through
-      ``reference``).  The class sugar constructs its methods, so a method
-      that reads the class's name (``Box()`` inside ``Box.run``) is
+    - a ``class``'s name: the class sugar constructs its methods, so a
+      method that reads the class's name (``Box()`` inside ``Box.run``) is
       constructed under the class statement's application; but the class
       statement's value never runs a method's body, and the method reads the
-      name when it is called, after the statement ran.  The cycle is the
-      construction's, not the program's;
+      name when it is called, after the statement ran and bound its key.
+      The cycle is the construction's, not the program's;
     - a ``def``'s own name read by its body is the recursion seat: calling
       the decorators' result runs that body again.  It is refused by name
       where it reduces, never unfolded (``source_visible_call_frame``).
@@ -25258,6 +25284,14 @@ def _decorator_application_sugar(
     )
 
     unit = definition.unit
+    # The unit whose module body runs a ``class`` statement, at import: a
+    # read of the name after import reads what that one run bound the key to.
+    module_run = (
+        unit
+        if isinstance(definition, ClassDef)
+        and unit.module_execution_site(definition) is not None
+        else None
+    )
     key = "decorator-application:" + definition.fragment.seal().cid
     if _frame_is_under_construction(key):
         # A decorator (or the definition's own body, constructed for its
@@ -25265,9 +25299,8 @@ def _decorator_application_sugar(
         # the name this statement binds: the application is under
         # construction up the stack, never unfolded again here.  The read is
         # the key's where the statement bound it (a method called after the
-        # class statement ran reads the class it built); where nothing bound
-        # it, a class's name is the application read again at the reduce and
-        # a ``def``'s is refused by name (``DecoratorApplicationSugar.desugar``).
+        # class statement ran reads the class it built), and is refused by
+        # name where nothing bound it (``DecoratorApplicationSugar.desugar``).
         return DecoratorApplicationSugar(
             definition_name=definition.name,
             decorators=(),
@@ -25279,7 +25312,7 @@ def _decorator_application_sugar(
             ),
             site=site,
             evaluation=evaluation,
-            reference=reference if isinstance(definition, ClassDef) else None,
+            module_run=module_run,
         )
     module_site = (
         unit.module_execution_site(definition) if unit.module_threaded_names() else None
@@ -25341,6 +25374,7 @@ def _decorator_application_sugar(
         evaluation=evaluation,
         uncarried=uncarried,
         defaults=defaults,
+        module_run=module_run,
     )
 
 
