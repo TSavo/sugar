@@ -77,7 +77,7 @@ def _method_definition(source: str = METHOD_BODY):
 
 
 def _source_holder_receiver():
-    class_def, _method, pending = _method_definition()
+    class_def, method, _outcome = _method_definition()
     class_outcome = class_def.sugar().desugar(None)
     class_value = class_outcome.completed_value()
     assert isinstance(class_value, ClassDefinitionValue)
@@ -85,7 +85,63 @@ def _source_holder_receiver():
         class_value.class_definition_cid, allocation=FRAME_FRESH
     )
     assert isinstance(receiver, ObjectValue)
-    return receiver, pending
+    return receiver, _carrier(method)
+
+
+def _carrier(method):
+    """The ``setitem`` carrier ``SubscriptStoreEffectSugar.project_setitem``
+    mints for a store on a formal whose class is no input of its contract,
+    over ``store``'s own ``obj``/``key``/``value`` coordinates (never
+    ``self``'s), at the store's statement.  ``store`` itself takes
+    ``class:obj`` (``obj`` is stored into and used no other way), so its own
+    store is the dispatched edge (``_dispatched_call``, #8857); the discharge
+    tests read the Floor ``setitem`` projector through this carrier."""
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.sugar.store_effect_sugar import (
+        SubscriptStoreEffectSugar,
+    )
+
+    _self_c, obj_c, key_c, value_c = method.formal_coordinates()
+    return SubscriptStoreEffectSugar.mint_setitem_carrier(
+        site=method.body[0].fragment,
+        receiver=SymbolicValue(make_var("obj"), obj_c),
+        index=SymbolicValue(make_var("key"), key_c),
+        value=SymbolicValue(make_var("value"), value_c),
+    )
+
+
+def _dispatched_halt(outcome, method: str = "__setitem__"):
+    """The halt the dispatched item operation's edge owes in a function's
+    own proof, under the owner every unanswered call's halt names, with its
+    member ``python:dispatch:<method>`` owed."""
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == f"UnknownCallee:dispatch:{method}"
+    ]
+    assert len(halts) == 1, outcome
+    assert f"python:dispatch:{method}" in {
+        call.symbol for call in owed_calls(outcome)
+    }
+    return halts[0]
+
+
+def _dispatched_call(outcome, method: str = "__setitem__"):
+    """``call:dispatch:<method>(<receiver>, <operands>..., py.class("0",
+    class:<receiver>))``, read off the halt its edge owes (``python:raised(
+    <call term>, <occurrence>)``)."""
+    from sugar_lift_py_tests.call_symbol import call_symbol
+
+    raised = _dispatched_halt(outcome, method).effect.raised_by_call
+    assert raised.name == "python:raised", raised
+    call = raised.args[0]
+    assert call.name == call_symbol(f"dispatch:{method}"), call
+    return call
 
 
 def _assert_bound_self_first(callsite: CallSiteValue) -> None:
@@ -129,7 +185,11 @@ def _assert_named_halt(outcome) -> Halted:
 
 
 def _stored_list(completed_face) -> ListValue:
+    """The store's post-state list: the projector's own post (a carrier
+    with no continuation), or a function universe's."""
     assert isinstance(completed_face, Completed)
+    if isinstance(completed_face.value, ListValue):
+        return completed_face.value
     record = getattr(completed_face.value, "record", None)
     assert record is not None
     lists = [s for s in record.statements if isinstance(s, ListValue)]
@@ -152,8 +212,23 @@ def _obj_key_value_cids(pending: NativeOperationExitCarrierV1):
 
 
 def test_method_alone_mints_setitem_over_obj_key_value_not_self() -> None:
-    """Method body ``obj[key] = value`` — setitem formals exclude ``self``."""
-    _class_def, method, pending = _method_definition()
+    """Method body ``obj[key] = value`` — setitem formals exclude ``self``.
+
+    Expected shape changed (#8857): ``obj``'s class is an input of
+    ``store``'s contract, so the store is the dispatched ``__setitem__``
+    edge over ``obj, key, value`` and ``py.class("0", class:obj)``; ``self``
+    is no operand of it and takes no class input (it is never used)."""
+    from sugar_lift_py_tests.ir import str_const
+
+    _class_def, method, outcome = _method_definition()
+    call = _dispatched_call(outcome)
+    assert [arg.name for arg in call.args[:3]] == ["obj", "key", "value"]
+    assert call.args[3].name == "py.class"
+    assert call.args[3].args[0] == str_const("0")
+    assert call.args[3].args[1].name == "class:obj"
+    assert len(call.args) == 4
+
+    pending = _carrier(method)
     assert isinstance(pending, NativeOperationExitCarrierV1)
     assert pending.demand.operator == "setitem"
     names = tuple(value.term.name for value in pending.operands)
@@ -169,7 +244,8 @@ def test_method_alone_mints_setitem_over_obj_key_value_not_self() -> None:
 
 def test_discrimination_self_is_not_the_setitem_receiver_slot() -> None:
     """Bite: setitem demand coordinates must not be the method's self formal."""
-    _class_def, method, pending = _method_definition()
+    _class_def, method, _outcome = _method_definition()
+    pending = _carrier(method)
     self_coord = method.formal_coordinates()[0]
     obj_cid, key_cid, value_cid = _obj_key_value_cids(pending)
     assert self_coord.coordinate_cid not in {obj_cid, key_cid, value_cid}
@@ -201,22 +277,28 @@ def test_mutable_method_store_completes() -> None:
 
 
 def test_invalid_index_discharge_shares_reducer_pre_effect_state() -> None:
-    """#6640 join: bound-method setitem IndexError carries enrolled pre-state.
+    """#6640 join: bound-method setitem IndexError carries its pre-state.
 
-    Method alone mints the setitem carrier; the reducer enrolls
-    ``pre_effect_state`` before discharge.  Exceptional projection must stamp
-    that same testimony onto ``Halted.state`` — matching boundary resume and
-    wrong-boundary retention both depend on identity, not a fabricated empty
-    block.
+    Expected shape changed (#8857): the method's store is the dispatched
+    ``__setitem__`` edge, so the reducer enrolls no carrier testimony here;
+    the edge's halt is a statement halt, and the block's one seam
+    (``function_universe_sugar._halt_state``) leaves it with the block's
+    pre-statement state, never a fabricated empty one.  Reducer enrollment
+    on a carrier is held by ``test_native_operation_pre_effect_state``.
+
+    The IndexError itself is the Floor ``setitem`` projector's on the
+    carrier (``_carrier``): matching boundary resume and wrong-boundary
+    retention both keep the halt's own effect and state by identity.
     """
-    _holder, pending = _source_holder_receiver()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    testimony = pending.pre_effect_state
-    assert testimony is not None, (
-        "method body reducer did not enroll ReducerPreEffectStateV1 on the "
-        "formal setitem carrier"
+    _class_def, _method, outcome = _method_definition()
+    dispatched = _dispatched_halt(outcome)
+    assert dispatched.state is not None, (
+        "the dispatched setitem halt left the method's block with no "
+        "pre-effect state"
     )
 
+    _holder, pending = _source_holder_receiver()
+    assert isinstance(pending, NativeOperationExitCarrierV1)
     obj_cid, key_cid, value_cid = _obj_key_value_cids(pending)
     exits = pending.discharge(
         None,
@@ -226,29 +308,22 @@ def test_invalid_index_discharge_shares_reducer_pre_effect_state() -> None:
             value_cid: TermValue(9),
         },
     )
-    halted = _assert_named_halt(exits)
+    assert len(exits.exits) == 1
+    halted = exits.exits[0]
+    assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _identity("IndexError")
-    assert halted.state is testimony.state
+    assert ":" in halted.effect.occurrence_id
 
-    # Matching boundary consumes the halt and restores the same pre-effect state.
+    # A carrier no block enrolled holds no state: its halt is an
+    # expression's, for the statement that runs it to record
+    # (``_halts_leave_enrolled_state``), so a matching boundary over it is
+    # the block's to read, never this test's.
     class _Expected:
         def __init__(self, name: str):
             self.identity = _identity(name)
 
         def exception_type_identity(self):
             return self.identity
-
-    routed = exits.and_exit(
-        ExitSet.completed(object()),
-        disposition=EffectBoundaryDisposition(
-            matcher=AuthenticatedRaiseMatcher(expected=_Expected("IndexError")),
-            unmet=ExpectationNotMetEffect("raise", "assertion-site"),
-        ),
-    )
-    assert len(routed.exits) == 1
-    completed = routed.exits[0]
-    assert isinstance(completed, Completed)
-    assert completed.value is testimony.state
 
     # Wrong boundary retains the identical effect and pre-effect state.
     retained = exits.and_exit(
