@@ -113,7 +113,7 @@ def _claim_statuses(prove_doc: dict) -> set[str]:
     return {
         row["status"]
         for row in prove_doc.get("rows") or []
-        if row.get("property") == "consistency:test_consumer"
+        if row.get("property") == "consistency:python:test_witness.test_consumer"
     }
 
 

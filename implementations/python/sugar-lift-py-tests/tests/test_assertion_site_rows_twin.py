@@ -95,7 +95,7 @@ def test_a_same_module_string_claim_is_decided(tmp_path: Path) -> None:
         rows = [
             row
             for row in doc.get("rows") or []
-            if row.get("property") == "consistency:test_vendor"
+            if row.get("property") == "consistency:python:test_witness.test_vendor"
         ]
         assert len(rows) == 1, doc.get("rows")
         return rows[0].get("status")
