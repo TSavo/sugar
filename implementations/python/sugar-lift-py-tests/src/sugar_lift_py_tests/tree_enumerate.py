@@ -382,6 +382,42 @@ def module_run_halts(unit) -> tuple:
     return tuple(outcome.halts())
 
 
+MODULE_RUN_NAME = "<module>"
+"""The name the module body's one run is stated under, Python's own name for
+a module's code (``co_name``): the module is no function and has no target
+symbol of its own."""
+
+
+def module_run_memento(sf: SourceFile, file_rel: str):
+    """The SourceMemento of the module itself (``statement_memento`` over
+    its root, under ``MODULE_RUN_NAME``): the warrant of what its one run
+    owes (``module_run_owed_calls``) or refuses (``refused_module_row``)."""
+    return statement_memento(sf.root, MODULE_RUN_NAME, file_rel)
+
+
+def module_run_owed_calls(sf: SourceFile) -> tuple:
+    """Every unanswered call the module body's one run owes, read off THE
+    module reduction's final arms (``_module_run_reduction``) by the one
+    reader a function's reduction is read by (``unanswered_calls.owed_calls``).
+
+    The module run is a reduction like a function's: what its arms left
+    unanswered (a module-level ``x = undecided_call()``, an imported
+    decorator's application ``@elsewhere.wrap``) is owed by the file's proof
+    exactly as a function's is (step 8), whether or not any function reads
+    what it made.  A refusal by name of the run propagates to the caller,
+    who states it (``refused_module_row``)."""
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    held = _module_run_reduction(sf.unit)
+    if held is None:
+        raise ValueError(
+            "the module run's debts were asked for while the run is under way: "
+            "owner=module_run_owed_calls "
+            "replacement=read them after the run, from the file scan"
+        )
+    return owed_calls(held.outcome)
+
+
 def _module_run_reduction(unit):
     """``unit``'s module run: THE module reduction (``owner_reduction`` with
     no owner, an ``OwnerReduction``), run once, at the root occurrence path,
@@ -502,11 +538,31 @@ def refused_function_row(fn, file_rel: str, refusal) -> UndecidedRow:
     (``FunctionDef.bridge_source_symbol``), never off its construction, which
     is what refused.
     """
+    return _refused_row(
+        function_def_memento(fn, file_rel),
+        fn.bridge_source_symbol(),
+        refusal,
+        file_rel,
+    )
+
+
+def refused_module_row(sf: SourceFile, file_rel: str, refusal) -> UndecidedRow:
+    """The ``undecided`` row for a module body whose one run the lifter
+    refuses by name (``module_run_owed_calls``), by the same rule as a
+    refused function (``refused_function_row``): the refusal's own name and
+    what it observed, at the module (``module_run_memento``).  The module
+    has no target symbol of its own (``None``).  What the run would have
+    owed is not known, so the refusal is stated, never dropped."""
+    return _refused_row(module_run_memento(sf, file_rel), None, refusal, file_rel)
+
+
+def _refused_row(memento, symbol, refusal, file_rel: str) -> UndecidedRow:
+    """The one ``undecided`` row of a refusal by name at ``memento``'s
+    span: ``symbol`` (or ``None``), the refusal's testimony as the reason."""
     from sugar_lift_py_tests.context_manager_resolution import (
         SourceFragmentCoordinateV1,
     )
 
-    memento = function_def_memento(fn, file_rel)
     coordinate = SourceFragmentCoordinateV1(
         memento.source_cid,
         memento.span.start_line,
@@ -516,7 +572,7 @@ def refused_function_row(fn, file_rel: str, refusal) -> UndecidedRow:
     )
     testimony = refusal.diagnostic()
     return UndecidedRow(
-        symbol=fn.bridge_source_symbol(),
+        symbol=symbol,
         site=_undecided_site(file_rel, coordinate),
         reason={
             "refused": {
@@ -576,9 +632,11 @@ The verifier reads the class symbol off the row name by this suffix, and the
 row is a statement of fact, never a claim to check (``consistency.rs``)."""
 
 
-def ancestry_statement_memento(statement, name: str, file_rel: str):
-    """The SourceMemento of the statement that binds ``name`` (a ``class``, or
-    a package's re-exporting ``from ... import``): its ancestry row's warrant."""
+def statement_memento(statement, name: str, file_rel: str):
+    """The SourceMemento of a module-level node under ``name``: the statement
+    that binds ``name`` (a ``class``, or a package's re-exporting ``from ...
+    import``), its ancestry row's warrant; or the module itself, its one
+    run's rows' warrant (``module_run_memento``)."""
     from sugar_lift_py_tests.kit_rpc.source_memento_dto import SourceMementoDto
     from sugar_lift_py_tests.kit_rpc.source_span_dto import SourceSpanDto
 
@@ -620,7 +678,7 @@ def exception_ancestry_rows(sf: SourceFile, file_rel: str) -> list:
     for statement, name, symbol, identity, ancestors in (
         sf.unit.exception_class_ancestry()
     ):
-        memento = ancestry_statement_memento(statement, name, file_rel)
+        memento = statement_memento(statement, name, file_rel)
         locus = ConstructionSite(
             path=file_rel, line=memento.span.start_line, column=memento.span.start_col
         )

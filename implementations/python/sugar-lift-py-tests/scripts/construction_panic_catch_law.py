@@ -203,8 +203,13 @@ except LifterRefusal as refusal:
     # function is that function's refused member; the full scan writes its
     # `undecided` row with the refusal's name and reason and serves the rest of
     # the file. A ``BackendDefect`` is re-raised by the handler before it
-    # (pure re-raise) and is never recorded as a function's refusal.
-    ("lift_rpc.py", "_handle_enumerate"): frozenset({_canonical_handler("""
+    # (pure re-raise) and is never recorded as a function's refusal. The
+    # module body's one run follows the same rule (#7757): a refusal by name
+    # of the run is the module's refused member, written once, and the run's
+    # debts are then none it can state.
+    ("lift_rpc.py", "_handle_enumerate"): frozenset(
+        {
+            _canonical_handler("""
 except LifterRefusal as refusal:
     scan_rows.append(
         (
@@ -213,7 +218,19 @@ except LifterRefusal as refusal:
         )
     )
     continue
-""")}),
+"""),
+            _canonical_handler("""
+except LifterRefusal as refusal:
+    scan_rows.append(
+        (
+            module_memento,
+            _tree.refused_module_row(sf, file_rel, refusal),
+        )
+    )
+    module_calls = ()
+"""),
+        }
+    ),
     ("desugar_repro.py", "_desugar_one"): frozenset({_canonical_handler("""
 except BaseException as exc:
     status = type(exc).__name__

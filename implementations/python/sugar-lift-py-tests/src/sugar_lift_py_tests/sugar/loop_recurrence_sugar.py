@@ -176,10 +176,10 @@ class LoopBindingRefSugar(ConstructedTermSugar):
         bound = None
         if temporal is not None:
             key = evaluation_read_here(temporal, self.post_key)
-            bound = temporal.value_read(key)
+            bound = temporal.key_read(key)
         if bound is None:
             self._unbound()
-        return ExitSet.completed(bound)
+        return bound
 
     def _unbound(self):
         """A read whose key the loop's publication never reached here.

@@ -33,7 +33,7 @@ built after evaluating the defaults and before applying its decorators
 (``ClassConstructorBodySugar.bind_class_call``); and, for a module ``def`` called
 after import, the module run that ran its statement, bound at the frame entry
 (``call_site_sugar.with_module_final_globals``) and asked for only where the
-key is read (``TemporalContext.value_read``).  A default expression is
+key is read (``TemporalContext.key_read``).  A default expression is
 never evaluated at a call: a call where none of these bound the key is
 refused by name.
 """
@@ -131,7 +131,7 @@ class DefaultValueSugar(Sugar):
     def desugar(self, ctx: object = None) -> ExitSet:
         bound = self.bound_value(ctx)
         if bound is not None:
-            return ExitSet.completed(bound)
+            return bound
         from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
         raise SourceCallBindingGap(
@@ -140,8 +140,10 @@ class DefaultValueSugar(Sugar):
         )
 
     def bound_value(self, ctx):
-        """The value the ``def`` statement or lambda expression bound under
-        the key where the call runs, or None where nothing bound it."""
+        """The read of the value the ``def`` statement or lambda expression
+        bound under the key where the call runs (one completed arm owing
+        what the read owes, ``TemporalContext.key_read``), or None where
+        nothing bound it."""
         temporal = getattr(ctx, "temporal", None) if ctx is not None else None
         if temporal is None:
             return None
@@ -149,7 +151,7 @@ class DefaultValueSugar(Sugar):
             evaluation_read_here,
         )
 
-        return temporal.value_read(evaluation_read_here(temporal, self.evaluation))
+        return temporal.key_read(evaluation_read_here(temporal, self.evaluation))
 
 
 def bind_carried_defaults(ctx, defaults):
