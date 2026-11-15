@@ -14,6 +14,7 @@ def test_import_binding_transfer_rejects_future_statement_variants_loudly() -> N
     transfer = import_binding._Pass(
         source_cid="blake3-512:" + "0" * 128,
         module_name="fixture",
+        module_is_package=False,
         module_identities={},
     )
     scope = SourceFile(("pass\n", "fixture.py", "blake3-512:" + "1" * 128)).root
