@@ -33,7 +33,12 @@ def _tree(tmp_path: Path, name: str) -> SourceFile:
     from sugar_lift_py_tests.lift_rpc import _open_at_seat
 
     path = tmp_path / name
-    path.write_text("result = tuple(item for item in unknown)[1:]\n", encoding="utf-8")
+    # ``unknown`` is a formal: an iterable the read does not know, never a
+    # name nothing binds (whose read halts with ``NameError``, #7854).
+    path.write_text(
+        "def produce(unknown):\n    return tuple(item for item in unknown)[1:]\n",
+        encoding="utf-8",
+    )
     return _open_at_seat(
         path,
         root=tmp_path,
