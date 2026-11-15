@@ -14993,6 +14993,16 @@ class Delete(Statement):
                     target.slice_.substitute(current),
                     target.span,
                 )
+            if not isinstance(target, Name):
+                # The delete operation IS its target's site (``del o.a``'s
+                # ``__delattr__``, ``del r[k]``'s ``__delitem__``): it builds
+                # the receiver (and the index) and answers for itself, so
+                # nothing else constructs the target.  This absorption is its
+                # discharge, as the container-mutation door's item delete's
+                # is (``container_mutation._container_call``).  A Name target
+                # is a binding spelling, which the statement's own discharge
+                # answers.
+                target.discharge_by_substitution()
             operations.append(operation)
         return operations[0] if len(operations) == 1 else _Splice(tuple(operations))
 
@@ -15017,9 +15027,12 @@ class Delete(Statement):
         """Construct the exact module-level subscript-delete statement."""
         if len(self.targets) == 1 and isinstance(self.targets[0], Subscript):
             target = self.targets[0]
-            return self._make_delete_subscript(
+            sugar = self._make_delete_subscript(
                 target.value, target.slice_, target.span
             ).sugar()
+            # The delete is its target's site, as in ``substitute``.
+            target.discharge_by_substitution()
+            return sugar
         from .panic import SugarNotWritten
 
         raise SugarNotWritten(
@@ -15295,12 +15308,21 @@ def _valued_store_target_sugar(target, value_sugar, site):
             SubscriptStoreEffectSugar,
         )
 
-        return SubscriptStoreEffectSugar(
+        store = SubscriptStoreEffectSugar(
             receiver=target.value.sugar(),
             index=target.slice_.sugar(),
             value=value_sugar,
             site=site,
         )
+        # The store IS its target's site (``r[k] = v``'s ``__setitem__``): it
+        # builds the receiver and the index and makes the one call the target
+        # stands for, so nothing else constructs the target.  This absorption
+        # is its discharge, as the container-mutation door's item store's is
+        # (``container_mutation._container_call``).  A receiver no bound name
+        # reaches (``self.iloc[i] = v``, ``f(x)[k] = v``) takes this store,
+        # and its target stayed on the roll unanswered (#7757).
+        target.discharge_by_substitution()
+        return store
     return None
 
 
