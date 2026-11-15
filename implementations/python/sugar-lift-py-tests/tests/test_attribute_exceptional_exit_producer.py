@@ -261,7 +261,6 @@ def _assert_bare_desugar_symbolic_attribute(node: Attribute) -> None:
     [
         ("tests/series/test_api.py", 175, "foo", "ser.foo"),
         ("tests/series/test_api.py", 195, "weekday", "ser.weekday"),
-        ("tests/api/test_api.py", 491, "foo", "pd.util.foo"),
         ("tests/strings/test_api.py", 88, "str", "mi.str"),
         ("tests/series/accessors/test_cat_accessor.py", 65, "cat", "invalid.cat"),
         ("tests/arrays/sparse/test_accessor.py", 97, "density", "ser.sparse.density"),
@@ -277,12 +276,45 @@ def test_no_call_attribute_corpus_sites_stay_symbolic_undecided(
     _assert_bare_desugar_symbolic_attribute(node)
 
 
-def test_binop_child_np_nan_reattributes_to_attribute_owner() -> None:
-    """BinOp ``s_0123 & np.nan`` child-evaluates ``.nan`` on SymbolicValue.
+def test_import_member_path_read_is_the_closed_reference() -> None:
+    """``pd.util.foo`` under ``import pandas as pd`` is an import member path.
 
-    That read is Attribute-family (owner SymbolicValue.attribute), not
-    binary_operation_exception_floor: its two faces keep the attribute's
-    owner when a BinOp site is a parent of Attribute evaluation.
+    Every import-bound reference reads the one import table (#7837, #7851):
+    the table authenticates the head and the attribute chain names the export
+    path, so the value read is the one closed reference
+    ``ref:pandas.util.foo``.  The alias is never an opaque symbolic receiver
+    asked for a member (the deleted second way this row used to pin as
+    ``SymbolicValue.attribute``), and no ``AttributeError`` is named here.
+    This pins the value the read completes with; it states nothing about
+    whether the read can halt.
+    """
+    from sugar_lift_py_tests.floor.import_member_value import ImportMemberValue
+    from sugar_lift_py_tests.outcome import Completed
+
+    path = _authenticated_corpus_file("tests/api/test_api.py")
+    source = path.read_text(encoding="utf-8")
+    assert "pd.util.foo" in source
+    node = _line_attribute(source, path, line=491, attr="foo")
+
+    outcome = node.sugar().desugar(None)
+
+    (member,) = [arm.value for arm in outcome.exits if isinstance(arm, Completed)]
+    assert isinstance(member, ImportMemberValue)
+    assert member.qualified_name == "pandas.util.foo"
+    assert member.exported_member_path == ("util", "foo")
+    assert member.to_term(owner="test") == ctor(
+        "ref:pandas.util.foo", [], symbol_kind="coordinate"
+    )
+
+
+def test_binop_child_np_nan_is_the_closed_reference_under_the_binary_faces() -> None:
+    """BinOp ``s_0123 & np.nan``: ``np.nan`` is an import member.
+
+    The operand reads the one import table (#7837, #7851): it is the closed
+    reference ``ref:numpy.nan``, never ``.nan`` asked of an opaque symbolic
+    ``np`` (the deleted second way this test used to pin as
+    ``SymbolicValue.attribute``).  The binary operation over an undecided
+    left operand keeps its own two faces.
     """
     path = _authenticated_corpus_file("tests/series/test_logical_ops.py")
     source = path.read_text(encoding="utf-8")
@@ -311,5 +343,6 @@ def test_binop_child_np_nan_reattributes_to_attribute_owner() -> None:
         for arm in outcome.exits
         if isinstance(arm, Halted) and isinstance(arm.effect, UndeterminedRaiseEffect)
     ]
-    assert "SymbolicValue.attribute" in owners
-    assert "python:attribute.completes" in repr(outcome)
+    assert "UndecidedBinary:&" in owners
+    assert "SymbolicValue.attribute" not in owners
+    assert "numpy.nan" in repr(outcome)
