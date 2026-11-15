@@ -146,8 +146,10 @@ _USES = {
     "one-call": ("    a = Box(1)\n    assert a.n == 1\n", 1),
     "two-calls": ("    a = Box(1)\n    b = Box(2)\n    assert a.n == 1\n", 2),
 }
-# Halted faces one class call carries from a class body that may complete.
-_BODY_HALTS = {"field-may-raise": 2}
+# Halted faces one class call carries from a class body that may complete:
+# the dotted read ``os.environ`` (the member may be absent), the subscript,
+# and ``int`` of what it read.
+_BODY_HALTS = {"field-may-raise": 3}
 # Class bodies that never complete: the exception their one halt raises.
 _BODY_ALWAYS_RAISES = {"field-int-of-text": "ValueError"}
 

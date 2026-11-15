@@ -346,11 +346,14 @@ def test_the_initializer_universe_under_an_unrun_source_new_refuses() -> None:
 @pytest.mark.parametrize(
     ("body", "halted"),
     [
-        ('    limit = os.environ["L"]\n', 1),
-        ('    limit = int(os.environ["L"])\n', 2),
-        ('    a = os.environ["A"]\n    b = os.environ["B"]\n', 2),
+        # Each ``os.environ`` is a dotted read off an imported module, which
+        # may raise (the member may be absent; no module's namespace is
+        # held): one halt of its own, before the subscript's.
+        ('    limit = os.environ["L"]\n', 2),
+        ('    limit = int(os.environ["L"])\n', 3),
+        ('    a = os.environ["A"]\n    b = os.environ["B"]\n', 4),
         # ``a = b = e`` evaluates ``e`` once.
-        ('    a = b = os.environ["A"]\n', 1),
+        ('    a = b = os.environ["A"]\n', 2),
         ("    limit = 3\n", 0),
         ("    pass\n", 0),
     ],

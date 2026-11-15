@@ -5,6 +5,12 @@ names the export path.  This floor carries that joined coordinate without
 re-asking an opaque module receiver for a member and without inventing
 AttributeError.
 
+A dotted read (``np.nan``) can raise where it is read and the lifter holds no
+module's namespace, so that read is two-faced (``read_faces``): this
+coordinate under the read's completes atom, an undetermined raise under the
+complement, the ``undecided`` member owed under the import's target symbol.
+A name ``from m import x`` bound is read by name and cannot raise at the read.
+
 Operations on this floor share one door: the export is source-authenticated
 but its runtime type is not lift-time decided (``runtime_type_is_decided`` is
 False). Lookups use the existing undecided_* two-faced helpers. Call,
@@ -94,6 +100,59 @@ class ImportMemberValue(FloorValue):
         from sugar_lift_py_tests.ir import ctor
 
         return ctor(f"ref:{self.qualified_name}", [], symbol_kind="coordinate")
+
+    def read_faces(self, site):
+        """``module.attr`` read off an imported head: the two faces.
+
+        Python runs ``getattr`` on what the import bound, once per segment of
+        the path, and any of them may raise (an absent member is
+        ``AttributeError``; a module ``__getattr__`` may raise anything).  The
+        lifter holds no module's namespace, so whether the member is there is
+        not decided here.  It is the one two-faced unanswered outcome
+        (``ExitSet.two_faced``), the form every undecided attribute read takes
+        (``FloorValue.undecided_attribute``): this reference completes only
+        under ``python:attribute.completes(python:attribute(<head>, <path>,
+        <site>))``, keyed on the exact source site, and the complement halts
+        with an ``UndeterminedRaiseEffect``.  Both arms owe the ``undecided``
+        member (reason ``unanswered``) at the read's site, under the one
+        import table's target symbol, so the join can answer it (step 9).  No
+        ``AttributeError`` is named and no namespace is consulted.
+
+        Only a dotted read reaches here.  A name ``from m import x`` bound is
+        read by name: nothing runs at the read, so it stays the one completed
+        arm (``ImportMemberSugar.desugar``).
+        """
+        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+        from sugar_lift_py_tests.ir import atomic, ctor, str_const
+        from sugar_lift_py_tests.occurrence import occurrence_key
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        key = occurrence_key(site)
+        completes = atomic(
+            "python:attribute.completes",
+            [
+                ctor(
+                    "python:attribute",
+                    (
+                        _import_member_head_term(self.receipt),
+                        str_const(".".join(self.receipt.use["exportedMemberPath"])),
+                        str_const(key),
+                    ),
+                )
+            ],
+        )
+        return ExitSet.two_faced(
+            self,
+            UndeterminedRaiseEffect(
+                blame=str(site),
+                occurrence=key,
+                producer_node_owner="ImportMemberValue.read",
+                site=site,
+            ),
+            guard=completes,
+            site=site,
+            symbol=self.receipt.target_symbol,
+        )
 
     def exception_type_identity(self):
         """The same import coordinate the exception authenticator mints."""
@@ -272,6 +331,30 @@ def _import_member_runtime_effect(
             ),
         )
     )
+
+
+def _import_member_head_term(receipt):
+    """What the import statement bound, the receiver of a dotted member read.
+
+    Named from the authenticated binding alone (its module identity and
+    exported path), never from the receipt's target symbol or the local
+    spelling.  A plain ``import`` binds a module: ``python:module(<name>)``,
+    the spelling ``AttributeSugar`` gives the module an ``import a.b`` receipt
+    testifies.  A ``from m import x`` binding is the value its own read is:
+    the closed reference ``ref:m.x``.
+    """
+    from sugar_lift_py_tests.import_binding import (
+        _authenticated_binding_target_symbol,
+    )
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    bound = _authenticated_binding_target_symbol(receipt.import_binding).removeprefix(
+        "python:"
+    )
+    target = receipt.import_binding.to_value().get("target")
+    if isinstance(target, dict) and target.get("exportedPath") == []:
+        return ctor("python:module", (str_const(bound),))
+    return ctor(f"ref:{bound}", [], symbol_kind="coordinate")
 
 
 def _import_member_export_path(receipt) -> tuple[str, ...]:
