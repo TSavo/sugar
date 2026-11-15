@@ -32,7 +32,6 @@ from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
     NativeOperationResolutionV1,
-    source_coordinate,
 )
 from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
@@ -430,20 +429,14 @@ def test_lying_boundary_exception_type_is_not_truth_origin() -> None:
     )
     assert boundary_type == floor_type  # equality alone proves nothing
 
-    operation_origin = source_coordinate(fragment)
+    operation_origin = fragment
     truthful_resolution = NativeOperationResolutionV1.exceptional(
         exception_type_coordinate=floor_type,
         operation_occurrence=operation_origin,
     )
     # Lying: same type coordinate content, but occurrence is the *assertion*
     # site (boundary), not the UnaryOp / truth raise occurrence.
-    boundary_origin = type(operation_origin)(
-        operation_origin.source_cid,
-        operation_origin.start_line + 10,
-        operation_origin.start_col,
-        operation_origin.end_line + 10,
-        operation_origin.end_col,
-    )
+    boundary_origin = _Site(line=fragment.line + 10)
     lying_resolution = NativeOperationResolutionV1.exceptional(
         exception_type_coordinate=boundary_type,
         operation_occurrence=boundary_origin,

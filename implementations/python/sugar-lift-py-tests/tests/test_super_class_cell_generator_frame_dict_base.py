@@ -270,16 +270,36 @@ def _super_call(name: str, *arguments):
     )
 
 
+def _assert_undecided_read(outcome, site) -> None:
+    """The dict base's storage is not current
+    (``MappingObjectValue._builtin_dict``), so dict's own read of it is not
+    decided here: the read's two faces, both owing the ``undecided`` member
+    (reason ``unanswered``) at the read's site -- never a member it holds and
+    never a refusal."""
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+    from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
+
+    owed = (unanswered_call(None, site),)
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    (halt,) = [arm for arm in outcome.exits if isinstance(arm, Halted)]
+    assert len(outcome.exits) == 2
+    assert outcome.completed_value() is None
+    assert done.owed == halt.owed == owed
+    assert owed_calls(outcome) == owed
+
+
 def test_super_getitem_reads_the_dict_base() -> None:
-    assert _super_call("__getitem__", StringValue("k")).completed_value() == (
-        TermValue(7)
+    _assert_undecided_read(
+        _super_call("__getitem__", StringValue("k")), "super-__getitem__"
     )
 
 
 def test_super_contains_tests_the_dict_base() -> None:
-    assert isinstance(
-        _super_call("__contains__", StringValue("k")).completed_value(),
-        TrueBoolLiteralSugar,
+    outcome = _super_call("__contains__", StringValue("k"))
+    _assert_undecided_read(outcome, "super-__contains__")
+    assert not any(
+        isinstance(getattr(arm, "value", None), TrueBoolLiteralSugar)
+        for arm in outcome.exits
     )
 
 

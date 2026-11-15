@@ -96,8 +96,9 @@ def test_positional_keyword_and_default_callers_reach_the_same_demand() -> None:
     exceptional = (positional, keyword, default)
     halted = tuple(outcome.exits[0] for outcome in exceptional)
     assert all(isinstance(exit_, Halted) for exit_ in halted)
+    site = carrier.site
     assert {exit_.effect.occurrence_id for exit_ in halted} == {
-        str(carrier.demand.source_node.wire())
+        f"{site.filename}:{site.line}:{site.col}"
     }
 
 
@@ -129,7 +130,8 @@ def test_lying_boundary_type_cannot_create_or_consume_the_subscript_result() -> 
     assert len(routed.exits) == 1
     escaped = routed.exits[0]
     assert isinstance(escaped, Halted)
-    assert escaped.effect.occurrence_id == str(carrier.demand.source_node.wire())
+    site = carrier.site
+    assert escaped.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
     assert escaped.effect.exception_type_coordinate == (
         original.effect.exception_type_coordinate
     )

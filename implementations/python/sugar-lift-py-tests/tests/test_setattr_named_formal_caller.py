@@ -406,11 +406,12 @@ def test_tuple_receiver_store_halts_from_setattr_not_boundary() -> None:
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _identity("AttributeError")
-    assert halted.effect.occurrence_id == str(site)
+    # The store statement ``obj.field = value`` is the operation's site.
+    site = function.body[0].fragment
+    assert halted.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
     assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
     # Direct setattr owner is proven on the incomplete path before carrier
     # re-projects the exceptional resolution.
-    site = function.body[0].fragment
     from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
     from sugar_lift_py_tests.sugar.sugar_base import Sugar as _S
 

@@ -51,7 +51,7 @@ def test_mutable_dict_global_lookup_preserves_complementary_value_and_keyerror_f
     halted = next(exit for exit in exits.exits if isinstance(exit, Halted))
     completed = next(exit for exit in exits.exits if isinstance(exit, Completed))
     assert halted.effect.exception_name == "KeyError"
-    assert halted.effect.occurrence == str(site)
+    assert halted.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
     from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
 
     key_error_coord, key_error_mro = _builtin_exception_identity("KeyError")

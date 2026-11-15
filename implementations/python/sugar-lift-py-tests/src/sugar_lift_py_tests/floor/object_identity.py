@@ -160,8 +160,10 @@ def identity_term(value, site, role: str, *, owner: str):
     if site is None:
         from sugar_source_tree.panic import SugarNotWritten
 
+        # The read reached its floor without its site: the floor that minted
+        # the read (``owner``) is the coordinate this refusal blames.
         raise SugarNotWritten(
-            blame=None,
+            blame=owner,
             owner=owner,
             observed=(
                 f"undecided read of a stale {type(value).__name__} "
