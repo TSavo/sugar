@@ -49,6 +49,7 @@ def test_halt_identity():
 
     assert _classes("""
 def test_occurrence():
+    assert face.occurrence_id is not None
 """) == {"PRESENCE-ONLY-IDENTITY"}
 
 
