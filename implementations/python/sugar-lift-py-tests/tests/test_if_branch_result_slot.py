@@ -91,7 +91,20 @@ def test_undecidable_if_elif_else_retains_complementary_faces() -> None:
         },
     )
     assert isinstance(exits, ExitSet)
-    completed = _only(exits, Completed)
+    # ``left < right`` over two operands of undecided type selects
+    # ``__lt__`` from types nobody looked at, so the comparison itself may
+    # raise: the branches stand on the face where it completes, and the
+    # complement is a halt naming no exception.  The halt is never dropped.
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome.exit_set import complement_guard
+
+    assert len(exits.exits) == 2
+    (completed,) = (exit_ for exit_ in exits.exits if isinstance(exit_, Completed))
+    (halted,) = exits.halts()
+    assert type(halted.effect) is UndeterminedRaiseEffect
+    assert halted.effect.exception_name is None
+    assert "python:compare.completes" in repr(completed.guard)
+    assert halted.guard == complement_guard(completed.guard)
     returns = tuple(
         entry
         for entry in completed.value.record.statements
