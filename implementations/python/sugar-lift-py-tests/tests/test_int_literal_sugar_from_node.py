@@ -3,8 +3,8 @@
 A `1` in source, asked for its sugar, constructs an IntLiteralSugar and
 desugars to the number as a floor term. No factory, no owns, no catalog:
 the Constant node recognizes ITSELF (its value is an int) and constructs
-its sugar directly. A literal kind not yet converted throws SugarNotWritten
-loudly, by kind — the honest gap arm.
+its sugar directly. Every literal kind is converted: each is its own sugar,
+picked by the value's exact type, and none is folded into the int leaf.
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ import tempfile
 from pathlib import Path
 
 from sugar_source_tree.tree import SourceFile
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.outcome import ExitSet
@@ -57,24 +56,56 @@ def test_the_sugar_carries_the_nodes_own_fragment_as_its_site():
     assert (site.span.start, site.span.end) == (frag.span.start, frag.span.end)
 
 
-def test_a_bool_is_not_an_int_literal_it_throws_until_written():
-    # bool is a subclass of int; the node must distinguish it. True is its own
-    # (not-yet-written) sugar, so it throws rather than becoming IntLiteralSugar.
-    (const,) = _constants("x = True\n")
-    try:
-        const.sugar()
-        assert False, "True must not construct IntLiteralSugar"
-    except SugarNotWritten:
-        pass
+def test_a_bool_is_not_an_int_literal_it_is_its_own_sugar():
+    # bool is a subclass of int; the node must distinguish it. True and False
+    # are their own sugars, never IntLiteralSugar(1) / IntLiteralSugar(0).
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+        TrueBoolLiteralSugar,
+    )
+
+    (true_const,) = _constants("x = True\n")
+    true_sugar = true_const.sugar()
+    assert isinstance(true_sugar, TrueBoolLiteralSugar)
+    assert not isinstance(true_sugar, IntLiteralSugar)
+
+    (false_const,) = _constants("x = False\n")
+    false_sugar = false_const.sugar()
+    assert isinstance(false_sugar, FalseBoolLiteralSugar)
+    assert not isinstance(false_sugar, IntLiteralSugar)
 
 
-def test_an_unconverted_literal_kind_throws_loudly_by_kind():
-    (const,) = _constants("x = 3.0\n")  # float: leaf not written yet
-    try:
-        const.sugar()
-        assert False, "an unwritten literal kind must throw"
-    except SugarNotWritten as panic:
-        assert "Constant" in panic.observed
+def test_every_other_literal_kind_is_its_own_sugar_by_exact_type():
+    # Every literal kind is converted: none is left to refuse, and none is
+    # folded into the int leaf. The value's exact type picks the sugar.
+    from sugar_lift_py_tests.sugar.bytes_literal_sugar import BytesLiteralSugar
+    from sugar_lift_py_tests.sugar.complex_literal_sugar import ComplexLiteralSugar
+    from sugar_lift_py_tests.sugar.ellipsis_literal_sugar import (
+        EllipsisLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.none_literal_sugar import NoneLiteralSugar
+    from sugar_lift_py_tests.sugar.real_literal_sugar import RealLiteralSugar
+    from sugar_lift_py_tests.sugar.string_literal_sugar import StringLiteralSugar
+
+    (real,) = _constants("x = 3.0\n")
+    real_sugar = real.sugar()
+    assert isinstance(real_sugar, RealLiteralSugar)
+    assert not isinstance(real_sugar, IntLiteralSugar)
+    assert real_sugar.value == 3.0 and type(real_sugar.value) is float
+
+    for source, expected in (
+        ("x = None\n", NoneLiteralSugar),
+        ("x = 'a'\n", StringLiteralSugar),
+        ("x = b'a'\n", BytesLiteralSugar),
+        ("x = ...\n", EllipsisLiteralSugar),
+        ("x = 2j\n", ComplexLiteralSugar),
+    ):
+        (const,) = _constants(source)
+        sugar = const.sugar()
+        assert isinstance(sugar, expected), source
+        assert not isinstance(sugar, IntLiteralSugar), source
 
 
 # ── the Sugar base contract: meaning-only, enforced by ABC ──────────────
