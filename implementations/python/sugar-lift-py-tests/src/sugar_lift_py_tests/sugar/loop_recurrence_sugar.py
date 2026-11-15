@@ -1708,15 +1708,16 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 owner="LoopRecurrenceSugar.target",
                 blame=target.fragment,
             )
+            # An item with no authenticated members (the symbolic item, a
+            # symbolic member) is unpacked through the one undecided
+            # operation: two faces (``runtime_unpack_faces``), completing with
+            # the roster or halting with the unpack's raise, both owing its
+            # ``undecided`` member.  The leaves are read from each completed
+            # arm beneath its guard and owing what it owes, and the halt is an
+            # arm as it is (``ExitSet.sequence``): never refused for its debt.
             unpacked = _require_exit_set(
                 operation.submit(current, ctx), owner="LoopRecurrenceSugar.target"
             )
-            # A roster owing something has no linear place for the debt: it is
-            # refused with every other shape, never carried on without it.
-            if unpacked.owed_items():
-                raise TypeError(
-                    "positional target unpack omitted its authenticated roster"
-                )
 
             def leaves(roster):
                 if not isinstance(roster, UnpackMemberRoster):
