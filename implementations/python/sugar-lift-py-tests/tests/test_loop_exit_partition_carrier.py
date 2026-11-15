@@ -230,28 +230,34 @@ def test_guarded_loop_read_is_a_constructed_term_with_exact_coordinates():
 
 
 def test_the_carrier_is_the_loop_projection_read(tmp_path):
-    """THE CARRIER, pinned where it was measured rather than where it raises.
+    """THE CARRIER, pinned where it is minted rather than where it raises.
 
     The refusal's stack names `store_effect_sugar` and `method_call._collect`
     and no `read_binding` at all, so an agent reading only the traceback would
-    wire the testimony into the wrong producer. This test asserts the mint lands
-    at `read_binding`'s `LoopGuardedProjection` branch, over the loop's own
-    target CID, with exactly the two exit routes as its sides.
+    wire the testimony into the wrong producer. The carrier is the
+    `LoopGuardedProjection` the loop's post-binding projection constructs for
+    the read of `indexer` (`project_loop_post_binding` with a read name): the
+    one object every reader of the name receives (`LoopProjectedBinding`
+    refuses a product that lost its identity). This test asserts it is minted
+    over the loop's own target CID with exactly the two exit routes as sides.
+    Construction mints it whether or not the function body is ever reduced.
     """
-    from sugar_lift_py_tests.sugar import guarded_binding_read_sugar as module
+    from sugar_source_tree import loop_recurrence as module
 
     seen: list[LoopGuardedProjection] = []
-    original = module._read_loop_projection
+    original = module.project_loop_post_binding
 
-    def spy(state, **kwargs):
-        seen.append(state)
-        return original(state, **kwargs)
+    def spy(**kwargs):
+        projected = original(**kwargs)
+        if projected.projection is not None:
+            seen.append(projected.projection)
+        return projected
 
-    module._read_loop_projection = spy
+    module.project_loop_post_binding = spy
     try:
         _desugar_all(_write(tmp_path, FIXTURE))
     finally:
-        module._read_loop_projection = original
+        module.project_loop_post_binding = original
 
     assert seen, "no LoopGuardedProjection read: the carrier moved"
     for projection in seen:

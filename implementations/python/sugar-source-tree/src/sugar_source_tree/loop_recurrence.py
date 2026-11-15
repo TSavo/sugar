@@ -149,11 +149,10 @@ def project_loop_post_binding(
         if record.get("kind") == "loop-post-binding"
         and record["bindingCoordinateCid"] == binding_coordinate.cid
     ]
-    post_face_cids = {record["completedFaceCid"] for record in post_records}
-    if len(post_face_cids) != len(post_records):
-        raise BindingStateWireGap(
-            "loop post-binding projection repeats one completed route"
-        )
+    # A completed face's CID seals its route kind, its guard and its state, so
+    # two post-binding records naming one face name ONE route: it is carried
+    # once.  Routes told apart by their guards are distinct faces and each is
+    # carried with its own guard.  Every record is still checked below.
     # The DECLARED size of this loop occurrence's exit family. Read off the
     # producer's own records, never counted from what arrived: counting would
     # make a dropped face silently re-read as a smaller complete partition,
@@ -168,6 +167,7 @@ def project_loop_post_binding(
     exit_partition_arity = declared.pop() if declared else None
     completed_by_cid = {face.cid: face for face in construction.completed_faces}
     projected_faces = []
+    carried_face_cids: set[str] = set()
     for post_record in post_records:
         face_cid = post_record["completedFaceCid"]
         face = completed_by_cid.get(face_cid)
@@ -211,6 +211,9 @@ def project_loop_post_binding(
                 raise BindingStateWireGap(
                     "completed face live guard formula does not match producer testimony"
                 )
+        if face_cid in carried_face_cids:
+            continue
+        carried_face_cids.add(face_cid)
         projected_faces.append(
             LoopProjectedCompletedFace(
                 target_cid=target_cid,
