@@ -10411,7 +10411,15 @@ class Comprehension(Node):
         from .shadow import rewrite
 
         new_iter, di = self._substitute_field(self.iter, scope)
-        bound = set(self.unit.require_target_pattern_for_target(self.target).names)
+        # A target with no binding leaf (``for d[k] in ...``) binds no name
+        # and has no pattern (``target_pattern_enrollment``): its ifs read
+        # the enclosing scope whole.  The comprehension itself stays loud at
+        # construction (``ListComp._comprehension_target`` is None).
+        bound = (
+            set(self.unit.require_target_pattern_for_target(self.target).names)
+            if SourceUnit._owns_binding_leaf(self.target)
+            else set()
+        )
         ifs_scope = (
             {k: v for k, v in scope.items() if k not in bound} if bound else scope
         )
@@ -17277,6 +17285,26 @@ class For(Statement):
             # `else` is unrollable too: the jump-guard means no `break` exists, and
             # with no break the else ALWAYS runs -- it is just more block, spliced
             # after the unrolled iterations.
+            if not SourceUnit._owns_binding_leaf(self.target):
+                # ``for d[k] in ...`` / ``for o.f in ...``: each item stores
+                # through the target (``__setitem__`` / ``__setattr__``) and
+                # binds no name, so the target has no pattern
+                # (``target_pattern_enrollment``: no binding leaf) for either
+                # path below to read.  Refused by name here, never the
+                # pattern table's lookup miss.
+                raise SugarNotWritten(
+                    owner="For.substitute",
+                    blame=self.target.fragment,
+                    observed=(
+                        f"for-loop target {self.target.kind} binds no name: "
+                        "each item stores through it"
+                    ),
+                    requested="a for-loop store target with no binding leaf",
+                    fix=(
+                        "write the per-item store through a subscript or "
+                        "attribute target; until then the loop stays loud"
+                    ),
+                )
             concrete = self.target.kind in ("Name", "Tuple", "List")
             with reduction_span(
                 sugar="For.concrete_elements", role="temporal", site=where
