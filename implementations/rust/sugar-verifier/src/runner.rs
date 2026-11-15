@@ -1644,11 +1644,7 @@ fn work_one(
     let producer_post = if cs.panic_site {
         None
     } else {
-        crate::handshake::locate_producer_post(
-            &cs.arg_term,
-            &pool.mementos,
-            &pool.bridges_by_symbol,
-        )
+        crate::handshake::locate_producer_post(&cs.arg_term, pool)
     };
 
     // Tier 0: Memento IS verification. Look up the formula CID in the pool.
