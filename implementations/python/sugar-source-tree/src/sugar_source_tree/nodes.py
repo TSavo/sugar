@@ -14514,17 +14514,26 @@ class Delete(Statement):
                 if prior is _MISSING:
                     prior = UnboundBinding(name=target.id, cause=target.fragment)
                 operation = self._make_delete_name(target.id, prior, target.span)
-                current[target.id] = UnboundBinding(
-                    name=target.id, cause=target.fragment
-                )
+                # A fresh scope: one already substituted against is never
+                # changed after (``_substituted_child`` keys its memo on it).
+                current = {
+                    **current,
+                    target.id: UnboundBinding(name=target.id, cause=target.fragment),
+                }
             elif isinstance(target, Attribute):
+                # Each part substitutes as the one door's does (above): a
+                # read the rewrite replaced (``del o.a`` on a formal or a
+                # local) answers by that substitution, and the node that
+                # replaced it answers where the operation builds it.
                 operation = self._make_delete_attribute(
-                    target.value.substitute(current), target.attr, target.span
+                    self._substitute_field(target.value, current)[0],
+                    target.attr,
+                    target.span,
                 )
             else:
                 operation = self._make_delete_subscript(
-                    target.value.substitute(current),
-                    target.slice_.substitute(current),
+                    self._substitute_field(target.value, current)[0],
+                    self._substitute_field(target.slice_, current)[0],
                     target.span,
                 )
             if not isinstance(target, Name):
