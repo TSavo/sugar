@@ -397,6 +397,122 @@ def test_per_test_recompute_agrees_with_lift(tmp_path):
         assert re.outcome == ws[name].outcome
 
 
+def test_a_module_that_fails_to_collect_is_a_failed_witness_not_an_absence(tmp_path):
+    # A test module whose import fails runs no test, so no runtest report names
+    # it. It is recorded under its own node id as a FAILED witness: the package
+    # says the file was not witnessed instead of being silently empty.
+    from sugar_pytest_witness.witness import run_file_witnesses
+
+    (tmp_path / "test_orphan.py").write_text(
+        "from no_such_module_anywhere import f\n\ndef test_f():\n    assert f()\n"
+    )
+    ws = run_file_witnesses(str(tmp_path), "test_orphan.py", [])
+    assert [(w.test_id, w.outcome) for w in ws] == [("test_orphan.py", "failed")], ws
+
+
+def test_a_witness_run_that_records_nothing_names_its_failure(tmp_path):
+    # A run that never reaches a test (here pytest refuses a file that is not
+    # there: a usage error) is not an empty result. It is ONE failed witness whose
+    # node id names the file and pytest's own reason, so prove reports it.
+    from sugar_pytest_witness.witness import run_file_witnesses
+
+    ws = run_file_witnesses(str(tmp_path), "test_absent.py", [])
+    assert len(ws) == 1, ws
+    (w,) = ws
+    assert w.outcome == "failed", w
+    prefix = "test_absent.py::<witness run failed: pytest exited "
+    assert w.test_id.startswith(prefix), w
+    assert w.test_id.endswith(">") and "no output" not in w.test_id, w
+
+
+def _enumerate_through_component_manifest(ws_dir, caller_pythonpath):
+    """Start the kit exactly as sugar does, from the repo's component manifest
+    (command + working_dir), with the caller's PYTHONPATH in the environment, and
+    ask it for the anchor test file's universe. Returns the package memento."""
+    import subprocess
+    import sys
+    import tomllib
+    from pathlib import Path
+
+    manifest_dir = Path(__file__).resolve().parents[4] / ".sugar" / "components"
+    manifest_path = manifest_dir / "python-pytest-witness" / "manifest.toml"
+    manifest = tomllib.loads(manifest_path.read_text())
+    cwd = (manifest_path.parent / manifest["working_dir"]).resolve()
+    bin_dir = os.path.dirname(sys.executable)
+    path = bin_dir + os.pathsep + os.environ.get("PATH", "")
+    env = dict(os.environ, PYTHONPATH=caller_pythonpath, PATH=path)
+    request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "sugar.enumerate",
+        "params": {
+            "level": "universe",
+            "workspace_root": str(ws_dir),
+            "at": {"file": "test_consumer.py"},
+        },
+    }
+    shutdown = {"jsonrpc": "2.0", "id": 2, "method": "shutdown"}
+    proc = subprocess.run(
+        manifest["command"],
+        cwd=cwd,
+        env=env,
+        input=json.dumps(request) + "\n" + json.dumps(shutdown) + "\n",
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    for line in proc.stdout.splitlines():
+        try:
+            reply = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if reply.get("id") != 1:
+            continue
+        assert "result" in reply, reply
+        for node in reply["result"]["nodes"]:
+            audit = node.get("audit") or {}
+            if audit.get("witness_kind") == "pytest-witness-package":
+                return audit
+        raise AssertionError(f"no witness package memento: {reply}")
+    raise AssertionError(f"no enumerate reply; stderr={proc.stderr}")
+
+
+@pytest.mark.parametrize(
+    "claim, passed",
+    [('"eHl6"', 1), ('"AAAA"', 0)],
+    ids=["truthful", "lying"],
+)
+def test_the_component_kit_runs_the_consumers_test_on_the_callers_pythonpath(
+    tmp_path, claim, passed
+):
+    # The federation shape: the consumer's test imports a vendor module that
+    # resolves only through the CALLER's PYTHONPATH. The component manifest used
+    # to replace PYTHONPATH with the kit's own src trees, so the test failed to
+    # collect and the package was empty in both twins (one package CID for a
+    # passing and a failing test). Now the kit keeps the caller's PYTHONPATH:
+    # the truthful consumer's test is witnessed passed, the lying one failed.
+    import base64
+
+    vendor = tmp_path / "vendor"
+    vendor.mkdir()
+    (vendor / "fedvendor.py").write_text(
+        "def encode(value):\n    return {'xyz': 'eHl6'}[value]\n"
+    )
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    (consumer / "test_consumer.py").write_text(
+        "from fedvendor import encode\n\n\n"
+        f"def test_consumer():\n    assert encode('xyz') == {claim}\n"
+    )
+    memento = _enumerate_through_component_manifest(consumer, str(vendor))
+    assert memento["count"] == 1, memento
+    assert memento["passed"] == passed, memento
+    body = base64.b64decode(memento["body_b64"]).decode("utf-8")
+    (line,) = [json.loads(raw) for raw in body.splitlines() if raw]
+    assert line["test"] == "test_consumer.py::test_consumer", line
+    assert line["outcome"] == ("passed" if passed else "failed"), line
+
+
 def test_witness_bundle_is_content_addressed_jsonl(tmp_path):
     # MANY witnesses in ONE .witness file; each line self-addresses
     # (blake3(line) == cid), so the reader needs no index and trusts nothing.
