@@ -19696,8 +19696,22 @@ class With(Statement):
         return _Splice((node,), body_net, halted, header)
 
     def _with_assignment_binding(self, item, value, scope):
-        """Delegate a with-as binding to Python's ordinary Assign seam."""
+        """Delegate a with-as binding to Python's ordinary Assign seam.
+
+        The ``Assign`` is minted only so the one seam reads the binding off
+        it: it is no statement of any block, and nothing constructs it.  The
+        ``with`` itself binds the enter slot its value reads
+        (``_reduced_manager_sugar``, ``GeneratorWithSugar``); its target is
+        the source ``as`` name, a binding spelling, and its value the
+        minted ``ObservationRef``, which answers where it is minted.  Minting
+        registered the store, so it answers the roll here, by the one
+        discharge of a node a rewrite made and nothing constructs
+        (``discharge_by_substitution``), as a binding minted for a scope
+        does (``_minted_binding_reference``).  Unanswered, every ``with ...
+        as <name>:`` left it on the roll as a silent unaccounted construction
+        (#7757)."""
         assignment = self._make_assign(item.optional_vars, value)
+        assignment.discharge_by_substitution()
         return assignment.substitution_binding(scope)
 
     def substitution_binding(self, scope):
