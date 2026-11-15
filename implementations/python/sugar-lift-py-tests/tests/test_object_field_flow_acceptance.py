@@ -616,7 +616,8 @@ def test_symbolic_subscript_key_delete_raises_type_error_at_once(tmp_path):
     _formal_key_type_error(
         tmp_path / "symbolic_subscript_key_delete.py",
         "del item[key]",
-        "doesn't support item deletion",
+        # CPython 3.12 spells it "doesn't support", 3.13 "does not support".
+        "support item deletion",
     )
 
 
