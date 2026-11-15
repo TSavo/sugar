@@ -28,10 +28,14 @@ None of them reached the producer as a value: the call they make was a
 ``CallSiteValue`` that was never reduced (a lambda's ``py.call``, ``h(g)``
 with ``g`` symbolic, ``Box()`` with no body), so the raise was never
 evaluated at all.  That is a different defect from the two representations.
-The lambda call and the returned ``__new__`` are reduced since: at the
-reduction level their lying halves halt, and are pinned green; the others are
-expected red there.  Through the solver no lying half of the five is ``sat``:
-a call that is not reduced is the unanswered call, which owes its member.
+The lambda call, the returned ``__new__``, the raising base and ``h(g)`` are
+reduced since: at the reduction level their lying halves halt, and are pinned
+green; the other is expected red there.  ``h(g)`` hands ``h`` the function
+``g``'s ``def`` statement built (a function-body read of an undecorated
+module ``def``'s name is that function, #7757), and ``f()`` inside ``h``
+applies it through the one call door.  Through the solver no lying half of
+the five is ``sat``: a call that is not reduced is the unanswered call, which
+owes its member.
 """
 
 from __future__ import annotations
@@ -207,39 +211,25 @@ _FIVE_HALVES = {
     "raising-base": ("object", "1 // 0"),
 }
 _NOT_REDUCED = (
-    "the call is a CallSiteValue that is never reduced (a lambda's py.call, "
-    "h(g) with g symbolic, Box() with no body): the raise is never evaluated, "
-    "so it completes with no halted face (#7821; not the two representations)"
+    "the call is a CallSiteValue that is never reduced (Box() with no body): "
+    "the raise is never evaluated, so it completes with no halted face "
+    "(#7821; not the two representations)"
 )
 
 
-# A truthful half Python decides and the reduction does not: ``h(g)`` hands
+# Every truthful half is what Python decides: one completion.  ``h(g)`` hands
 # ``h`` an undecorated ``def`` as a value, and ``f()`` inside ``h`` calls it.
-# A read of an undecorated ``def``'s name is the ordinary name
-# (``Name.substitute``): no function value stands for it, where a lambda is
-# one (``LambdaCallable``) and a decorated ``def``'s name is bound to one
-# (``decorator_application_sugar._function_value``).  So ``f()`` has nothing
-# to apply and is the unanswered call in ``test_f``'s frame too: one
-# completion under the call's own guard beside its undetermined raise, which
-# names no exception.  It is not a completion alone, and it is pinned as what
-# it is.
-_FIVE_UNDECIDED = {"function-passed-as-argument"}
-
-
-@pytest.mark.parametrize("shape", sorted(set(_FIVE) - _FIVE_UNDECIDED))
+# The read of ``g`` in ``test_f`` is the function its ``def`` statement built
+# (``SourceUnit.function_definition_for_read``: the definition's own frame,
+# as a lambda is a ``LambdaCallable`` and a decorated ``def``'s name is bound
+# to one), so ``f()`` applies it through the one call door, as ``g()`` does.
+# It was pinned undecided (one completion beside an undetermined raise) while
+# the read was the bare name with no function value behind it (#7757).
+@pytest.mark.parametrize("shape", sorted(_FIVE))
 def test_the_truthful_half_of_each_of_the_five_completes(shape: str) -> None:
     truthful, _lying = _FIVE_HALVES[shape]
 
     assert _faces(_function(_FIVE[shape].format(x=truthful))) == (1, ())
-
-
-@pytest.mark.parametrize("shape", sorted(_FIVE_UNDECIDED))
-def test_a_truthful_half_calling_a_def_passed_as_a_value_is_not_decided(
-    shape: str,
-) -> None:
-    truthful, _lying = _FIVE_HALVES[shape]
-
-    assert _faces(_function(_FIVE[shape].format(x=truthful))) == (1, (None,))
 
 
 # A lambda bound to a local name and called (``g = lambda: 1 // 0; g()``) is
@@ -251,8 +241,16 @@ def test_a_truthful_half_calling_a_def_passed_as_a_value_is_not_decided(
 # ``Box()`` over ``class Box(1 // 0)``: the class statement halts at its base
 # and no class is built, so the lying half has no completion and one halt.
 # The expected-red mark on it was XPASS(strict) on the main scorecard at
-# 18a14aa25 (#8416), so the mark is gone and the assertion stands.
-_FIVE_REDUCED = {"lambda-call", "raising-base", "raising-new"}
+# 18a14aa25 (#8416), so the mark is gone and the assertion stands.  So is
+# ``h(g)`` over ``def g(): return 1 // 0``: ``f()`` inside ``h`` applies the
+# function ``g`` names, whose body raises, so the call halts with no
+# completion (#7757).
+_FIVE_REDUCED = {
+    "function-passed-as-argument",
+    "lambda-call",
+    "raising-base",
+    "raising-new",
+}
 
 
 @pytest.mark.parametrize(

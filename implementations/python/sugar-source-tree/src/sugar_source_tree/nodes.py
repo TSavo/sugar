@@ -5384,6 +5384,47 @@ class SourceUnit:
             return None
         return definition
 
+    def function_definition_for_read(self, read: "Name") -> "FunctionDef | None":
+        """The undecorated module ``def`` a value read of a name reaches from
+        a function body, or None.
+
+        ``h(g)``, ``x = g`` and ``return g`` read ``g`` as a value: the
+        function its ``def`` statement built (#7757).  That value is the
+        definition's own frame, called through the one call door, binding the
+        defaults the statement evaluated under their per-parameter keys
+        (``DecoratedDefinitionRef`` with no decorator to apply,
+        ``_decorator_application_sugar``), so a call through any value that
+        is the function applies it, as ``g()`` does.  The read is never the
+        bare name with no function value behind it.
+
+        Answered by the same law a call of the name is
+        (``module_definition_at``: the one module binding, CPython's scope
+        classification at the read), for a plain function only: an ``async
+        def`` or generator function is no value this carries, and a decorated
+        ``def`` or a ``class`` binds its statement's value under its own key.
+        Answered only for a read that runs when some function is called
+        (``module_execution_site`` is None: it sits in a ``def`` or lambda
+        body).  A read the module body itself runs (a module statement, a
+        class body, a default, a decorator) stands before or after the
+        ``def`` statement in that run, which only the statement binding its
+        value under its evaluation key decides: not answered here.
+        """
+        bindings = (self.module_direct_bindings or {}).get(read.id, ())
+        if len(bindings) != 1:
+            return None
+        definition = bindings[0]
+        if (
+            not isinstance(definition, FunctionDef)
+            or definition.decorators
+            or FunctionDef._owns_yield(definition.body)
+        ):
+            return None
+        if self.module_definition_at(read.id, read.line_col_span()) is not definition:
+            return None
+        if self.module_execution_site(read) is not None:
+            return None
+        return definition
+
     @staticmethod
     def source_class_has_authenticated_default_attribute_behavior(
         definition: "ClassDef",
@@ -24800,7 +24841,10 @@ class Name(Expression):
             # definition's own runtime binding, never the definition
             # statement spliced into expression position.  A ``class``
             # statement binds its name to its value's key
-            # (``DecoratedDefinitionRef``), which the read is (below).
+            # (``DecoratedDefinitionRef``), which the read is (below).  A
+            # function-body read of an undecorated module ``def``'s name is
+            # the function (``Name._construct_sugar``); a local ``def``'s
+            # value read is still this bare name (#7757, not yet collapsed).
             return self
         if isinstance(bound, ImportBindingRef):
             # An import bound this name: a read the one import table rows
@@ -24899,7 +24943,23 @@ class Name(Expression):
         """A name constructs NameSugar with its identifier. A name is a leaf:
         nothing to build from children, only to look up against the temporal
         scope when the body reduces (an unbound name panics there, loudly).
-        The construction is the one read of a name (``_name_read_sugar``)."""
+        The construction is the one read of a name (``_name_read_sugar``).
+
+        A function-body read of a name one undecorated module ``def`` binds
+        is that function (``SourceUnit.function_definition_for_read``): the
+        value its statement built, through the one application
+        (``DecoratedDefinitionRef``, no decorator to apply), which every call
+        through the value applies by the one call door (#7757).  Where the
+        definition's frame is a recursion seat (it is under construction up
+        the stack) or it has none (``_definition_call_frame``), the function
+        is not unfolded again: the read stays the name, whose call is the
+        unanswered call, as a call by name at that seat is.  A frame that
+        refuses by name refuses this read."""
+        definition = self.unit.function_definition_for_read(self)
+        if definition is not None:
+            frame, _seat = _definition_call_frame(definition)
+            if frame is not None:
+                return _decorated_definition_ref(definition, self.span).sugar()
         return _name_read_sugar(self, self.id)
 
 
@@ -25207,7 +25267,12 @@ class DecoratedDefinitionRef(Expression):
     definition never stands for the name.  A ``class`` statement binds its
     name through this node decorated or not (``call_applies_own_frame``):
     with no decorator the application applies none, and the value is the
-    class the statement's run built.
+    class the statement's run built.  A value read of an undecorated module
+    ``def``'s name from a function body is this node too
+    (``SourceUnit.function_definition_for_read``, with no ``evaluation``):
+    the application applies no decorator and evaluates no default, and the
+    value is the function, its own frame, whose calls read the defaults the
+    statement bound under their per-parameter keys.
 
     ``definition`` is the statement (a leaf); ``decorator_bindings`` holds,
     for each decorator, the ``def``/``class`` a bare-name decorator is bound
@@ -25258,6 +25323,13 @@ def call_applies_own_frame(definition) -> bool:
     argument -- is the one read of that key (``DecoratedDefinitionRef``; with
     no decorator the application applies none).  The class statement is
     never read in the name's place (#7757).
+
+    This answers the call by name only.  A value read of an undecorated
+    module ``def``'s name from a function body is the function
+    (``SourceUnit.function_definition_for_read``), and a call through that
+    value applies it by the one call door; the call by name still seats the
+    definition's frame itself (``Call._construct_sugar``), the second way
+    #7757 has left to delete.
     Anything that is not a definition applies no decoration.
     """
     if isinstance(definition, ClassDef):
@@ -25640,9 +25712,15 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
             _decorator_step(definition, decorator, bound)
             for decorator, bound in zip(definition.decorators, padded, strict=True)
         )
+        # An undecorated ``def`` read as a value evaluates no default here:
+        # its statement bound each one under its per-parameter key where it
+        # ran (``_definition_defaults_sugar``), and every call of the
+        # function reads those keys (``DefaultValueSugar``), as a call by
+        # name does.  A default is never evaluated again where the name is
+        # read.
         defaults = (
             ()
-            if isinstance(definition, ClassDef)
+            if isinstance(definition, ClassDef) or not definition.decorators
             else _definition_default_evaluations(definition)
         )
         return decorators, defaults
@@ -25682,22 +25760,6 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
         uncarried=uncarried,
         defaults=defaults,
     )
-
-
-def _source_function_frame(definition):
-    """``(frame, None)``: the call frame of the source ``def`` ``definition``
-    (its typed occurrence's), or ``(None, refusal)`` where it is not one this
-    carries as a value: a generator function (its call allocates a
-    generator), or a definition with no frame (``_definition_call_frame``)."""
-    frame, refusal = _definition_call_frame(definition)
-    if refusal is not None:
-        return None, refusal
-    if frame.generator_steps is not None:
-        return None, (
-            f"generator function `{definition.name}` is not carried as a "
-            "callable value"
-        )
-    return frame, None
 
 
 def _definition_call_frame(definition):
@@ -25863,7 +25925,13 @@ def _definition_decorator_step(target, site, spelling):
     """A decorator bound to the source ``def``/``class`` ``target``: its value,
     applied through the one call routine.  A ``class`` (decorated or not)
     and a decorated ``def`` are read through their statement's evaluation
-    key (``DecoratedDefinitionRef``), as every read of the name is."""
+    key (``DecoratedDefinitionRef``), as every read of the name is.  An
+    undecorated ``def`` is read as every value read of its name is: the
+    function its statement built, the same reference with no decorator to
+    apply (``SourceUnit.function_definition_for_read``), never a frame this
+    step seats for itself.  A definition whose frame is under construction
+    up the stack, or that has none, is refused by name where that read
+    reduces (``DecoratorApplicationSugar.desugar``)."""
     from sugar_lift_py_tests.sugar.decorator_application_sugar import (
         DecoratorStepV1,
     )
@@ -25882,10 +25950,17 @@ def _definition_decorator_step(target, site, spelling):
         return DecoratorStepV1.refused(
             site, spelling, f"`async def {target.name}` returns a coroutine"
         )
-    frame, refusal = _source_function_frame(target)
-    if refusal is not None:
-        return DecoratorStepV1.refused(site, spelling, refusal)
-    return DecoratorStepV1.apply(site, spelling, frame=frame)
+    if FunctionDef._owns_yield(target.body):
+        return DecoratorStepV1.refused(
+            site,
+            spelling,
+            f"generator function `{target.name}` is not carried as a callable value",
+        )
+    return DecoratorStepV1.apply(
+        site,
+        spelling,
+        callee=_decorated_definition_ref(target, target.span).sugar(),
+    )
 
 
 def _discharge_absorbed(node) -> None:
