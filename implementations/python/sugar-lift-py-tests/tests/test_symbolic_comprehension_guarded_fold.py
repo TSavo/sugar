@@ -44,7 +44,19 @@ def _post_of(source, path=None):
             construction_context=TreeConstructionContextV1.for_test_without_workspace(),
         ).functions()
     )[0]
-    return _completed(function.sugar().desugar(None)).post()
+    from sugar_lift_py_tests.tree_enumerate import as_its_own_proof_states
+
+    # ``iter(xs)`` over a formal waits on the caller's actual: the function's
+    # own proof discharges it with none (``as_its_own_proof_states``).
+    return _completed(
+        as_its_own_proof_states(function.sugar().desugar(None), None)
+    ).post()
+
+
+# The owners of the halts an undecided ``iter`` of the iterable states: over
+# a formal with no actual (the function's own proof), over any other
+# symbolic value (an inner generator's member).
+_ITERATION_HALT_OWNERS = ("UnansweredNativeOperation:iter", "SymbolicValue.iter")
 
 
 def _completed(outcome):
@@ -52,7 +64,9 @@ def _completed(outcome):
 
     A call whose callee nothing resolved (``g``, ``p``, ``h``) may raise: it
     halts with an ``UndeterminedRaiseEffect`` under the complement of its
-    completion atom, beside the completion this file inspects."""
+    completion atom, beside the completion this file inspects.  So may
+    ``iter`` of a symbolic iterable, which the fold runs before any member
+    (``ComprehensionSugar._iterated``)."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.outcome import Completed, Halted
 
@@ -62,7 +76,10 @@ def _completed(outcome):
     assert len(completed) == 1, exits
     assert all(
         isinstance(face.effect, UndeterminedRaiseEffect)
-        and face.effect.producer_node_owner.startswith("UnknownCallee:")
+        and (
+            face.effect.producer_node_owner.startswith("UnknownCallee:")
+            or face.effect.producer_node_owner in _ITERATION_HALT_OWNERS
+        )
         for face in halted
     ), halted
     return completed[0].value

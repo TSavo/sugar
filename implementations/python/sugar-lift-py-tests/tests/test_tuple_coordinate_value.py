@@ -64,8 +64,18 @@ def _nodes(tree: SourceFile):
 
 
 def _value(outcome):
-    assert outcome.completed_value() is not None, outcome
-    return outcome.completed_value()
+    """The value of ``outcome``'s one completed arm.
+
+    The generator runs ``iter`` on the formal ``unknown`` first, which waits
+    on the caller's actual (``ComprehensionSugar._iterated``): with none it
+    stands as its two faces (``as_its_own_proof_states``), and the value is
+    the completed arm beside that halt."""
+    from sugar_lift_py_tests.outcome.exit_set import Completed
+    from sugar_lift_py_tests.tree_enumerate import as_its_own_proof_states
+
+    outcome = as_its_own_proof_states(outcome, None)
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    return done.value
 
 
 def _context(owner: str):
@@ -333,10 +343,12 @@ def test_tuple_coordinate_is_an_instance_of_tuple(tmp_path: Path) -> None:
 def _mints_tuple_coordinate(outcome) -> bool:
     """Whether any completed arm of ``outcome`` is a tuple coordinate."""
     from sugar_lift_py_tests.outcome.exit_set import Completed
+    from sugar_lift_py_tests.tree_enumerate import as_its_own_proof_states
 
+    # ``iter(unknown)`` waits on the caller's actual: discharged with none.
     return any(
         isinstance(arm, Completed) and isinstance(arm.value, TupleCoordinateValue)
-        for arm in getattr(outcome, "exits", ())
+        for arm in getattr(as_its_own_proof_states(outcome, None), "exits", ())
     )
 
 
