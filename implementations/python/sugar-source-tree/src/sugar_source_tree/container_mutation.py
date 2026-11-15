@@ -3555,10 +3555,18 @@ def _ambient_targets(statement, call, scope, ambient=None):
             (node, rules, subject) for node in objects for subject, rules in subjects
         ]
     targets.extend((node, None, None) for node in rebound)
-    cells = _cell_slots(call, reach, scope)
+    # The callee's own cells and the module globals it declares ``global``:
+    # its contract names each as it left it (``cell:<name>``,
+    # ``global:<name>``, #7757 step 7).  Such a global is in ``rebound`` here
+    # and in ``frame`` with its slot (``_global_targets``): it is the one
+    # slotted target, never a second unslotted one, which would leave its
+    # read after the call the unknown (``_rebind``: two calls' worth of
+    # ``reached``).
+    cells = {
+        **{_object_key(target[0]): target[3] for target in frame if len(target) > 3},
+        **_cell_slots(call, reach, scope),
+    }
     if cells:
-        # The callee's own cells: its contract names each as it left it
-        # (``cell:<name>``, #7757 step 7).
         targets = [
             (*target, cells[_object_key(target[0])])
             if _object_key(target[0]) in cells
