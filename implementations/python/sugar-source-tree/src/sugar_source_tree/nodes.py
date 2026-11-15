@@ -17679,10 +17679,18 @@ class AnnAssign(Statement):
                     ),
                     fix="construct the statement through its block's substitution",
                 )
-            return ExprStatementSugar(
+            sugar = ExprStatementSugar(
                 value=self.target.value.sugar(),
                 site=self.fragment,
             )
+            # Python evaluates the receiver alone: the attribute is never
+            # read and nothing is stored, so nothing constructs the target.
+            # It answers with the statement that consumed it, as a store's
+            # target answers with its store (``_valued_store_target_sugar``);
+            # unanswered, it stayed on the roll (``io/formats/format.py:228``
+            # ``self.tr_row_num: int | None``, #7757).
+            self.target.discharge_by_substitution()
+            return sugar
         if self.value is not None and isinstance(self.target, (Attribute, Subscript)):
             if self._evaluates_annotation():
                 raise SugarNotWritten(
