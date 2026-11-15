@@ -94,3 +94,40 @@ def test_a_discarded_round_of_a_live_loop_answers_where_minted():
         e.kind in ("FormalRef", "BindingCoordinateRef") and e.start_line in (7, 8)
         for e in report.minority
     ), report.minority
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # One arm of an ``if`` binds the local ``def``: the callee is the
+        # guarded read, its ``def`` face and its unbound face.
+        "def f(c):\n"
+        "    if c:\n"
+        "        def g():\n"
+        "            return 1\n"
+        "    return g()\n",
+        # Both arms bind it, and a live loop's calls stand between the
+        # ``def``s and the call (``core/internals/managers.py:1403``,
+        # ``value_getitem`` in ``BlockManager.iset``).
+        "def f(c, items, out):\n"
+        "    if c:\n"
+        "        def g(x):\n"
+        "            return x\n"
+        "    else:\n"
+        "        def g(x):\n"
+        "            return -x\n"
+        "    for item in items:\n"
+        "        out.append(g(item))\n"
+        "    out.append(dict(values=g(1)))\n"
+        "    return out\n",
+    ],
+)
+def test_a_call_of_a_branch_bound_def_builds_its_callee(source):
+    # The call's lexical row names the last ``def`` before it; the callee
+    # the substitution read is not that spelling, so the call is the
+    # value's (``ComputedCallSugar``), which builds the callee: it answers
+    # the roll, and no one ``def`` stands for the call.
+    report = _report(source)
+    assert not any(e.kind == "GuardedBindingRead" for e in report.minority), (
+        report.minority
+    )
