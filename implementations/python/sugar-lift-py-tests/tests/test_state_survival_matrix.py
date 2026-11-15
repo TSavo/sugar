@@ -62,6 +62,7 @@ from sugar_lift_py_tests.effect.expectation_not_met_effect import (
 )
 from sugar_lift_py_tests.floor import ListValue, TermValue
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor, str_const
@@ -369,10 +370,24 @@ def _returned(value, *, owner: str):
     """What an applied source call returns: the call's sole authenticated
     return (``CallSiteValue.project_operation_receiver``), never a block
     walked for a ``ReturnValue`` -- the call is applied where it stands and
-    its completed face is the value it returned."""
+    its completed face is the value it returned.
+
+    The completed value carries what the callee's frame left of each object
+    it shares with the caller as writes riding it (``caller_visible_values``);
+    the value returned is what they present."""
+    _carried, value = peel_walrus_binds(value)
     if isinstance(value, CallSiteValue):
         return value.project_operation_receiver(None, owner=owner)
     return value
+
+
+def _actual_after(value, name: str):
+    """The elements of the caller's list actual ``name`` as the callee left
+    it: the write riding the call's completed value."""
+    carried, _value = peel_walrus_binds(value)
+    (state,) = [bind.assigned_value for bind in carried if bind.name == name]
+    assert isinstance(state, ListValue), state
+    return state.elements
 
 
 def test_r2_source_try_helper_alone_still_defers_as_setitem_carrier() -> None:
@@ -395,6 +410,8 @@ def test_r2_source_try_indexerror_routes_to_handler_on_authenticated_call() -> N
     face = outcome.exits[0]
     assert isinstance(face, Completed)
     assert _returned(face.value, owner="r2-try-handler") == TermValue(1)
+    # The store raised before it changed the list.
+    assert _actual_after(face.value, "actual:0") == (TermValue(0),)
 
 
 def test_r2_source_try_success_bypasses_handler() -> None:
@@ -407,6 +424,8 @@ def test_r2_source_try_success_bypasses_handler() -> None:
     face = outcome.exits[0]
     assert isinstance(face, Completed)
     assert _returned(face.value, owner="r2-try-success") == TermValue(0)
+    # The in-range store changed the caller's list.
+    assert _actual_after(face.value, "actual:0") == (TermValue(9),)
 
 
 # ===========================================================================
