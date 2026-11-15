@@ -7,8 +7,7 @@
 //
 // Every node is a lazy cursor: it holds enough to reach the SAME
 // already-rendezvous'd kit process again (a `KitConn`, mirroring the exact
-// spawn-per-call membrane `resolve.rs`'s `resolve_source`/`resolve_testimony`
-// already use -- no second transport invented) plus its own
+// spawn-per-call membrane `resolve.rs`'s `resolve_source` already uses -- no second transport invented) plus its own
 // `SourceMemento` locator (the tree's primary key, per the plan's "locator
 // design" section: every node the factory builds is built FROM a fragment,
 // and the memento is that fragment's durable, CID-pinned address). No node
@@ -99,8 +98,7 @@ impl Level {
 /// enumerated. `Kit::enumerate_conn` clones the Kit-owned `LiftPluginKit`
 /// with method `sugar.enumerate` (#3855 pool single-owner) so lift and
 /// enumerate share one Drop-scoped resident. Distinct from
-/// `resolve_source`/`resolve_testimony`, which still one-shot spawn outside
-/// that connection (residual outside this membrane).
+/// `resolve_source`, which still one-shot spawns outside that connection (residual outside this membrane).
 #[derive(Debug, Clone)]
 pub struct KitConn {
     pub surface: String,

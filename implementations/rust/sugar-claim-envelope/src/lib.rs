@@ -82,8 +82,6 @@ pub const KIT_DECLARATION_RPC_METHOD: &str = "sugar.plugin.kit_declaration";
 pub struct KitDeclaration {
     pub kit: KitIdentity,
     pub rpc: KitDeclarationRpc,
-    #[serde(rename = "proofResolution")]
-    pub proof_resolution: KitProofResolution,
     #[serde(
         rename = "oracleHost",
         default,
@@ -268,13 +266,6 @@ pub struct KitDeclarationRpcMethod {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct KitProofResolution {
-    pub strategy: String,
-    #[serde(rename = "rpcMethod", default, skip_serializing_if = "Option::is_none")]
-    pub rpc_method: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KitOracleHost {
     #[serde(rename = "hostKind")]
     pub host_kind: String,
@@ -319,10 +310,6 @@ impl KitDeclaration {
         for method in &self.rpc.methods {
             require_nonempty("rpc.methods[].name", &method.name)?;
         }
-        require_nonempty("proofResolution.strategy", &self.proof_resolution.strategy)?;
-        if let Some(method) = &self.proof_resolution.rpc_method {
-            require_nonempty("proofResolution.rpcMethod", method)?;
-        }
         if let Some(oracle_host) = &self.oracle_host {
             require_nonempty("oracleHost.hostKind", &oracle_host.host_kind)?;
         }
@@ -344,9 +331,7 @@ fn require_nonempty(field: &'static str, value: &str) -> Result<(), KitDeclarati
 
 #[cfg(test)]
 mod kit_declaration_schema_tests {
-    use super::{
-        KitDeclaration, KitDeclarationRpc, KitDeclarationRpcMethod, KitIdentity, KitProofResolution,
-    };
+    use super::{KitDeclaration, KitDeclarationRpc, KitDeclarationRpcMethod, KitIdentity};
 
     fn valid_declaration() -> KitDeclaration {
         KitDeclaration {
@@ -360,10 +345,6 @@ mod kit_declaration_schema_tests {
                     name: "sugar.plugin.kit_declaration".to_string(),
                     required: true,
                 }],
-            },
-            proof_resolution: KitProofResolution {
-                strategy: "rpc-proof-bytes".to_string(),
-                rpc_method: Some("sugar.plugin.resolve_dependency_proofs".to_string()),
             },
             oracle_host: None,
             residue_categories: vec![],
@@ -386,7 +367,6 @@ mod kit_declaration_schema_tests {
     fn kit_declaration_rejects_missing_required_fields() {
         let missing_rpc = serde_json::json!({
             "kit": {"id": "sugar-walk-rpc", "language": "rust", "version": "0.1.0"},
-            "proofResolution": {"strategy": "rpc-proof-bytes"},
             "residueCategories": []
         });
 

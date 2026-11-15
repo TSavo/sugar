@@ -17,7 +17,7 @@ c={"name":"decoded_len_estimate","kit":"rust-native-producer","contract_cid":"bl
 for line in sys.stdin:
  r=json.loads(line); method=r.get("method"); ident=r.get("id")
  if method=="initialize": out={"protocolVersion":"1.0","serverInfo":{"name":"native-producer","version":"1"},"capabilities":{}}
- elif method=="sugar.plugin.kit_declaration": out={"kit":{"id":"rust-native-producer","language":"rust","version":"1"},"rpc":{"methods":[{"name":"sugar.enumerate","required":True}]},"proofResolution":{"strategy":"exported-symbol-contracts","rpcMethod":"sugar.enumerate"},"residueCategories":[]}
+ elif method=="sugar.plugin.kit_declaration": out={"kit":{"id":"rust-native-producer","language":"rust","version":"1"},"rpc":{"methods":[{"name":"sugar.enumerate","required":True}]},"residueCategories":[]}
  elif method=="sugar.enumerate":
   p=r["params"]; assert p["level"]=="exports"; at=p.get("at")
   out={"nodes":[{"memento":m,"audit":a,"payload":c}],"gaps":[]} if not at or at.get("symbol")=="decoded_len_estimate" else {"nodes":[],"gaps":[{"reason":"symbol not exported by this artifact"}]}

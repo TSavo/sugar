@@ -1606,7 +1606,6 @@ mod tests {
                     {"name": "sugar.plugin.lift", "required": true}
                 ]
             },
-            "proofResolution": {"strategy": "rpc-proof-bytes"},
             "residueCategories": []
         })
     }

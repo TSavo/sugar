@@ -29,7 +29,6 @@ javac \
   --add-exports jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED \
   -source 21 -target 21 \
   -d "$BUILD" \
-  "$ROOT/src/JavaDependencyProofResolver.java" \
   "$ROOT/src/JavaPanamaFfmRpc.java" 2>&1 | grep -v '^Note:' || true
 
 JAVA_FLAGS="--add-exports jdk.compiler/com.sun.source.tree=ALL-UNNAMED \

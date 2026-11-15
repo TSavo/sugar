@@ -56,8 +56,8 @@
 // Pool single-owner (#3855): `Kit` holds one `LiftPluginKit` connection. Lift
 // path-algebra registration and `enumerate_conn` clone that connection (shared
 // Drop-scoped `ResidentSlot`) rather than minting a second resident. Residual:
-// census/discovery move; `resolve_source`/`resolve_testimony` still one-shot
-// spawn outside the owned connection.
+// census/discovery move; `resolve_source` still one-shot spawns outside the
+// owned connection.
 
 use std::path::{Path, PathBuf};
 
@@ -71,10 +71,7 @@ use sugar_claim_envelope::KitDeclaration;
 
 use crate::kit_declaration::{load_kit_handshake_with_command, KitDeclarationLoadError};
 use crate::kit_path::{execute_path, KitRegistry, LiftKit, PathExecutionError};
-use crate::resolve::{
-    resolve_source, resolve_testimony, ResolvedSource, SourceRefusal, TestimonyError,
-    TestimonyResolution,
-};
+use crate::resolve::{resolve_source, ResolvedSource, SourceRefusal};
 use libsugar::core::SourceMemento;
 
 /// The census's resolved answer to "what plugin command answers this
@@ -434,8 +431,8 @@ impl Kit {
         })
     }
 
-    /// The kit's own declared identity, methods, and proof-resolution
-    /// strategy, as answered by the live handshake in `rendezvous`.
+    /// The kit's own declared identity and methods, as answered by the live
+    /// handshake in `rendezvous`.
     pub fn declaration(&self) -> &KitDeclaration {
         &self.declaration
     }
@@ -540,26 +537,6 @@ impl Kit {
         Ok(acknowledged.to_owned())
     }
 
-    /// SEAM 4 -- the testimony verb. Asks THIS kit (the one this handle
-    /// rendezvous'd with) for its vendor dependency-proof catalog over
-    /// `sugar.plugin.resolve_dependency_proofs`, decoded into typed,
-    /// speaker-stamped `ProofBytes`. A kit that doesn't implement the
-    /// method (or never answers) is `TestimonyOutcome::Unavailable` -- a
-    /// LINK-class absence, not an error -- per `resolve::resolve_testimony`.
-    ///
-    /// `workspace_root` is the project being scanned for dependency proofs
-    /// (the RPC's `project_root` param) -- distinct from `manifest.working_dir`
-    /// (the spawned kit process's cwd), the same distinction
-    /// `kit_dispatch::dependency_proofs_for_command` preserved.
-    pub fn testimony(&self, workspace_root: &Path) -> Result<TestimonyResolution, TestimonyError> {
-        resolve_testimony(
-            &self.manifest.surface,
-            &self.manifest.command,
-            self.manifest.working_dir.as_deref(),
-            workspace_root,
-        )
-    }
-
     /// SEAM 4 -- the source verb. Asks THIS kit to resolve a `SourceMemento`
     /// over `sugar.plugin.resolve_source_memento`, exact-or-refuse: CID
     /// drift on the kit's side of the membrane comes back as
@@ -596,7 +573,6 @@ mod rendezvous_tests {
         let lift_only: KitDeclaration = serde_json::from_value(serde_json::json!({
             "kit": {"id": "lift-only", "language": "rust", "version": "1"},
             "rpc": {"methods": [{"name": "lift", "required": true}]},
-            "proofResolution": {"strategy": "none"},
             "residueCategories": []
         }))
         .expect("fixture declaration");

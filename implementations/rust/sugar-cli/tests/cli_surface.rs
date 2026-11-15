@@ -357,7 +357,7 @@ while IFS= read -r line; do
   if [[ "$line" == *'"method":"initialize"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"identify","protocol_version":"pep/1.7.0","capabilities":{}}}'
   elif [[ "$line" == *'"method":"sugar.plugin.kit_declaration"'* ]]; then
-    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"proofResolution":{"strategy":"none"},"residueCategories":[]}}'
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"residueCategories":[]}}'
   elif [[ "$line" == *'"method":"lift"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"identity-document","identities":[{"domain":"software","claim":"checked_add_u8.postcondition"}]}}'
   elif [[ "$line" == *'"method":"shutdown"'* ]]; then
@@ -421,7 +421,7 @@ while IFS= read -r line; do
   if [[ "$line" == *'"method":"initialize"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"stalled","protocol_version":"pep/1.7.0","capabilities":{}}}'
   elif [[ "$line" == *'"method":"sugar.plugin.kit_declaration"'* ]]; then
-    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"stalled-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"proofResolution":{"strategy":"none"},"residueCategories":[]}}'
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"stalled-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"residueCategories":[]}}'
   elif [[ "$line" == *'"method":"lift"'* ]]; then
     sleep 30
   fi
@@ -475,7 +475,7 @@ while IFS= read -r line; do
   if [[ "$line" == *'"method":"initialize"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"library-bindings","protocol_version":"pep/1.7.0","capabilities":{}}}'
   elif [[ "$line" == *'"method":"sugar.plugin.kit_declaration"'* ]]; then
-    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"proofResolution":{"strategy":"none"},"residueCategories":[]}}'
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"residueCategories":[]}}'
   elif [[ "$line" == *'"method":"lift"'* ]]; then
     if [[ "$line" != *'"layer":"library-bindings"'* ]]; then
       printf 'expected library-bindings layer, saw: %s\n' "$line" >&2
@@ -540,7 +540,7 @@ while IFS= read -r line; do
   if [[ "$line" == *'"method":"initialize"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"bad-identify","protocol_version":"pep/1.7.0","capabilities":{}}}'
   elif [[ "$line" == *'"method":"sugar.plugin.kit_declaration"'* ]]; then
-    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"proofResolution":{"strategy":"none"},"residueCategories":[]}}'
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"residueCategories":[]}}'
   elif [[ "$line" == *'"method":"lift"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[],"diagnostics":[]}}'
   elif [[ "$line" == *'"method":"shutdown"'* ]]; then
@@ -601,7 +601,7 @@ while IFS= read -r line; do
   if [[ "$line" == *'"method":"initialize"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"mint-lift","protocol_version":"pep/1.7.0","capabilities":{}}}'
   elif [[ "$line" == *'"method":"sugar.plugin.kit_declaration"'* ]]; then
-    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"proofResolution":{"strategy":"none"},"residueCategories":[]}}'
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"residueCategories":[]}}'
   elif [[ "$line" == *'"method":"lift"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[{"kind":"contract","name":"demo.contract","outBinding":"out","post":{"kind":"atomic","name":"demo_true","args":[]}}],"diagnostics":[]}}'
   elif [[ "$line" == *'"method":"shutdown"'* ]]; then
@@ -678,7 +678,7 @@ while IFS= read -r line; do
   if [[ "$line" == *'"method":"initialize"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"producer","protocol_version":"pep/1.7.0","capabilities":{}}}'
   elif [[ "$line" == *'"method":"sugar.plugin.kit_declaration"'* ]]; then
-    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"proofResolution":{"strategy":"none"},"residueCategories":[]}}'
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"residueCategories":[]}}'
   elif [[ "$line" == *'"method":"lift"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[{"kind":"contract","name":"callee@src/lib.rs:1:1","outBinding":"out","pre":{"kind":"atomic","name":"producer_pre","args":[]},"post":{"kind":"atomic","name":"producer_post","args":[]}}],"diagnostics":[]}}'
   elif [[ "$line" == *'"method":"shutdown"'* ]]; then
@@ -698,7 +698,7 @@ while IFS= read -r line; do
   if [[ "$line" == *'"method":"initialize"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"consumer","protocol_version":"pep/1.7.0","capabilities":{}}}'
   elif [[ "$line" == *'"method":"sugar.plugin.kit_declaration"'* ]]; then
-    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"proofResolution":{"strategy":"none"},"residueCategories":[]}}'
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"residueCategories":[]}}'
   elif [[ "$line" == *'"method":"lift"'* ]]; then
     printf 'consumer must be dispatched via lift_implications, not lift: %s\n' "$line" >&2
     exit 44
@@ -842,7 +842,7 @@ while IFS= read -r line; do
   if [[ "$line" == *'"method":"initialize"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"producer","protocol_version":"pep/1.7.0","capabilities":{}}}'
   elif [[ "$line" == *'"method":"sugar.plugin.kit_declaration"'* ]]; then
-    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"proofResolution":{"strategy":"none"},"residueCategories":[]}}'
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"residueCategories":[]}}'
   elif [[ "$line" == *'"method":"lift"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[{"kind":"function-contract","name":"encoded_len","outBinding":"out","post":{"kind":"atomic","name":"=","args":[{"kind":"var","name":"out"},{"kind":"ctor","name":"call:encoded_len","args":[{"kind":"var","name":"n"},{"kind":"var","name":"padded"}]}]},"sourceWarrants":[{"kind":"source-memento","file":"src/encode.rs","sourceFunctionName":"encoded_len","source_function_name":"encoded_len","span":{"start_line":97,"start_col":0,"end_line":122,"end_col":1},"paramNames":["bytes_len","padding"],"param_names":["bytes_len","padding"],"source_cid":"blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","template_cid":"blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}],"sourceLedger":{"source_loci":1,"source_warranted":1,"source_inactive":0,"source_support":0,"source_boundary":0,"source_unresolved":0},"sourceAudits":[{"role":"rust-fn-contracts","universe_kind":"function-contract","totals":{"source_loci":1,"source_warranted":1,"source_inactive":0,"source_support":0,"source_boundary":0,"source_unresolved":0},"loci":[{"file":"src/encode.rs","role":"rust-fn-contracts","universe_kind":"function-contract","ast_path":"encoded_len","sourceFunctionName":"encoded_len","line":97,"col":0}]}],"factoryAudits":[],"sourceMementos":[{"kind":"source-memento","file":"src/encode.rs","sourceFunctionName":"encoded_len","source_function_name":"encoded_len","span":{"start_line":97,"start_col":0,"end_line":122,"end_col":1},"paramNames":["bytes_len","padding"],"param_names":["bytes_len","padding"],"source_cid":"blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","template_cid":"blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],"factoryAuditSummary":{"emittedRows":0,"statusCounts":{"warranted":0,"incomplete":0,"support":0,"unresolved":0},"unresolvedSites":[],"factoryWalk":[]},"diagnostics":[]}}'
   elif [[ "$line" == *'"method":"shutdown"'* ]]; then
@@ -862,7 +862,7 @@ while IFS= read -r line; do
   if [[ "$line" == *'"method":"initialize"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"consumer","protocol_version":"pep/1.7.0","capabilities":{}}}'
   elif [[ "$line" == *'"method":"sugar.plugin.kit_declaration"'* ]]; then
-    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"proofResolution":{"strategy":"none"},"residueCategories":[]}}'
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"residueCategories":[]}}'
   elif [[ "$line" == *'"method":"lift"'* ]]; then
     printf 'consumer must be dispatched via lift_implications, not lift: %s\n' "$line" >&2
     exit 44
@@ -1142,7 +1142,7 @@ while IFS= read -r line; do
   if [[ "$line" == *'"method":"initialize"'* ]]; then
     printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"name":"{name}","protocol_version":"pep/1.7.0","capabilities":{{}}}}}}'
   elif [[ "$line" == *'"method":"sugar.plugin.kit_declaration"'* ]]; then
-    printf '%s\n' '{{"jsonrpc":"2.0","id":2,"result":{{"kit":{{"id":"test-fixture","language":"bash","version":"0.0.0"}},"rpc":{{"methods":[{{"name":"lift","required":true}}]}},"proofResolution":{{"strategy":"none"}},"residueCategories":[]}}}}'
+    printf '%s\n' '{{"jsonrpc":"2.0","id":2,"result":{{"kit":{{"id":"test-fixture","language":"bash","version":"0.0.0"}},"rpc":{{"methods":[{{"name":"lift","required":true}}]}},"residueCategories":[]}}}}'
   elif [[ "$line" == *'"method":"lift"'* ]]; then
     printf '{{"jsonrpc":"2.0","id":2,"result":'
     cat "$response"
@@ -1255,7 +1255,7 @@ while IFS= read -r line; do
   if [[ "$line" == *'"method":"initialize"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"test-lift","protocol_version":"pep/1.7.0","capabilities":{}}}'
   elif [[ "$line" == *'"method":"sugar.plugin.kit_declaration"'* ]]; then
-    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"proofResolution":{"strategy":"none"},"residueCategories":[]}}'
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"residueCategories":[]}}'
   elif [[ "$line" == *'"method":"lift"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[{"kind":"contract","name":"demo.contract","outBinding":"out","post":{"kind":"atomic","name":"demo_true","args":[]}}],"diagnostics":[]}}'
   elif [[ "$line" == *'"method":"shutdown"'* ]]; then
@@ -1334,7 +1334,7 @@ while IFS= read -r line; do
   if [[ "$line" == *'"method":"initialize"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"producer","protocol_version":"pep/1.7.0","capabilities":{}}}'
   elif [[ "$line" == *'"method":"sugar.plugin.kit_declaration"'* ]]; then
-    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"proofResolution":{"strategy":"none"},"residueCategories":[]}}'
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"residueCategories":[]}}'
   elif [[ "$line" == *'"method":"lift"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[{"kind":"contract","name":"caller@src/lib.rs:1:1","outBinding":"out","post":{"kind":"atomic","name":"caller_post","args":[]}}],"diagnostics":[]}}'
   elif [[ "$line" == *'"method":"shutdown"'* ]]; then
@@ -1354,7 +1354,7 @@ while IFS= read -r line; do
   if [[ "$line" == *'"method":"initialize"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"consumer","protocol_version":"pep/1.7.0","capabilities":{}}}'
   elif [[ "$line" == *'"method":"sugar.plugin.kit_declaration"'* ]]; then
-    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"proofResolution":{"strategy":"none"},"residueCategories":[]}}'
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"residueCategories":[]}}'
   elif [[ "$line" == *'"method":"sugar.plugin.lift_implications"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[],"diagnostics":[{"kind":"lift-gap","reason":"no-contract-for-callee","callee":"Some","file":"src/lib.rs","line":1,"col":34}]}}'
   elif [[ "$line" == *'"method":"shutdown"'* ]]; then
@@ -1426,7 +1426,7 @@ while IFS= read -r line; do
   if [[ "$line" == *'"method":"initialize"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"path-lift","protocol_version":"pep/1.7.0","capabilities":{}}}'
   elif [[ "$line" == *'"method":"sugar.plugin.kit_declaration"'* ]]; then
-    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"proofResolution":{"strategy":"none"},"residueCategories":[]}}'
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kit":{"id":"test-fixture","language":"bash","version":"0.0.0"},"rpc":{"methods":[{"name":"lift","required":true}]},"residueCategories":[]}}'
   elif [[ "$line" == *'"method":"lift"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[{"kind":"contract","name":"path.config.contract","outBinding":"out","post":{"kind":"atomic","name":"path_config_true","args":[]}}],"diagnostics":[]}}'
   elif [[ "$line" == *'"method":"shutdown"'* ]]; then

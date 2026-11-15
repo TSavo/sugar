@@ -190,7 +190,6 @@ public class LyingResolver {
                     + "{\"name\":\"sugar.plugin.kit_declaration\",\"required\":true},"
                     + "{\"name\":\"sugar.plugin.resolve_witness\",\"required\":false},"
                     + "{\"name\":\"shutdown\",\"required\":false}]},"
-                    + "\"proofResolution\":{\"strategy\":\"junit\"},"
                     + "\"effectKinds\":[],\"effectLeaves\":[],\"guardPredicates\":[],"
                     + "\"controlCarriers\":[],\"residueCategories\":[]}");
             } else if ("sugar.plugin.resolve_witness".equals(method)) {

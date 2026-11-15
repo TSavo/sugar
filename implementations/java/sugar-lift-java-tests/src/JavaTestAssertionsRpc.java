@@ -84,8 +84,6 @@ public final class JavaTestAssertionsRpc {
                 response = switch (method) {
                     case "initialize"                   -> ok(id, initializeResult());
                     case "sugar.plugin.kit_declaration" -> ok(id, kitDeclarationResult());
-                    case "sugar.plugin.resolve_dependency_proofs" -> ok(id,
-                            JavaDependencyProofResolver.resolveDependencyProofs(line));
                     case "sugar.enumerate"              -> enumerate(id, line);
                     // `lift` stays as the kit's own single-shot test door
                     // (tests/run.sh drives it directly); it is no longer
@@ -123,12 +121,9 @@ public final class JavaTestAssertionsRpc {
              + "\"rpc\":{\"methods\":["
              + "{\"name\":\"initialize\",\"required\":true},"
              + "{\"name\":\"sugar.plugin.kit_declaration\",\"required\":true},"
-             + "{\"name\":\"sugar.plugin.resolve_dependency_proofs\",\"required\":false},"
              + "{\"name\":\"sugar.enumerate\",\"required\":true},"
              + "{\"name\":\"shutdown\",\"required\":false}"
              + "]},"
-             + "\"proofResolution\":{\"strategy\":\"maven\","
-             + "\"rpcMethod\":\"sugar.plugin.resolve_dependency_proofs\"},"
              + "\"effectKinds\":[],\"effectLeaves\":[],\"guardPredicates\":[],"
              + "\"controlCarriers\":[],\"residueCategories\":[]}";
     }

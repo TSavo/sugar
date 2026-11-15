@@ -256,51 +256,13 @@ Request:
 }
 ```
 
-#### §4.2.3 `sugar.plugin.resolve_dependency_proofs`
+#### §4.2.3 `sugar.plugin.resolve_dependency_proofs` (RETIRED)
 
-Kit-owned package-manager proof resolution. The runtime calls this method before
-verification pool assembly. The substrate MUST NOT inspect cargo metadata,
-classpath entries, node_modules, sys.path, or any other platform dependency
-graph directly; it passes the project root to configured kits and unions the
-returned proof catalog bytes by CID.
-
-Request:
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 3,
-  "method": "sugar.plugin.resolve_dependency_proofs",
-  "params": {
-    "project_root": "/absolute/project/root"
-  }
-}
-```
-
-Response (success):
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 3,
-  "result": {
-    "proofs": [
-      {
-        "cid": "blake3-512:<hex>",
-        "bytes_base64": "<standard-base64-proof-catalog-bytes>",
-        "source": "diagnostic-kit-owned-label"
-      }
-    ]
-  }
-}
-```
-
-`proofs` entries MUST carry opaque `.proof` catalog bytes in `bytes_base64`.
-`cid`, when present, MUST match the content CID of those bytes. `source` is a
-diagnostic label only and MUST NOT be treated as filesystem or package-manager
-authority. Implementations MAY return an empty array when the language kit has
-no implementation yet, but MUST log that language-specific dependency proof
-resolution is not implemented. The runtime MUST load by bytes, recompute bundle
-and member CIDs, and union members. It MUST NOT extract formulas for rewriting,
-follow kit-supplied `.proof` paths, or reinterpret package-manager metadata.
+RETIRED (item 47 on #7757). An imported proof is read only from the project's
+`.sugar/imports/` directory, as a `.proof` file (step 9 reads `.proof` files
+only); no kit serves imported proofs over RPC. Kits MUST NOT declare or answer
+`sugar.plugin.resolve_dependency_proofs`, and a kit declaration carries no
+`proofResolution` field.
 
 #### §4.2.4 `sugar.plugin.shutdown`
 

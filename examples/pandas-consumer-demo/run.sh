@@ -175,7 +175,6 @@ for line in sys.stdin:
         result = {{
             "kit": {{"id": "static-pandas-vendor", "language": "python", "version": "0.0.0"}},
             "rpc": {{"methods": [{{"name": "lift", "required": True}}]}},
-            "proofResolution": {{"strategy": "none"}},
             "residueCategories": [],
         }}
     elif method in ("lift", "sugar.plugin.lift"):

@@ -115,7 +115,7 @@ def test_kit_declaration_returns_emit_only_hypothesis_declaration() -> None:
         "sugar.plugin.kit_declaration",
         "shutdown",
     }
-    assert result["proofResolution"] == {"strategy": "pip"}
+    assert "proofResolution" not in result
     assert result["effectKinds"] == []
     assert result["effectLeaves"] == []
     assert result["guardPredicates"] == []

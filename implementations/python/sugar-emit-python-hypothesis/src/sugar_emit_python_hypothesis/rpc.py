@@ -102,7 +102,6 @@ def kit_declaration_result() -> dict[str, Any]:
                 {"name": "shutdown", "required": False},
             ]
         },
-        "proofResolution": {"strategy": "pip"},
         "effectKinds": [],
         "effectLeaves": [],
         "guardPredicates": [],
