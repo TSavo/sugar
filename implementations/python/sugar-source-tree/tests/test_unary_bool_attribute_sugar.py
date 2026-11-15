@@ -49,7 +49,9 @@ def test_not_is_truth_then_negate():
     left, right = carrier.operands
     assert left.to_term(owner="not carrier tooth").name == "z"
     assert right.value == 1
-    assert len(carrier.continuations) >= 6
+    # The block's statement tail waits as an ExitSet-wide step
+    # (``after_discharge``), not as a continuation.
+    assert len(carrier.continuations) >= 5
 
 
 # ---- BoolOp ------------------------------------------------------------------
@@ -62,7 +64,7 @@ def test_and_conjoins_operand_truthiness():
     )
     assert carrier.operands[0].to_term(owner="and carrier tooth").name == "z"
     assert carrier.operands[1].value == 1
-    assert len(carrier.continuations) == 6
+    assert len(carrier.continuations) == 5
 
 
 def test_or_disjoins_operand_truthiness():
@@ -72,7 +74,7 @@ def test_or_disjoins_operand_truthiness():
     )
     assert carrier.operands[0].to_term(owner="or carrier tooth").name == "z"
     assert carrier.operands[1].value == 1
-    assert len(carrier.continuations) == 6
+    assert len(carrier.continuations) == 5
 
 
 def test_bare_operands_refuse_undecided_truth():

@@ -61,7 +61,9 @@ def test_chained_comparison_conjoins_adjacent_pairs():
     left, right = carrier.operands
     assert left.value == 0
     assert right.to_term(owner="comparison-chain carrier tooth").name == "z"
-    assert len(carrier.continuations) == 6
+    # The block's statement tail waits as an ExitSet-wide step
+    # (``after_discharge``), not as a continuation.
+    assert len(carrier.continuations) == 5
 
 
 def test_comparison_composes_inside_boolop():
@@ -72,7 +74,7 @@ def test_comparison_composes_inside_boolop():
     left, right = carrier.operands
     assert left.to_term(owner="boolop carrier tooth").name == "z"
     assert right.value == 1
-    assert len(carrier.continuations) == 6
+    assert len(carrier.continuations) == 5
 
 
 if __name__ == "__main__":

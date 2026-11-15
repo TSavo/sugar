@@ -69,7 +69,9 @@ def test_spread_keyword_args_build_reference_method_call():
     receiver, name = carrier.operands
     assert receiver.to_term(owner="method receiver carrier tooth").name == "z"
     assert name.value == "get"
-    assert len(carrier.continuations) == 5
+    # The block's statement tail waits as an ExitSet-wide step
+    # (``after_discharge``), not as a continuation.
+    assert len(carrier.continuations) == 4
 
 
 def test_spread_call_is_a_constructed_method_argument_coordinate():

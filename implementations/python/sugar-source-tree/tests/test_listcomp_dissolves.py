@@ -58,7 +58,9 @@ def test_undecidable_filtered_comprehension_is_typed_filter_guard():
     left, right = carrier.operands
     assert left.to_term(owner="listcomp carrier tooth").name == "x"
     assert right.formal_coordinate.declared_name == "limit"
-    assert len(carrier.continuations) == 5
+    # The block's statement tail waits as an ExitSet-wide step
+    # (``after_discharge``), not as a continuation.
+    assert len(carrier.continuations) == 4
 
 
 def test_symbolic_comprehension_builds_coordinate():

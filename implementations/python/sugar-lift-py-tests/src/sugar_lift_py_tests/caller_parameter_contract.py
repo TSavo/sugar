@@ -873,7 +873,13 @@ class NativeOperationExitCarrierV1:
         )
 
     def _enroll_pre_effect_state(self, pre_effect_state):
-        """Enroll reducer testimony without adding an expression continuation."""
+        """Enroll reducer testimony without adding an expression continuation.
+
+        THE ONE ENROLLMENT: the block reducer enrolls the state a deferred
+        statement began from here, then hands its one statement tail to
+        :meth:`after_discharge` (``reduce_block_to_exitset``); a carrier a
+        continuation mints with no state of its own inherits this one's here
+        (:meth:`discharge`); :meth:`and_then` enrolls through it too."""
         testimony = self.pre_effect_state
         if pre_effect_state is not _PRE_EFFECT_STATE_UNSET:
             if not isinstance(pre_effect_state, ReducerPreEffectStateV1):
@@ -1238,7 +1244,7 @@ class NativeOperationExitCarrierV1:
             )
 
         # A short circuit recorded before later work (``return a if c else
-        # -x``: the return, the block projection, an enclosing ``if``'s join)
+        # -x``: the return, the block's statement tail, an enclosing ``if``'s join)
         # unions its stopping face in where it was recorded, so that work runs
         # on both legs. One recorded after all work keeps the end-of-discharge
         # union below.
