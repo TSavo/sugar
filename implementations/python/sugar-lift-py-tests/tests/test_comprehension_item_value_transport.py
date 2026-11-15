@@ -14,13 +14,18 @@ from sugar_lift_py_tests.floor import ListValue, ObjectValue, TermValue
 from sugar_lift_py_tests.floor.object_field import ObjectField
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
-from sugar_source_tree.nodes import ListComp, TargetPatternConstructionGapV1
+from sugar_source_tree.nodes import (
+    FunctionDef,
+    ListComp,
+    Return,
+    TargetPatternConstructionGapV1,
+)
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.effect import RaiseEffect
 
 
-def _source_list_comprehension(source: str):
+def _function(source: str) -> FunctionDef:
     tree = SourceFile(
         (
             source,
@@ -29,13 +34,26 @@ def _source_list_comprehension(source: str):
         ),
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )
-    node = next(item for item in tree.nodes() if isinstance(item, ListComp))
-    return node.sugar()
+    return next(node for node in tree.nodes() if isinstance(node, FunctionDef))
 
 
-def _context_with_items(items) -> ReduceContext:
+def _source_list_comprehension(source: str):
+    """The comprehension as the function's body rewrite constructs it: its
+    iterable ``items`` is the formal's reference (``FormalRef``), which reads
+    the formal's coordinate, never the name."""
+    (ret,) = _function(source).substitute({}).body
+    assert isinstance(ret, Return) and isinstance(ret.value, ListComp)
+    return ret.value.sugar()
+
+
+def _context_with_items(source: str, items) -> ReduceContext:
+    """A context in which ``build``'s formal ``items`` holds ``items``: bound
+    under the formal's coordinate, as a followed call binds its actual."""
+    (formal,) = _function(source).formal_coordinates()
     ctx = ReduceContext.root(owner="comprehension item transport")
-    return replace(ctx, temporal=ctx.temporal.bind_value("items", items))
+    return replace(
+        ctx, temporal=ctx.temporal.bind_value(formal.coordinate_cid, items)
+    )
 
 
 def _objects() -> tuple[ObjectValue, ObjectValue]:
@@ -51,15 +69,14 @@ def _objects() -> tuple[ObjectValue, ObjectValue]:
 
 def test_swapped_finite_members_preserve_each_object_identity() -> None:
     first, second = _objects()
-    comprehension = _source_list_comprehension(
-        "def build(items):\n    return [item for item in items]\n"
-    )
+    source = "def build(items):\n    return [item for item in items]\n"
+    comprehension = _source_list_comprehension(source)
 
     forward = comprehension.desugar(
-        _context_with_items(fresh(ListValue, (first, second)))
+        _context_with_items(source, fresh(ListValue, (first, second)))
     )
     swapped = comprehension.desugar(
-        _context_with_items(fresh(ListValue, (second, first)))
+        _context_with_items(source, fresh(ListValue, (second, first)))
     )
 
     assert forward.completed_value() is not None
@@ -83,12 +100,11 @@ def test_filtered_out_member_never_reaches_element_binding() -> None:
         identity="member:second",
         allocation=FRAME_FRESH,
     )
-    comprehension = _source_list_comprehension(
-        "def build(items):\n    return [item for item in items if item.keep]\n"
-    )
+    source = "def build(items):\n    return [item for item in items if item.keep]\n"
+    comprehension = _source_list_comprehension(source)
 
     outcome = comprehension.desugar(
-        _context_with_items(fresh(ListValue, (first, second)))
+        _context_with_items(source, fresh(ListValue, (first, second)))
     )
 
     assert outcome.completed_value() is not None
@@ -105,12 +121,11 @@ def test_halted_constructor_arm_is_absent_from_finite_items() -> None:
     second = replace(
         second, fields=(ObjectField("values", fresh(ListValue, (TermValue(9),))),)
     )
-    comprehension = _source_list_comprehension(
-        "def build(items):\n    return [item.values[4] for item in items]\n"
-    )
+    source = "def build(items):\n    return [item.values[4] for item in items]\n"
+    comprehension = _source_list_comprehension(source)
 
     outcome = comprehension.desugar(
-        _context_with_items(fresh(ListValue, (first, second)))
+        _context_with_items(source, fresh(ListValue, (first, second)))
     )
 
     assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
@@ -133,13 +148,12 @@ def test_tuple_target_coordinate_swap_is_refused_by_source_owner() -> None:
 
 
 def test_nonfinite_iterable_with_undecided_filter_stays_loud() -> None:
-    comprehension = _source_list_comprehension(
-        "def build(items):\n    return [item for item in items if item.keep]\n"
-    )
+    source = "def build(items):\n    return [item for item in items if item.keep]\n"
+    comprehension = _source_list_comprehension(source)
 
     with pytest.raises(SugarNotWritten, match="finite|filter|undecided"):
         comprehension.desugar(
             _context_with_items(
-                ObjectValue("UnknownIterable", (), allocation=FRAME_FRESH)
+                source, ObjectValue("UnknownIterable", (), allocation=FRAME_FRESH)
             )
         )
