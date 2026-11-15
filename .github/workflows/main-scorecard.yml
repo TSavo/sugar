@@ -17,8 +17,8 @@ name: Main scorecard
 #
 # THE BOARD HAS ITS OWN LANE (2026-11-15)
 #
-# This workflow measures the package suite, the solver twins and the
-# federation example. The pandas board is main-scorecard-board.yml, with its
+# This workflow measures the package suite, the solver twins, the
+# federation example and the Rust tests of the prove path. The pandas board is main-scorecard-board.yml, with its
 # own concurrency group: while the board was a job here, one run held the
 # group until the board finished (over an hour), so merges got no row in
 # between. Both workflows post rows on the same issue; each names its numbers
@@ -84,7 +84,7 @@ env:
   SUITE_INLINE_MAX_FILES: "40"
   SCORECARD_ISSUE_TITLE: "Main scorecard"
   # The numbers this workflow reports; the board is main-scorecard-board.yml.
-  SCORECARD_MEASURES: "suite,twins,federation"
+  SCORECARD_MEASURES: "suite,twins,federation,rust"
   GH_TOKEN: ${{ github.token }}
   GH_REPO: ${{ github.repository }}
 
@@ -416,12 +416,114 @@ jobs:
         shell: bash
         run: echo "job wall $(( $(date +%s) - JOB_T0 ))s"
 
+  # ------------------------------------------------------ (4) rust tests
+  # The Rust unit and integration tests of the crates on the Python proof
+  # path. No other workflow runs `cargo test`, so before this job the tests
+  # PRs added to these crates never ran. The target directory lives in the
+  # cache directory every runner shares, so a run recompiles only what the
+  # SHA changed (cargo locks it against a concurrent build). `--no-fail-fast`
+  # so one failing test binary does not hide the rest; the number is the sum
+  # of cargo's `test result:` lines over the crates. A crate that exits
+  # nonzero with no failing test did not build: the measure is then
+  # unmeasured, never a smaller total.
+  rust:
+    name: rust tests
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 60
+    steps:
+      - name: Start the job clock
+        shell: bash
+        run: echo "JOB_T0=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12.13"
+      - name: Scorecard environment (persistent venv, gh)
+        shell: bash
+        run: bash tools/main_scorecard_env.sh
+      - name: Set up Rust toolchain
+        uses: ./.github/actions/setup-rust-cache
+      - name: Install z3 (cached on the runner)
+        shell: bash
+        run: tools/ci-apt-install.sh z3
+      - name: cargo test (sugar-verifier, sugar-ir-compiler-smt-lib, sugar-compiler, sugar-cli)
+        id: cargo
+        shell: bash
+        working-directory: implementations/rust
+        run: |
+          set +e -uo pipefail
+          export CARGO_TARGET_DIR="$SCORECARD_CACHE/rust-test-target"
+          export CARGO_TERM_COLOR=never
+          log="$GITHUB_WORKSPACE/rust.log"
+          : > "$log"
+          passed=0; failed=0; broken=""; lines=""
+          for crate in sugar-verifier sugar-ir-compiler-smt-lib sugar-compiler sugar-cli; do
+            t=$(date +%s)
+            cargo test -p "$crate" --no-fail-fast > "$RUNNER_TEMP/rust-$crate.log" 2>&1
+            rc=$?
+            { echo "===== cargo test -p $crate (exit $rc)"; cat "$RUNNER_TEMP/rust-$crate.log"; } >> "$log"
+            read -r p f < <(grep -a '^test result:' "$RUNNER_TEMP/rust-$crate.log" | awk '
+              { for (i = 1; i < NF; i++) {
+                  if ($(i + 1) ~ /^passed;?$/) p += $i
+                  if ($(i + 1) ~ /^failed;?$/) f += $i } }
+              END { print p + 0, f + 0 }')
+            wall=$(( $(date +%s) - t ))
+            echo "$crate: exit $rc passed $p failed $f wall ${wall}s"
+            lines="$lines $crate=$p/$((p + f)):${wall}s"
+            passed=$((passed + p)); failed=$((failed + f))
+            if [ "$rc" -ne 0 ] && [ "$f" -eq 0 ]; then broken="$broken $crate"; fi
+          done
+          echo "rust tests: passed $passed failed $failed did-not-build:${broken:- none}"
+          echo "passed=$passed" >> "$GITHUB_OUTPUT"
+          echo "failed=$failed" >> "$GITHUB_OUTPUT"
+          echo "broken=${broken# }" >> "$GITHUB_OUTPUT"
+          echo "crates=${lines# }" >> "$GITHUB_OUTPUT"
+          grep -a -E '^test .* FAILED$|^error(\[|:)' "$log" | head -n 50
+          true
+      - name: Post the rust number
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          RUST_PASSED: ${{ steps.cargo.outputs.passed }}
+          RUST_FAILED: ${{ steps.cargo.outputs.failed }}
+          RUST_BROKEN: ${{ steps.cargo.outputs.broken }}
+          RUST_CRATES: ${{ steps.cargo.outputs.crates }}
+        run: |
+          set +e -uo pipefail
+          if [ -z "$RUST_PASSED" ]; then
+            python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" \
+              --set rust.measured=false --set "rust.note=cargo test did not run"
+          elif [ -n "$RUST_BROKEN" ]; then
+            python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" \
+              --set rust.measured=false \
+              --set "rust.note=did not build: $RUST_BROKEN ($RUST_CRATES)"
+          else
+            python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" \
+              --set "rust.passed=$RUST_PASSED" \
+              --set "rust.failed=$RUST_FAILED" \
+              --set "rust.total=$(( RUST_PASSED + RUST_FAILED ))" \
+              --set "rust.crates=$RUST_CRATES"
+          fi
+      - name: Upload rust log
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-scorecard-rust
+          path: rust.log
+          if-no-files-found: ignore
+      - name: Job wall time
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: echo "job wall $(( $(date +%s) - JOB_T0 ))s"
+
   # ------------------------------------------------------- (5) scorecard
   # Each measuring job already posted its number. This job closes the row:
   # a measure that never reported becomes unmeasured, and is compared.
   scorecard:
     name: scorecard (final row)
-    needs: [suite, suite-shard, suite-join, solver]
+    needs: [suite, suite-shard, suite-join, solver, rust]
     if: ${{ !cancelled() }}
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
