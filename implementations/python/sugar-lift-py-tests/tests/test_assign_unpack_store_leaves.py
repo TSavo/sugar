@@ -51,9 +51,19 @@ from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
+# The receivers these twins store into (``o``, ``n``) are names only a star
+# import the lifter cannot read may bind: free operands whose runtime type
+# nothing decides, so each store is two-faced (``store_faces``).  A name the
+# module binds nowhere is no free operand: its read halts with ``NameError``
+# (``NameSugar``, #7854) and no store runs -- that is the honest answer for
+# ``o.x, o.y = p, q`` in a module that binds ``o`` nowhere, not the
+# receiver these laws are about.
+_UNREAD_STAR_IMPORT = "from unread_module import *\n"
+
+
 def _function(tmp_path: Path, source: str, stem: str = "assign_case"):
     path = tmp_path / f"{stem}.py"
-    path.write_text(source, encoding="utf-8")
+    path.write_text(_UNREAD_STAR_IMPORT + source, encoding="utf-8")
     return next(
         SourceFile(
             path_source(str(path)),
@@ -171,7 +181,8 @@ def _post(tmp_path: Path, source: str, stem: str = "assign_case"):
     return _completed_value(tmp_path, source, stem).post()
 
 
-# Free undecided ``o`` keeps dual-face AttributeStoreRuntimeEffect arms.
+# Free undecided ``o`` (``_UNREAD_STAR_IMPORT``) keeps dual-face
+# AttributeStoreRuntimeEffect arms.
 # Formal receivers mint setattr_named (vertical completion).
 TWO_ATTRIBUTE = "def f(p, q):\n    o.x, o.y = p, q\n    return p\n"
 

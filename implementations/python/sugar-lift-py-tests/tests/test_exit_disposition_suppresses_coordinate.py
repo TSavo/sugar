@@ -19,6 +19,7 @@ from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
 from sugar_lift_py_tests.ir import atomic, ctor, str_const
 from sugar_lift_py_tests.outcome.exit_disposition import exit_disposition_effect
 from sugar_lift_py_tests.outcome.exit_set import Halted
+from sugar_lift_py_tests.sugar.function_universe_sugar import halt_record
 from sugar_source_tree.panic import SugarNotWritten
 
 
@@ -41,7 +42,7 @@ def test_truthful_suppresses_matching_coordinate() -> None:
     effect = _key_error()
     verdict = exit_disposition_effect(
         Suppresses(EffectMatcher(kind="raise", name="KeyError")),
-        Halted(_guard(), effect, "state"),
+        Halted(_guard(), effect, halt_record(None)),
     )
     assert verdict is None  # consumed
 
@@ -60,7 +61,7 @@ def test_lying_twin_same_spelling_foreign_coordinate_restores() -> None:
     assert lying.exception_name == "KeyError"
     restored = exit_disposition_effect(
         Suppresses(EffectMatcher(kind="raise", name="KeyError")),
-        Halted(_guard(), lying, "state"),
+        Halted(_guard(), lying, halt_record(None)),
     )
     assert restored is lying
 
@@ -70,7 +71,7 @@ def test_name_less_matcher_throws_not_suppress() -> None:
     with pytest.raises(SugarNotWritten) as caught:
         exit_disposition_effect(
             Suppresses(EffectMatcher(kind="raise", name=None)),  # type: ignore[arg-type]
-            Halted(_guard(), effect, "state"),
+            Halted(_guard(), effect, halt_record(None)),
         )
     assert "name-less" in caught.value.observed
 
@@ -87,7 +88,7 @@ def test_name_less_effect_with_coordinate_does_not_equal_name_less_matcher() -> 
     with pytest.raises(SugarNotWritten):
         exit_disposition_effect(
             Suppresses(EffectMatcher(kind="raise", name=None)),  # type: ignore[arg-type]
-            Halted(_guard(), effect, "state"),
+            Halted(_guard(), effect, halt_record(None)),
         )
 
 
@@ -96,6 +97,6 @@ def test_missing_effect_coordinate_throws() -> None:
     with pytest.raises(SugarNotWritten) as caught:
         exit_disposition_effect(
             Suppresses(EffectMatcher(kind="raise", name="KeyError")),
-            Halted(_guard(), effect, "state"),
+            Halted(_guard(), effect, halt_record(None)),
         )
     assert "exception_type_coordinate" in caught.value.observed
