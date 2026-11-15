@@ -104,6 +104,10 @@ from typing import Iterable
 
 from sugar_lift_py_tests.repo_root import resolve_repo_root
 
+# Not the board: ``R`` here counts scopes that construct through the bare
+# door in the kit's own source, never corpus files or functions.
+SCOREBOARD_AUTHORITY = False
+
 # The deleted spelling, ``SourceFile.from_path(...)``: always bare.
 BARE_DOOR = "from_path"
 BARE_DOOR_OWNER = "SourceFile"
