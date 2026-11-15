@@ -3661,6 +3661,149 @@ fn bridge_answer(
     )))
 }
 
+/// The inputs a contract takes beside its parameters (step 4, #7757): what
+/// its body reads that the caller supplies at the call. Each is a formal of
+/// the contract spelled `<kind>:<name>`, and each is supplied by a named
+/// argument of the call term, `<ctor>(<name>, <value>)`:
+///
+/// - `cell:<name>`: a captured cell of a local `def` or a lambda, supplied by
+///   `py.closure(<name>, <value>)`;
+/// - `global:<name>`: a module global the body reads at the call, supplied by
+///   `py.global(<name>, <value>)`;
+/// - `default:<param>`: the default the `def` statement bound for
+///   `<param>`, supplied by `py.default(<param>, <value>)`; a parameter the
+///   call does not pass is bound to it.
+///
+/// A parameter is any other formal: bound by position, or by
+/// `py.kwarg(<name>, <value>)`.
+const CONTRACT_INPUTS: [(&str, &str); 3] = [
+    ("py.closure", "cell:"),
+    ("py.global", "global:"),
+    ("py.default", "default:"),
+];
+
+/// The named-argument ctor that binds a parameter by name.
+const PYTHON_KWARG: &str = "py.kwarg";
+
+/// True for a contract input (`cell:`, `global:`, `default:`), never a
+/// parameter.
+fn is_contract_input(formal: &str) -> bool {
+    CONTRACT_INPUTS
+        .iter()
+        .any(|(_, prefix)| formal.starts_with(prefix))
+}
+
+/// A named argument of a call term: `(ctor, name, value)` for `py.kwarg`,
+/// `py.closure`, `py.global` or `py.default` applied to a string name and a
+/// value. `None` for a positional argument. `Some(Err(()))` for a named
+/// ctor whose name is not a string constant or whose arity is not two.
+fn named_argument(arg: &Json) -> Option<Result<(&str, String, Json), ()>> {
+    if arg.get("kind").and_then(|v| v.as_str()) != Some("ctor") {
+        return None;
+    }
+    let ctor = arg.get("name").and_then(|v| v.as_str())?;
+    if ctor != PYTHON_KWARG && !CONTRACT_INPUTS.iter().any(|(named, _)| *named == ctor) {
+        return None;
+    }
+    let parts = arg.get("args").and_then(|v| v.as_array());
+    let named = parts.and_then(|parts| match parts.as_slice() {
+        [name, value] => name
+            .get("value")
+            .and_then(|v| v.as_str())
+            .map(|name| (ctor, name.to_string(), value.clone())),
+        _ => None,
+    });
+    Some(named.ok_or(()))
+}
+
+/// Each formal of the answering contract bound to what the call supplies
+/// for it (step 4): positional arguments bind the parameters in order,
+/// `py.kwarg` binds a parameter by name, and each contract input is bound by
+/// its named argument. A parameter the call does not pass is bound to the
+/// contract's `default:<param>` input. `None` when the call does not fit the
+/// contract (more positional arguments than parameters, a name the contract
+/// does not take, a formal bound twice, a parameter neither passed nor
+/// defaulted): the join refuses it as `import-signature-mismatch`.
+///
+/// An input the call does not supply is left unbound: the instance is open
+/// and the call stays owed (`OpenAfterSpecialization`), never answered on a
+/// value the caller did not give.
+fn bind_call_arguments(formals: &[String], args: &[Json]) -> Option<Vec<(String, Json)>> {
+    let parameters: Vec<&str> = formals
+        .iter()
+        .map(String::as_str)
+        .filter(|formal| !is_contract_input(formal))
+        .collect();
+    let mut bound: std::collections::BTreeMap<String, Json> = std::collections::BTreeMap::new();
+    let mut positional = 0usize;
+    for arg in args {
+        match named_argument(arg) {
+            None => {
+                let parameter = parameters.get(positional)?;
+                positional += 1;
+                bound.insert((*parameter).to_string(), arg.clone());
+            }
+            Some(Err(())) => return None,
+            Some(Ok((ctor, name, value))) => {
+                let formal = if ctor == PYTHON_KWARG {
+                    name
+                } else {
+                    let (_, prefix) = CONTRACT_INPUTS.iter().find(|(named, _)| *named == ctor)?;
+                    format!("{prefix}{name}")
+                };
+                if !formals.contains(&formal) || bound.contains_key(&formal) {
+                    return None;
+                }
+                if ctor == PYTHON_KWARG && is_contract_input(&formal) {
+                    return None;
+                }
+                bound.insert(formal, value);
+            }
+        }
+    }
+    let mut bindings = Vec::with_capacity(formals.len());
+    for parameter in &parameters {
+        if let Some(actual) = bound.remove(*parameter) {
+            bindings.push(((*parameter).to_string(), actual));
+            continue;
+        }
+        // Not passed: the parameter is the default the `def` statement bound,
+        // as the call supplies it; a default the call does not supply stays
+        // the free input, so the instance is open.
+        let default = format!("default:{parameter}");
+        if !formals.contains(&default) {
+            return None;
+        }
+        let actual = bound
+            .get(&default)
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({"kind": "var", "name": default}));
+        bindings.push(((*parameter).to_string(), actual));
+    }
+    bindings.extend(bound);
+    Some(bindings)
+}
+
+/// `formula` with each formal replaced by its binding at once: every formal
+/// is first renamed to a name no term spells, so an actual that reads a
+/// variable spelled as another formal is never captured by that formal's
+/// binding.
+fn substitute_call_bindings(formula: &Json, bindings: &[(String, Json)]) -> Json {
+    let placeholder = |index: usize| format!("\u{0}bound-formal:{index}");
+    let mut instance = formula.clone();
+    for (index, (formal, _)) in bindings.iter().enumerate() {
+        instance = crate::instantiate::substitute_formula_pub(
+            &instance,
+            formal,
+            &serde_json::json!({"kind": "var", "name": placeholder(index)}),
+        );
+    }
+    for (index, (_, actual)) in bindings.iter().enumerate() {
+        instance = crate::instantiate::substitute_formula_pub(&instance, &placeholder(index), actual);
+    }
+    instance
+}
+
 /// THE JOIN (step 9; row 0a.5). Each unanswered call member's `symbol` is
 /// joined to the bridge whose `sourceSymbol` is the same string, over every
 /// proof prove read: the project's own `.proof` and the imported ones alike
@@ -4486,7 +4629,9 @@ fn linked_ambient_post_instances_for_inv(
                 });
                 continue;
             };
-            if post.binding.formals.len() != args.len() {
+            // Positional and named arguments bound to the contract's
+            // parameters and inputs (step 4): one binder for every call.
+            let Some(bindings) = bind_call_arguments(&post.binding.formals, args) else {
                 dropped.push(DroppedAmbientPost {
                     source_symbol: post.binding.source_symbol.clone(),
                     target_cid: post.binding.target_cid.clone(),
@@ -4495,7 +4640,7 @@ fn linked_ambient_post_instances_for_inv(
                     spelling: compact_json(call),
                 });
                 continue;
-            }
+            };
             // The result the claim reads is a completed call: every halt the
             // contract states is off this path, `not(guard)` under the
             // call's actual (step 9). A halt certain on the path makes the
@@ -4513,9 +4658,7 @@ fn linked_ambient_post_instances_for_inv(
                 );
                 IrFormula::And(operands).to_value()
             };
-            for (formal, actual) in post.binding.formals.iter().zip(args.iter()) {
-                instance = crate::instantiate::substitute_formula_pub(&instance, formal, actual);
-            }
+            instance = substitute_call_bindings(&instance, &bindings);
             instance = crate::instantiate::substitute_formula_pub(
                 &instance,
                 &post.binding.out_binding,
@@ -11015,6 +11158,128 @@ mod tests {
             "{}",
             result.reason
         );
+    }
+
+    // ── Step 4: a contract's inputs beside its parameters ───────────────
+    // A captured cell, a module global and a default are formals of the
+    // contract spelled `cell:<name>`, `global:<name>`, `default:<param>`; the
+    // call supplies each by a named argument, as it supplies a parameter by
+    // position or by `py.kwarg`.
+
+    fn named_arg(ctor: &str, name: &str, value: Json) -> Json {
+        json!({"kind": "ctor", "name": ctor, "args": [string_const(name), value]})
+    }
+
+    fn formals(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| name.to_string()).collect()
+    }
+
+    #[test]
+    fn the_binder_binds_parameters_by_position_and_name_and_inputs_by_name() {
+        let bound = bind_call_arguments(
+            &formals(&["x", "y", "cell:k", "global:G"]),
+            &[
+                int(1),
+                named_arg("py.kwarg", "y", int(2)),
+                named_arg("py.closure", "k", int(3)),
+                named_arg("py.global", "G", int(4)),
+            ],
+        )
+        .expect("the call fits the contract");
+        assert_eq!(
+            bound,
+            vec![
+                ("x".to_string(), int(1)),
+                ("y".to_string(), int(2)),
+                ("cell:k".to_string(), int(3)),
+                ("global:G".to_string(), int(4)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_parameter_the_call_omits_is_its_default_input() {
+        let contract = formals(&["x", "default:x"]);
+        let supplied =
+            bind_call_arguments(&contract, &[named_arg("py.default", "x", int(4))]).unwrap();
+        assert_eq!(supplied, vec![("x".to_string(), int(4)), ("default:x".to_string(), int(4))]);
+        // A default the call does not supply stays the free input: open.
+        let unsupplied = bind_call_arguments(&contract, &[]).unwrap();
+        assert_eq!(unsupplied, vec![("x".to_string(), var("default:x"))]);
+        // No default: a parameter the call omits does not fit.
+        assert!(bind_call_arguments(&formals(&["x"]), &[]).is_none());
+    }
+
+    #[test]
+    fn a_call_that_does_not_fit_the_contract_is_refused() {
+        let contract = formals(&["x", "cell:k"]);
+        // More positional arguments than parameters.
+        assert!(bind_call_arguments(&contract, &[int(1), int(2)]).is_none());
+        // A name the contract does not take.
+        assert!(bind_call_arguments(&contract, &[int(1), named_arg("py.kwarg", "z", int(2))])
+            .is_none());
+        assert!(bind_call_arguments(&contract, &[int(1), named_arg("py.closure", "j", int(2))])
+            .is_none());
+        // A formal bound twice.
+        assert!(bind_call_arguments(&contract, &[int(1), named_arg("py.kwarg", "x", int(2))])
+            .is_none());
+        // An input is never bound as a keyword.
+        assert!(bind_call_arguments(
+            &contract,
+            &[int(1), named_arg("py.kwarg", "cell:k", int(2))]
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn the_binder_never_captures_an_actual_spelled_as_another_formal() {
+        // `def g(x, y): return x`, called `g(y, 2)` from a contract whose own
+        // formal is `y`: `x := y` must not then be rebound by `y := 2`.
+        let instance = substitute_call_bindings(
+            &eqf(var("out"), var("x")),
+            &[("x".to_string(), var("y")), ("y".to_string(), int(2))],
+        );
+        assert_eq!(instance, eqf(var("out"), var("y")));
+    }
+
+    fn cell_reader_post() -> AmbientPost {
+        joined_post(
+            "python:m.outer.<locals>.g@3:4",
+            JOIN_SITE,
+            eqf(var("out"), var("cell:k")),
+            formals(&["x", "cell:k"]),
+        )
+    }
+
+    fn cell_reader_claim(rhs: i64, closure: Option<i64>) -> Json {
+        let mut args = vec![int(3)];
+        if let Some(value) = closure {
+            args.push(named_arg("py.closure", "k", int(value)));
+        }
+        let call = json!({"kind": "ctor", "name": "call:g", "args": args});
+        eqf(call_result(call, JOIN_SITE), int(rhs))
+    }
+
+    #[test]
+    fn a_captured_cell_the_call_supplies_decides_the_claim() {
+        let truthful = prove_joined(cell_reader_claim(5, Some(5)), &[cell_reader_post()]);
+        assert_eq!(truthful.verdict, ObligationVerdict::Discharged, "{}", truthful.reason);
+        let lying = prove_joined(cell_reader_claim(6, Some(5)), &[cell_reader_post()]);
+        assert_eq!(lying.verdict, ObligationVerdict::Unsatisfied, "{}", lying.reason);
+    }
+
+    #[test]
+    fn an_input_the_call_does_not_supply_leaves_the_call_owed() {
+        let partition =
+            linked_ambient_post_instances_for_inv(&cell_reader_claim(5, None), &[cell_reader_post()]);
+        assert!(partition.kept.is_empty(), "{partition:?}");
+        assert_eq!(partition.dropped.len(), 1, "{partition:?}");
+        assert_eq!(
+            partition.dropped[0].reason,
+            DroppedAmbientPostReason::OpenAfterSpecialization
+        );
+        let result = prove_joined(cell_reader_claim(6, None), &[cell_reader_post()]);
+        assert_ne!(result.verdict, ObligationVerdict::Discharged, "{}", result.reason);
     }
 
     // ── Step 9: a dropped answer leaves the call unanswered ─────────────
