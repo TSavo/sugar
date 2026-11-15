@@ -11604,10 +11604,15 @@ class ClassDef(Statement):
             try:
                 body = method.sugar()
                 frame = method.source_visible_call_frame()
-            except SugarNotWritten:
+            except (SugarNotWritten, SourceCallFrameCycle):
                 # The class body binds the method; the method body runs only
                 # when called.  Its refusal is deferred to that caller, which
-                # constructs the body again and meets it by name.
+                # constructs the body again and meets it by name.  So is a
+                # method whose own body is under construction up the stack
+                # (a recursion seat: ``HDFStore.copy`` reads an attribute of
+                # the ``HDFStore(...)`` it builds, which asks for the class
+                # value): the class statement completes, and a call of the
+                # method meets the seat at its call (``Call._construct_sugar``).
                 return DeferredClassMethodV1(
                     method.name,
                     method.fragment.seal().cid,

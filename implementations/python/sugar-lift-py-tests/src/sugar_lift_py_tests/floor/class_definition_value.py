@@ -19,12 +19,14 @@ class ConstructedClassMethodV1:
 
 @dataclass(frozen=True)
 class DeferredClassMethodV1:
-    """A method whose body refused at class construction.
+    """A method whose body refused at class construction, or whose body was
+    under construction up the stack (a recursion seat,
+    ``SourceCallFrameCycle``).
 
     A ``def`` in a class body binds a function; the body runs only when the
     method is called.  The class statement completes; whoever reads the
     method's body or frame (its caller) constructs it again and meets the
-    refusal there.  The refusal is never testimony about the class statement.
+    refusal, or the seat, there.  The refusal is never testimony about the class statement.
     The definition itself is testified by ``definition_fragment_cid``; the
     node is only the handle a caller constructs from.
     """
