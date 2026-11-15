@@ -53,7 +53,9 @@ receiver an active ``__init__`` constructs):
   test, an item or attribute access, an iteration, an ``await``
   (``_sites_at``): each is rebound to its value after the operation,
   unknown when it runs code (decided at reduce by the values it runs on:
-  a builtin value runs none) and the value is one a call may change; a
+  a builtin value runs none; a call bound to a builtin exception class
+  that stores its actuals as ``args`` runs none, decided by its binding,
+  ``_constructs_builtin_exception``) and the value is one a call may change; a
   cell a nested scope declares ``nonlocal`` is unknown whatever it holds.
   Code that runs in the frame's own namespace -- ``exec``/``eval`` handed
   no globals mapping, any operation handed a ``locals()``/``vars()``
@@ -3117,13 +3119,63 @@ def _body_calls(definition):
 def _runs_no_code(call) -> bool:
     """An operation in a source body that runs no code: a cited pure builtin
     (by its binding) over constants or a method of a literal
-    (``_is_pure_call``); any other operation over values that are builtin
-    all the way down (``_code_subjects``)."""
+    (``_is_pure_call``); a construction of a builtin exception class by
+    BaseException's law (``_constructs_builtin_exception``); any other
+    operation over values that are builtin all the way down
+    (``_code_subjects``)."""
     from .nodes import Call
 
     if isinstance(call, Call):
-        return _is_pure_call(call, {})
+        return _is_pure_call(call, {}) or _constructs_builtin_exception(call)
     return _code_subjects(call, {}) == []
+
+
+def _constructs_builtin_exception(call) -> bool:
+    """Whether the call ``call`` constructs a builtin exception class and so
+    runs no code, whatever its actuals are.
+
+    The callee is decided by its binding, never its spelling: the builtin
+    namespace member a bare name falls through to, or an import of
+    ``builtins`` binds (``SourceUnit.name_reference_at``, the one lookup
+    ``_builtin_callee`` and the lifter's cited fold read,
+    ``CallSiteSugar._builtin_reference``,
+    ``builtin_exception_cited_fold``).  A user class, a subclass, a
+    parameter or any rebinding spelled ``ValueError`` reaches none.
+
+    The construction is cited as depending only on how many actuals it is
+    handed, never on what they are
+    (``builtin_exception_construction_reads_values`` False:
+    ``BaseException_new`` stores them as ``args``, CPython
+    Objects/exceptions.c), with no keyword actual or only keywords its
+    constructor rejects with ``TypeError`` before reading any
+    (``builtin_exception_constructor_rejects_keywords``).  The constructors
+    that read their actuals -- ``OSError``'s errno subclass selection,
+    ``SyntaxError``'s details tuple, the ``Unicode*Error`` signatures, the
+    exception groups -- are not this.  A starred or ``**`` actual iterates
+    a value, which may run code: not this either.  What each actual's own
+    evaluation runs is its own operation (``_sites_at``)."""
+    from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+        builtin_exception_construction_reads_values,
+        builtin_exception_constructor_rejects_keywords,
+    )
+
+    from .nodes import Name, Starred
+
+    func = call.func
+    if not isinstance(func, Name):
+        return False
+    if any(isinstance(arg, Starred) for arg in call.args):
+        return False
+    if any(keyword.arg is None for keyword in call.keywords):
+        return False
+    target = call.unit.name_reference_at(func.id, func.line_col_span())
+    prefix = "python:builtins."
+    if target is None or not target.startswith(prefix):
+        return False
+    name = target[len(prefix) :]
+    if call.keywords and not builtin_exception_constructor_rejects_keywords(name):
+        return False
+    return not builtin_exception_construction_reads_values(name, len(call.args))
 
 
 def _unfollowed_reach(call, scope, reach, followed):
@@ -3590,7 +3642,9 @@ def _code_subjects(call, scope):
     decided builtin all the way down (``builtin_typed``) runs none, and an
     operation's value is one when its operands are (``_operand_subjects``).
     ``[]``: it runs no code (a cited pure builtin over builtin operands,
-    ``_is_pure_call``; an operation over builtin values).  None: no read
+    ``_is_pure_call``; a builtin exception class constructed by
+    BaseException's law, ``_constructs_builtin_exception``; an operation
+    over builtin values).  None: no read
     decides it -- a callee or an operand that is not a read (an import, a
     class, a source function by its name, a path, a call's result), a
     builtin the law does not cite as running only its operands' dunders
@@ -3607,7 +3661,7 @@ def _code_subjects(call, scope):
     elif isinstance(call, PathContainerCall):
         operands = (call.receiver, *call.args)
     elif isinstance(call, Call):
-        if _is_pure_call(call, scope):
+        if _is_pure_call(call, scope) or _constructs_builtin_exception(call):
             return []
         func = call.func
         rest = (*call.args, *(keyword.value for keyword in call.keywords))
