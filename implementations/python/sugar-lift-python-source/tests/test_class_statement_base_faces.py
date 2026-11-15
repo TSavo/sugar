@@ -170,7 +170,9 @@ def _with_base(tmp_path: Path, outcome):
 
 
 def _halt(owner: str):
-    return UndeterminedRaiseEffect(blame="w.py:1:0", occurrence="k", producer_node_owner=owner)
+    return UndeterminedRaiseEffect(
+        blame="w.py:1:0", occurrence="k", producer_node_owner=owner, site="w.py:1:0"
+    )
 
 
 def _atom(name: str):

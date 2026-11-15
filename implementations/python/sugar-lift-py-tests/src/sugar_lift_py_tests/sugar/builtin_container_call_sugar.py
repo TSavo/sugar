@@ -68,9 +68,10 @@ def _opaque_pair(kind, method, site):
     return ExitSet.two_faced(
         TupleValue((post, result)),
         UndeterminedRaiseEffect(
-            blame=str(site) if site is not None else None,
-            occurrence=key if site is not None else None,
+            blame=str(site),
+            occurrence=key,
             producer_node_owner=f"BuiltinMethodCall:{target}",
+            site=site,
         ),
         guard=completes,
         site=site,

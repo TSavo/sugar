@@ -241,7 +241,9 @@ def test_nameless_halt_stays_outside_assertion_boundary():
     cannot turn a nameless halt into that result or demand a predicate whose
     subject does not exist.
     """
-    nameless = UndeterminedRaiseEffect(blame="producer.py:9:4")
+    nameless = UndeterminedRaiseEffect(
+        blame="producer.py:9:4", site="producer.py:9:4"
+    )
     body = ExitSet((Halted(true_guard(), nameless, _state("nameless")),))
 
     routed = _boundary_from_exitset(body, expected=_Expected("ValueError")).desugar()
@@ -285,6 +287,7 @@ def test_pandas_common_143_composes_compare_exit_with_assertion_contract():
     nameless_effect = UndeterminedRaiseEffect(
         blame="pandas/tests/arithmetic/common.py:144:8",
         producer_node_owner="ComparisonOpSugar.desugar",
+        site="pandas/tests/arithmetic/common.py:144:8",
     )
     nameless = Halted(true_guard(), nameless_effect, _state("nameless"))
     completed = Completed(true_guard(), _state("completed"))

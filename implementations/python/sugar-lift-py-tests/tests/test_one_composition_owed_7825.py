@@ -357,7 +357,7 @@ def test_a_deferred_carrier_owes_its_prefix_arms_debts() -> None:
             Completed(prefix_guard, TermValue(1), owed=(first,)),
             Halted(
                 complement_guard(prefix_guard),
-                UndeterminedRaiseEffect(blame="test", occurrence="test"),
+                UndeterminedRaiseEffect(blame="test", occurrence="test", site="test"),
                 None,
                 owed=(second,),
             ),
@@ -479,7 +479,9 @@ def test_an_equality_halt_owes_the_alternative_it_ran_after() -> None:
                 Completed(_EQ_FACE, _Truth(_EQ), owed=("debt:eq",)),
                 Halted(
                     complement_guard(_EQ_FACE),
-                    UndeterminedRaiseEffect(blame="test", occurrence="test"),
+                    UndeterminedRaiseEffect(
+                        blame="test", occurrence="test", site="test"
+                    ),
                     None,
                     owed=("debt:eq-halt",),
                 ),

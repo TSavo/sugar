@@ -152,7 +152,9 @@ def test_an_undetermined_leaf_is_never_partitioned_by_a_guess():
         [str_const("builtins"), str_const("BaseException")],
     )
     other = _identity("truthful", "Other")
-    undecided = UndeterminedRaiseEffect(blame="leaf:undecided", occurrence="leaf:u")
+    undecided = UndeterminedRaiseEffect(
+        blame="leaf:undecided", occurrence="leaf:u", site="leaf:undecided"
+    )
     decided = _leaf(other, "leaf:other", other, base_exception)
     group = GroupedRaiseEffect("group:root", "root", (undecided, decided))
 
@@ -243,7 +245,9 @@ def test_group_split_of_an_undetermined_leaf_is_two_faces_never_a_refusal():
     from sugar_lift_py_tests.outcome.exit_set import Completed
 
     other = _identity("truthful", "Other")
-    undecided = UndeterminedRaiseEffect(blame="leaf:undecided", occurrence="leaf:u")
+    undecided = UndeterminedRaiseEffect(
+        blame="leaf:undecided", occurrence="leaf:u", site="leaf:undecided"
+    )
     decided = _leaf(other, "leaf:other")
     group = _builtin_group((undecided, decided))
     handler = _typed_value(_identity("truthful", "Base"))

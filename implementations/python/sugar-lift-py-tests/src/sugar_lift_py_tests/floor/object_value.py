@@ -610,6 +610,7 @@ class ObjectValue(FloorValue):
                 blame=str(site),
                 occurrence=key,
                 producer_node_owner="ObjectValue.delattr",
+                site=site,
             ),
             guard=completes,
             site=site,

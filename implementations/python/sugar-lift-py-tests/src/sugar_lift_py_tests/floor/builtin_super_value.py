@@ -70,6 +70,7 @@ class BuiltinSuperValue(FloorValue):
                 blame=str(site),
                 occurrence=key,
                 producer_node_owner="BuiltinSuperValue.supercheck",
+                site=site,
             ),
             guard=completes,
             site=site,

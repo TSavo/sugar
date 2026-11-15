@@ -330,6 +330,7 @@ def runtime_unpack_faces(
             blame=str(site),
             occurrence=occurrence_key(site),
             producer_node_owner=f"{owner}.unpack",
+            site=site,
         ),
         guard=atomic("python:unpack.completes", [operation]),
         site=site,

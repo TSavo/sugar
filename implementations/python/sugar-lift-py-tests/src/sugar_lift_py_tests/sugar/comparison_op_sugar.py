@@ -293,9 +293,10 @@ def undecided_dispatch_faces(predicate, site, op_kind: str):
     return ExitSet.two_faced(
         predicate,
         UndeterminedRaiseEffect(
-            blame=str(site) if site is not None else None,
-            occurrence=key if site is not None else None,
+            blame=str(site),
+            occurrence=key,
             producer_node_owner=f"UndecidedCompare:{op_kind}",
+            site=site,
         ),
         guard=completes,
         site=site,

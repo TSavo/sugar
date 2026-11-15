@@ -563,7 +563,9 @@ def _undetermined_body():
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 
     effect = UndeterminedRaiseEffect(
-        occurrence="t.py:2:4", producer_node_owner="UnprojectedSourceCall:m.g"
+        occurrence="t.py:2:4",
+        producer_node_owner="UnprojectedSourceCall:m.g",
+        site="t.py:2:4",
     )
     return effect, _FixedSugar(ExitSet.halted(effect))
 

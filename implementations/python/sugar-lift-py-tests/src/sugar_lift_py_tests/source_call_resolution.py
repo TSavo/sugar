@@ -930,9 +930,10 @@ class UnknownCalleeCallV1:
         return ExitSet.two_faced(
             _occurrence_result(callsite, site),
             UndeterminedRaiseEffect(
-                blame=str(site) if site is not None else None,
-                occurrence=key if site is not None else None,
+                blame=str(site),
+                occurrence=key,
                 producer_node_owner=f"UnknownCallee:{self.callee_name}",
+                site=site,
             ),
             guard=completes,
             site=site,

@@ -538,6 +538,7 @@ class FloorValue:
                 blame=str(site),
                 occurrence=key,
                 producer_node_owner=owner,
+                site=site,
             ),
             guard=completes,
             site=site,
@@ -734,6 +735,7 @@ class FloorValue:
                 blame=str(site),
                 occurrence=key,
                 producer_node_owner=owner,
+                site=site,
             ),
             guard=completes,
             site=site,
@@ -1484,7 +1486,14 @@ def _siteless_undecided_read(owner: str, read: str, node: str) -> NoReturn:
 
 
 def undecided_binary_faces(left, right, site, operator: str):
-    """Two faces for ``left <operator> right`` over an undecided operand type."""
+    """Two faces for ``left <operator> right`` over an undecided operand type.
+
+    ``site`` is the BinOp's own fragment: the occurrence the result and the
+    completes atom are keyed on, and the fragment the halt states (#7766).
+    A binary operation that reached here with no site is refused by name at
+    its key (``occurrence.site_coordinate_cid``), as every other undecided
+    operation is; no empty key stands in for it.
+    """
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.floor.object_identity import identity_term
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
@@ -1492,7 +1501,7 @@ def undecided_binary_faces(left, right, site, operator: str):
     from sugar_lift_py_tests.occurrence import occurrence_key
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
-    key = occurrence_key(site) if site is not None else ""
+    key = occurrence_key(site)
     owner = f"python:binary_op {operator} at {site}"
     result = SymbolicValue(
         ctor(
@@ -1512,9 +1521,10 @@ def undecided_binary_faces(left, right, site, operator: str):
     return ExitSet.two_faced(
         result,
         UndeterminedRaiseEffect(
-            blame=str(site) if site is not None else None,
-            occurrence=key if site is not None else None,
+            blame=str(site),
+            occurrence=key,
             producer_node_owner=f"UndecidedBinary:{operator}",
+            site=site,
         ),
         guard=completes,
         site=site,

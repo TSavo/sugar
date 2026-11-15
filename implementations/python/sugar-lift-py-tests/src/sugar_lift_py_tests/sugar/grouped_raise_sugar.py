@@ -260,6 +260,7 @@ class GroupedRaiseSugar(Sugar):
                 blame=str(self.site),
                 occurrence=key,
                 producer_node_owner=f"ExceptionGroupConstruction:{label}",
+                site=self.site,
             ),
             guard=completes,
             site=self.site,

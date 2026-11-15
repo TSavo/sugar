@@ -78,6 +78,7 @@ def store_faces(effect):
             blame=str(site),
             occurrence=occurrence_key(site),
             producer_node_owner=type(effect).__name__,
+            site=site,
         ),
         guard=store_completed_guard(effect),
         site=site,
