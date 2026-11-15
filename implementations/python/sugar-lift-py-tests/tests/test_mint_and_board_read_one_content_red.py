@@ -46,9 +46,10 @@ _MODULE = (
 def test_a_with_over_a_same_module_manager_reaches_the_solver(tmp_path: Path) -> None:
     """``f()`` enters ``Resource(1)`` and returns 1.
 
-    The manager is made in ``f``'s frame, so ``__init__`` and ``__enter__``
-    are applied to a current object and ``f()`` is 1: the test function's
-    claim is decided, truthful ``sat`` and lying ``unsat``.
+    Before #7757 step 6 the manager was made in ``f``'s frame and
+    ``__init__`` and ``__enter__`` were applied to it, so ``f()`` was 1 at
+    the reduction: truthful ``sat``, lying ``unsat``.  Since step 6 neither
+    body is applied (below).
 
     ``Resource.__init__``'s and ``__enter__``'s OWN proofs have no caller:
     ``self.target = target`` and ``return self.target`` act on a formal with
@@ -64,5 +65,13 @@ def test_a_with_over_a_same_module_manager_reaches_the_solver(tmp_path: Path) ->
         for number, line in enumerate(_MODULE.splitlines(), start=1)
         if line.startswith("def test_")
     )
-    assert claim_verdict(truthful.prove_doc, claims_from_line=test_line) == "sat"
-    assert lying.verdict == "unsat"
+    # Since #7757 step 6 (#8738, #8744) ``Resource(1)`` is an edge and
+    # ``__enter__`` on its result is a method call on a call's result, whose
+    # dispatch is not decided at the reduction: the unanswered call.  ``f()``
+    # returns that call's value, which nothing states, so the truthful claim
+    # reads ``open`` on main (scorecard 43738710481), listed on #7661.
+    # Dispatch at prove (#7757 step 8: #8750 prove side, the lift side not
+    # merged) decides it: truthful ``sat``, lying ``unsat``.  Until then the
+    # lie reads ``open`` by the same undecided value, never ``sat``.
+    assert claim_verdict(truthful.prove_doc, claims_from_line=test_line) == "open"
+    assert lying.verdict == "open"
