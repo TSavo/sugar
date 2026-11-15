@@ -109,8 +109,9 @@ class SubscriptSugar(ConstructedTermSugar):
         ``subscript_with`` (operation) over legacy ``subscript``.
 
         Several floors implement only ``subscript_with`` (DictLiteralValue,
-        TupleLiteralValue, ObjectValue, StringValue, …); floors that only
-        implement ``subscript`` answer through ``subscript_with_occurrence``.
+        TupleLiteralValue, ObjectValue, …); floors that only implement
+        ``subscript`` (StringValue: a proved out-of-range index is its ground
+        ``IndexError``) answer through ``subscript_with_occurrence``.
         A formal's ``subscript`` carrier discharges through the same door.
         """
         from sugar_lift_py_tests.operations.subscript_operation import (
