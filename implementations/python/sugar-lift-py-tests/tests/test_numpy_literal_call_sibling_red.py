@@ -457,16 +457,32 @@ def test_numpy_add_literal_call_is_not_bridged(
     assert observed == {"truthful": "open", "lying": "open"}
 
 
+def _assertion_site():
+    """A real ``assert`` statement's fragment: the site an ``InvValue`` is
+    stated at.  The row it mints carries the fragment's own sealed warrant
+    (``SourceFragment.memento``), which a stand-in holding only a file name
+    and a line does not have."""
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_source_tree.nodes import Assert
+    from sugar_source_tree.tree import SourceFile
+
+    source = "def f():\n    assert 2 == 2\n"
+    tree = SourceFile(
+        (source, "vendor.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
+    (statement,) = tuple(node for node in tree.nodes() if isinstance(node, Assert))
+    return statement.fragment
+
+
 def test_computed_sibling_is_structurally_derived() -> None:
     from sugar_lift_py_tests.floor import InvValue
     from sugar_lift_py_tests.ir import eq, num
 
-    class _Site:
-        filename = "vendor.py"
-        line = 1
-        col = 0
-
-    site = _Site()
+    site = _assertion_site()
     inv = InvValue(
         eq(num(2), num(2)),
         site,
@@ -485,12 +501,7 @@ def test_identical_stated_and_computed_equality_retains_both_warrants() -> None:
     from sugar_lift_py_tests.floor import InvValue
     from sugar_lift_py_tests.ir import eq, num
 
-    class _Site:
-        filename = "vendor.py"
-        line = 1
-        col = 0
-
-    site = _Site()
+    site = _assertion_site()
     formula = eq(num(2), num(2))
     inv = InvValue(formula, site, derived_formulas=(formula,))
 
