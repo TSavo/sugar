@@ -1,4 +1,12 @@
-"""Source-defined subscript stores discharge through authenticated callers."""
+"""Source-defined subscript stores discharge through authenticated callers.
+
+A same-file call is its coordinate and edge, joined at prove (#7757 steps 5
+and 6, the owner's ruling "Edge, join at prove", #8705): the helper's
+``setitem`` carrier is discharged by prove's one binder with the call's
+actuals, never at the call.  What the store does with a caller's actuals is
+the helper's own row discharged with them; the call owes its halt, which
+prove joins at the call (#8690) with the type the contract states (#8749).
+"""
 
 from __future__ import annotations
 
@@ -11,10 +19,7 @@ from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
 from sugar_lift_py_tests.floor import TermValue, TupleValue
-from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
-from sugar_lift_py_tests.occurrence import call_frame_path
 from sugar_lift_py_tests.outcome import (
-    Completed,
     ExitSet,
     Halted,
     NativeOperationExitCarrierV1,
@@ -61,6 +66,29 @@ class _Expected:
         return self.identity
 
 
+_TUPLE_CALLER = (
+    "def helper(obj, key, value):\n"
+    "    obj[key] = value\n\n"
+    "helper((0,), 0, 9)\n"
+)
+
+
+def _discharged_with_the_callers_actuals(helper):
+    """The helper's row discharged with what ``helper((0,), 0, 9)`` passes:
+    what prove's binder binds its carrier with at that call."""
+    pending = helper.sugar().desugar(None)
+    assert isinstance(pending, NativeOperationExitCarrierV1)
+    obj_cid, key_cid, value_cid = pending.demand.operand_coordinate_cids
+    return pending.discharge(
+        None,
+        {
+            obj_cid: TupleValue((TermValue(0),)),
+            key_cid: TermValue(0),
+            value_cid: TermValue(9),
+        },
+    )
+
+
 def test_helper_alone_retains_setitem_demand_in_projector_order() -> None:
     helper, _calls = _helper_and_calls(
         "def helper(obj, key, value):\n    obj[key] = value\n"
@@ -80,68 +108,36 @@ def test_helper_alone_retains_setitem_demand_in_projector_order() -> None:
     )
 
 
-def test_positional_keyword_and_default_callers_complete_same_store_demand() -> None:
-    _helper, calls = _helper_and_calls(
-        "def helper(obj, key=0, value=9):\n"
-        "    obj[key] = value\n\n"
-        "helper([0], 0, 9)\n"
-        "helper([0], key=0, value=9)\n"
-        "helper([0])\n"
-    )
-
-    faces = tuple(_one_face(call.sugar().desugar(None)) for call in calls)
-
-    assert len(faces) == 3
-    assert all(isinstance(face, Completed) for face in faces)
-    # The completed value is the Call, carrying what the helper did to the
-    # list its caller passed as a write the caller's statement applies
-    # (``CallSiteValue.project_producer_outcome``, ``carry_walrus_binds``).
-    peeled = tuple(peel_walrus_binds(face.value) for face in faces)
-    assert all(binds for binds, _call in peeled), peeled
-    values = tuple(call for _binds, call in peeled)
-    assert values[0].arg_values == values[1].arg_values == values[2].arg_values
-    assert (
-        values[0].formal_coordinate_cids
-        == values[1].formal_coordinate_cids
-        == values[2].formal_coordinate_cids
-    )
-    assert (
-        values[0].source_call_frame_cid
-        == values[1].source_call_frame_cid
-        == values[2].source_call_frame_cid
-    )
+# ``test_positional_keyword_and_default_callers_complete_same_store_demand``
+# was deleted: it pinned the followed frame's ``source_call_frame_cid`` and
+# ``formal_coordinate_cids`` on the call value and the helper's store carried
+# to the caller as a write, all of which went with the body follow (#8705,
+# #8739, #8751).  The three binding forms are read off the edge in
+# ``test_setitem_formal_caller.test_positional_keyword_and_default_callers_complete_same_demand``.
 
 
 def test_immutable_receiver_reads_but_formal_store_halts_with_named_type() -> None:
-    helper, calls = _helper_and_calls(
-        "def helper(obj, key, value):\n"
-        "    obj[key] = value\n\n"
-        "helper((0,), 0, 9)\n"
-    )
+    helper, calls = _helper_and_calls(_TUPLE_CALLER)
     readable = TupleValue((TermValue(0),)).subscript(TermValue(0), "read.py:1")
     assert readable.completed_value() == TermValue(0)
-    assert isinstance(helper.sugar().desugar(None), NativeOperationExitCarrierV1)
 
-    halted = _one_face(calls[-1].sugar().desugar(None))
+    halted = _one_face(_discharged_with_the_callers_actuals(helper))
 
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _identity("TypeError")
     # The locus is the store's own ``file:line:col`` (``obj[key] = value``,
-    # line 2, column 4; ``AuthenticatedRaiseLocus.of``), stamped with the call
-    # frame it was raised in where it crossed the call
-    # (``call_site_value.call_owned``). It names the store, never an
-    # enclosing assertion.
-    frame = "/".join(call_frame_path(calls[-1].fragment, ()))
-    assert halted.effect.occurrence_id == f"setitem_formal_call.py:2:4@{frame}"
+    # line 2, column 4; ``AuthenticatedRaiseLocus.of``).  It names the store,
+    # never an enclosing assertion; the call it crosses is stamped where
+    # prove joins it, the callee's site kept as producer (#8690).
+    assert halted.effect.occurrence_id.startswith("setitem_formal_call.py:2:4")
+    # The call itself owes its halt: it is the edge, two-faced.
+    call_outcome = calls[-1].sugar().desugar(None)
+    assert [face for face in call_outcome.exits if isinstance(face, Halted)]
 
 
 def test_wrong_expected_type_leaves_setitem_exception_unconsumed() -> None:
-    _helper, calls = _helper_and_calls(
-        "def helper(obj, key, value):\n"
-        "    obj[key] = value\n\n"
-        "helper((0,), 0, 9)\n"
-    )
-    produced = calls[-1].sugar().desugar(None)
+    helper, _calls = _helper_and_calls(_TUPLE_CALLER)
+    produced = _discharged_with_the_callers_actuals(helper)
     original = _one_face(produced)
     assert isinstance(original, Halted)
 

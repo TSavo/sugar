@@ -276,12 +276,35 @@ def test_isomorph_lying_swapped_index_value_mint_differs() -> None:
 
 
 def test_isomorph_source_caller_invalid_index_preserves_state() -> None:
+    """``f([0], [0], 5, 0, 1, 9)``: ``codes[5] = 9`` raises IndexError.
+
+    Expected verdict changed (#7757 steps 5 and 6, #8705): the source call
+    no longer is the one IndexError halt of the followed body.  It is the
+    edge, which owes its halt; the IndexError with the earlier binding's
+    state is the row discharged with the call's actuals, which prove joins
+    at the call (#8690, #8749)."""
     source = ISOMORPH + "\nf([0], [0], 5, 0, 1, 9)\n"
     tree = _tree(source, "isomorph_call.py")
     call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
     outcome = call.sugar().desugar(None)
     assert isinstance(outcome, ExitSet)
-    halted = outcome.exits[0]
+    assert [face for face in outcome.exits if isinstance(face, Halted)], outcome
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert len(completed) == 1, outcome
+    assert not isinstance(completed[0].value, UniverseValue)
+
+    _, pending = _isomorph_helper()
+    assert isinstance(pending, NativeOperationExitCarrierV1)
+    obj_cid, key_cid, value_cid = pending.demand.operand_coordinate_cids
+    exits = pending.discharge(
+        None,
+        {
+            obj_cid: fresh(ListValue, (TermValue(0),)),
+            key_cid: TermValue(5),
+            value_cid: TermValue(9),
+        },
+    )
+    halted = exits.exits[0]
     assert isinstance(halted, Halted)
     assert "IndexError" in repr(halted.effect.exception_type_coordinate)
     assert halted.state is not None

@@ -44,24 +44,40 @@ def _call_outcome(call: str):
     return node.sugar().desugar(None)
 
 
-def _returned(outcome) -> TermValue:
-    """The value the call's body returned.
+def _returned(pending, a, i, q) -> TermValue:
+    """The value the helper's row returns, discharged with ``a``, ``i`` and
+    ``q``: what prove's one binder binds its carrier with at a call
+    ``helper(a, i, q)``.
 
-    The completed call presents its ``CallSiteValue`` beneath whatever writes
-    it carries to its caller (``peel_walrus_binds``: the list the body stored
-    into is the caller's), and that call digs to the floor its body returned
-    (``_dig_floor_or_none``): the returned value itself, not a block."""
-    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+    A same-file call is its coordinate and edge, joined at prove (#7757
+    steps 5 and 6, #8705): the call no longer digs to the floor the
+    followed body returned, so the try's composition over the deferred store
+    is read off the helper's own row."""
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
 
+    a_cid, i_cid, q_cid = pending.demand.operand_coordinate_cids
+    outcome = pending.discharge(None, {a_cid: a, i_cid: i, q_cid: q})
     assert isinstance(outcome, ExitSet)
-    assert len(outcome.exits) == 1
-    face = outcome.exits[0]
-    assert isinstance(face, Completed)
-    _binds, call = peel_walrus_binds(face.value)
-    assert isinstance(call, CallSiteValue), call
-    returned = call._dig_floor_or_none(None, owner="test_try_native_store_carrier")
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert len(completed) == 1, outcome
+    returns = [
+        s for s in completed[0].value.record.statements if isinstance(s, ReturnValue)
+    ]
+    assert returns, completed[0].value
+    returned = returns[-1].value
     assert isinstance(returned, TermValue), returned
     return returned
+
+
+def _the_call(call: str) -> CallSiteValue:
+    """The source call's value on its completed face: the edge, which owes
+    its halt under the complement of its ``completes`` atom."""
+    outcome = _call_outcome(call)
+    assert [face for face in outcome.exits if isinstance(face, Halted)], outcome
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert len(completed) == 1, outcome
+    assert isinstance(completed[0].value, CallSiteValue), completed[0].value
+    return completed[0].value
 
 
 def test_try_body_retains_formal_store_as_one_deferred_carrier() -> None:
@@ -72,9 +88,14 @@ def test_try_body_retains_formal_store_as_one_deferred_carrier() -> None:
 
 
 def test_try_store_completion_bypasses_handler() -> None:
-    outcome = _call_outcome("helper([0], 0, 9)\n")
+    pending = _helper_outcome()
+    assert isinstance(pending, NativeOperationExitCarrierV1)
+    _the_call("helper([0], 0, 9)\n")
 
-    assert _returned(outcome).value == 0
+    returned = _returned(
+        pending, fresh(ListValue, (TermValue(0),)), TermValue(0), TermValue(9)
+    )
+    assert returned.value == 0
 
 
 def test_try_store_indexerror_routes_to_handler_without_fabricated_state() -> None:
@@ -82,10 +103,12 @@ def test_try_store_indexerror_routes_to_handler_without_fabricated_state() -> No
     assert isinstance(pending, NativeOperationExitCarrierV1)
     testimony = pending.pre_effect_state
     assert testimony is not None
+    _the_call("helper([0], 4, 9)\n")
 
-    outcome = _call_outcome("helper([0], 4, 9)\n")
-
-    assert _returned(outcome).value == 1
+    returned = _returned(
+        pending, fresh(ListValue, (TermValue(0),)), TermValue(4), TermValue(9)
+    )
+    assert returned.value == 1
     empty_state = type(testimony.state)((), True, ())
     assert testimony.state is not None
     assert testimony.state is not empty_state
