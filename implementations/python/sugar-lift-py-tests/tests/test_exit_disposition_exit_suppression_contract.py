@@ -19,6 +19,7 @@ from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
 from sugar_lift_py_tests.ir import atomic, ctor, str_const
 from sugar_lift_py_tests.outcome.exit_disposition import exit_disposition_effect
 from sugar_lift_py_tests.outcome.exit_set import Halted
+from sugar_lift_py_tests.sugar.function_universe_sugar import halt_record
 from sugar_source_tree.panic import SugarNotWritten
 
 
@@ -41,7 +42,7 @@ def test_truthful_contract_suppresses_matching_coordinate() -> None:
     effect = _value_error()
     verdict = exit_disposition_effect(
         ExitSuppressionContract.suppresses(("ValueError",)),
-        Halted(_guard(), effect, "state"),
+        Halted(_guard(), effect, halt_record(None)),
     )
     assert verdict is None
 
@@ -60,7 +61,7 @@ def test_lying_twin_same_spelling_foreign_coordinate_restores() -> None:
     assert lying.exception_name == "ValueError"
     restored = exit_disposition_effect(
         ExitSuppressionContract.suppresses(("ValueError",)),
-        Halted(_guard(), lying, "state"),
+        Halted(_guard(), lying, halt_record(None)),
     )
     assert restored is lying
 
@@ -70,7 +71,7 @@ def test_missing_effect_coordinate_throws() -> None:
     with pytest.raises(SugarNotWritten) as caught:
         exit_disposition_effect(
             ExitSuppressionContract.suppresses(("ValueError",)),
-            Halted(_guard(), effect, "state"),
+            Halted(_guard(), effect, halt_record(None)),
         )
     assert "exception_type_coordinate" in caught.value.observed
 
@@ -79,7 +80,7 @@ def test_never_suppresses_restores_even_with_coordinate() -> None:
     effect = _value_error()
     restored = exit_disposition_effect(
         ExitSuppressionContract.never_suppresses(),
-        Halted(_guard(), effect, "state"),
+        Halted(_guard(), effect, halt_record(None)),
     )
     assert restored is effect
 

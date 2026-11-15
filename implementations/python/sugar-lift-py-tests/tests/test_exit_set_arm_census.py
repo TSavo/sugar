@@ -34,6 +34,7 @@ from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.ir import atomic, make_var
 from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+from sugar_lift_py_tests.sugar.function_universe_sugar import halt_record
 
 from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 
@@ -71,9 +72,7 @@ def _mixed(width: int, prefix: str) -> ExitSet:
     exits = []
     for index in range(width):
         exits.append(Completed(_guard(f"{prefix}_c{index}"), _value()))
-        exits.append(
-            Halted(_guard(f"{prefix}_h{index}"), _effect(), f"{prefix}_s{index}")
-        )
+        exits.append(Halted(_guard(f"{prefix}_h{index}"), _effect(), halt_record(None)))
     return ExitSet(tuple(exits))
 
 
