@@ -31,7 +31,6 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import AugAssign, FunctionDef
 from sugar_source_tree.operators import Add, BinaryOperator
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.effect import RaiseEffect
 
@@ -263,8 +262,47 @@ def test_discrimination_wrong_order_rhs_before_get() -> None:
         assert order == ["get", "rhs", "op", "set"]
 
 
+def _widget_class_value():
+    """The class value of ``class Widget: pass``: its MRO is a source class
+    and ``object``, and no class of it binds ``__getattr__``."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+    from sugar_lift_py_tests.floor.class_definition_value import (
+        ClassDefinitionValue,
+    )
+    from sugar_source_tree.nodes import ClassDef
+
+    tree = SourceFile(
+        (
+            "class Widget:\n    pass\n",
+            "widget_class.py",
+            blake3_512_of(b"class Widget:\n    pass\n"),
+        ),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
+    (statement,) = (node for node in tree.root.body if isinstance(node, ClassDef))
+    span = statement.binding_target.line_col_span()
+    return ClassDefinitionValue(
+        class_name=statement.name,
+        class_definition_cid=statement.fragment.seal().cid,
+        methods=(),
+        initializer=None,
+        binding_target_occurrence=SourceFragmentCoordinateV1(
+            statement.unit.source_cid,
+            span.start_line,
+            span.start_col,
+            span.end_line,
+            span.end_col,
+        ),
+        class_definition=statement,
+    )
+
+
 def test_production_get_halt_blocks_rhs_arithmetic_and_store() -> None:
-    """Missing field → AttributeError undecided or halt; no store."""
+    """A fresh ``Widget`` with no ``field``: the read raises AttributeError
+    (Python's absence rule), and that halt blocks the RHS, the arithmetic
+    and the store."""
     box = {"rhs": 0, "set": 0}
     get_site, op_site, set_site, site = _production_sites()
 
@@ -284,9 +322,15 @@ def test_production_get_halt_blocks_rhs_arithmetic_and_store() -> None:
             box["set"] += 1
             return super().setattr(name, value, site_, ctx)
 
-    # Empty fields — attribute read is undecided / AttributeError path
+    # Empty fields, a source class over ``object``: the read is AttributeError.
     receiver = _StoreCounting(
-        "Widget", (), (), (), "empty", allocation=FRAME_FRESH
+        "Widget",
+        (),
+        (),
+        (),
+        "empty",
+        defining_class=_widget_class_value(),
+        allocation=FRAME_FRESH,
     )
     sugar = AttributeAugAssignSugar(
         receiver=_FloorSugar(receiver),
@@ -299,9 +343,14 @@ def test_production_get_halt_blocks_rhs_arithmetic_and_store() -> None:
         set_site=set_site,
         site=site,
     )
-    # Undecided attribute raises SugarNotWritten — get halt blocks RHS.
-    with pytest.raises(SugarNotWritten):
-        sugar.desugar(None)
+    out = sugar.desugar(None)
+    assert out.completed_value() is None, out
+    names = [
+        halt.effect.exception_name
+        for halt in out.halts()
+        if isinstance(halt.effect, RaiseEffect)
+    ]
+    assert names == ["AttributeError"], out
     assert box["rhs"] == 0
     assert box["set"] == 0
 

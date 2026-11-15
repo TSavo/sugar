@@ -1,12 +1,11 @@
 """Bounded consumer instrument for authenticated ``_NamedIntConstant.name``."""
 
+from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor.object_value import ObjectField, ObjectValue
 from sugar_lift_py_tests.floor.string_value import StringValue
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
-import pytest
 
 from frame_fresh import FRAME_FRESH
 
@@ -58,11 +57,16 @@ def test_named_int_constant_name_uses_object_field_owner() -> None:
     assert first.to_term(owner="test") != second.to_term(owner="test")
 
 
-def test_named_int_constant_foreign_member_stays_typed_loud() -> None:
+def test_named_int_constant_foreign_member_is_the_undecided_read() -> None:
+    # No class statement: the receiver's MRO is not read, so Python's absence
+    # rule does not decide the read -- never AttributeError, never a panic.
     receiver = ObjectValue(
         "re._constants._NamedIntConstant",
         (ObjectField("name", StringValue("SRE_FLAG_ASCII")),),
         allocation=FRAME_FRESH,
     )
-    with pytest.raises(ConstructionPanic, match="ObjectValue.attribute"):
-        AttributeSugar(_ReceiverSugar(receiver), "foreign", _Site("foreign")).desugar()
+    outcome = receiver.attribute("foreign", "foreign-site", None)
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
+    assert halt.effect.producer_node_owner == "ObjectValue.attribute"
+    assert outcome.owed_items()
