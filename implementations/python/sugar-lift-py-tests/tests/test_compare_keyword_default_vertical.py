@@ -175,7 +175,16 @@ def test_helper_alone_is_undischarged_and_all_three_bindings_reach_one_demand() 
     halted = tuple(
         _named_type_error(outcome) for outcome in (positional, keyword, default)
     )
-    assert len({face.effect.occurrence_id for face in halted}) == 1
+    # One raise locus: the helper's ``left < right`` (line 2, col 11), however
+    # the formal was bound.  A raise crossing a call is stamped with the call
+    # that raised it (``call_site_value.call_owned``: ``<locus>@<call path>``),
+    # so each of the three calls is its own occurrence of that one locus.
+    occurrences = [face.effect.occurrence_id for face in halted]
+    assert {occurrence.split("@", 1)[0] for occurrence in occurrences} == {
+        "compare-keyword-default.py:2:11"
+    }
+    assert all("@" in occurrence for occurrence in occurrences)
+    assert len(set(occurrences)) == 3
     assert isinstance(normal, ExitSet)
     assert len(normal.exits) == 1
     assert not any(isinstance(face, Halted) for face in normal.exits)
