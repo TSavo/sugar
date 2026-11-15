@@ -120,7 +120,10 @@ def _assert_enter_returns(source_file, expected: int) -> None:
         if getattr(formula, "name", None) != "=":
             continue
         left = formula.args[0]
-        if getattr(left, "name", None) == "enter_result_value":
+        # The enter result is stated on the coordinate the body reads.
+        if getattr(left, "name", None) == "python:effect_slot" and str(
+            getattr(left.args[0], "value", "")
+        ).endswith("#enter_result"):
             enter_facts.append(formula.args[1])
     assert len(enter_facts) == 1
     assert enter_facts[0].value == expected
