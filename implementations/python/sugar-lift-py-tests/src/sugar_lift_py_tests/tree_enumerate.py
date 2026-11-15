@@ -320,10 +320,10 @@ def _module_run(unit, sf) -> tuple:
 
 
 # Each unit's module run, remembered through the one door for memo rows
-# (``construction_cache``): the context each completed arm ended with, or
-# the refusal the run raised, re-raised on every hit.  Keyed by the unit's
-# id; the unit is pinned beside its rows, so the id is never recycled under
-# them.
+# (``construction_cache``): the run's reduction (its outcome and the context
+# each completed arm ended with), or the refusal the run raised, re-raised on
+# every hit.  Keyed by the unit's id; the unit is pinned beside its rows, so
+# the id is never recycled under them.
 _MODULE_RUNS: dict = {}
 _MODULE_RUN_UNITS: dict = {}
 
@@ -335,22 +335,64 @@ def module_end_contexts(unit) -> tuple:
 
     The run is THE module reduction (``owner_reduction`` with no owner),
     run once, at the root occurrence path, as an import runs it, wherever
-    it is asked for.  A function called after import reads a global
-    through the module's final binding of it, the key of the module body's
-    last write; the value the run bound under that key is its value,
-    whatever the write evaluated (a literal, ``x += e``, a call's result,
-    a list), evaluated once and read only where the key is read
-    (``call_site_sugar.ModuleFinalValue``).  Only completed arms: a
+    it is asked for (``_module_run_reduction``).  A function called after
+    import reads a global through the module's final binding of it, the key
+    of the module body's last write; the value the run bound under that key
+    is its value, whatever the write evaluated (a literal, ``x += e``, a
+    call's result, a list), evaluated once and read only where the key is
+    read (``call_site_sugar.ModuleFinalValue``).  Only completed arms: a
     function is called after an import that completed.
 
     Empty, so each such read is refused by name, where the run completes on
-    no arm (every arm halts), and where it is asked for while it runs (a
+    no arm (every arm halts: ``module_run_halts`` is what a read of a class
+    statement's key is then), and where it is asked for while it runs (a
     run that reaches, through another module's function, a read of this
-    module's final binding).  Where the run refuses (a construction gap),
-    the refusal is remembered as loudly as an answer, by the memo row's own
-    door (``construction_cache.close_row``), and the same refusal reaches
-    every read that asks: the run is never run again for the next reader,
-    and its refusal is never caught to read as an answer.
+    module's final binding).
+    """
+    held = _module_run_reduction(unit)
+    return () if held is None else held.ends
+
+
+def module_run_halts(unit) -> tuple:
+    """The halted arms of ``unit``'s module run where it completes on no
+    arm, read off the one module reduction (``_module_run_reduction``); else
+    empty.
+
+    No import of such a module completes: every route to a function of it
+    goes through one of these halts, which is how Python ends that import
+    (``X = 1 // 0``, a class statement whose body or base raises).  So a read
+    after import of a key only that run binds, which no completed arm bound
+    because there is none, is the run's halts, each as the run reached it
+    (``DecoratorApplicationSugar``, a read of a class's name; #7757 item 21,
+    #7766).  The halts are the run's own arms, carried; nothing is reduced
+    again for the reader.  Empty while the run is under way, where some arm
+    completes, and where the run is not a set of arms (it waits on a
+    caller's actuals): a read with nothing bound there is refused by name.
+    """
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
+
+    held = _module_run_reduction(unit)
+    if held is None or held.ends:
+        return ()
+    outcome = getattr(held, "outcome", None)
+    if not isinstance(outcome, ExitSet):
+        return ()
+    if any(isinstance(face, Completed) for face in outcome.exits):
+        return ()
+    return tuple(outcome.halts())
+
+
+def _module_run_reduction(unit):
+    """``unit``'s module run: THE module reduction (``owner_reduction`` with
+    no owner, an ``OwnerReduction``), run once, at the root occurrence path,
+    as an import runs it, wherever it is asked for.  None where it is asked
+    for while it runs.
+
+    Where the run refuses (a construction gap), the refusal is remembered as
+    loudly as an answer, by the memo row's own door
+    (``construction_cache.close_row``), and the same refusal reaches every
+    read that asks: the run is never run again for the next reader, and its
+    refusal is never caught to read as an answer.
     """
     from sugar_lift_py_tests.occurrence import occurrence_path
     from sugar_source_tree.construction_cache import (
@@ -363,7 +405,7 @@ def module_end_contexts(unit) -> tuple:
 
     key = id(unit)
     if key in _MODULE_RUNS_UNDER_WAY:
-        return ()
+        return None
     memo = (key,)
     reporter = unit.constructed_module.root.reporter
     if _MODULE_RUN_UNITS.get(key) is unit:
@@ -382,7 +424,7 @@ def module_end_contexts(unit) -> tuple:
         # (``_module_run``): a reduction row served here or computed here
         # is the one a later ``owner_reduction(None)`` is served.
         with occurrence_path(()):
-            ends = owner_reduction(None, unit.constructed_module).ends
+            held = owner_reduction(None, unit.constructed_module)
     except LifterRefusal as panic:
         # The one refusal (either family), remembered as loudly as an answer
         # and raised on.
@@ -394,8 +436,8 @@ def module_end_contexts(unit) -> tuple:
         abandon_row(computation)
         raise
     _MODULE_RUN_UNITS[key] = unit
-    close_row(_MODULE_RUNS, memo, computation, reporter, value=ends)
-    return ends
+    close_row(_MODULE_RUNS, memo, computation, reporter, value=held)
+    return held
 
 
 def function_def_memento(fn, file_rel: str):
@@ -652,9 +694,11 @@ def function_universe_outcome(fn):
     (``ClassDef.statement_value_ref``), in the state the module's one run
     left (``DecoratorApplicationSugar``, ``module_end_contexts``), as a
     class call's callee is.  The class statement is never reduced for this
-    universe (#7757 item 21): where the module's run bound no class under
-    the key (the statement runs in no module body, the run completed on no
-    arm), the read is refused by name and this function is undecided by it
+    universe (#7757 item 21): where the module's run completed on no arm,
+    the read is that run's halts (``module_run_halts``) and so is this
+    universe, which never runs; where the run bound no class under the key
+    otherwise (the statement runs in no module body, no completed arm ran
+    it), the read is refused by name and this function is undecided by it
     (``refused_function_row``).
 
     A function reduced on its own is called from outside its module's run:
