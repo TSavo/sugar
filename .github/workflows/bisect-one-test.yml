@@ -39,6 +39,11 @@ jobs:
       - name: Scorecard environment (persistent venv)
         shell: bash
         run: bash tools/main_scorecard_env.sh
+      - name: Set up Rust toolchain
+        uses: ./.github/actions/setup-rust-cache
+      - name: Install z3 (cached on the runner)
+        shell: bash
+        run: tools/ci-apt-install.sh z3
       - name: Run the test at each commit
         shell: bash
         env:
@@ -48,6 +53,9 @@ jobs:
           set +e -uo pipefail
           for sha in $SHAS; do
             git checkout -q --force "$sha" || { echo "BISECT $sha CHECKOUT-FAILED"; continue; }
+            # The sugar binary for this commit, from bin/sugarbin's shelf or built once.
+            export SUGAR_BIN="$("$GITHUB_WORKSPACE/bin/sugarbin" --profile release 2>"$RUNNER_TEMP/sugarbin-$sha.log")" \
+              || { echo "BISECT $sha SUGARBIN-FAILED"; tail -n 5 "$RUNNER_TEMP/sugarbin-$sha.log"; continue; }
             PYTHONPATH="$(python3 tools/managed_checkout_pythonpath.py --repo-root "$GITHUB_WORKSPACE")" \
               python -m pytest "implementations/python/$TEST" -q -p no:cacheprovider -p no:randomly \
               > "$RUNNER_TEMP/bisect-$sha.log" 2>&1
