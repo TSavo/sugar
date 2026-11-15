@@ -60,13 +60,6 @@ def test_a_guarded_cell_read_at_a_local_call_answers_where_minted():
             "ObservationRef",
             "def f(p):\n    with open(p) as _:\n        pass\n    return p\n",
         ),
-        # An actual a source call statement changed, read by nothing after
-        # (``tests/io/parser/dtypes/test_dtypes_basic.py:220``).
-        (
-            "SourceCallActualAfter",
-            "def put(items):\n    items.append(1)\n\n\n"
-            "def f():\n    x = [0]\n    put(x)\n",
-        ),
         # The receiver a class call constructs, at the whole class statement
         # (``errors/__init__.py:718``).
         (

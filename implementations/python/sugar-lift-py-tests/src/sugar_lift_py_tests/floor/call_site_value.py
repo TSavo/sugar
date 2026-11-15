@@ -1878,19 +1878,16 @@ class CallSiteValue(FloorValue):
             )
             return retained
 
-        # What the callee did to objects the caller can see is the caller's on
-        # both arms, through the one projection (``caller_visible_values``),
-        # wherever the call sits: the receiver field stores its body made,
-        # and what its frame left of every other object it shares with the
-        # caller (its actuals, the module objects and cells it reads), each
-        # a value read in the callee's frame where the arm left it, carried
-        # under the call's key.  A completed arm carries them on the Call's
-        # value (``CallerStoreValue``, a walrus's write) to the statement
-        # that evaluates the call, which applies them as it applies a
-        # walrus's write (an assignment's value, an argument, a condition) or
-        # lays the stores in its record (``ExprStatementSugar``); a halt
-        # carries them into the caller's record here (``at_the_call``).  The
-        # callee's locals and keys stay behind on both.
+        # The receiver field stores the callee's body made are the caller's
+        # on both arms (``caller_visible_stores``), wherever the call sits.
+        # A completed arm carries them on the Call's value
+        # (``CallerStoreValue``, a walrus's write) to the statement that
+        # evaluates the call, which applies them as it applies a walrus's
+        # write or lays them in its record (``ExprStatementSugar``); a halt
+        # carries them into the caller's record here (``at_the_call``).  What
+        # the call did to any other object the caller shares is the one
+        # exposure rule's (#7757 steps 5 and 6).  The callee's locals and
+        # keys stay behind on both.
         carries = carries_its_stores_to_the_caller(self)
 
         def completed_at_the_call(value):
@@ -1900,7 +1897,7 @@ class CallSiteValue(FloorValue):
             )
 
             carried = (
-                caller_visible_values(value.statements, self)
+                _carried_stores(value.statements)
                 if carries and isinstance(value, BlockValue)
                 else ()
             )
@@ -1944,11 +1941,7 @@ class CallSiteValue(FloorValue):
                 if self.site is None
                 else call_frame_path(self.site, self.occurrence_path)
             )
-            carried = (
-                caller_visible_values(_record_entries(halt.state), self)
-                if carries
-                else ()
-            )
+            carried = _carried_stores(_record_entries(halt.state)) if carries else ()
             return ExitSet.halted(
                 call_owned(halt.effect, frame), state=at_the_call(ctx, carried)
             )
@@ -1979,7 +1972,7 @@ def caller_visible_stores(entries) -> tuple:
     branch guard stays in the callee's nested record; it is never flattened
     onto the receiver.  The stores of the one projection of what a callee
     did to objects its caller sees, for a completed body and for a halt, at
-    the call (``caller_visible_values``)."""
+    the call (``_carried_stores``)."""
     from sugar_lift_py_tests.floor.guarded_receiver_field_store_value import (
         GuardedReceiverFieldStoreValue,
     )
@@ -1999,139 +1992,18 @@ def caller_visible_stores(entries) -> tuple:
     return tuple(stores)
 
 
-def caller_visible_values(entries, call) -> tuple:
-    """What ``call``'s callee did to objects its caller sees, read off the
-    record one arm of its body left by (``entries``), as the writes the call
-    carries to its caller on that arm: THE one projection of a callee's
-    effects, for a completed body and for a halt, wherever the call sits
-    (``CallSiteValue.project_producer_outcome``).
+def _carried_stores(entries) -> tuple:
+    """The receiver field stores among a callee record's ``entries`` that
+    reach its caller (``caller_visible_stores``), each as the callee store
+    the Call's value carries (``CallerStoreValue``): it advances every
+    binding of the caller's that names its receiver.  The one projection of
+    what an applied body did to objects its caller sees, for a completed
+    body and for a halt (``CallSiteValue.project_producer_outcome``)."""
+    from sugar_lift_py_tests.floor.named_expression_value import CallerStoreValue
 
-    - Each unconditional receiver field store (``caller_visible_stores``),
-      as a callee store (``CallerStoreValue``): it advances every binding of
-      the caller's that names its receiver.
-    - What the callee's frame left of each other object it shares with the
-      caller -- an actual, a module object or a cell its body changed
-      (``SourceVisibleFunctionBodySugar.exit_reads``) -- as a write of the
-      value its own frame read there (``CallerVisibleStateValue``) under the
-      call's key projected by the object's label
-      (``nodes.carried_evaluation``, ``projection_key``): every name of the
-      caller bound to the object reads that key after the call
-      (``SourceCallActualAfterSugar``).  Where the callee's frame did not
-      decide it on this arm, the value is an unknown minted at the call,
-      never the object as it was before the call.  The callee's own keys
-      never reach the caller.
-    - An actual of an immutable builtin type is the caller's object as it
-      was (``_immutable_actuals``): nothing a callee does changes it, and a
-      rebind of its formal (``x += 2``, ``x = v``) is the callee's local
-      alone.  It is carried as that actual, never as what the callee's frame
-      read of the formal's name.
-
-    A record that holds several paths -- each ``return`` taken under its
-    branch's guards beside the path that went on to the body's end -- holds
-    each path's value under that path's guards (``CallerVisibleStateValue
-    .guards``): the call carries the one value that selects among them by
-    those guards (``GuardedValue``), each undecided one an unknown."""
-    from sugar_lift_py_tests.floor.named_expression_value import (
-        CallerStoreValue,
-        NamedExpressionValue,
+    return tuple(
+        CallerStoreValue("", store) for store in caller_visible_stores(entries)
     )
-    from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
-        _unknown_after,
-    )
-    from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
-        CallerVisibleStateValue,
-    )
-    from sugar_lift_py_tests.temporal.temporal_context import projection_key
-    from sugar_source_tree.nodes import Call, carried_evaluation
-
-    carried = [CallerStoreValue("", store) for store in caller_visible_stores(entries)]
-    body = call.body
-    labels = tuple(
-        label for label, _read, _keys in getattr(body, "exit_reads", ()) or ()
-    )
-    node = getattr(call.site, "node", None)
-    if not labels or not isinstance(node, Call):
-        return tuple(carried)
-    frame = getattr(body, "frame", None)
-    left = [
-        entry
-        for entry in entries
-        if isinstance(entry, CallerVisibleStateValue)
-        and frame is not None
-        and entry.frame == frame
-    ]
-    key = carried_evaluation(node)
-    unchanged = _immutable_actuals(call)
-    for label in labels:
-        value = unchanged.get(label)
-        if value is None:
-            value = _selected(
-                [entry for entry in left if entry.label == label],
-                lambda: _unknown_after(call.site, label),
-            )
-        carried.append(
-            NamedExpressionValue(label, value, evaluation=projection_key(key, label))
-        )
-    return tuple(carried)
-
-
-def _immutable_actuals(call) -> dict:
-    """``{label: actual}``: each actual of ``call`` that no callee can
-    change -- a value of an immutable builtin type all the way down
-    (``_immutable``, the one rule by which a name bound to such a value
-    keeps it across a call: ``ReceiverAfterCallSugar``,
-    ``PathAfterCallSugar``) -- under the label its formal's object is
-    carried by (``actual:<index>``, ``nodes._shared_names``).
-
-    A formal is the callee's own local.  ``x += 2`` on an ``int``, a ``str``
-    or a ``tuple`` binds that local to another object and leaves the
-    caller's as it was; only a change to an object the two share reaches the
-    caller.  The body's threading follows ``x += e`` as the formal's object
-    changed in place (``container_mutation.name_mutation_statement``), which
-    its value decides: a ``list``'s in-place result is the list, and what
-    the frame read of the name is then the object.  For an immutable actual
-    that read is the local's new value (``5`` for ``f(3)``), never the
-    caller's object, so the caller's object is the actual itself.
-
-    Empty where the call's actuals are not one per formal: no label names
-    an actual there."""
-    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
-    from sugar_lift_py_tests.sugar.builtin_container_call_sugar import _immutable
-
-    actuals = tuple(call.arg_values)
-    if len(actuals) != len(call.parameters):
-        return {}
-    unchanged = {}
-    for index, actual in enumerate(actuals):
-        _binds, held = peel_walrus_binds(actual)
-        if _immutable(held):
-            unchanged[f"actual:{index}"] = held
-    return unchanged
-
-
-def _selected(laid, unknown):
-    """The one value ``laid`` (what a callee's frame left of one object on
-    each path one record holds, ``CallerVisibleStateValue``) states: the
-    unguarded one's value (the path no guarded ``return`` took), each
-    guarded one's selected under its guards before it (``GuardedValue``).
-    An undecided value is ``unknown()``; a record with no unguarded one, or
-    with more than one, leaves the rest of its paths unknown."""
-    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
-    from sugar_lift_py_tests.ir import and_
-
-    unguarded = [entry for entry in laid if not entry.guards]
-    value = (
-        unguarded[0].value
-        if len(unguarded) == 1 and unguarded[0].value is not None
-        else unknown()
-    )
-    for entry in reversed([entry for entry in laid if entry.guards]):
-        guard = (
-            entry.guards[0] if len(entry.guards) == 1 else and_(list(entry.guards))
-        )
-        arm = entry.value if entry.value is not None else unknown()
-        value = GuardedValue(guard, arm, value)
-    return value
 
 
 def _unconditional(guard) -> bool:
@@ -2315,7 +2187,7 @@ def at_the_call(ctx, carried=()):
     callee owes (``ExitSet.and_then``).
 
     What the callee did before its halt to an object the caller can see is
-    not rolled back: ``carried`` (``caller_visible_values``) are the writes
+    not rolled back: ``carried`` (``_carried_stores``) are the writes
     the call carries on this arm, each applied to the caller's context
     (``bind_walrus_binds``) as a completed call's value carries them to its
     statement; the receiver field stores among them are the record's

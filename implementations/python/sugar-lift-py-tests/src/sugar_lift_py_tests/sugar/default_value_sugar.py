@@ -30,7 +30,7 @@ built after evaluating the defaults and before applying its decorators
 (``DecoratorApplicationSugar``), and a method's class
 (``ClassDefinitionValue.method_defaults``), which a class call reads for its
 ``__init__`` and ``__new__`` from the class statement's one outcome
-(``ClassConstructorBodySugar.bind_class_call``); and, for a module ``def`` called
+(``ClassDefinitionValue.callable_application_with``); and, for a module ``def`` called
 after import, the module run that ran its statement, bound at the frame entry
 (``call_site_sugar.with_module_final_globals``) and asked for only where the
 key is read (``TemporalContext.key_read``).  A default expression is
