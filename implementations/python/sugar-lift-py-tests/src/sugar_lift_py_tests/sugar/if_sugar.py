@@ -387,7 +387,20 @@ class IfSugar(Sugar):
         slot = (
             None if self.branch_slot is None else branch_slot_here(self.branch_slot)
         )
-        formula = (
+        # Each arm is guarded by the test's own condition (``observed_formula``),
+        # the formula the branch slot stands for, so the two arms are exactly
+        # the two faces of the test: a ``return`` an arm takes is guarded by
+        # it, and what follows the ``if`` goes on under its complement
+        # (``continuation_guard``, the fall-through ``past_prior_returns``
+        # splits on).  The slot's guard is no arm's guard: a contract row
+        # never carries the slot's authentication (it mints nothing), so an
+        # arm guarded by the slot was guarded by a flag no input decides, and
+        # both arms stood satisfiable for one input (#7757).  The slot stays
+        # what the assignment phi after the ``if`` reads (``If.substitute``),
+        # authenticated as the test's condition below; its guard keys the
+        # partition this ``if`` mints, one per run of the ``if``.
+        formula = observed_formula
+        slot_guard = (
             observed_formula
             if observed_formula in (false_guard(), true_guard())
             else branch_result_guard(slot, self.site)
@@ -453,7 +466,7 @@ class IfSugar(Sugar):
         # the arms as testimony instead of re-proving it from guard spelling,
         # which stops being legible once these guards are conjoined with a
         # prefix or merged with a sibling arm.
-        then_face, else_face = _partition(("IfSugar", self.site, formula))
+        then_face, else_face = _partition(("IfSugar", self.site, slot_guard))
         join = functools.partial(
             self._join_branches,
             formula=formula,
@@ -557,11 +570,13 @@ class IfSugar(Sugar):
             if left.exits
             else exits
         )
-        # A ground condition never uses the branch-result slot as the arm
-        # guard (formula is already true_guard/false_guard). Authenticating
-        # that unused slot would inject BranchResultAuthentication into every
-        # folded `if not args:` factory prefix, and prefix CIDs cannot project
-        # that testimony. Symbolic splits still publish the slot authentication.
+        # No arm is guarded by the branch-result slot: every arm is guarded
+        # by the test's own condition. A ground condition decides the slot in
+        # the reduction context (``_ground_branch_result``); authenticating it
+        # too would inject BranchResultAuthentication into every folded `if
+        # not args:` factory prefix, and prefix CIDs cannot project that
+        # testimony. A symbolic split publishes the slot's authentication for
+        # the phi after the ``if``, which reads the slot.
         # The callee stores the condition's value carried lead it on every
         # arm: the header rule lays them (``header_ran``).
         unconditional_entries = (
