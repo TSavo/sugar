@@ -159,10 +159,24 @@ class IfExpSugar(ConstructedTermSugar):
         if self.branch_slot is not None:
             from sugar_lift_py_tests.floor.branch_result_coordinate import (
                 branch_result_guard,
+                branch_result_reading,
             )
 
             if observed_formula not in (false_guard(), true_guard()):
-                formula = branch_result_guard(self.branch_slot, self.site)
+                # A phi after a symbolic ``if`` selects by the ``if``'s own
+                # test, as the path after the ``if`` reads its slot
+                # (``GuardedFaces.readings``): the same condition the
+                # ``if``'s arms are guarded by, so ``x`` after ``if c: x = 1
+                # else: x = 2`` is ``1`` exactly where ``c`` holds.  The
+                # slot's coordinate, which no contract row ties to the test,
+                # is the guard only of a slot no ``if`` on this path read (a
+                # ``try``'s route, a loop's write slot) (#7757).
+                reading = branch_result_reading(self.branch_slot, ctx)
+                formula = (
+                    reading
+                    if reading is not None
+                    else branch_result_guard(self.branch_slot, self.site)
+                )
         # Ground conditions select one arm before the peer reduces — same law
         # IfSugar owns for statement form. Dual-mode RaisesExc phis
         # (`(T,) if not isinstance(x, tuple) else x`) must collapse to the live

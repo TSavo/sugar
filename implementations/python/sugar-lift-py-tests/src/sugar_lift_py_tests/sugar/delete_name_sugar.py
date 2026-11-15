@@ -5,7 +5,6 @@ from typing import ClassVar
 
 from sugar_lift_py_tests.effect import NameErrorEffect
 from sugar_lift_py_tests.floor.block_value import BlockValue
-from sugar_lift_py_tests.floor.branch_result_coordinate import branch_result_guard
 from sugar_lift_py_tests.ir import not_
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.binding_projection import (
@@ -16,6 +15,7 @@ from sugar_lift_py_tests.sugar.binding_projection import (
 from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import (
     _guarded_projection_faces,
     _loop_exit_faces,
+    _projection_guard,
 )
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
@@ -73,9 +73,7 @@ def delete_binding(state, *, name: str, site, ctx) -> ExitSet:
         return exits.normalize()
     if not isinstance(state, GuardedProjection):
         _unhandled_projection(state, verb="delete", name=name, site=site)
-    from sugar_lift_py_tests.sugar.evaluation_ref_sugar import branch_slot_here
-
-    guard = branch_result_guard(branch_slot_here(state.slot), site)
+    guard = _projection_guard(state, ctx, site)
     true_face, false_face = _guarded_projection_faces(state)
     return (
         delete_binding(state.when_true, name=name, site=site, ctx=ctx)

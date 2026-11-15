@@ -188,6 +188,53 @@ def _arm_evaluations(arms, incoming) -> tuple:
     return tuple((key, value) for key, value in joined if value is not None)
 
 
+def _arm_readings(arms, incoming, own=()) -> tuple:
+    """The branch-result slots read as their ``if``'s test after an ``if``
+    (``GuardedFaces.readings``): ``own``, this ``if``'s slot read as its test's
+    condition, and each slot the completed arms of ``arms`` read that
+    ``incoming`` (the context the ``if`` runs in) did not -- an ``if`` nested
+    in a suite, whose phi a read after this ``if`` still selects by.
+
+    A slot belongs to one ``if`` in one suite, so the arms that read it agree
+    on one condition, which is its reading.  Arms that read it as different
+    conditions (a nested test whose truth has several completed faces, each
+    selecting the suites under its own formula) read it as each arm's own
+    condition under that arm's guard: ``or(g_i and c_i)``, never one of them
+    for all."""
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.ir import and_, or_
+    from sugar_lift_py_tests.outcome import Completed
+
+    before = getattr(incoming, "ground_branch_results", None)
+    if not isinstance(before, dict):
+        before = {}
+    made: dict = {}
+    for arm in arms:
+        for exit_ in getattr(arm, "exits", ()):
+            if not isinstance(exit_, Completed):
+                continue
+            context = getattr(exit_.value, "context", None)
+            table = getattr(context, "ground_branch_results", None)
+            if not isinstance(table, dict):
+                continue
+            for slot_id, reading in table.items():
+                if not isinstance(reading, PredicateValue):
+                    continue
+                if before.get(slot_id) is reading:
+                    continue
+                made.setdefault(slot_id, []).append((exit_.guard, reading.formula))
+    carried = []
+    for slot_id, read in made.items():
+        first = read[0][1]
+        if all(formula == first for _guard, formula in read):
+            carried.append((slot_id, first))
+            continue
+        carried.append(
+            (slot_id, or_([and_([guard, formula]) for guard, formula in read]))
+        )
+    return (*carried, *own)
+
+
 def _joined_evaluation(arms):
     """One evaluation key's value after the ``if``, from ``arms``: each a
     completed arm of the ``if`` that bound the key, holding the value it
@@ -395,10 +442,12 @@ class IfSugar(Sugar):
         # splits on).  The slot's guard is no arm's guard: a contract row
         # never carries the slot's authentication (it mints nothing), so an
         # arm guarded by the slot was guarded by a flag no input decides, and
-        # both arms stood satisfiable for one input (#7757).  The slot stays
-        # what the assignment phi after the ``if`` reads (``If.substitute``),
-        # authenticated as the test's condition below; its guard keys the
-        # partition this ``if`` mints, one per run of the ``if``.
+        # both arms stood satisfiable for one input (#7757).  The assignment
+        # phi after the ``if`` (``If.substitute``) selects by the same
+        # condition: the path after a symbolic ``if`` reads its slot as it
+        # (``GuardedFaces.readings``, ``branch_result_reading``).  The slot's
+        # guard keys the partition this ``if`` mints, one per run of the
+        # ``if``.
         formula = observed_formula
         slot_guard = (
             observed_formula
@@ -575,14 +624,20 @@ class IfSugar(Sugar):
         # the reduction context (``_ground_branch_result``); authenticating it
         # too would inject BranchResultAuthentication into every folded `if
         # not args:` factory prefix, and prefix CIDs cannot project that
-        # testimony. A symbolic split publishes the slot's authentication for
-        # the phi after the ``if``, which reads the slot.
+        # testimony. A symbolic split publishes the slot's authentication
+        # (read by a ``with``'s guards, ``resolve_branch_result_guards``, and
+        # a class body's record), and the path after it reads the slot as
+        # the test's condition (``readings``): the phi after the ``if``
+        # selects by that condition, never by the slot's coordinate, which
+        # no contract row ties to the test.
         # The callee stores the condition's value carried lead it on every
         # arm: the header rule lays them (``header_ran``).
-        unconditional_entries = (
-            ()
-            if observed_formula in (false_guard(), true_guard())
-            else (authentication,)
+        symbolic = observed_formula not in (false_guard(), true_guard())
+        unconditional_entries = (authentication,) if symbolic else ()
+        own_reading = (
+            ((authentication.slot.slot_id, observed_formula),)
+            if symbolic and authentication.slot is not None
+            else ()
         )
 
         entries = []
@@ -636,6 +691,7 @@ class IfSugar(Sugar):
             # Each suite's arms under its polarity: a key's value on each
             # path is read under that path's own guard.
             evaluations=_arm_evaluations((went_on,), incoming),
+            readings=_arm_readings((went_on,), incoming, own_reading),
         )
         if not exits.halts() and not exits.owed_items() and not left.exits:
             return ExitSet.completed(faces)
