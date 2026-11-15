@@ -28,7 +28,10 @@ The residue of #7976, each a second way to obtain a value:
 5. An object a constructor call built (``ObjectPlaceStateV1``) was read as
    the value computed at substitution, and a field a later store put there
    as the stored expression computed at substitution.  The object reads its
-   assignment's key; the field reads the store statement's key.
+   assignment's key; the field reads the store statement's key.  Since every
+   field store is the one receiver field store (#8259, #8287), a read of the
+   object after a store is that store's post-state over the reference to the
+   assignment's key: no object-place state stands in the body.
 6. ``with cm:`` over a call result a name holds evaluated the call's
    operands again at the ``with``.  It reads the assignment's key.
 
@@ -99,13 +102,11 @@ from sugar_source_tree.nodes import (
     EvaluationRef,
     FunctionDef,
     Name,
-    ObjectPlaceStateV1,
     PathAfterCall,
     PathContainerCall,
     ReceiverFieldStoreState,
     ReceiverFieldStoreStatement,
     Return,
-    _occurrence_testimony,
     ground_subscript_key,
 )
 from sugar_source_tree.container_mutation import _display_member
@@ -500,6 +501,27 @@ def _place_body():
     return _function(PLACE).substitute({}).body
 
 
+def _object_reads(body) -> list:
+    """The object ``box`` as the ``return`` reads it: the one receiver
+    field store's post-state (``ReceiverFieldStoreState``) over the object.
+    A field store is the one receiver field store (#8259, #8287): the read
+    of the object beneath it is the reference to the assignment's key, and
+    no object-place state stands between them in the body."""
+    ret = body[-1]
+    assert isinstance(ret, Return)
+    return [
+        node for node in ret.value.walk() if isinstance(node, ReceiverFieldStoreState)
+    ]
+
+
+def _beneath_the_stores(state):
+    """The receiver beneath every field store a post-state folds."""
+    receiver = state.receiver
+    while isinstance(receiver, ReceiverFieldStoreState):
+        receiver = receiver.receiver
+    return receiver
+
+
 def test_an_object_place_reads_its_assignments_key() -> None:
     body = _place_body()
     assign = next(
@@ -512,15 +534,11 @@ def test_an_object_place_reads_its_assignments_key() -> None:
     # The statement keeps its call: it evaluates it here, once.
     assert assign.value.kind == "Call"
     key = projection_key(assign.evaluation, "box")
-    states = [
-        node
-        for statement in body
-        for node in statement.walk()
-        if isinstance(node, ObjectPlaceStateV1)
-    ]
+    states = _object_reads(body)
     assert states
     for state in states:
-        assert state.evaluation == key
+        assert isinstance(_beneath_the_stores(state), EvaluationRef)
+        assert _beneath_the_stores(state).evaluation == key
         sugar = state.sugar()
         # Every store on the object so far, over the key: never the
         # constructed value computed at substitution.
@@ -686,24 +704,18 @@ def test_no_constructor_call_is_reduced_at_substitution() -> None:
         and node.targets[0].id == "box"
     )
     store = next(node for node in body if isinstance(node, ReceiverFieldStoreStatement))
-    states = [
-        node
-        for statement in body
-        for node in statement.walk()
-        if isinstance(node, ObjectPlaceStateV1)
-    ]
+    key = projection_key(assign.evaluation, "box")
+    states = _object_reads(body)
     assert states
     for state in states:
-        # No constructed value rides the state: its testimony names the
-        # constructor call, the key reference's ``of``.
-        assert getattr(state, "constructed_value", None) is None
-        assert state.base.kind == "Call"
-        assert state.base.span == assign.value.span
-        assert (
-            state.construction_testimony.cid
-            == _occurrence_testimony(state.base).cid
-        )
-        state.validate_identity()
+        # No constructed value rides the read: the object beneath the stores
+        # is the reference to the assignment's key, and no node of the read
+        # carries a value computed at substitution.
+        beneath = _beneath_the_stores(state)
+        assert isinstance(beneath, EvaluationRef)
+        assert beneath.evaluation == key
+        for node in state.walk():
+            assert getattr(node, "constructed_value", None) is None
     # The stored value is the store statement's own key reference: nothing
     # was reduced for it at substitution.
     assert store.value.kind == "EvaluationRef"
