@@ -27,11 +27,6 @@ from test_undetermined_raise_except_matching import _exits
         "import decimal\ndef f(p):\n    with decimal.localcontext() as fh:\n"
         "        fh.write('x')\n    return 1\n",
         "def f(p):\n    with open(p) as fh:\n        fh.write('x')\n    return 1\n",
-        # A source manager whose enter result's method raises: never total.
-        "class M:\n    def __enter__(self):\n        return self\n"
-        "    def __exit__(self, *a):\n        return None\n"
-        "    def write(self, v):\n        raise ValueError\n"
-        "def f(p):\n    with M() as fh:\n        fh.write('x')\n    return 1\n",
     ],
 )
 def test_method_on_enter_result_is_two_faced(tmp_path, source):
@@ -45,3 +40,28 @@ def test_method_on_enter_result_is_two_faced(tmp_path, source):
     completed = [face for face in exits if isinstance(face, Completed)]
     assert completed
     assert all("python:unknown_callee_call.completes" in repr(face.guard) for face in completed)
+
+
+def test_method_on_a_source_enter_result_runs_its_body(tmp_path):
+    """A source manager whose ``__enter__`` returns ``self``: ``fh`` is that
+    instance (the value ``__enter__`` returned), so ``fh.write('x')`` runs
+    ``M.write``, which always raises ``ValueError``.  Never total, and never
+    the unknown callee: the method the instance's class holds is applied."""
+    source = (
+        "class M:\n    def __enter__(self):\n        return self\n"
+        "    def __exit__(self, *a):\n        return None\n"
+        "    def write(self, v):\n        raise ValueError\n"
+        "def f(p):\n    with M() as fh:\n        fh.write('x')\n    return 1\n"
+    )
+    exits = _exits(tmp_path, source).exits
+    halts = [face.effect for face in exits if isinstance(face, Halted)]
+    assert not any(
+        isinstance(effect, UndeterminedRaiseEffect)
+        and effect.producer_node_owner == "UnknownCallee:write"
+        for effect in halts
+    )
+    assert any(
+        not isinstance(effect, UndeterminedRaiseEffect)
+        and getattr(effect, "exception_name", None) == "ValueError"
+        for effect in halts
+    )

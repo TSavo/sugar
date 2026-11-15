@@ -143,7 +143,15 @@ class GeneratorWithSugar(Sugar):
 
         # The generator-backed manager's __exit__ per body exit: an
         # exception is thrown in at the yield, anything else resumes it.
-        body_es = reduce_block_to_exitset(self.body, ctx)
+        # The body reads ``as x`` as the value the generator yielded.
+        binding = (
+            None
+            if self.enter_slot_id is None
+            else EnterResultBinding(self.enter_slot_id, entered.value)
+        )
+        body_es = reduce_block_to_exitset(
+            self.body, ctx if binding is None else binding.bound_in(ctx)
+        )
 
         def resume(state):
             # A body halt the generator suppresses goes on after the ``with``
@@ -179,11 +187,7 @@ class GeneratorWithSugar(Sugar):
             routed_faces.append(routed)
         # The routed body faces are siblings: they join through the one join.
         result = ExitSet(()).union(*routed_faces)
-        facts = ()
-        if self.enter_slot_id is not None:
-            facts = EnterResultBinding(self.enter_slot_id, entered.value).to_facts(
-                site=self.site
-            )
+        facts = () if binding is None else binding.to_facts(site=self.site)
         return prepend_facts_to_exitset(result, facts)
 
     def _entry_refusal_exit(self, machine, ctx):

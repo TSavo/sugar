@@ -30,20 +30,6 @@ class ManagerCoordinate(FloorValue):
 
 
 @dataclass(frozen=True)
-class EnterResultCoordinate(FloorValue):
-    """``with m as x`` enter-result coordinate: ``python:enter_result(E)``."""
-
-    slot_id: str
-    site: object = dataclass_field(compare=False, default=None)
-
-    def to_term(self, *, owner: str):
-        del owner
-        from sugar_lift_py_tests.ir import ctor, str_const
-
-        return ctor("python:enter_result", [str_const(self.slot_id)])
-
-
-@dataclass(frozen=True)
 class ExitTypeCoordinate(FloorValue):
     """Parametric ``__exit__`` type arg: ``python:exit_type(X)``."""
 
