@@ -188,7 +188,7 @@ fn spoken_pool_folds_to_the_disk_loaded_pool_with_identical_rows() {
     let imports = root.join(".sugar").join("imports");
     std::fs::create_dir_all(&imports).expect("mkdir imports");
     let disk_name =
-        |p: &ProofBytes| format!("{}.proof", p.expected_cid.to_string().replace(':', "_"));
+        |p: &ProofBytes| sugar_proof_envelope::proof_filename(&p.expected_cid.to_string());
     std::fs::write(root.join(disk_name(&consumer_proof)), &consumer_proof.bytes).unwrap();
     std::fs::write(imports.join(disk_name(&vendor_proof)), &vendor_proof.bytes).unwrap();
     let disk_pool = load_all_proofs::run(root);

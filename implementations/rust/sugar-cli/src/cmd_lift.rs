@@ -3853,7 +3853,7 @@ fn contract_qualified_owner(report: &LiftSourceReport, contract: &Value) -> Stri
 }
 
 fn short_cid(cid: &str) -> String {
-    let body = cid.strip_prefix("blake3-512:").unwrap_or(cid);
+    let body = sugar_canonicalizer::cid_hex(cid).unwrap_or(cid);
     if body.len() <= 12 {
         return cid.to_string();
     }
@@ -5242,7 +5242,7 @@ struct CanonicalAssertion {
 }
 
 fn short_claim_cid(cid: &str) -> String {
-    let digest = cid.strip_prefix("blake3-512:").unwrap_or(cid);
+    let digest = sugar_canonicalizer::cid_hex(cid).unwrap_or(cid);
     if digest.len() <= 12 {
         digest.to_string()
     } else {

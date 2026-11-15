@@ -568,13 +568,6 @@ fn loaded_source_identity_refusal(name: &str, detail: impl std::fmt::Display) ->
     LiftPluginError::SplitPipeline(format!("{name}: {detail}"))
 }
 
-fn content_cid_is_well_formed(value: &str) -> bool {
-    let Some(hex) = value.strip_prefix("blake3-512:") else {
-        return false;
-    };
-    hex.len() == 128 && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
 /// Authenticate a source kit's generic declared/loaded identity relation.
 ///
 /// The producer owns language-specific origin discovery. This boundary knows
@@ -626,7 +619,7 @@ fn authenticate_loaded_source_identity(
         for entry in entries {
             if entry.subject.is_empty()
                 || entry.origin.is_empty()
-                || !content_cid_is_well_formed(&entry.content_cid)
+                || !sugar_canonicalizer::is_blake3_512_cid(&entry.content_cid)
             {
                 return Err(loaded_source_identity_refusal(
                     "LoadedSourceIdentityMismatchV1",

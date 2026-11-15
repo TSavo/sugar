@@ -358,15 +358,14 @@ fn seal_to_temp_project(graph: &ProofGraph) -> tempfile::TempDir {
         manifest: None,
     };
     let sealed = build_proof_envelope(&proof_input);
-    // v1.1.0 load rule 1: the `.proof` filename stem must be the hex
+    // v1.1.0 load rule 1: the `.proof` filename stem must be the
     // `blake3-512` CID, so the on-disk loader can content-address it.
-    let stem = sealed
-        .cid
-        .strip_prefix("blake3-512:")
-        .expect("sealed cid is blake3-512");
     let dir = tempfile::tempdir().expect("temp project dir");
-    std::fs::write(dir.path().join(format!("{stem}.proof")), &sealed.bytes)
-        .expect("write fixture proof");
+    std::fs::write(
+        dir.path().join(sugar_proof_envelope::proof_filename(&sealed.cid)),
+        &sealed.bytes,
+    )
+    .expect("write fixture proof");
     dir
 }
 
