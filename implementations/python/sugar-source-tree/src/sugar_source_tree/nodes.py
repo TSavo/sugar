@@ -12214,13 +12214,20 @@ class ClassDef(Statement):
 
         The body is a block: every statement of it is reduced by the one
         block reducer through its own sugar (``_class_body_block``).  What is
-        admitted is what the class statement can read the namespace of off
-        the state that block leaves: an assignment or annotated assignment
-        to Names, a ``def`` and a ``class`` (in the body itself), ``pass``,
-        the docstring and an ``if`` over the same.  Anything else, and a
-        ``def`` or ``class`` under an ``if`` (an arm's ``def`` is in no
-        method roster, and an arm's class statement binds no key), is
-        refused here, never dropped."""
+        admitted is every statement that block reduces whose namespace the
+        class statement reads off the state the block leaves: every simple
+        statement (one that holds no statement: an assignment of any target
+        shape, the mutation statement the threading makes of ``x = r.m()``
+        or ``r.m()``, a store, a bare expression, ``raise``, ``assert``),
+        each name it binds read under the key its sugar binds it under
+        (``Node.written_keys``, ``_class_body_block``, which refuses by name
+        a bound name with no key); a ``def`` and a ``class`` (in the body
+        itself); ``pass``; the docstring; and an ``if`` over the same.  A
+        compound statement (a loop, ``with``, ``try``, ``match``: its
+        writes are not read here), a walrus (its write is its own node's,
+        not its statement's), and a ``def`` or ``class`` under an ``if`` (an
+        arm's ``def`` is in no method roster, and an arm's class statement
+        binds no key), are refused here, never dropped."""
         for index, item in enumerate(statements):
             if isinstance(item, Pass):
                 continue
@@ -12229,12 +12236,15 @@ class ClassDef(Statement):
                 self._require_class_members(item.orelse, top=False)
                 continue
             if (
-                isinstance(item, Assign)
-                and item.targets
-                and all(isinstance(target, Name) for target in item.targets)
+                not isinstance(
+                    item, (FunctionDef, AsyncFunctionDef, ClassDef, TypeAlias)
+                )
+                and not any(
+                    isinstance(child, Statement)
+                    for _field, _index, child in item._child_edges()
+                )
+                and not _walrus_targets(item)
             ):
-                continue
-            if isinstance(item, AnnAssign) and isinstance(item.target, Name):
                 continue
             if top and (
                 isinstance(item, (FunctionDef, AsyncFunctionDef, ClassDef))
@@ -12283,7 +12293,10 @@ class ClassDef(Statement):
         ``fields`` name what the namespace holds once that block ran: one
         row per Name a statement binds, with the key the statement's sugar
         binds its value under (``Assign.target_evaluations``,
-        ``AnnAssign.target_evaluations``, ``_definition_evaluation_key``).
+        ``AnnAssign.target_evaluations``, ``_definition_evaluation_key``;
+        any other simple statement's ``Node.written_keys``: ``limit =
+        os.getcwd()`` is the mutation statement the threading makes of
+        ``x = r.m()``, and binds ``limit`` under its ``rebinds`` key).
         The class statement reads each row's value off the state the block
         leaves (``ClassDefinitionSugar._namespace``); nothing here evaluates
         a field.  ``branch_fields`` are the indexes of the rows standing in
@@ -12330,19 +12343,28 @@ class ClassDef(Statement):
                 branch_fields.add(len(fields))
             fields.append(row)
 
-        def rows(item, in_branch, after_if) -> bool:
+        def rows(item, in_branch, after_if, bound, armed) -> bool:
             # True when ``item`` is an ``if`` or one of the phis spliced
-            # after it.
+            # after it.  ``bound``: the names a statement of the body bound
+            # on the path to ``item`` (class names on every face that
+            # reaches it); ``armed``: the names only an arm of an earlier
+            # ``if`` bound.
             if isinstance(item, If):
                 slot = getattr(item, "branch_result_slot_id", None)
                 if slot is not None:
                     branch_slots.append(slot)
                 for arm in (item.body, item.orelse):
                     spliced = False
+                    in_arm = set(bound)
                     for child in arm:
-                        spliced = rows(child, True, spliced)
+                        spliced = rows(child, True, spliced, in_arm, armed)
+                    armed.update(in_arm - bound)
                 return True
-            if isinstance(item, Assign):
+            if (
+                isinstance(item, Assign)
+                and item.targets
+                and all(isinstance(target, Name) for target in item.targets)
+            ):
                 keys = dict(item.target_evaluations())
                 if not keys and after_if:
                     return True
@@ -12363,23 +12385,92 @@ class ClassDef(Statement):
                         ),
                         in_branch,
                     )
+                    bound.add(target.id)
                 return False
-            if isinstance(item, AnnAssign) and item.value is not None:
-                key = dict(item.target_evaluations()).get(item.target.id)
-                if key is None:
-                    unkeyed(item, item.target.id)
+            if isinstance(item, AnnAssign) and isinstance(item.target, Name):
+                # ``x: T`` with no value binds nothing.
+                if item.value is not None:
+                    key = dict(item.target_evaluations()).get(item.target.id)
+                    if key is None:
+                        unkeyed(item, item.target.id)
+                    enroll(
+                        ConstructedClassFieldV1(
+                            item.target.id,
+                            item.fragment.seal().cid,
+                            item.value.sugar(),
+                            binding_occurrence(item.target),
+                            evaluation_key=key,
+                        ),
+                        in_branch,
+                    )
+                    bound.add(item.target.id)
+                return False
+            written(item, in_branch, bound, armed)
+            return False
+
+        def written(item, in_branch, bound, armed) -> None:
+            # Any other simple statement (``_require_class_members``): the
+            # mutation statement the threading makes of ``x = r.m()`` or
+            # ``r.m()``, a store, an unpacking assignment, a bare
+            # expression, ``raise``, ``assert``.  Each name it binds in the
+            # class namespace (its own targets; the name a mutation statement
+            # assigns, ``rebinds``) is a row under the key its sugar binds it
+            # under (``Node.written_keys``), and so is each other name it
+            # writes that the body already bound on this path (an object a
+            # field holds, changed by the call: the namespace holds it after
+            # the call).  A name it writes that the body never bound is a
+            # module name's state after the call, not the class's.  A name
+            # only an arm of an earlier ``if`` bound may or may not be the
+            # class's: refused by name.
+            own = set(item.names_bound_here())
+            assigned = getattr(item, "rebinds", None)
+            if isinstance(assigned, str):
+                own.add(assigned)
+            # An assignment of any target shape binds each name under its
+            # projection of the statement's evaluation, as the field rows
+            # above read (its ``written_keys`` also name the carried write a
+            # live loop binds, which no class body runs).
+            writes = tuple(
+                item.target_evaluations()
+                if isinstance(item, Assign)
+                else item.written_keys()
+            )
+            keyed = {name for name, _key in writes}
+            for name in sorted(own - keyed):
+                unkeyed(item, name)
+            group = item.fragment.seal().cid
+            for name, key in writes:
+                if name not in own and name not in bound:
+                    if name in armed:
+                        raise SugarNotWritten(
+                            blame=item.fragment,
+                            owner="ClassDef._construct_sugar",
+                            observed=(
+                                f"class-body statement writes {name}, which only "
+                                "an arm of an earlier if bound"
+                            ),
+                            requested=(
+                                "a name the class body binds on every face that "
+                                "reaches the write, or a module name it never binds"
+                            ),
+                            fix="read the arm's binding as the guarded binding it is",
+                        )
+                    continue
                 enroll(
                     ConstructedClassFieldV1(
-                        item.target.id,
-                        item.fragment.seal().cid,
-                        item.value.sugar(),
-                        binding_occurrence(item.target),
+                        name,
+                        group,
+                        None,
+                        binding_occurrence(item),
+                        group,
                         evaluation_key=key,
                     ),
                     in_branch,
                 )
-            return False
+            bound.update(own)
 
+        bound_names: set = set()
+        armed_names: set = set()
         after_if = False
         for index, item in enumerate(body):
             spliced, after_if = after_if, False
@@ -12428,9 +12519,10 @@ class ClassDef(Statement):
                     ),
                     False,
                 )
+                bound_names.add(item.name)
                 statements.append(_body_statement_sugar(keyed))
                 continue
-            after_if = rows(item, False, spliced)
+            after_if = rows(item, False, spliced, bound_names, armed_names)
             statements.append(_body_statement_sugar(item))
         return (
             tuple(statements),

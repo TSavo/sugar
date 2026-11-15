@@ -181,8 +181,8 @@ def test_a_raising_default_is_refused_by_name_not_bound_as_a_value() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The five shapes of #7821.  Expected red: the call is never reduced, so no
-# raise reaches it, as a value or as a halt.
+# The five shapes of #7821.  Each was red: the call was never reduced, so no
+# raise reached it, as a value or as a halt.  All five are reduced now.
 # ---------------------------------------------------------------------------
 
 _FIVE = {
@@ -210,11 +210,6 @@ _FIVE_HALVES = {
     "raise-in-class-body": ("limit = 1", "raise ValueError"),
     "raising-base": ("object", "1 // 0"),
 }
-_NOT_REDUCED = (
-    "the call is a CallSiteValue that is never reduced (Box() with no body): "
-    "the raise is never evaluated, so it completes with no halted face "
-    "(#7821; not the two representations)"
-)
 
 
 # Every truthful half is what Python decides: one completion.  ``h(g)`` hands
@@ -244,26 +239,15 @@ def test_the_truthful_half_of_each_of_the_five_completes(shape: str) -> None:
 # 18a14aa25 (#8416), so the mark is gone and the assertion stands.  So is
 # ``h(g)`` over ``def g(): return 1 // 0``: ``f()`` inside ``h`` applies the
 # function ``g`` names, whose body raises, so the call halts with no
-# completion (#7757).
-_FIVE_REDUCED = {
-    "function-passed-as-argument",
-    "lambda-call",
-    "raising-base",
-    "raising-new",
-}
-
-
-@pytest.mark.parametrize(
-    "shape",
-    [
-        shape
-        if shape in _FIVE_REDUCED
-        else pytest.param(
-            shape, marks=pytest.mark.xfail(strict=True, reason=_NOT_REDUCED)
-        )
-        for shape in sorted(_FIVE)
-    ],
-)
+# completion (#7757).  So is ``Box()`` over ``class Box: if True: raise
+# ValueError``: the class body is a block that admits every simple statement
+# the block reducer reduces (``ClassDef._require_class_members``), so the
+# ``raise`` halts the class statement in the module's run, no import
+# completes, and the read of ``Box`` is that run's one halt
+# (``tree_enumerate.module_run_halts``).  It was refused by name as an
+# unsupported conditional class member, which the strict expected-red mark
+# held; the mark is gone and the assertion stands.
+@pytest.mark.parametrize("shape", sorted(_FIVE))
 def test_the_lying_half_of_each_of_the_five_halts(shape: str) -> None:
     _truthful, lying = _FIVE_HALVES[shape]
 

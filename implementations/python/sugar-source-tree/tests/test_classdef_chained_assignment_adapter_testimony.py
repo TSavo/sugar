@@ -144,11 +144,25 @@ def test_removing_class_chained_assign_arm_restores_exact_re_failure(
     assert error.blame.line_col_span.start_col == 4
 
 
-def test_class_chained_assignment_refuses_a_non_name_target() -> None:
+def test_class_chained_assignment_with_a_non_name_target_runs_as_python_does() -> None:
+    """``I = holder.IGNORECASE = 7`` is an assignment, a statement the class
+    body's block reduces like any other (``ClassDef._require_class_members``
+    no longer refuses it by name).  ``holder`` is bound nowhere, so Python
+    raises ``NameError`` at the class statement storing through it, and no
+    class exists: no completed face, the ``NameError`` its one halt."""
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+
     source = SourceFile(
         ("class Flags:\n    I = holder.IGNORECASE = 7\n", "lying.py", "cid"), construction_context=TreeConstructionContextV1.for_test_without_workspace()
     )
     class_node = next(node for node in source.nodes() if isinstance(node, ClassDef))
 
-    with pytest.raises(SugarNotWritten, match="unsupported class member Assign"):
-        class_node.sugar()
+    outcome = class_node.sugar().desugar()
+
+    assert isinstance(outcome, ExitSet), outcome
+    assert not any(isinstance(face, Completed) for face in outcome.exits), outcome
+    assert [
+        getattr(face.effect, "exception_name", None)
+        for face in outcome.exits
+        if isinstance(face, Halted)
+    ] == ["NameError"]
