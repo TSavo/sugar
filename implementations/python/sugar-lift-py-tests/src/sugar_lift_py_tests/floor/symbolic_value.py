@@ -49,7 +49,10 @@ class SymbolicValue(FloorValue):
     # fold's lambda binds, and each leaf's projection of it.  Outside the
     # fold nothing binds it and no input decides it, so a read of it owes the
     # undecided member (``loop_recurrence_sugar.holds_recurrence_value``,
-    # #7757).  Not part of the value's identity.
+    # #7757).  So does its final member, what a lambda made in the
+    # comprehension reads after it (``ComprehensionSugar._symbolic_final_ctx``,
+    # ``python:comprehension.final_member``).  Not part of the value's
+    # identity.
     recurrence_member: bool = field(default=False, compare=False)
 
     def denotes_value(self) -> bool:

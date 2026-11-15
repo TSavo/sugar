@@ -166,7 +166,10 @@ def holds_recurrence_value(value) -> bool:
     reaches the fold, the halt's guard reads it free, so a claim about that
     halt (an ``except`` around the comprehension) would be decided by the
     solver choosing the member.  A finite member is the member's own value,
-    never marked."""
+    never marked.  The fold's final member, what a lambda made in the
+    comprehension reads after it (``python:comprehension.final_member``,
+    ``ComprehensionSugar._symbolic_final_ctx``), is marked the same way: no
+    equation ties it to a member of the iterable."""
     from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
     from sugar_lift_py_tests.floor.guarded_value import GuardedValue
     from sugar_lift_py_tests.ir import _Ctor

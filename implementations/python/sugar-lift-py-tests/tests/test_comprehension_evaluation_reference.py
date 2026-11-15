@@ -335,7 +335,11 @@ def test_a_symbolic_stored_lambda_reads_the_final_member_without_a_panic() -> No
     )
     assert isinstance(final, SymbolicValue)
     assert final != ctx.temporal.value_if_bound(generator.binding_coordinate_cid)
-    assert sugar.element.body.desugar(ctx) == ExitSet.completed(final)
+    read = sugar.element.body.desugar(ctx)
+    assert read == ExitSet.completed(final)
+    # Nothing ties the final member to a member of ``xs``: its read owes
+    # (#7757).
+    assert read.owed_items(), read
 
 
 # #7757 item 7, after #7944: the stored-lambda rule holds for every enclosing
@@ -445,5 +449,7 @@ def test_a_symbolic_stored_lambda_reads_the_outer_final_member() -> None:
     final = ctx.temporal.value_if_bound(cell)
     assert isinstance(final, SymbolicValue)
     lam = sugar.element.element
-    assert lam.body.desugar(ctx) == ExitSet.completed(final)
+    read = lam.body.desugar(ctx)
+    assert read == ExitSet.completed(final)
+    assert read.owed_items(), read
     assert lam.desugar(ctx).completed_value().closure == ((cell, final),)
