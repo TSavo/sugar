@@ -631,6 +631,13 @@ pub struct MintContractArgs {
     /// with no caller. Carried in the header after the content CID, like
     /// `panicLoci`. Empty omits the key.
     pub input_values: Vec<Arc<Value>>,
+    /// The variadic parameters among `formals` (#7757): `{kind: "positional"
+    /// | "keyword", formal: <name>}` for a `*args` / `**kwargs`. Prove's one
+    /// binder binds each as Python does (the tuple of the positional
+    /// arguments, the dict of the keyword arguments, no other parameter
+    /// takes). Carried in the header after the content CID, like
+    /// `inputValues`. Empty omits the key.
+    pub variadic_formals: Vec<Arc<Value>>,
     /// Python source-unit class shape catalog. This is signed, load-bearing
     /// evidence for the verifier's attribute-safety discharge arm. Empty omits
     /// the key so class-free units keep their existing bytes.
@@ -1318,6 +1325,12 @@ pub fn mint_contract_with_body_cid(
         kind_specific.push((
             "inputValues".into(),
             Value::array(args.input_values.clone()),
+        ));
+    }
+    if !args.variadic_formals.is_empty() {
+        kind_specific.push((
+            "variadicFormals".into(),
+            Value::array(args.variadic_formals.clone()),
         ));
     }
     if !args.class_shapes.is_empty() {
@@ -2362,6 +2375,7 @@ mod tests {
             body_discharge_refusal_reason: None,
             panic_loci: Vec::new(),
             input_values: Vec::new(),
+            variadic_formals: Vec::new(),
             class_shapes: Vec::new(),
             source_warrants: Vec::new(),
             proofir_provenance: None,
@@ -2417,6 +2431,7 @@ mod tests {
             body_discharge_refusal_reason: None,
             panic_loci: Vec::new(),
             input_values: Vec::new(),
+            variadic_formals: Vec::new(),
             class_shapes: Vec::new(),
             source_warrants: Vec::new(),
             proofir_provenance: None,
@@ -2457,6 +2472,7 @@ mod tests {
             body_discharge_refusal_reason: None,
             panic_loci: Vec::new(),
             input_values: Vec::new(),
+            variadic_formals: Vec::new(),
             class_shapes: Vec::new(),
             source_warrants: Vec::new(),
             proofir_provenance: None,
@@ -2648,6 +2664,7 @@ mod tests {
             body_discharge_refusal_reason: None,
             panic_loci: Vec::new(),
             input_values: Vec::new(),
+            variadic_formals: Vec::new(),
             class_shapes: Vec::new(),
             source_warrants: Vec::new(),
             proofir_provenance: None,

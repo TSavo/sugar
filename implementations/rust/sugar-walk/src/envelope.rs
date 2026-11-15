@@ -262,6 +262,7 @@ pub fn mint_args(
         // identity or invalidate existing proofs.
         panic_loci,
         input_values: Vec::new(),
+        variadic_formals: Vec::new(),
         class_shapes: Vec::new(),
         source_warrants: Vec::new(),
         proofir_provenance: None,

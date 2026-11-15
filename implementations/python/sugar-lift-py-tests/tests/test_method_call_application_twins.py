@@ -233,6 +233,39 @@ def test_a_descriptor_method_on_a_bare_instance_is_dispatched_by_its_kind(
     )
 
 
+# A ``*args`` method on the bare instance: the dispatched call passes its
+# actuals as Python spells them (``check(limit, 3, 9)``), and prove's one
+# binder binds ``*parts`` to the tuple of the positional actuals no other
+# parameter takes (#7757, the contract's ``variadicFormals``).  Before, the
+# call did not fit the contract's two formals and stayed owed.
+_STAR_ARGS_CALL = """\
+class Limit:
+    def check(self, *parts):
+{body}
+
+
+def test_limit():
+    limit = Limit()
+    value = limit.check(3, 9)
+    assert value == 3
+"""
+
+
+def test_a_star_args_method_on_a_bare_instance_binds_its_actuals(
+    tmp_path: Path,
+) -> None:
+    """``limit.check(3, 9)`` with ``def check(self, *parts)``: completes
+    with 3 vs always raises.  Truthful ``sat``, lying ``unsat``."""
+
+    _pair(
+        tmp_path,
+        "star-args-call",
+        _STAR_ARGS_CALL.format(body="        return 3"),
+        _STAR_ARGS_CALL.format(body="        raise ValueError('too many')"),
+        expected=("sat", "unsat"),
+    )
+
+
 # The test function spreads a dict it made into the method applied on a
 # receiver it made.
 _SPREAD_CALL = """\

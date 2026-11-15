@@ -227,6 +227,34 @@ def _stated_formal_sorts(formals, formal_coordinates):
     return [{"kind": "primitive", "name": sort.name} for sort in sorts]
 
 
+#: The kind of variadic parameter a formal coordinate states, as the
+#: contract names it (``variadicFormals``, read by prove's one binder,
+#: ``consistency::contract_binder_formals``).
+_VARIADIC_KINDS = {
+    "variadic-positional": "positional",
+    "variadic-keyword": "keyword",
+}
+
+
+def _stated_variadic_formals(formals, formal_coordinates):
+    """``((kind, formal), ...)``: the ``*args`` (``positional``) and
+    ``**kwargs`` (``keyword``) parameters among ``formals``, read off the
+    parameter kind each one's formal coordinate states
+    (``FormalParameterCoordinateV1.parameter_kind``).  Prove's one binder
+    binds a ``*args`` formal to the tuple of the positional arguments no
+    other parameter takes and a ``**kwargs`` formal to the dict of the
+    keyword arguments no other parameter takes (#7757), so a call spelled
+    as Python spells it (``__exit__(m, t, v, tb)`` for ``def
+    __exit__(self, *exc)``) fits.  A coordinate stating no kind (a frame's
+    binding coordinate) states none."""
+    stated = []
+    for formal, coordinate in zip(formals, formal_coordinates):
+        kind = _VARIADIC_KINDS.get(getattr(coordinate, "parameter_kind", None))
+        if kind is not None:
+            stated.append((kind, formal))
+    return tuple(stated)
+
+
 def contract_claim(formula, *, formals, def_memento, role, floor_chain):
     """One formula of a function's contract row, in the one claim form.
 
@@ -278,6 +306,10 @@ def function_contract_row(
     ``formalSorts`` states one sort per formal, the sort its authenticated
     formal coordinate carries (the same statement ``ParameterOwnedContractV1``
     makes). The linker's catalog reads a contract's signature from it.
+
+    ``variadicFormals`` names the ``*args`` and ``**kwargs`` among the
+    formals (``_stated_variadic_formals``), which prove's one binder binds as
+    Python binds them.
 
     ``panic_loci`` states the reduction's halted arms, one entry each, in the
     existing ``panicLoci`` shape (#7766), each with its arm's guard.
@@ -335,6 +367,7 @@ def function_contract_row(
         proofir_provenance=proofir_provenance,
         formals=list(formals),
         formal_sorts=_stated_formal_sorts(formals, formal_coordinates),
+        variadic_formals=_stated_variadic_formals(formals, formal_coordinates),
         kind="function-contract",
         bridge_source_symbol=bridge_source_symbol,
         panic_loci=tuple(panic_loci),

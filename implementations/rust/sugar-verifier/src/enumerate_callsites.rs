@@ -878,16 +878,8 @@ fn bridge_formal_actuals_match_arg_terms(
     let Some(contract) = pool.contract_body_by_cid(&target_cid) else {
         return false;
     };
-    let Some(formals) = contract
-        .get("formals")
-        .and_then(|v| v.as_array())
-        .and_then(|formals| {
-            formals
-                .iter()
-                .map(|formal| formal.as_str().map(str::to_string))
-                .collect::<Option<Vec<_>>>()
-        })
-    else {
+    // The formals as the one binder reads them (`*args`/`**kwargs` marked).
+    let Some(formals) = crate::consistency::contract_binder_formals(&contract) else {
         return false;
     };
     let stated = crate::consistency::stated_input_values(&contract);

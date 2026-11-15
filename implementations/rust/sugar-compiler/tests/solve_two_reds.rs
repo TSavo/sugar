@@ -73,6 +73,7 @@ fn push_named_contract_with_inv(
         body_discharge_refusal_reason: None,
         panic_loci: Vec::new(),
         input_values: Vec::new(),
+        variadic_formals: Vec::new(),
         class_shapes: Vec::new(),
         source_warrants: Vec::new(),
         proofir_provenance: Some(json_to_cvalue(&json!({

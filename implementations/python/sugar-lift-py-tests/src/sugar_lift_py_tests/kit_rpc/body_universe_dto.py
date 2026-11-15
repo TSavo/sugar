@@ -98,6 +98,13 @@ class BodyUniverseDto:
     # One sort per formal, stated by a function-contract whose formals carry
     # authenticated coordinates; the linker reads the signature from it.
     formal_sorts: list[dict] = field(default_factory=list)
+    # ``((kind, formal), ...)``: the ``*args`` (``positional``) and
+    # ``**kwargs`` (``keyword``) parameters among ``formals``
+    # (``universe_value._stated_variadic_formals``, #7757). Prove's one binder
+    # binds each as Python does: the tuple of the positional arguments, the
+    # dict of the keyword arguments, no other parameter takes. Empty omits
+    # the key, so a contract with none keeps its bytes.
+    variadic_formals: tuple[tuple[str, str], ...] = ()
     # `function-contract` (with `post` + `formals`) makes the mint auto-mint a
     # `sourceSymbol -> this contract` bridge (`bind_function_bridge`), resolving the
     # target CID at seal -- which is what lets `collect_ambient_posts` pick the post
@@ -194,6 +201,11 @@ class BodyUniverseDto:
             out["formals"] = list(self.formals)
         if self.formal_sorts:
             out["formalSorts"] = list(self.formal_sorts)
+        if self.variadic_formals:
+            out["variadicFormals"] = [
+                {"kind": kind, "formal": formal}
+                for kind, formal in self.variadic_formals
+            ]
         if self.bridge_source_symbol is not None:
             out["bridgeSourceSymbol"] = self.bridge_source_symbol
         return out
