@@ -12,6 +12,7 @@ from sugar_lift_py_tests.floor import (
     TermValue,
 )
 from sugar_lift_py_tests.ir import atomic, ctor, formula_term, make_var, num, str_const
+from sugar_lift_py_tests.occurrence import occurrence_key
 from sugar_lift_py_tests.outcome import Completed
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.temporal.builtin_name_bindings import (
@@ -47,14 +48,23 @@ def test_opaque_arithmetic_cites_operator_coordinate(method, operator, kind) -> 
     left = SymbolicValue(make_var("left"))
     if kind == "callsite":
         left = CallSiteValue("opaque", (), (), ctor("call:opaque", []), None)
-    outcome = getattr(left, method)(TermValue(2), "arithmetic.py:1", None)
-    # The undecided operand keeps its raise face; the one completed face
-    # cites the operator coordinate over both operands.
+    site = "arithmetic.py:1"
+    outcome = getattr(left, method)(TermValue(2), site, None)
+    # The undecided operand keeps its raise face; the one completed face is
+    # the undecided law's result (#7642): the operator and both operands,
+    # keyed on this evaluation's occurrence. No ``/``, ``%`` or ``//``
+    # coordinate is folded over the operands -- that was the second way.
     (completed,) = [
         exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)
     ]
     assert completed.value.to_term(owner="test") == ctor(
-        operator, [left.to_term(owner="test"), num(2)]
+        "python:binary_result",
+        [
+            str_const(operator),
+            left.to_term(owner="test"),
+            num(2),
+            str_const(occurrence_key(site)),
+        ],
     )
 
 
