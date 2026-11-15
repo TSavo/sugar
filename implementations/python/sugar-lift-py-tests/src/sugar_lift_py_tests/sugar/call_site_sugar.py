@@ -1860,18 +1860,37 @@ def global_value_at_call(callee, name: str, ctx, *, module_site, call_site):
     module-final value where the call may run before it."""
     from sugar_lift_py_tests.ir import make_var
     from sugar_lift_py_tests.occurrence import site_coordinate_cid
+
+    value = global_read_at_call(callee, name, ctx, module_site=module_site)
+    if value is not None:
+        return value.to_term(owner="global_value_at_call")
+    return make_var(f"undecided:global:{name}@{site_coordinate_cid(call_site)}")
+
+
+def global_read_at_call(callee, name: str, ctx, *, module_site):
+    """The one value a call of ``callee`` reads for its ``global:<name>``
+    input where the call runs: every key the binding reads through
+    (``global_input_keys``) holds a value in the caller's ``ctx``, and all of
+    them state one term.  None otherwise.  What ``global_value_at_call``
+    states as the input's term, and what the alias rule asks of the call
+    with its actuals (``object_identity.actuals_share_an_object``,
+    ``lambda_callable.definition_edge_call``): an actual that is, or holds,
+    the object the callee reads as the global binds that input's object
+    too."""
     from sugar_source_tree.nodes import _site_where_called
 
     unit = callee.unit
     keys = global_input_keys(unit, name, _site_where_called(unit, module_site))
-    terms = []
+    values = []
     for key in keys:
         bound = None if ctx is None else ctx.temporal.value_if_bound(key)
         value = None if bound is None else bound_value_read(bound)
         if value is None:
-            terms = []
-            break
-        terms.append(value.to_term(owner="global_value_at_call"))
-    if terms and all(term == terms[0] for term in terms[1:]):
-        return terms[0]
-    return make_var(f"undecided:global:{name}@{site_coordinate_cid(call_site)}")
+            return None
+        values.append(value)
+    if not values:
+        return None
+    terms = [value.to_term(owner="global_value_at_call") for value in values]
+    if any(term != terms[0] for term in terms[1:]):
+        return None
+    return values[0]

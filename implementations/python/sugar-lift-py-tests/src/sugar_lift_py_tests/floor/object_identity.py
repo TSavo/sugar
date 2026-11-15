@@ -475,16 +475,21 @@ def as_bound_formals(actuals, arrivals) -> tuple:
 
 
 def actuals_share_an_object(actuals) -> bool:
-    """Whether another of ``actuals`` may be, or hold, one of the current
-    mutable objects some actual is or holds (``f(xs, xs)``, ``f(xs, [xs])``,
-    ``o.m(o.items)``): the alias rule's own test (``as_bound_formals``), for
-    a call joined at prove (``lambda_callable.definition_edge_call``)."""
+    """Whether another of ``actuals`` may be, or hold, one of the objects
+    some actual is or holds (``_current_objects``: ``f(xs, xs)``,
+    ``f(xs, [xs])``, ``o.m(o.items)``): the alias rule's own test
+    (``as_bound_formals``), for a call joined at prove
+    (``lambda_callable.definition_edge_call``).  ``actuals`` are every value
+    the call binds a formal or an input of the callee's contract to: its
+    actuals, its captured cells and the module globals the callee reads
+    (``g(G)`` where ``g`` reads ``G``: the contract states the global and
+    the formal as two objects)."""
     return any(_shared(tuple(actuals)))
 
 
 def _shared(actuals) -> tuple:
     """For each of ``actuals``, whether another of them may be, or hold, one
-    of the current mutable objects it is or holds (``_current_objects``)."""
+    of the objects it is or holds (``_current_objects``)."""
     reached = tuple(_current_objects(actual) for actual in actuals)
     return tuple(
         any(
@@ -497,16 +502,23 @@ def _shared(actuals) -> tuple:
 
 
 def _current_objects(value, depth=0) -> frozenset:
-    """The constructions (``allocation``) of every current mutable object
-    ``value`` is or holds at any depth: a ``list``/``dict``/``set`` and an
-    instance of a source class, through containers, a tuple's elements, an
-    instance's fields and the faces of a guarded value.  A stale object
-    (``contents_current``) is already read in its undecided form."""
+    """The objects ``value`` is or holds at any depth, through containers, a
+    tuple's elements, an instance's fields and the faces of a guarded value:
+    each current mutable object (a ``list``/``dict``/``set`` and an instance
+    of a source class) by its construction (``allocation``), and each module
+    global or captured cell the frame reads as its free contract input
+    (``ContractInputV1.value``: a function's own proof reads ``G`` as
+    ``global:G``) by that input's coordinate -- one input, one binding, one
+    object, whatever its type.  A stale object (``contents_current``) is
+    already read in its undecided form."""
+    from sugar_lift_py_tests.contract_input import CELL_INPUT, GLOBAL_INPUT
+
     from .dict_value import DictValue
     from .guarded_value import GuardedValue
     from .list_value import ListValue
     from .object_value import ObjectValue
     from .set_value import SetValue
+    from .symbolic_value import SymbolicValue
     from .tuple_value import TupleValue
 
     if depth > 32:
@@ -516,6 +528,10 @@ def _current_objects(value, depth=0) -> frozenset:
     container = kind in (ListValue, DictValue, SetValue)
     if (container or isinstance(value, ObjectValue)) and contents_current(value):
         found.add(value.allocation)
+    if isinstance(value, SymbolicValue):
+        coordinate = value.formal_coordinate
+        if getattr(coordinate, "input_kind", None) in (GLOBAL_INPUT, CELL_INPUT):
+            found.add(("input", coordinate.coordinate_cid))
     if kind in (ListValue, SetValue, TupleValue):
         members = value.elements
     elif kind is DictValue:
