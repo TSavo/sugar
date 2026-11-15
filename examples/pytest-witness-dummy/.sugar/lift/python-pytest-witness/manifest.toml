@@ -2,25 +2,26 @@ name = "pytest-witness-lift"
 version = "0.1.0-draft"
 protocol_version = "pep/1.7.0"
 kind = "lift"
+# The kit's src trees go IN FRONT of the caller's PYTHONPATH, never in place of
+# it: the witness runs the project's own tests, whose imports resolve on the
+# caller's PYTHONPATH.
 # The kit's lift entry (runs the test, emits the witnessed contract).
 command = [
-    "/usr/bin/env",
-    "PYTHONPATH=../../implementations/python/sugar-lift-py-pytest-witness/src:../../implementations/python/sugar-lift-py-tests/src:../../implementations/python/sugar-lift-python-source/src",
-    "python3",
-    "-m",
-    "sugar_pytest_witness.lift_lsp",
+    "/bin/sh",
+    "-c",
+    'export PYTHONPATH="../../implementations/python/sugar-lift-py-pytest-witness/src:../../implementations/python/sugar-lift-py-tests/src:../../implementations/python/sugar-lift-python-source/src${PYTHONPATH:+:$PYTHONPATH}"; exec python3 -m sugar_pytest_witness.lift_lsp',
 ]
 # The kit's DISCHARGE entry (re-runs the test to settle the witness). Declared
 # here, alongside `command`, so witness discharge rides the SAME manifest
 # dispatch lift uses. `witness_tool` keys the per-tool registry: `prove` exports
 # this as SUGAR_WITNESS_DISCHARGE_PYTEST and the verifier routes the
-# certificate's tool="pytest" to it.
+# certificate's tool="pytest" to it. It takes `<witness.proof> <project_dir>`,
+# so the arguments appended after the trailing "sh" ($0) are forwarded.
 discharge_command = [
-    "/usr/bin/env",
-    "PYTHONPATH=../../implementations/python/sugar-lift-py-pytest-witness/src:../../implementations/python/sugar-lift-py-tests/src:../../implementations/python/sugar-lift-python-source/src",
-    "python3",
-    "-m",
-    "sugar_pytest_witness.discharge_cli",
+    "/bin/sh",
+    "-c",
+    'export PYTHONPATH="../../implementations/python/sugar-lift-py-pytest-witness/src:../../implementations/python/sugar-lift-py-tests/src:../../implementations/python/sugar-lift-python-source/src${PYTHONPATH:+:$PYTHONPATH}"; exec python3 -m sugar_pytest_witness.discharge_cli "$@"',
+    "sh",
 ]
 witness_tool = "pytest"
 # The kit's WITNESS-RESOLVE entry. Verification lives in the rust CLI; the kit
@@ -31,11 +32,9 @@ witness_tool = "pytest"
 # different RPC method, declared here so witness resolution ties to THIS kit per
 # manifest (everything tied together per kit: lift, discharge, resolve).
 resolve_witness_command = [
-    "/usr/bin/env",
-    "PYTHONPATH=../../implementations/python/sugar-lift-py-pytest-witness/src:../../implementations/python/sugar-lift-py-tests/src:../../implementations/python/sugar-lift-python-source/src",
-    "python3",
-    "-m",
-    "sugar_pytest_witness.lift_lsp",
+    "/bin/sh",
+    "-c",
+    'export PYTHONPATH="../../implementations/python/sugar-lift-py-pytest-witness/src:../../implementations/python/sugar-lift-py-tests/src:../../implementations/python/sugar-lift-python-source/src${PYTHONPATH:+:$PYTHONPATH}"; exec python3 -m sugar_pytest_witness.lift_lsp',
 ]
 resolve_witness_method = "sugar.plugin.resolve_witness"
 working_dir = "."

@@ -7,12 +7,11 @@ protocol_version = "sugar-component/1"
 languages = ["python"]
 # sugar_lift_py_tests imports sugar_lift_python_source at load (source_fragment);
 # both package src trees must be on PYTHONPATH or initialize dies before handshake.
+# They go IN FRONT of the caller's PYTHONPATH, never in place of it: the caller's
+# PYTHONPATH is where the project's own imports resolve.
 command = [
-    "/usr/bin/env",
-    "PYTHONPATH=implementations/python/sugar-lift-py-tests/src:implementations/python/sugar-lift-python-source/src",
-    "python3",
-    "-m",
-    "sugar_lift_py_tests.lift_rpc",
-    "--rpc",
+    "/bin/sh",
+    "-c",
+    'export PYTHONPATH="implementations/python/sugar-lift-py-tests/src:implementations/python/sugar-lift-python-source/src${PYTHONPATH:+:$PYTHONPATH}"; exec python3 -m sugar_lift_py_tests.lift_rpc --rpc',
 ]
 working_dir = "../../.."

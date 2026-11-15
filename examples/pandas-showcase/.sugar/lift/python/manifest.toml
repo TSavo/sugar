@@ -4,14 +4,12 @@ protocol_version = "pep/1.7.0"
 kind = "lift"
 # The plain pytest bare-assert CONSISTENCY seat. Scalar assertions are where
 # z3's teeth are. Invoked module-form over PYTHONPATH so no console script needs
-# installing in the venv.
+# installing in the venv. The kit's src trees go in front of the caller's
+# PYTHONPATH, never in place of it.
 command = [
-    "/usr/bin/env",
-    "PYTHONPATH=../../implementations/python/sugar-lift-py-tests/src:../../implementations/python/sugar-lift-python-source/src",
-    "/tmp/pandas-witness-venv/bin/python",
-    "-m",
-    "sugar_lift_py_tests.lift_rpc",
-    "--rpc",
+    "/bin/sh",
+    "-c",
+    'export PYTHONPATH="../../implementations/python/sugar-lift-py-tests/src:../../implementations/python/sugar-lift-python-source/src${PYTHONPATH:+:$PYTHONPATH}"; exec /tmp/pandas-witness-venv/bin/python -m sugar_lift_py_tests.lift_rpc --rpc',
 ]
 working_dir = "."
 

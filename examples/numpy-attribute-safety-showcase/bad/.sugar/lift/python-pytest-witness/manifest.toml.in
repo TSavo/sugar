@@ -2,10 +2,13 @@ name = "pytest-witness-lift"
 version = "0.1.0-draft"
 protocol_version = "pep/1.7.0"
 kind = "lift"
-command = ["/usr/bin/env", "PYTHONPATH=@SUITE_SRC@", "@PYTHON@", "-m", "sugar_pytest_witness.lift_lsp"]
-discharge_command = ["/usr/bin/env", "PYTHONPATH=@SUITE_SRC@", "@PYTHON@", "-m", "sugar_pytest_witness.discharge_cli"]
+# The suite's src tree goes in front of the caller's PYTHONPATH, never in place
+# of it. The discharge entry forwards its `<witness.proof> <project_dir>`
+# arguments, appended after the trailing "sh" ($0).
+command = ["/bin/sh", "-c", 'export PYTHONPATH="@SUITE_SRC@${PYTHONPATH:+:$PYTHONPATH}"; exec @PYTHON@ -m sugar_pytest_witness.lift_lsp']
+discharge_command = ["/bin/sh", "-c", 'export PYTHONPATH="@SUITE_SRC@${PYTHONPATH:+:$PYTHONPATH}"; exec @PYTHON@ -m sugar_pytest_witness.discharge_cli "$@"', "sh"]
 witness_tool = "pytest"
-resolve_witness_command = ["/usr/bin/env", "PYTHONPATH=@SUITE_SRC@", "@PYTHON@", "-m", "sugar_pytest_witness.lift_lsp"]
+resolve_witness_command = ["/bin/sh", "-c", 'export PYTHONPATH="@SUITE_SRC@${PYTHONPATH:+:$PYTHONPATH}"; exec @PYTHON@ -m sugar_pytest_witness.lift_lsp']
 resolve_witness_method = "sugar.plugin.resolve_witness"
 working_dir = "."
 

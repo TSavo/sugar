@@ -5,13 +5,12 @@ kind = "lift"
 # Dispatch the PYTEST lifter (sugar_lift_py_tests.lsp main loop, NDJSON
 # over stdio). PYTHONPATH points at the lifter source tree so no install /
 # venv is required. working_dir is the project root (the examples dir),
-# resolved relative to the repo root the manifest discovery uses.
+# resolved relative to the repo root the manifest discovery uses. The kit's src
+# trees go in front of the caller's PYTHONPATH, never in place of it.
 command = [
-    "/usr/bin/env",
-    "PYTHONPATH=../../implementations/python/sugar-lift-py-tests/src:../../implementations/python/sugar-lift-python-source/src",
-    "python3",
-    "-m",
-    "sugar_lift_py_tests.lsp",
+    "/bin/sh",
+    "-c",
+    'export PYTHONPATH="../../implementations/python/sugar-lift-py-tests/src:../../implementations/python/sugar-lift-python-source/src${PYTHONPATH:+:$PYTHONPATH}"; exec python3 -m sugar_lift_py_tests.lsp',
 ]
 working_dir = "."
 

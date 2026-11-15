@@ -61,18 +61,14 @@ version = "0.1.0-draft"
 protocol_version = "pep/1.7.0"
 kind = "lift"
 command = [
-    "/usr/bin/env",
-    "PYTHONPATH=$REPO/implementations/python/sugar-build-witness/src:$REPO/implementations/python/sugar-lift-py-tests/src",
-    "$VENV/bin/python",
-    "-m",
-    "sugar_build_witness.lift_lsp",
+    "/bin/sh",
+    "-c",
+    'export PYTHONPATH="$REPO/implementations/python/sugar-build-witness/src:$REPO/implementations/python/sugar-lift-py-tests/src\${PYTHONPATH:+:\$PYTHONPATH}"; exec $VENV/bin/python -m sugar_build_witness.lift_lsp',
 ]
 resolve_witness_command = [
-    "/usr/bin/env",
-    "PYTHONPATH=$REPO/implementations/python/sugar-build-witness/src:$REPO/implementations/python/sugar-lift-py-tests/src",
-    "$VENV/bin/python",
-    "-m",
-    "sugar_build_witness.lift_lsp",
+    "/bin/sh",
+    "-c",
+    'export PYTHONPATH="$REPO/implementations/python/sugar-build-witness/src:$REPO/implementations/python/sugar-lift-py-tests/src\${PYTHONPATH:+:\$PYTHONPATH}"; exec $VENV/bin/python -m sugar_build_witness.lift_lsp',
 ]
 resolve_witness_method = "sugar.plugin.resolve_witness"
 working_dir = "."
