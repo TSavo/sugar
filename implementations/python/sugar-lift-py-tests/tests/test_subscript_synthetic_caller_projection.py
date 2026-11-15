@@ -136,6 +136,16 @@ def _int(call, value: int):
     return TermValue(value).to_term(owner=str(call.site))
 
 
+def _class(key: str, name: str):
+    """``py.class(<key>, python:builtin("<name>"))`` (#8857)."""
+    from sugar_lift_py_tests.receiver_dispatch import (
+        CLASS_ARGUMENT,
+        builtin_class_term,
+    )
+
+    return ctor(CLASS_ARGUMENT, [str_const(key), builtin_class_term(name)])
+
+
 def _discharged(carrier, key: int) -> ExitSet:
     """The helper's row discharged with ``[7]`` and ``key``: what prove's one
     binder binds its carrier with at a call that supplies them."""
@@ -159,17 +169,33 @@ def test_positional_keyword_and_default_callers_reach_the_same_demand() -> None:
     # prove joins the helper's halt at each call (#8690, #8749).  The three
     # forms carry the same binding of ``key``; the helper's row discharged
     # with it reaches the one ``obj[key]``.
+    #
+    # After the actuals ride the classes the caller decides, keyed by the
+    # argument each is (#8857, ``receiver_dispatch.class_arguments``): the
+    # ``[7]`` it built is a ``list`` at ``"0"``, a supplied ``int`` key an
+    # ``int`` at its position or keyword; a default supplies none.
     carrier = _carrier()
     completed, positional, keyword, default = (
         _the_call(outcome) for outcome in _caller_outcomes()
     )
-    assert list(_coordinate(completed).args[1:]) == [_int(completed, 0)]
-    assert list(_coordinate(positional).args[1:]) == [_int(positional, 1)]
+    assert list(_coordinate(completed).args[1:]) == [
+        _int(completed, 0),
+        _class("0", "list"),
+        _class("1", "int"),
+    ]
+    assert list(_coordinate(positional).args[1:]) == [
+        _int(positional, 1),
+        _class("0", "list"),
+        _class("1", "int"),
+    ]
     assert list(_coordinate(keyword).args[1:]) == [
-        ctor("py.kwarg", [str_const("key"), _int(keyword, 1)])
+        ctor("py.kwarg", [str_const("key"), _int(keyword, 1)]),
+        _class("0", "list"),
+        _class("key", "int"),
     ]
     assert list(_coordinate(default).args[1:]) == [
-        ctor("py.default", [str_const("key"), _int(default, 1)])
+        ctor("py.default", [str_const("key"), _int(default, 1)]),
+        _class("0", "list"),
     ]
 
     assert isinstance(_discharged(carrier, 0).exits[0], Completed)
