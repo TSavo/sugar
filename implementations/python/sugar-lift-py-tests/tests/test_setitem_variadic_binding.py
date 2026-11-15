@@ -91,6 +91,19 @@ def _edge(program: str, actuals: str):
     return edge
 
 
+def _coordinate(edge):
+    """The call's coordinate ``call:<target>(<arguments>)`` the edge's value
+    names: the completed face of the one unanswered call returns
+    ``python:call_result(<call term>, <occurrence>)`` (#7757 steps 5 and 6,
+    #8705), so the formals the one binder packs are the call term's
+    arguments, never the result's."""
+    result = edge.term
+    assert result.name == "python:call_result", result
+    call = result.args[0]
+    assert call.name.startswith("call:"), call
+    return call
+
+
 def _formal(edge, name: str, value):
     """``py.kwarg(name, value)``: the formal ``name`` bound to ``value``."""
     from sugar_lift_py_tests.ir import ctor, str_const
@@ -184,7 +197,7 @@ def test_remaining_positionals_become_authenticated_tuple_store_value() -> None:
         TermValue(2),
         TermValue(3),
     )
-    assert list(edge.term.args[1:]) == [
+    assert list(_coordinate(edge).args[1:]) == [
         _formal(edge, "key", TermValue(0)),
         _formal(
             edge, "values", TupleValue((TermValue(1), TermValue(2), TermValue(3)))
@@ -225,7 +238,7 @@ def test_extra_keywords_become_authenticated_mapping_store_value() -> None:
         TermValue(1),
         TermValue(2),
     )
-    assert list(edge.term.args[1:]) == [
+    assert list(_coordinate(edge).args[1:]) == [
         _formal(edge, "key", TermValue(0)),
         _formal(
             edge,
@@ -265,13 +278,13 @@ def test_kw_values_discharge_stores_dict_at_index() -> None:
 def test_empty_star_is_honest_empty_tuple() -> None:
     """``helper([0], 0)`` with *values — empty pack, not None / omitted."""
     edge = _edge(HELPER_STAR, "[0], 0")
-    assert edge.term.args[2] == _formal(edge, "values", TupleValue(()))
+    assert _coordinate(edge).args[2] == _formal(edge, "values", TupleValue(()))
 
 
 def test_empty_kw_is_honest_empty_dict() -> None:
     """``helper([0], 0)`` with **values — empty mapping, not None / omitted."""
     edge = _edge(HELPER_KW, "[0], 0")
-    assert edge.term.args[2] == _formal(edge, "values", fresh(DictValue, ()))
+    assert _coordinate(edge).args[2] == _formal(edge, "values", fresh(DictValue, ()))
 
 
 def test_empty_star_discharge_stores_empty_tuple() -> None:
@@ -331,7 +344,7 @@ def test_source_caller_invalid_index_preserves_state() -> None:
     outcome = _call(HELPER_STAR, "[0], 1, 9")
     assert [face for face in outcome.exits if isinstance(face, Halted)], outcome
     edge = _edge(HELPER_STAR, "[0], 1, 9")
-    assert list(edge.term.args[1:]) == [
+    assert list(_coordinate(edge).args[1:]) == [
         _formal(edge, "key", TermValue(1)),
         _formal(edge, "values", TupleValue((TermValue(9),))),
     ]
@@ -428,9 +441,11 @@ def test_star_vs_kw_kinds_are_not_interchangeable_discrimination() -> None:
     """Bite: *values pack is TupleValue; **values pack is DictValue."""
     star = _edge(HELPER_STAR, "[0], 0, 1")
     kw = _edge(HELPER_KW, "[0], 0, a=1")
-    assert star.term.args[2] == _formal(star, "values", TupleValue((TermValue(1),)))
-    assert kw.term.args[2] == _formal(
+    assert _coordinate(star).args[2] == _formal(
+        star, "values", TupleValue((TermValue(1),))
+    )
+    assert _coordinate(kw).args[2] == _formal(
         kw, "values", fresh(DictValue, ((StringValue("a"), TermValue(1)),))
     )
     with pytest.raises(AssertionError):
-        assert star.term.args[2] == kw.term.args[2]
+        assert _coordinate(star).args[2] == _coordinate(kw).args[2]

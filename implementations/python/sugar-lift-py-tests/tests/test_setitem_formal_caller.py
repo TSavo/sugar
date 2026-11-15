@@ -97,6 +97,19 @@ def _caller_edge(signature: str, actuals: str):
     return edge
 
 
+def _coordinate(edge):
+    """The call's coordinate ``call:<target>(<arguments>)`` the edge's value
+    names: the completed face of the one unanswered call returns
+    ``python:call_result(<call term>, <occurrence>)`` (#7757 steps 5 and 6,
+    #8705), so the arguments prove's binder binds are the call term's,
+    never the result's."""
+    result = edge.term
+    assert result.name == "python:call_result", result
+    call = result.args[0]
+    assert call.name.startswith("call:"), call
+    return call
+
+
 def _int(edge, value: int):
     return TermValue(value).to_term(owner=str(edge.site))
 
@@ -332,15 +345,15 @@ def test_positional_keyword_and_default_callers_complete_same_demand() -> None:
         _binds, receiver = peel_walrus_binds(edge.arg_values[0])
         assert isinstance(receiver, ListValue), receiver
         assert receiver.elements == (TermValue(0),)
-    assert list(positional.term.args[1:]) == [
+    assert list(_coordinate(positional).args[1:]) == [
         _int(positional, 0),
         _int(positional, 9),
     ]
-    assert list(keyword.term.args[1:]) == [
+    assert list(_coordinate(keyword).args[1:]) == [
         _named(keyword, "py.kwarg", "key", 0),
         _named(keyword, "py.kwarg", "value", 9),
     ]
-    assert list(default.term.args[1:]) == [
+    assert list(_coordinate(default).args[1:]) == [
         _named(default, "py.default", "key", 0),
         _named(default, "py.default", "value", 9),
     ]
@@ -443,7 +456,7 @@ def test_source_caller_indexerror_halts_with_named_identity() -> None:
         "IndexError",
     )
     edge = _caller_edge("obj, key, value", "[0], 4, 9")
-    assert list(edge.term.args[1:]) == [_int(edge, 4), _int(edge, 9)]
+    assert list(_coordinate(edge).args[1:]) == [_int(edge, 4), _int(edge, 9)]
 
 
 # ---------------------------------------------------------------------------

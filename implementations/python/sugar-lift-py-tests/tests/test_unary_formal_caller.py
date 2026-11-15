@@ -87,7 +87,15 @@ def _call_edge(signature: str, body: str, actuals: str):
 
 
 def _edge_arguments(edge) -> list:
-    return list(edge.term.args)
+    """The arguments of the call's coordinate ``call:<target>(...)``: the
+    completed face of the one unanswered call returns ``python:call_result(
+    <call term>, <occurrence>)`` (#7757 steps 5 and 6, #8705), so what
+    prove's binder binds is the call term's arguments, never the result's."""
+    result = edge.term
+    assert result.name == "python:call_result", result
+    call = result.args[0]
+    assert call.name.startswith("call:"), call
+    return list(call.args)
 
 
 def _int(edge, value: int):

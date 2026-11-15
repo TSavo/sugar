@@ -99,6 +99,19 @@ def _edge(actuals: str):
     return edge
 
 
+def _coordinate(edge):
+    """The call's coordinate ``call:<target>(<arguments>)`` the edge's value
+    names: the completed face of the one unanswered call returns
+    ``python:call_result(<call term>, <occurrence>)`` (#7757 steps 5 and 6,
+    #8705), so the arguments prove's binder binds are the call term's,
+    never the result's."""
+    result = edge.term
+    assert result.name == "python:call_result", result
+    call = result.args[0]
+    assert call.name.startswith("call:"), call
+    return call
+
+
 def _named(edge, kind: str, name: str, value: int):
     from sugar_lift_py_tests.ir import ctor, str_const
 
@@ -174,7 +187,7 @@ def test_positional_only_receiver_and_keyword_only_value_complete() -> None:
         TermValue(0),
         TermValue(9),
     )
-    assert edge.term.args[-1] == _named(edge, "py.kwarg", "value", 9)
+    assert _coordinate(edge).args[-1] == _named(edge, "py.kwarg", "value", 9)
 
 
 def test_default_key_and_keyword_only_value_complete() -> None:
@@ -182,7 +195,7 @@ def test_default_key_and_keyword_only_value_complete() -> None:
     carried on the edge as ``py.default``."""
     edge = _edge("[0], value=9")
     assert edge.arg_values == (fresh(ListValue, (TermValue(0),)), TermValue(9))
-    assert list(edge.term.args[1:]) == [
+    assert list(_coordinate(edge).args[1:]) == [
         _named(edge, "py.kwarg", "value", 9),
         _named(edge, "py.default", "key", 0),
     ]
@@ -196,7 +209,7 @@ def test_explicit_keyword_key_binds_same_key_formal() -> None:
     edge = _edge("[0, 0], key=1, value=9")
     assert edge.arg_values[1] == TermValue(1)
     assert edge.arg_values[2] == TermValue(9)
-    assert list(edge.term.args[1:]) == [
+    assert list(_coordinate(edge).args[1:]) == [
         _named(edge, "py.kwarg", "key", 1),
         _named(edge, "py.kwarg", "value", 9),
     ]
