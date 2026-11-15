@@ -150,7 +150,20 @@ def test_symbolic_source_return_control_preserves_complementary_guards() -> None
             right.coordinate_cid: SymbolicValue(make_var("actual_value")),
         },
     )
-    completed = _only_exit(exits, Completed)
+    # ``lower() < actual_value`` over an undecided actual is two-faced
+    # (#7585): the comparison's rich method is code nobody looked at, so the
+    # control completes only under ``python:compare.completes`` and halts,
+    # undetermined, under the complement.  Neither face is dropped.
+    from sugar_lift_py_tests.outcome.exit_set import complement_guard
+
+    assert isinstance(exits, ExitSet)
+    (completed,) = [exit_ for exit_ in exits.exits if isinstance(exit_, Completed)]
+    (halted,) = exits.halts()
+    assert len(exits.exits) == 2
+    assert completed.guard.name == "python:compare.completes"
+    assert halted.guard == complement_guard(completed.guard)
+    assert halted.effect.producer_node_owner == "UndecidedCompare:Lt"
+    assert halted.effect.exception_name is None
     returns = tuple(
         entry
         for entry in completed.value.record.statements
