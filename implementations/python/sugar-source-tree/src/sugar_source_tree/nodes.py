@@ -6306,6 +6306,16 @@ def _iteration_copies(loop, index: int, statements) -> tuple:
     return tuple(as_occurrence(statement, segment) for statement in statements)
 
 
+def _evaluates_code(node) -> bool:
+    """Whether evaluating ``node`` may run code: it holds a call or a
+    formatted value (an f-string part calls ``format``).  A member of an
+    iterable display that does is evaluated before the first item, in
+    order, by an unrolled ``for`` (``For._evaluated_before_the_first_item``)
+    and by a comprehension the unroll dissolves
+    (``ListComp._members_evaluated_first``) alike."""
+    return any(n.kind in ("Call", "FormattedValue") for n in node.walk())
+
+
 def _iteration_scope(loop, index: int, bindings, outer):
     """The scope for substituting iteration ``index`` of ``loop``'s body:
     ``bindings``, with that iteration's segment ahead of the segments
@@ -9740,11 +9750,15 @@ class Statement(Node):
         read with it (``_evaluation_slot``).  A re-substitution on the exit
         path its key was minted under keeps that key; a copy of it onto
         another exit path is another evaluation and gets its own.
+
+        Any node's occurrence is keyed this way: a member of an iterable
+        display a dissolved comprehension evaluates before its first element
+        (``ListComp._members_evaluated_first``) is keyed by its own.
         """
         from sugar_lift_python_source.canonical import cid_of_json
         from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
 
-        exit_path = self._evaluation_exit_path(scope)
+        exit_path = Statement._evaluation_exit_path(self, scope)
         existing = getattr(self, "evaluation", None)
         if isinstance(existing, str):
             minted = getattr(self, "evaluation_exit_path", None)
@@ -17847,10 +17861,7 @@ class For(Statement):
         for index, (element, unpack) in enumerate(
             zip(elements, unpacks, strict=True)
         ):
-            calls = any(
-                node.kind in ("Call", "FormattedValue") for node in element.walk()
-            )
-            if unpack is None or not calls:
+            if unpack is None or not _evaluates_code(element):
                 kept.append(unpack)
             elif (
                 index == 0
@@ -17889,20 +17900,31 @@ class For(Statement):
 
         What is evaluated is the one unroll step a ``for`` and a
         comprehension share (``_iterable_evaluations``); a ``for`` places
-        each evaluation as a statement before its first item."""
-        from .shadow import recast
+        each evaluation as a statement before its first item.  One whose
+        value an item reads through its key (a member of a dissolved
+        comprehension's display iterable, ``ListComp.
+        _members_evaluated_first``) is held under that key, binding no name
+        (``Expr._construct_sugar``), as an item's own evaluation is
+        (``_item_evaluated_apart``)."""
+        from .backend import Child, Leaf
+        from .shadow import _handle_of, _shadow_of
 
-        return tuple(
-            recast(self, "Expr", value=evaluation)
-            for evaluation in For._iterable_evaluations(self, iterable)
-        )
+        statements = []
+        for evaluation, key in For._iterable_evaluations(self, iterable):
+            slots = (("value", Child(_handle_of(evaluation))),)
+            if key is not None:
+                slots = (*slots, ("evaluation", Leaf(key)))
+            statements.append(_shadow_of(self, "Expr", slots))
+        return tuple(statements)
 
     def _iterable_evaluations(self, iterable) -> tuple:
         """What of an unrolled iterable (``iterable``, substituted) Python
         evaluates once, before the first item -- the one step a ``for``
         (``_iterable_evaluated``) and a comprehension the unroll dissolves
         into a display (``ListComp._dissolved_iterable``) take before
-        their items.
+        their items -- as ``(evaluation, key)`` pairs: ``key`` is the one
+        an item reads the evaluation's value under, or None where no item
+        reads it.
 
         A ``range(...)`` call of ground ints is evaluated whole: its value
         is consumed by the unroll (each item is the int it yields), and
@@ -17910,14 +17932,15 @@ class For(Statement):
         evaluation's.  A list or tuple display is consumed member by member
         and never built whole (its discharge is the consumption); what a
         display that a dissolved comprehension made carries to evaluate
-        first (``iterable_evaluations``) is evaluated here in its place.  A
+        first (``iterable_evaluations``, ``ListComp._carried_evaluations``)
+        is evaluated here in its place, with the keys its members read.  A
         read of a name bound to a ground display is read by every item
         (``_item_of``): nothing."""
         if iterable.kind in ("List", "Tuple"):
             iterable.discharge_by_substitution()
-            return tuple(getattr(iterable, "iterable_evaluations", None) or ())
+            return ListComp._carried_evaluations(iterable)
         if iterable.kind == "Call":
-            return (iterable,)
+            return ((iterable, None),)
         return ()
 
     def _item_evaluated_apart(self, unpack, element):
@@ -23037,6 +23060,9 @@ class ListComp(Expression):
             return None
         if len(elements) > For._UNROLL_FUEL:
             return None
+        elements, members = ListComp._members_evaluated_first(
+            self, it, elements, scope
+        )
         target = gen.target
         results = []
         for index, element in enumerate(elements):
@@ -23056,14 +23082,56 @@ class ListComp(Expression):
             (member,) = _iteration_copies(self, index, (new_elt if _d else self.elt,))
             results.append(member)
         evaluations = ListComp._dissolved_iterable(
-            self, it, elements, (self.elt,) if not results else (), gen.ifs
+            self, it, elements, (self.elt,) if not results else (), gen.ifs, members
         )
         return ListComp._make_list(self, tuple(results), evaluations)
 
-    def _dissolved_iterable(self, iterable, elements, unevaluated, filters):
+    def _members_evaluated_first(self, iterable, elements, scope):
+        """``(elements, members)``: Python evaluates an iterable display --
+        every member of it -- once, before the first element.  Substituting
+        each member into the element interleaves them where a member after
+        the first runs code (``_evaluates_code``): ``[h(x) for x in [g1(),
+        g2()]]`` was evaluated g1, h, g2, h; Python evaluates g1, g2, h, h.
+
+        There every member that runs code is evaluated before the first
+        element, in order, its value held under its item key (its own
+        occurrence's evaluation, ``Statement._evaluation_key``, projected
+        by ``_item_evaluation_key``), and the element reads it there
+        (``EvaluationRef``) -- the step an unrolled ``for`` takes over the
+        same display (``For._evaluated_before_the_first_item``).
+        ``members`` pairs each such member with its key; the display carries
+        them after its iterable's own (``_dissolved_iterable``).  Each
+        reference is minted: one no element reads (``[0 for _ in [g1(),
+        g2()]]``), or one an unroll that refuses after minting leaves,
+        answers where it is minted (``_minted_binding_reference``).  A
+        display whose only member that runs code is its first is in
+        Python's order already, and is unchanged."""
+        if iterable.kind not in ("List", "Tuple") or not any(
+            _evaluates_code(element) for element in elements[1:]
+        ):
+            return elements, ()
+        read = []
+        members = []
+        for element in elements:
+            if element.kind == "Starred" or not _evaluates_code(element):
+                read.append(element)
+                continue
+            key = _item_evaluation_key(Statement._evaluation_key(element, scope))
+            members.append((element, key))
+            read.append(
+                _minted_binding_reference(
+                    _evaluation_ref(self, element.span, key, "<item>", of=element)
+                )
+            )
+        return read, tuple(members)
+
+    def _dissolved_iterable(
+        self, iterable, elements, unevaluated, filters, members=()
+    ):
         """What the display this comprehension dissolved into over
         ``iterable`` (substituted) and its ``elements`` evaluates before its
-        first member (``iterable_evaluations``).
+        first member (``iterable_evaluations``), as ``(evaluation, key)``
+        pairs (``For._iterable_evaluations``).
 
         The unroll takes the same step a ``for`` does before its items
         (``For._iterable_evaluations``): ``range(n)`` is evaluated once,
@@ -23071,7 +23139,9 @@ class ListComp(Expression):
         whose faces its sugar carries before it holds the members
         (``collection_sugar._reduce_into``) -- never a dropped evaluation.
         A display iterable is consumed member by member and answers with
-        it.
+        it; each member the elements read through its key (``members``,
+        ``_members_evaluated_first``) is evaluated after what the iterable
+        itself carries, in order, before the first element.
 
         A template Python never evaluates answers with the display, as a
         structural part does (``unevaluated_parts``): ``unevaluated`` (the
@@ -23082,7 +23152,7 @@ class ListComp(Expression):
         for root in (*unevaluated, *(() if elements else filters)):
             for node in root.walk():
                 node.discharge_by_substitution()
-        return For._iterable_evaluations(self, iterable)
+        return (*For._iterable_evaluations(self, iterable), *members)
 
     def _ground_filters_pass(self, filters, scope) -> "Optional[bool]":
         """The conjunction of constructed ground filters, or no testimony.
@@ -23430,26 +23500,61 @@ class ListComp(Expression):
     @staticmethod
     def _evaluations_slot(evaluations: tuple) -> tuple:
         """The ``iterable_evaluations`` slot of a dissolved display, or none
-        where its iterable evaluates nothing before the first member."""
-        from .backend import Children
+        where its iterable evaluates nothing before the first member; with
+        the key each is held under (``iterable_evaluation_keys``, None where
+        no member reads it) where a member reads one
+        (``_members_evaluated_first``)."""
+        from .backend import Children, Leaf
         from .shadow import _handle_of
 
         if not evaluations:
             return ()
-        return (
+        keys = tuple(key for _evaluation, key in evaluations)
+        slots = (
             (
                 "iterable_evaluations",
-                Children(tuple(_handle_of(e) for e in evaluations)),
+                Children(tuple(_handle_of(e) for e, _key in evaluations)),
             ),
         )
+        if any(key is not None for key in keys):
+            slots = (*slots, ("iterable_evaluation_keys", Leaf(keys)))
+        return slots
+
+    @staticmethod
+    def _carried_evaluations(display) -> tuple:
+        """``(evaluation, key)`` for each evaluation a dissolved display
+        carries before its first member (``_evaluations_slot``); empty for
+        any other display."""
+        evaluations = tuple(getattr(display, "iterable_evaluations", None) or ())
+        keys = getattr(display, "iterable_evaluation_keys", None)
+        if not isinstance(keys, tuple):
+            keys = (None,) * len(evaluations)
+        return tuple(zip(evaluations, keys, strict=True))
 
     def _evaluated_first_sugars(self) -> tuple:
         """The sugar of each evaluation a dissolved display makes before its
-        first member (``_dissolved_iterable``); empty for any other display."""
-        return tuple(
-            evaluation.sugar()
-            for evaluation in getattr(self, "iterable_evaluations", None) or ()
-        )
+        first member (``_dissolved_iterable``); empty for any other display.
+
+        One a member reads through its key (``_members_evaluated_first``)
+        holds its value there as it completes: the one bind an expression
+        makes under a key (``NamedExprSugar``, ``NamedExpressionValue.
+        bind``), never under a name -- ``<item>`` is no source name -- so
+        every element after it reads it (``reduce_operands``,
+        ``written_by``) and the display consumes it with the rest."""
+        from sugar_lift_py_tests.sugar.named_expr_sugar import NamedExprSugar
+
+        sugars = []
+        for evaluation, key in ListComp._carried_evaluations(self):
+            sugar = evaluation.sugar()
+            if key is not None:
+                sugar = NamedExprSugar(
+                    name="<item>",
+                    value=sugar,
+                    site=evaluation.fragment,
+                    evaluation=key,
+                )
+            sugars.append(sugar)
+        return tuple(sugars)
 
     def _construct_sugar(self):
         # A walrus in the element or a condition constructs: it writes its
@@ -23679,6 +23784,9 @@ class SetComp(Expression):
         )
         if elements is None or len(elements) > For._UNROLL_FUEL:
             return None
+        elements, members = ListComp._members_evaluated_first(
+            self, iterable, elements, scope
+        )
         results = []
         seen = set()
         for element in elements:
@@ -23702,7 +23810,12 @@ class SetComp(Expression):
                 seen.add(key)
                 results.append(result)
         evaluations = ListComp._dissolved_iterable(
-            self, iterable, elements, (self.elt,) if not results else (), gen.ifs
+            self,
+            iterable,
+            elements,
+            (self.elt,) if not results else (),
+            gen.ifs,
+            members,
         )
         return SetComp._make_set(self, tuple(results), evaluations)
 
@@ -23799,6 +23912,9 @@ class DictComp(Expression):
         )
         if elements is None or len(elements) > For._UNROLL_FUEL:
             return None
+        elements, members = ListComp._members_evaluated_first(
+            self, iterable, elements, scope
+        )
         pairs = []
         key_indexes = {}
         for element in elements:
@@ -23833,6 +23949,7 @@ class DictComp(Expression):
             elements,
             (self.key, self.value) if not pairs else (),
             gen.ifs,
+            members,
         )
         return DictComp._make_dict(self, tuple(pairs), evaluations)
 
