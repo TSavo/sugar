@@ -61,8 +61,26 @@ def _source(tmp_path: Path, name: str, text: str):
     )
 
 
+def _reduce_every_function(source_file) -> None:
+    """Each function's outcome, through its one entrance.
+
+    ``function.sugar().desugar(None)`` is not a function's outcome: an
+    operation on a formal (``if c > 0``) waits for a caller's actual as a
+    deferred carrier, and nothing after it reduces until the carrier is
+    discharged. ``function_universe_outcome`` states the body as its own
+    proof does (``as_its_own_proof_states``), so every read after the test
+    reduces -- measuring desugar(None) alone counted no read at all."""
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    for function in source_file.functions():
+        try:
+            function_universe_outcome(function)
+        except BaseException:  # a refusal is not this module's subject
+            pass
+
+
 def _mint_count(monkeypatch, source_file) -> list[str]:
-    """Every `binding.projection` slot minted while desugaring the file."""
+    """Every `binding.projection` slot minted while reducing the file."""
     import sugar_lift_py_tests.sugar.guarded_binding_read_sugar as reader
 
     minted: list[str] = []
@@ -73,11 +91,7 @@ def _mint_count(monkeypatch, source_file) -> list[str]:
         return original(state)
 
     monkeypatch.setattr(reader, "_guarded_projection_faces", watched)
-    for function in source_file.functions():
-        try:
-            function.sugar().desugar(None)
-        except BaseException:  # a refusal is not this module's subject
-            pass
+    _reduce_every_function(source_file)
     return minted
 
 
@@ -339,11 +353,7 @@ def test_tripwire_b_the_join_itself_does_not_happen(tmp_path, monkeypatch) -> No
         "def caller(a, b):\n"
         "    return pick(a) + pick(b)\n",
     )
-    for function in source_file.functions():
-        try:
-            function.sugar().desugar(None)
-        except BaseException:
-            pass
+    _reduce_every_function(source_file)
 
     assert joins == [], f"two executions met over one slot: {joins}"
 
