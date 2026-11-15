@@ -394,13 +394,17 @@ def test_a_seek_off_the_board_door_leaf_is_refused_by_name(
 def test_functions_finds_both_the_contract_owner_and_the_enclosing_test(
     project: Path,
 ) -> None:
+    """Each ``def`` is named as its source names it. The module-qualified
+    spelling is the definition's one symbol, stated on its contract row
+    (``bridgeSourceSymbol``, see the universe scan below), never a second
+    spelling of the memento's name."""
     file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
     result = _enumerate("functions", project, at=file_memento)
     names = sorted(
         n["memento"].get("function_name") or n["memento"].get("source_function_name")
         for n in result["nodes"]
     )
-    assert names == ["mathy.add", "test_add"]
+    assert names == ["add", "test_add"]
 
 
 CALLING_SOURCE = """\
@@ -735,25 +739,45 @@ def test_enumerate_empty_file_is_an_empty_level_not_an_error(project) -> None:
     assert response["result"]["nodes"] == []
 
 
+def _function_contracts(nodes) -> list:
+    """The function-contract rows of a universe scan.
+
+    A function is one contract row (#7766). The other rows a scan states are
+    ``undecided`` members (a call or operation nothing here answers, a
+    function refused by name) and a class's ancestry; none of them is a
+    second row for a function."""
+    return [
+        node
+        for node in nodes
+        if (node["audit"] or {}).get("kind") == "function-contract"
+    ]
+
+
 def test_universe_scan_lists_function_contract_rows(project: Path) -> None:
-    """File-level universe scan surfaces batch function-contract names."""
+    """File-level universe scan: one function-contract row per function, named
+    as its ``def`` is and stating the definition's one symbol."""
     file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
     result = _enumerate("universe", project, at=file_memento, seek=False)
-    names = sorted(
-        (n["audit"] or {}).get("name")
-        or n["memento"].get("name")
-        or n["memento"].get("function_name")
-        for n in result["nodes"]
+    contracts = sorted(
+        (node["audit"]["name"], node["audit"].get("bridgeSourceSymbol"))
+        for node in _function_contracts(result["nodes"])
     )
-    assert names == ["mathy.add"]
+    assert contracts == [
+        ("add", "python:mathy.add"),
+        ("test_add", "python:mathy.test_add"),
+    ]
     assert result["gaps"] == []
 
 
 def test_full_tree_universe_rows_come_only_from_the_one_reduction(
     tmp_path: Path,
 ) -> None:
-    """No second lifter adds rows (#7767): no panicLoci, no classShapes, and no
-    `pre = true` carrier for a body whose reduction is not a set of arms."""
+    """No second lifter adds rows (#7767): no classShapes, and no `pre = true`
+    carrier for a body whose reduction is not a set of arms. A ``panicLoci``
+    entry is a halted arm of the function's one reduction (#7766: a halt is
+    never dropped), in the one panic-locus shape, and nothing else."""
+    from sugar_lift_py_tests.kit_rpc.body_universe_dto import RUNTIME_FAILURE_SITE
+
     source = (
         resolve_repo_root()
         / "examples/numpy-attribute-safety-showcase/good/src/numpy_box.py"
@@ -765,7 +789,10 @@ def test_full_tree_universe_rows_come_only_from_the_one_reduction(
     audits = [node["audit"] or {} for node in result["nodes"]]
 
     for row in audits:
-        assert "panicLoci" not in row, row
+        for locus in row.get("panicLoci", ()):
+            assert row["kind"] == "function-contract", row
+            assert locus["callee"] == RUNTIME_FAILURE_SITE, locus
+            assert set(locus) <= {"callee", "file", "line", "argTerm", "guard"}, locus
         assert "classShapes" not in row, row
         provenance = row.get("proofirProvenance") or {}
         assert provenance.get("nodeClass") != "SourceSidecarCarrier", row
@@ -801,13 +828,18 @@ def test_callable_universe_identity_uses_content_and_qualified_spelling(
 
     def identity(file_name: str):
         nodes = _enumerate("universe", tmp_path, at=files[file_name])["nodes"]
-        assert len(nodes) == 1, nodes
-        memento = nodes[0]["memento"]
+        # One contract row for the one function. ``a + b`` over two formals
+        # waits on a caller's actuals, so the scan also states it as an
+        # ``undecided`` member: the only other row kind here.
+        (contract,) = _function_contracts(nodes)
+        assert all(
+            node["audit"]["kind"] == "undecided"
+            for node in nodes
+            if node is not contract
+        ), nodes
         return (
-            memento["source_cid"],
-            memento.get("function_name")
-            or memento.get("source_function_name")
-            or memento.get("sourceFunctionName"),
+            contract["memento"]["source_cid"],
+            contract["audit"]["bridgeSourceSymbol"],
         )
 
     module_a_once = identity("module_a.py")
@@ -816,5 +848,6 @@ def test_callable_universe_identity_uses_content_and_qualified_spelling(
 
     assert module_a_once != module_b_once
     assert module_a_once == module_a_twice
-    assert module_a_once[1] == "module_a.add"
-    assert module_b_once[1] == "module_b.add"
+    # The qualified spelling is the definition's one symbol.
+    assert module_a_once[1] == "python:module_a.add"
+    assert module_b_once[1] == "python:module_b.add"
