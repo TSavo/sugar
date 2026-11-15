@@ -19,7 +19,9 @@ from sugar_lift_py_tests.kit_rpc import (
     SourceMementoDto,
     SourceSpanDto,
 )
-from sugar_lift_py_tests.effect import RuntimeEffect
+from sugar_lift_py_tests.effect import RuntimeEffect, SubscriptStoreRuntimeEffect
+from sugar_lift_py_tests.effect.runtime_effect import runtime_effect_evidence
+from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.proofir import (
     ClaimFormula,
     ConstructionSite,
@@ -61,7 +63,30 @@ def _claim_formula_from_payload(payload: dict[str, object]) -> ClaimFormula:
     return wrapped
 
 
-def test_python_dtos_emit_rpc_report_shapes() -> None:
+def _named_runtime_effect(tmp_path, reason: str) -> RuntimeEffect:
+    """A runtime effect as a floor builds one: a named kind, through the one
+    evidence bundle, at a real source fragment, over an operand no lift
+    decides.  A bare ``RuntimeEffect(reason)`` is unrepresentable."""
+    from sugar_lift_python_source.source_oracle import workspace_path_source
+    from sugar_source_tree.tree import SourceFile
+
+    path = tmp_path / "encoder.py"
+    path.write_text("def store(xs, i, v):\n    xs[i] = v\n")
+    function = next(
+        SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()
+    )
+    site = function.body[0].fragment
+    return SubscriptStoreRuntimeEffect(
+        reason, **runtime_effect_evidence("py.setitem", make_var("i"), site)
+    )
+
+
+def test_a_generic_runtime_effect_is_unrepresentable() -> None:
+    with pytest.raises(TypeError):
+        RuntimeEffect("write more floor for this effect")  # type: ignore[abstract,call-arg]
+
+
+def test_python_dtos_emit_rpc_report_shapes(tmp_path) -> None:
     source = _source_memento()
     fact_source = SourceMementoDto(
         file="test_encoder.py",
@@ -112,7 +137,7 @@ def test_python_dtos_emit_rpc_report_shapes() -> None:
     )
     effect = EffectDto(
         name="python.red.effect",
-        effect=RuntimeEffect("write more floor for this effect"),
+        effect=_named_runtime_effect(tmp_path, "write more floor for this effect"),
         source_memento=source,
     )
     implication = ImplicationDto(
