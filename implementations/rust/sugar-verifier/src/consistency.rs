@@ -11475,9 +11475,13 @@ mod tests {
         assert_eq!(report.owed, 1, "the unanswered call is owed");
     }
 
-    /// `def f(x): return x == 1`-shaped: f's post reads an owed `==` at its
-    /// own site (a member with no symbol). `decided` states the operation's
-    /// completes atom in the post itself, so the joined post decides it.
+    /// `def f(x): return x.a == 1`-shaped: f's post reads an owed `==` at its
+    /// own site (a member with no symbol). Its left operand, `x.a`, is a value
+    /// whose builtin type nothing states, so binding `x` to the actual `3`
+    /// leaves the comparison open: Python decides `3 == 1` itself (the SMT
+    /// backend writes `==` over two `int`s as completing), but not `x.a == 1`.
+    /// `decided` states the operation's completes atom in the post itself, so
+    /// the joined post decides it.
     fn f_reads_owed_operation_pool(rhs: i64, decided: bool) -> (MementoPool, String) {
         let test_site = answered_site(4, 12);
         let test_site_cid = undecided_site_coordinate_cid(&test_site);
@@ -11486,13 +11490,18 @@ mod tests {
         let mut pool = MementoPool::default();
         insert_unanswered(&mut pool, Some("python:m.f"), test_site);
         let compare_member = insert_unanswered(&mut pool, None, compare_site);
+        let x_a = json!({
+            "kind": "ctor",
+            "name": "python:attribute",
+            "args": [var("x"), str_const("a")]
+        });
         let completes = json!({
             "kind": "atomic",
             "name": "python:compare.completes",
             "args": [{
                 "kind": "ctor",
                 "name": "python:compare",
-                "args": [str_const("Eq"), var("x"), int(1), str_const(&compare_key)]
+                "args": [str_const("Eq"), x_a, int(1), str_const(&compare_key)]
             }]
         });
         let guarded = json!({
