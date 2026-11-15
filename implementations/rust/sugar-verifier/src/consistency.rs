@@ -4207,6 +4207,25 @@ pub(crate) fn call_argument_formals(
     formals: &[String],
     args: &[Json],
 ) -> Option<Vec<(String, Json)>> {
+    read_call_arguments(formals, args).map(|read| read.supplied)
+}
+
+/// A call's arguments read against a contract's formals
+/// (`call_argument_formals`, the one reading).
+struct CallArguments {
+    /// Each formal with what the call supplies for it.
+    supplied: Vec<(String, Json)>,
+    /// Each argument key a `py.class` names (a position in decimal digits,
+    /// or a keyword) paired with the parameter the argument it names binds,
+    /// where the contract takes that parameter's `class:<parameter>` input:
+    /// the caller names that operand by its key, the contract by the
+    /// parameter (#7757 step 7).
+    keyed: Vec<(String, String)>,
+}
+
+/// The reading `call_argument_formals` documents, with the argument key of
+/// each class it supplies (`CallArguments::keyed`).
+fn read_call_arguments(formals: &[String], args: &[Json]) -> Option<CallArguments> {
     let parameters: Vec<&str> = formals
         .iter()
         .map(String::as_str)
@@ -4338,7 +4357,12 @@ pub(crate) fn call_argument_formals(
     let dict = json!({"kind": "ctor", "name": PYTHON_DICT_DISPLAY, "args": entries});
     let takes_keyword = !packed_keyword.is_empty();
     supply_variadic(double_name, dict, takes_keyword, &mut seen, &mut supplied)?;
+    let mut keyed: Vec<(String, String)> = Vec::new();
     for (key, class) in classes {
+        let spelled = match &key {
+            ClassKey::Position(position) => position.to_string(),
+            ClassKey::Keyword(name) => name.clone(),
+        };
         let parameter = match key {
             ClassKey::Position(_) if spread => return None,
             ClassKey::Position(position) if position < positional => {
@@ -4364,8 +4388,9 @@ pub(crate) fn call_argument_formals(
             return None;
         }
         supplied.push((formal, class));
+        keyed.push((spelled, parameter));
     }
-    Some(supplied)
+    Some(CallArguments { supplied, keyed })
 }
 
 /// The value a contract states for each `global:<name>` input it decides
@@ -4420,13 +4445,28 @@ pub(crate) fn bind_call_arguments(
     stated: &[(String, Json)],
     args: &[Json],
 ) -> Option<Vec<(String, Json)>> {
+    bind_call(formals, stated, args).map(|call| call.bindings)
+}
+
+/// What the one binder binds at a call (`bind_call_arguments`).
+struct BoundCall {
+    /// Each formal bound to what the call supplies for it.
+    bindings: Vec<(String, Json)>,
+    /// Each argument key the call names an operand by, with the parameter
+    /// that operand binds (`CallArguments::keyed`).
+    keyed: Vec<(String, String)>,
+}
+
+/// The one binder (`bind_call_arguments`), with the argument key of each
+/// operand whose class the call supplies (`BoundCall::keyed`).
+fn bind_call(formals: &[String], stated: &[(String, Json)], args: &[Json]) -> Option<BoundCall> {
     let parameters: Vec<&str> = formals
         .iter()
         .map(String::as_str)
         .filter(|formal| !is_contract_input(formal))
         .collect();
-    let mut bound: std::collections::BTreeMap<String, Json> =
-        call_argument_formals(formals, args)?.into_iter().collect();
+    let CallArguments { supplied, keyed } = read_call_arguments(formals, args)?;
+    let mut bound: std::collections::BTreeMap<String, Json> = supplied.into_iter().collect();
     for (formal, value) in stated {
         if formals.contains(formal) && !bound.contains_key(formal) {
             bound.insert(formal.clone(), value.clone());
@@ -4456,7 +4496,41 @@ pub(crate) fn bind_call_arguments(
         bindings.push(((*parameter).to_string(), actual));
     }
     bindings.extend(bound);
-    Some(bindings)
+    Some(BoundCall { bindings, keyed })
+}
+
+/// `python:after(<out>, "<key>") = python:after(<out>, "<parameter>")` for
+/// each operand a call names by its argument key (`BoundCall::keyed`) where
+/// the key is not the parameter's own name (#7757 step 7).
+///
+/// A callee's contract states what it leaves in an operand over the
+/// parameter that operand binds (`python:after(out, "<param>")`). A caller
+/// that knows the callee's signature names it by that parameter (a call of a
+/// same-file `def`, the kit's `lambda_callable._after_labels`); a caller that
+/// does not -- a dispatched call (`call:dispatch:<m>`), whose function is
+/// chosen here, and a call whose receiver the call form passes implicitly
+/// (`super().m()`) -- names it by the argument key its class rides under
+/// (`py.class("0", ...)`, `DISPATCH_RECEIVER_LABEL`). Both name one object
+/// as the call left it, so the instance states them equal, and the caller's
+/// read is the contract's term. Only for arguments bound as they stand
+/// (`DispatchReceiver::AsCalled`): a `staticmethod` or `classmethod`
+/// dispatch rebinds the positions the keys count, and a key there names no
+/// parameter the caller's operand binds.
+fn argument_key_aliases(out: &str, keyed: &[(String, String)]) -> Vec<Json> {
+    let after = |label: &str| {
+        json!({
+            "kind": "ctor",
+            "name": PYTHON_AFTER,
+            "args": [{"kind": "var", "name": out}, string_const_term(label)],
+        })
+    };
+    keyed
+        .iter()
+        .filter(|(key, parameter)| key != parameter)
+        .map(|(key, parameter)| {
+            json!({"kind": "atomic", "name": "=", "args": [after(key), after(parameter)]})
+        })
+        .collect()
 }
 
 /// A function's own row bound through the one binder with no caller (step
@@ -7146,8 +7220,8 @@ fn linked_ambient_post_instances_for_inv(
             // parameters and inputs (step 4): one binder for every call. A
             // dispatched answer binds them as the kind of function it
             // resolved to takes them (`post_arguments`, step 8).
-            let Some(bindings) = post_arguments(post, args).and_then(|args| {
-                bind_call_arguments(&post.binding.formals, &post.binding.stated_inputs, &args)
+            let Some(BoundCall { bindings, keyed }) = post_arguments(post, args).and_then(|args| {
+                bind_call(&post.binding.formals, &post.binding.stated_inputs, &args)
             }) else {
                 dropped.push(DroppedAmbientPost {
                     source_symbol: post.binding.source_symbol.clone(),
@@ -7220,6 +7294,17 @@ fn linked_ambient_post_instances_for_inv(
                 ])
                 .to_value()
             };
+            // An operand the caller names by its argument key is the object
+            // the contract names by the parameter it binds (step 7): the
+            // binder's own pairing, for arguments bound as they stand.
+            if post.receiver == DispatchReceiver::AsCalled {
+                let aliases = argument_key_aliases(&post.binding.out_binding, &keyed);
+                if !aliases.is_empty() {
+                    let mut conjuncts = vec![instance];
+                    conjuncts.extend(aliases);
+                    instance = IrFormula::And(conjuncts).to_value();
+                }
+            }
             instance = substitute_call_bindings(&instance, &bindings);
             instance = crate::instantiate::substitute_formula_pub(
                 &instance,
@@ -14355,6 +14440,47 @@ mod tests {
             &[var("b"), named_arg("py.class", "1", class)]
         )
         .is_none());
+    }
+
+    #[test]
+    fn an_operand_named_by_its_argument_key_is_the_parameter_it_binds() {
+        // Step 7: the binder pairs each `py.class` key with the parameter the
+        // argument it names binds, where the contract takes that class input;
+        // the caller of a dispatched call names its receiver `"0"`, the
+        // method's contract names it `self`.
+        let contract = formals(&["self", "k", "class:self", "class:k"]);
+        let class = instance("python:m.Box", &[]);
+        let bound = bind_call(
+            &contract,
+            &[],
+            &[
+                var("b"),
+                named_arg("py.kwarg", "k", var("c")),
+                named_arg("py.class", "0", class.clone()),
+                named_arg("py.class", "k", class.clone()),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            bound.keyed,
+            vec![("0".to_string(), "self".to_string()), ("k".to_string(), "k".to_string())]
+        );
+        // One equation per key that is not the parameter's own name.
+        let after = |label: &str| {
+            json!({"kind": "ctor", "name": PYTHON_AFTER, "args": [var("out"), string_const(label)]})
+        };
+        assert_eq!(
+            argument_key_aliases("out", &bound.keyed),
+            vec![json!({"kind": "atomic", "name": "=", "args": [after("0"), after("self")]})]
+        );
+        // No class input, no pairing: nothing is named by a key.
+        let bare = bind_call(
+            &formals(&["self", "k"]),
+            &[],
+            &[var("b"), int(4), named_arg("py.class", "0", class)],
+        )
+        .unwrap();
+        assert!(bare.keyed.is_empty());
     }
 
     fn namespace(mro: &[&str], binds: &[(&str, &str, &str)]) -> ClassNamespace {
