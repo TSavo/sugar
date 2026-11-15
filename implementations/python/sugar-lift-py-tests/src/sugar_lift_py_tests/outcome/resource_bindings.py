@@ -34,20 +34,29 @@ class ManagerBinding:
 
 @dataclass(frozen=True)
 class EnterResultBinding:
-    """Slot E is authenticated by the completed ``__enter__`` result."""
+    """Slot E is authenticated by the completed ``__enter__`` result.
+
+    The fact is stated on the one term the body reads ``as x`` through: the
+    slot's coordinate (``EffectCoordinate``, ``python:effect_slot(E)``).  A
+    fact on any other name for the slot binds nothing the body reads, so a
+    claim on ``x`` would be decided over a free value.
+    """
 
     slot_id: str
     enter_value: object  # FloorValue
 
     def to_facts(self, site=None) -> tuple:
+        from sugar_lift_py_tests.floor.effect_coordinate import EffectCoordinate
         from sugar_lift_py_tests.floor.inv_value import InvValue
-        from sugar_lift_py_tests.ir import ctor, eq, str_const
+        from sugar_lift_py_tests.ir import eq
 
-        slot = str_const(self.slot_id)
+        slot = EffectCoordinate(slot_id=self.slot_id).to_term(
+            owner="EnterResultBinding"
+        )
         term = self.enter_value.to_term(owner="EnterResultBinding")
         return (
             InvValue(
-                eq(ctor("enter_result_value", [slot]), term),
+                eq(slot, term),
                 site=site,
             ),
         )

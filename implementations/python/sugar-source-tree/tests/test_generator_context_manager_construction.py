@@ -63,7 +63,7 @@ def test_renamed_generator_manager_enters_at_first_yield_without_name_authority(
     value = outcome.completed_value()
     assert value is not None
     assert value.statements[0].formula == eq(
-        ctor("enter_result_value", [str_const(sugar.enter_slot_id)]), num(7)
+        ctor("python:effect_slot", [str_const(sugar.enter_slot_id)]), num(7)
     )
 
 
@@ -143,7 +143,7 @@ def test_contextmanager_style_try_finally_resumes_cleanup_before_termination():
     value = outcome.completed_value()
     assert value is not None
     assert value.statements[0].formula == eq(
-        ctor("enter_result_value", [str_const(sugar.enter_slot_id)]), num(7)
+        ctor("python:effect_slot", [str_const(sugar.enter_slot_id)]), num(7)
     )
 
 
@@ -161,7 +161,7 @@ def test_docstring_is_stepped_and_is_never_the_blocker():
     value = outcome.completed_value()
     assert value is not None
     assert value.statements[0].formula == eq(
-        ctor("enter_result_value", [str_const(sugar.enter_slot_id)]), num(7)
+        ctor("python:effect_slot", [str_const(sugar.enter_slot_id)]), num(7)
     )
 
 
@@ -173,7 +173,7 @@ def test_term_step_executes_a_call_expression_before_yield():
     value = outcome.completed_value()
     assert value is not None
     assert value.statements[0].formula == eq(
-        ctor("enter_result_value", [str_const(sugar.enter_slot_id)]), num(7)
+        ctor("python:effect_slot", [str_const(sugar.enter_slot_id)]), num(7)
     )
 
 
@@ -185,7 +185,7 @@ def test_assign_step_executes_a_name_binding_before_yield():
     value = outcome.completed_value()
     assert value is not None
     assert value.statements[0].formula == eq(
-        ctor("enter_result_value", [str_const(sugar.enter_slot_id)]), num(7)
+        ctor("python:effect_slot", [str_const(sugar.enter_slot_id)]), num(7)
     )
 
 
