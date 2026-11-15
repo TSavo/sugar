@@ -1,4 +1,9 @@
-"""The source ``If`` producer must supply one condition-owned result slot."""
+"""The source ``If`` producer must supply one condition-owned result slot.
+
+An undecided condition is read off a function's formals: a module-level read
+of a name nothing binds is Python's ``NameError`` at the condition, which the
+lifter answers, so a condition over free module names never reaches its
+branches at all."""
 
 from __future__ import annotations
 
@@ -28,17 +33,41 @@ def _two_ifs() -> tuple[If, If]:
     branches = tuple(
         node
         for node in _tree(
-            "if left is right:\n"
-            "    assert left is right\n"
-            "else:\n"
-            "    assert left is not right\n"
-            "if nearby:\n"
-            "    pass\n"
+            "def decide(left, right, nearby):\n"
+            "    if left is right:\n"
+            "        assert left is right\n"
+            "    else:\n"
+            "        assert left is not right\n"
+            "    if nearby:\n"
+            "        pass\n"
         ).nodes()
         if isinstance(node, If)
     )
     assert len(branches) == 2
     return branches
+
+
+def test_a_condition_over_free_module_names_is_python_s_name_error() -> None:
+    """Nothing binds ``left`` at module level: Python raises ``NameError`` at
+    the condition, before either branch runs, and so does the lifter."""
+    branch = next(
+        node
+        for node in _tree(
+            "if left is right:\n"
+            "    assert left is right\n"
+            "else:\n"
+            "    assert left is not right\n"
+        ).nodes()
+        if isinstance(node, If)
+    )
+
+    outcome = branch.sugar().desugar(None)
+
+    assert outcome.completed_value() is None
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert halt.effect.exception_name == "NameError"
+    assert halt.effect.name == "left"
 
 
 def test_raw_source_if_routes_through_one_condition_owned_slot() -> None:
@@ -63,10 +92,11 @@ def test_renamed_raw_source_if_uses_its_exact_condition_slot() -> None:
     branch = next(
         node
         for node in _tree(
-            "if renamed is sentinel:\n"
-            "    assert renamed is sentinel\n"
-            "else:\n"
-            "    assert renamed is not sentinel\n"
+            "def decide(renamed, sentinel):\n"
+            "    if renamed is sentinel:\n"
+            "        assert renamed is sentinel\n"
+            "    else:\n"
+            "        assert renamed is not sentinel\n"
         ).nodes()
         if isinstance(node, If)
     )
@@ -127,7 +157,7 @@ def test_nearby_condition_slot_is_rejected_at_the_if_occurrence() -> None:
     message = str(raised.value)
     assert "If._construct_sugar" in message
     assert "branch-result slot" in message
-    assert "if-construct-slot.py:1:0" in message
+    assert "if-construct-slot.py:2:4" in message
 
 
 def test_condition_halt_bypasses_both_if_bodies() -> None:
@@ -222,14 +252,15 @@ def test_identical_condition_spellings_at_distinct_ifs_do_not_share_slots() -> N
     branches = tuple(
         node
         for node in _tree(
-            "if left is right:\n"
-            "    assert left is right\n"
-            "else:\n"
-            "    assert left is not right\n"
-            "if left is right:\n"
-            "    assert left is right\n"
-            "else:\n"
-            "    assert left is not right\n"
+            "def decide(left, right):\n"
+            "    if left is right:\n"
+            "        assert left is right\n"
+            "    else:\n"
+            "        assert left is not right\n"
+            "    if left is right:\n"
+            "        assert left is right\n"
+            "    else:\n"
+            "        assert left is not right\n"
         ).nodes()
         if isinstance(node, If)
     )
