@@ -1612,6 +1612,76 @@ def _stores_only_on(statements, name: str, *, top: bool = True) -> bool:
     return True
 
 
+def _exit_reads(definition, start: BindingMap, final: BindingMap) -> tuple:
+    """``((label, read sugar, keys), ...)``: the read, where ``definition``'s
+    body ends, of each object its frame shares with a caller that the body
+    changed -- each formal (``actual:<index>``), each closure cell it reads
+    or declares ``nonlocal`` (``cell:<name>``), each module global it reads
+    (``global:<name>``) -- in ``final``, the scope its threading left after
+    the body (``FunctionDef._substitute_body_to_end``); ``start`` is the
+    frame's scope (each formal and cell its coordinate read).  ``keys`` are
+    the evaluations the read reads through
+    (``container_mutation.exit_read_keys``).
+
+    The body reduces each read where each arm leaves it, completed or
+    halted, and the call carries the values out: the one projection of what
+    a callee did to what its caller sees
+    (``call_site_value.caller_visible_values``).  Only a body every path
+    through which is the threading's (``_straight_line_helper``: no loop, no
+    early ``return``, guards that only raise), so a read after its last
+    statement is the object as every completed arm leaves it; a caller
+    follows no other (``container_mutation.source_helper_actual_states``).
+    A changed object is one a caller follows as changed: a state of the same
+    object through the one door or a nested call's carried value
+    (``_changed_state``), or a cell the body declares ``nonlocal`` and
+    rebinds.
+    """
+    from .container_mutation import (
+        _MUTATED_BINDINGS,
+        _changed_state,
+        _free_names,
+        _read_of,
+        _same_read,
+        _state,
+        _straight_line_helper,
+        exit_read_keys,
+    )
+
+    if not _straight_line_helper(definition):
+        return ()
+    references = definition._module_global_references()
+    start = {**start, **references}
+    captured, _coordinates = definition._captured_bindings()
+    declared = {name for name, nonlocal_ in _free_names(definition) if nonlocal_}
+    named = (
+        *(
+            (f"actual:{index}", param.name)
+            for index, param in enumerate(definition.params)
+        ),
+        *((f"cell:{name}", name) for name in captured),
+        *((f"global:{name}", name) for name in sorted(references)),
+    )
+    reads = []
+    for label, name in named:
+        if name not in final or name not in start or final[name] is start[name]:
+            continue
+        entry = _state(start[name])
+        written = _read_of(final[name])
+        rebound = (
+            name in declared
+            and written is not None
+            and getattr(written, "kind", None) not in _MUTATED_BINDINGS
+            and not _same_read(written, entry)
+        )
+        if not rebound and _changed_state(_state(final[name]), entry) is not True:
+            continue
+        read = _name_read(definition, name, final)
+        if read is None:
+            continue
+        reads.append((label, read.sugar(), exit_read_keys(read)))
+    return tuple(reads)
+
+
 def _first_formal_stated_by_stores(definition, start: BindingMap, final: BindingMap):
     """Whether every effect ``definition``'s body has on the object its first
     formal binds is one of its field stores on that formal (``self.x = v``),
@@ -9765,6 +9835,11 @@ class FunctionDef(Statement):
                 )
             ),
             self.fragment,
+            exit_reads=(
+                ()
+                if generator_steps is not None
+                else _exit_reads(self, formal_scope, final)
+            ),
         )
         return SourceVisibleCallFrameV1(
             source_identity_cid=self.unit.source_cid,
@@ -9822,9 +9897,9 @@ class FunctionDef(Statement):
         the coordinate (``CallSiteSugar._captured_values``).  The name itself
         is never read.  A ``nonlocal`` name the body writes is read so too:
         its writes rebind it in the frame, and the caller reads the cell
-        after the call through the write's key
-        (``container_mutation.source_helper_actual_states``), or as unknown
-        where the call is not followed (``_ambient_targets``).
+        after the call as the value the call carried out of the frame for it
+        (``_exit_reads``, ``container_mutation.source_helper_actual_states``),
+        or as unknown where the call is not followed (``_ambient_targets``).
         ``__class__`` (the cell a class body gives a method that uses
         ``super()``) is the class's, not an enclosing function's local, and
         is not captured here."""
@@ -19123,7 +19198,7 @@ class Try(Statement):
         it changes is unknown at its halt, never the state it began with."""
         if post is None:
             return net
-        from .container_mutation import _havoc, _read_of
+        from .container_mutation import _havoc, _read_of, at_halt_read
         from .shadow import occurrence_tags_of
 
         compound = getattr(statement, "kind", None) in self._COMPOUND_KINDS
@@ -19142,19 +19217,19 @@ class Try(Statement):
             kind = getattr(state, "kind", None)
             # A value the call met decides it (``ReceiverAfterCall`` with
             # rules): whatever it decides after the call, it decides at a
-            # halt inside it too.  An object a source helper changed whose
-            # state holds at every halt inside the call and nothing the
-            # statement evaluates before the call may halt
-            # (``container_mutation.source_helper_actual_states``,
-            # ``_halts_before``) is that state at the halt, as on the
-            # completed path: what the callee did to the caller's object
-            # before it raised is not rolled back.  Otherwise unknown.
+            # halt inside it too.  An object a followed source helper
+            # changed is read at the halt through the call's key
+            # (``container_mutation.at_halt_read``): what the call carried
+            # on the arm it left by, halted or completed -- what the callee
+            # did to the caller's object before it raised is not rolled
+            # back -- and the object as the statement found it where the
+            # halt's record holds no such key, the call never having run.
+            # Otherwise unknown.
             decided = kind == "ReceiverAfterCall" and getattr(state, "rules", None)
-            holds = (
-                kind == "SourceCallActualAfter"
-                and getattr(state, "holds_at_halt", False) is True
-            )
-            kept = decided or holds
+            carried = kind == "SourceCallActualAfter"
+            if carried:
+                state = at_halt_read(statement, state, tags)
+            kept = decided or carried
             if compound:
                 # An ``if`` binds what its test's calls changed before either
                 # branch (``container_mutation.thread_header``), and a name a
@@ -22441,6 +22516,49 @@ class Compare(Expression):
         return ChainedCompareSugar(values=pairs, site=self.fragment)
 
 
+def carried_evaluation(call) -> str:
+    """The key a call carries what its callee did to the objects its caller
+    shares under (``call_site_value.caller_visible_values``): each object's
+    value under its label's projection of it (``projection_key``), which a
+    name of the caller reads after the call
+    (``container_mutation._actual_after``).
+
+    Minted as a statement's evaluation is (``Statement._evaluation_key``):
+    the call's source occurrence, and the loop iterations and exit path its
+    copy was substituted for, which its substitution records on it
+    (``_carrying_its_evaluation``).  One function of the call node, read
+    alike by the caller's threading and by the call at reduce (its site's
+    node), so both name one key."""
+    recorded = getattr(call, "carried_evaluation", None)
+    if isinstance(recorded, str):
+        return recorded
+    return call._evaluation_key({})
+
+
+def _carrying_its_evaluation(scope, call):
+    """``call`` recording its key (``carried_evaluation``) where ``scope``
+    substitutes a copy of it -- a loop iteration's, a ``finally``'s on one
+    exit path -- whose key its source occurrence alone does not name: each
+    copy is its own evaluation, as each copy of a statement is.  A call by
+    name with positional actuals only, the one a caller's threading follows
+    (``container_mutation.source_helper_actual_states``); ``call`` itself
+    otherwise."""
+    if not (
+        isinstance(call, Call)
+        and isinstance(call.func, Name)
+        and not call.keywords
+        and not any(isinstance(arg, Starred) for arg in call.args)
+        and (scope.get(_EVALUATION_OCCURRENCE) or scope.get(_EVALUATION_EXIT_PATH))
+    ):
+        return call
+    key = call._evaluation_key(scope)
+    if getattr(call, "carried_evaluation", None) == key:
+        return call
+    from .shadow import rewrite_with_leaves
+
+    return rewrite_with_leaves(call, {"carried_evaluation": key})
+
+
 class Call(Expression):
     # A call on ``self`` evaluated in place (``_call_on_self_in_place``)
     # binds its pair under a key minted exactly as a statement's (and a
@@ -22462,6 +22580,7 @@ class Call(Expression):
 
             rewritten = rewrite_with_leaves(rewritten, {"closure_cells": cells})
         rewritten = self._carry_argument_cells(scope, rewritten)
+        rewritten = _carrying_its_evaluation(scope, rewritten)
         if (
             rewritten is not self
             and isinstance(rewritten, Call)
@@ -22523,8 +22642,9 @@ class Call(Expression):
 
         A ``nonlocal`` name is carried as a read one is: the body reads the
         cell's binding at the call through its coordinate and writes it in
-        its frame; what the caller reads after the call is the caller's
-        threading (``container_mutation.source_helper_actual_states``).
+        its frame; what the caller reads after the call is the value the call
+        carries out of the frame for it (``_exit_reads``,
+        ``container_mutation.source_helper_actual_states``).
         Empty when a read name has no value binding here (unbound, or bound
         to a definition or an import).  Empty, too, when this scope's binding of a
         read name is not the cell's: a lambda reached in another function (a
@@ -24636,12 +24756,18 @@ class ReceiverAfterCall(Expression):
 
 
 class SourceCallActualAfter(Expression):
-    """An actual's object after a source helper's cited stores on it."""
+    """An object a followed source callee shares with its caller, read after
+    the call: the value the call carried out of the callee's frame under
+    ``evaluation`` (``container_mutation._actual_after``,
+    ``call_site_value.caller_visible_values``).  ``prior`` is the caller's
+    read of the object before the call; ``at_halt`` reads it where the key
+    is unbound (``container_mutation.at_halt_read``)."""
 
-    state: Expression
+    evaluation: str
     label: str
     occurrence: str
-    _child_fields = ("state",)
+    prior: Expression
+    _child_fields = ("prior",)
 
     def substitute(self, scope):
         del scope
@@ -24652,10 +24778,12 @@ class SourceCallActualAfter(Expression):
             SourceCallActualAfterSugar,
         )
 
+        at_halt = getattr(self, "at_halt", None) is True
         return SourceCallActualAfterSugar(
-            state=self.state.sugar(),
+            evaluation=self.evaluation,
             label=self.label,
             site=self.fragment,
+            prior=self.prior.sugar() if at_halt else None,
         )
 
 
