@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 import json
+import logging
 import subprocess
 
 
@@ -30,12 +31,22 @@ def _payload(source: Path, rel: str):
     from sugar_lift_py_tests.lift_rpc import tree_construction_context_for_workspace
 
     root = source.parent
-    return corpus_fatal_triage._child_payload(
-        source,
-        rel,
-        corpus_root=root,
-        construction_context=tree_construction_context_for_workspace(root),
-    )
+    try:
+        return corpus_fatal_triage._child_payload(
+            source,
+            rel,
+            corpus_root=root,
+            construction_context=tree_construction_context_for_workspace(root),
+        )
+    finally:
+        # ``_child_payload`` runs in the supervised worker process, where it
+        # switches logging off for good (``logging.disable(CRITICAL)``) unless
+        # progress logging is asked for.  Called in-process here, that switch
+        # outlived this test and silenced every later logger in the session:
+        # the engine live-log tests (``test_engine_logging``,
+        # ``test_floor_measurement_integrity``) read an empty sink whenever
+        # they shared a shard with this file.  Hand the process back as found.
+        logging.disable(logging.NOTSET)
 
 
 def test_unwritten_construction_is_counted_typed_gap_not_fatal_crash(
