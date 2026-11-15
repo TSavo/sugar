@@ -24274,11 +24274,20 @@ class Call(Expression):
             and not any(isinstance(arg, Starred) for arg in self.args)
         ):
             # typing.cast(typ, val) returns val unchanged
-            # (https://docs.python.org/3/library/typing.html#typing.cast), so
-            # the call constructs as its second operand: no call-site value
-            # ever carries a cast for a later reader to recognise by name.
+            # (https://docs.python.org/3/library/typing.html#typing.cast), but
+            # it is an ordinary call: Python evaluates ``typ`` there, then
+            # ``val``.  The call builds both and completes with ``val``'s
+            # value, every face of ``typ`` the call's (``TypingCastSugar``):
+            # no call-site value ever carries a cast for a later reader to
+            # recognise by name.
+            from sugar_lift_py_tests.sugar.typing_cast_sugar import TypingCastSugar
+
             self._discharge_callee_spelling()
-            return self.args[1].sugar()
+            return TypingCastSugar(
+                typ=self.args[0].sugar(),
+                value=self.args[1].sugar(),
+                site=self.fragment,
+            )
 
         # Either spread form selects the reference call coordinate. In
         # particular, a lone ``**d`` must not fall through to the legacy
