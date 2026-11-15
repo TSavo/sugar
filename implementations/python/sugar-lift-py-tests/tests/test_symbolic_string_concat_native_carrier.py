@@ -7,8 +7,8 @@ transitive stdlib (enum.py). Bare NameSugar desugar of a formal yields
 and aborted SourceFile open with functionsTotal=0 before any function walk.
 
 Formal-seated formals mint NativeOperationExitCarrierV1. A formal-less
-SymbolicValue + StringValue takes the one undecided binary law (two faces),
-which is also no SNW; the str + symbolic reverse still mints the carrier.
+SymbolicValue + StringValue, and the StringValue + SymbolicValue reverse, take
+the one undecided binary law (two faces), which is also no SNW.
 """
 
 from __future__ import annotations
@@ -58,13 +58,61 @@ def test_symbolic_plus_string_is_the_undecided_binary_law() -> None:
     ]
 
 
-def test_string_plus_symbolic_mints_native_operation_carrier() -> None:
+def test_string_plus_symbolic_is_the_undecided_binary_law() -> None:
+    """The reverse: a formal-less ``str + symbolic`` is the same law, never a
+    carrier with no coordinate (#7757: ``df["s" + end[:-4]]``)."""
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+
     site = _tiny_binop_site()
     left = StringValue(".")
     right = SymbolicValue(make_var("cls_name"))
+    assert right.formal_coordinate is None
+    outcome = left.add(right, site, None)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    assert any(isinstance(face, Completed) for face in outcome.exits)
+    halts = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert [face.effect.producer_node_owner for face in halts] == [
+        "UndecidedBinary:+"
+    ]
+
+
+def _formal(site, name: str):
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+    from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
+    from sugar_lift_py_tests.ir import PrimitiveSort
+
+    span = site.line_col_span
+    locus = SourceFragmentCoordinateV1(
+        site.source_cid,
+        span.start_line,
+        span.start_col,
+        span.end_line,
+        span.end_col,
+    )
+    return FormalParameterCoordinateV1.mint(
+        owner_source_identity_cid=locus.source_cid,
+        owner_definition_locus=locus,
+        declaration_locus=locus,
+        ordinal=0,
+        parameter_kind="positional-or-keyword",
+        declared_name=name,
+        sort=PrimitiveSort("Value"),
+    )
+
+
+def test_string_plus_a_parameter_mints_native_operation_carrier() -> None:
+    """A parameter operand is the one place the carrier stands: its caller's
+    actual fills the slot."""
+    site = _tiny_binop_site()
+    formal = _formal(site, "cls_name")
+    left = StringValue(".")
+    right = SymbolicValue(make_var("cls_name"), formal)
     outcome = left.add(right, site, None)
     assert isinstance(outcome, NativeOperationExitCarrierV1)
     assert outcome.demand.operator == "add"
+    assert outcome.coordinates == (None, formal)
 
 
 def test_symbolic_plus_int_is_the_undecided_binary_law() -> None:

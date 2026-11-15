@@ -74,16 +74,51 @@ def _with_bare_format_spec(node):
     )
 
 
-def test_fstring_concat_preserves_operands_in_native_operation_carrier():
-    """Do not restore the deleted ``.value`` false-completion expectation.
+def test_fstring_concat_keeps_its_faces_and_its_operands():
+    """``f"n={z}"`` is its faces, never a carrier that waits on no caller.
 
-    ``str + SymbolicValue`` deliberately stays pending until native-operation
-    discharge.  The carrier must retain the exact f-string operands instead of
-    fabricating the completed ``+`` term this test asserted before #7060.
+    The formatted part is ``format(z)``, not the parameter ``z``: no caller's
+    actual fills it, so nothing defers.  Its raise face is the format call's
+    own (``UnknownCallee:format``) and the join of two strings adds none.  The
+    completed face keeps both operands, the literal and the formatted value,
+    in ``python:fstring``; it does not fabricate the joined string (#7060).
+    A carrier minted here with no coordinate held every face beside it, and
+    no caller ever answered it (#7757).
     """
     outcome = _fn('def A(z):\n    return f"n={z}"\n').sugar().desugar()
+    assert not isinstance(outcome, NativeOperationExitCarrierV1), outcome
 
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    term = _post_term('def A(z):\n    return f"n={z}"\n')
+    assert term.name == "python:fstring"
+    left, right = term.args
+    assert type(left).__name__ == "_ConstStr" and left.value == "n="
+    assert right.name == "python:fstring_value"
+
+
+def test_string_plus_an_undecided_value_is_the_undecided_binary_law():
+    """``"n=" + z`` reduced with no context: ``z`` is an undecided value with
+    no formal, so no caller answers the operation.  It is the one undecided
+    binary law, a completed face and the ``UndecidedBinary:+`` halt, never a
+    carrier with no coordinate (#7757)."""
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
+
+    fn = _fn('def A(z):\n    return "n=" + z\n')
+    outcome = fn.body[0].value.sugar().desugar(None)
+
+    assert isinstance(outcome, ExitSet), type(outcome).__name__
+    assert any(isinstance(face, Completed) for face in outcome.exits)
+    assert [face.effect.producer_node_owner for face in outcome.halts()] == [
+        "UndecidedBinary:+"
+    ]
+
+
+def test_string_plus_a_parameter_is_the_native_operation_carrier():
+    """``"n=" + z`` with ``z`` the function's parameter: the caller's actual
+    decides it, so the operation is the ``add`` carrier, with the parameter's
+    coordinate in its slot and the exact operands."""
+    outcome = _fn('def A(z):\n    return "n=" + z\n').sugar().desugar()
+
+    assert isinstance(outcome, NativeOperationExitCarrierV1), outcome
     with pytest.raises(AttributeError, match="value"):
         _ = outcome.value
 
@@ -91,7 +126,8 @@ def test_fstring_concat_preserves_operands_in_native_operation_carrier():
     left, right = outcome.operands
     assert isinstance(left, StringValue) and left.value == "n="
     assert isinstance(right, SymbolicValue)
-    assert right.to_term(owner="f-string carrier tooth").name == "python:fstring_value"
+    assert right.formal_coordinate is not None
+    assert outcome.coordinates == (None, right.formal_coordinate)
 
 
 def test_fstring_with_only_a_literal_is_the_string():

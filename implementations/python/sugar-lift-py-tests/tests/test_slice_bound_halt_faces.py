@@ -96,6 +96,34 @@ def test_a_bound_that_adds_a_string_keeps_its_face(tmp_path: Path) -> None:
     assert owners == Counter({SUBSCRIPT: 1, BINARY_ADD: 1}), owners
 
 
+def test_a_string_plus_an_undecided_index_keeps_every_halt_face(
+    tmp_path: Path,
+) -> None:
+    """The reverse operand order: ``"s" + end[:-4]`` is ``StringValue.add``
+    over the undecided subscript result.  With no parameter in either
+    operand it is the one undecided binary law, so ``end[:-4]``'s halt, the
+    binary halt and ``df[...]``'s halt all reach the outcome, beside a
+    completed face; a carrier with no coordinate held all three."""
+    outcome = _returned_expression_outcome(
+        tmp_path,
+        'def f(df, end):\n    return df["s" + end[:-4]]\n',
+    )
+    owners = _halt_owners(outcome)
+    assert owners == Counter({SUBSCRIPT: 2, BINARY_ADD: 1}), owners
+    assert any(isinstance(face, Completed) for face in outcome.exits), (
+        "the read may also complete"
+    )
+
+
+def test_a_bound_that_prefixes_a_string_keeps_its_face(tmp_path: Path) -> None:
+    owners = _halt_owners(
+        _returned_expression_outcome(
+            tmp_path, 'def f(x, a, b):\n    return x[a : "s" + b]\n'
+        )
+    )
+    assert owners == Counter({SUBSCRIPT: 1, BINARY_ADD: 1}), owners
+
+
 def test_a_bound_that_subscripts_keeps_its_face(tmp_path: Path) -> None:
     owners = _halt_owners(
         _returned_expression_outcome(

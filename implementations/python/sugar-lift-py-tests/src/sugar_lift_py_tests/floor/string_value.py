@@ -436,11 +436,16 @@ class StringValue(GuardStableValue):
             # str; name concat without inventing the joined text.  Known by
             # the callee its minting site decided, never the spelling.
             return CallSiteValue.named_string_concat(self, other, site)
-        if type(other) is SymbolicValue:
-            # str + symbolic: same native-operation ExitSet carrier as
-            # SymbolicValue.add(StringValue). Do not re-enter as
-            # SymbolicValue(str_term).add(symbolic) — that pair SNWs and was
-            # the reverse face of enum.py:75-style materialize aborts.
+        if type(other) is SymbolicValue and other.formal_coordinate is not None:
+            # str + <parameter>: the caller's actual decides it, the same
+            # carrier SymbolicValue.add mints for <parameter> + str.  A
+            # symbolic with no formal has no slot a caller fills, so it is not
+            # deferred: it falls to the one undecided binary law below
+            # (``super().add`` -> ``_undecided_binary_law``), two faces, like
+            # every other undecided pair.  A carrier minted with no coordinate
+            # waited on a caller that never answers it, and every face
+            # composed beside it waited with it (``df["s" + end[:-4]]`` lost
+            # both subscript halts that way, #7757).
             from sugar_lift_py_tests.caller_parameter_contract import (
                 NativeOperationExitCarrierV1,
             )
@@ -449,7 +454,7 @@ class StringValue(GuardStableValue):
                 site=site,
                 operator="add",
                 operands=(self, other),
-                coordinates=(None, getattr(other, "formal_coordinate", None)),
+                coordinates=(None, other.formal_coordinate),
             )
         if type(other) is CallSiteValue and other.names_a_string():
             # "`" + type(exc).__name__ + "()" inside backquote. Do not wrap
