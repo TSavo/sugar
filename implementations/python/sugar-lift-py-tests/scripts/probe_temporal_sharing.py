@@ -46,7 +46,6 @@ def _construct(module_source: str, bound_s: float):
         row = consumer.measure_file_via_enumerate(
             workspace_root=root,
             file_rel="synth/subject.py",
-            contract_refs=None,
         )
         return row.get("terminalKind"), time.monotonic() - started
 

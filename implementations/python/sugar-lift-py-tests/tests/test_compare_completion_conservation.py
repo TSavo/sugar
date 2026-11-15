@@ -17,12 +17,10 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     attribute_body_probe,
     attribute_body_probes,
     discover_no_call_body_probes,
-    pull_shared_demand_table,
     require_expected_denominators,
+    with_demand_rows,
 )
 from sugar_lift_py_tests.outcome import ExitSet
-
-from sugar_lift_py_tests.repo_root import resolve_repo_root
 
 PREVIOUSLY_UNACCOUNTED = frozenset(
     {
@@ -88,12 +86,9 @@ def test_one_silent_compare_completion_is_row_level_red() -> None:
         attribute_body_probe(probe)
 
 
-def test_all_34_compare_completions_publish_authenticated_compare_exits(
-    tmp_path: Path,
-) -> None:
+def test_all_34_compare_completions_publish_authenticated_compare_exits() -> None:
     corpus = authenticated_pandas_corpus()
-    repo_root = resolve_repo_root()
-    payload = pull_shared_demand_table(repo_root, tmp_path / "demand-table.json")
+    payload = with_demand_rows(corpus.root)
     compare_inventory = require_expected_denominators(
         discover_no_call_body_probes(
             payload,

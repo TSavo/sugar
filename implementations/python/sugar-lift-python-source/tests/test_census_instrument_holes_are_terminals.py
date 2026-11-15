@@ -80,7 +80,6 @@ def _measure_seat(seat: str) -> dict[str, Any]:
     return _recensus_consumer().measure_file_via_enumerate(
         workspace_root=corpus,
         file_rel=seat,
-        contract_refs=None,
         source_workspace_root=locus_root,
     )
 

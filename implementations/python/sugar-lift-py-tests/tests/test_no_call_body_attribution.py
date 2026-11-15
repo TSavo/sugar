@@ -13,7 +13,6 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     AttributionInvariantError,
     BodyAttribution,
     BodyProbe,
-    DemandTableRefusal,
     DiscoveryDisposition,
     NamedDemandExclusion,
     ProducerFamily,
@@ -22,7 +21,6 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     discover_no_call_body_probes,
     require_expected_denominators,
     summarize_attribution_outcomes,
-    validate_shared_demand_table,
     _use_site_coordinate,
 )
 from sugar_lift_py_tests.outcome import ExitSet
@@ -361,40 +359,6 @@ def test_receiver_call_exceptional_exit_is_not_claimed_by_root_subscript() -> No
     assert body.family is ProducerFamily.SUBSCRIPT
     assert body.outcome is AttributionOutcome.AUTHENTICATED_EXIT
     assert body.detail == "Call"
-
-
-def _table_payload() -> dict:
-    return {
-        "contentKey": "blake3-512:" + "d" * 128,
-        "authentication": {
-            "python": "cpython-3.12.13",
-            "authenticatedCorpusManifestCid": CANONICAL_CORPUS_MANIFEST_CID,
-            "pandas": "3.0.3",
-        },
-        "identity": {
-            "corpusManifestCid": CANONICAL_CORPUS_MANIFEST_CID,
-            "fileCount": 1421,
-        },
-        "rows": [],
-    }
-
-
-def test_shared_table_accepts_only_the_canonical_content_manifest() -> None:
-    payload = _table_payload()
-    validated = validate_shared_demand_table(
-        payload, expected_content_key=payload["contentKey"]
-    )
-    assert validated is payload
-
-    payload = _table_payload()
-    payload["authentication"][
-        "authenticatedCorpusManifestCid"
-    ] = HISTORICAL_PATH_SHAPE_DIGEST
-    payload["identity"]["corpusManifestCid"] = HISTORICAL_PATH_SHAPE_DIGEST
-    with pytest.raises(DemandTableRefusal, match="historical path-shape"):
-        validate_shared_demand_table(
-            payload, expected_content_key=payload["contentKey"]
-        )
 
 
 def test_nameless_tripwire_fires_when_coordinates_are_none() -> None:

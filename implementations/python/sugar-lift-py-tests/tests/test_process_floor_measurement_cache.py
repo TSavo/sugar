@@ -30,7 +30,6 @@ def _key(**overrides) -> CACHE.MeasurementKey:
         corpus_manifest_cid="blake3-512:" + "a" * 128,
         axis=CACHE.DEFAULT_AXIS,
         file_content_cid="blake3-512:" + "b" * 128,
-        demand_table_cid="demand:local-derivation",
         file_timeout_ms=30000,
     )
     base.update(overrides)

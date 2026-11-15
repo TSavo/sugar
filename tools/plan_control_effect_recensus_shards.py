@@ -36,10 +36,11 @@ from compose_control_effect_board import build_plan  # noqa: E402
 from sugar_lift_py_tests.authenticated_pytest import (  # noqa: E402
     authenticated_pandas_corpus,
 )
-from sugar_lift_py_tests.prebuilt_demand_table import (  # noqa: E402
-    mint_prebuilt_demand_table,
-    publish_prebuilt_demand_table,
-    write_prebuilt_demand_table,
+from sugar_lift_py_tests.demand_table_identity import (  # noqa: E402
+    semantic_identity_for_corpus,
+)
+from sugar_lift_py_tests.lift_rpc import (  # noqa: E402
+    provisional_contract_refs_from_demands,
 )
 
 
@@ -61,13 +62,10 @@ def main(argv: list[str] | None = None) -> int:
         "--demand-table-corpus-root",
         type=Path,
         required=True,
-        help="authenticated corpus root whose demand table is derived once",
-    )
-    parser.add_argument(
-        "--demand-table-out",
-        type=Path,
-        required=True,
-        help="plan-time demand-table artifact carried to every shard",
+        help=(
+            "authenticated corpus root whose With demand table every shard "
+            "derives per source; the plan states its identity, never its rows"
+        ),
     )
     parser.add_argument("--shard-count", type=int, default=DEFAULT_SHARD_COUNT)
     parser.add_argument("--measured-commit", required=True)
@@ -100,11 +98,12 @@ def main(argv: list[str] | None = None) -> int:
             "--demand-table-corpus-root does not equal the authenticated pandas "
             f"root: requested={demanded_root} authenticated={authenticated_corpus.root}"
         )
-    demand_table = mint_prebuilt_demand_table(authenticated_corpus)
-    write_prebuilt_demand_table(demand_table, args.demand_table_out)
-    # Publication is part of plan authority, not a best-effort cache write. A
-    # plan that cannot publish the table it names must not mint planCid.
-    publish_prebuilt_demand_table(demand_table, args.demand_table_out)
+    # The plan states which With demand table its shards measure under: the
+    # address of what every row is a function of, and the meaning key. Neither
+    # derives a row; each shard opens the same per-source door on the same
+    # root and states what it observed (#7757 item 46).
+    demand_table_cid = provisional_contract_refs_from_demands(demanded_root).table_cid
+    demand_table_identity = semantic_identity_for_corpus(demanded_root)
     # If path resolver empty for all, equal-count still works via assign_files.
     plan = build_plan(
         enrolled_files=enrolled,
@@ -117,16 +116,16 @@ def main(argv: list[str] | None = None) -> int:
         prior_hits=assignment.prior_hits,
         prior_misses=assignment.prior_misses,
         estimated_loads=assignment.estimated_loads,
-        demand_table_cid=demand_table.content_cid,
-        demand_table_identity=demand_table.semantic_identity.as_dict(),
+        demand_table_cid=demand_table_cid,
+        demand_table_identity=demand_table_identity.as_dict(),
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(
         f"PLAN mode={assignment.mode} k={args.shard_count} "
         f"prior_hits={assignment.prior_hits} prior_misses={assignment.prior_misses} "
-        f"planCid={plan['planCid']} demandTableCid={demand_table.content_cid} "
-        f"demandMeaning={demand_table.semantic_identity.content_key} out={args.out}",
+        f"planCid={plan['planCid']} demandTableCid={demand_table_cid} "
+        f"demandMeaning={demand_table_identity.content_key} out={args.out}",
         flush=True,
     )
     print(assignment.job_log_line(population="control-effect-recensus"), flush=True)

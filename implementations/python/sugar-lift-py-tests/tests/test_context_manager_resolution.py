@@ -144,10 +144,10 @@ def test_demand_enrollment_uses_typed_with_coordinate_without_spelling_authority
             AssertionError("demand pass constructed Sugar")
         ),
     )
-    rows = lift_rpc._context_manager_demand_rows(tmp_path)
+    rows = lift_rpc._context_manager_rows_for_paths([consumer], root=tmp_path)
     assert len(rows) == 1
     # This structural pass never infers authority from the alias spelling.
-    # _preconstruction_demand_rows joins the separately authenticated lexical
+    # The per-source door joins the separately authenticated lexical
     # ImportBinding at this exact coordinate.
     assert rows[0]["targetSymbol"] is None
     assert rows[0]["gapKind"] == "undecided"

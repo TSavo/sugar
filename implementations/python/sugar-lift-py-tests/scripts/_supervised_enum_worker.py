@@ -88,11 +88,14 @@ def _progress(phase: str, **fields: object) -> None:
 
 def _initialize(
     corpus_root: str,
-    demand_table_path: str | None,
     *,
-    allow_local_demand_derivation: bool,
     source_workspace_root: str | None = None,
 ) -> dict:
+    """Freeze the worker's construction context on the root's With demand table.
+
+    The table is the per-source door (``provisional_contract_refs_from_demands``):
+    a file's rows are derived when that file is lifted. No table is loaded from
+    disk in its place (#7757 item 46)."""
     global _CONSTRUCTION_CONTEXT, _CORPUS_ROOT, _SOURCE_WORKSPACE_ROOT
     import os
 
@@ -112,11 +115,9 @@ def _initialize(
             "coordinate": "supervised-enum-worker.construction-context",
             "reason": "frozen construction context was already initialized",
             "corpus_root": corpus_root or None,
-            "demand_table_path": demand_table_path,
             "phase": "already-initialized",
         }
     from sugar_lift_py_tests.lift_rpc import (
-        provisional_contract_refs_from_demand_rows,
         provisional_contract_refs_from_demands,
         tree_construction_context_for_workspace,
     )
@@ -130,7 +131,6 @@ def _initialize(
                 "without a named population root"
             ),
             "corpus_root": None,
-            "demand_table_path": demand_table_path,
             "phase": "resolve-corpus-root",
         }
 
@@ -146,14 +146,11 @@ def _initialize(
             ),
             "corpus_root": str(root),
             "source_workspace_root": str(workspace_root),
-            "demand_table_path": demand_table_path,
             "phase": "resolve-corpus-root",
         }
     _progress(
         "resolve-corpus-root",
         corpus_root=str(root),
-        demand_table_path=demand_table_path,
-        allow_local_demand_derivation=allow_local_demand_derivation,
         root_exists=root.exists(),
         root_is_dir=root.is_dir(),
     )
@@ -166,98 +163,15 @@ def _initialize(
                 "(nothing to derive demands or freeze construction context against)"
             ),
             "corpus_root": str(root),
-            "demand_table_path": demand_table_path,
             "phase": "resolve-corpus-root",
         }
 
-    contract_refs = None
-    demand_table_identity = None
-    if demand_table_path:
-        from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
-        from sugar_lift_py_tests.prebuilt_demand_table import (
-            load_prebuilt_demand_table,
-            validate_prebuilt_demand_table,
-        )
-
-        table_path = Path(demand_table_path)
-        _progress(
-            "load-shared-demand-table",
-            corpus_root=str(root),
-            demand_table_path=str(table_path),
-            table_exists=table_path.is_file(),
-        )
-        if not table_path.is_file():
-            return {
-                "kind": "initialize-refusal",
-                "coordinate": "supervised-enum-worker.construction-context",
-                "reason": (
-                    f"demand_table_path is not a file: {table_path} "
-                    "(shared python-demand-table testimony missing on disk)"
-                ),
-                "corpus_root": str(root),
-                "demand_table_path": str(table_path),
-                "phase": "load-shared-demand-table",
-            }
-        corpus = authenticated_pandas_corpus()
-        if corpus.root != root:
-            return {
-                "kind": "initialize-refusal",
-                "coordinate": "supervised-enum-worker.construction-context",
-                "reason": (
-                    f"authenticated demand table corpus root mismatch: "
-                    f"worker={root} authenticated={corpus.root}"
-                ),
-                "corpus_root": str(root),
-                "demand_table_path": str(table_path),
-                "phase": "load-shared-demand-table",
-            }
-        table = load_prebuilt_demand_table(
-            table_path,
-            expected_corpus_pin={
-                "distribution": corpus.distribution,
-                "version": corpus.version,
-                "fileCount": corpus.file_count,
-                "aggregateHash": corpus.manifest_cid,
-            },
-        )
-        # A table keyed on any other corpus, producer source, parser or
-        # config is refused here by name: the key is re-derived, never pinned.
-        validate_prebuilt_demand_table(table, corpus)
-        contract_refs = provisional_contract_refs_from_demand_rows(list(table.rows))
-        demand_table_identity = table.semantic_identity.content_key
-    elif not allow_local_demand_derivation:
-        return {
-            "kind": "initialize-refusal",
-            "coordinate": "supervised-enum-worker.construction-context",
-            "reason": (
-                "authenticated demand table testimony is absent and "
-                "allow_local_demand_derivation is false; pass demand_table_path "
-                "or allow local derivation"
-            ),
-            "corpus_root": str(root),
-            "demand_table_path": None,
-            "phase": "demand-table-required",
-        }
-    else:
-        # Local derivation walks every *.py under corpus_root — authenticated
-        # pandas (~1421 files) is multi-minute. Progress lands before the walk
-        # so a supervisor timeout names this phase instead of refused: None.
-        _progress(
-            "derive-provisional-demands",
-            corpus_root=str(root),
-            demand_table_path=None,
-            note=(
-                "walking corpus_root for With/call demands; "
-                "authenticated pandas is expected to take minutes"
-            ),
-        )
-        contract_refs = provisional_contract_refs_from_demands(root)
-    _progress(
-        "freeze-construction-context",
-        corpus_root=str(root),
-        demand_table_identity=demand_table_identity,
-        using_provisional_demands=demand_table_path is None,
-    )
+    # Opening the per-source door content-addresses the enrolled files and
+    # parses nothing. Progress lands before it so a supervisor timeout names
+    # this phase instead of refused: None.
+    _progress("open-per-source-demands", corpus_root=str(root))
+    contract_refs = provisional_contract_refs_from_demands(root)
+    _progress("freeze-construction-context", corpus_root=str(root))
     _CORPUS_ROOT = root
     _SOURCE_WORKSPACE_ROOT = workspace_root
     _CONSTRUCTION_CONTEXT = tree_construction_context_for_workspace(
@@ -267,7 +181,6 @@ def _initialize(
         "kind": "context-ready",
         "corpus_root": str(root),
         "source_workspace_root": str(workspace_root),
-        "demand_table_identity": demand_table_identity,
     }
 
 
@@ -310,20 +223,13 @@ def main() -> int:
             continue
         if kind == "initialize":
             corpus_root = str(msg.get("corpus_root") or "")
-            demand_table_path = (
-                str(msg["demand_table_path"]) if msg.get("demand_table_path") else None
-            )
             try:
                 response = _initialize(
                     corpus_root,
-                    demand_table_path,
                     source_workspace_root=(
                         str(msg["source_workspace_root"])
                         if msg.get("source_workspace_root")
                         else None
-                    ),
-                    allow_local_demand_derivation=bool(
-                        msg.get("allow_local_demand_derivation", False)
                     ),
                 )
             except Exception as error:  # noqa: BLE001 — named refusal to parent
@@ -332,7 +238,6 @@ def main() -> int:
                     "coordinate": "supervised-enum-worker.construction-context",
                     "reason": f"{type(error).__name__}: {error}",
                     "corpus_root": corpus_root or None,
-                    "demand_table_path": demand_table_path,
                     "phase": "initialize-exception",
                 }
             print(json.dumps(response), flush=True)

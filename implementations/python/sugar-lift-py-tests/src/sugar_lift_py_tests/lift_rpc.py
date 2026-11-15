@@ -69,20 +69,11 @@ _BOUND_CONTRACT_REFS = None
 # keyed by linkUnitCid, so resume checks a resolution set against the unit it
 # was folded for.
 _RETAINED_LINK_UNITS = {}
-# Provisional With/call demand table by resolved workspace root. Deriving it
-# walks every enrolled ``*.py`` (authenticated import uses + With sites) —
-# measured multi-minute on pandas (1421 files). Recensus builds it "once" in
-# control_effect_recensus, but ``measure_file_via_enumerate`` never received
-# that table: each D2 ``sugar.enumerate level=functions`` re-derived via
-# ``tree_construction_context_for_workspace`` → hang-looking multi-minute
-# per file. Process memo makes the paid scan real amortization within one
-# process; k=8 still pays ×k cold startups unless shards LOAD a prebuilt
-# table (see ``prebuilt_demand_table`` + ``install_provisional_contract_refs``).
+# The per-source With demand table by resolved workspace root: the one
+# derivation of a With item's row (``_PerSourceDemandRows``), memoized so a
+# second open of the same root reuses the sources already derived. Nothing
+# installs a table here in place of the derivation (#7757 item 46).
 _PROVISIONAL_CONTRACT_REFS_BY_ROOT: Dict[str, Any] = {}
-# How many times ``_preconstruction_demand_rows`` actually walked a corpus.
-# Unit tests count this (do not time it): a cold process given a prebuilt
-# table must leave this at zero after install + measure.
-_PRECONSTRUCTION_WALK_COUNT = 0
 # D3 exposure telemetry, process-local because enumerate_rpc dispatches in-process.
 # The wire DTO stays closed; the recensus consumer takes this observation after
 # the facts demand.  One entry per source CID, popped by the consumer, so a
@@ -102,24 +93,14 @@ def take_d3_residency_observation(source_cid: str) -> Dict[str, Any] | None:
     return dict(row) if row is not None else None
 
 
-def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
-    """Enroll typed With occurrences without constructing any Sugar.
-
-    Import authority is joined later from ``_call_use_rows`` at the identical
-    source coordinate.  This pass owns only the structural fact that
-    a typed WithItem exists; it never reconstructs imports from spellings.
-    """
-    from sugar_source_tree.tree import SourceTree
-
-    return _context_manager_rows_for_paths(SourceTree(root).paths(), root=root)
-
-
 def _context_manager_rows_for_paths(paths, *, root: Path) -> List[Dict[str, Any]]:
     """The typed With occurrences of exactly these files, in the order given.
 
-    A With row is a function of its own file. The corpus pass above and the
-    per-source door below both come through here, so a one-file question and
-    a whole-corpus question cannot disagree about a row.
+    A With row is a function of its own file; the per-source door below is
+    its only caller. This pass owns only the structural fact that a typed
+    WithItem exists, without constructing any Sugar; import authority is
+    joined from ``_call_use_rows_for_units`` at the identical source
+    coordinate, never reconstructed from spellings.
 
     Each file is opened by the opener's first stage (``_open_at_seat``), at
     the seat the opener reads, so the row reads the same bytes at the same
@@ -165,37 +146,11 @@ def _context_manager_rows_for_paths(paths, *, root: Path) -> List[Dict[str, Any]
     return rows
 
 
-def provisional_contract_refs_from_demand_rows(
-    rows,
-    *,
-    table_cid: str | None = None,
-    catalog_cid: str | None = None,
-):
-    """Project one already-authenticated demand table into construction refs.
-
-    No corpus walk. When ``table_cid`` is omitted, the table is content-addressed
-    from the CM demand rows so two identical row sets share one CID.
-    """
-    from types import MappingProxyType
-
-    from sugar_lift_py_tests.context_manager_resolution import ResolvedContractRefsV1
-    from sugar_lift_python_source.canonical import cid_of_json
-
-    resolutions, cm_rows = _context_manager_resolutions_from_demand_rows(rows)
-    if table_cid is None:
-        table_cid = cid_of_json(
-            {"kind": "provisional-demand-table-rows", "rows": cm_rows}
-        )
-    if catalog_cid is None:
-        catalog_cid = table_cid
-    return ResolvedContractRefsV1(catalog_cid, table_cid, MappingProxyType(resolutions))
-
-
 def _context_manager_resolutions_from_demand_rows(rows):
-    """Typed gap resolution per With demand row, plus the rows that produced them.
+    """Typed gap resolution per With demand row of one source.
 
-    The one projection from demand rows to construction refs: the whole-table
-    door and the per-source door both use it.
+    The one projection from demand rows to construction refs; the per-source
+    door is its only caller.
     """
     from sugar_lift_py_tests.context_manager_resolution import (
         UNDECIDED_GAP_KIND,
@@ -205,11 +160,7 @@ def _context_manager_resolutions_from_demand_rows(rows):
     )
 
     resolutions = {}
-    cm_rows = []
     for row in rows:
-        if row.get("kind") != "context-manager-demand":
-            continue
-        cm_rows.append(row)
         site = SourceFragmentCoordinateV1.decode(row["useSite"])
         preimage = {
             key: row[key]
@@ -225,19 +176,25 @@ def _context_manager_resolutions_from_demand_rows(rows):
             UNDECIDED_GAP_KIND,
             (),
         )
-    return resolutions, cm_rows
+    return resolutions
 
 
 class _PerSourceDemandRows:
-    """Demand rows for one source CID at a time; never the corpus's rows.
+    """The one derivation of the With demand rows: one source CID at a time.
 
     Opening this reads and content-addresses the enrolled files (the import
     join needs every module's identity) and parses nothing. Rows for a source
-    are derived by the same call/With passes and the same join the whole-table
-    door runs, restricted to the files carrying that source CID -- every row's
-    use site names its own source CID, so the restriction is exact. Files with
-    identical bytes share one source CID and are derived together, in tree
-    order, exactly as the whole-table join meets them.
+    are the With items of the files carrying that source CID, read from the
+    one opened file (``_open_at_seat``), each joined to the authenticated
+    import use at its coordinate -- every row's use site names its own source
+    CID. Files with identical bytes share one source CID and are derived
+    together, in tree order.
+
+    What still reads a row (#7757 item 46): ``With``'s require door reads its
+    item's row on every construction (``With._seated_manager_resolution``),
+    and the board door's with-item census projects one row per item
+    (``effective_context_manager_resolutions_for_source``). Every row is the
+    ``undecided`` gap: the manager is what the head reduces to.
     """
 
     def __init__(self, root: Path) -> None:
@@ -291,8 +248,7 @@ class _PerSourceDemandRows:
 def per_source_provisional_contract_refs(root: Path):
     """Provisional With-demand refs whose rows are derived per source, on demand.
 
-    Same resolutions as ``provisional_contract_refs_from_demand_rows`` over the
-    whole-corpus table, at the cost of the sources actually asked about.
+    A lookup pays for the source it asks about and no other.
     """
     from sugar_lift_py_tests.context_manager_resolution import (
         PerSourceResolutionsV1,
@@ -302,10 +258,9 @@ def per_source_provisional_contract_refs(root: Path):
     demands = _PerSourceDemandRows(root)
 
     def derive(source_cid: str):
-        resolutions, _cm_rows = _context_manager_resolutions_from_demand_rows(
+        return _context_manager_resolutions_from_demand_rows(
             demands.rows_for_source(source_cid)
         )
-        return resolutions
 
     table_cid = demands.identity_cid()
     return ResolvedContractRefsV1(
@@ -316,17 +271,18 @@ def per_source_provisional_contract_refs(root: Path):
 
 
 def provisional_contract_refs_from_demands(root: Path):
-    """One typed gap row per enrolled With demand — census / unbinded construct door.
+    """One typed gap row per enrolled With demand: the table every open reads.
 
-    Production replaces this table via ``bind_contract_refs`` with authenticated
-    resolutions. Until that table is installed (or for instruments that construct
-    without the Rust prebind), every With use-site must still appear so
-    ``With._prebound_manager_resolution`` does not treat missing context as
-    unconditional ``RuntimeSelectedContextManager`` (false red).
+    The one door onto the With demand rows (#7757 item 46): the enumerate
+    levels, the board door, the supervised worker and every instrument come
+    here, and nothing installs a table in its place. A bound table
+    (``bind_contract_refs``) is read instead when one was installed.
 
     Each demand lands as ``ContextManagerResolutionGapV1`` of the one kind
     ``undecided`` (#7757 item 4): its manager is what the head reduces to
-    (``With._reduced_manager_sugar``).
+    (``With._reduced_manager_sugar``). The row must still be there: an item
+    nobody seated a row for halts by name at the require door
+    (``With._prebound_manager_resolution``).
 
     Rows are derived per source on first demand: asking about one file costs
     that file, not the corpus. Process-memoized by resolved root so a second
@@ -341,30 +297,9 @@ def provisional_contract_refs_from_demands(root: Path):
     return refs
 
 
-def install_provisional_contract_refs(root: Path, refs) -> None:
-    """Seed the process demand-table memo without walking the corpus.
-
-    Shards load a plan-time prebuilt table and call this once. Subsequent
-    ``provisional_contract_refs_from_demands`` / D2 enumerate hits the memo.
-    """
-    key = str(Path(root).resolve())
-    _PROVISIONAL_CONTRACT_REFS_BY_ROOT[key] = refs
-
-
 def clear_provisional_contract_refs_memo() -> None:
     """Drop process demand-table memo (tests / hermetic process reuse)."""
     _PROVISIONAL_CONTRACT_REFS_BY_ROOT.clear()
-
-
-def preconstruction_walk_count() -> int:
-    """How many times the corpus was walked for provisional demand rows."""
-    return _PRECONSTRUCTION_WALK_COUNT
-
-
-def reset_preconstruction_walk_count() -> None:
-    """Zero the walk counter (tests only)."""
-    global _PRECONSTRUCTION_WALK_COUNT
-    _PRECONSTRUCTION_WALK_COUNT = 0
 
 
 def tree_construction_context_for_workspace(
@@ -677,17 +612,6 @@ def open_source_file_for_construction(
     return source_file
 
 
-def _call_use_rows(root: Path) -> List[Dict[str, Any]]:
-    """The lexical pass's imported plain calls, by their authenticated use sites.
-
-    Read only by the With join below; never rows of the demand table.
-    """
-    units = _corpus_source_units(root)
-    return _call_use_rows_for_units(
-        root, units, _module_identities_for_units(root, units)
-    )
-
-
 def _corpus_source_units(root: Path) -> list:
     """``(path, source, source_cid)`` per readable enrolled file, in tree order."""
     from sugar_lift_python_source.source_oracle import SourceUnavailable, path_source
@@ -721,7 +645,11 @@ def _module_identities_for_units(root: Path, units) -> Dict[str, Dict[str, Any]]
 def _call_use_rows_for_units(
     root: Path, units, module_identities
 ) -> List[Dict[str, Any]]:
-    """Imported call uses of exactly these units, against corpus identities."""
+    """Imported call uses of exactly these units, against corpus identities.
+
+    The lexical pass's imported plain calls, by their authenticated use
+    sites. Read only by the With join; never rows of the demand table.
+    """
     from sugar_lift_py_tests.import_binding import authenticated_import_uses
 
     rows: List[Dict[str, Any]] = []
@@ -817,29 +745,14 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
     return rows
 
 
-def _preconstruction_demand_rows(root: Path) -> List[Dict[str, Any]]:
-    """The With demands, each joined to the authenticated call at its coordinate.
-
-    A context-manager expression is constructed under its context-manager
-    contract.  Its call coordinate supplies the authenticated import binding.
-    The table carries With demands only: no call-contract demand or export row
-    is enrolled beside them (nothing reads one).
-
-    Each call is one corpus walk (counted by ``preconstruction_walk_count``).
-    Only a caller that needs the whole table as an artifact comes here; a
-    question about some files goes through ``_PerSourceDemandRows``.
-    """
-    global _PRECONSTRUCTION_WALK_COUNT
-    _PRECONSTRUCTION_WALK_COUNT += 1
-    return _join_call_identity_into_with_demands(
-        _call_use_rows(root), _context_manager_demand_rows(root)
-    )
-
-
 def _join_call_identity_into_with_demands(
     call_rows: List[Dict[str, Any]], cm_rows: List[Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
-    """The join itself, over whichever files the two row lists cover."""
+    """The With demands, each joined to the authenticated call at its coordinate.
+
+    Its call coordinate supplies the authenticated import binding. The table
+    carries With demands only: no call-contract demand or export row is
+    enrolled beside them (nothing reads one)."""
     from sugar_lift_py_tests.context_manager_resolution import UNDECIDED_GAP_KIND
 
     calls_by_site = {

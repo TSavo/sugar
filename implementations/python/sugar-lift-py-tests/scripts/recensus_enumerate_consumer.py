@@ -1084,10 +1084,13 @@ def measure_file_via_enumerate(
     workspace_root: Path,
     file_rel: str,
     source_cid: str | None = None,
-    contract_refs=None,
     source_workspace_root: Path | None = None,
 ) -> dict[str, Any]:
     """One terminal, plus the attendance the walk that produced it can testify to.
+
+    The With demand table is the root's one per-source door
+    (``provisional_contract_refs_from_demands``), the table every
+    ``sugar.enumerate`` level reads; no caller hands one in (#7757 item 46).
 
     Attendance travels WITH the terminal, in the row, so it survives a
     checkpoint resume exactly as the terminal does. A shard that resumed could
@@ -1112,7 +1115,6 @@ def measure_file_via_enumerate(
                 workspace_root=workspace_root,
                 file_rel=file_rel,
                 source_cid=source_cid,
-                contract_refs=contract_refs,
                 source_workspace_root=source_workspace_root,
                 progress=progress,
             )
@@ -1148,7 +1150,6 @@ def _measure_seat_under_ceiling(
     workspace_root: Path,
     file_rel: str,
     source_cid: str | None,
-    contract_refs,
     source_workspace_root: Path | None,
     progress: dict[str, Any],
 ) -> dict[str, Any]:
@@ -1157,7 +1158,6 @@ def _measure_seat_under_ceiling(
         workspace_root=workspace_root,
         file_rel=file_rel,
         source_cid=source_cid,
-        contract_refs=contract_refs,
         source_workspace_root=source_workspace_root,
         progress=progress,
     )
@@ -1205,7 +1205,6 @@ def _terminal_via_enumerate(
     workspace_root: Path,
     file_rel: str,
     source_cid: str | None = None,
-    contract_refs=None,
     source_workspace_root: Path | None = None,
     progress: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -1214,11 +1213,6 @@ def _terminal_via_enumerate(
     Never raises after a roster is banked — residual panic becomes a terminal
     row with functionsTotal preserved (roster-floor).
     """
-    if contract_refs is not None:
-        from sugar_lift_py_tests.lift_rpc import install_provisional_contract_refs
-
-        install_provisional_contract_refs(Path(workspace_root), contract_refs)
-
     path = (workspace_root / file_rel).resolve()
     ast_fn = count_ast_function_defs(path)
     # ROSTER-FLOOR under a timer. `progress` is the only way a bound that fires
@@ -1316,18 +1310,14 @@ def _terminal_via_enumerate(
             source_cid=source_cid,
         )
 
-    if contract_refs is None:
-        from sugar_lift_py_tests.lift_rpc import (
-            install_provisional_contract_refs,
-            provisional_contract_refs_from_demands,
-        )
+    from sugar_lift_py_tests.lift_rpc import provisional_contract_refs_from_demands
 
-        # The per-file roster is the sanctioned ConstructionPanic membrane.
-        # Bank it before entering the corpus-wide fallback. A panic from this
-        # fallback remains loud: it is not a terminal for this one file and
-        # must never be absorbed or misattributed as one.
-        contract_refs = provisional_contract_refs_from_demands(Path(workspace_root))
-        install_provisional_contract_refs(Path(workspace_root), contract_refs)
+    # The root's one With demand table: the same per-source door the enumerate
+    # request reads. The per-file roster is the sanctioned ConstructionPanic
+    # membrane; it is banked above, before this door is opened. A panic from
+    # opening it remains loud: it is not a terminal for this one file and must
+    # never be absorbed or misattributed as one.
+    contract_refs = provisional_contract_refs_from_demands(Path(workspace_root))
 
     try:
         cm_events, cm_gaps = demand_context_manager_resolution_events(

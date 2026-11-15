@@ -159,7 +159,6 @@ def test_consumer_carries_pre_demand_and_real_audit_open_observations(
         row = CONSUMER.measure_file_via_enumerate(
             workspace_root=tmp_path,
             file_rel="pkg/mod.py",
-            contract_refs=[],
         )
 
         assert row["inputKey"]["sourceCid"] == source_cid

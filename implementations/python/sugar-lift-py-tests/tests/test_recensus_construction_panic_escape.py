@@ -112,7 +112,6 @@ def test_source_identity_purely_reraises_construction_panic(
         CONSUMER.measure_file_via_enumerate(
             workspace_root=tmp_path,
             file_rel=path.name,
-            contract_refs={},
         )
 
     assert caught.value is planted
@@ -191,7 +190,6 @@ def test_sanctioned_per_file_membranes_enroll_construction_panic(
     row = CONSUMER.measure_file_via_enumerate(
         workspace_root=tmp_path,
         file_rel=path.name,
-        contract_refs={},
     )
 
     assert row["category"] == "panic"

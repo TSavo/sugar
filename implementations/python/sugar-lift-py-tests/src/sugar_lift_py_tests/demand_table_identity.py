@@ -1,9 +1,10 @@
-"""The content key for a shared demand table.
+"""The content key for the With demand table of a corpus.
 
-Building the With demand table costs >600s on the pinned corpus and timed out
-at 240s on a single subpackage, and every owner driving a with-shape needs it
-before they can answer a single question. Paying it per owner is the defect;
-publishing one authenticated artifact is the fix.
+The table itself is derived one source at a time, on demand
+(``lift_rpc._PerSourceDemandRows``); no artifact of it is minted or published
+(#7757 item 46). This key states what the table is a function of, so a plan
+and its shards can state they measured under the same one without deriving a
+row.
 
 THE KEY IS THE PREIMAGE, NOT THE LOCATION. Mirrors `bin/sugarbin`'s existing
 `build_identity()` rule for the Rust binary -- *"Shelf / artifact identity is
@@ -261,6 +262,30 @@ def demand_table_identity(
     manifest_cid, file_count = corpus_manifest_cid(root, paths)
     return demand_table_identity_for_manifest(
         manifest_cid, file_count, source_root=source_root, config=config
+    )
+
+
+def semantic_identity_for_corpus(
+    root: pathlib.Path,
+    *,
+    source_root: pathlib.Path | None = None,
+    config: Mapping[str, object] | None = None,
+) -> DemandTableIdentityV1:
+    """The meaning key of the With demand table this corpus and producer yield.
+
+    The key is a function of the inputs (corpus bytes, producer source,
+    parser, config), so it is stated without deriving a single row. The files
+    are step 2's file list, the one the per-source rows are derived over
+    (``lift_rpc._corpus_source_units``), #7757 item 45.
+    """
+    from sugar_source_tree.tree import SourceTree
+
+    root = pathlib.Path(root)
+    return demand_table_identity(
+        root,
+        list(SourceTree(root).paths()),
+        source_root=source_root or pathlib.Path(__file__).resolve().parents[1],
+        config=config,
     )
 
 

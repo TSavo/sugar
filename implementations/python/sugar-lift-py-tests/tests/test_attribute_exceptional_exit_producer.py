@@ -120,62 +120,24 @@ def _assert_undecided(node: Attribute, receiver, *, name: str | None = None) -> 
     assert halt.effect.blame == str(node.fragment)
 
 
-def test_shared_table_authenticates_the_exact_assertion_manager(tmp_path: Path) -> None:
-    from sugar_lift_py_tests.no_call_body_attribution import (
-        shared_demand_table_content_key,
-    )
+def test_per_source_door_enrolls_the_exact_assertion_manager() -> None:
+    """The one per-source derivation states this site's row: the With item at
+    its coordinate, joined to the authenticated ``pytest.raises`` import."""
+    from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
+    from sugar_lift_py_tests.lift_rpc import _PerSourceDemandRows
 
-    demand_table_key = shared_demand_table_content_key()
-    output = tmp_path / "python-demand-table.json"
-    pulled = subprocess.run(
-        [
-            str(_repo_root() / "bin/sugarbin"),
-            "artifact",
-            "pull",
-            "--kind",
-            "python-demand-table",
-            "--content-key",
-            demand_table_key,
-            "--output",
-            str(output),
-            "--runtime",
-            "cpython-3.12.13",
-        ],
-        cwd=_repo_root(),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert pulled.returncode == 0 and output.is_file(), (
-        "the authenticated #6464 demand table is absent; do not rebuild it: "
-        + pulled.stderr
-    )
-    with output.open("rb") as table_file, mmap.mmap(
-        table_file.fileno(), 0, access=mmap.ACCESS_READ
-    ) as table:
-        assert table.find(demand_table_key.encode()) >= 0
-        assert table.find(b'"python": "cpython-3.12.13"') >= 0
-        assert table.find(MANIFEST_CID.encode()) >= 0
-        assert table.find(b'"pandas": "3.0.3"') >= 0
-        assert table.find(b'"fileCount": 1421') >= 0
-        cursor = 0
-        rows = []
-        while True:
-            cursor = table.find(b'"startLine": 103', cursor)
-            if cursor < 0:
-                break
-            window = table[max(0, cursor - 5000) : cursor + 5000]
-            if (
-                SOURCE_CID.encode() in window
-                and b'"kind": "context-manager-demand"' in window
-                and b'"targetSymbol": "pytest.raises"' in window
-                and b'"gapKind": null' in window
-                and b'"startCol": 13' in window
-                and b'"endCol": 58' in window
-            ):
-                rows.append(cursor)
-            cursor += 1
-        assert len(rows) >= 1
+    rows = [
+        row
+        for row in _PerSourceDemandRows(
+            authenticated_pandas_corpus().root
+        ).rows_for_source(SOURCE_CID)
+        if row["useSite"]["startLine"] == 103
+        and row["targetSymbol"] == "pytest.raises"
+        and row["gapKind"] is None
+        and row["useSite"]["startCol"] == 13
+        and row["useSite"]["endCol"] == 58
+    ]
+    assert len(rows) >= 1
 
 
 def test_real_pandas_constructed_receiver_attribute_is_named_undecided() -> None:

@@ -31,24 +31,10 @@ def main(argv: list[str] | None = None) -> int:
 
     import recensus_enumerate_consumer as consumer
 
-    # SHARD CONDITIONS -- the same prebuilt demand table the profile installs.
-    # Measuring against provisional per-file demands would report a different
-    # population and could not be compared with the frontier rows at all.
-    from sugar_lift_py_tests.prebuilt_demand_table import (
-        install_prebuilt_demand_table,
-        mint_prebuilt_demand_table,
-    )
-    from sugar_lift_py_tests.lift_rpc import install_provisional_contract_refs
-
+    # SHARD CONDITIONS -- the same per-source With demand door every shard
+    # opens on the corpus root (``measure_file_via_enumerate`` opens it).
     authenticated = authenticated_pandas_corpus()
     corpus = authenticated.root
-    table = mint_prebuilt_demand_table(authenticated)
-    contract_refs = install_prebuilt_demand_table(table, root=corpus)
-    install_provisional_contract_refs(corpus, contract_refs)
-    print(
-        f"PROBE_DEMAND_TABLE contentCid={table.content_cid} rows={len(table.rows)}",
-        flush=True,
-    )
 
     print(f"PROBE_CORPUS root={corpus} files={authenticated.file_count}", flush=True)
 
@@ -64,7 +50,6 @@ def main(argv: list[str] | None = None) -> int:
         row = consumer.measure_file_via_enumerate(
             workspace_root=corpus,
             file_rel=seat,
-            contract_refs=contract_refs,
             source_workspace_root=locus_root,
         )
         panics = row.get("constructionPanics") or []

@@ -4,11 +4,12 @@ Diagnostic only.
 
 A slice of 178 seats understates every population it samples -- it understated
 ``@contextmanager`` badly. This gives the whole-corpus denominator for the
-reasons that are decided at DEMAND time, by minting the same table the census
-mints (``_preconstruction_demand_rows``) and counting its ``gapKind``.
+reasons that are decided at DEMAND time, by reading every source's rows from
+the one per-source derivation the census reads
+(``no_call_body_attribution.with_demand_rows``) and counting its ``gapKind``.
 
 What this CAN say: the corpus population of demand-side kinds
-(``runtime-selected`` and ``None`` -- i.e. a call row was joined).
+(``undecided`` and ``None`` -- i.e. a call row was joined).
 
 What this CANNOT say: the population of reasons produced at DERIVATION time
 (``source-body-gap``, ``dynamic-export``, ``call-target-off-population``,
@@ -38,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
-    from sugar_lift_py_tests.lift_rpc import _preconstruction_demand_rows
+    from sugar_lift_py_tests.no_call_body_attribution import with_demand_rows
     from sugar_lift_python_source.source_oracle import SourceUnavailable, path_source
     from sugar_source_tree.tree import SourceTree
 
@@ -56,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         seat_by_cid.setdefault(source_cid, path.resolve().relative_to(root).as_posix())
         source_by_cid.setdefault(source_cid, source)
 
-    rows = _preconstruction_demand_rows(root)
+    rows = with_demand_rows(root)["rows"]
     cm_rows = [row for row in rows if row.get("kind") == "context-manager-demand"]
     print(f"CM_DEMANDS {len(cm_rows)}  (of {len(rows)} demand rows)")
 

@@ -1,13 +1,14 @@
-"""The provisional demand door resolves one source at a time.
+"""The With demand door resolves one source at a time, and is the one door.
 
-Every reader of the provisional table asks about one source file. Deriving the
-whole corpus before the first question made a one-file run cost the corpus.
-The per-source door runs the same passes and the same join on the files that
-share a source CID, on first demand, so one file costs one file.
+Every reader of the With demand table asks about one source file. The
+per-source door runs the With pass and the import join on the files that share
+a source CID, on first demand, so one file costs one file. There is no
+whole-corpus derivation beside it and no table installed in its place
+(#7757 item 46).
 
 Twins:
-  truthful — per-source answers equal the whole-table answers entry for entry,
-             and asking about one file derives only that file;
+  truthful — every With item of a source has one undecided row, and asking
+             about one file derives only that file;
   lying    — a use site the corpus does not contain fails closed.
 """
 
@@ -22,6 +23,7 @@ from sugar_lift_python_source.source_oracle import path_source
 
 from sugar_lift_py_tests import lift_rpc as lr
 from sugar_lift_py_tests.context_manager_resolution import (
+    UNDECIDED_GAP_KIND,
     ContractRefProtocolError,
     PerSourceResolutionsV1,
     resolutions_for_source,
@@ -60,64 +62,69 @@ def _corpus(root: Path) -> Path:
     return root
 
 
-def _whole_table(root: Path):
-    return lr.provisional_contract_refs_from_demand_rows(
-        lr._preconstruction_demand_rows(root)
-    ).by_use_site
-
-
-def test_per_source_answers_equal_the_whole_table(tmp_path: Path) -> None:
-    root = _corpus(tmp_path)
-    whole = dict(_whole_table(root))
-    assert whole, "fixture must enroll with-demands"
-
+def _refs(root: Path):
     lr.clear_provisional_contract_refs_memo()
-    refs = lr.provisional_contract_refs_from_demands(root)
+    return lr.provisional_contract_refs_from_demands(root)
+
+
+def test_every_with_item_has_one_undecided_row(tmp_path: Path) -> None:
+    root = _corpus(tmp_path)
+    uses_cid = path_source(str(root / "uses.py"))[2]
+    local_cid = path_source(str(root / "local.py"))[2]
+
+    refs = _refs(root)
     assert isinstance(refs.by_use_site, PerSourceResolutionsV1)
-    assert dict(refs.by_use_site) == whole
-    for use_site, resolution in whole.items():
+    rows = dict(refs.by_use_site)
+    # uses.py and its byte-identical twin share one source CID, so one row.
+    assert sorted((site.source_cid, site.start_line) for site in rows) == sorted(
+        [(uses_cid, 3), (local_cid, 4), (local_cid, 6)]
+    )
+    assert {resolution.kind for resolution in rows.values()} == {UNDECIDED_GAP_KIND}
+    for use_site, resolution in rows.items():
         assert refs.require(use_site) == resolution
 
 
-def test_one_file_derives_one_file_and_walks_nothing(tmp_path: Path) -> None:
+def test_one_file_derives_one_file(tmp_path: Path) -> None:
     root = _corpus(tmp_path)
-    whole = dict(_whole_table(root))
     local_cid = path_source(str(root / "local.py"))[2]
-    local_sites = {site for site in whole if site.source_cid == local_cid}
-    assert len(local_sites) == 2
 
-    lr.clear_provisional_contract_refs_memo()
-    lr.reset_preconstruction_walk_count()
-    refs = lr.provisional_contract_refs_from_demands(root)
+    refs = _refs(root)
     assert refs.by_use_site.derived_source_cids() == ()
 
+    local_sites = set(resolutions_for_source(refs.by_use_site, local_cid))
+    assert len(local_sites) == 2
     for site in local_sites:
-        assert refs.require(site) == whole[site]
-    assert set(resolutions_for_source(refs.by_use_site, local_cid)) == local_sites
+        assert refs.require(site).kind == UNDECIDED_GAP_KIND
 
     assert refs.by_use_site.derived_source_cids() == (local_cid,)
-    assert lr.preconstruction_walk_count() == 0
+
+
+def test_no_whole_corpus_derivation_or_install_remains() -> None:
+    """The per-source door is the only derivation; nothing installs over it."""
+    for name in (
+        "_preconstruction_demand_rows",
+        "_context_manager_demand_rows",
+        "_call_use_rows",
+        "provisional_contract_refs_from_demand_rows",
+        "install_provisional_contract_refs",
+        "preconstruction_walk_count",
+    ):
+        assert not hasattr(lr, name), name
 
 
 def test_identity_names_the_corpus_not_the_question(tmp_path: Path) -> None:
     root = _corpus(tmp_path)
-    lr.clear_provisional_contract_refs_memo()
-    before = lr.provisional_contract_refs_from_demands(root).table_cid
-    lr.clear_provisional_contract_refs_memo()
-    assert lr.provisional_contract_refs_from_demands(root).table_cid == before
+    before = _refs(root).table_cid
+    assert _refs(root).table_cid == before
 
     (root / "plain.py").write_text("x = 2\n", encoding="utf-8")
-    lr.clear_provisional_contract_refs_memo()
-    assert lr.provisional_contract_refs_from_demands(root).table_cid != before
+    assert _refs(root).table_cid != before
 
 
 def test_site_outside_the_corpus_fails_closed(tmp_path: Path) -> None:
     root = _corpus(tmp_path)
-    whole = dict(_whole_table(root))
-    real = next(iter(whole))
-
-    lr.clear_provisional_contract_refs_memo()
-    refs = lr.provisional_contract_refs_from_demands(root)
+    refs = _refs(root)
+    real = next(iter(dict(refs.by_use_site)))
 
     forged_source = dataclasses.replace(real, source_cid="blake3:" + "0" * 64)
     with pytest.raises(ContractRefProtocolError):

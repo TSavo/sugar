@@ -1,10 +1,9 @@
-"""Provisional demand table is process-memoized by workspace root.
+"""The per-source With demand table is process-memoized by workspace root.
 
-``_preconstruction_demand_rows`` walks every enrolled ``*.py`` (call uses +
-With sites). Recensus paid that once, but ``measure_file_via_enumerate`` never
-received the table — each D2 ``level=functions`` re-derived via
-``tree_construction_context_for_workspace`` and looked like a multi-minute hang
-on a single file (pandas _json). Process memo makes the scan O(corpus) once.
+Opening the door content-addresses every enrolled ``*.py``. Every reader of a
+root (each D2 ``level=functions``, the board door, the worker) gets the same
+table object, so the open is paid once per process and the sources already
+derived are reused.
 """
 
 from __future__ import annotations

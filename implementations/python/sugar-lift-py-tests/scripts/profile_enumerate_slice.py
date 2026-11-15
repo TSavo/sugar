@@ -58,25 +58,11 @@ def main(argv: list[str] | None = None) -> int:
     import recensus_enumerate_consumer as consumer
 
     # SHARD CONDITIONS, not a cheaper neighbour. A shard measures every file
-    # against the ONE prebuilt demand table; `contract_refs=None` measures
-    # against provisional per-file demands instead and reports a different
-    # (larger) panic population. Deriving the table here is what makes this
-    # profile comparable to the shard partials at all.
-    from sugar_lift_py_tests.prebuilt_demand_table import (
-        install_prebuilt_demand_table,
-        mint_prebuilt_demand_table,
-    )
-    from sugar_lift_py_tests.lift_rpc import install_provisional_contract_refs
-
+    # against the corpus root's one per-source With demand door, which
+    # `measure_file_via_enumerate` opens; this profile reads the same door,
+    # which is what makes it comparable to the shard partials.
     authenticated = authenticated_pandas_corpus()
     corpus = authenticated.root
-    table = mint_prebuilt_demand_table(authenticated)
-    contract_refs = install_prebuilt_demand_table(table, root=corpus)
-    install_provisional_contract_refs(corpus, contract_refs)
-    print(
-        f"PROFILE_DEMAND_TABLE contentCid={table.content_cid} rows={len(table.rows)}",
-        flush=True,
-    )
 
     seats = _roster(corpus)[args.start :: args.stride]
     if args.limit is not None:
@@ -115,7 +101,6 @@ def main(argv: list[str] | None = None) -> int:
             row = consumer.measure_file_via_enumerate(
                 workspace_root=corpus,
                 file_rel=seat,
-                contract_refs=contract_refs,
                 source_workspace_root=locus_root,
             )
         except LifterRefusal:

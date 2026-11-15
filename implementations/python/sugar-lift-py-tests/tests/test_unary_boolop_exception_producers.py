@@ -94,42 +94,15 @@ def test_verified_pandas_303_reproducers_are_content_pinned() -> None:
     )
 
 
-def test_shared_table_authenticates_unary_and_complete_boolop_family(tmp_path) -> None:
-    from sugar_lift_py_tests.no_call_body_attribution import (
-        shared_demand_table_content_key,
-    )
+def test_per_source_door_enrolls_unary_and_complete_boolop_family() -> None:
+    """The one per-source derivation states these sites' rows."""
+    from sugar_lift_py_tests.lift_rpc import _PerSourceDemandRows
 
-    demand_table_key = shared_demand_table_content_key()
-    root = resolve_repo_root()
-    output = tmp_path / "python-demand-table.json"
-    pulled = subprocess.run(
-        [
-            str(root / "bin/sugarbin"),
-            "artifact",
-            "pull",
-            "--kind",
-            "python-demand-table",
-            "--content-key",
-            demand_table_key,
-            "--output",
-            str(output),
-            "--runtime",
-            "cpython-3.12.13",
-        ],
-        cwd=root,
-        capture_output=True,
-        text=True,
-    )
-    assert pulled.returncode == 0, pulled.stderr
-    table = json.loads(output.read_text(encoding="utf-8"))
-    assert table["contentKey"] == demand_table_key
-    assert table["authentication"]["python"] == "cpython-3.12.13"
-    assert table["authentication"]["authenticatedCorpusManifestCid"] == MANIFEST_CID
-    assert table["authentication"]["pandas"] == "3.0.3"
-    assert table["identity"]["fileCount"] == 1421
+    demands = _PerSourceDemandRows(CORPUS)
     sites = {
         (row["useSite"]["sourceCid"], row["useSite"]["startLine"])
-        for row in table["rows"]
+        for source_cid in (UNARY_SOURCE_CID, BOOLOP_SOURCE_CID)
+        for row in demands.rows_for_source(source_cid)
         if row.get("kind") == "context-manager-demand"
         and row.get("gapKind") is None
         and row.get("targetSymbol") == "pytest.raises"

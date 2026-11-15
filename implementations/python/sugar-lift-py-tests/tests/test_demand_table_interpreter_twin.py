@@ -14,14 +14,10 @@ from sugar_lift_py_tests.authenticated_pytest import (
     interpreter_identity,
 )
 from sugar_lift_py_tests.demand_table_identity import (
-    demand_table_identity,
     demand_table_identity_for_manifest,
+    semantic_identity_for_corpus,
 )
-from sugar_lift_py_tests.no_call_body_attribution import (
-    shared_demand_table_content_key,
-)
-from sugar_source_tree.tree import SourceTree
-from sugar_lift_py_tests.lift_rpc import _preconstruction_demand_rows
+from sugar_lift_py_tests.no_call_body_attribution import with_demand_rows
 from sugar_lift_python_source.canonical import blake3_512_of, cid_of_json
 from sugar_source_tree.cpython_adapter import CPythonAstBackend
 
@@ -56,17 +52,16 @@ def test_runtime_derived_testimony_names_only_the_declared_authority() -> None:
     assert set(MEASURED_PARSER_AST_CIDS) == {"cpython-ast-cpython-3.12"}
 
 
-def test_shared_table_key_is_the_walked_corpus_key() -> None:
-    """The key production asks for is the key a mint over the corpus states."""
+def test_walked_corpus_key_is_the_authenticated_manifest_key() -> None:
+    """The key a walk over the corpus states is the authenticated manifest's."""
     corpus = authenticated_pandas_corpus()
     source_root = sugar_lift_py_tests_package_root() / "src"
-    identity = demand_table_identity(
-        corpus.root,
-        SourceTree(corpus.root).paths(),
-        source_root=source_root,
+    walked = semantic_identity_for_corpus(corpus.root, source_root=source_root)
+    stated = demand_table_identity_for_manifest(
+        corpus.manifest_cid, corpus.file_count, source_root=source_root
     )
 
-    assert identity.content_key == shared_demand_table_content_key()
+    assert walked.content_key == stated.content_key
 
 
 def _producer_source(root: Path, edits: dict[str, str] | None = None) -> Path:
@@ -115,7 +110,7 @@ def test_demand_table_output_interpreter_twin(tmp_path: Path) -> None:
     (package / "__init__.py").write_text("", encoding="utf-8")
     (package / "format_context.py").write_text(_SOURCE, encoding="utf-8")
 
-    rows = _preconstruction_demand_rows(corpus)
+    rows = with_demand_rows(corpus)["rows"]
     assert rows, "the acceptance corpus produced no demand-table rows"
     output_cid = cid_of_json(
         {"kind": "python-preconstruction-demand-table", "rows": rows}
@@ -126,7 +121,7 @@ def test_demand_table_output_interpreter_twin(tmp_path: Path) -> None:
     assert output_cid == cid_of_json(
         {
             "kind": "python-preconstruction-demand-table",
-            "rows": _preconstruction_demand_rows(corpus),
+            "rows": with_demand_rows(corpus)["rows"],
         }
     ), "the demand rows are not a function of the corpus"
     parser_ast_cid = blake3_512_of(

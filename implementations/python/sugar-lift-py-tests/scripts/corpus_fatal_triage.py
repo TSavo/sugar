@@ -118,7 +118,7 @@ def _run_child(args: argparse.Namespace) -> int:
                         "gap": {
                             "owner": "corpus_fatal_triage.child-protocol",
                             "observed": "one-file child invocation has no shared frozen context",
-                            "requested": "persistent worker initialized from the authenticated shared demand table",
+                            "requested": "persistent worker initialized on the authenticated corpus root",
                             "fix": "run fatal triage through its parent protocol",
                         },
                     }
@@ -232,12 +232,10 @@ def _run_parent(args: argparse.Namespace) -> int:
         for package, root, path in paths
     }
 
-    # Authenticate the corpus seat before acquiring the shared demand table.
-    # The path is transport only; the manifest CID and demand-table content key
-    # are the identities.  One persistent worker freezes one context from that
-    # table and consumes it for every file in this run.
+    # Authenticate the corpus seat before measuring. One persistent worker
+    # freezes one context on the corpus root (the per-source With demand door)
+    # and consumes it for every file in this run.
     from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
-    from sugar_lift_py_tests.no_call_body_attribution import pull_shared_demand_table
     from _supervised_enum_supervisor import SupervisedEnumSupervisor
 
     authenticated = authenticated_pandas_corpus()
@@ -248,13 +246,9 @@ def _run_parent(args: argparse.Namespace) -> int:
             "is absent from the enrolled package roots"
         )
     workspace_root = Path(os.path.commonpath([str(root) for root in corpus_roots]))
-    demand_scratch = tempfile.TemporaryDirectory(prefix="fatal-triage-demand-")
-    demand_table_path = Path(demand_scratch.name) / "python-demand-table.json"
-    pull_shared_demand_table(resolve_repo_root(), demand_table_path)
     supervisor = SupervisedEnumSupervisor(
         file_timeout=float(args.file_timeout),
         corpus_root=workspace_root,
-        demand_table_path=demand_table_path,
     )
 
     def measure_unchecked(rel: str) -> dict[str, Any]:
@@ -303,7 +297,6 @@ def _run_parent(args: argparse.Namespace) -> int:
             measured = [measure(rel) for rel in sorted(by_rel)]
     finally:
         supervisor.stop()
-        demand_scratch.cleanup()
 
     for index, (rel, measured_row) in enumerate(
         zip(sorted(by_rel), measured, strict=True), start=1

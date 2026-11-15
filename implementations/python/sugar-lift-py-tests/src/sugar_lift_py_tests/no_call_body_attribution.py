@@ -1,6 +1,7 @@
 """Per-family attribution for assertion bodies whose root is not a Call.
 
-The authenticated runner owns discovery and shared-table transport.  This
+The authenticated runner owns discovery; its With demand rows come from the
+one per-source derivation (``lift_rpc._PerSourceDemandRows``).  This
 module owns the closed accounting algebra: every completed probe is attributed
 to exactly one producer family and one closed outcome. A named
 ``SugarNotWritten`` refusal is accounted semantics, not a failure.
@@ -31,22 +32,6 @@ AUTHENTICATED_PANDAS = "3.0.3"
 AUTHENTICATED_FILE_COUNT = 1421
 
 
-def shared_demand_table_content_key() -> str:
-    """The shared table's content key, derived at use.
-
-    The key hashes the producer source files, so it is computed from them
-    each time it is needed rather than copied down; a copy goes stale on the
-    next producer edit (#7757).
-    """
-    from .demand_table_identity import demand_table_identity_for_manifest
-
-    return demand_table_identity_for_manifest(
-        CANONICAL_CORPUS_MANIFEST_CID,
-        AUTHENTICATED_FILE_COUNT,
-        source_root=Path(__file__).resolve().parents[1],
-    ).content_key
-
-
 class ProducerFamily(str, Enum):
     SUBSCRIPT = "Subscript"
     BINOP = "BinOp"
@@ -75,10 +60,6 @@ class AttributionOutcome(str, Enum):
 
 class AttributionInvariantError(RuntimeError):
     """An enrolled body completed without entering one of the three arms."""
-
-
-class DemandTableRefusal(RuntimeError):
-    """The shared table does not carry the required authenticated identity."""
 
 
 @dataclass(frozen=True)
@@ -468,141 +449,23 @@ def attribute_body_probes(probes: Iterable[BodyProbe]) -> AttributionReport:
     )
 
 
-def validate_shared_demand_table(payload: dict, *, expected_content_key: str) -> dict:
-    """Authenticate the shared table identity before reading any demand row."""
-    authentication = payload.get("authentication") or {}
-    identity = payload.get("identity") or {}
-    presented = {
-        authentication.get("authenticatedCorpusManifestCid"),
-        identity.get("corpusManifestCid"),
-    }
-    if HISTORICAL_PATH_SHAPE_DIGEST in presented:
-        raise DemandTableRefusal(
-            "historical path-shape digest is not corpus authentication"
-        )
-    expected = {
-        "contentKey": expected_content_key,
-        "runtime": AUTHENTICATED_RUNTIME,
-        "pandas": AUTHENTICATED_PANDAS,
-        "manifest": CANONICAL_CORPUS_MANIFEST_CID,
-        "fileCount": AUTHENTICATED_FILE_COUNT,
-    }
-    observed = {
-        "contentKey": payload.get("contentKey"),
-        "runtime": authentication.get("python"),
-        "pandas": authentication.get("pandas"),
-        "manifest": authentication.get("authenticatedCorpusManifestCid"),
-        "identityManifest": identity.get("corpusManifestCid"),
-        "fileCount": identity.get("fileCount"),
-    }
-    if (
-        observed["contentKey"] != expected["contentKey"]
-        or observed["runtime"] != expected["runtime"]
-        or observed["pandas"] != expected["pandas"]
-        or observed["manifest"] != expected["manifest"]
-        or observed["identityManifest"] != expected["manifest"]
-        or observed["fileCount"] != expected["fileCount"]
-    ):
-        raise DemandTableRefusal(
-            f"shared demand-table identity mismatch: expected={expected!r} "
-            f"observed={observed!r}"
-        )
-    if not isinstance(payload.get("rows"), list):
-        raise DemandTableRefusal("shared demand table carries no row list")
-    return payload
+def with_demand_rows(corpus_root: Path) -> dict:
+    """Every With demand row of the corpus, asked source by source.
 
-
-def pull_shared_demand_table(repo_root: Path, output: Path) -> dict:
-    """Resolve the shared table, deriving authentically on a CAS miss.
-
-    A miss is slow but honest: the authenticated producer is the fallback.
-    Corrupt/private-shelf errors remain loud refusals and never fall through.
+    The rows are the one per-source derivation's (``_PerSourceDemandRows``),
+    read for every enrolled source; nothing is pulled from a shelf or minted
+    as a table in its place (#7757 item 46).
     """
-    import json
-    import os
-    import subprocess
+    from sugar_lift_py_tests.lift_rpc import _PerSourceDemandRows
 
-    content_key = shared_demand_table_content_key()
-    environment = dict(os.environ)
-    environment.update(
-        SUGAR_BINARY_ALLOW_BUILD="0",
-        SUGAR_BINARY_PUBLISH="0",
-    )
-    completed = subprocess.run(
-        (
-            str(repo_root / "bin" / "sugarbin"),
-            "artifact",
-            "pull",
-            "--kind",
-            "python-demand-table",
-            "--content-key",
-            content_key,
-            "--output",
-            str(output),
-            "--runtime",
-            AUTHENTICATED_RUNTIME,
-        ),
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=False,
-        env=environment,
-    )
-    if completed.returncode == 1:
-        print(
-            "python-demand-table CAS miss: "
-            f"requested semantic key={content_key}; "
-            "falling back to authenticated derivation",
-            file=sys.stderr,
-            flush=True,
-        )
-        from .authenticated_pytest import authenticated_pandas_corpus
-        from .prebuilt_demand_table import (
-            load_prebuilt_demand_table,
-            mint_prebuilt_demand_table,
-            write_prebuilt_demand_table,
-        )
-
-        table = mint_prebuilt_demand_table(authenticated_pandas_corpus())
-        # The artifact consumed by process floors is the canonical prebuilt
-        # table, not the legacy attribution wrapper.  One wire shape keeps
-        # derive -> write -> load honest.
-        write_prebuilt_demand_table(table, output)
-        loaded = load_prebuilt_demand_table(
-            output,
-            expected_corpus_pin=table.corpus_pin,
-            expected_content_cid=table.content_cid,
-        )
-        if loaded != table:
-            raise DemandTableRefusal(
-                "authenticated demand-table fallback round-trip changed table"
-            )
-        payload = {
-            "contentKey": table.semantic_identity.content_key,
-            "rows": list(table.rows),
-            "authentication": {
-                "python": AUTHENTICATED_RUNTIME,
-                "pandas": table.corpus_pin.version,
-                "authenticatedCorpusManifestCid": table.corpus_pin.aggregate_hash,
-            },
-            "identity": {
-                "corpusManifestCid": table.corpus_pin.aggregate_hash,
-                "fileCount": table.corpus_pin.file_count,
-            },
-        }
-        return validate_shared_demand_table(
-            payload, expected_content_key=table.semantic_identity.content_key,
-        )
-    if completed.returncode != 0 or not output.is_file():
-        raise DemandTableRefusal(
-            "the exact shared python-demand-table is unavailable; await its "
-            f"publisher and never rebuild it (exit={completed.returncode}, "
-            f"stderr={completed.stderr.strip()[:400]!r})"
-        )
-    return validate_shared_demand_table(
-        json.loads(output.read_text(encoding="utf-8")),
-        expected_content_key=content_key,
-    )
+    demands = _PerSourceDemandRows(Path(corpus_root))
+    return {
+        "rows": [
+            row
+            for source_cid in demands.source_cids()
+            for row in demands.rows_for_source(source_cid)
+        ]
+    }
 
 
 def _use_site_coordinate(
@@ -846,9 +709,7 @@ def run_authenticated_attribution(
     *,
     families: frozenset[ProducerFamily] | None = None,
 ) -> AttributionReport:
-    """Authenticated executable edge. Workstations must refuse before pulling."""
-    import tempfile
-
+    """Authenticated executable edge over the authenticated pandas corpus."""
     from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 
     corpus = authenticated_pandas_corpus()
@@ -860,10 +721,7 @@ def run_authenticated_attribution(
             f"launcher selected unexpected corpus {corpus.manifest_cid} "
             f"over {corpus.file_count} files"
         )
-    with tempfile.TemporaryDirectory() as scratch:
-        payload = pull_shared_demand_table(
-            repo_root, Path(scratch) / "python-demand-table.json"
-        )
+    payload = with_demand_rows(corpus.root)
     disposition = discover_no_call_body_probes(payload, corpus.root, families=families)
     probes = require_expected_denominators(
         disposition.probes,
