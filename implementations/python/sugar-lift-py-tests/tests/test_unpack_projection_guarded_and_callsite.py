@@ -290,22 +290,19 @@ def test_callsite_arity_is_the_target_count(tmp_path: Path) -> None:
     assert str(two.guard) != str(three.guard)
 
 
-def test_callsite_with_no_reachable_body_takes_the_opaque_arm(
+def test_callsite_whose_body_floors_to_a_display_binds_its_members(
     tmp_path: Path,
 ) -> None:
-    """When the dig cannot fire, the answer is the obligation -- never a member.
+    """Law 6: ``pair`` is defined in the same file and returns the display
+    ``p, q``, so ``a, b = pair(p, q)`` unpacks a 2-tuple into two targets.
 
-    ``_dig_floor_or_none`` returns ``None`` as soon as ``self.body`` is absent,
-    and this harness reduces with ``desugar(None)``, so no callee body is
-    attached even for a function defined in the same file. That makes the
-    opaque arm the one under test here.
-
-    The decidable half -- a dug callee whose body floors to a display, binding
-    the members already in hand -- is NOT exercised by this module, because
-    this harness supplies no reduce context for the dig. It is stated in
-    ``CallSiteValue.project_sequence_with`` and covered by the corpus run, not
-    asserted here; claiming it from this fixture would be asserting a path the
-    fixture never reaches.
+    Python never raises there: a 2-tuple always unpacks into two names, and
+    building it cannot raise.  The call binds ``pair``'s body (a same-file
+    call is applied, step 6), its return floors to the display, and the
+    unpack binds the members already in hand.  ``A`` is one completion under
+    truth with no halt -- no unpack obligation is owed, because there is no
+    raise for it to stand for.  The opaque arm (law 5) is the receiver the
+    caller does not have: ``o.copy()`` above.
     """
     source = (
         "def pair(p, q):\n"
@@ -315,9 +312,7 @@ def test_callsite_with_no_reachable_body_takes_the_opaque_arm(
         "    a, b = pair(p, q)\n"
         "    return a\n"
     )
-    outcome = _outcome(tmp_path, source, "callsite_opaque")
-    halt = _callsite_unpack_halt(outcome)
-    assert isinstance(halt.effect, UndeterminedRaiseEffect), halt.effect
-    # The obligation names the callsite coordinate, not an invented element.
-    assert "call:pair" in str(halt.guard)
-    assert "python:unpack.destructure" in str(halt.guard)
+    outcome = _outcome(tmp_path, source, "callsite_display")
+    assert outcome.halts() == ()
+    assert outcome.completed_value() is not None, outcome
+    assert "python:unpack.destructure" not in repr(outcome)
