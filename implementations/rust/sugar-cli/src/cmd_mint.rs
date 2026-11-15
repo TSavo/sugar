@@ -4131,6 +4131,22 @@ fn mint_ir_document_with_source_and_plan_mementos(
             }
             None => Vec::new(),
         };
+        // The value the contract states for each module global input it
+        // decides (#7757 step 5): carried through so prove's one binder binds
+        // a `global:<name>` no call supplies to it.
+        let input_values: Vec<Arc<CValue>> = match decl.get("inputValues") {
+            Some(Value::Array(arr)) => arr
+                .iter()
+                .map(|value| json_to_cvalue_with_terms(value, term_table))
+                .collect::<Result<Vec<_>, _>>()?,
+            Some(value) => {
+                return Err(format!(
+                    "contract `{name}`: inputValues must be an array, got {}",
+                    json_type_name(value)
+                ));
+            }
+            None => Vec::new(),
+        };
         let class_shapes_value = decl.get("classShapes").or_else(|| decl.get("class_shapes"));
         let class_shapes: Vec<Arc<CValue>> = match class_shapes_value {
             Some(Value::Array(arr)) => arr
@@ -4313,6 +4329,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
                 body_discharge_eligible,
                 body_discharge_refusal_reason: body_discharge_refusal_reason.clone(),
                 panic_loci: panic_loci.clone(),
+                input_values: input_values.clone(),
                 class_shapes: class_shapes.clone(),
                 source_warrants: source_warrants.clone(),
                 proofir_provenance,

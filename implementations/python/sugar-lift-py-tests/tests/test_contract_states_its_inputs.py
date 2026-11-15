@@ -5,10 +5,11 @@ A captured cell is read when the function is called, from the enclosing
 scope the call sees, so the caller supplies it as it supplies an actual: the
 contract states it as the formal ``cell:<name>`` after the parameters. A
 default the ``def`` statement bound is the formal ``default:<param>``, which
-prove's binder binds to a parameter the call omits. A module global the body
-reads is the formal ``global:<name>``; the function's own row is decided at
-the module-final value, as a root is called after import. Before this, a lambda or
-local ``def`` reading an enclosing local was refused by name and its row was
+prove's binder binds to a parameter the call omits. A module global a call
+reads is the formal ``global:<name>``: the contract is stated over it, and
+the row states the value the module's run left, which prove's binder binds
+where no call supplies one (step 5). Before this, a lambda or local ``def``
+reading an enclosing local was refused by name and its row was
 ``undecided`` (#8687).
 """
 
@@ -92,10 +93,40 @@ def test_a_def_reading_a_module_global_states_it_as_an_input(tmp_path):
     # call (``py.global``): the contract names it after the parameters.
     assert row.formals == ["x", "global:G"]
     assert len(row.formal_sorts) == 2
-    # The row itself is decided as a root is called, after import: at
-    # ``global:G`` := the module-final value, so the post reads the value
-    # the module's run left, never the free input.
-    assert "global:G" not in repr(row.post.ir_formula)
+    # The contract is stated over the input (step 5): its post reads the free
+    # ``global:G``, and the row states the value the module's run left for
+    # it, which prove's one binder binds where no call supplies one.
+    assert "global:G" in repr(row.post.ir_formula)
+    ((formal, term),) = row.input_values
+    assert formal == "global:G"
+    assert "3" in repr(term)
+
+
+def test_a_class_is_a_definition_never_an_input(tmp_path):
+    row = _rows(
+        tmp_path,
+        "class Box:\n    pass\n\n\ndef f():\n    return Box\n",
+        lambda tree: [fn for fn in tree.functions() if fn.name == "f"][0],
+    )
+
+    # A class statement binds a definition (decision (c), #7757 step 5):
+    # the body reads it at the value the module's run left, as it reads a
+    # ``def``'s or an import's name.
+    assert row.formals == []
+    assert row.input_values == ()
+
+
+def test_a_global_a_called_function_reads_is_the_caller_s_input(tmp_path):
+    row = _rows(
+        tmp_path,
+        "X = 1\n\n\ndef g():\n    return X\n\n\ndef f():\n    return g()\n",
+        lambda tree: [fn for fn in tree.functions() if fn.name == "f"][0],
+    )
+
+    # ``g`` reads ``X`` where ``f`` calls it, so ``f``'s call supplies it
+    # from ``f``'s own input: a caller of ``f`` while the module runs
+    # supplies the binding standing there, never the module-final value.
+    assert row.formals == ["global:X"]
 
 
 def test_global_inputs_follow_the_defaults_in_name_order(tmp_path):

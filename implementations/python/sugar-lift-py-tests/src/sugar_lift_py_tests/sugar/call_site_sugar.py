@@ -1698,3 +1698,139 @@ def _collect_final_evaluations(state, evaluations: list, decisions: list) -> Non
         decisions.append(state.slot.slot_id)
         _collect_final_evaluations(state.when_true, evaluations, decisions)
         _collect_final_evaluations(state.when_false, evaluations, decisions)
+
+
+# ---------------------------------------------------------------------------
+# A function's module global inputs (#7757 step 5).
+#
+# A function reads its own module's globals where it is called: after import,
+# at the values the module's one run left; while the module body runs, at the
+# binding standing at that call.  Its contract states its post and claims
+# over each ``global:<name>`` input free (``bind_global_inputs``), its row
+# states the value the run left for each (``stated_global_values``), and a
+# call of it supplies the binding where the call runs (``global_value_at_call``,
+# ``py.global``).  Prove's one binder binds an input no call supplies to the
+# stated value, as it binds an omitted parameter to its default.  A class or a
+# decorated ``def`` is a definition, never an input
+# (``SourceUnit.module_definition_names``).
+# ---------------------------------------------------------------------------
+
+
+def global_input_keys(unit, name: str, site=None) -> tuple:
+    """The evaluation keys the module binding of ``name`` reads through
+    where a function of ``unit`` is called at the module execution ``site``
+    (None: after import, the module's final binding): each key
+    ``_collect_final_evaluations`` collects off the binding
+    (``SourceUnit.module_bindings_at``).  Empty where the module does not
+    decide the binding there."""
+    from sugar_source_tree.nodes import UNDECIDED_MODULE_BINDING
+
+    state = unit.module_bindings_at(site, frozenset({name})).get(
+        name, UNDECIDED_MODULE_BINDING
+    )
+    if state is UNDECIDED_MODULE_BINDING:
+        return ()
+    evaluations: list = []
+    decisions: list = []
+    _collect_final_evaluations(state, evaluations, decisions)
+    return tuple(dict.fromkeys(evaluations))
+
+
+def _global_inputs(definition) -> tuple:
+    """The ``global:`` inputs of ``definition``'s contract
+    (``nodes._contract_inputs``), in their order."""
+    from sugar_lift_py_tests.contract_input import GLOBAL_INPUT
+
+    return tuple(
+        item
+        for item in definition.contract_inputs()
+        if item.coordinate.input_kind == GLOBAL_INPUT
+    )
+
+
+def bind_global_inputs(ctx, definition, *, owner: str):
+    """``ctx`` at the entry of ``definition``'s own contract (a ``def``,
+    ``async def`` or lambda), with each key the module's final binding of a
+    ``global:<name>`` input reads through (``global_input_keys``) bound to
+    the free input (``ContractInputV1.value``), as a captured cell is bound
+    to its free input (``contract_input.bind_contract_inputs``).  So the
+    contract's post and claims are stated over the input, and every call the
+    body makes of a function that reads the global supplies the input
+    (``global_value_at_call``).  A key already bound in ``ctx`` keeps its
+    binding.  ``ctx`` comes back unchanged when nothing is bound."""
+    inputs = _global_inputs(definition)
+    if not inputs:
+        return ctx
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.context import ReduceContext
+
+    entered = ReduceContext.root(owner=owner) if ctx is None else ctx
+    bound_any = False
+    for item in inputs:
+        value = item.value()
+        for key in global_input_keys(definition.unit, item.coordinate.name):
+            if entered.temporal.value_if_bound(key) is not None:
+                continue
+            entered = replace(
+                entered,
+                temporal=entered.temporal.bind_value(key, value, blame=owner),
+            )
+            bound_any = True
+    return entered if bound_any else ctx
+
+
+def stated_global_values(definition) -> tuple:
+    """``((formal, term), ...)``: the value the module's one run left for
+    each ``global:<name>`` input of ``definition``'s contract, read where
+    its one key is read (``ModuleFinalValue``: the run asked for, its
+    refusal raised here).  The row states them (``inputValues``) and prove's
+    one binder binds an input no call supplies to its stated value (a call
+    after import, pytest's call of a test function).  An input whose final
+    binding reads through more than one key (a branch merge, a loop's
+    faces), or that the run leaves undecided, owing, or not one completed
+    value, is not stated: a claim that reads it is not decided."""
+    stated = []
+    for item in _global_inputs(definition):
+        keys = global_input_keys(definition.unit, item.coordinate.name)
+        if len(keys) != 1:
+            continue
+        read = ModuleFinalValue(definition.unit, keys[0]).read()
+        if read is None or read.owed_items():
+            continue
+        value = read.completed_value()
+        if value is None:
+            continue
+        stated.append((item.formal, value.to_term(owner="stated_global_values")))
+    return tuple(stated)
+
+
+def global_value_at_call(callee, name: str, ctx, *, module_site, call_site):
+    """The term a call of ``callee`` (a ``def`` or lambda of this file)
+    supplies for its ``global:<name>`` input (``py.global``): the binding of
+    ``name`` standing where the call runs, read through the keys it reads
+    through (``global_input_keys``) in the caller's ``ctx``.  While the
+    module body runs (``module_site``, the module execution site the call is
+    reduced under, when it is ``callee``'s module's) that is the binding the
+    run made there; called from a function's own contract, the caller's own
+    input (``bind_global_inputs``).  Where the keys hold no one value, the
+    term is a variable no contract binds (named by the call's ``call_site``),
+    so the join's instance is open and the call stays owed: never the
+    module-final value where the call may run before it."""
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.occurrence import site_coordinate_cid
+    from sugar_source_tree.nodes import _site_where_called
+
+    unit = callee.unit
+    keys = global_input_keys(unit, name, _site_where_called(unit, module_site))
+    terms = []
+    for key in keys:
+        bound = None if ctx is None else ctx.temporal.value_if_bound(key)
+        value = None if bound is None else bound_value_read(bound)
+        if value is None:
+            terms = []
+            break
+        terms.append(value.to_term(owner="global_value_at_call"))
+    if terms and all(term == terms[0] for term in terms[1:]):
+        return terms[0]
+    return make_var(f"undecided:global:{name}@{site_coordinate_cid(call_site)}")

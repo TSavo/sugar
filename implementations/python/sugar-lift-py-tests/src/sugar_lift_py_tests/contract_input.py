@@ -19,14 +19,16 @@ the caller's named argument exactly as it binds an actual to a parameter. In
 the function's own proof no caller supplies it: the body reads a cell as the
 free input, as it reads a parameter (``FormalRefSugar``).
 
-A module global is the one input the function's own row binds: the row is
-decided as a root is called, after import (pytest calls a test function so),
-with each ``global:<name>`` at the value the module's one run left for the
-name. The frame entry binds the keys the body reads the global through to
-that value (``call_site_sugar.with_module_final_globals``), so the row reads
-exactly what it read before the contract named the input, decided or
-undecided as the run left it (#8018, #8501). A caller binds the input at the
-call, with the value the global holds there (``py.global``, step 5).
+A module global is read as the free input too (step 5): the keys the module's
+final binding of it reads through are bound to the input at the entry
+(``call_site_sugar.bind_global_inputs``). The row states the value the
+module's one run left for it (``call_site_sugar.stated_global_values``,
+``inputValues``), and prove's one binder binds a ``global:<name>`` no call
+supplies to that value, as it binds an omitted parameter to its default: a
+call after import, and the row's own claims (pytest's call of a test
+function), read the module-final value; a call made while the module runs
+supplies the binding standing there (``py.global``). A class or a decorated
+``def`` is a definition, never an input (#7757, decision (c)).
 """
 
 from __future__ import annotations
@@ -104,10 +106,10 @@ class ContractInputCoordinateV1:
 class ContractInputV1:
     """One input of a function's contract: its coordinate, and the key the
     body reads it through (``read_cid``: a captured cell's coordinate), or
-    ``None`` for an input the function's own universe does not bind free: a
-    default (the body reads the parameter it binds) and a module global
-    (the root row's frame entry binds its keys to the module-final value,
-    ``with_module_final_globals``)."""
+    ``None`` for an input not read through one coordinate: a default (the
+    body reads the parameter it binds) and a module global (read through
+    the keys of the module's binding of it, each bound to the free input at
+    the entry, ``call_site_sugar.bind_global_inputs``)."""
 
     coordinate: ContractInputCoordinateV1
     read_cid: str | None = None

@@ -6,11 +6,12 @@ def test_x(): assert X == <n>
 ```
 
 ``test_x`` reads ``X`` when pytest calls it, after import, so its contract
-states ``global:X`` as an input (#7757 step 4). Its own row is decided as a
-root is called: at ``global:X`` := the value the module's one run left, 3
-(#8018: a module-final ground literal read stays). Naming the input changes
-no verdict: the truthful claim ``X == 3`` is ``sat``, the lying ``X == 4``
-``unsat``, as before.
+states ``global:X`` as an input (#7757 step 4) and its claim is stated over
+the free input (step 5). The row states the value the module's one run left
+for it, 3, and prove's one binder binds the input to it, as pytest's call
+after import supplies nothing (``consistency::bind_own_inputs``). The
+truthful claim ``X == 3`` is ``sat``, the lying ``X == 4`` ``unsat``, as
+before.
 
 Each half goes through ``run_source_through_real_solver``: real ``sugar
 mint`` then real ``sugar prove``.
