@@ -12794,12 +12794,21 @@ class ClassDef(Statement):
 
 
     def _sugar_source_class_base(self, base):
-        """Sugar a base, unwrapping a local ``Base`` or ``Base[T]`` to that class.
+        """``(sugar, type_arguments)`` for a base, unwrapping a local
+        ``Base`` or ``Base[T]`` to that class.
 
         Subscription supplies type arguments; it does not change which class
         owns inherited runtime methods. The module-level ClassDef binding is
         the same door ``module_direct_bindings`` already uses for allocation.
-        Computed and attributed bases stay ordinary expressions.
+        Computed and attributed bases stay ordinary expressions
+        (``type_arguments`` None).
+
+        The read of the class's name is the base's construction: the name
+        (and, for ``Base[T]``, the subscription the unwrap reads through)
+        answers the roll by it.  Python still evaluates ``T`` where the class
+        statement runs: ``type_arguments`` is its sugar, evaluated after the
+        base's read, every face of it the statement's
+        (``ClassDefinitionSugar.base_type_arguments``), never dropped.
         """
         name = None
         if isinstance(base, Name):
@@ -12812,12 +12821,18 @@ class ClassDef(Statement):
                 # A base is a read of the class's name: the class statement's
                 # value under its evaluation key, decorated or not (#7757,
                 # ``call_applies_own_frame``), never the statement itself.
-                return _decorated_definition_ref(
+                read = _decorated_definition_ref(
                     bindings[0],
                     base.span,
                     evaluation=_definition_evaluation_key(bindings[0], {}),
                 ).sugar()
-        return base.sugar()
+                type_arguments = None
+                if isinstance(base, Subscript):
+                    base.value.discharge_by_substitution()
+                    type_arguments = base.slice_.sugar()
+                base.discharge_by_substitution()
+                return read, type_arguments
+        return base.sugar(), None
 
     def _module_name_references(self) -> dict:
         """The module's binding of each module name this class body reads,
@@ -12960,7 +12975,7 @@ class ClassDef(Statement):
             branch_slots,
             default_keys,
         ) = self._class_body_block(threaded)
-        base_sugars = ()
+        bases = ()
         if self.bases:
             self._require_construction_context(owner="ClassDef._construct_sugar")
             # Each base is built by the tree itself: a local ``Base`` /
@@ -12970,9 +12985,13 @@ class ClassDef(Statement):
             # base here erased ``dict`` from ``class _EnumDict(dict)`` and
             # fabricated a plain-object receiver. Dropping
             # ``AbstractRaises[T]`` left ``super()`` with zero direct bases.
-            base_sugars = tuple(
-                self._sugar_source_class_base(base) for base in self.bases
-            )
+            bases = tuple(self._sugar_source_class_base(base) for base in self.bases)
+        # Python evaluates each class keyword's value (``metaclass=ABCMeta``)
+        # where the statement runs, after the bases and before the body: an
+        # evaluation of the statement, every face of it the statement's
+        # (``ClassDefinitionSugar.keyword_sugars``).  The keyword itself
+        # answers with this statement (``Keyword._structural_part``).
+        keyword_sugars = tuple(keyword.value.sugar() for keyword in self.keywords)
         return ClassDefinitionSugar(
             class_name=self.name,
             source_identity_cid=self.unit.source_cid,
@@ -13002,7 +13021,9 @@ class ClassDef(Statement):
                 )
                 for item in self.decorators
             ),
-            base_sugars=base_sugars,
+            base_sugars=tuple(sugar for sugar, _arguments in bases),
+            base_type_arguments=tuple(arguments for _sugar, arguments in bases),
+            keyword_sugars=keyword_sugars,
             base_fragment_cids=tuple(base.fragment.seal().cid for base in self.bases),
             site=self.fragment,
             class_definition=self,
