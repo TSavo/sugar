@@ -58,3 +58,34 @@ def test_an_unread_member_and_walrus_answer_where_they_are_minted():
         "    return []\n"
     )
     assert not [e for e in report.minority if e.kind in _MINTED]
+
+
+def test_a_module_live_loop_s_references_answer_where_they_are_minted():
+    # A live loop mints its target's and its header's references, and the
+    # post-loop key it publishes, at the loop's span: values of a scope.  A
+    # function frame's sealer constructs them; a module body has none, so
+    # ``core/_numba/extensions.py:481`` (``for reduction, reduction_method in
+    # series_reductions: generate_series_reduction(...)``) left an
+    # ``EvaluationRef`` at the loop's span unanswered.
+    report = _report(
+        "import os\n"
+        "import operator\n"
+        "\n"
+        "\n"
+        "def generate(name, method):\n"
+        "    return name\n"
+        "\n"
+        "\n"
+        "pairs = os.environ.get('P')\n"
+        "for name, method in pairs:\n"
+        "    generate(name, method)\n"
+        "\n"
+        "reductions = [('add', operator.add), ('sub', operator.sub)]\n"
+        "for reduction, reduction_method in reductions:\n"
+        "    generate(reduction, reduction_method)\n"
+        "\n"
+        "total = 0\n"
+        "for item in pairs:\n"
+        "    total += 1\n"
+    )
+    assert not [e for e in report.minority if e.kind == "EvaluationRef"]

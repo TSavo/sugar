@@ -7465,11 +7465,22 @@ def _loop_target_bindings(loop, names, scope) -> dict:
     A target bound before the loop keeps the pre-loop binding's coordinate
     (it is the same variable, and the loop carries it); a target bound
     nowhere before is the reference alone.
+
+    The reference is a value of the body's scope, minted at the loop's span,
+    never a source occurrence: a read of the target is re-spanned to its own
+    site (``Name.substitute``) and answers for itself.  In a function frame
+    the substitution trace's sealer constructs it (``live_loop_construction.
+    _seal_runtime_state``); a module body has no such sealer, so a live
+    module loop's reference was constructed by nothing
+    (``core/_numba/extensions.py:481``).  It answers where it is minted
+    (``_minted_binding_reference``), as every binding a rewrite mints does.
     """
     references = {}
     for name in sorted(names):
         evaluation = _loop_target_evaluation_key(loop, name, scope)
-        reference = _evaluation_ref(loop, loop.span, evaluation, name)
+        reference = _minted_binding_reference(
+            _evaluation_ref(loop, loop.span, evaluation, name)
+        )
         entry = scope.get(name)
         if isinstance(entry, BindingEntryV1):
             references[name] = replace(entry, state=reference, sealed_state=None)
@@ -7558,12 +7569,21 @@ def _loop_header_bindings(loop, names, scope, kept=frozenset()) -> dict:
             if name in kept and not isinstance(start, UnboundBinding)
             else None
         )
-        reference = _evaluation_ref(
-            loop,
-            loop.span,
-            evaluation,
-            name,
-            of=None if before is None else object_across_items(loop, name, before),
+        # A value of the body's scope, minted at the loop's span: it answers
+        # where it is minted, as the target's reference does
+        # (``_loop_target_bindings``).
+        reference = _minted_binding_reference(
+            _evaluation_ref(
+                loop,
+                loop.span,
+                evaluation,
+                name,
+                of=(
+                    None
+                    if before is None
+                    else object_across_items(loop, name, before)
+                ),
+            )
         )
         if isinstance(start, BindingEntryV1):
             headers[name] = replace(start, state=reference, sealed_state=None)
@@ -7924,7 +7944,12 @@ def _live_loop_publication(loop, carried, scope) -> dict:
                 continue
         published[name] = join_binding_state(
             slot=loop_write_slot(post_key),
-            when_true=_evaluation_ref(loop, loop.span, post_key, name),
+            # A value of the scope after the loop, minted at its span: it
+            # answers where it is minted, as the phi over it does
+            # (``If._make_ifexp``).
+            when_true=_minted_binding_reference(
+                _evaluation_ref(loop, loop.span, post_key, name)
+            ),
             when_false=prior,
             make_ifexp=make_ifexp,
         )
