@@ -3638,13 +3638,18 @@ struct AmbientPost {
     /// How the call's arguments bind the answering contract
     /// (`post_arguments`): as they stand for every post but a dispatched
     /// answer, which binds them by the kind of function it resolved to
-    /// (step 8).
+    /// (step 8), and a called function value's, which binds the actuals and
+    /// the value's own inputs (step 9).
     receiver: DispatchReceiver,
     /// The class namespaces the proofs state, where the answering contract
     /// states a `python:plain_store` guard (step 7): what decides it once the
     /// call binds the class input it reads (`decide_plain_stores`). `None`
     /// leaves every such guard undecided.
     namespaces: Option<Arc<BTreeMap<String, ClassNamespace>>>,
+    /// `Some` for the owed entry of a member with no symbol (step 9): owed as
+    /// it stands, answered at a read whose call is a call of a function value
+    /// stated as its join symbol (`function_value_answer`).
+    value_calls: Option<Arc<FunctionAnswers>>,
 }
 
 #[derive(Debug, Clone)]
@@ -4785,6 +4790,13 @@ enum DispatchReceiver {
     /// A `classmethod`: the instance's class (its `python:class_object`
     /// term) is passed in the instance's place.
     Class(Json),
+    /// A call of a function value (`py.call(<callee>, <actuals>...)`) whose
+    /// callee is the value stated as its join symbol
+    /// (`python:function(<symbol>, <inputs>...)`): the callee is not passed,
+    /// and the value's own inputs (its `py.default` and `py.closure` terms)
+    /// are passed after the actuals, as a call of the definition by name
+    /// passes them (`function_value_answer`).
+    Value(Vec<Json>),
 }
 
 /// What a dispatched call or read resolves to (step 8): the join symbol of
@@ -4899,6 +4911,12 @@ fn dispatched_arguments(receiver: &DispatchReceiver, args: &[Json]) -> Option<Ve
     if *receiver == DispatchReceiver::AsCalled {
         return Some(args.to_vec());
     }
+    if let DispatchReceiver::Value(inputs) = receiver {
+        let (_callee, actuals) = args.split_first()?;
+        let mut bound = actuals.to_vec();
+        bound.extend(inputs.iter().cloned());
+        return Some(bound);
+    }
     let instance = args.iter().position(is_positional_argument)?;
     let mut rebound = Vec::with_capacity(args.len());
     for (index, arg) in args.iter().enumerate() {
@@ -5010,13 +5028,7 @@ fn dispatch_table(pool: &MementoPool) -> DispatchTable {
             if !dispatched || symbol.is_empty() || answers.contains_key(symbol) {
                 continue;
             }
-            let answer = single_bridge_answer(pool, symbol).filter(|(binding, _, _, _, _)| {
-                !binding
-                    .formals
-                    .iter()
-                    .any(|formal| formal.starts_with(GLOBAL_INPUT_PREFIX))
-            });
-            answers.insert(symbol.clone(), answer);
+            answers.insert(symbol.clone(), called_function_answer(pool, symbol));
         }
     }
     DispatchTable {
@@ -5129,6 +5141,200 @@ fn constructed_instance(post: &Json, out: &str, class: &str) -> Option<Json> {
     Some(json!({"kind": "ctor", "name": PYTHON_INSTANCE, "args": args}))
 }
 
+/// The answer the bridge stating `symbol` gives a call of that function
+/// that is not made by name (a dispatched method call, step 8; a call of a
+/// function value, step 9): `single_bridge_answer`, `None` where the
+/// contract takes a `global:` input (such a call supplies no module global,
+/// and the value the module's run left is not the one standing where the
+/// call may run).
+fn called_function_answer(pool: &MementoPool, symbol: &str) -> Option<BridgeAnswer> {
+    single_bridge_answer(pool, symbol).filter(|(binding, _, _, _, _)| {
+        !binding
+            .formals
+            .iter()
+            .any(|formal| formal.starts_with(GLOBAL_INPUT_PREFIX))
+    })
+}
+
+// ── A call of a function value a post returns (step 9; #7757) ──────────────
+//
+// A function value is stated as its join symbol: `python:function(<symbol>,
+// py.default(<param>, <value>)..., py.closure(<name>, <value>)...)`, the
+// Python kit's `LambdaCallable.to_term`, the same symbol a call of the
+// definition by name carries (#8682), with exactly the inputs that call
+// supplies. A call of a value, `python:call_result(py.call(<callee>,
+// <actuals>...), <occurrence>)`, is owed at its site (an `undecided` member
+// with no symbol). Where the callee is such a term -- in the claim itself, or
+// a call's result that a joined post states, unguarded, to be one -- the call
+// is an edge to that symbol, joined like any other edge through the one
+// binder (`DispatchReceiver::Value`). Where the returned value is not a
+// decided function value, the call stays owed.
+
+/// The ctor a function value is stated as.
+const PYTHON_FUNCTION: &str = "python:function";
+/// The call of a value: `py.call(<callee>, <actuals>...)`.
+const PYTHON_VALUE_CALL: &str = "py.call";
+
+/// What the join reads to answer a call of a function value: each symbol a
+/// `python:function` term names anywhere in the pool's contracts, with the
+/// answer its bridge gives (`called_function_answer`).
+#[derive(Debug, Default)]
+struct FunctionAnswers {
+    answers: BTreeMap<String, Option<BridgeAnswer>>,
+    /// The class namespaces the proofs state, where an answer states a
+    /// `python:plain_store` guard (step 7), as a joined edge carries them
+    /// (`AmbientPost::namespaces`).
+    namespaces: Option<Arc<BTreeMap<String, ClassNamespace>>>,
+}
+
+/// Every symbol a `python:function` term names under `node`.
+fn collect_function_value_symbols(node: &Json, out: &mut std::collections::BTreeSet<String>) {
+    if node.get("kind").and_then(|v| v.as_str()) == Some("ctor")
+        && node.get("name").and_then(|v| v.as_str()) == Some(PYTHON_FUNCTION)
+    {
+        if let Some(symbol) = node
+            .get("args")
+            .and_then(|v| v.as_array())
+            .and_then(|args| args.first())
+            .and_then(const_str)
+        {
+            out.insert(symbol.to_string());
+        }
+    }
+    if let Some(body) = node.get("body") {
+        collect_function_value_symbols(body, out);
+    }
+    for field in ["operands", "args"] {
+        if let Some(children) = node.get(field).and_then(|v| v.as_array()) {
+            for child in children {
+                collect_function_value_symbols(child, out);
+            }
+        }
+    }
+}
+
+/// The function-value answers over `pool` (`FunctionAnswers`).
+fn function_answers(pool: &MementoPool) -> FunctionAnswers {
+    let mut symbols = std::collections::BTreeSet::new();
+    for (_cid, member) in pool.contract_members() {
+        let Some(body) = pool
+            .contract_body_for_member(member)
+            .filter(|v| v.is_object())
+        else {
+            continue;
+        };
+        for slot in ["inv", "post"] {
+            if let Some(formula) = body.get(slot) {
+                collect_function_value_symbols(formula, &mut symbols);
+            }
+        }
+    }
+    FunctionAnswers {
+        answers: symbols
+            .into_iter()
+            .map(|symbol| {
+                let answer = called_function_answer(pool, &symbol);
+                (symbol, answer)
+            })
+            .collect(),
+    }
+}
+
+/// The callee of a call of a value: `<callee>` of `py.call(<callee>, ...)`.
+fn called_value(call: &Json) -> Option<&Json> {
+    if call.get("kind")?.as_str()? != "ctor" || call.get("name")?.as_str()? != PYTHON_VALUE_CALL {
+        return None;
+    }
+    call.get("args")?.as_array()?.first()
+}
+
+/// Whether `term` is a function value stated as its join symbol.
+fn is_function_value(term: &Json) -> bool {
+    term.get("kind").and_then(|v| v.as_str()) == Some("ctor")
+        && term.get("name").and_then(|v| v.as_str()) == Some(PYTHON_FUNCTION)
+}
+
+/// The function value `callee` is: itself when it is one, else the one a
+/// joined post stated, unguarded, for that term (`decided`, by its
+/// canonical spelling). `None` when neither decides it.
+fn function_value_of(callee: &Json, decided: &BTreeMap<String, Json>) -> Option<Json> {
+    if is_function_value(callee) {
+        return Some(callee.clone());
+    }
+    decided.get(&json_term_key(callee)).cloned()
+}
+
+/// A term's canonical spelling, the key the join reads terms by.
+fn json_term_key(term: &Json) -> String {
+    libsugar::canonical::json_jcs(term)
+        .unwrap_or_else(|_| serde_json::to_string(term).unwrap_or_default())
+}
+
+/// The function value an unguarded `=(<result>, python:function(...))` of
+/// `instance` (a joined post at the call `result`) states `result` to be.
+fn stated_function_value(instance: &Json, result: &Json) -> Option<Json> {
+    top_level_conjuncts(instance.clone()).into_iter().find_map(|fact| {
+        if fact.get("kind").and_then(|v| v.as_str()) != Some("atomic")
+            || fact.get("name").and_then(|v| v.as_str()) != Some("=")
+        {
+            return None;
+        }
+        let [left, right] = fact.get("args")?.as_array()?.as_slice() else {
+            return None;
+        };
+        if left == result && is_function_value(right) {
+            Some(right.clone())
+        } else if right == result && is_function_value(left) {
+            Some(left.clone())
+        } else {
+            None
+        }
+    })
+}
+
+/// The contract that answers a call of a function value at this read (step
+/// 9): `function`'s join symbol joined to its bridge's contract
+/// (`FunctionAnswers`), bound by the one binder to the call's actuals and
+/// the value's own inputs (`DispatchReceiver::Value`). `None` -- the call
+/// stays owed -- when `post` is no owed value-call site, when the value
+/// carries anything but its `py.default` and `py.closure` inputs, when no
+/// single contract answers the symbol, or when the arguments do not bind its
+/// formals.
+fn function_value_answer(post: &AmbientPost, function: &Json, call: &Json) -> Option<AmbientPost> {
+    let table = post.value_calls.as_ref()?;
+    let (symbol, inputs) = function.get("args")?.as_array()?.split_first()?;
+    let symbol = const_str(symbol)?;
+    if !inputs.iter().all(|input| {
+        input.get("kind").and_then(|v| v.as_str()) == Some("ctor")
+            && matches!(
+                input.get("name").and_then(|v| v.as_str()),
+                Some("py.default" | "py.closure")
+            )
+    }) {
+        return None;
+    }
+    let (binding, answer, halt_guards, every_halt_guarded, typed_halts) =
+        table.answers.get(symbol)?.clone()?;
+    let receiver = DispatchReceiver::Value(inputs.to_vec());
+    let args = call.get("args")?.as_array()?;
+    let bound = dispatched_arguments(&receiver, args)?;
+    bind_call_arguments(&binding.formals, &binding.stated_inputs, &bound)?;
+    Some(AmbientPost {
+        binding,
+        post: answer,
+        halt_guards,
+        every_halt_guarded,
+        typed_halts,
+        member_cid: post.member_cid.clone(),
+        site_cid: post.site_cid.clone(),
+        refusal: None,
+        dispatch: None,
+        receiver,
+        namespaces: table.namespaces.clone(),
+        value_calls: None,
+    })
+}
+
 /// A dispatched member (step 8): the name it looks up, whether it is a read
 /// of that attribute (`python:dispatch:.<name>`) or a call of it
 /// (`python:dispatch:<name>`), and the table the join resolves it through.
@@ -5185,6 +5391,7 @@ fn dispatch_answer(post: &AmbientPost, call: &Json) -> Option<AmbientPost> {
         dispatch: None,
         receiver: target.receiver,
         namespaces: Some(Arc::clone(&dispatch.table.namespaces)),
+        value_calls: None,
     })
 }
 
@@ -5547,6 +5754,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                     dispatch: None,
                     receiver: DispatchReceiver::AsCalled,
                     namespaces,
+                    value_calls: None,
                 })
             }
             Ok(None) => owed.push(owed_post(
@@ -5574,16 +5782,38 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                 dispatch: None,
                 receiver: DispatchReceiver::AsCalled,
                 namespaces: None,
+                value_calls: None,
             }),
         }
     }
-    for (site_cid, (member_cid, subject)) in unanswered_operations(pool) {
-        owed.push(owed_post(
+    // A member with no symbol is owed as it stands; where its site is a call
+    // of a function value stated as its join symbol, a read answers it
+    // through that symbol (`function_value_answer`, step 9).
+    let operations = unanswered_operations(pool);
+    let values: Option<Arc<FunctionAnswers>> = if operations.is_empty() {
+        None
+    } else {
+        let mut answers = function_answers(pool);
+        // An answer that guards a field it stores (step 7) is decided on the
+        // namespaces the proofs state, as a joined edge's is.
+        let guarded = answers.answers.values().flatten().any(|(_, post, halt_guards, _, _)| {
+            mentions_plain_store(post) || halt_guards.iter().any(mentions_plain_store)
+        });
+        if guarded {
+            let table = table.get_or_insert_with(|| Arc::new(dispatch_table(pool)));
+            answers.namespaces = Some(Arc::clone(&table.namespaces));
+        }
+        Some(Arc::new(answers))
+    };
+    for (site_cid, (member_cid, subject)) in operations {
+        let mut post = owed_post(
             &subject,
             &member_cid,
             &site_cid,
             DroppedAmbientPostReason::Unanswered,
-        ));
+        );
+        post.value_calls = values.clone();
+        owed.push(post);
     }
     let recursive = recursive_contract_cids(&posts);
     let mut joined: Vec<AmbientPost> = posts
@@ -5639,6 +5869,7 @@ fn owed_post(
         dispatch: None,
         receiver: DispatchReceiver::AsCalled,
         namespaces: None,
+        value_calls: None,
     }
 }
 
@@ -6344,14 +6575,24 @@ fn linked_ambient_post_instances_for_inv(
         libsugar::canonical::json_jcs(term)
             .unwrap_or_else(|_| serde_json::to_string(term).unwrap_or_default())
     };
-    let mut pending: std::collections::VecDeque<(Json, Vec<String>)> = callsites
+    // Each read: the call's result term, the contracts it was reached
+    // through, and whether it is settled (a call of a value whose callee no
+    // joined post has decided yet waits, `deferred`, until the reads before
+    // it are joined; settled, it is read as it stands).
+    let mut pending: std::collections::VecDeque<(Json, Vec<String>, bool)> = callsites
         .into_iter()
         .filter(is_call_result_term)
-        .map(|term| (term, Vec::new()))
+        .map(|term| (term, Vec::new(), false))
         .collect();
     let mut read: std::collections::BTreeSet<String> =
-        pending.iter().map(|(term, _)| term_key(term)).collect();
-    while let Some((result_term, through)) = pending.pop_front() {
+        pending.iter().map(|(term, _, _)| term_key(term)).collect();
+    // The function value each call's result is, where a joined post states
+    // it unguarded (`stated_function_value`), by the result's spelling.
+    let mut decided: BTreeMap<String, Json> = BTreeMap::new();
+    let mut deferred: Vec<(Json, Vec<String>)> = Vec::new();
+    while let Some((result_term, through, settled)) =
+        next_join_read(&mut pending, &mut deferred, &decided)
+    {
         let result_term = &result_term;
         let Some((call, site_cid)) = call_result_parts(result_term) else {
             dropped.push(DroppedAmbientPost {
@@ -6384,12 +6625,49 @@ fn linked_ambient_post_instances_for_inv(
         } else {
             Vec::new()
         };
+        // A call of a function value (step 9): the value the callee is,
+        // stated as its join symbol, decides which contract answers it. A
+        // callee a joined post may yet state waits for the reads before it.
+        let value_sites: Vec<&AmbientPost> = if stated.is_empty() && dispatched.is_empty() {
+            at_site
+                .iter()
+                .copied()
+                .filter(|post| post.value_calls.is_some())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let callee = called_value(call).filter(|_| !value_sites.is_empty());
+        let mut valued: Vec<AmbientPost> = Vec::new();
+        if let Some(callee) = callee {
+            match function_value_of(callee, &decided) {
+                Some(function) => valued.extend(
+                    value_sites
+                        .iter()
+                        .filter_map(|post| function_value_answer(post, &function, call)),
+                ),
+                None if !settled && is_call_result_term(callee) => {
+                    deferred.push((result_term.clone(), through.clone()));
+                    continue;
+                }
+                None => {}
+            }
+            if through.is_empty() {
+                for post in &value_sites {
+                    dispatched_members.push((post.member_cid.clone(), !valued.is_empty()));
+                }
+            }
+        }
         if through.is_empty() {
             for post in at_site.iter().filter(|post| post.dispatch.is_some()) {
                 dispatched_members.push((post.member_cid.clone(), !dispatched.is_empty()));
             }
         }
-        let answering: Vec<&AmbientPost> = stated.into_iter().chain(dispatched.iter()).collect();
+        let answering: Vec<&AmbientPost> = stated
+            .into_iter()
+            .chain(dispatched.iter())
+            .chain(valued.iter())
+            .collect();
         if answering.is_empty() {
             // A site with no member at all is not a call another proof
             // answers: a body the lift reduced states its result in the same
@@ -6562,8 +6840,13 @@ fn linked_ambient_post_instances_for_inv(
                     if read.insert(term_key(&nested)) {
                         let mut nested_through = through.clone();
                         nested_through.push(post.binding.target_cid.clone());
-                        pending.push_back((nested, nested_through));
+                        pending.push_back((nested, nested_through, false));
                     }
+                }
+                // A joined post that states this call's result, unguarded, to
+                // be a function value decides a later call of that result.
+                if let Some(function) = stated_function_value(&instance, result_term) {
+                    decided.entry(json_term_key(result_term)).or_insert(function);
                 }
                 // The joined contract's owed operations (an `==` nothing
                 // answers, keyed at the callee's site): the claim reads them
@@ -6613,6 +6896,36 @@ fn linked_ambient_post_instances_for_inv(
         owed_operations,
         dispatched: dispatched_members,
     }
+}
+
+/// The join's next read (`linked_ambient_post_instances_for_inv`): the next
+/// pending one, or, when none is left, the deferred calls of a value again.
+/// Where a joined post has since decided one of their callees
+/// (`function_value_of`), they are read again as unsettled (each one still
+/// undecided waits once more); where none has, they are read as settled, as
+/// they stand. Each round that reads them again decides at least one, so the
+/// join ends.
+fn next_join_read(
+    pending: &mut std::collections::VecDeque<(Json, Vec<String>, bool)>,
+    deferred: &mut Vec<(Json, Vec<String>)>,
+    decided: &BTreeMap<String, Json>,
+) -> Option<(Json, Vec<String>, bool)> {
+    if let Some(next) = pending.pop_front() {
+        return Some(next);
+    }
+    if deferred.is_empty() {
+        return None;
+    }
+    let waiting = std::mem::take(deferred);
+    let progressed = waiting.iter().any(|(term, _)| {
+        call_result_parts(term)
+            .and_then(|(call, _)| called_value(call))
+            .is_some_and(|callee| function_value_of(callee, decided).is_some())
+    });
+    for (term, through) in waiting {
+        pending.push_back((term, through, !progressed));
+    }
+    pending.pop_front()
 }
 
 /// An owed operation a joined post reads is a free value in the row unless
@@ -12246,7 +12559,95 @@ mod tests {
             dispatch: None,
             receiver: DispatchReceiver::AsCalled,
             namespaces: None,
+            value_calls: None,
         }
+    }
+
+    /// #7757 step 9: `A(2)` where `A` is `ten(...)`'s result and `ten`'s
+    /// joined post states that result, unguarded, to be a function value
+    /// stated as its join symbol. The call of the value is an edge to that
+    /// symbol, joined through the one binder, and its member is answered. A
+    /// call of a value no joined post decides stays owed.
+    #[test]
+    fn a_call_of_a_function_value_a_joined_post_returns_joins_its_symbol() {
+        let lambda_symbol = "python:m.ten.<locals>.<lambda>@2:11";
+        let function = json!({
+            "kind": "ctor",
+            "name": PYTHON_FUNCTION,
+            "args": [str_const(lambda_symbol)],
+        });
+        let ten_result = call_result(
+            json!({"kind": "ctor", "name": "call:m.ten", "args": [int(1)]}),
+            JOIN_SITE,
+        );
+        let ten = joined_post(
+            "python:m.ten",
+            JOIN_SITE,
+            eqf(var("out"), function),
+            vec!["fn".to_string()],
+        );
+        let value_site = "blake3-512:value-site";
+        let value_call = |callee: Json| {
+            json!({"kind": "ctor", "name": PYTHON_VALUE_CALL, "args": [callee, int(2)]})
+        };
+        let mut answers = FunctionAnswers::default();
+        answers.answers.insert(
+            lambda_symbol.to_string(),
+            Some((
+                BridgeBinding {
+                    source_symbol: lambda_symbol.to_string(),
+                    target_cid: "lambda-target-cid".to_string(),
+                    target_proof_cid: None,
+                    formals: vec!["z".to_string()],
+                    out_binding: "out".to_string(),
+                    stated_inputs: Vec::new(),
+                },
+                eqf(var("out"), var("z")),
+                Vec::new(),
+                false,
+                Vec::new(),
+            )),
+        );
+        let mut owed = owed_post(
+            "m.py:9",
+            "value-member-cid",
+            value_site,
+            DroppedAmbientPostReason::Unanswered,
+        );
+        owed.value_calls = Some(Arc::new(answers));
+        let ambient = vec![ten, owed];
+
+        let called = call_result(value_call(ten_result), value_site);
+        let partition = linked_ambient_post_instances_for_inv(&eqf(called.clone(), int(2)), &ambient);
+        assert!(partition.dropped.is_empty(), "{:?}", partition.dropped);
+        let expected = canonicalize_formula_json(&eqf(called, int(2)));
+        assert!(
+            partition.kept.iter().any(|post| {
+                post.binding.source_symbol == lambda_symbol && post.instantiated_post == expected
+            }),
+            "{:?}",
+            partition.kept
+        );
+        assert!(partition
+            .dispatched
+            .contains(&("value-member-cid".to_string(), true)));
+
+        // The callee is a call nothing answers: no function value is decided.
+        let unknown = call_result(
+            json!({"kind": "ctor", "name": "call:m.other", "args": []}),
+            "blake3-512:other-site",
+        );
+        let partition = linked_ambient_post_instances_for_inv(
+            &eqf(call_result(value_call(unknown), value_site), int(2)),
+            &ambient,
+        );
+        assert!(partition
+            .kept
+            .iter()
+            .all(|post| post.binding.source_symbol != lambda_symbol));
+        assert!(partition
+            .dispatched
+            .contains(&("value-member-cid".to_string(), false)));
     }
 
     /// #7757 step 7: a handler's test over the exception a joined call

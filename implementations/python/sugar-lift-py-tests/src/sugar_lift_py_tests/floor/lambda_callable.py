@@ -14,8 +14,10 @@ class LambdaCallable(FloorValue):
     decorators apply (``DecoratorApplicationSugar``): either is called
     through its own source frame by ``callable_application_with``.
 
-    ``to_term`` is an opaque callable identity coordinate containing parameter
-    names only.  ``python:lambda`` is an ordinary ctor in ProofIR, not a binder;
+    ``to_term`` is the value stated as its join symbol where it names one
+    (``python:function``, ``_function_term``): a call of it at prove is an
+    edge to that symbol.  Otherwise it is an opaque callable identity
+    coordinate containing parameter names only.  Neither is a binder;
     placing the body beneath it would leak formal variables into global scope.
 
     ``closure`` is each final-member coordinate the body reads through an
@@ -71,6 +73,9 @@ class LambdaCallable(FloorValue):
         del owner
         from sugar_lift_py_tests.ir import ctor, str_const
 
+        stated = self._function_term()
+        if stated is not None:
+            return stated
         encoded_parameters = [str_const(parameter) for parameter in self.parameters]
         for key, default in self.defaults:
             encoded_parameters.append(
@@ -122,6 +127,63 @@ class LambdaCallable(FloorValue):
             "python:lambda",
             [str_const(self.construction_identity), *encoded_parameters],
         )
+
+    def _function_term(self):
+        """This function value as its join symbol (#7757 step 9):
+        ``python:function(<symbol>, py.default(<param>, <value>)...,
+        py.closure(<name>, <value>)...)``, ``<symbol>`` the join symbol of
+        the ``def`` or lambda that built it (``bridge_source_symbol``, #8682),
+        each default its statement evaluated under the formal it defaults,
+        and each captured cell the value carries under its name: exactly the
+        inputs a call of it supplies (``definition_edge_call``).  A post that
+        returns the value states it so, and prove joins a call whose callee
+        is this term to that symbol's contract through the one binder, as it
+        joins any edge.
+
+        None, and the opaque ``python:lambda`` identity stands, where the
+        value names no symbol (no workspace root, the edge's
+        ``fallback_target``), where its defaults cannot be paired with the
+        formals they default, or where it carries an enclosing
+        comprehension's cell (``closure``), which no input of its contract
+        takes: a call of it stays owed."""
+        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_source_tree.panic import SugarNotWritten
+
+        frame = self.source_call_frame
+        definition = getattr(frame, "owner", None)
+        if definition is None or self.closure:
+            return None
+        symbol_of = getattr(definition, "bridge_source_symbol", None)
+        if symbol_of is None:
+            return None
+        try:
+            symbol = symbol_of()
+        except SugarNotWritten:
+            # The definition names no symbol here (an absolute locus): the
+            # value keeps its opaque identity, and a call of it is refused
+            # by name at its edge (``definition_edge_call``), as before.
+            return None
+        if not symbol:
+            return None
+        defaulted = tuple(
+            parameter.name
+            for parameter in getattr(definition, "params", ())
+            if getattr(parameter, "default", None) is not None
+        )
+        if len(defaulted) != len(self.defaults):
+            return None
+        inputs = [
+            ctor(
+                "py.default",
+                [str_const(name), value.to_term(owner="LambdaCallable")],
+            )
+            for name, (_key, value) in zip(defaulted, self.defaults, strict=True)
+        ]
+        inputs += [
+            ctor("py.closure", [str_const(name), value.to_term(owner="LambdaCallable")])
+            for name, _coordinate, value in self.captured
+        ]
+        return ctor("python:function", [str_const(symbol), *inputs])
 
     def callable_application_with(self, operation, ctx):
         """Call the function where a value of it is called.
