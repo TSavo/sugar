@@ -501,6 +501,11 @@ fn load_catalog_bytes(
             .or_insert_with(|| body.bytes().to_vec());
     }
 
+    // The catalog is read: the pool records this bundle before any member,
+    // so a bundle with no members is still one the pool read, and the run
+    // that discharges over this pool names it among its inputs.
+    pool.bundle_members.entry(derived_full.clone()).or_default();
+
     // Members -> pool: per-member validation (CID recomputation, signature
     // verification when present,
     // contract body-pointer resolution) then indexing. ProofGraph::read()
