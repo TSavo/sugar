@@ -380,6 +380,15 @@ _FIVE_OPEN = {
         "unanswered call and h owes its member; only a caller's frame "
         "(test_f's h(g)) binds f"
     ),
+    "raising-new": (
+        "Box's own contract runs its source __new__ as an edge (step 6), so "
+        "what it returned is not seen at the lift and type.__call__'s "
+        "type(obj).__init__ face is the unanswered call, owed; it shares the "
+        "__new__ edge's site, and prove's join (answers by site) binds it "
+        "to __new__'s contract, which it does not fit. Decided at step 9 "
+        "once the join tells the two calls at one site apart and relates "
+        "__new__'s returned value to the __init__ face"
+    ),
 }
 
 
