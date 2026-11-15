@@ -85,7 +85,15 @@ def test_one_silent_compare_completion_is_row_level_red() -> None:
         attribute_body_probe(probe)
 
 
-def test_all_34_compare_completions_publish_authenticated_compare_exits() -> None:
+def test_all_34_compare_completions_end_on_one_arm() -> None:
+    """The 34 call-free comparisons that once completed silently each end on
+    one arm of the ledger, never a panic.  Each probe reduces its body with
+    no context, so its operands are undecided, and a comparison of undecided
+    operands dispatches to rich-comparison methods of a type nothing here
+    decides: its raise has no decided type (#8620, as the attribute family's,
+    #8175).  Such a body is undischarged and its nameless face is stated in
+    the identity list; a body whose comparison decides its raise publishes
+    the authenticated ``Compare`` exit."""
     corpus = authenticated_pandas_corpus()
     compare_inventory = require_expected_denominators(
         discover_no_call_body_probes(
@@ -111,7 +119,19 @@ def test_all_34_compare_completions_publish_authenticated_compare_exits() -> Non
     assert report.outcome_total == 34
     assert len(report.bodies) == 34
     assert all(
-        body.outcome is AttributionOutcome.AUTHENTICATED_EXIT
-        and body.detail == "Compare"
+        (
+            body.outcome is AttributionOutcome.AUTHENTICATED_EXIT
+            and body.detail == "Compare"
+        )
+        or body.outcome is AttributionOutcome.UNDISCHARGED
         for body in report.bodies
-    )
+    ), [(body.body_id, body.outcome, body.detail) for body in report.bodies]
+    undischarged = {
+        body.body_id
+        for body in report.bodies
+        if body.outcome is AttributionOutcome.UNDISCHARGED
+    }
+    assert {
+        discrepancy.body_id
+        for discrepancy in report.exceptional_exit_identity_discrepancies
+    } == undischarged

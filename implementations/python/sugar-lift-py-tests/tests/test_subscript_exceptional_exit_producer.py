@@ -213,11 +213,17 @@ def test_authenticated_subscript_family_owns_no_construction_panics() -> None:
         for body in report.bodies
         if body.outcome is AttributionOutcome.CONSTRUCTION_PANIC
     )
-    # Residual dual-edge index producers closed as authenticated exits:
-    # data[ub + 1] follows the BinOp dispatch partition; ser[df > 5] follows
-    # the Compare dispatch partition. SubscriptSugar sequences those ExitSets
-    # so Halted faces survive when the completed face cannot decide the lookup.
-    required_auth_exit_sites = {
+    # Residual dual-edge index producers: data[ub + 1] follows the BinOp
+    # dispatch partition; ser[df > 5] follows the Compare dispatch partition.
+    # SubscriptSugar sequences those ExitSets so Halted faces survive when the
+    # completed face cannot decide the lookup.  Each probe reduces its body
+    # with no context, so the operands are undecided: the operation is the one
+    # two-faced outcome (``_assert_two_faced_read``; the undecided binary and
+    # comparison, #8318, #8620), whose raise has a type nothing here decides.
+    # That halt is never dropped and never named a type it is not: such a body
+    # is undischarged, its nameless face stated in the identity list.  Where
+    # an operand is decided the exit is authenticated under its owner.
+    required_exit_sites = {
         "tests/extension/base/getitem.py:147:Subscript": "BinOp",
         "tests/series/indexing/test_getitem.py:595:Subscript": "Compare",
     }
@@ -238,26 +244,36 @@ def test_authenticated_subscript_family_owns_no_construction_panics() -> None:
             flush=True,
         )
 
-    auth_by_id = {
-        body.body_id: body.detail
+    by_id = {body.body_id: body for body in report.bodies}
+    undischarged = {
+        body.body_id
         for body in report.bodies
-        if body.outcome is AttributionOutcome.AUTHENTICATED_EXIT
+        if body.outcome is AttributionOutcome.UNDISCHARGED
     }
-    for body_id, owner in required_auth_exit_sites.items():
-        assert auth_by_id.get(body_id) == owner, (body_id, auth_by_id.get(body_id))
+    for body_id, owner in required_exit_sites.items():
+        body = by_id.get(body_id)
+        assert body is not None, body_id
+        assert (
+            body.outcome is AttributionOutcome.AUTHENTICATED_EXIT
+            and body.detail == owner
+        ) or body.outcome is AttributionOutcome.UNDISCHARGED, (
+            body_id,
+            body.outcome,
+            body.detail,
+        )
 
     assert row.enrolled == FAMILY_DENOMINATORS[ProducerFamily.SUBSCRIPT]
     assert {probe.body_id for probe in probes} >= required_non_vendor_sites
-    assert (
-        row.authenticated_exceptional_exits
-        + row.named_refusals
-        + row.construction_panics
-        == 392
-    )
+    assert row.outcome_total == 392
+    assert len(undischarged) == row.undischarged
+    assert {
+        discrepancy.body_id
+        for discrepancy in report.exceptional_exit_identity_discrepancies
+    } == undischarged
     assert report.discrepancies == ()
+    assert report.conservation_shortfall == 0
     assert not reattributed_gaps, reattributed_gaps
     assert row.construction_panics == 0
-    assert row.authenticated_exceptional_exits >= 2
 
 
 def _assert_two_faced_read(outcome, owner: str | None = None) -> None:
