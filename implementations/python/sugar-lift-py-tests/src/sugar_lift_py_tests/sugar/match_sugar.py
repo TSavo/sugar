@@ -741,6 +741,50 @@ def _formula_from_floor_value(value, site):
     return predicate_formula(value, site)
 
 
+def _guard_truth_formula(value, site):
+    """The formula a case guard's truth states, or a refusal by name.
+
+    A guard whose truth is one decided value states its formula, through the
+    projection every guarded construct reads (``truth_formula``).  A guard
+    whose truth is not one value where the match is reduced -- a formal's,
+    which waits on its caller's actual (``SymbolicValue.truth``), or the two
+    faces of a value whose truth is not decided -- has no one formula, and
+    this match selects its cases by formula (``earlier``).  Carrying such a
+    truth means sequencing the case body and every later case after each of
+    its faces, as ``IfSugar._desugar_condition`` does for an ``if``; that is
+    not written for a case guard, so the guard is refused by name here.
+    Before, it reached ``truth_formula``'s bare ``NotImplementedError``,
+    which is no named refusal.
+    """
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        plain_completed_value,
+    )
+    from sugar_lift_py_tests.sugar.if_sugar import truth_formula
+
+    truth = value.truth(site)
+    if plain_completed_value(truth) is None:
+        from sugar_source_tree.panic import SugarNotWritten
+
+        raise SugarNotWritten(
+            owner="MatchSugar.guard",
+            blame=site if site is not None else "MatchSugar.guard",
+            observed=(
+                "case guard whose truth is not one decided value: "
+                f"{type(truth).__name__}"
+            ),
+            requested=(
+                "the guard's truth through the one truth rule "
+                "(bool_op_sugar.truth_of), each face selecting the case "
+                "under its own guard"
+            ),
+            fix=(
+                "sequence the case body and the later cases after each truth "
+                "face, as IfSugar._desugar_condition does"
+            ),
+        )
+    return truth_formula(truth, value)
+
+
 def _exceptional_faces_only(exits, prefix_guard):
     """Propagate only non-Completed control faces under ``prefix_guard``.
 
@@ -905,7 +949,7 @@ def _guard_faces_under(
             earlier_bits.append(_and_parts(match_formula, face.guard))
             continue
         if isinstance(face, Completed):
-            truth = _formula_from_floor_value(face.value, site)
+            truth = _guard_truth_formula(face.value, site)
             body_exits = routed(reduce_block_to_exitset(body, body_ctx))
             # The body runs after ``path`` and then the guard face itself: its
             # guard, its partition testimony and what it owes ride onto every
