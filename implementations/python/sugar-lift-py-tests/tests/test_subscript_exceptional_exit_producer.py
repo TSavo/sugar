@@ -48,9 +48,9 @@ from sugar_lift_py_tests.repo_root import resolve_repo_root
 from sugar_lift_py_tests.effect import RaiseEffect
 
 SITE_SHA256 = "0308786b24b61a2b98be5d649e57ee847d7993ae1d0e1823d7f760408523131f"
-# Content manifest (relative path + per-file BLAKE3-512). Path-shape
+# Content manifest (relative path + per-file BLAKE3-512): the one canonical
+# coordinate, ``CANONICAL_CORPUS_MANIFEST_CID``, read by its own name. Path-shape
 # sha256:a223… is historical negative testimony only — never identity.
-MANIFEST_CID = CANONICAL_CORPUS_MANIFEST_CID
 MANIFEST_SHA256 = CANONICAL_CORPUS_MANIFEST_SHA256
 
 
@@ -154,7 +154,7 @@ def authenticated_corpus():
 @pytest.fixture(scope="module")
 def authenticated_site(authenticated_corpus):
     corpus = authenticated_corpus
-    assert corpus.manifest_cid == MANIFEST_CID
+    assert corpus.manifest_cid == CANONICAL_CORPUS_MANIFEST_CID
     site = corpus.root / "tests/test_multilevel.py"
     assert hashlib.sha256(site.read_bytes()).hexdigest() == SITE_SHA256
 
@@ -192,7 +192,7 @@ def test_launcher_authenticates_the_exact_corpus() -> None:
     corpus = authenticated_pandas_corpus()
     assert (corpus.version, corpus.manifest_cid, corpus.file_count) == (
         "3.0.3",
-        MANIFEST_CID,
+        CANONICAL_CORPUS_MANIFEST_CID,
         1421,
     )
     # Path-shape is refusal testimony, not an accepted corpus identity.
