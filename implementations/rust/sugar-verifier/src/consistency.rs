@@ -3883,6 +3883,17 @@ const PYTHON_CLASS: &str = "py.class";
 /// value for it; a caller that knows the class supplies it (`py.class`).
 const CLASS_INPUT_PREFIX: &str = "class:";
 
+/// The formal prefix of a receiver-field input (#7757): `field:<p>.<f>`,
+/// the value of the field `<f>` in the `__dict__` the object parameter `<p>`
+/// binds arrived with, which a method's body reads where nothing in its
+/// frame may have changed that `__dict__` (the kit's
+/// `nodes._receiver_field_inputs`), under `python:plain_read(class:<p>,
+/// "<f>")`. The function's own proof states no value for it; prove binds it
+/// where the receiver is a class call's result whose constructor contract
+/// states the field (`constructed_field_inputs`), and leaves it free
+/// otherwise.
+const FIELD_INPUT_PREFIX: &str = "field:";
+
 /// The contract header field naming a function's variadic parameters
 /// (#7757): `[{"kind": "positional" | "keyword", "formal": <name>}]`, the
 /// `*args` and `**kwargs` of its `def`. Each names one of `formals`.
@@ -4068,10 +4079,11 @@ fn supply_variadic(
     Some(())
 }
 
-/// True for a contract input (`cell:`, `global:`, `default:`, `class:`),
-/// never a parameter.
+/// True for a contract input (`cell:`, `global:`, `default:`, `class:`,
+/// `field:`), never a parameter.
 fn is_contract_input(formal: &str) -> bool {
     formal.starts_with(CLASS_INPUT_PREFIX)
+        || formal.starts_with(FIELD_INPUT_PREFIX)
         || CONTRACT_INPUTS
             .iter()
             .any(|(_, prefix)| formal.starts_with(prefix))
@@ -4484,9 +4496,14 @@ fn bind_own_inputs_with_unstated(body: &Json) -> (Json, Vec<String>) {
     }) else {
         return (body.clone(), Vec::new());
     };
+    // A `global:` input the contract states no value for, and a `field:`
+    // input (no caller binds it here: the value a caller's object arrives
+    // with), are free: the claims are decided over every value of them.
     let globals: Vec<&String> = formals
         .iter()
-        .filter(|formal| formal.starts_with(GLOBAL_INPUT_PREFIX))
+        .filter(|formal| {
+            formal.starts_with(GLOBAL_INPUT_PREFIX) || formal.starts_with(FIELD_INPUT_PREFIX)
+        })
         .collect();
     if globals.is_empty() {
         return (body.clone(), Vec::new());
@@ -5011,6 +5028,12 @@ struct DispatchTable {
     /// does not decide it on every completed face, or no single bridge
     /// answers the class's symbol.
     constructed: BTreeMap<String, Option<Json>>,
+    /// Each class `constructed` decides, with the fields whose value its
+    /// constructor contract states on every completed face
+    /// (`constructed_stated_fields`): what a `field:<p>.<f>` input of a
+    /// dispatched answer is bound to where `class:<p>` is that class's
+    /// `python:constructed(<class>)` (`constructed_field_inputs`).
+    constructed_fields: BTreeMap<String, std::collections::BTreeSet<String>>,
 }
 
 /// The single bridge answer for `symbol` over `pool`: `None` when no bridge
@@ -5038,15 +5061,22 @@ fn dispatch_table(pool: &MementoPool) -> DispatchTable {
     // The instance each class's constructor contract states it makes: the
     // class row is the contract a call of the class joins (its bridge
     // answers the class's own symbol).
-    let constructed: BTreeMap<String, Option<Json>> = namespaces
-        .keys()
-        .map(|class| {
-            let instance = single_bridge_answer(pool, class).and_then(|(binding, post, ..)| {
-                constructed_instance(&post, &binding.out_binding, class)
-            });
-            (class.clone(), instance)
-        })
-        .collect();
+    let mut constructed: BTreeMap<String, Option<Json>> = BTreeMap::new();
+    let mut constructed_fields: BTreeMap<String, std::collections::BTreeSet<String>> =
+        BTreeMap::new();
+    for class in namespaces.keys() {
+        let answer = single_bridge_answer(pool, class);
+        let instance = answer.as_ref().and_then(|(binding, post, ..)| {
+            constructed_instance(post, &binding.out_binding, class)
+        });
+        if let (Some(_), Some((binding, post, ..))) = (&instance, &answer) {
+            let fields = constructed_stated_fields(post, &binding.out_binding);
+            if !fields.is_empty() {
+                constructed_fields.insert(class.clone(), fields);
+            }
+        }
+        constructed.insert(class.clone(), instance);
+    }
     let mut answers: BTreeMap<String, Option<BridgeAnswer>> = BTreeMap::new();
     for namespace in namespaces.values() {
         for (kind, symbol) in namespace.binds.values() {
@@ -5068,6 +5098,7 @@ fn dispatch_table(pool: &MementoPool) -> DispatchTable {
         namespaces: Arc::new(namespaces),
         answers,
         constructed,
+        constructed_fields,
     }
 }
 
@@ -5172,6 +5203,169 @@ fn constructed_instance(post: &Json, out: &str, class: &str) -> Option<Json> {
     let mut args = vec![string_const_term(class)];
     args.extend(fields.iter().map(|field| string_const_term(field)));
     Some(json!({"kind": "ctor", "name": PYTHON_INSTANCE, "args": args}))
+}
+
+/// The operands of `node` read as a conjunction: each operand of an `and`,
+/// at any depth of nested `and`s, or `node` itself.
+fn conjuncts(node: &Json) -> Vec<&Json> {
+    let mut out = Vec::new();
+    let mut pending = vec![node];
+    while let Some(node) = pending.pop() {
+        match (
+            node.get("kind").and_then(|v| v.as_str()),
+            node.get("operands").and_then(|v| v.as_array()),
+        ) {
+            (Some("and"), Some(operands)) => pending.extend(operands.iter().rev()),
+            _ => out.push(node),
+        }
+    }
+    out
+}
+
+/// The field each conjunct of `node` states the value of on the instance a
+/// constructor contract makes: `attr:<f>(python:after(out, "out")) == <v>`
+/// (the kit's `ConstructedInstanceValue.post_formula`), read through `and`
+/// only (never under a disjunction, a negation or an implication).
+fn stated_instance_fields(node: &Json, out: &str) -> std::collections::BTreeSet<String> {
+    let mut fields = std::collections::BTreeSet::new();
+    for conjunct in conjuncts(node) {
+        if conjunct.get("kind").and_then(|v| v.as_str()) != Some("atomic")
+            || conjunct.get("name").and_then(|v| v.as_str()) != Some("=")
+        {
+            continue;
+        }
+        let Some(sides) = conjunct.get("args").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        for side in sides {
+            let Some((name, args)) = ctor_parts(side) else {
+                continue;
+            };
+            let Some(field) = name.strip_prefix(ATTRIBUTE_CTOR_PREFIX) else {
+                continue;
+            };
+            if matches!(args.as_slice(), [object] if names_the_constructed_instance(object, out)) {
+                fields.insert(field.to_string());
+            }
+        }
+    }
+    fields
+}
+
+/// Whether a conjunct of `node` (read through `and`) states the class of
+/// the instance a constructor contract makes (`python:type_is` or
+/// `python:class_undecided` over `python:after(out, "out")`): what every
+/// completed face of the contract states (the kit's
+/// `receiver_dispatch.constructed_class_facts`), so a face's body is known
+/// by it.
+fn states_the_constructed_class(node: &Json, out: &str) -> bool {
+    conjuncts(node).into_iter().any(|conjunct| {
+        conjunct.get("kind").and_then(|v| v.as_str()) == Some("atomic")
+            && matches!(
+                conjunct.get("name").and_then(|v| v.as_str()),
+                Some(PYTHON_TYPE_IS | PYTHON_CLASS_UNDECIDED)
+            )
+            && conjunct
+                .get("args")
+                .and_then(|v| v.as_array())
+                .and_then(|args| args.first())
+                .is_some_and(|subject| names_the_constructed_instance(subject, out))
+    })
+}
+
+/// The ctor prefix of a field read: `attr:<name>(<object>)`.
+const ATTRIBUTE_CTOR_PREFIX: &str = "attr:";
+
+/// The fields whose value a class's constructor contract states on every
+/// completed face of its `post` (#7757): `attr:<f>(python:after(out,
+/// "out")) == <v>`. A face is an implication of the post's conjunction whose
+/// consequent states the instance's class (`states_the_constructed_class`):
+/// the post states each completed arm `g -> post` (`tree_enumerate.
+/// exit_arms_payload_rows`). A field is stated where an unconditional
+/// conjunct states it, or every face does. Anything else -- a field stated
+/// on some faces only, under a disjunction or a negation, an implication
+/// that is no face -- is not stated.
+fn constructed_stated_fields(post: &Json, out: &str) -> std::collections::BTreeSet<String> {
+    let mut always = std::collections::BTreeSet::new();
+    let mut faces: Vec<std::collections::BTreeSet<String>> = Vec::new();
+    for conjunct in conjuncts(post) {
+        if conjunct.get("kind").and_then(|v| v.as_str()) == Some("implies") {
+            let consequent = conjunct
+                .get("operands")
+                .and_then(|v| v.as_array())
+                .and_then(|operands| match operands.as_slice() {
+                    [_, consequent] => Some(consequent),
+                    _ => None,
+                });
+            if let Some(consequent) = consequent {
+                if states_the_constructed_class(consequent, out) {
+                    faces.push(stated_instance_fields(consequent, out));
+                }
+            }
+            continue;
+        }
+        always.extend(stated_instance_fields(conjunct, out));
+    }
+    let mut faces = faces.into_iter();
+    if let Some(first) = faces.next() {
+        let common = faces.fold(first, |common, face| &common & &face);
+        always.extend(common);
+    }
+    always
+}
+
+/// The `field:<p>.<f>` inputs of a dispatched answer's contract whose value
+/// the call states (#7757): for each `class:<p>` the call's arguments bind
+/// (`call_argument_formals` over `formals`) to `python:constructed(<C>)` --
+/// a class call's result as its construction left it -- each field `<f>`
+/// the constructor contract of `<C>` states on every completed face
+/// (`DispatchTable::constructed_fields`) is bound to `attr:<f>(python:
+/// after(<actual of p>, "out"))`: the term that contract states the field's
+/// value over, joined at the class call. Any other input stays free: a call
+/// that reads it is owed (never decided on a value nobody gave).
+fn constructed_field_inputs(
+    table: &DispatchTable,
+    formals: &[String],
+    args: &[Json],
+) -> Vec<(String, Json)> {
+    let Some(supplied) = call_argument_formals(formals, args) else {
+        return Vec::new();
+    };
+    let mut inputs = Vec::new();
+    for (formal, class) in &supplied {
+        let Some(parameter) = formal.strip_prefix(CLASS_INPUT_PREFIX) else {
+            continue;
+        };
+        let Some(symbol) = constructed_class_symbol(class) else {
+            continue;
+        };
+        if !matches!(table.constructed.get(symbol), Some(Some(_))) {
+            continue;
+        }
+        let Some(fields) = table.constructed_fields.get(symbol) else {
+            continue;
+        };
+        let Some((_, actual)) = supplied.iter().find(|(bound, _)| bound == parameter) else {
+            continue;
+        };
+        let instance = json!({
+            "kind": "ctor",
+            "name": PYTHON_AFTER,
+            "args": [actual, string_const_term("out")],
+        });
+        for field in fields {
+            let input = format!("{FIELD_INPUT_PREFIX}{parameter}.{field}");
+            if formals.contains(&input) {
+                let value = json!({
+                    "kind": "ctor",
+                    "name": format!("{ATTRIBUTE_CTOR_PREFIX}{field}"),
+                    "args": [instance.clone()],
+                });
+                inputs.push((input, value));
+            }
+        }
+    }
+    inputs
 }
 
 /// The answer the bridge stating `symbol` gives a call of that function
@@ -5416,9 +5610,13 @@ fn dispatch_answer(post: &AmbientPost, call: &Json) -> Option<AmbientPost> {
         dispatch.read,
         &class,
     )?;
-    let (binding, answer, halt_guards, every_halt_guarded, typed_halts) =
+    let (mut binding, answer, halt_guards, every_halt_guarded, typed_halts) =
         dispatch.table.answers.get(&target.symbol)?.clone()?;
     let rebound = dispatched_arguments(&target.receiver, args)?;
+    // The fields of a class call's result its constructor contract states:
+    // the value each `field:<p>.<f>` input of the answer is bound to.
+    let fields = constructed_field_inputs(&dispatch.table, &binding.formals, &rebound);
+    binding.stated_inputs.extend(fields);
     bind_call_arguments(&binding.formals, &binding.stated_inputs, &rebound)?;
     Some(AmbientPost {
         binding,
@@ -5624,6 +5822,37 @@ const PLAIN_STORE_HOOKS: [&str; 4] = ["__setattr__", "__getattribute__", "__slot
 ///
 /// False whenever that is not decided by what the proofs state.
 fn plain_store_holds(table: &DispatchTable, class: &Json, field: &str) -> bool {
+    plain_access_holds(table, class, field, &PLAIN_STORE_HOOKS)
+}
+
+/// `python:plain_read(<class>, <field>)`: a read of `<field>` on an instance
+/// of `<class>` is its `__dict__` entry by Python's own rule (the Python
+/// kit's `receiver_dispatch.PLAIN_READ`). A method's contract guards its read
+/// of a field of its receiver with it: the read is the `field:<p>.<f>` input
+/// only where the atom holds.
+const PYTHON_PLAIN_READ: &str = "python:plain_read";
+/// The names whose binding by any class of the order makes a field read
+/// anything but the `__dict__` entry: `__getattribute__` (the read runs
+/// it), `__getattr__` (an absent entry falls to it), `__slots__` (the name
+/// is a member descriptor), `__dict__` (the dict itself replaced).
+const PLAIN_READ_HOOKS: [&str; 4] = ["__getattribute__", "__getattr__", "__slots__", "__dict__"];
+
+/// Whether a read of `field` on an instance whose class input is bound to
+/// `class` is its `__dict__` entry: as `plain_store_holds` decides a store,
+/// with `PLAIN_READ_HOOKS` (no class of the order binds the name -- a data
+/// descriptor would win over the entry -- nor `__getattribute__`,
+/// `__getattr__`, `__slots__`, `__dict__`).
+fn plain_read_holds(table: &DispatchTable, class: &Json, field: &str) -> bool {
+    plain_access_holds(table, class, field, &PLAIN_READ_HOOKS)
+}
+
+/// The walk `plain_store_holds` and `plain_read_holds` share: `field` is
+/// no dunder name, `class` is a decided instance (a class call's result
+/// read through the instance its constructor contract states, as
+/// `dispatch_answer` reads it), and every class of the order its own proof
+/// states is a source class with a namespace row, stated alike, or
+/// `object`, last, binding neither `field` nor any of `hooks`.
+fn plain_access_holds(table: &DispatchTable, class: &Json, field: &str, hooks: &[&str]) -> bool {
     if field.is_empty() || (field.starts_with("__") && field.ends_with("__")) {
         return false;
     }
@@ -5665,9 +5894,7 @@ fn plain_store_holds(table: &DispatchTable, class: &Json, field: &str) -> bool {
         };
         if namespace.mro.is_empty()
             || namespace.binds.contains_key(field)
-            || PLAIN_STORE_HOOKS
-                .iter()
-                .any(|hook| namespace.binds.contains_key(*hook))
+            || hooks.iter().any(|hook| namespace.binds.contains_key(*hook))
         {
             return false;
         }
@@ -5675,12 +5902,16 @@ fn plain_store_holds(table: &DispatchTable, class: &Json, field: &str) -> bool {
     true
 }
 
-/// Whether `node` states a `python:plain_store` atom anywhere.
+/// Whether `node` states a `python:plain_store` or `python:plain_read`
+/// atom anywhere: the guards the namespaces decide (`decide_plain_stores`).
 fn mentions_plain_store(node: &Json) -> bool {
     match node {
         Json::Object(map) => {
             if map.get("kind").and_then(|v| v.as_str()) == Some("atomic")
-                && map.get("name").and_then(|v| v.as_str()) == Some(PYTHON_PLAIN_STORE)
+                && matches!(
+                    map.get("name").and_then(|v| v.as_str()),
+                    Some(PYTHON_PLAIN_STORE | PYTHON_PLAIN_READ)
+                )
             {
                 return true;
             }
@@ -5723,7 +5954,10 @@ fn formula_constant(formula: &Json) -> Option<bool> {
 /// atom not decided stands as it was, and a connective no replacement
 /// reached keeps its shape. So an operation a decided guard settles (the
 /// store's own completion, `or(plain_store, <completes>)`) no longer reads
-/// its owed atom once the guard is `true`.
+/// its owed atom once the guard is `true`. A `python:plain_read(<class>,
+/// "<f>")` atom is decided the same way (`plain_read_holds`): a field read
+/// it guards is the `field:` input, and the undecided read under its
+/// complement folds away.
 fn decide_plain_stores(formula: &Json, table: Option<&DispatchTable>) -> Json {
     match table {
         Some(table) if mentions_plain_store(formula) => decided_plain_stores(formula, table).0,
@@ -5739,16 +5973,20 @@ fn decided_plain_stores(node: &Json, table: &DispatchTable) -> (Json, bool) {
     };
     match kind {
         "atomic" => {
-            if node.get("name").and_then(|v| v.as_str()) != Some(PYTHON_PLAIN_STORE) {
-                return (node.clone(), false);
-            }
+            let holds: fn(&DispatchTable, &Json, &str) -> bool =
+                match node.get("name").and_then(|v| v.as_str()) {
+                    Some(PYTHON_PLAIN_STORE) => plain_store_holds,
+                    Some(PYTHON_PLAIN_READ) => plain_read_holds,
+                    _ => return (node.clone(), false),
+                };
             let decided = match node
                 .get("args")
                 .and_then(|v| v.as_array())
                 .map(Vec::as_slice)
             {
-                Some([class, field]) => const_str(field)
-                    .is_some_and(|field| plain_store_holds(table, class, field)),
+                Some([class, field]) => {
+                    const_str(field).is_some_and(|field| holds(table, class, field))
+                }
                 _ => false,
             };
             if decided {
@@ -14205,6 +14443,7 @@ mod tests {
                 .iter()
                 .map(|(class, instance)| (class.to_string(), instance.clone()))
                 .collect(),
+            constructed_fields: BTreeMap::new(),
         }
     }
 
@@ -14282,6 +14521,151 @@ mod tests {
             "builtins.object".to_string(),
         ];
         assert!(!plain_store_holds(&class_table(&builtin, &[]), &boxed, "n"));
+    }
+
+    #[test]
+    fn a_plain_read_is_decided_on_the_order_of_a_decided_or_constructed_class() {
+        // `python:plain_read(<class>, "<f>")` holds where no class of the
+        // order binds the field, `__getattribute__` or `__getattr__`; a class
+        // call's result (`python:constructed(<C>)`) is exactly of `<C>`.
+        let mut namespaces = BTreeMap::new();
+        namespaces.insert(
+            "python:m.Gauge".to_string(),
+            namespace(
+                &["python:m.Gauge", "builtins.object"],
+                &[("read", "function", "python:m.Gauge.read")],
+            ),
+        );
+        let constructed = json!({"kind": "ctor", "name": "python:constructed", "args": [
+            string_const("python:m.Gauge")
+        ]});
+        let stated = [("python:m.Gauge", Some(instance("python:m.Gauge", &["n"])))];
+        let table = class_table(&namespaces, &stated);
+        assert!(plain_read_holds(&table, &constructed, "n"));
+        assert!(plain_read_holds(&table, &instance("python:m.Gauge", &["n"]), "n"));
+        // A free class input, a dunder, a binding of the name, a class call
+        // whose instance the constructor does not state: not decided.
+        assert!(!plain_read_holds(&table, &var("class:self"), "n"));
+        assert!(!plain_read_holds(&table, &constructed, "__dict__"));
+        assert!(!plain_read_holds(&table, &constructed, "read"));
+        assert!(!plain_read_holds(
+            &class_table(&namespaces, &[("python:m.Gauge", None)]),
+            &constructed,
+            "n"
+        ));
+        for hook in PLAIN_READ_HOOKS {
+            let mut hooked = namespaces.clone();
+            hooked
+                .get_mut("python:m.Gauge")
+                .unwrap()
+                .binds
+                .insert(hook.to_string(), ("other".to_string(), String::new()));
+            let hooked = class_table(&hooked, &stated);
+            assert!(!plain_read_holds(&hooked, &constructed, "n"), "{hook}");
+        }
+        // A `__setattr__` makes a store run code, not a read.
+        let mut setter = namespaces.clone();
+        setter
+            .get_mut("python:m.Gauge")
+            .unwrap()
+            .binds
+            .insert("__setattr__".to_string(), ("function".to_string(), String::new()));
+        let setter = class_table(&setter, &stated);
+        assert!(plain_read_holds(&setter, &constructed, "n"));
+        assert!(!plain_store_holds(&setter, &constructed, "n"));
+        // The guard of a read folds to `true` like a store's.
+        let guard = json!({"kind": "atomic", "name": "python:plain_read", "args": [
+            constructed.clone(), string_const("n")
+        ]});
+        assert_eq!(decide_plain_stores(&guard, Some(&table)), bool_formula(true));
+    }
+
+    #[test]
+    fn a_constructor_states_a_field_on_every_completed_face_or_not_at_all() {
+        let made = json!({"kind": "ctor", "name": "python:after", "args": [
+            var("out"), string_const("out")
+        ]});
+        let type_is = json!({"kind": "atomic", "name": "python:type_is", "args": [
+            made.clone(), string_const("python:m.Gauge")
+        ]});
+        let field = |name: &str, value: Json| {
+            json!({"kind": "atomic", "name": "=", "args": [
+                {"kind": "ctor", "name": format!("attr:{name}"), "args": [made.clone()]},
+                value
+            ]})
+        };
+        // One unconditional face.
+        let post = json!({"kind": "and", "operands": [
+            type_is.clone(), field("n", var("n"))
+        ]});
+        assert_eq!(
+            constructed_stated_fields(&post, "out").into_iter().collect::<Vec<_>>(),
+            vec!["n".to_string()]
+        );
+        // Two faces: `n` on both, `m` on one only.
+        let face = |fields: Vec<Json>| {
+            let mut operands = vec![type_is.clone()];
+            operands.extend(fields);
+            json!({"kind": "implies", "operands": [var("g"), {"kind": "and", "operands": operands}]})
+        };
+        let post = json!({"kind": "and", "operands": [
+            face(vec![field("n", int(1)), field("m", int(2))]),
+            face(vec![field("n", int(3))]),
+        ]});
+        assert_eq!(
+            constructed_stated_fields(&post, "out").into_iter().collect::<Vec<_>>(),
+            vec!["n".to_string()]
+        );
+        // Under a disjunction nothing is stated.
+        let post = json!({"kind": "or", "operands": [
+            {"kind": "and", "operands": [type_is.clone(), field("n", int(1))]},
+            type_is.clone(),
+        ]});
+        assert!(constructed_stated_fields(&post, "out").is_empty());
+    }
+
+    #[test]
+    fn a_field_input_is_bound_where_the_receivers_constructor_states_it() {
+        let mut table = DispatchTable::default();
+        table.constructed.insert(
+            "python:m.Gauge".to_string(),
+            Some(instance("python:m.Gauge", &["n"])),
+        );
+        table.constructed_fields.insert(
+            "python:m.Gauge".to_string(),
+            ["n".to_string()].into_iter().collect(),
+        );
+        let receiver = var("R");
+        let constructed = json!({"kind": "ctor", "name": "python:constructed", "args": [
+            string_const("python:m.Gauge")
+        ]});
+        let call = vec![
+            receiver.clone(),
+            json!({"kind": "ctor", "name": "py.class", "args": [string_const("0"), constructed]}),
+        ];
+        let formals = formals(&["self", "class:self", "field:self.n", "field:self.m"]);
+        let inputs = constructed_field_inputs(&table, &formals, &call);
+        assert_eq!(
+            inputs,
+            vec![(
+                "field:self.n".to_string(),
+                json!({"kind": "ctor", "name": "attr:n", "args": [
+                    {"kind": "ctor", "name": "python:after", "args": [receiver, string_const("out")]}
+                ]})
+            )]
+        );
+        // `field:self.m` stays free: the binder leaves the instance open.
+        let bound = bind_call_arguments(&formals, &inputs, &call).unwrap();
+        assert!(bound.iter().any(|(formal, _)| formal == "field:self.n"));
+        assert!(!bound.iter().any(|(formal, _)| formal == "field:self.m"));
+        // An instance the lift supplies states no field value.
+        let decided = vec![
+            var("R"),
+            json!({"kind": "ctor", "name": "py.class", "args": [
+                string_const("0"), instance("python:m.Gauge", &["n"])
+            ]}),
+        ];
+        assert!(constructed_field_inputs(&table, &formals, &decided).is_empty());
     }
 
     #[test]

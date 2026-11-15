@@ -108,16 +108,19 @@ def test_receiver_method_call_carries_the_method_raise(tmp_path: Path) -> None:
     ``gauge.read()`` is dispatched at prove over the class and fields
     ``Gauge``'s contract states (``python:constructed``, #7757 step 8).  The
     lying ``read`` always raises, so the claim after it is refuted:
-    ``unsat``.  The truthful ``read`` returns ``self.n``, a field of an
-    instance that arrived by binding in ``read``'s own proof: owed, so the
-    truthful half stays ``open`` (not bridged, listed on #7661)."""
+    ``unsat``.  The truthful ``read`` returns ``self.n``: in ``read``'s own
+    proof that is the ``field:self.n`` input under ``python:plain_read(
+    class:self, "n")`` (#7757), and the dispatched call binds it to the
+    value ``Gauge``'s constructor contract states for ``n`` on every
+    completed face (``attr:n(python:after(<Gauge(4)>, "out"))``, 4), with
+    the guard decided on ``Gauge``'s namespace row: ``sat``."""
 
     _pair(
         tmp_path,
         "obj-call",
         _OBJ_CALL.format(body="        return self.n"),
         _OBJ_CALL.format(body="        raise KeyError('no reading')"),
-        expected=("open", "unsat"),
+        expected=("sat", "unsat"),
     )
 
 
@@ -481,13 +484,17 @@ def test_a_field_read_through_the_callers_self_reads_the_value(
     tmp_path: Path,
 ) -> None:
     """``box = Box(); box.run()``, ``run`` returning ``self.n``: the claim on
-    the value ``__init__`` stored is decided, its denial refuted."""
+    the value ``__init__`` stored is decided, its denial refuted.  ``run``'s
+    read of ``self.n`` is its ``field:self.n`` input, bound at the
+    dispatched call to the value ``Box``'s constructor contract states
+    (#7757): truthful ``sat``, lying ``unsat``."""
 
     _pair(
         tmp_path,
         "field-read",
         _FIELD_READ.format(claim=3),
         _FIELD_READ.format(claim=4),
+        expected=("sat", "unsat"),
     )
 
 

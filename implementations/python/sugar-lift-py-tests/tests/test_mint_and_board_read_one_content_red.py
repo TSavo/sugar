@@ -65,23 +65,16 @@ def test_a_with_over_a_same_module_manager_reaches_the_solver(tmp_path: Path) ->
         for number, line in enumerate(_MODULE.splitlines(), start=1)
         if line.startswith("def test_")
     )
-    # Since #7757 step 6 (#8738, #8744) ``Resource(1)`` is an edge and
-    # ``__enter__`` on its result is the unanswered call.  ``f()`` returns
-    # that call's value, which nothing states, so the truthful claim reads
-    # ``open`` on main (scorecard 43738710481), listed on #7661.  The lie
-    # was set to ``open`` by reasoning (the truthful half failed first): it
-    # reads the same undecided value, never ``sat``.
-    #
-    # Step 8 dispatches the ``with``'s ``__enter__``/``__exit__`` on
-    # ``Resource(1)`` over the class its contract states (``python:
-    # constructed``), and ``__exit__(self, *exc)`` fits the one binder
-    # (#8838).  It still does not decide the claim, for one named reason:
-    # ``__enter__``'s own contract returns ``self.target``, a field read of
-    # a receiver that arrived by binding: the undecided read, owed.
-    # ``class:self`` binds the class and the field names (``python:
-    # instance``), never the field values the caller holds; the value the
-    # construction left (``attr:target(python:after(<Resource(1)>, "out"))
-    # == 1``, #8746) is stated on the caller's side and nothing binds the
-    # method's ``self`` to it (the receiver's state as an input).
-    assert claim_verdict(truthful.prove_doc, claims_from_line=test_line) == "open"
-    assert lying.verdict == "open"
+    # Since #7757 step 6 (#8738, #8744) ``Resource(1)`` is an edge.  Step 8
+    # dispatches the ``with``'s ``__enter__``/``__exit__`` on ``Resource(1)``
+    # over the class its contract states (``python:constructed``), and
+    # ``__exit__(self, *exc)`` fits the one binder (#8838).  ``__enter__``'s
+    # own contract returns ``self.target``: the ``field:self.target`` input
+    # under ``python:plain_read(class:self, "target")`` (#7757).  The
+    # dispatched call binds it to the value ``Resource``'s constructor
+    # contract states for ``target`` on every completed face
+    # (``attr:target(python:after(<Resource(1)>, "out"))``, 1), and the
+    # guard is decided on ``Resource``'s namespace row: ``f()`` is 1, the
+    # truthful claim ``sat`` and the lie refuted.
+    assert claim_verdict(truthful.prove_doc, claims_from_line=test_line) == "sat"
+    assert lying.verdict == "unsat"

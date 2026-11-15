@@ -120,6 +120,14 @@ def stored_class_input(receiver, name: str, unit):
 
     return input_formal(CLASS_INPUT, coordinate.declared_name)
 
+
+#: ``python:plain_read(<class>, <field>)``: a read of ``<field>`` on an
+#: instance of ``<class>`` is its ``__dict__`` entry by Python's own rule --
+#: no ``__getattribute__`` or ``__getattr__`` and no binding of the name
+#: (a data descriptor would win over the entry) in the order of ``<class>``
+#: (``consistency::PYTHON_PLAIN_READ``, decided on the namespace rows).
+PLAIN_READ = "python:plain_read"
+
 # A read of any of these names, or of these attributes, may store any name
 # on any object: ``setattr(o, name, v)``, ``vars(o)[name] = v``,
 # ``o.__dict__[name] = v``, ``object.__setattr__(o, name, v)`` -- and so
@@ -574,6 +582,116 @@ def class_input_formals(unit) -> frozenset:
         _CLASS_INPUT_FORMALS.clear()
     _CLASS_INPUT_FORMALS[id(module)] = (module, answer)
     return answer
+
+
+# Module -> (module, {coordinate CID: {field: ContractInputV1}}), the last
+# few typed modules read.
+_FIELD_INPUTS: dict = {}
+
+
+def field_inputs(unit) -> dict:
+    """``{coordinate CID: {field: input}}`` for every parameter of a
+    function of the module ``unit`` holds whose fields are inputs of that
+    function's contract (``nodes._receiver_field_inputs``): the
+    ``field:<param>.<field>`` input (``ContractInputV1``) a read of that
+    field of that parameter is.  Read once per typed module."""
+    from sugar_lift_py_tests.contract_input import FIELD_INPUT, ContractInputV1
+    from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
+    from sugar_source_tree.nodes import (
+        AsyncFunctionDef,
+        FunctionDef,
+        Lambda,
+        _receiver_field_inputs,
+    )
+
+    module = getattr(unit, "typed_module", None)
+    if module is None:
+        return {}
+    held = _FIELD_INPUTS.get(id(module))
+    if held is not None and held[0] is module:
+        return held[1]
+    found: dict = {}
+    for statement in module.body:
+        for node in statement.walk():
+            if not isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda)):
+                continue
+            reads = _receiver_field_inputs(node)
+            if not reads:
+                continue
+            owner_cid = node.fragment.seal().cid
+            for formal in node.formal_coordinates():
+                if not isinstance(formal, FormalParameterCoordinateV1):
+                    continue
+                for parameter, field in reads:
+                    if parameter != formal.declared_name:
+                        continue
+                    found.setdefault(formal.coordinate_cid, {})[field] = (
+                        ContractInputV1.mint(
+                            owner_definition_cid=owner_cid,
+                            input_kind=FIELD_INPUT,
+                            name=f"{parameter}.{field}",
+                        )
+                    )
+    if len(_FIELD_INPUTS) >= 8:
+        _FIELD_INPUTS.clear()
+    _FIELD_INPUTS[id(module)] = (module, found)
+    return found
+
+
+def receiver_field_read(receiver, name, site):
+    """``receiver.name`` where ``receiver`` is a parameter of the function
+    whose own proof this is and the field is an input of its contract
+    (``field_inputs``, ``nodes._receiver_field_inputs``), else None (the
+    read takes the path it took before):
+
+    - under ``python:plain_read(class:<param>, "<name>")`` it completes with
+      the ``field:<param>.<name>`` input: the value the ``__dict__`` the
+      object arrived with holds, which the caller binds at prove where it
+      states it, and which is free otherwise;
+    - under the complement it is the one two-faced undecided read
+      (``FloorValue.undecided_attribute``): its completion owes the
+      ``undecided`` member, and its halt is kept.
+
+    The guard is decided at prove on the namespace rows of the class the
+    caller binds ``class:<param>`` to (``consistency::plain_read_holds``);
+    where nothing binds a decided class it stands, and neither face is
+    chosen.  In a dynamic module (``module_attribute_names``) nothing is
+    read through a field input: a computed store may have changed the
+    object's ``__dict__`` or its class unseen."""
+    from sugar_lift_py_tests.contract_input import CLASS_INPUT, input_formal
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
+    from sugar_lift_py_tests.ir import atomic, make_var, not_, str_const
+    from sugar_lift_py_tests.occurrence import occurrence_key
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import partition
+    from sugar_source_tree.fragment import SourceFragment
+
+    coordinate = getattr(receiver, "formal_coordinate", None)
+    if (
+        type(receiver) is not SymbolicValue
+        or not isinstance(coordinate, FormalParameterCoordinateV1)
+        or coordinate.parameter_kind not in _PARAMETER_KINDS
+        or type(site) is not SourceFragment
+    ):
+        return None
+    unit = site.unit
+    item = field_inputs(unit).get(coordinate.coordinate_cid, {}).get(name)
+    if item is None or module_attribute_names(unit)[1]:
+        return None
+    guard = atomic(
+        PLAIN_READ,
+        [
+            make_var(input_formal(CLASS_INPUT, coordinate.declared_name)),
+            str_const(name),
+        ],
+    )
+    plain, other = partition(("receiver_field_read", occurrence_key(site), name))
+    read = ExitSet.completed(item.value()).guarded(guard, plain)
+    undecided = receiver.undecided_attribute(
+        name, site, owner="receiver_dispatch.receiver_field_read"
+    ).guarded(not_(guard), other)
+    return read.union(undecided)
 
 
 # Module -> (module, {receiver coordinate CID: formal}), the last few read.

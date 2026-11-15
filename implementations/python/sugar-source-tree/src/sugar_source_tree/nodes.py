@@ -11745,17 +11745,23 @@ class ClassDef(Statement):
         The class of the ``def``'s receiver (its first parameter's
         ``class:<param>``, #7757 steps 7 and 8) is no input here: the
         receiver is the instance this construction makes, of the class the
-        call names, never an argument a caller supplies a class for."""
+        call names, never an argument a caller supplies a class for.  Nor
+        is a field of it (``field:<receiver>.<f>``, #7757): the fields of the
+        instance this construction makes are the ones it stores."""
         constructor = self.constructor_definition()
         if constructor is None:
             return ()
-        from sugar_lift_py_tests.contract_input import CLASS_INPUT
+        from sugar_lift_py_tests.contract_input import CLASS_INPUT, FIELD_INPUT
 
         receiver = constructor.params[0].name if constructor.params else None
         kept = []
         for item in constructor.contract_inputs():
             coordinate = item.coordinate
             if coordinate.input_kind == CLASS_INPUT and coordinate.name == receiver:
+                continue
+            if coordinate.input_kind == FIELD_INPUT and coordinate.name.startswith(
+                f"{receiver}."
+            ):
                 continue
             kept.append(item)
         return tuple(kept)
@@ -26724,13 +26730,23 @@ def _contract_inputs(definition) -> tuple:
       mutates the same way (``_receiver_class_cells``, #7757 step 7): the
       class of the formal ``cell:<name>``, the one input kind, supplied by
       ``py.class("cell:<name>", <class>)``.
+    - ``field:<receiver>.<name>`` for each field ``<receiver>.<name>`` a
+      method reads of its receiver where the object's ``__dict__`` is the
+      one it arrived with (``_receiver_field_inputs``, #7757): the read is
+      that input where the class input's namespace makes it the plain
+      ``__dict__`` read (``python:plain_read``, decided at prove).
 
     The caller supplies each at the call (``py.closure``, ``py.default``,
-    ``py.global``, ``py.class``), as it supplies an actual for a parameter."""
+    ``py.global``, ``py.class``), as it supplies an actual for a parameter;
+    a ``field:`` input is bound at prove to the value the constructor
+    contract of the receiver's class states for the field, where the
+    receiver is a class call's result (``consistency::
+    constructed_field_inputs``), and is free otherwise."""
     from sugar_lift_py_tests.contract_input import (
         CELL_INPUT,
         CLASS_INPUT,
         DEFAULT_INPUT,
+        FIELD_INPUT,
         GLOBAL_INPUT,
         ContractInputV1,
         input_formal,
@@ -26780,7 +26796,15 @@ def _contract_inputs(definition) -> tuple:
         )
         for name in _receiver_class_cells(definition)
     )
-    return cells + defaults + globals_ + classes + cell_classes
+    fields = tuple(
+        ContractInputV1.mint(
+            owner_definition_cid=owner_cid,
+            input_kind=FIELD_INPUT,
+            name=f"{receiver}.{field}",
+        )
+        for receiver, field in _receiver_field_inputs(definition)
+    )
+    return cells + defaults + globals_ + classes + cell_classes + fields
 
 
 def _receiver_class_parameters(definition) -> tuple:
@@ -26788,10 +26812,12 @@ def _receiver_class_parameters(definition) -> tuple:
     contract (#7757 step 8), in parameter order: each positional or keyword
     parameter ``p`` the body calls a method of (``p.m(...)``), stores or
     deletes an item of (``p[k] = v``, ``del p[k]``: ``type(p).__setitem__``
-    and ``__delitem__``, #7757 step 7), or stores a field on (``p.f = v``,
+    and ``__delitem__``, #7757 step 7), stores a field on (``p.f = v``,
     ``p.f OP= v``, ``p.f: T = v``: stated under a guard over this input,
-    #7757 step 7) and uses in no other way that could change the object's
-    ``__dict__`` before such a call without the frame seeing it:
+    #7757 step 7), or is a method's receiver whose fields the body reads as
+    inputs (``_receiver_field_inputs``), and uses in no other way that could
+    change the object's ``__dict__`` before such a call without the frame
+    seeing it:
 
     - every other read of ``p`` is ``p.<attr>``: ``p`` is never read bare (an
       argument, an assignment's value, a callee, a container, an item read),
@@ -26836,9 +26862,131 @@ def _read_receiver_class_parameters(definition) -> tuple:
     received, blocked, _read, zero_argument_super = uses
     if zero_argument_super:
         blocked = blocked | {parameters[0]}
+    # A method's receiver whose fields are inputs (``_receiver_field_inputs``)
+    # takes its class as an input too: the plain-read guard reads it.
+    received = received | {name for name, _field in _receiver_field_inputs(definition)}
     return tuple(
         name for name in parameters if name in received and name not in blocked
     )
+
+
+def _receiver_field_inputs(definition) -> tuple:
+    """The fields of a method's receiver that are inputs of its contract
+    (#7757), ``((<receiver>, <field>), ...)`` in field name order: each
+    field ``p.<f>`` the body reads of the method's receiver ``p``
+    (``_method_receiver``: the one parameter a dispatched call binds the
+    class of, so the only one a caller can bind the fields of) where the
+    object's ``__dict__`` is still the one it arrived with at every read:
+
+    - the body calls no method of ``p`` and stores or deletes no item of it
+      (the code that runs may store any field), stores or deletes no field
+      of it (``p.x = v``, ``p.x += v``, ``del p.x``, ``p.x`` as a loop or
+      ``with`` target), and never uses it any other way
+      (``_receiver_uses``: bare, an item read, a field's method, a nested
+      function, a zero-argument ``super()``);
+    - ``<f>`` is no dunder name (``__class__`` and ``__dict__`` are
+      ``object``'s own data descriptors, never a ``__dict__`` entry).
+
+    The receiver's class is then an input too (``_receiver_class_parameters``,
+    the one input kind).  The read is the ``field:<p>.<f>`` input where the
+    class input's namespace makes it the plain ``__dict__`` read
+    (``python:plain_read``, decided at prove on the class's namespace row),
+    and the one undecided read otherwise (``AttributeSugar.
+    project_attribute``).  Read once per definition."""
+    row = definition._coordinate()[2]
+    held = row.get("__receiver_field_inputs__")
+    if held is not None:
+        return held
+    answer = _read_receiver_field_inputs(definition)
+    row["__receiver_field_inputs__"] = answer
+    return answer
+
+
+def _read_receiver_field_inputs(definition) -> tuple:
+    """``_receiver_field_inputs``, read off the definition's body."""
+    receiver = _method_receiver(definition)
+    if receiver is None:
+        return ()
+    uses = _receiver_uses(definition)
+    if uses is None:
+        return ()
+    received, blocked, _read, zero_argument_super = uses
+    if receiver in received or receiver in blocked or zero_argument_super:
+        return ()
+    body = definition.body
+    statements = tuple(body) if isinstance(body, (list, tuple)) else (body,)
+    nodes = []
+    for statement in statements:
+        nodes.extend(statement.walk())
+    stored = _attribute_store_targets(nodes)
+    fields: set = set()
+    for node in nodes:
+        if not (
+            isinstance(node, Attribute)
+            and isinstance(node.value, Name)
+            and node.value.id == receiver
+        ):
+            continue
+        if id(node) in stored:
+            return ()
+        fields.add(node.attr)
+    return tuple(
+        (receiver, field)
+        for field in sorted(fields)
+        if not (field.startswith("__") and field.endswith("__"))
+    )
+
+
+def _method_receiver(definition):
+    """The parameter a method binds the instance it is called on to: the
+    first positional parameter of a ``def`` written directly in a class body
+    (``SourceUnit.lexical_class_owner_for``), undecorated or a ``property``
+    getter (``ClassDef._method_descriptor_kind``), and not one Python passes
+    the class to (``_IMPLICIT_CLASS_RECEIVERS``: ``__new__``,
+    ``__init_subclass__``, ``__class_getitem__``).  None for anything else:
+    a ``staticmethod`` takes no instance, a ``classmethod`` the class, and
+    another decorator's result is not the written function."""
+    if not isinstance(definition, FunctionDef) or not definition.params:
+        return None
+    if definition.name in _IMPLICIT_CLASS_RECEIVERS:
+        return None
+    owner = definition.unit.lexical_class_owner_for(definition)
+    if owner is None:
+        return None
+    if definition.decorators and owner._method_descriptor_kind(definition) != (
+        "property"
+    ):
+        return None
+    first = definition.params[0]
+    if first.param_kind not in ("positional_only", "positional_or_keyword"):
+        return None
+    return first.name
+
+
+def _attribute_store_targets(nodes) -> set:
+    """The ids of the ``Attribute`` nodes among ``nodes`` that stand in a
+    target position -- an assignment's target (plain, augmented, annotated),
+    a ``del``, a ``for`` or comprehension target, a ``with ... as`` target --
+    at any depth of a tuple, list or starred target: a store or delete of
+    that attribute."""
+    targets = []
+    for node in nodes:
+        if isinstance(node, (Assign, Delete)):
+            targets.extend(node.targets)
+        elif isinstance(node, (AugAssign, AnnAssign, For, AsyncFor, Comprehension)):
+            targets.append(node.target)
+        elif isinstance(node, WithItem) and node.optional_vars is not None:
+            targets.append(node.optional_vars)
+    stored = set()
+    while targets:
+        target = targets.pop()
+        if isinstance(target, Attribute):
+            stored.add(id(target))
+        elif isinstance(target, (Tuple_, List)):
+            targets.extend(target.elts)
+        elif isinstance(target, Starred):
+            targets.append(target.value)
+    return stored
 
 
 def _receiver_class_cells(definition) -> tuple:
