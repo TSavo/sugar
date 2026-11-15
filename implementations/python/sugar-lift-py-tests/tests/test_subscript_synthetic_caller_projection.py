@@ -107,9 +107,14 @@ def test_positional_keyword_and_default_callers_reach_the_same_demand() -> None:
     halted = tuple(outcome.exits[0] for outcome in exceptional)
     assert all(isinstance(exit_, Halted) for exit_ in halted)
     site = carrier.site
-    assert {exit_.effect.occurrence_id for exit_ in halted} == {
+    # An occurrence is the operation's coordinate and the call that reached
+    # it: ``<file:line:col>@call:<call cid>``.  The three callers reach the
+    # one ``obj[key]``; each call is its own occurrence of it.
+    split = [exit_.effect.occurrence_id.split("@call:") for exit_ in halted]
+    assert {locus for locus, _call in split} == {
         f"{site.filename}:{site.line}:{site.col}"
     }
+    assert len({call for _locus, call in split}) == len(halted)
 
 
 class _Expected:
@@ -141,7 +146,11 @@ def test_lying_boundary_type_cannot_create_or_consume_the_subscript_result() -> 
     escaped = routed.exits[0]
     assert isinstance(escaped, Halted)
     site = carrier.site
-    assert escaped.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
+    # The routed halt is the original occurrence, the subscript reached
+    # through this call: ``<file:line:col>@call:<call cid>``.
+    assert escaped.effect.occurrence_id == original.effect.occurrence_id
+    locus, _call = escaped.effect.occurrence_id.split("@call:")
+    assert locus == f"{site.filename}:{site.line}:{site.col}"
     assert escaped.effect.exception_type_coordinate == (
         original.effect.exception_type_coordinate
     )
