@@ -521,4 +521,14 @@ def test_production_source_case_guard_construction_is_honorably_red() -> None:
     )
     case0 = match_stmts[0].cases[0]
     assert case0.guard is not None, "construction omitted guard sugar"
-    assert case0.capture_name == "x", "construction omitted capture_name"
+    # Construction now builds the guarded case.  The bare capture ``x`` is
+    # bound by the one temporal rewrite, not by a second capture slot: every
+    # read of ``x`` in the case is a reference to what the capture bound, the
+    # subject ``z``.  So the spec names no capture, and ``return x`` returns
+    # the formal ``z``.
+    from sugar_lift_py_tests.sugar.formal_ref_sugar import FormalRefSugar
+
+    assert case0.capture_name is None
+    returned = case0.body[0].value
+    assert isinstance(returned, FormalRefSugar), type(returned)
+    assert returned.coordinate.declared_name == "z"
