@@ -950,20 +950,32 @@ class UnknownCalleeCallV1:
         is joined (#7757 step 7).  One term for every such call, same-file or
         imported.
 
-        ``halted_at``: the source fragment the halt leaves at where ``site``
-        is a synthetic call's content-addressed slot id, which states none
-        (a manager protocol's ``__enter__``/``__exit__``, its ``with``
-        item, ``context_manager_contract.protocol_step_site``); the call's
-        occurrence stays ``site``.  None: ``site`` itself."""
+        ``halted_at``: the source fragment of a synthetic call whose ``site``
+        is a content-addressed slot id, which states none (a manager
+        protocol's ``__enter__``/``__exit__``: its ``with`` item,
+        ``context_manager_contract.protocol_step_site``).  The call stands
+        at that fragment, one way for every call: its occurrence (the
+        ``python:call_result`` and ``python:raised`` terms), the ``undecided``
+        member it owes, and where its halt leaves.  Prove joins a member to
+        a read by that one key, the site and the symbol the call names
+        (``consistency::answers_at``), so a call whose occurrence named the
+        slot id was a read no member answers, and a member with no fragment
+        was refused at mint (``tree_enumerate.unanswered_call_rows``).
+        ``__enter__`` and ``__exit__`` of one item are told apart by their
+        call terms.  The slot id stays the halt's ``occurrence`` key, the
+        one the ``try`` enclosing the ``with`` reads to tell a halt of the
+        header from one after the body (``nodes._header_occurrence_keys``).
+        None: ``site`` itself."""
         from .effect.raise_effect import UndeterminedRaiseEffect
         from .ir import atomic, ctor
         from .occurrence import occurrence_key, occurrence_term
         from .outcome.exit_set import ExitSet
 
         key = occurrence_key(site)
+        stands_at = site if halted_at is None else halted_at
         # The call term names its occurrence by coordinate (#7808); `key`
         # stays the raise effect's own occurrence (listed on #7808).
-        result = _occurrence_result(callsite, site)
+        result = _occurrence_result(callsite, stands_at)
         call = (
             result.term
             if result is not callsite
@@ -971,7 +983,7 @@ class UnknownCalleeCallV1:
                 "python:call_result",
                 (
                     callsite.to_term(owner=f"UnknownCallee:{self.callee_name}"),
-                    occurrence_term(site),
+                    occurrence_term(stands_at),
                 ),
             )
         )
@@ -984,7 +996,7 @@ class UnknownCalleeCallV1:
         raised_by_call = None
         if symbol is not None and hasattr(callsite, "term"):
             raised_by_call = ctor(
-                "python:raised", (callsite.term, occurrence_term(site))
+                "python:raised", (callsite.term, occurrence_term(stands_at))
             )
         # Nothing here answers this call: the one constructor makes both arms
         # owe it (#7825, H4), and the full scan writes it once as the proof's
@@ -996,11 +1008,11 @@ class UnknownCalleeCallV1:
                 blame=str(site),
                 occurrence=key,
                 producer_node_owner=f"UnknownCallee:{self.callee_name}",
-                site=site if halted_at is None else halted_at,
+                site=stands_at,
                 raised_by_call=raised_by_call,
             ),
             guard=completes,
-            site=site,
+            site=stands_at,
             symbol=getattr(callsite, "authenticated_target_symbol", None),
         )
 
