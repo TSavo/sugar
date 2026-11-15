@@ -197,11 +197,14 @@ lake_project = "{_root() / 'tools' / 'portfolio' / 'lean-mathlib'}"
         "    assert proc.stdout is not None\n"
         "    CAPTURE.parent.mkdir(parents=True, exist_ok=True)\n"
         "    with CAPTURE.open('a', encoding='utf-8') as out:\n"
+        # Each line is recorded before it is relayed: mint may finish and
+        # stop the kit as soon as it reads the last response, and a line
+        # relayed first could be cut off mid-write in the capture.
         "        for line in proc.stdout:\n"
-        "            sys.stdout.write(line)\n"
-        "            sys.stdout.flush()\n"
         "            out.write(line)\n"
         "            out.flush()\n"
+        "            sys.stdout.write(line)\n"
+        "            sys.stdout.flush()\n"
         "    return proc.wait()\n"
         "\n"
         "if __name__ == '__main__':\n"
