@@ -126,6 +126,9 @@ def test_a_branch_step_carries_both_sides_and_its_own_fragment(tmp_path) -> None
     assert isinstance(step.then_steps[0], YieldStepV1)
     assert isinstance(step.else_steps[0], YieldStepV1)
     assert step.fragment_cid
+    # The guard's truth is taken at the test expression's own fragment, not
+    # at the `If` statement's.
+    assert step.guard_site.seal().cid != step.fragment_cid
     # The step is instance-agnostic: no partition is minted at producer time,
     # because the key needs an instance_coordinate that does not exist yet.
     assert not hasattr(step, "partition")
@@ -190,6 +193,7 @@ def test_a_ground_true_guard_splices_the_then_branch() -> None:
         (YieldStepV1(IntLiteralSugar(1, site="yield:1")),),
         (),
         "frag",
+        "s",
     )
 
     assert isinstance(_machine((step, ReturnStepV1())).resume(), YieldEffect)
@@ -201,6 +205,7 @@ def test_a_ground_false_guard_splices_the_else_branch() -> None:
         (YieldStepV1(IntLiteralSugar(1, site="yield:1")),),
         (),
         "frag",
+        "s",
     )
 
     assert isinstance(_machine((step, ReturnStepV1())).resume(), GeneratorTerminationV1)
@@ -235,8 +240,8 @@ def test_a_partitioned_guard_preserves_halts_and_transitions_completed_faces(
     )
     guard = TrueBoolLiteralSugar(site="guard")
 
-    def guard_truth(self, value):
-        del self
+    def guard_truth(self, value, site):
+        del self, site
         if value is guard:
             return guard_outcome
         from sugar_lift_py_tests.outcome import ExitSet
@@ -249,6 +254,7 @@ def test_a_partitioned_guard_preserves_halts_and_transitions_completed_faces(
         (YieldStepV1(IntLiteralSugar(1, site="yield:1")),),
         (),
         "frag",
+        "guard",
     )
 
     outcome = _machine((step, ReturnStepV1())).resume()
@@ -279,7 +285,7 @@ def test_a_branch_with_k_suspensions_stays_one_arm(branch_suspensions) -> None:
         for n in range(branch_suspensions)
     )
 
-    step = IfStepV1(NameSugar("c", site="s"), branch, (), "frag")
+    step = IfStepV1(NameSugar("c", site="s"), branch, (), "frag", "s")
     outcome = _machine((step, ReturnStepV1())).resume()
 
     assert len(_completed(outcome)) == 1
@@ -293,6 +299,7 @@ def test_sequential_branches_stay_one_arm() -> None:
             (YieldStepV1(IntLiteralSugar(n, site=f"yield:{n}")),),
             (),
             f"frag{n}",
+            f"guard:{n}",
         )
         for n in range(3)
     ) + (ReturnStepV1(),)

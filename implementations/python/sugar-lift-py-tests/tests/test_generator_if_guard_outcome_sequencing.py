@@ -89,12 +89,17 @@ def _machine(step: IfStepV1):
     )
 
 
-def _step(guard) -> IfStepV1:
+# The guard expression's own site: the truth is taken there.
+_GUARD_SITE = "if:guard-outcomes:test"
+
+
+def _step(guard, guard_site=_GUARD_SITE) -> IfStepV1:
     return IfStepV1(
         guard,
         (YieldStepV1(IntLiteralSugar(1, site="yield:then")),),
         (YieldStepV1(IntLiteralSugar(2, site="yield:else")),),
         "if:guard-outcomes",
+        guard_site,
     )
 
 
@@ -196,12 +201,12 @@ def test_four_face_guard_projects_completed_operands_once_then_transitions(
     outcome = machine.resume()
 
     assert isinstance(outcome, ExitSet)
-    assert direct_calls == [machine.instance_coordinate]
-    assert inner_true_calls == [machine.instance_coordinate]
-    assert inner_false_calls == [machine.instance_coordinate]
-    assert direct_calls[0] is machine.instance_coordinate
-    assert inner_true_calls[0] is machine.instance_coordinate
-    assert inner_false_calls[0] is machine.instance_coordinate
+    assert direct_calls == [step.guard_site]
+    assert inner_true_calls == [step.guard_site]
+    assert inner_false_calls == [step.guard_site]
+    assert direct_calls[0] is step.guard_site
+    assert inner_true_calls[0] is step.guard_site
+    assert inner_false_calls[0] is step.guard_site
     assert len(transition_calls) == 2
     assert transition_calls[0].formula is direct_formula
     _assert_halt_identity(outcome.exits[0], halted_left)
@@ -250,8 +255,8 @@ def test_guarded_incomplete_arm_becomes_halted_without_running_branch() -> None:
     outcome = machine.resume()
 
     assert isinstance(outcome, ExitSet)
-    assert calls == [machine.instance_coordinate]
-    assert calls[0] is machine.instance_coordinate
+    assert calls == [step.guard_site]
+    assert calls[0] is step.guard_site
     assert len(outcome.exits) == 1
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
@@ -278,8 +283,8 @@ def test_nonlinear_guard_none_transition_is_exact_typed_refusal() -> None:
     with pytest.raises(SugarNotWritten) as raised:
         machine.resume()
 
-    assert calls == [machine.instance_coordinate]
-    assert calls[0] is machine.instance_coordinate
+    assert calls == [step.guard_site]
+    assert calls[0] is step.guard_site
     _assert_transition_refusal(
         raised,
         step,
@@ -298,6 +303,7 @@ def test_nonlinear_guard_gap_transition_is_exact_typed_refusal() -> None:
         (OpaqueStepV1("branch-gap"),),
         (),
         "if:guard-outcomes",
+        _GUARD_SITE,
     )
 
     with pytest.raises(SugarNotWritten) as raised:
@@ -347,8 +353,8 @@ def test_guard_carrier_composes_prefix_and_runs_projection_and_transition_once(
     assert truth_calls == []
     assert transition_calls == []
     outcome = deferred.discharge(None, {})
-    assert truth_calls == [machine.instance_coordinate]
-    assert truth_calls[0] is machine.instance_coordinate
+    assert truth_calls == [step.guard_site]
+    assert truth_calls[0] is step.guard_site
     assert len(transition_calls) == 1
     assert transition_calls[0].formula == atomic("guard:carrier-truth", [])
     assert isinstance(outcome, ExitSet)
@@ -400,6 +406,7 @@ def test_projected_truth_exitset_composes_a_branch_carrier_without_duplication(
         ),
         (),
         "if:projected-truth-carrier",
+        _GUARD_SITE,
     )
     transition_calls = _transition_truth_spy(monkeypatch)
     machine = _machine(step)
@@ -408,11 +415,11 @@ def test_projected_truth_exitset_composes_a_branch_carrier_without_duplication(
 
     assert isinstance(deferred, NativeOperationExitCarrierV1)
     assert deferred.demand is branch_carrier.demand
-    assert projection_calls == [machine.instance_coordinate]
-    assert projection_calls[0] is machine.instance_coordinate
+    assert projection_calls == [step.guard_site]
+    assert projection_calls[0] is step.guard_site
     assert transition_calls == [projected_truth.exits[1].value]
     outcome = deferred.discharge(None, {})
-    assert projection_calls == [machine.instance_coordinate]
+    assert projection_calls == [step.guard_site]
     assert transition_calls == [projected_truth.exits[1].value]
     assert isinstance(outcome, ExitSet)
     nested_halted = outcome.exits[0]
@@ -428,3 +435,41 @@ def test_projected_truth_exitset_composes_a_branch_carrier_without_duplication(
     assert len(completed) == 1
     assert isinstance(completed[0].value, YieldEffect)
     assert completed[0].value.machine.cursor == 2
+
+
+def test_an_undecided_guard_halts_at_the_guard_fragment_in_its_instance(
+    tmp_path,
+) -> None:
+    """An undecided guard's truth is its two faces taken at the guard's own
+    fragment, so enumeration states where it halted (``halt_site``), and
+    inside the instance's occurrence, so two instances over one branch are
+    two occurrences of the exception it may throw."""
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.occurrence import occurrence_key
+    from sugar_lift_py_tests.tree_enumerate import halt_site
+
+    path = tmp_path / "guard_site.py"
+    path.write_text("def f(left, right):\n    return left == right\n", encoding="utf-8")
+    site = next(_open_at_seat(path, root=tmp_path).functions()).body[0].fragment
+    operand = SymbolicValue(TermValue(104).to_term(owner="guard operand"))
+    step = _step(_OutcomeGuard(ExitSet.completed(operand)), guard_site=site)
+    machine = _machine(step)
+    other = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:if-guard-outcomes:other",
+        frame_coordinate="frame:if-guard-outcomes",
+        binding_state=(),
+        steps=(step,),
+    )
+
+    halts = []
+    for instance in (machine, other):
+        outcome = instance._guard_truth(step.guard, step.guard_site)
+        assert isinstance(outcome, ExitSet)
+        halted = [arm for arm in outcome.exits if isinstance(arm, Halted)]
+        assert len(halted) == 1
+        assert halt_site(halted[0].effect, blame="guard") is site
+        assert halted[0].effect.occurrence == occurrence_key(
+            site, (f"generator:{instance.instance_coordinate}",)
+        )
+        halts.append(halted[0].effect)
+    assert halts[0].occurrence != halts[1].occurrence

@@ -90,7 +90,7 @@ def _machine(*, entry, floor, guard=None, then_steps=None, else_steps=(), ctx=No
         frame_coordinate="frame:option_context",
         binding_state=(entry,),
         steps=(
-            IfStepV1(guard, then_steps, else_steps, "frag:guard"),
+            IfStepV1(guard, then_steps, else_steps, "frag:guard", "guard:test"),
             ReturnStepV1(),
         ),
         formal_floor_bindings=(FormalFloorBindingV1(entry.coordinate.cid, floor),),

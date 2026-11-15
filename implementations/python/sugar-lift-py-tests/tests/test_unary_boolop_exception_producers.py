@@ -227,16 +227,26 @@ def test_undecided_not_operand_is_the_two_faced_truth() -> None:
 
 
 def _undecided_truth_values():
+    from sugar_lift_py_tests.floor.manager_coordinate import RaisedExitTypeValue
     from sugar_lift_py_tests.floor.undetermined_exception_value import (
         UndeterminedExceptionTypeValue,
         UndeterminedExceptionValue,
     )
+    from sugar_lift_py_tests.ir import ctor, str_const
 
     raised = UndeterminedExceptionValue("probe:occurrence", "probe:producer")
     return (
         SymbolicValue(make_var("obj1")),
         raised,
         UndeterminedExceptionTypeValue(raised),
+        # The class a raise threw, handed to ``__exit__``: its own formal
+        # coordinate, so it waits on no caller's actual.
+        RaisedExitTypeValue(
+            ctor(
+                "python:exception_type_identity",
+                [str_const("builtins"), str_const("ValueError")],
+            )
+        ),
     )
 
 
@@ -246,8 +256,8 @@ def _undecided_truth_values():
 def test_every_value_whose_truth_is_undecided_is_the_two_faced_truth(value) -> None:
     """``bool(value)`` for a value whose runtime type is not decided is the
     undecided member's two faces, with its own term at its own site -- the
-    exception an undetermined raise threw and its type as much as a bare
-    symbolic value.  None of them is refused."""
+    exception an undetermined raise threw and its type, and the class a raise
+    threw, as much as a bare symbolic value.  None of them is refused."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
     from sugar_lift_py_tests.ir import py_truthy

@@ -474,13 +474,18 @@ class ImportStepV1:
 
 @dataclass(frozen=True)
 class WhileStepV1:
-    """Authenticated generator while with a nameable body and no else."""
+    """Authenticated generator while with a nameable body and no else.
+
+    ``guard_site`` is the test expression's own source fragment: the site the
+    guard's truth is taken at (``GeneratorConstructionV1._guard_truth``).
+    """
 
     guard: ConstructedTermSugar
     body_steps: tuple
     fragment_cid: str
     coordinate: object
     occurrence: object = field(compare=False, repr=False)
+    guard_site: object = field(compare=False, repr=False)
 
     def __post_init__(self) -> None:
         from sugar_lift_py_tests.context_manager_resolution import (
@@ -702,8 +707,11 @@ class ExceptArmsStepV1:
 class IfStepV1:
     """A branch inside a generator body, with each side's own step sequence.
 
-    Carries SOURCE data only -- the guard's sugar, both branches' steps, and the
-    `If` statement's own fragment CID. It deliberately does NOT carry a
+    Carries SOURCE data only -- the guard's sugar, both branches' steps, the
+    `If` statement's own fragment CID, and the test expression's own source
+    fragment (``guard_site``: the site the guard's truth is taken at, so an
+    undecided guard's ``undecided`` member and halt stand at the guard). It
+    deliberately does NOT carry a
     partition: the composite key needs the machine's `instance_coordinate`, and
     `allocate` mints that AFTER the producer has built the steps. Minting at
     TRANSITION time instead keeps the step tuple instance-agnostic, so one
@@ -723,6 +731,7 @@ class IfStepV1:
     then_steps: tuple
     else_steps: tuple
     fragment_cid: str
+    guard_site: object = field(compare=False, repr=False)
 
     def __post_init__(self) -> None:
         _require_constructed_term(self.guard, owner="IfStepV1.guard")
@@ -1944,7 +1953,7 @@ class GeneratorConstructionV1:
             machine = replace(self, cursor=self.cursor + 1)
             return machine._transition(requested)
         if isinstance(step, WhileStepV1):
-            guard_outcome = self._guard_truth(step.guard)
+            guard_outcome = self._guard_truth(step.guard, step.guard_site)
             if not isinstance(guard_outcome, ExitSet):
                 return self._gap(requested, "While guard is not ground")
             if guard_outcome.exits and guard_outcome.halts() == guard_outcome.exits:
@@ -3162,7 +3171,7 @@ class GeneratorConstructionV1:
             return transitioned
 
         def _project_guard_operand(value):
-            projected = self._guard_truth(value)
+            projected = self._guard_truth(value, step.guard_site)
             if projected is None or isinstance(projected, GeneratorTransitionGapV1):
                 _refuse_transition(projected)
             return projected
@@ -3177,7 +3186,7 @@ class GeneratorConstructionV1:
                 return transitioned
             return ExitSet.completed(transitioned)
 
-        guard_outcome = self._guard_truth(step.guard)
+        guard_outcome = self._guard_truth(step.guard, step.guard_site)
         if (
             isinstance(guard_outcome, ExitSet)
             and guard_outcome.exits
@@ -3294,7 +3303,7 @@ class GeneratorConstructionV1:
                 ctx = item.bind.bind(ctx)
         return ctx
 
-    def _guard_truth(self, guard: object):
+    def _guard_truth(self, guard: object, site):
         """The guard's typed truth outcome, or None if it cannot stand.
 
         A branch guard is not the operand -- it is the operand's truth, taken
@@ -3304,8 +3313,16 @@ class GeneratorConstructionV1:
         False, a container's is its non-emptiness, and a value whose truth is
         not decided here is its two faces (its truth completes under its
         ``python:truth.completes`` guard or halts undetermined, owing the
-        undecided member). The truth is keyed on this instance's coordinate,
-        so two live generators over one branch never share it.
+        undecided member).
+
+        The truth is taken at ``site``, the guard expression's own source
+        fragment (``IfStepV1.guard_site`` / ``WhileStepV1.guard_site``), so
+        an undecided guard's member and halt stand at the guard
+        (``tree_enumerate.halt_site``).  It is taken inside this instance's
+        occurrence (``generator:<instance coordinate>`` on the occurrence
+        path): two live generators over one branch are two evaluations of
+        the guard, so their truths and the exceptions they may throw are two
+        occurrences, never one (``occurrence.occurrence_key``).
 
         Guard Sugar is reduced under :meth:`_guard_evaluation_context` so
         BindingCoordinateRefSugar resolves binder Floors at the exact
@@ -3332,14 +3349,14 @@ class GeneratorConstructionV1:
             value = outcome.completed_value()
         if not hasattr(value, "truth"):
             return None
+        from sugar_lift_py_tests.occurrence import entered
         from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
 
         # ConstructionPanic is BaseException by design so ordinary Exception
         # handlers cannot silence it. Do not catch BaseException here — that
         # would reclassify incomplete floors as undecided suspension gaps.
-        outcome = truth_of(
-            value, self.instance_coordinate, owner="GeneratorConstructionV1.guard"
-        )
+        with entered(f"generator:{self.instance_coordinate}"):
+            outcome = truth_of(value, site, owner="GeneratorConstructionV1.guard")
         if isinstance(outcome, (ExitSet, NativeOperationExitCarrierV1)):
             return outcome
         return None

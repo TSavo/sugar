@@ -10577,6 +10577,7 @@ class FunctionDef(Statement):
                             span.end_col,
                         ),
                         occurrence=statement.fragment,
+                        guard_site=statement.test.fragment,
                     )
                 )
             if isinstance(statement, If):
@@ -10593,6 +10594,7 @@ class FunctionDef(Statement):
                         then_body,
                         else_body,
                         statement.fragment.seal().cid,
+                        statement.test.fragment,
                     )
                 )
             if (
@@ -10740,6 +10742,7 @@ class FunctionDef(Statement):
                         compose_finally_exits(step.then_steps, cleanup_step),
                         compose_finally_exits(step.else_steps, cleanup_step),
                         step.fragment_cid,
+                        step.guard_site,
                     )
                 if isinstance(step, (ReturnStepV1, RaiseStepV1)):
                     composed.append(cleanup_step)
@@ -10757,6 +10760,7 @@ class FunctionDef(Statement):
                         compose_finally_exits(step.then_steps, cleanup_step),
                         compose_finally_exits(step.else_steps, cleanup_step),
                         step.fragment_cid,
+                        step.guard_site,
                     )
                 if isinstance(step, (ReturnStepV1, RaiseStepV1)):
                     composed.append(cleanup_step)

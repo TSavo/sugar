@@ -630,12 +630,16 @@ class CallSiteValue(FloorValue):
     def _construct_decidable_truth(self, site):
         """Construct truth for a ground callsite, or return None to stay loud.
 
-        - Dug body answers with its own truth.
+        - Dug body answers with its truth, taken through the one truth rule
+          (``bool_op_sugar.truth_of``): a dug value whose truth is not decided
+          is its two faces.
         Unconstructable ground residual returns None so the caller panics.
         """
+        from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
+
         dug = self._dig_floor_or_none(None, owner="CallSiteValue.truth")
         if dug is not None and dug is not self:
-            return dug.truth(site)
+            return truth_of(dug, site, owner="CallSiteValue.truth")
         return None
 
     def bitwise_invert(self, site):

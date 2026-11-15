@@ -175,6 +175,8 @@ class RaisedExitTypeValue(FloorValue):
     def formal_coordinate(self):
         # Rich operators must wait for an actual class/metaclass Floor, on
         # either side of comparison. Identity against None is total separately.
+        # Truth waits on no caller: being its own coordinate, it takes the
+        # undecided member's two faces (``bool_op_sugar.truth_of``).
         return self
 
     def denotes_value(self) -> bool:

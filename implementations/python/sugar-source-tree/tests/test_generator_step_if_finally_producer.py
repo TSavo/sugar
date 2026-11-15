@@ -191,6 +191,7 @@ def test_ground_true_branch_with_yield_advances_through_exact_then_arm() -> None
         steps[0].then_steps,
         steps[0].else_steps,
         steps[0].fragment_cid,
+        steps[0].guard_site,
     )
     machine = GeneratorConstructionV1.allocate(
         allocation_coordinate="call:m2",
@@ -214,6 +215,7 @@ def test_ground_false_validation_raise_halts_before_yield() -> None:
         steps[0].then_steps,
         steps[0].else_steps,
         steps[0].fragment_cid,
+        steps[0].guard_site,
     )
     machine = GeneratorConstructionV1.allocate(
         allocation_coordinate="call:raise",
