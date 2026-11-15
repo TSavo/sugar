@@ -104,9 +104,7 @@ class DefinitionDefaultsSugar(Sugar):
             evaluate_assignment_values,
         )
 
-        return evaluate_assignment_values(
-            self.values, ctx, evaluations=self.evaluations, site=self.site
-        )
+        return evaluate_assignment_values(self.values, ctx, evaluations=self.evaluations)
 
 
 @dataclass(frozen=True)

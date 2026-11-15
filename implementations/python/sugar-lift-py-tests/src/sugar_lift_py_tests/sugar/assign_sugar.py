@@ -63,9 +63,7 @@ class AssignSugar(Sugar):
         return evaluate_assignment_values(
             (self.value,),
             ctx,
-            bind=bind,
             evaluations=_evaluation_indices(self.evaluations, bind),
-            site=self.site,
         )
 
 
@@ -119,9 +117,7 @@ class MultiAssignSugar(Sugar):
         return evaluate_assignment_values(
             values,
             ctx,
-            bind=bind,
             evaluations=_evaluation_indices(self.evaluations, bind),
-            site=self.site,
         )
 
 
@@ -174,9 +170,7 @@ class ChainedAssignSugar(Sugar):
             return evaluate_assignment_values(
                 (self.value,),
                 ctx,
-                bind=bind,
                 evaluations=(*_evaluation_indices(self.evaluations, bind), *value_key),
-                site=self.site,
             )
         if ctx is None:
             ctx = ReduceContext.root(owner="ChainedAssignSugar")

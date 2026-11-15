@@ -45,7 +45,6 @@ from sugar_lift_py_tests.occurrence import (
 )
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
-from sugar_lift_py_tests.sugar.assigned_value import carried_write_key
 from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
     ContainerMutationStatementSugar,
 )
@@ -509,7 +508,8 @@ def test_the_bodys_write_is_its_augmented_assignment() -> None:
 
 
 def test_an_assignment_in_the_body_is_a_keyed_write() -> None:
-    # ``t = t + v`` binds its carried write of ``t``, never the name.
+    # ``t = t + v`` binds its projection of the statement's evaluation, never
+    # the name.
     runtime = _live_runtime(
         "def f(xs):\n"
         "    t = 0\n"
@@ -520,13 +520,10 @@ def test_an_assignment_in_the_body_is_a_keyed_write() -> None:
     [(header, writes, _else_writes)] = runtime.carried_evaluations
     [assign] = runtime.body_sugars
     assert isinstance(assign, AssignSugar)
-    # The statement writes ``t`` under each key it binds it under
-    # (``Node.written_keys``): its carried write, then its projection of the
-    # statement's evaluation, the key every later read of ``t`` reads.
-    assert writes == (
-        carried_write_key(assign.site, "t"),
-        dict(assign.evaluations)["t"],
-    )
+    # The statement writes ``t`` under the one key it binds it under
+    # (``Node.written_keys``): its projection of the statement's evaluation,
+    # the key every later read of ``t`` reads, the loop's latch included.
+    assert writes == (dict(assign.evaluations)["t"],)
     assert all(write.startswith(EVALUATION_PREFIX) for write in writes)
     assert header not in writes
 

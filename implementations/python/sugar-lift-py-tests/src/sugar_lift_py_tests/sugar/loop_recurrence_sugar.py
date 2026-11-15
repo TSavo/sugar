@@ -391,19 +391,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         )
         from sugar_lift_py_tests.temporal import bind_temporal
 
-        from dataclasses import replace
-
         runtime_ctx = ctx
-        if runtime_ctx is not None and runtime.carried_names:
-            runtime_ctx = replace(
-                runtime_ctx,
-                live_loop_names=frozenset(
-                    (
-                        *getattr(runtime_ctx, "live_loop_names", ()),
-                        *runtime.carried_names,
-                    )
-                ),
-            )
         starts = tuple(
             zip(
                 self._carried_evaluations(runtime),

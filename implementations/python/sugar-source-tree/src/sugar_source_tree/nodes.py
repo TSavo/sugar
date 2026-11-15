@@ -9937,21 +9937,21 @@ def _collect_binding_spellings(target, spellings: list) -> None:
 
 def _assignment_written_keys(statement, targets) -> tuple:
     """``(name, key)`` for each name an assignment's ``targets`` bind
-    (``Node.written_keys``): its carried write (``carried_write_key``,
-    which the statement's sugar binds for a name a live loop carries, an
-    ``if``'s phi among them) and, once substituted, its projection of the
-    statement's evaluation (``projection_key``)."""
-    from sugar_lift_py_tests.sugar.assigned_value import carried_write_key
+    (``Node.written_keys``): its projection of the statement's evaluation
+    (``projection_key``), the one key the statement's sugar binds the
+    written value under and every later read of the name reads -- a live
+    loop's latch included (``live_loop_construction._carried_writes``).  A
+    statement never substituted carries no key and writes none."""
     from sugar_lift_py_tests.temporal.temporal_context import projection_key
 
     evaluation = getattr(statement, "evaluation", None)
-    keys = []
-    for target in targets:
-        for name in _target_bound_names(target):
-            keys.append((name, carried_write_key(statement.fragment, name)))
-            if isinstance(evaluation, str):
-                keys.append((name, projection_key(evaluation, name)))
-    return tuple(keys)
+    if not isinstance(evaluation, str):
+        return ()
+    return tuple(
+        (name, projection_key(evaluation, name))
+        for target in targets
+        for name in _target_bound_names(target)
+    )
 
 
 class Keyword(Node):
@@ -12803,8 +12803,7 @@ class ClassDef(Statement):
                 own.add(assigned)
             # An assignment of any target shape binds each name under its
             # projection of the statement's evaluation, as the field rows
-            # above read (its ``written_keys`` also name the carried write a
-            # live loop binds, which no class body runs).
+            # above read (``target_evaluations``).
             writes = tuple(
                 item.target_evaluations()
                 if isinstance(item, Assign)
@@ -15714,8 +15713,8 @@ class Assign(Statement):
 
     def written_keys(self) -> tuple:
         """Every name any target binds (``y = e``, an unpack, a chain),
-        under its carried write and its projection of this statement's
-        evaluation (``_assignment_written_keys``)."""
+        under its projection of this statement's evaluation
+        (``_assignment_written_keys``)."""
         return _assignment_written_keys(self, self.targets)
 
     def _keyed_binding(self, binding):
