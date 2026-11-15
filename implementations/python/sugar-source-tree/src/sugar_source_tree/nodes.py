@@ -6247,43 +6247,53 @@ def _iteration_scope(loop, index: int, bindings, outer):
     }
 
 
-def _item_threaded(statements, scope):
+def _item_threaded(statements, scope, item: "_Threaded"):
     """``(scope, rebound)``: ``scope``, the state an item of an unrolled
     loop begins in, threaded through the item's occurrence copies
-    (``_iteration_copies``) as the block threads those same copies once the
-    loop has dissolved (``_substitute_body_tracked``): each copy's binding,
-    then what its operations may rebind by the one exposure rule
-    (``container_mutation.havoc_after``) -- a module global a call rebinds
-    through ``global``, a ``nonlocal`` cell, a name bound to an object the
-    code may reach -- keyed by the copy's own evaluation (its iteration
-    segment).  The state the next item begins in is this one: a name an
-    item's call may rebind is read in the next item (its body, its store
-    targets) as the item left it, never as it stood before the loop, and
-    two items' rebindings are two evaluations.  Before, the carry took the
-    copies' bindings alone.
+    (``_iteration_copies``, ``statements``) by the very bindings the block
+    took from the statements they copy (``item``, the ``_Threaded`` the
+    item's threading filled, one record per copy) and that it takes from
+    those same copies once the loop has dissolved
+    (``_substitute_body_tracked``, ``_spliced``): what was taken before
+    the first, then for each copy its own binding (or what was taken in
+    its place), each walrus's binding, what its operations may rebind by
+    the one exposure rule (``container_mutation.havoc_after``) -- a module
+    global a call rebinds through ``global``, a ``nonlocal`` cell, a name
+    bound to an object the code may reach -- keyed by the copy's own
+    evaluation (its iteration segment), and what was taken after it (a
+    nested unrolled loop's final target binding, a ``match`` capture, a
+    ``with`` or ``try`` body's net, a live loop's carried names): one rule,
+    ``_thread_taken``.  The state the next item begins in is this one: a
+    name the item binds or its call may rebind is read in the next item
+    (its body, its store targets) as the item left it, never as it stood
+    before the loop, and two items' rebindings are two evaluations.
 
     ``rebound``: the names whose last change in the item is such a
-    rebinding, with what they read after it; a later statement's own
-    binding of a name (a walrus's included) wins over it, as in the block
+    rebinding, with what they read after it; a later binding of a name (a
+    walrus's, one taken after a statement) wins over it, as in the block
     (``_rebind`` keeps a name the statement bound)."""
-    from .container_mutation import havoc_after
-
     rebound = {}
-    for statement in statements:
+    if item.lead:
+        scope = {**scope, **item.lead}
+        for name in item.lead:
+            rebound.pop(name, None)
+    for statement, taken in zip(statements, item.taken, strict=True):
         pre = scope
-        binding = statement.substitution_binding(scope)
+        binding = (
+            taken.binding
+            if taken.binding is not None
+            else statement.substitution_binding(scope)
+        )
         if binding:
             scope = {**scope, **binding}
             for name in binding:
                 rebound.pop(name, None)
-        for node in statement.walk():
-            if node.kind == "NamedExpr" and node.target.kind == "Name":
-                rebound.pop(node.target.id, None)
-        after = havoc_after(statement, pre, scope)
-        for name, state in after.items():
-            if scope.get(name, _MISSING) is not state:
-                rebound[name] = state
-        scope = after
+        scope, bound, rebinds = _thread_taken(
+            statement, pre, scope, taken, entries=False
+        )
+        for name in bound:
+            rebound.pop(name, None)
+        rebound.update(rebinds)
     return scope, rebound
 
 
@@ -8465,9 +8475,17 @@ class _Splice:
     item's manager and ``__enter__``, a ``match`` subject), before any of its
     suites ran.  A ``try`` enclosing the statement gives such a halt an edge
     of its own (``Try._body_halt_edges``).  None where the statement has no
-    header that can halt apart from its suites."""
+    header that can halt apart from its suites.
 
-    __slots__ = ("statements", "bindings", "halted", "header")
+    ``taken`` (one ``_Taken`` per statement, or None) and ``lead`` are what
+    the threading that produced ``statements`` took from each of them
+    besides its own ``substitution_binding``, and before the first
+    (``_Threaded``): the block threading the splice takes them at the same
+    places, so a nested statement's bindings (an inner unrolled loop's
+    final target binding, a ``match`` capture, a ``with`` or ``try`` body's
+    net, a live loop's carried names) are never lost by the flattening."""
+
+    __slots__ = ("statements", "bindings", "halted", "header", "taken", "lead")
 
     def __init__(
         self,
@@ -8475,11 +8493,163 @@ class _Splice:
         bindings: BindingMap | None = None,
         halted: BindingMap | None = None,
         header: BindingMap | None = None,
+        *,
+        threaded: "Optional[_Threaded]" = None,
     ) -> None:
         self.statements = statements
         self.bindings = bindings or {}
         self.halted = halted
         self.header = header
+        # ``threaded`` is the sequence ``statements`` was read off
+        # (``tuple(threaded.statements)``), one record per statement.
+        self.taken = (
+            (_NOTHING_TAKEN,) * len(statements)
+            if threaded is None
+            else tuple(threaded.taken)
+        )
+        self.lead = {} if threaded is None else dict(threaded.lead)
+
+
+class _Taken:
+    """What a block took from one statement it threaded besides the
+    statement's own ``substitution_binding`` (``_substitute_body_tracked``),
+    kept so every later threading of that statement -- its copy in an
+    unrolled loop's item, threaded for the carry into the next item
+    (``_item_threaded``), or the block the loop's ``_Splice`` reaches --
+    takes the very same bindings (``_thread_taken``).
+
+    ``binding``: what the block bound in place of the statement's own
+    binding (a live loop's carried names), or None.  ``skip``: the walrus
+    names the block did not take from it (a live loop's, written per item).
+    ``after``: what the block bound after it -- a nested statement's
+    ``_Splice.bindings`` (an unrolled loop's final target binding, a
+    ``match`` capture, a ``with`` or ``try`` body's net, an ``if``'s
+    availability), a live loop's publication, a module name left
+    uncarried."""
+
+    __slots__ = ("binding", "skip", "after")
+
+    def __init__(self, binding=None, skip=frozenset(), after=None) -> None:
+        self.binding = binding
+        self.skip = frozenset(skip)
+        self.after = dict(after or {})
+
+
+_NOTHING_TAKEN = _Taken()
+
+
+class _Threaded:
+    """A threaded statement sequence as a block threaded it: ``statements``,
+    one ``_Taken`` per statement (``taken``), and ``lead``, what the
+    threading took before its first statement (a spliced statement that
+    produced none and bound names: ``for j in [1, 2]: break``).  Filled by
+    ``_substitute_body_tracked`` and ``For._substitute_controlled_suite``;
+    a ``_Splice`` built from it hands it to the block it reaches."""
+
+    __slots__ = ("statements", "taken", "lead")
+
+    def __init__(self, statements=(), taken=None) -> None:
+        self.statements = list(statements)
+        self.taken = list(taken or (_NOTHING_TAKEN,) * len(self.statements))
+        self.lead: BindingMap = {}
+
+    def add(self, statement, taken=None) -> None:
+        self.statements.append(statement)
+        self.taken.append(taken or _NOTHING_TAKEN)
+
+    def after(self, bindings) -> None:
+        """Take ``bindings`` after the last statement (before the first
+        statement still to come, when there is none yet)."""
+        if not bindings:
+            return
+        if not self.taken:
+            self.lead = {**self.lead, **bindings}
+            return
+        last = self.taken[-1]
+        self.taken[-1] = _Taken(last.binding, last.skip, {**last.after, **bindings})
+
+    def splice(self, statements, taken, lead) -> None:
+        """Append another threaded sequence: its ``lead`` after this one's
+        last statement, then its statements with what was taken from each."""
+        self.after(lead)
+        for statement, record in zip(statements, taken, strict=True):
+            self.add(statement, record)
+
+    def extend(self, other: "_Threaded", statements=None) -> None:
+        """Append ``other`` -- or ``statements``, ``other``'s statements as
+        copies of them (``_iteration_copies``), one for one."""
+        self.splice(
+            other.statements if statements is None else statements,
+            other.taken,
+            other.lead,
+        )
+
+    def prefixed(self, statement) -> "_Threaded":
+        """This sequence with ``statement`` (an item's unpack) ahead of it:
+        ``lead`` is then taken after ``statement``."""
+        out = _Threaded((statement,))
+        out.extend(self)
+        return out
+
+
+def _spliced(statement):
+    """``(statements, taken, lead)``: the statements a substituted statement
+    expands into (``_Splice``) and what the threading that produced them
+    took from each, and before the first; a statement that is itself is
+    its one statement, nothing taken."""
+    if isinstance(statement, _Splice):
+        return statement.statements, statement.taken, statement.lead
+    return (statement,), (_NOTHING_TAKEN,), {}
+
+
+def _thread_taken(statement, pre, scope, taken, *, entries: bool):
+    """THE threading of one statement a block holds, after its own binding
+    (taken by the caller, into ``scope``): each walrus nested in it binds
+    its name (``taken.skip`` apart), then what its operations may rebind by
+    the one exposure rule (``container_mutation.havoc_after``, from
+    ``pre``, the scope it began in), then what the block took after it
+    (``taken.after``).  ``entries``: the walrus bindings are minted as
+    binding entries (``_binding_entries``), as the block mints its own.
+
+    One rule for the block (``_substitute_body_tracked``), the jump-owning
+    unroll's suite (``For._substitute_controlled_suite``) and the carry of
+    an unrolled item (``_item_threaded``): what one takes the others take.
+
+    Returns ``(scope, bound, rebound)``: ``bound``, the names a walrus or
+    ``taken.after`` bound; ``rebound``, the names the exposure rule changed
+    and nothing after it bound, with what they read."""
+    from .container_mutation import havoc_after
+
+    bound: set = set()
+    for node in statement.walk():
+        if node.kind != "NamedExpr":
+            continue
+        if node.target.kind == "Name" and node.target.id in taken.skip:
+            # A walrus in a live loop's body writes once per item, under
+            # that item's key: after the loop its name is the loop's
+            # carried value (the last item's write, latched as ``x += e``'s
+            # is) or its publication, not a reference to a key no item
+            # bound unqualified.
+            continue
+        wb = node.substitution_binding(scope)
+        if wb:
+            if entries:
+                wb = node._binding_entries(wb, scope)
+            scope = {**scope, **wb}
+            bound.update(wb)
+    threaded = havoc_after(statement, pre, scope)
+    rebound = {
+        name: state
+        for name, state in threaded.items()
+        if scope.get(name, _MISSING) is not state
+    }
+    scope = threaded
+    if taken.after:
+        scope = {**scope, **taken.after}
+        bound.update(taken.after)
+        for name in taken.after:
+            rebound.pop(name, None)
+    return scope, bound, rebound
 
 
 class _StatementEdge(tuple):
@@ -9189,7 +9359,12 @@ class Node(Typed):
         return self.fragment, ("constructed-projection", ordinal)
 
     def _substitute_body_tracked(
-        self, statements: tuple, scope: BindingMap, *, edge_states: list | None = None
+        self,
+        statements: tuple,
+        scope: BindingMap,
+        *,
+        edge_states: list | None = None,
+        threaded: "Optional[_Threaded]" = None,
     ):
         """Substitute a statement sequence, THREADING each statement's binding:
         an assignment binds its name to its substituted rhs for the rest of the
@@ -9212,12 +9387,21 @@ class Node(Typed):
         Threading a module body for its readers
         (``SourceUnit.module_binding_states``), the scope carries the table
         ``_MODULE_STATEMENT_STATES``: the same state is recorded there for
-        every statement, at any depth, by its source position."""
+        every statement, at any depth, by its source position.
+
+        ``threaded`` is an out-parameter too (``_Threaded``): every new
+        statement, with what this threading took from it besides its own
+        binding (``_Taken``), so a copy of the statements (an unrolled
+        loop's item) is threaded by the very same bindings
+        (``_item_threaded``), and so is the block a ``_Splice`` of them
+        reaches.  A statement spliced here from a ``_Splice`` is threaded
+        by what was taken from it where it was produced (``_spliced``)."""
         from sugar_lift_py_tests.engine_log import reduction_span
 
         initial = dict(scope)
         scope = dict(scope)
         new_items = []
+        out = threaded if threaded is not None else _Threaded()
         changed = False
         for stmt in statements:
             pre_statement_scope = dict(scope)
@@ -9278,9 +9462,7 @@ class Node(Typed):
             # here so the block threads each one -- the loop's carried accumulator
             # is just ordinary block-threading over the unrolled sequence. The
             # expanded statements are already substituted; thread their bindings.
-            produced = (
-                new_stmt.statements if isinstance(new_stmt, _Splice) else (new_stmt,)
-            )
+            produced, produced_taken, produced_lead = _spliced(new_stmt)
             if new_stmt is not stmt and not any(
                 produced_stmt.kind == stmt.kind and produced_stmt.span == stmt.span
                 for produced_stmt in produced
@@ -9297,12 +9479,26 @@ class Node(Typed):
                 stmt.discharge_by_substitution()
                 for spelling in stmt.binding_spellings():
                     spelling.discharge_by_substitution()
-            for produced_stmt in produced:
+            # What the threading that produced a spliced statement took
+            # before its first statement, and from each, is taken here at
+            # the same place (``_spliced``).
+            if produced_lead:
+                scope = {**scope, **produced_lead}
+                out.after(produced_lead)
+            for produced_stmt, inner in zip(produced, produced_taken, strict=True):
                 pre_produced_scope = scope
                 new_items.append(produced_stmt)
+                if live_loop_bindings is not None:
+                    taken = _Taken(
+                        live_loop_bindings,
+                        (*live_loop_bindings, *published),
+                        inner.after,
+                    )
+                else:
+                    taken = inner
                 binding = (
-                    live_loop_bindings
-                    if live_loop_bindings is not None
+                    taken.binding
+                    if taken.binding is not None
                     else produced_stmt.substitution_binding(scope)
                 )
                 if binding:
@@ -9316,34 +9512,18 @@ class Node(Typed):
                         changed = True
                     scope = {**scope, **binding}
                 # walrus bindings nested in the statement's expressions leak out
-                # to the enclosing block (their scope is the containing function).
-                for node in produced_stmt.walk():
-                    if node.kind == "NamedExpr":
-                        if (
-                            live_loop_bindings is not None
-                            and node.target.kind == "Name"
-                            and (
-                                node.target.id in live_loop_bindings
-                                or node.target.id in published
-                            )
-                        ):
-                            # A walrus in a live loop's body writes once per
-                            # item, under that item's key: after the loop
-                            # its name is the loop's carried value (the last
-                            # item's write, latched as ``x += e``'s is) or
-                            # its publication, not a reference to a key no
-                            # item bound unqualified.
-                            continue
-                        wb = node.substitution_binding(scope)
-                        if wb:
-                            wb = node._binding_entries(wb, scope)
-                            scope = {**scope, **wb}
-                # Every object the statement's calls may have changed -- an
-                # object place as much as any other -- is rebound by the one
-                # exposure rule.
-                from .container_mutation import havoc_after
-
-                scope = havoc_after(produced_stmt, pre_produced_scope, scope)
+                # to the enclosing block (their scope is the containing
+                # function); every object the statement's calls may have
+                # changed -- an object place as much as any other -- is
+                # rebound by the one exposure rule; then what was taken after
+                # it where it was produced (``_thread_taken``).
+                scope, _bound, _rebound = _thread_taken(
+                    produced_stmt, pre_produced_scope, scope, taken, entries=True
+                )
+                out.add(produced_stmt, taken)
+            # What this block takes after the statement's last produced
+            # statement is taken after it by every later threading of them.
+            statement_tail_from = scope
             if isinstance(new_stmt, _Splice) and new_stmt.bindings:
                 projected = stmt._binding_entries(new_stmt.bindings, scope)
                 scope = {**scope, **projected}
@@ -9371,6 +9551,13 @@ class Node(Typed):
                     scope = dict(scope)
                     for name in sorted(uncarried):
                         scope[name] = UNDECIDED_MODULE_BINDING
+            out.after(
+                {
+                    name: state
+                    for name, state in scope.items()
+                    if statement_tail_from.get(name, _MISSING) is not state
+                }
+            )
             trace = scope.get(_SUBSTITUTION_TRACE_BUILDER)
             if isinstance(trace, SubstitutionTraceBuilderV1):
                 trace.record(stmt, pre_statement_scope, scope)
@@ -17119,15 +17306,19 @@ class For(Statement):
                                 bindings, scope, unpacks, abandoned
                             )
                             if controlled is not None:
-                                statements, final_bindings = controlled
+                                items, final_bindings = controlled
                                 For._answer_unevaluated_body(self, elements)
-                                return _Splice(
+                                spliced = _Threaded(
                                     (
                                         *self._iterable_evaluated(subst_iter),
                                         *hoisted,
-                                        *statements,
-                                    ),
+                                    )
+                                )
+                                spliced.extend(items)
+                                return _Splice(
+                                    tuple(spliced.statements),
                                     final_bindings,
+                                    threaded=spliced,
                                 )
                             # A symbolic guard owns a jump.  It cannot be selected
                             # by concrete unrolling and must remain a real loop
@@ -17146,10 +17337,12 @@ class For(Statement):
                     if elements is not None and all(b is not None for b in bindings):
                         For._answer_unevaluated_body(self, elements)
                         target_names = set(target_pattern.names)
-                        unrolled: list = [
-                            *self._iterable_evaluated(subst_iter),
-                            *hoisted,
-                        ]
+                        unrolled = _Threaded(
+                            (
+                                *self._iterable_evaluated(subst_iter),
+                                *hoisted,
+                            )
+                        )
                         carried = dict(
                             scope
                         )  # carries loop variables across iterations
@@ -17165,24 +17358,30 @@ class For(Statement):
                                 self, index, {**carried, **element_bindings}, scope
                             )
                             item_edges: list = []
-                            new_body, _c, item_net = self._substitute_body_tracked(
-                                self.body, iter_scope, edge_states=item_edges
+                            item = _Threaded()
+                            _new_body, _c, item_net = self._substitute_body_tracked(
+                                self.body,
+                                iter_scope,
+                                edge_states=item_edges,
+                                threaded=item,
                             )
                             halt_names |= _loop_item_halt_names(
                                 self, scope, iter_scope, item_edges, item_net
                             )
                             if unpack is not None:
                                 # The iteration's unpack of its item opens it.
-                                new_body = (unpack, *new_body)
+                                item = item.prefixed(unpack)
                             # Each iteration is its own evaluation of the body.
-                            new_body = _iteration_copies(self, index, new_body)
-                            unrolled.extend(new_body)
+                            new_body = _iteration_copies(self, index, item.statements)
+                            unrolled.extend(item, new_body)
                             # thread this iteration's bindings forward (the
-                            # carried fold), and what its operations may
-                            # rebind (``_item_threaded``), never the loop
-                            # target's own names (rebound next iteration).
+                            # carried fold) -- every one the block took from
+                            # the statements the copies copy -- and what its
+                            # operations may rebind (``_item_threaded``),
+                            # never the loop target's own names (rebound
+                            # next iteration).
                             iter_scope, _rebound = _item_threaded(
-                                new_body, iter_scope
+                                new_body, iter_scope, item
                             )
                             carried = {
                                 k: v
@@ -17203,20 +17402,25 @@ class For(Statement):
                                 ),
                             }
                             else_edges: list = []
-                            else_body, _c, else_net = self._substitute_body_tracked(
-                                self.orelse, else_scope, edge_states=else_edges
+                            else_threaded = _Threaded()
+                            _else_body, _c, else_net = self._substitute_body_tracked(
+                                self.orelse,
+                                else_scope,
+                                edge_states=else_edges,
+                                threaded=else_threaded,
                             )
                             halt_names |= _loop_item_halt_names(
                                 self, scope, else_scope, else_edges, else_net
                             )
-                            unrolled.extend(else_body)
+                            unrolled.extend(else_threaded)
                         return _Splice(
-                            tuple(unrolled),
+                            tuple(unrolled.statements),
                             final_target_bindings,
                             _compound_halt_state(
                                 self, entry, scope, (), unknown=frozenset(halt_names)
                             ),
                             _header_halt_state(self, entry, scope),
+                            threaded=unrolled,
                         )
                 if elements is not None:
                     # A concrete iterable whose display element the target did
@@ -17792,8 +17996,12 @@ class For(Statement):
         ``unpacks`` (``_iteration_unpacks``) opens each iteration with its
         keyed binding of its item.  Where it gives up, what it made before
         is put on ``minted`` (``_answer_abandoned_unroll``).
+
+        Returns ``(unrolled, final_target_bindings)``: ``unrolled``, the
+        items' copies and the ``else`` as threaded (``_Threaded``), what was
+        taken from each statement kept for the block the splice reaches.
         """
-        unrolled = []
+        unrolled = _Threaded()
         carried = dict(scope)
         final_target_bindings = None
         broke = False
@@ -17805,22 +18013,25 @@ class For(Statement):
             start = _iteration_scope(
                 self, index, {**carried, **element_bindings}, scope
             )
-            reduced = self._substitute_controlled_suite(self.body, start, minted)
+            item = _Threaded()
+            reduced = self._substitute_controlled_suite(
+                self.body, start, minted, threaded=item
+            )
             if reduced is None:
                 if minted is not None:
-                    minted.extend(unrolled)
+                    minted.extend(unrolled.statements)
                     if unpack is not None:
                         minted.append(unpack)
                 return None
-            statements, iteration, action = reduced
+            _statements, iteration, action = reduced
             if unpack is not None:
-                statements = (unpack, *statements)
-            copies = _iteration_copies(self, index, statements)
-            unrolled.extend(copies)
+                item = item.prefixed(unpack)
+            copies = _iteration_copies(self, index, item.statements)
+            unrolled.extend(item, copies)
             # What the item's operations may rebind is carried as the copies
             # left it, keyed by this item's evaluation (``_item_threaded``),
             # never as the suite's untagged threading did.
-            _threaded, rebound = _item_threaded(copies, start)
+            _threaded, rebound = _item_threaded(copies, start, item)
             target_names = set(
                 self.unit.require_target_pattern(self, self.target).names
             )
@@ -17845,13 +18056,23 @@ class For(Statement):
                 **else_scope,
                 _EVALUATION_OCCURRENCE: scope.get(_EVALUATION_OCCURRENCE, ()),
             }
-            else_body, _changed = self._substitute_body(self.orelse, else_scope)
-            unrolled.extend(else_body)
-        return tuple(unrolled), final_target_bindings
+            else_threaded = _Threaded()
+            self._substitute_body_tracked(
+                self.orelse, else_scope, threaded=else_threaded
+            )
+            unrolled.extend(else_threaded)
+        return unrolled, final_target_bindings
 
-    def _substitute_controlled_suite(self, statements, scope, minted=None):
-        from .container_mutation import havoc_after
-
+    def _substitute_controlled_suite(
+        self, statements, scope, minted=None, *, threaded=None
+    ):
+        """``(produced, state, action)``: ``statements`` threaded up to the
+        loop jump a ground guard selects (``action``), or None where none
+        decides.  ``threaded`` (``_Threaded``) receives each produced
+        statement with what was taken from it, as the block's threading
+        fills it (``_substitute_body_tracked``)."""
+        if threaded is None:
+            threaded = _Threaded()
         produced = []
         current = dict(scope)
 
@@ -17883,7 +18104,7 @@ class For(Statement):
                 # TrySugar router below rather than being linearized here.
                 incoming_action = statement.body[0].kind.lower()
                 cleanup = For._substitute_controlled_suite(
-                    self, statement.finalbody, current, minted
+                    self, statement.finalbody, current, minted, threaded=threaded
                 )
                 if cleanup is None:
                     return abandoned()
@@ -17905,7 +18126,9 @@ class For(Statement):
                 if verdict is None:
                     return abandoned(test)
                 branch = statement.body if verdict else statement.orelse
-                nested = For._substitute_controlled_suite(self, branch, current, minted)
+                nested = For._substitute_controlled_suite(
+                    self, branch, current, minted, threaded=threaded
+                )
                 if nested is None:
                     return abandoned(test)
                 branch_statements, current, action = nested
@@ -17928,25 +18151,32 @@ class For(Statement):
                 # #7757).  The loop stays a live loop, which routes the jump.
                 return abandoned()
             substituted = statement.substitute_in_block(current)
-            expanded = (
-                substituted.statements
-                if isinstance(substituted, _Splice)
-                else (substituted,)
-            )
+            expanded, expanded_taken, expanded_lead = _spliced(substituted)
             produced.extend(expanded)
-            for item in expanded:
+            if expanded_lead:
+                current = {**current, **expanded_lead}
+                threaded.after(expanded_lead)
+            for item, taken in zip(expanded, expanded_taken, strict=True):
                 pre_item = current
-                binding = item.substitution_binding(current)
+                binding = (
+                    taken.binding
+                    if taken.binding is not None
+                    else item.substitution_binding(current)
+                )
                 if binding:
                     binding = item._binding_entries(binding, current)
                     current = {**current, **binding}
-                # What the statement's operations may rebind is read after
-                # it as the block reads it (``_substitute_body_tracked``):
-                # the one exposure rule, within the item as between items
-                # (``_item_threaded``).
-                current = havoc_after(item, pre_item, current)
+                # Each walrus's binding, what the statement's operations may
+                # rebind and what was taken after it are read after it as
+                # the block reads them (``_substitute_body_tracked``): one
+                # rule, within the item as between items (``_item_threaded``).
+                current, _bound, _rebound = _thread_taken(
+                    item, pre_item, current, taken, entries=True
+                )
+                threaded.add(item, taken)
             if isinstance(substituted, _Splice) and substituted.bindings:
                 projected = statement._binding_entries(substituted.bindings, current)
+                threaded.after(projected)
                 current = {**current, **projected}
         return produced, current, None
 
@@ -18222,13 +18452,14 @@ class While(Statement):
         unrolled = self._try_unroll(scope, halt_names)
         if unrolled is not None:
             if For._body_has_owned_loop_control(self):
-                return _Splice(unrolled)
+                return _Splice(tuple(unrolled.statements), threaded=unrolled)
             return _Splice(
-                unrolled,
+                tuple(unrolled.statements),
                 None,
                 _compound_halt_state(
                     self, scope, scope, (), unknown=frozenset(halt_names)
                 ),
+                threaded=unrolled,
             )
 
         # Symbolic (or unsupported) while: keep the node; mask the carried
@@ -18309,8 +18540,10 @@ class While(Statement):
         return self if not changed else rewrite(self, **changed)
 
     def _try_unroll(self, scope, halt_names=None):
-        """The unrolled statement tuple, or None if the loop is not concrete
-        (condition undecidable against the carried state, or fuel exhausted).
+        """The unrolled statements as threaded (``_Threaded``: what was
+        taken from each kept for the block the splice reaches), or None if
+        the loop is not concrete (condition undecidable against the carried
+        state, or fuel exhausted).
 
         ``halt_names`` collects the names a halt inside an item (or the
         ``else``) may carry changed (``_loop_item_halt_names``); an item
@@ -18328,12 +18561,13 @@ class While(Statement):
 
         controlled = For._body_has_owned_loop_control(self)
         carried = dict(scope)
-        unrolled: list = []
+        unrolled = _Threaded()
         made: list = []
 
         def abandoned():
             _answered_where_minted(
-                (self.test, *self.body, *self.orelse), (*made, *unrolled)
+                (self.test, *self.body, *self.orelse),
+                (*made, *unrolled.statements),
             )
             return None
 
@@ -18348,15 +18582,20 @@ class While(Statement):
                 # `else` always runs -- spliced after the iterations.
                 if self.orelse:
                     else_edges: list = []
-                    else_body, _c, else_net = self._substitute_body_tracked(
-                        self.orelse, carried, edge_states=else_edges
+                    else_threaded = _Threaded()
+                    _else_body, _c, else_net = self._substitute_body_tracked(
+                        self.orelse,
+                        carried,
+                        edge_states=else_edges,
+                        threaded=else_threaded,
                     )
                     if halt_names is not None:
                         halt_names |= _loop_item_halt_names(
                             self, scope, carried, else_edges, else_net
                         )
-                    unrolled.extend(else_body)
-                return tuple(unrolled)
+                    unrolled.extend(else_threaded)
+                return unrolled
+            item = _Threaded()
             if controlled:
                 start = _iteration_scope(self, index, carried, scope)
                 reduced = For._substitute_controlled_suite(
@@ -18364,35 +18603,38 @@ class While(Statement):
                     self.body,
                     start,
                     made,
+                    threaded=item,
                 )
                 if reduced is None:
                     return abandoned()
                 new_body, carried, action = reduced
                 made.extend(new_body)
-                copies = _iteration_copies(self, index, new_body)
-                unrolled.extend(copies)
+                copies = _iteration_copies(self, index, item.statements)
+                unrolled.extend(item, copies)
                 # What the item's operations may rebind is carried keyed by
                 # this item's evaluation (``_item_threaded``).
-                _threaded, rebound = _item_threaded(copies, start)
+                _threaded, rebound = _item_threaded(copies, start, item)
                 carried = {**carried, **rebound}
                 if action == "break":
-                    return tuple(unrolled)
+                    return unrolled
                 continue
             carried = _iteration_scope(self, index, carried, scope)
             item_edges: list = []
             new_body, _c, item_net = self._substitute_body_tracked(
-                self.body, carried, edge_states=item_edges
+                self.body, carried, edge_states=item_edges, threaded=item
             )
             if halt_names is not None:
                 halt_names |= _loop_item_halt_names(
                     self, scope, carried, item_edges, item_net
                 )
             made.extend(new_body)
-            new_body = _iteration_copies(self, index, new_body)
-            unrolled.extend(new_body)
-            # The item's bindings and what its operations may rebind
-            # (``_item_threaded``) are the state the next test and item read.
-            carried, _rebound = _item_threaded(new_body, carried)
+            copies = _iteration_copies(self, index, item.statements)
+            unrolled.extend(item, copies)
+            # The item's bindings -- every one the block took from the
+            # statements the copies copy -- and what its operations may
+            # rebind (``_item_threaded``) are the state the next test and
+            # item read.
+            carried, _rebound = _item_threaded(copies, carried, item)
         return abandoned()  # fuel exhausted: an infinite/huge loop is not an unroll
 
     def _ground_truth(self, test):
