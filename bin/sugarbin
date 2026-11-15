@@ -545,11 +545,6 @@ case "${1:-}" in
     dispatch_job_subcommand "$@"
     exit $?
     ;;
-  artifact)
-    [[ $# -ge 2 ]] || { echo "sugarbin: artifact requires publish or pull" >&2; exit 2; }
-    artifact_subcommand="$2"
-    shift 2
-    ;;
   preflight-lock)
     lock_preflight=1
     shift
@@ -563,8 +558,6 @@ usage: bin/sugarbin [--bin <name>] [--profile release|debug] [--platform <auto|k
        bin/sugarbin job status --host bx --id <job-id>
        bin/sugarbin job collect --host bx --id <job-id> --output <local-dir>
        bin/sugarbin preflight-lock --bin <name> --profile <profile> --platform <key>
-       bin/sugarbin artifact publish --kind python-demand-table --content-key <key> --input <json> --runtime <name> [--platform <key>] [--profile <name>] [--shelf-root <dir>]
-       bin/sugarbin artifact pull --kind python-demand-table --content-key <key> --output <json> --runtime <name> [--platform <key>] [--profile <name>] [--shelf-root <dir>]
 
 Resolve a Sugar workspace binary by source stamp:
   SUGAR_BIN override -> local target by stamp -> shelf by stamp -> build + publish.
@@ -593,13 +586,6 @@ On success, prints exactly the binary path to stdout. Diagnostics go to stderr.
 EOF
 }
 
-artifact_subcommand="${artifact_subcommand:-}"
-artifact_kind=""
-artifact_key=""
-artifact_input=""
-artifact_output=""
-artifact_shelf_root=""
-artifact_runtime=""
 bin_name="sugar"
 profile="release"
 platform_override="auto"
@@ -625,36 +611,6 @@ while [[ $# -gt 0 ]]; do
       print_source_stamp=1
       shift
       ;;
-    --kind)
-      [[ -n "$artifact_subcommand" && $# -ge 2 ]] || { echo "sugarbin: --kind requires an artifact subcommand and value" >&2; exit 2; }
-      artifact_kind="$2"
-      shift 2
-      ;;
-    --content-key)
-      [[ -n "$artifact_subcommand" && $# -ge 2 ]] || { echo "sugarbin: --content-key requires an artifact subcommand and value" >&2; exit 2; }
-      artifact_key="$2"
-      shift 2
-      ;;
-    --input)
-      [[ -n "$artifact_subcommand" && $# -ge 2 ]] || { echo "sugarbin: --input requires an artifact subcommand and value" >&2; exit 2; }
-      artifact_input="$2"
-      shift 2
-      ;;
-    --output)
-      [[ -n "$artifact_subcommand" && $# -ge 2 ]] || { echo "sugarbin: --output requires an artifact subcommand and value" >&2; exit 2; }
-      artifact_output="$2"
-      shift 2
-      ;;
-    --shelf-root)
-      [[ -n "$artifact_subcommand" && $# -ge 2 ]] || { echo "sugarbin: --shelf-root requires an artifact subcommand and value" >&2; exit 2; }
-      artifact_shelf_root="$2"
-      shift 2
-      ;;
-    --runtime)
-      [[ -n "$artifact_subcommand" && $# -ge 2 ]] || { echo "sugarbin: --runtime requires an artifact subcommand and value" >&2; exit 2; }
-      artifact_runtime="$2"
-      shift 2
-      ;;
     --help | -h)
       usage
       exit 0
@@ -667,14 +623,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -n "$artifact_subcommand" ]]; then
-  [[ "$profile" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "sugarbin: artifact --profile must be a path-safe name" >&2; exit 2; }
-else
-  case "$profile" in
-    release | debug) ;;
-    *) echo "sugarbin: --profile must be release or debug" >&2; exit 2 ;;
-  esac
-fi
+case "$profile" in
+  release | debug) ;;
+  *) echo "sugarbin: --profile must be release or debug" >&2; exit 2 ;;
+esac
 
 package_for_bin() {
   case "$1" in
@@ -1869,162 +1821,6 @@ pull_from_filesystem_shelf() {
   materialize_cached_artifact "$candidate" "$stamp" "$identity"
 }
 
-write_payload_artifact_manifest() {
-  local payload="$1" kind="$2" key="$3" runtime="$4" manifest sha
-  manifest="$(artifact_manifest_path "$payload")"
-  sha="$(sha256_file "$payload")"
-  python3 - "$manifest" "$kind" "$key" "$runtime" "$(platform_key)" "$profile" "$sha" <<'PY'
-import json
-import os
-import sys
-import tempfile
-
-path, kind, content_key, runtime, platform, profile, sha256 = sys.argv[1:]
-data = {
-    "schema": 1,
-    "artifactKind": kind,
-    "contentKey": content_key,
-    "runtime": runtime,
-    "platform": platform,
-    "profile": profile,
-    "sha256": sha256,
-}
-os.makedirs(os.path.dirname(path), exist_ok=True)
-fd, temporary = tempfile.mkstemp(prefix=".sugarbin-artifact-manifest-", dir=os.path.dirname(path))
-with os.fdopen(fd, "w", encoding="utf-8") as out:
-    json.dump(data, out, indent=2, sort_keys=True)
-    out.write("\n")
-os.chmod(temporary, 0o644)
-os.replace(temporary, path)
-PY
-}
-
-verify_payload_artifact_manifest() {
-  local payload="$1" manifest="$2" kind="$3" key="$4" runtime="$5"
-  [[ -f "$payload" && -f "$manifest" ]] || return 1
-  python3 - "$manifest" "$payload" "$kind" "$key" "$runtime" "$(platform_key)" "$profile" <<'PY'
-import hashlib
-import json
-import sys
-
-manifest, payload, kind, content_key, runtime, platform, profile = sys.argv[1:]
-try:
-    with open(manifest, encoding="utf-8") as source:
-        data = json.load(source)
-except Exception as error:
-    print(f"sugarbin: invalid payload artifact manifest: {error}", file=sys.stderr)
-    raise SystemExit(1)
-expected = {
-    "schema": 1,
-    "artifactKind": kind,
-    "contentKey": content_key,
-    "runtime": runtime,
-    "platform": platform,
-    "profile": profile,
-}
-for field, value in expected.items():
-    if data.get(field) != value:
-        print(f"sugarbin: payload artifact identity mismatch: {field}", file=sys.stderr)
-        raise SystemExit(1)
-with open(payload, "rb") as source:
-    actual = hashlib.sha256(source.read()).hexdigest()
-if data.get("sha256") != actual:
-    print("sugarbin: payload artifact checksum mismatch", file=sys.stderr)
-    raise SystemExit(1)
-PY
-}
-
-publish_payload_artifact() {
-  local kind="$1" key="$2" runtime="$3" input="$4" name="$5" staging payload status actual_key claimed
-  [[ -f "$input" ]] || { log "artifact input is not a file: $input"; return 1; }
-  staging="$(mktemp -d "${TMPDIR:-/tmp}/sugarbin-artifact-publish.XXXXXX")"
-  payload="$staging/$name"
-  cp "$input" "$payload"
-  # ONE DOOR: address is h(payload). Caller key is checked, not believed.
-  actual_key="$(blake3_512_file "$payload")" || { rm -rf "$staging"; return 1; }
-  claimed="${key/blake3-512:/blake3-512_}"
-  if [[ "$claimed" != "$actual_key" ]]; then
-    log "crime=cas-publish-key-payload-mismatch owner=bin/sugarbin claimed=$claimed payload=$actual_key illegal shape=artifact publish trusted a caller content key that is not h(payload) replacement=pass the blake3-512 of the payload bytes"
-    rm -rf "$staging"
-    return 1
-  fi
-  write_payload_artifact_manifest "$payload" "$kind" "$actual_key" "$runtime" || { status=$?; rm -rf "$staging"; return "$status"; }
-  publish_to_filesystem_shelf "$payload" "$actual_key" "$name" "$kind" "$runtime"
-  status=$?
-  rm -rf "$staging"
-  return "$status"
-}
-
-pull_payload_artifact() {
-  local kind="$1" key="$2" runtime="$3" output="$4" name="$5" cell staging payload manifest output_manifest
-  cell="$(filesystem_shelf_cell "$kind" "$key" "$name" "$runtime")"
-  if filesystem_shelf_complete "$cell" "$name" \
-    && ! filesystem_shelf_cell_is_peer_readable "$cell" "$name"; then
-    log "crime=private-filesystem-shelf-cell owner=bin/sugarbin cell=$cell illegal shape=a content-addressed shelf cell is readable only by its creating identity replacement=repair the cell to directory mode 0755 and artifact modes 0644, then keep publication behind bin/sugarbin"
-    return 2
-  fi
-  if ! filesystem_shelf_complete "$cell" "$name"; then
-    log "filesystem shelf miss for $kind key $key"
-    return 1
-  fi
-  command -v gzip >/dev/null 2>&1 || { log "gzip not found; cannot unpack $kind"; return 2; }
-  staging="$(mktemp -d "${TMPDIR:-/tmp}/sugarbin-artifact-pull.XXXXXX")"
-  payload="$staging/$name"
-  manifest="$(artifact_manifest_path "$payload")"
-  if ! gzip -dc "$cell/$name.gz" >"$payload" || ! cp "$cell/$name.sugarbin.json" "$manifest"; then
-    rm -rf "$staging"
-    log "crime=corrupt-shelf-cell owner=bin/sugarbin cell=$cell replacement=remove the corrupt cell and rebuild from declared inputs"
-    return 2
-  fi
-  # CAS membership: payload under address h must satisfy h(payload)=h.
-  local actual_key claimed
-  actual_key="$(blake3_512_file "$payload")" || { rm -rf "$staging"; return 2; }
-  claimed="${key/blake3-512:/blake3-512_}"
-  if [[ "$actual_key" != "$claimed" ]]; then
-    log "crime=cas-address-payload-mismatch owner=bin/sugarbin cell=$cell address=$claimed payload=$actual_key replacement=evict the CAS cell; a content-addressed shelf cannot host p under h≠h(p)"
-    rm -rf "$staging"
-    return 2
-  fi
-  if ! verify_payload_artifact_manifest "$payload" "$manifest" "$kind" "$claimed" "$runtime"; then
-    rm -rf "$staging"
-    log "crime=corrupt-shelf-cell owner=bin/sugarbin cell=$cell replacement=remove the corrupt cell and rebuild from declared inputs"
-    return 2
-  fi
-  mkdir -p "$(dirname "$output")"
-  output_manifest="$(artifact_manifest_path "$output")"
-  mv -f "$manifest" "$output_manifest"
-  mv -f "$payload" "$output"
-  rm -rf "$staging"
-  log "filesystem shelf hit for $kind key $key"
-}
-
-dispatch_artifact_subcommand() {
-  [[ "$artifact_kind" == python-demand-table ]] || { log "unknown artifact kind: $artifact_kind"; return 2; }
-  [[ "$artifact_key" =~ ^blake3-512[:_][0-9a-f]{128}$ ]] || { log "artifact --content-key must be a blake3-512 content key"; return 2; }
-  [[ "$artifact_runtime" =~ ^[A-Za-z0-9._-]+$ ]] || { log "artifact --runtime must be a path-safe name"; return 2; }
-  local declared_python runtime
-  declared_python="$(awk -F ' *= *' '$1 == "python" { gsub(/"/, "", $2); print $2 }' "$repo_root/sugar-build.toml")"
-  [[ -n "$declared_python" ]] || { log "crime=missing-runtime-authority owner=sugar-build.toml replacement=declare tools.python exactly once"; return 78; }
-  runtime="cpython-$declared_python"
-  if [[ "$artifact_runtime" != "$runtime" ]]; then
-    log "crime=undeclared-python-runtime owner=bin/sugarbin required=$runtime requested=$artifact_runtime replacement=request the runtime declared by sugar-build.toml or publish a distinct declared cell"
-    return 78
-  fi
-  [[ -z "$artifact_shelf_root" ]] || SUGAR_BINARY_SHELF_ROOT="$artifact_shelf_root"
-  local name="$artifact_kind"
-  case "$artifact_subcommand" in
-    publish)
-      [[ -n "$artifact_input" && -z "$artifact_output" ]] || { log "artifact publish requires --input and forbids --output"; return 2; }
-      publish_payload_artifact "$artifact_kind" "$artifact_key" "$artifact_runtime" "$artifact_input" "$name"
-      ;;
-    pull)
-      [[ -n "$artifact_output" && -z "$artifact_input" ]] || { log "artifact pull requires --output and forbids --input"; return 2; }
-      pull_payload_artifact "$artifact_kind" "$artifact_key" "$artifact_runtime" "$artifact_output" "$name"
-      ;;
-    *) log "unknown artifact subcommand: $artifact_subcommand"; return 2 ;;
-  esac
-}
-
 # An override path names the profile it was built under whenever it sits in a
 # cargo target directory or carries a shelf artifact name. Read that evidence
 # back out; print nothing when the path claims neither.
@@ -2136,11 +1932,6 @@ main() {
   release_rebuild_single_flight
   printf '%s\n' "$built"
 }
-
-if [[ -n "$artifact_subcommand" ]]; then
-  dispatch_artifact_subcommand
-  exit $?
-fi
 
 if [[ "$lock_preflight" == "1" ]]; then
   [[ -n "${SUGAR_BINARY_SOURCE_STAMP:-}" ]] || {

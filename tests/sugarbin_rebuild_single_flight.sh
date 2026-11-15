@@ -62,7 +62,7 @@ grep -Fq 'phase=resolve-build bin=' "$sugarbin" \
 grep -Fq 'phase=resolve-hit source=' "$sugarbin" \
   || fail 'warm hit must emit phase=resolve-hit source=…'
 
-main_body="$(sed -n '/^main()/,/^if \[\[ -n "\$artifact_subcommand" \]\]/p' "$sugarbin")"
+main_body="$(sed -n '/^main()/,/^if \[\[ "\$lock_preflight" == "1" \]\]/p' "$sugarbin")"
 # Order on the miss path (last acquire/build_from_source in main).
 acquire_line="$(grep -n 'acquire_rebuild_single_flight' <<<"$main_body" | tail -1 | cut -d: -f1)"
 build_line="$(grep -n 'build_from_source' <<<"$main_body" | tail -1 | cut -d: -f1)"
