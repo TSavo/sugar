@@ -297,16 +297,20 @@ def test_dual_subscript_display_unpack_constructs_distinct_pairings(
 
 
 def test_formal_receiver_stays_undischarged_not_completed(tmp_path: Path) -> None:
-    """Face (a) formal path: setitem carrier is undischarged, never Completed.
+    """Face (a) formal path: the store is undischarged, never Completed.
 
-    Formal receivers mint ``NativeOperationExitCarrierV1`` (operator
-    ``setitem``) awaiting caller actuals.  That is the honest undischarged
-    resolution — not a fabricated completion, and not a ``SugarNotWritten``
-    panic (the panic is reserved for undecided non-formal receivers).
+    Expected shape changed (#8925): ``a``'s class is an input of ``f``'s
+    contract (an item store through an unpack leaf is read as ``a[i] = v``
+    is), so the store is the dispatched ``__setitem__`` edge, owed as the one
+    member ``python:dispatch:__setitem__`` with its halt kept, answered at
+    prove by the class each caller binds -- not a fabricated completion, and
+    not a ``SugarNotWritten`` panic (the panic is reserved for undecided
+    non-formal receivers).
     """
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
 
     sugar = _function_sugar(
         tmp_path,
@@ -314,15 +318,19 @@ def test_formal_receiver_stays_undischarged_not_completed(tmp_path: Path) -> Non
         "formal",
     )
     outcome = sugar.desugar(None)
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
-    assert outcome.demand.operator == "setitem"
-    assert not (isinstance(outcome, ExitSet) and outcome.completed_value() is not None)
-    # Missing actuals: the store is the cited unanswered face (#7825).
-    from sugar_lift_py_tests.unanswered_calls import owed_calls
-
-    exits = outcome.discharge(None, {})
-    assert outcome.unanswered_call() in owed_calls(exits)
-    assert exits.completed_value() is None
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    assert "python:dispatch:__setitem__" in {
+        call.symbol for call in owed_calls(outcome)
+    }
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "UnknownCallee:dispatch:__setitem__"
+    ]
+    assert len(halts) == 1, outcome
+    assert halts[0].state is not None
+    assert outcome.completed_value() is None
 
 
 # ---------------------------------------------------------------------------
@@ -499,10 +507,17 @@ def test_lying_completed_face_for_undecided_receiver_is_not_the_law(
         "def f(a, i, p, q):\n    x, a[i] = p, q\n    return x\n",
         "lie_undecided",
     )
-    # Truthful path: undischarged setitem carrier (not Completed).
+    # Truthful path (expected shape changed, #8925): the dispatched
+    # ``__setitem__`` edge, owed with its halt kept (not Completed).
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
     outcome = sugar.desugar(None)
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
-    assert outcome.demand.operator == "setitem"
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    assert "python:dispatch:__setitem__" in {
+        call.symbol for call in owed_calls(outcome)
+    }
+    assert outcome.halts()
     # A lying implementation would return a sole completion. Discriminate: that
     # is not what construction desugars to today, and must not be asserted green.
     with pytest.raises(AssertionError):

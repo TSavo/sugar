@@ -32,6 +32,17 @@ Acceptance faces (each with a discrimination twin):
   4. First-store halt blocks later targets (dual-store unpack).
   5. Swapped source/discharge order twin fails.
 
+Since #8925 ``a`` above takes ``class:a`` as an input of ``f``'s contract: an
+item store through an unpack leaf is read as ``a[i] = v`` is
+(``nodes._receiver_uses``), so ``x, a[i] = p, q`` stores through the
+dispatched ``__setitem__`` edge, ``call:dispatch:__setitem__(a, i, q,
+py.class("0", class:a))``, owed with its halt kept and answered at prove by
+the class each caller binds (``list.__setitem__``'s law, #8864).  The
+``setitem`` carrier stands for the same unpack on a formal whose class is no
+input; the discharge faces below read it off ``CARRIER_PROGRAM``, where
+``b = a`` hands ``a`` on bare (``_receiver_uses``: blocked) and the store
+goes through ``b``.
+
 Does not touch ``store_effect_sugar``, projector tables, or carrier/ExitSet.
 """
 
@@ -56,6 +67,11 @@ from sugar_source_tree.tree import SourceFile
 
 PROGRAM = "def f(a, i, p, q):\n    x, a[i] = p, q\n    return x\n"
 
+# The same unpack on a formal whose class is no input of ``f``'s contract:
+# ``b = a`` reads ``a`` bare, so the store through ``b`` (``a``'s object) is
+# the ``setitem`` carrier over ``a``'s formal coordinate.
+CARRIER_PROGRAM = "def f(a, i, p, q):\n    b = a\n    x, b[i] = p, q\n    return x\n"
+
 
 def _tree(source: str, name: str = "unpack_setitem_caller.py") -> SourceFile:
     return SourceFile(
@@ -64,10 +80,56 @@ def _tree(source: str, name: str = "unpack_setitem_caller.py") -> SourceFile:
     )
 
 
-def _helper():
+def _dispatched_helper():
+    """``PROGRAM`` alone and its own proof's reduction: ``a``'s class is an
+    input (#8925), so its unpack leaf store is the dispatched edge."""
     tree = _tree(PROGRAM, "helper_alone.py")
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     return function, function.sugar().desugar(None)
+
+
+def _helper():
+    """``CARRIER_PROGRAM`` alone: the undischarged ``setitem`` carrier, with
+    the pre-effect state the body's reducer enrolls."""
+    tree = _tree(CARRIER_PROGRAM, "helper_carrier_alone.py")
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    return function, function.sugar().desugar(None)
+
+
+def _dispatched_call(outcome, method: str = "__setitem__"):
+    """The dispatched store's coordinate ``call:dispatch:<method>(<receiver>,
+    <operands>..., py.class("0", class:<receiver>))``, read off the one halt
+    its edge owes (``python:raised(<call term>, <occurrence>)``)."""
+    from sugar_lift_py_tests.call_symbol import call_symbol
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == f"UnknownCallee:dispatch:{method}"
+    ]
+    assert len(halts) == 1, outcome
+    assert halts[0].state is not None
+    assert f"python:dispatch:{method}" in {
+        call.symbol for call in owed_calls(outcome)
+    }
+    raised = halts[0].effect.raised_by_call
+    assert raised.name == "python:raised", raised
+    call = raised.args[0]
+    assert call.name == call_symbol(f"dispatch:{method}"), call
+    return call
+
+
+def _class_input(call, receiver: str) -> None:
+    """The receiver's class rides last: ``py.class("0", class:<receiver>)``."""
+    from sugar_lift_py_tests.ir import str_const
+
+    rides = call.args[-1]
+    assert rides.name == "py.class", rides
+    assert rides.args[0] == str_const("0")
+    assert rides.args[1].name == f"class:{receiver}", rides
 
 
 def _call(actuals: str):
@@ -113,6 +175,24 @@ def _returned(universe: UniverseValue) -> ReturnValue:
 
 
 def test_helper_alone_retains_setitem_demand_in_discharge_order() -> None:
+    # Expected shape changed (#8925): ``x, a[i] = p, q`` on a formal whose
+    # class is an input is the dispatched ``__setitem__`` edge, in the same
+    # discharge order (receiver, index, value), owed with its halt and the
+    # block's state kept; ``x`` binds ``p`` beside it, so every completed
+    # face returns ``p``.  The carrier stands where the class is no input.
+    _, outcome = _dispatched_helper()
+    call = _dispatched_call(outcome)
+    assert [arg.name for arg in call.args[:3]] == ["a", "i", "q"]
+    _class_input(call, "a")
+    assert len(call.args) == 4
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert completed, outcome
+    for face in completed:
+        assert isinstance(face.value, UniverseValue), face.value
+        returned = _returned(face.value)
+        assert isinstance(returned.value, SymbolicValue)
+        assert returned.value.term.name == "p"
+
     _, pending = _helper()
     assert isinstance(pending, NativeOperationExitCarrierV1)
     assert pending.demand.operator == "setitem"
@@ -135,6 +215,9 @@ def test_helper_alone_retains_setitem_demand_in_discharge_order() -> None:
 
 def test_helper_alone_is_not_a_completed_face_discrimination() -> None:
     """Bite: undischarged formal unpack must not look like a Completed body."""
+    _, dispatched = _dispatched_helper()
+    assert dispatched.completed_value() is None
+    assert dispatched.halts()
     _, pending = _helper()
     with pytest.raises(AssertionError):
         assert isinstance(pending, ExitSet) and pending.completed_value() is not None
@@ -373,7 +456,8 @@ def test_swapped_source_discharge_order_twin_fails() -> None:
 def test_lying_swapped_index_value_mint_is_not_truthful_store() -> None:
     """Lying mint with index/value slots swapped is distinguishable."""
     function, truthful = _helper()
-    site = function.body[0].fragment
+    # The unpack is ``CARRIER_PROGRAM``'s second statement.
+    site = function.body[1].fragment
     obj_c, key_c, value_c = truthful.coordinates
     lying = NativeOperationExitCarrierV1.mint(
         site=site,

@@ -57,6 +57,20 @@ ISOMORPH = (
     "    return out\n"
 )
 
+# Since #8925 ``codes`` above takes ``class:codes`` as an input of ``f``'s
+# contract (an item store through an unpack leaf is read as ``codes[i] = v``
+# is), so its store is the dispatched ``__setitem__`` edge, owed with its halt
+# kept and answered at prove by the class each caller binds (#8864).  The
+# ``setitem`` carrier, whose discharge the faces below read, stands for the same
+# unpack on a formal whose class is no input: ``held = codes`` reads ``codes``
+# bare, and the store goes through ``held`` (``codes``'s object).
+ISOMORPH_CARRIER = (
+    "def f(out, codes, i, sorter, rhs_out, rhs_store):\n"
+    "    held = codes\n"
+    "    out, held[i] = rhs_out, rhs_store\n"
+    "    return out\n"
+)
+
 
 def _identity(name: str):
     from sugar_lift_py_tests.ir import ctor, str_const
@@ -74,10 +88,46 @@ def _tree(source: str, name: str = "pandas_unpack_setitem.py") -> SourceFile:
     )
 
 
-def _isomorph_helper():
+def _isomorph_dispatched():
+    """``ISOMORPH`` alone: ``codes``'s class is an input (#8925), so the
+    unpack leaf store is the dispatched edge."""
     tree = _tree(ISOMORPH, "isomorph_alone.py")
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     return function, function.sugar().desugar(None)
+
+
+def _isomorph_helper():
+    """``ISOMORPH_CARRIER`` alone: the undischarged ``setitem`` carrier, with
+    the pre-effect state the body's reducer enrolls."""
+    tree = _tree(ISOMORPH_CARRIER, "isomorph_carrier_alone.py")
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    return function, function.sugar().desugar(None)
+
+
+def _dispatched_call(outcome, method: str = "__setitem__"):
+    """The dispatched store's coordinate ``call:dispatch:<method>(<receiver>,
+    <operands>..., py.class("0", class:<receiver>))``, read off the one halt
+    its edge owes (``python:raised(<call term>, <occurrence>)``)."""
+    from sugar_lift_py_tests.call_symbol import call_symbol
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == f"UnknownCallee:dispatch:{method}"
+    ]
+    assert len(halts) == 1, outcome
+    assert halts[0].state is not None
+    assert f"python:dispatch:{method}" in {
+        call.symbol for call in owed_calls(outcome)
+    }
+    raised = halts[0].effect.raised_by_call
+    assert raised.name == "python:raised", raised
+    call = raised.args[0]
+    assert call.name == call_symbol(f"dispatch:{method}"), call
+    return call
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +198,20 @@ def test_real_coordinate_constructs_unpack_store_with_setitem_leaf() -> None:
 
 def test_isomorph_helper_retains_setitem_discharge_order() -> None:
     """Discharge mint is receiver → index → value (not source-eval order)."""
+    # Expected shape changed (#8925): on a formal whose class is an input the
+    # store is the dispatched ``__setitem__`` edge, in the same order, with
+    # ``class:codes`` riding last.  The carrier stands where it is no input.
+    from sugar_lift_py_tests.ir import str_const
+
+    _, outcome = _isomorph_dispatched()
+    call = _dispatched_call(outcome)
+    assert [arg.name for arg in call.args[:3]] == ["codes", "i", "rhs_store"]
+    rides = call.args[-1]
+    assert rides.name == "py.class", rides
+    assert rides.args[0] == str_const("0")
+    assert rides.args[1].name == "class:codes", rides
+    assert outcome.completed_value() is None
+
     _, pending = _isomorph_helper()
     assert isinstance(pending, NativeOperationExitCarrierV1)
     assert pending.demand.operator == "setitem"
@@ -235,7 +299,8 @@ def test_isomorph_later_halt_discrimination_not_completed() -> None:
 def test_isomorph_lying_swapped_index_value_mint_differs() -> None:
     """Truthful discharge order vs lying index/value swap are distinguishable."""
     function, truthful = _isomorph_helper()
-    site = function.body[0].fragment
+    # The unpack is ``ISOMORPH_CARRIER``'s second statement.
+    site = function.body[1].fragment
     obj_c, key_c, value_c = truthful.coordinates
     lying = NativeOperationExitCarrierV1.mint(
         site=site,

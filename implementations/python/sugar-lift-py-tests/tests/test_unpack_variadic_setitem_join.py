@@ -13,6 +13,14 @@ pre_effect_state identity — never a fabricated Completed return of x.
 Success path: x returns as formal p; a[i] stores the authenticated TupleValue
 packed from remaining positionals.
 
+Since #8925 ``a`` above takes ``class:a`` as an input of ``f``'s contract (an
+item store through an unpack leaf is read as ``a[i] = v`` is), so the store
+is the dispatched ``__setitem__`` edge, ``call:dispatch:__setitem__(a, i,
+values, py.class("0", class:a))``, owed with its halt kept and answered at
+prove by the class each caller binds (#8864).  The ``setitem`` carrier stands
+for the same unpack on a formal whose class is no input; the discharge faces
+below read it off ``CARRIER_PROGRAM`` (``b = a`` reads ``a`` bare).
+
 Does not touch carrier/ExitSet, store producer/projector/Floor; no second binder.
 """
 
@@ -43,6 +51,13 @@ from sugar_source_tree.tree import SourceFile
 
 PROGRAM = "def f(a, i, p, *values):\n    x, a[i] = p, values\n    return x\n"
 
+# The same unpack on a formal whose class is no input of ``f``'s contract:
+# ``b = a`` reads ``a`` bare, so the store through ``b`` (``a``'s object) is
+# the ``setitem`` carrier over ``a``'s formal coordinate.
+CARRIER_PROGRAM = (
+    "def f(a, i, p, *values):\n    b = a\n    x, b[i] = p, values\n    return x\n"
+)
+
 
 def _tree(source: str, name: str = "unpack_variadic_setitem.py") -> SourceFile:
     return SourceFile(
@@ -51,10 +66,46 @@ def _tree(source: str, name: str = "unpack_variadic_setitem.py") -> SourceFile:
     )
 
 
-def _helper():
+def _dispatched_helper():
+    """``PROGRAM`` alone and its own proof's reduction: ``a``'s class is an
+    input (#8925), so its unpack leaf store is the dispatched edge."""
     tree = _tree(PROGRAM, "helper_alone.py")
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     return function, function.sugar().desugar(None)
+
+
+def _helper():
+    """``CARRIER_PROGRAM`` alone: the undischarged ``setitem`` carrier, with
+    the pre-effect state the body's reducer enrolls."""
+    tree = _tree(CARRIER_PROGRAM, "helper_carrier_alone.py")
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    return function, function.sugar().desugar(None)
+
+
+def _dispatched_call(outcome, method: str = "__setitem__"):
+    """The dispatched store's coordinate ``call:dispatch:<method>(<receiver>,
+    <operands>..., py.class("0", class:<receiver>))``, read off the one halt
+    its edge owes (``python:raised(<call term>, <occurrence>)``)."""
+    from sugar_lift_py_tests.call_symbol import call_symbol
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == f"UnknownCallee:dispatch:{method}"
+    ]
+    assert len(halts) == 1, outcome
+    assert halts[0].state is not None
+    assert f"python:dispatch:{method}" in {
+        call.symbol for call in owed_calls(outcome)
+    }
+    raised = halts[0].effect.raised_by_call
+    assert raised.name == "python:raised", raised
+    call = raised.args[0]
+    assert call.name == call_symbol(f"dispatch:{method}"), call
+    return call
 
 
 def _call(actuals: str):
@@ -100,6 +151,26 @@ def _returned(universe: UniverseValue) -> ReturnValue:
 
 
 def test_helper_alone_retains_setitem_with_variadic_value() -> None:
+    # Expected shape changed (#8925): on a formal whose class is an input the
+    # unpack leaf store is the dispatched ``__setitem__`` edge, the pack its
+    # value operand, in discharge order; ``x`` binds ``p`` beside it, so
+    # every completed face returns ``p``.  The carrier stands where the class
+    # is no input.
+    from sugar_lift_py_tests.ir import str_const
+
+    _, outcome = _dispatched_helper()
+    call = _dispatched_call(outcome)
+    assert [arg.name for arg in call.args[:3]] == ["a", "i", "values"]
+    rides = call.args[-1]
+    assert rides.name == "py.class", rides
+    assert rides.args[0] == str_const("0")
+    assert rides.args[1].name == "class:a", rides
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert completed, outcome
+    for face in completed:
+        assert isinstance(face.value, UniverseValue), face.value
+        assert _returned(face.value).value.term.name == "p"
+
     function, pending = _helper()
     assert isinstance(pending, NativeOperationExitCarrierV1)
     assert pending.demand.operator == "setitem"
@@ -128,6 +199,9 @@ def test_helper_alone_retains_setitem_with_variadic_value() -> None:
 
 
 def test_helper_alone_is_not_completed_discrimination() -> None:
+    _, dispatched = _dispatched_helper()
+    assert dispatched.completed_value() is None
+    assert dispatched.halts()
     _, pending = _helper()
     with pytest.raises(AssertionError):
         assert isinstance(pending, ExitSet) and pending.completed_value() is not None
@@ -210,10 +284,10 @@ def _classes() -> list:
     """After the formals ride the classes the caller decides, each keyed by
     its formal's name where the signature packs (#8857,
     ``definition_edge_call``): the ``[0]`` it built a ``list``, ``i`` and
-    ``p`` each an ``int``, the pack a ``tuple``.  (``a`` is stored into
-    through an unpack target, which is no whole item target, so ``f``'s
-    contract takes no ``class:a`` and its store stays the carrier; the
-    caller supplies the classes all the same.)"""
+    ``p`` each an ``int``, the pack a ``tuple``.  (Since #8925 ``a``,
+    stored into through an unpack target, takes ``class:a``, which the
+    ``list`` binds at prove; the caller supplies the classes whatever the
+    callee's contract takes.)"""
     from sugar_lift_py_tests.ir import ctor, str_const
     from sugar_lift_py_tests.receiver_dispatch import (
         CLASS_ARGUMENT,

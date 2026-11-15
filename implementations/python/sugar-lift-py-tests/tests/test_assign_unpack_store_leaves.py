@@ -648,28 +648,31 @@ def test_source_visible_subscript_leaves_construct_after_store_coordinate_law(
 
 
 def test_formal_subscript_unpack_desugar_stays_undischarged(tmp_path: Path) -> None:
-    """Formal receivers mint undischarged setitem carrier (not Completed).
+    """A formal receiver's store stays undischarged (not Completed).
 
     Runtime-selected non-formal receivers still refuse at the store door
-    (#6599 SugarNotWritten).  Formal operands are the n-ary setitem vertical:
-    ``NativeOperationExitCarrierV1`` awaiting caller actuals.
+    (#6599 SugarNotWritten).  Expected shape changed (#8925): ``a``'s class
+    is an input of ``f``'s contract (an unpack leaf store is read as ``a[i]
+    = v`` is), so the store is the dispatched ``__setitem__`` edge, owed as
+    the one member ``python:dispatch:__setitem__`` with its halt kept until
+    prove binds the class a caller supplies -- no longer the ``setitem``
+    carrier, which stands only where the class is no input.
     """
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
 
     sugar = _function_sugar(
         tmp_path, "def f(a, i, p, q):\n    x, a[i] = p, q\n    return x\n", "formal_sub"
     )
     outcome = sugar.desugar(None)
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
-    assert outcome.demand.operator == "setitem"
-    from sugar_lift_py_tests.unanswered_calls import owed_calls
-
-    # No caller actual: the store is the cited unanswered face (#7825).
-    exits = outcome.discharge(None, {})
-    assert outcome.unanswered_call() in owed_calls(exits)
-    assert exits.completed_value() is None
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    assert "python:dispatch:__setitem__" in {
+        call.symbol for call in owed_calls(outcome)
+    }
+    assert outcome.halts()
+    assert outcome.completed_value() is None
 
 
 def test_dual_attribute_display_unpack_constructs(tmp_path: Path) -> None:
