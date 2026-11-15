@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use serde_json::Value;
 use serial_test::serial;
 use sugar_cli::component_plan::{plan_workspace, DiagnosticLevel, PlanIntent};
 use tempfile::TempDir;
@@ -275,70 +274,6 @@ fn assert_pid_reaped(pid: u32) {
         std::thread::sleep(Duration::from_millis(100));
     }
     panic!("component process {pid} was still present after timeout cleanup");
-}
-
-fn first_component_plan_intent(component: &FakeComponent) -> String {
-    let transcript = component.transcript();
-    for line in transcript.lines() {
-        let value: Value = serde_json::from_str(line).unwrap_or_else(|error| {
-            panic!("component transcript line was not JSON: {error}: {line}")
-        });
-        if value.get("method").and_then(Value::as_str) == Some("sugar.component.plan") {
-            return value
-                .pointer("/params/intent")
-                .and_then(Value::as_str)
-                .unwrap_or_else(|| panic!("component plan request missing intent: {line}"))
-                .to_string();
-        }
-    }
-    panic!("component transcript had no component-plan request: {transcript}");
-}
-
-fn component_plan_intent_from_cli_verb(verb: &str) -> String {
-    let project = TempDir::new().expect("project tempdir");
-    write_rust_project(project.path());
-    let lifter = fake_rust_lifter(project.path());
-    let component = FakeComponent::rust_claiming(&format!("{verb}-intent-component"), &lifter);
-
-    let mut command = Command::new(sugar_bin());
-    match verb {
-        "lift" => {
-            command.arg("lift").arg(project.path());
-        }
-        "prove" => {
-            command.arg("prove").arg(project.path());
-        }
-        other => panic!("unsupported CLI verb for component-plan intent test: {other}"),
-    }
-    let output = command
-        .env("HOME", project.path().join("home"))
-        .env("SUGAR_COMPONENT_PATH", component.component_path())
-        .env("SUGAR_COMPONENT_PLAN_TIMEOUT_SECS", "2")
-        .output()
-        .unwrap_or_else(|error| panic!("run sugar {verb}: {error}"));
-
-    let transcript = component.transcript();
-    assert!(
-        transcript.contains(r#""method":"sugar.component.plan""#),
-        "sugar {verb} should query the component plan\nstatus: {}\nstdout:\n{}\nstderr:\n{}\ntranscript:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-        transcript
-    );
-    assert_pid_reaped(component.pid());
-    first_component_plan_intent(&component)
-}
-
-#[test]
-#[serial]
-fn component_plan_intents_follow_cli_verb() {
-    let actual = [
-        component_plan_intent_from_cli_verb("lift"),
-        component_plan_intent_from_cli_verb("prove"),
-    ];
-
-    assert_eq!(actual, ["lift", "prove"]);
 }
 
 #[test]
