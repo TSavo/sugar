@@ -70,11 +70,37 @@ def _first_value_param(fn: ast.FunctionDef) -> ast.arg | None:
     return params[0]
 
 
+def _is_int_floor_fold(call: ast.Call, rel: Path) -> bool:
+    """``TermValue(<a>.value <op> <b>.value)`` in ``floor/term_value.py``.
+
+    The int floor answering its own operator over two ints the lift decided:
+    Python's ``3 & 5`` is ``1``, as ``3 + 5`` is ``8``, and the floor folds
+    both the same way.  That is the language's operator on a decided pair,
+    not an interpreter standing where a lowering belongs, and a bitvector
+    lowering there would be a wrong answer: a Python int is unbounded
+    (``1 << 40``).  Anything else spelled with ``<< >> & ^`` is still crime C.
+    """
+    if rel.parts[-2:] != ("floor", "term_value.py"):
+        return False
+    if not (isinstance(call.func, ast.Name) and call.func.id == "TermValue"):
+        return False
+    if len(call.args) != 1 or call.keywords:
+        return False
+    fold = call.args[0]
+    return isinstance(fold, ast.BinOp) and all(
+        isinstance(side, ast.Attribute) and side.attr == "value"
+        for side in (fold.left, fold.right)
+    )
+
+
 def crimes_in(path: Path, root: Path) -> list[str]:
     rel = path.relative_to(root)
     tree = ast.parse(path.read_text(encoding="utf-8"))
     crimes: list[str] = []
     local_sugar = _local_sugar_class(path)
+    # The int floor's own operator folds (``_is_int_floor_fold``), recorded at
+    # the enclosing call, which is visited before the fold beneath it.
+    int_floor_folds: set[int] = set()
 
     # Track the enclosing function name so Crime D can distinguish build() from desugar().
     _enclosing_fn: list[str] = []
@@ -117,7 +143,13 @@ def crimes_in(path: Path, root: Path) -> list[str]:
                         "sugars hold SugarBody children, never raw ast.* as a semantic field."
                     )
         # CRIME C: bitwise math executed in kit source -- the next xz.
-        if isinstance(node, ast.BinOp) and isinstance(node.op, _BITWISE_EXEC):
+        if isinstance(node, ast.Call) and _is_int_floor_fold(node, rel):
+            int_floor_folds.add(id(node.args[0]))
+        if (
+            isinstance(node, ast.BinOp)
+            and isinstance(node.op, _BITWISE_EXEC)
+            and id(node) not in int_floor_folds
+        ):
             crimes.append(
                 f"{rel}:{node.lineno}: CRIME C (execution instead of lowering) "
                 f"`{ast.unparse(node)}` -- the kit must LOWER bitwise ops to bitvector FOL "

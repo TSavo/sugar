@@ -476,7 +476,7 @@ def as_bound_formals(actuals, arrivals) -> tuple:
     bound = []
     for index, (actual, arrival) in enumerate(zip(actuals, arrivals)):
         shared = any(
-            reached[index] & other
+            not reached[index].isdisjoint(other)
             for position, other in enumerate(reached)
             if position != index
         )
