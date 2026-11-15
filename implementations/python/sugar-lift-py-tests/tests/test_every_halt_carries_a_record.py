@@ -332,33 +332,43 @@ def _returned_value(outcome):
 
 _ONE = fresh(ListValue, (TermValue(1),))
 
-_RAISES = "def g():\n    raise ValueError()\n"
+# The raise at a head is ``int("x")``: a builtin the reduction decides over
+# its ground operand, ``ValueError`` always.  These heads raised through a
+# same-file ``g()`` (and a same-file manager's ``__enter__``) until #7757
+# steps 5 and 6 (#8705, #8744): a same-file call is its coordinate and edge,
+# whose raise is joined at prove (the handler's match by the callee's stated
+# halt type, #8749), never decided at the reduction, so the state a halt at
+# the head carries could no longer be read off which handler ran.
+_RAISE = 'int("x")'
 
 _MANAGER = (
     "class M:\n"
+    "    def __init__(self, v):\n"
+    "        pass\n"
     "    def __enter__(self):\n"
-    "        raise ValueError()\n"
+    "        return self\n"
     "    def __exit__(self, exc_type, exc, tb):\n"
     "        return False\n"
 )
 
 # Each raises at the head of a compound statement, after ``acc.append(1)``.
+# The ``with``'s head raises in its manager's actual, before ``M`` is called.
 _HEADS = {
     "if-condition": (
-        _RAISES,
-        "    if g():\n        return 0\n",
+        "",
+        f"    if {_RAISE}:\n        return 0\n",
     ),
     "loop-iterable": (
-        _RAISES,
-        "    for x in g():\n        acc.append(x)\n",
+        "",
+        f"    for x in {_RAISE}:\n        acc.append(x)\n",
     ),
-    "with-enter": (
+    "with-manager": (
         _MANAGER,
-        "    with M():\n        acc.append(2)\n",
+        f"    with M({_RAISE}):\n        acc.append(2)\n",
     ),
     "assert": (
-        _RAISES,
-        "    assert g()\n",
+        "",
+        f"    assert {_RAISE}\n",
     ),
 }
 
@@ -393,9 +403,10 @@ def test_a_handler_sees_the_stores_made_before_a_raise_at_a_head(head: str) -> N
 # handler read ``acc`` undecided although no body code ran when the header
 # raised.  The header has an edge of its own now (``Try._body_halt_edges``,
 # ``_header_halt_state``), named by the halt's occurrence
-# (``_header_occurrence_keys``; ``__enter__`` is called at its own step's
-# site, ``protocol_step_site``, never the exit face ``__exit__`` is called at).
-_HEADER_EDGE_HEADS = ("loop-iterable", "with-enter")
+# (``_header_occurrence_keys``).  A same-file manager's ``__enter__`` is a
+# method call, coordinate and edge, since #8744: its raise is joined at prove,
+# so the ``with`` head here raises in the manager expression instead.
+_HEADER_EDGE_HEADS = ("loop-iterable", "with-manager")
 
 
 @pytest.mark.parametrize("head", _HEADER_EDGE_HEADS)
@@ -608,8 +619,7 @@ def _walrus_then(second: str) -> str:
     """``f``: ``x, y = (a := 1), <second>`` inside a ``try`` whose handler
     (and the completed path) returns ``a``."""
     return (
-        _RAISES
-        + "def f():\n"
+        "def f():\n"
         + "    try:\n"
         + f"        x, y = (a := 1), {second}\n"
         + "    except ValueError:\n"
@@ -619,13 +629,13 @@ def _walrus_then(second: str) -> str:
 
 
 def test_a_handler_sees_the_walrus_bound_before_a_later_member_raised() -> None:
-    # ``a`` is bound before ``g()`` raises: the handler returns it as the
-    # completed twin does.
+    # ``a`` is bound before ``int("x")`` raises: the handler returns it as
+    # the completed twin does.
     def returned(second: str):
         source = _walrus_then(second)
         return _returned_value(function_universe_outcome(_function(source)))
 
-    assert returned("g()") == returned("2")
+    assert returned(_RAISE) == returned("2")
 
 
 # -- no target is bound before every right-hand side has completed --------------
@@ -821,8 +831,7 @@ def _walrus_test(statement: str, second: str) -> str:
     """``f``: ``statement`` (holding ``(a := 1) and <second>``) inside a
     ``try`` whose handler (and the completed path) returns ``a``."""
     return (
-        _RAISES
-        + "def f():\n"
+        "def f():\n"
         + "    try:\n"
         + statement.format(test=f"(a := 1) and {second}")
         + "    except ValueError:\n"
@@ -842,29 +851,30 @@ def _walrus_test(statement: str, second: str) -> str:
 def test_a_handler_sees_the_walrus_a_statements_test_bound_before_it_raised(
     statement: str,
 ) -> None:
-    # ``if (a := 1) and g():`` where ``g`` raises: ``a`` is bound before
-    # ``g()`` runs, and the handler returns it as the completed twin does.
+    # ``if (a := 1) and int("x"):``, which raises: ``a`` is bound before
+    # ``int("x")`` runs, and the handler returns it as the completed twin
+    # does.
     def returned(second: str):
         source = _walrus_test(statement, second)
         return _returned_value(function_universe_outcome(_function(source)))
 
-    assert returned("g()") == returned("2")
+    assert returned(_RAISE) == returned("2")
 
 
 # A compound statement's halt in its header carried the state the header left
 # with every name unbound before the statement dropped
 # (``Try._mid_statement_state`` read a compound statement's names as unknown
-# at its halts), so the walrus the ``if`` test bound before ``g()`` raised was
+# at its halts), so the walrus the ``if`` test bound before the raise was
 # lost and the handler read ``a`` unbound.  The header is an expression run
 # before any suite: its walrus is read at the halt through its key
 # (``_compound_halt_state``, ``at_header``), as a simple statement's is.
-_IF_TEST_WALRUS_RAISES = _walrus_test("        if {test}:\n            pass\n", "g()")
+_IF_TEST_WALRUS_RAISES = _walrus_test("        if {test}:\n            pass\n", _RAISE)
 
 
 def test_the_truthful_half_reads_the_if_tests_walrus_bound_before_the_raise() -> (
     None
 ):
-    # TRUTHFUL: Python binds ``a = 1``, then ``g()`` raises; the handler
+    # TRUTHFUL: Python binds ``a = 1``, then ``int("x")`` raises; the handler
     # returns 1.
     outcome = function_universe_outcome(_function(_IF_TEST_WALRUS_RAISES))
     assert _returned_value(outcome) == TermValue(1)
