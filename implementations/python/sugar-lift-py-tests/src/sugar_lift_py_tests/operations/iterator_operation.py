@@ -59,26 +59,26 @@ def discharge_iter(receiver, site, ctx, *, owner: str = "project_iter"):
 def iteration_total(iterable) -> bool:
     """Whether ``iter(iterable)`` and each ``next`` of it are decided never
     to raise: the iterable is an exact finite container in hand
-    (``comprehension_sugar._finite_members``), or a decided builtin whose
-    iteration is CPython's own and cannot raise
-    (``source_call_resolution._iterable``: a ``str``, ``bytes``, ``list``,
-    ``tuple``, ``set`` or ``dict``, or an evaluated list/set/dict
-    comprehension) -- the one testimony ``iter(x)``'s totality reads
-    (``builtin_call_total``).  Such an iteration states no ``iter`` halt and
-    no ``next`` halt.
+    (``comprehension_sugar._finite_members``), or a value whose iteration is
+    CPython's own and cannot raise
+    (``source_call_resolution.iterates_without_raising``: a ``str``,
+    ``bytes``, ``list``, ``tuple``, ``set`` or ``dict``, an evaluated
+    list/set/dict comprehension, or what a completed ``range(...)`` call
+    returned, a range object).  Such an iteration states no ``iter`` halt
+    and no ``next`` halt.
 
     A container whose contents are not current
     (``object_identity.contents_stale``) is not: its ``iter`` is the
     undecided read its own receiver answers (``ListValue.iter_with``).
-    Anything else -- a formal, a call's result, an instance, any symbolic
-    value -- has its ``iter`` submitted to it (``iterated``)."""
+    Anything else -- a formal, any other call's result, an instance, any
+    symbolic value -- has its ``iter`` submitted to it (``iterated``)."""
     from sugar_lift_py_tests.floor.object_identity import contents_stale
-    from sugar_lift_py_tests.source_call_resolution import _iterable
+    from sugar_lift_py_tests.source_call_resolution import iterates_without_raising
     from sugar_lift_py_tests.sugar.comprehension_sugar import _finite_members
 
     if contents_stale(iterable):
         return False
-    return _finite_members(iterable) is not None or _iterable(iterable)
+    return _finite_members(iterable) is not None or iterates_without_raising(iterable)
 
 
 def iterated(iterable, ctx, *, owner: str, site):
@@ -137,9 +137,9 @@ def stepped(
     No step is submitted where the iteration's type is decided and its
     ``__next__`` cannot raise: an iteration decided never to raise
     (``iteration_total``), a decided builtin iterable whose contents are not
-    current (``source_call_resolution._iterable``: a list, tuple, ``str``,
-    ``bytes``, set or dict iterator), or a decided builtin iterator
-    (``ListIteratorValue``, ``TupleIteratorValue``)."""
+    current (``source_call_resolution.iterates_without_raising``: a list,
+    tuple, ``str``, ``bytes``, set or dict iterator), or a decided builtin
+    iterator (``ListIteratorValue``, ``TupleIteratorValue``)."""
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )
@@ -150,7 +150,7 @@ def stepped(
     )
     from sugar_lift_py_tests.operations.next_operation import NextOperation
     from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
-    from sugar_lift_py_tests.source_call_resolution import _iterable
+    from sugar_lift_py_tests.source_call_resolution import iterates_without_raising
     from sugar_lift_py_tests.sugar.function_universe_sugar import halts_recorded
     from sugar_lift_py_tests.sugar.loop_recurrence_sugar import (
         _is_authenticated_stop_iteration,
@@ -158,7 +158,7 @@ def stepped(
 
     if (
         iteration_total(iterable)
-        or _iterable(iterable)
+        or iterates_without_raising(iterable)
         or isinstance(iterator, (ListIteratorValue, TupleIteratorValue))
     ):
         return follow()
@@ -170,9 +170,7 @@ def stepped(
 
     def halted(halt):
         effect = halt.effect
-        if isinstance(effect, RaiseEffect) and _is_authenticated_stop_iteration(
-            effect
-        ):
+        if isinstance(effect, RaiseEffect) and _is_authenticated_stop_iteration(effect):
             return exhausted()
         return None if left is None else left(halt)
 

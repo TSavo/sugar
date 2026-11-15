@@ -133,9 +133,8 @@ def test_completed_element_builds_fold_without_exporting_target_binding():
     # iterator it completes with: the fold follows the faces they complete
     # on, and the faces they raise on are kept.
     assert isinstance(result, ExitSet)
-    assert sorted(
-        halted.effect.producer_node_owner for halted in result.halts()
-    ) == ["SymbolicValue.iter", "SymbolicValue.next"], result.halts()
+    owners = sorted(halted.effect.producer_node_owner for halted in result.halts())
+    assert owners == ["SymbolicValue.iter", "SymbolicValue.next"], result.halts()
     assert all(_iteration_halt(halted) for halted in result.halts())
     term = _the_completed_value(result).to_term(owner="test")
     assert term.name == "py.listcomp"

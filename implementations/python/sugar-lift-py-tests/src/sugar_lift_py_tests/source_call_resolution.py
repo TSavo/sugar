@@ -1093,6 +1093,43 @@ def _iterable(value) -> bool:
     ) or (_builtin_container(value) and not _scalar(value))
 
 
+def _range_object(value) -> bool:
+    """``value`` is what a completed ``range(...)`` call returned: a
+    ``range`` object, read off the call's binding
+    (``CallSiteValue.language_callee``), never its spelling.
+
+    CPython's ``range`` (Objects/rangeobject.c, ``range_new``) returns a new
+    ``range`` object or raises: ``TypeError`` for a keyword actual, an arity
+    outside one to three or an operand with no ``__index__``, ``ValueError``
+    for a zero step, or whatever an operand's ``__index__`` raises.  Those
+    are the call's own halt faces -- decided by the cited fold over ground
+    operands (``cpython_cited_fold``: ``range(0, 3, 0)`` is the one
+    ``ValueError``), else the halt of the one two-faced unanswered call
+    (``UnknownCalleeCallV1``: ``range(n)`` over a formal).  So on every face
+    the call completes on, whatever its operands, its value is a range
+    object.  Iterating one is CPython's own (``range_iter``;
+    ``longrangeiter`` past a C long) and never raises; its ``len`` may
+    (``OverflowError`` past ``sys.maxsize``), and so may ``list``/``tuple``
+    of it, which read that length first, so it is no ``_iterable``."""
+    from sugar_source_tree.nodes import LanguageCallee
+
+    from .floor.call_site_value import CallSiteValue
+
+    return (
+        isinstance(value, CallSiteValue)
+        and value.language_callee is LanguageCallee.BUILTIN_RANGE
+    )
+
+
+def iterates_without_raising(value) -> bool:
+    """Whether iterating ``value`` -- its ``iter`` and every ``next`` -- is
+    CPython's own and never raises: a decided builtin (``_iterable``), or a
+    range object (``_range_object``).  The testimony the one iterator path
+    of a loop's recurrence and a comprehension's fold reads
+    (``iterator_operation.iteration_total``, ``stepped``)."""
+    return _iterable(value) or _range_object(value)
+
+
 def _hashable_members(value) -> bool:
     """Iterating ``value`` yields only hashable members (``set(value)``)."""
     from .floor.bytes_value import BytesValue
