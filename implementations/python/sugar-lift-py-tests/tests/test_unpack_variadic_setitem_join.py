@@ -160,18 +160,42 @@ def test_mutable_receiver_completes_with_x_and_variadic_store() -> None:
     assert "out" in post and "p" in post
 
 
+def _the_call(actuals: str):
+    """The source call's value on its completed face: a same-file call is
+    its coordinate and edge, joined at prove (#7757 steps 5 and 6, #8705),
+    owing its halt under the complement of its ``completes`` atom.  Its
+    ``arg_values`` are the actuals as written; the one binder's packing of
+    ``*values`` is on its term, every formal by name (``py.kwarg``)."""
+    from sugar_lift_py_tests.floor import CallSiteValue
+
+    outcome = _call(actuals)
+    assert [face for face in outcome.exits if isinstance(face, Halted)], outcome
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert len(completed) == 1, outcome
+    assert isinstance(completed[0].value, CallSiteValue), completed[0].value
+    return completed[0].value
+
+
+def _formal(call, name: str, value):
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    return ctor("py.kwarg", [str_const(name), value.to_term(owner=str(call.site))])
+
+
 def test_source_caller_packs_remaining_positionals_into_values() -> None:
-    outcome = _call("[0], 0, 7, 1, 2")
-    assert isinstance(outcome, ExitSet)
-    face = outcome.exits[0]
-    assert isinstance(face, Completed)
-    assert face.value.arg_values == (
+    call = _the_call("[0], 0, 7, 1, 2")
+    assert call.arg_values == (
         fresh(ListValue, (TermValue(0),)),
         TermValue(0),
         TermValue(7),
-        TupleValue((TermValue(1), TermValue(2))),
+        TermValue(1),
+        TermValue(2),
     )
-    assert face.value.parameters == ("a", "i", "p", "values")
+    assert list(call.term.args[1:]) == [
+        _formal(call, "i", TermValue(0)),
+        _formal(call, "p", TermValue(7)),
+        _formal(call, "values", TupleValue((TermValue(1), TermValue(2)))),
+    ]
 
 
 def test_empty_variadic_store_is_honest_empty_tuple() -> None:
@@ -231,14 +255,20 @@ def test_variadic_store_halt_preserves_earlier_name_binding_state() -> None:
 
 
 def test_source_caller_variadic_store_halt_no_fabricated_completion() -> None:
-    outcome = _call("[0], 5, 7, 1, 2")
-    assert isinstance(outcome, ExitSet)
-    assert len(outcome.exits) == 1
-    halted = outcome.exits[0]
-    assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate == _identity("IndexError")
-    assert halted.state is not None
-    assert not isinstance(getattr(halted, "value", None), UniverseValue)
+    # Expected verdict changed (#7757 steps 5 and 6, #8705): the source call
+    # no longer is the one IndexError halt of the followed body; it is the
+    # edge, which owes its halt, and its completed face is the call value,
+    # never a completed return of ``x``.  The named IndexError with the
+    # earlier binding's state is the row discharged with these actuals
+    # (``test_variadic_store_halt_preserves_earlier_name_binding_state``),
+    # joined at the call by prove (#8690, #8749).
+    call = _the_call("[0], 5, 7, 1, 2")
+    assert not isinstance(call, UniverseValue)
+    assert list(call.term.args[1:]) == [
+        _formal(call, "i", TermValue(5)),
+        _formal(call, "p", TermValue(7)),
+        _formal(call, "values", TupleValue((TermValue(1), TermValue(2)))),
+    ]
 
 
 def test_halt_discrimination_is_not_completed_return_of_x() -> None:

@@ -83,6 +83,19 @@ def test_receiver_transition_updates_every_exact_identity_alias_only():
 
 
 def test_source_setitem_body_projects_updated_receiver_not_none_result():
+    """``receiver["member"] = 7`` through the source ``__setitem__``.
+
+    Expected value changed (#7757 steps 5 and 6, #8738, #8751): the store
+    no longer applies the method's body, so the receiver is not read as the
+    mapping it left (``entries == (("member", 7),)``).  The implicit call is
+    the method's coordinate and edge: on its completed face the receiver
+    after the call is unknown (``python:receiver_after_call``), never the
+    ``None`` the method returns, and the call owes its halt under the
+    complement.  What the method does to the receiver is joined at prove
+    (#7757 step 7)."""
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.outcome import Completed, Halted
+
     _definition, receiver = _definition_and_receiver()
 
     outcome = receiver.setitem(
@@ -92,7 +105,12 @@ def test_source_setitem_body_projects_updated_receiver_not_none_result():
         ReduceContext.root(owner="caller"),
     )
 
-    assert outcome.completed_value() is not None
-    assert isinstance(outcome.completed_value(), MappingObjectValue)
-    assert outcome.completed_value().identity == receiver.identity
-    assert outcome.completed_value().entries == ((StringValue("member"), TermValue(7)),)
+    assert [face for face in outcome.exits if isinstance(face, Halted)], outcome
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert len(completed) == 1, outcome
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+
+    _writes, after = peel_walrus_binds(completed[0].value)
+    assert not isinstance(after, NoneValue)
+    assert isinstance(after, SymbolicValue), after
+    assert after.term.name == "python:receiver_after_call"

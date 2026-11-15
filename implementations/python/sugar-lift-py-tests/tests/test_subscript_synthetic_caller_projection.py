@@ -15,6 +15,7 @@ claims about pandas source.
 
 from __future__ import annotations
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
     EffectBoundaryDisposition,
@@ -23,6 +24,7 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
+from sugar_lift_py_tests.floor import ListValue, TermValue
 from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.outcome import (
     Completed,
@@ -97,24 +99,70 @@ def test_helper_alone_is_named_undischarged_without_caller_actuals() -> None:
     assert exits.completed_value() is None
 
 
-def test_positional_keyword_and_default_callers_reach_the_same_demand() -> None:
-    carrier = _carrier()
-    completed, positional, keyword, default = _caller_outcomes()
 
-    assert len(completed.exits) == 1
-    assert isinstance(completed.exits[0], Completed)
-    exceptional = (positional, keyword, default)
-    halted = tuple(outcome.exits[0] for outcome in exceptional)
-    assert all(isinstance(exit_, Halted) for exit_ in halted)
+def _the_call(outcome: ExitSet):
+    """The call value on the one completed face of a caller's call: a
+    same-file call is its coordinate and edge, joined at prove (#7757 steps
+    5 and 6, #8705), completing under its ``completes`` atom and owing its
+    halt under the complement."""
+    from sugar_lift_py_tests.floor import CallSiteValue
+
+    assert [face for face in outcome.exits if isinstance(face, Halted)], outcome
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert len(completed) == 1, outcome
+    call = completed[0].value
+    assert isinstance(call, CallSiteValue), type(call)
+    return call
+
+
+def _int(call, value: int):
+    return TermValue(value).to_term(owner=str(call.site))
+
+
+def _discharged(carrier, key: int) -> ExitSet:
+    """The helper's row discharged with ``[7]`` and ``key``: what prove's one
+    binder binds its carrier with at a call that supplies them."""
+    obj_cid, key_cid = carrier.demand.operand_coordinate_cids
+    return carrier.discharge(
+        None, {obj_cid: fresh(ListValue, (TermValue(7),)), key_cid: TermValue(key)}
+    )
+
+
+def _index_error():
+    return ctor(
+        "python:exception_type_identity",
+        [str_const("builtins"), str_const("IndexError")],
+    )
+
+
+def test_positional_keyword_and_default_callers_reach_the_same_demand() -> None:
+    # Expected verdict changed (#7757 steps 5 and 6, #8705): each caller's
+    # call no longer holds the IndexError the followed body raised, stamped
+    # with that call's occurrence; it is the edge, which owes its halt, and
+    # prove joins the helper's halt at each call (#8690, #8749).  The three
+    # forms carry the same binding of ``key``; the helper's row discharged
+    # with it reaches the one ``obj[key]``.
+    carrier = _carrier()
+    completed, positional, keyword, default = (
+        _the_call(outcome) for outcome in _caller_outcomes()
+    )
+    assert list(completed.term.args[1:]) == [_int(completed, 0)]
+    assert list(positional.term.args[1:]) == [_int(positional, 1)]
+    assert list(keyword.term.args[1:]) == [
+        ctor("py.kwarg", [str_const("key"), _int(keyword, 1)])
+    ]
+    assert list(default.term.args[1:]) == [
+        ctor("py.default", [str_const("key"), _int(default, 1)])
+    ]
+
+    assert isinstance(_discharged(carrier, 0).exits[0], Completed)
+    halted = _discharged(carrier, 1).exits[0]
+    assert isinstance(halted, Halted)
+    assert halted.effect.exception_type_coordinate == _index_error()
     site = carrier.site
-    # An occurrence is the operation's coordinate and the call that reached
-    # it: ``<file:line:col>@call:<call cid>``.  The three callers reach the
-    # one ``obj[key]``; each call is its own occurrence of it.
-    split = [exit_.effect.occurrence_id.split("@call:") for exit_ in halted]
-    assert {locus for locus, _call in split} == {
+    assert halted.effect.occurrence_id.startswith(
         f"{site.filename}:{site.line}:{site.col}"
-    }
-    assert len({call for _locus, call in split}) == len(halted)
+    )
 
 
 class _Expected:
@@ -130,11 +178,11 @@ class _Expected:
 
 def test_lying_boundary_type_cannot_create_or_consume_the_subscript_result() -> None:
     carrier = _carrier()
-    _, positional, _, _ = _caller_outcomes()
-    original = positional.exits[0]
+    discharged = _discharged(carrier, 1)
+    original = discharged.exits[0]
     assert isinstance(original, Halted)
 
-    routed = positional.and_exit(
+    routed = discharged.and_exit(
         ExitSet.completed(object()),
         disposition=EffectBoundaryDisposition(
             matcher=AuthenticatedRaiseMatcher(expected=_Expected("ValueError")),
@@ -146,12 +194,10 @@ def test_lying_boundary_type_cannot_create_or_consume_the_subscript_result() -> 
     escaped = routed.exits[0]
     assert isinstance(escaped, Halted)
     site = carrier.site
-    # The routed halt is the original occurrence, the subscript reached
-    # through this call: ``<file:line:col>@call:<call cid>``.
+    # The routed halt is the original occurrence of the subscript.
     assert escaped.effect.occurrence_id == original.effect.occurrence_id
-    locus, _call = escaped.effect.occurrence_id.split("@call:")
-    assert locus == f"{site.filename}:{site.line}:{site.col}"
-    assert escaped.effect.exception_type_coordinate == (
-        original.effect.exception_type_coordinate
+    assert escaped.effect.occurrence_id.startswith(
+        f"{site.filename}:{site.line}:{site.col}"
     )
+    assert escaped.effect.exception_type_coordinate == _index_error()
     assert escaped.effect.exception_type_coordinate != _Expected("ValueError").identity
