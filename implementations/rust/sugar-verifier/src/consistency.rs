@@ -5973,13 +5973,27 @@ fn plain_access_holds(table: &DispatchTable, class: &Json, field: &str, hooks: &
         };
         if namespace.mro.is_empty()
             || namespace.binds.contains_key(field)
-            || hooks.iter().any(|hook| namespace.binds.contains_key(*hook))
+            || hooks.iter().any(|hook| {
+                namespace
+                    .binds
+                    .get(*hook)
+                    .is_some_and(|(kind, _)| kind.as_str() != NAMESPACE_CREATION_KIND)
+            })
         {
             return false;
         }
     }
     true
 }
+
+/// The kind a namespace row states for a name only CPython's type creation
+/// may write (the kit's `tree_enumerate._CREATION_KIND`): the class body
+/// binds it nowhere and no module store names it. What type creation writes
+/// for `__dict__` is the instance-dict descriptor, the plain `__dict__` path
+/// itself, so such a binding is no hook of `plain_access_holds`; whether the
+/// class holds it stays as undecided as an `undecided` binding for every
+/// other reader (a dispatch on it has no join symbol, `dispatched_target`).
+const NAMESPACE_CREATION_KIND: &str = "creation";
 
 /// Whether `node` states a `python:plain_store` or `python:plain_read`
 /// atom anywhere: the guards the namespaces decide (`decide_plain_stores`).
