@@ -340,7 +340,7 @@ def test_an_iterator_that_may_be_an_instance_leaves_the_check_undecided() -> Non
     )
     tree, context, classes = _parsed(source, "generator_self_iterator.py")
     site = _super_site(tree)
-    receiver = classes["Walker"].construct_receiver_state_from_block(None, "receiver")
+    receiver = classes["Walker"].fresh_receiver("receiver", allocation=FRAME_FRESH)
 
     assert not zero_argument_super_generator_iterator_is_builtin(site)
     outcome = zero_argument_super(site, _frame(context, classes["Walker"], receiver))
