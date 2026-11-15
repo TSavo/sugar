@@ -22,12 +22,19 @@ from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 
 
 def _exit_for_body(
-    exit_face_id: str, entered, body_face, ctx: object = None, *, unit=None
+    exit_face_id: str,
+    entered,
+    body_face,
+    ctx: object = None,
+    *,
+    unit=None,
+    fragment=None,
 ):
     """``__exit__`` on the entered receiver with this body face's actual ABI
     inputs.  ``unit``: the module the ``with`` stands in, where the receiver
     is a class call's result dispatched over its class
-    (``_call_protocol_method``).
+    (``_call_protocol_method``); ``fragment``: the ``with`` item, where a
+    halt of that call leaves.
 
     Python language reference 8.5, the with statement:
     https://docs.python.org/3/reference/compound_stmts.html#the-with-statement
@@ -156,6 +163,7 @@ def _exit_for_body(
         exit_face_id,
         ctx,
         unit=unit,
+        halted_at=fragment,
     )
 
 
@@ -305,6 +313,7 @@ class ReducedManagerProtocolV1:
                 protocol_step_site(self.exit_face_id, "__enter__"),
                 ctx,
                 unit=self.fragment.unit,
+                halted_at=self.fragment,
             )
             return _resource_enter_transitions(
                 receiver, enter, blame=self.exit_face_id
@@ -363,7 +372,12 @@ class ReducedManagerProtocolV1:
         receiver = getattr(entered, "receiver_state", None)
         if self._dispatched_manager(receiver):
             return _exit_for_body(
-                self.exit_face_id, entered, body_face, ctx, unit=self.fragment.unit
+                self.exit_face_id,
+                entered,
+                body_face,
+                ctx,
+                unit=self.fragment.unit,
+                fragment=self.fragment,
             )
         decided, has_enter, has_exit = self._protocol_of(receiver)
         if decided and has_enter and has_exit:
@@ -374,7 +388,9 @@ class ReducedManagerProtocolV1:
         )
 
 
-def _call_protocol_method(receiver, name, arguments, site, ctx, *, unit=None):
+def _call_protocol_method(
+    receiver, name, arguments, site, ctx, *, unit=None, halted_at=None
+):
     """``receiver.<name>(*arguments)``: the implicit special-method call
     ``type(receiver).<name>(receiver, *arguments)`` the ``with`` statement
     makes, through the one door every implicit dunder call takes
@@ -392,7 +408,10 @@ def _call_protocol_method(receiver, name, arguments, site, ctx, *, unit=None):
     the ``with`` stands in) is the dispatched edge over that class
     (``receiver_dispatch.dispatch_on_receiver``, #7757 step 8): its
     actuals as Python passes them (``__exit__(m, type, value, tb)``), bound
-    at prove by the one binder (a ``*exc`` formal takes the three).
+    at prove by the one binder (a ``*exc`` formal takes the three).  Its
+    ``site`` is the step's slot id, which states no source fragment: a halt
+    of the call leaves at ``halted_at``, the ``with`` item
+    (``UnknownCalleeCallV1.faces``).
     """
     from sugar_source_tree.panic import SugarNotWritten
 
@@ -400,7 +419,13 @@ def _call_protocol_method(receiver, name, arguments, site, ctx, *, unit=None):
         from sugar_lift_py_tests.receiver_dispatch import dispatch_on_receiver
 
         dispatched = dispatch_on_receiver(
-            name, receiver, tuple(arguments), (), site, unit=unit
+            name,
+            receiver,
+            tuple(arguments),
+            (),
+            site,
+            unit=unit,
+            halted_at=halted_at,
         )
         if dispatched is not None:
             return dispatched

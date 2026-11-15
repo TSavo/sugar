@@ -941,14 +941,20 @@ class UnknownCalleeCallV1:
 
     callee_name: str
 
-    def faces(self, callsite, site):
+    def faces(self, callsite, site, *, halted_at=None):
         """A call whose edge names its callee (a ``target_symbol``: a
         same-file definition's edge, ``lambda_callable.definition_edge_call``,
         or an import-bound callee the one import table names) raises the
         exception named by the call, ``python:raised(<call term>,
         <occurrence>)``, typed at prove by the callee's contract wherever one
         is joined (#7757 step 7).  One term for every such call, same-file or
-        imported."""
+        imported.
+
+        ``halted_at``: the source fragment the halt leaves at where ``site``
+        is a synthetic call's content-addressed slot id, which states none
+        (a manager protocol's ``__enter__``/``__exit__``, its ``with``
+        item, ``context_manager_contract.protocol_step_site``); the call's
+        occurrence stays ``site``.  None: ``site`` itself."""
         from .effect.raise_effect import UndeterminedRaiseEffect
         from .ir import atomic, ctor
         from .occurrence import occurrence_key, occurrence_term
@@ -990,7 +996,7 @@ class UnknownCalleeCallV1:
                 blame=str(site),
                 occurrence=key,
                 producer_node_owner=f"UnknownCallee:{self.callee_name}",
-                site=site,
+                site=site if halted_at is None else halted_at,
                 raised_by_call=raised_by_call,
             ),
             guard=completes,
