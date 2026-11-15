@@ -17,8 +17,8 @@ finish, edited in place by each later one. A measure that has not reported is
 ``--final``: a measure that never reported is then unmeasured, and that is
 compared.
 
-Two workflows post rows: main-scorecard.yml (suite, twins, federation) on every
-merge, and main-scorecard-board.yml (the pandas board) in its own lane, so a
+Two workflows post rows: main-scorecard.yml (suite, twins, federation, rust) on
+every merge, and main-scorecard-board.yml (the pandas board) in its own lane, so a
 slow board never holds the per-merge numbers back. Each names what it measures
 in SCORECARD_MEASURES. A measure outside that set is written ``-`` in the row:
 it is not this workflow's number, so it is never pending, never unmeasured and
@@ -32,8 +32,12 @@ REGRESSION: and makes this invocation exit 1.
 
 Comment shape (first line, then one machine-readable line of key=value):
   OK ... | REGRESSION: ... ; then
-  sha= prev= run= suite=p/t twins=p/t federation= board=c/t cpanic= issues=
-  prs= pending= rerun= carried= wall=
+  sha= prev= run= suite=p/t twins=p/t federation= rust=p/t board=c/t cpanic=
+  issues= prs= pending= rerun= carried= wall=
+
+``rust`` is the Rust unit and integration tests (``cargo test``) of the crates
+on the Python proof path. Rows written before it existed have no ``rust=``
+key: they still parse (``rust`` is not in ROW_KEYS) and count as not measured.
 """
 
 from __future__ import annotations
@@ -49,7 +53,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-MEASURES = ("suite", "twins", "federation", "board")
+MEASURES = ("suite", "twins", "federation", "board", "rust")
+# Required for a comment to count as a row. `rust` is read optionally: rows
+# written before it existed have no `rust=` key and must still parse.
 ROW_KEYS = ("sha", "prev", "run", "suite", "twins", "federation", "board", "cpanic")
 
 
@@ -221,7 +227,9 @@ def main(argv: list[str] | None = None) -> int:
 
 def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path, final: bool) -> int:
     results, pending = load_results(runs, final)
-    suite, twins, fed_r, board = (results[m] for m in MEASURES)
+    suite, twins, fed_r, board, rust = (
+        results[m] for m in ("suite", "twins", "federation", "board", "rust")
+    )
     own = own_measures()
     # Not this workflow's number: written "-", never pending, never compared.
     outside = [m for m in MEASURES if m not in own]
@@ -238,6 +246,9 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
     twins_pass, twins_total = pair("twins", "passed", "total")
     if twins_total == "0":
         twins_pass = twins_total = "?"
+    rust_pass, rust_total = pair("rust", "passed", "total")
+    if rust_total == "0":
+        rust_pass = rust_total = "?"
     fed = fed_r.get("verdict") if fed_r.get("measured") else "?"
     fed = fed if fed in ("PASS", "FAIL") else "?"
     if "federation" in outside:
@@ -259,13 +270,13 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
     if not issue:
         url = gh("issue", "create", "--title", title, "--body",
                  "One row per run of .github/workflows/main-scorecard.yml (suite, "
-                 "twins, federation) and of main-scorecard-board.yml (the pandas "
+                 "twins, federation, rust) and of main-scorecard-board.yml (the pandas "
                  "board), on every push to main, hourly, on demand. Each measuring "
                  "job edits its run's comment as soon as its own number lands; `?` "
                  "is pending until then and `-` is the other workflow's number. "
                  "Each comment starts with OK or REGRESSION:, then one "
                  "machine-readable line: sha= prev= run= suite= twins= federation= "
-                 "board= cpanic= issues= prs= pending= rerun= carried= wall=.")
+                 "rust= board= cpanic= issues= prs= pending= rerun= carried= wall=.")
         if url is None:
             print("::error::could not create the scorecard issue")
             return 1
@@ -368,6 +379,7 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
 
     fewer_failing_is_better("suite", "suite", suite_pass, suite_total, "suite")
     fewer_failing_is_better("twins", "twins", twins_pass, twins_total, "twins")
+    fewer_failing_is_better("rust", "rust", rust_pass, rust_total, "rust")
     higher_is_better("board completed", "board", board_done, "board", 0)
     if "board" not in pending and "board" not in outside:
         before = last_measured("cpanic")
@@ -406,7 +418,7 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
     row = (
         f"sha={sha} prev={prev_sha} run={run_id} suite={suite_pass}/{suite_total} "
         f"twins={twins_pass}/{twins_total} federation={fed} "
-        f"board={board_done}/{board_total} cpanic={cpanic} issues={issues} "
+        f"rust={rust_pass}/{rust_total} board={board_done}/{board_total} cpanic={cpanic} issues={issues} "
         f"prs={prs_cell} pending={','.join(pending) or 'none'} "
         f"rerun={carry_cell('rerun')} carried={carry_cell('carried')} wall={wall}"
     )
@@ -421,7 +433,8 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
         f"{twins_pass}/{twins_total} failed+error {num(twins.get('failed'))} "
         f"(job {job_wall(twins)}) | federation {fed}"
         f"{' (carried)' if fed_r.get('carried') else ''} (job {job_wall(fed_r)}) | "
-        f"board {board_done}/{board_total} cpanic={cpanic} (job {job_wall(board)}) | "
+        f"rust {rust_pass}/{rust_total} failed {num(rust.get('failed'))} "
+        f"(job {job_wall(rust)}) | board {board_done}/{board_total} cpanic={cpanic} (job {job_wall(board)}) | "
         f"run wall {wall} | open issues {issues} | [run]({run_url})"
     )
     notes = []
