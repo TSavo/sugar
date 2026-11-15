@@ -143,7 +143,7 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
                 parts.append(ExitSet((enter_face,)))
                 continue
             entered = enter_face.value
-            enter_value = _returned_value(entered.enter_value)
+            enter_value = _as_target(_returned_value(entered.enter_value), entered)
             enter_facts = ()
             body_ctx = ctx
             if resource.enter_slot_id is not None and enter_value is not None:
@@ -315,6 +315,35 @@ def _returned_value(value):
         if isinstance(last, ReturnValue):
             return last.value
     return value
+
+
+def _as_target(enter_value, entered):
+    """What the body reads ``as x`` as: the value ``__enter__`` returned.
+
+    A ``return`` hands its caller the value by binding
+    (``ReturnSugar``, ``object_identity.arrived``): an object the frame
+    returns is not current in the caller.  ``return self`` returns the
+    manager itself, and the ``with`` already holds that object as
+    ``__enter__`` left it (``EnteredManagerStateValue.receiver_state``,
+    the receiver with the method's stores applied), with the currency it
+    has in this frame: nothing runs between ``__enter__``'s return and the
+    body's first statement, and no source name but ``as x`` holds the
+    manager.  So a returned value that is the receiver -- the same object
+    coordinate (``identity``) and the same contents, compared as values
+    (``ObjectValue``'s equality reads neither ``allocation`` nor
+    ``arrival``) -- is ``receiver_state``.  Anything else ``__enter__``
+    returned is the value it returned, as it arrived."""
+    from sugar_lift_py_tests.floor.object_value import ObjectValue
+
+    receiver = getattr(entered, "receiver_state", None)
+    if (
+        isinstance(receiver, ObjectValue)
+        and type(enter_value) is type(receiver)
+        and enter_value.identity
+        and enter_value == receiver
+    ):
+        return receiver
+    return enter_value
 
 
 def _exit_return_values(exit_es, *, owner="WithReducedManagerSugar.exit-return"):
