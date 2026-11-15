@@ -1,0 +1,171 @@
+name: Main scorecard board
+
+# WHY THIS EXISTS
+#
+# The pandas board is the slowest number on the main scorecard. As a job of
+# main-scorecard.yml it held that workflow's concurrency group until it
+# finished (over an hour while the board is slow), so the suite, twins and
+# federation numbers were posted once per board run instead of once per merge.
+#
+# This workflow is the board alone, in its own concurrency group: one board
+# run measures while the newest trigger waits, and main-scorecard.yml posts
+# its own row on every merge without waiting for it. The board row is posted
+# on the same "Main scorecard" issue by tools/main_scorecard_post.py;
+# SCORECARD_MEASURES names the board as this workflow's only number, so the
+# other numbers are written `-` in a board row and are never compared there.
+# The board number is compared with the newest earlier row that measured the
+# board, and REGRESSION: turns the job red.
+#
+# Incremental carry, the persistent venv and `set +e` are as described in
+# main-scorecard.yml.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: main-scorecard-board
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+  actions: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  BOARD_SEATS: "4"
+  # Per-seat and join caps for the pandas board (seconds).
+  BOARD_SEAT_CAP_S: "10800"
+  BOARD_JOIN_CAP_S: "300"
+  SCORECARD_ISSUE_TITLE: "Main scorecard"
+  SCORECARD_MEASURES: "board"
+  GH_TOKEN: ${{ github.token }}
+  GH_REPO: ${{ github.repository }}
+
+jobs:
+  # The pass kit's shape (run.sh): BOARD_SEATS seats of --slice i/K, each with
+  # its own checkpoint, joined, then --aggregate-only. With --carry-store a
+  # seat measures only the files whose recorded dependencies changed and
+  # carries the other rows. pandas is pinned to 3.0.3 by
+  # sugar-lift-py-tests[test] and docs/ledgers/pins/pandas-3.0.3.pin.json.
+  board:
+    name: pandas board
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 240
+    steps:
+      - name: Start the job clock
+        shell: bash
+        run: echo "JOB_T0=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12.13"
+      - name: Scorecard environment (persistent venv, gh)
+        shell: bash
+        run: bash tools/main_scorecard_env.sh
+      - name: Set up Rust toolchain
+        uses: ./.github/actions/setup-rust-cache
+      - name: Resolve authenticated pandas corpus
+        id: corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$(
+            python -c 'from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus; print(authenticated_pandas_corpus().root)'
+          )"
+          echo "root=$root" >> "$GITHUB_OUTPUT"
+          echo "pandas corpus: $root"
+      - name: Corpus pin gate (pandas 3.0.3)
+        shell: bash
+        env:
+          PANDAS_CORPUS: ${{ steps.corpus.outputs.root }}
+        run: |
+          set -euo pipefail
+          python tools/bx_corpus_pin_gate.py \
+            --expected-pin docs/ledgers/pins/pandas-3.0.3.pin.json \
+            --corpus-root "$PANDAS_CORPUS"
+      - name: Seats + join + aggregate
+        shell: bash
+        working-directory: implementations/python/sugar-lift-py-tests
+        env:
+          PANDAS_CORPUS: ${{ steps.corpus.outputs.root }}
+        run: |
+          set +e -uo pipefail
+          export SUGAR_HOME="$GITHUB_WORKSPACE/.sugar"
+          OUT="$GITHUB_WORKSPACE/board"
+          rm -rf "$OUT"
+          mkdir -p "$OUT/join"
+          K="$BOARD_SEATS"
+          for i in $(seq 0 $((K - 1))); do
+            (
+              timeout -s KILL "$BOARD_SEAT_CAP_S" \
+                python -u scripts/control_effect_recensus.py "$PANDAS_CORPUS" \
+                  --corpus-root "$PANDAS_CORPUS" \
+                  --slice "$i/$K" \
+                  --out-dir "$OUT/s$i" \
+                  --carry-store "$SCORECARD_STORE" \
+                  > "$OUT/s$i.log" 2>&1
+              echo $? > "$OUT/s$i.rc"
+            ) &
+          done
+          wait
+          for i in $(seq 0 $((K - 1))); do
+            echo "seat s$i rc=$(cat "$OUT/s$i.rc" 2>/dev/null || echo missing)"
+            grep -a 'RECENSUS CARRY' "$OUT/s$i.log" || echo "seat s$i: no RECENSUS CARRY line"
+          done
+          cat "$OUT"/s*/checkpoint.jsonl > "$OUT/join/checkpoint.jsonl" 2>/dev/null
+          timeout -s KILL "$BOARD_JOIN_CAP_S" \
+            python -u scripts/control_effect_recensus.py "$PANDAS_CORPUS" \
+              --corpus-root "$PANDAS_CORPUS" \
+              --aggregate-only \
+              --out-dir "$OUT/join" \
+              > "$OUT/join.log" 2>&1
+          echo "join rc=$?"
+          grep -a 'RECENSUS DONE' "$OUT/join.log" || echo "no RECENSUS DONE line"
+      - name: Post the board number
+        if: always()
+        shell: bash
+        run: |
+          set +e -uo pipefail
+          line="$(grep -a 'RECENSUS DONE' board/join.log 2>/dev/null | tail -n 1 | tr -d '\r')"
+          completed="$(printf '%s' "$line" | sed -n 's/.*files=\([0-9]*\)\/\([0-9]*\).*/\1/p')"
+          total="$(printf '%s' "$line" | sed -n 's/.*files=\([0-9]*\)\/\([0-9]*\).*/\2/p')"
+          cpanic="$(printf '%s' "$line" | sed -n 's/.*cpanic=\([0-9]*\).*/\1/p')"
+          carried=0; rerun=0
+          for log in board/s*.log; do
+            [ -f "$log" ] || continue
+            c="$(grep -a 'RECENSUS CARRY' "$log" | tail -n 1 | sed -n 's/.* carried=\([0-9]*\).*/\1/p')"
+            r="$(grep -a 'RECENSUS CARRY' "$log" | tail -n 1 | sed -n 's/.* rerun=\([0-9]*\).*/\1/p')"
+            carried=$((carried + ${c:-0})); rerun=$((rerun + ${r:-0}))
+          done
+          echo "board completed=$completed total=$total cpanic=$cpanic rerun=$rerun carried=$carried"
+          if [ -n "$completed" ] && [ -n "$total" ]; then
+            python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" --final \
+              --set "board.completed=$completed" --set "board.total=$total" \
+              --set "board.cpanic=${cpanic:-?}" \
+              --set "board.line=$(printf '%s' "$line" | cut -c1-300)" \
+              --set "board.carry.rerun=$rerun" --set "board.carry.carried=$carried"
+          else
+            python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" --final \
+              --set board.measured=false --set "board.note=no RECENSUS DONE line"
+          fi
+      - name: Upload board logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-scorecard-board
+          path: |
+            board/*.log
+            board/*.rc
+            board/join/**
+          if-no-files-found: warn
+      - name: Job wall time
+        if: always()
+        shell: bash
+        run: echo "job wall $(( $(date +%s) - JOB_T0 ))s"
