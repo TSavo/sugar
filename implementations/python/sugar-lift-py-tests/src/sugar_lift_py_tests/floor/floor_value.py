@@ -1215,19 +1215,37 @@ class FloorValue:
             self, site, owner="FloorValue.less_than_from_left", operator="<"
         )
 
+    # Every ordering operator is the same operator-owned double dispatch as
+    # ``less_than``: the RHS answers its typed ``<op>_from_left`` door, which
+    # a value that presents another (a walrus, ``NamedExpressionValue``)
+    # overrides to run the operation on what it presents through the one
+    # operand door.  The default door refuses exactly as before.
+
     def less_equal(self, other, site, ctx):
-        return self._refuse_ordering_meaning(
-            other, site, owner="FloorValue.less_equal", operator="<="
-        )
+        return other.less_equal_from_left(self, site, ctx)
 
     def greater_than(self, other, site, ctx):
-        return self._refuse_ordering_meaning(
-            other, site, owner="FloorValue.greater_than", operator=">"
-        )
+        return other.greater_than_from_left(self, site, ctx)
 
     def greater_equal(self, other, site, ctx):
-        return self._refuse_ordering_meaning(
-            other, site, owner="FloorValue.greater_equal", operator=">="
+        return other.greater_equal_from_left(self, site, ctx)
+
+    def less_equal_from_left(self, left, site, ctx):
+        """Default RHS law for ``left <= self`` — never invents FOL meaning."""
+        return left._refuse_ordering_meaning(
+            self, site, owner="FloorValue.less_equal", operator="<="
+        )
+
+    def greater_than_from_left(self, left, site, ctx):
+        """Default RHS law for ``left > self`` — never invents FOL meaning."""
+        return left._refuse_ordering_meaning(
+            self, site, owner="FloorValue.greater_than", operator=">"
+        )
+
+    def greater_equal_from_left(self, left, site, ctx):
+        """Default RHS law for ``left >= self`` — never invents FOL meaning."""
+        return left._refuse_ordering_meaning(
+            self, site, owner="FloorValue.greater_equal", operator=">="
         )
 
     def denotes_value(self) -> bool:
