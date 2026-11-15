@@ -18,8 +18,7 @@ simultaneously:
 
     R(construction panics) = R(native crashes) = R(timeouts) = R(silent) = 0
 
-Native / timeout / bare-exception floors already refuse empty scan roots and
-are bound to ``PANDAS_CORPUS`` in ``tools/run_sole_construction_floors.sh``.
+Native / timeout / bare-exception floors already refuse empty scan roots.
 This floor must do the same: **explicit non-empty scan roots required**.
 Defaulting to kit ``production_roots`` (~444 files) is a wrong-population
 false green — R=0 on kit while the corpus is never entered.

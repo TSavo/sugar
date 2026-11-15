@@ -1,7 +1,6 @@
 """Discrimination + stable-zero for construction→consumer codomain law.
 
-Enrollment: tools/run_static_sole_construction_floors.sh
-  R_construction_consumer_codomain discrimination + R=0.
+R_construction_consumer_codomain discrimination + R=0.
 
 ZERO IS BANKABLE EVIDENCE, NOT ABSENCE OF AN INSTRUMENT — but only under this
 instrument's static reach. Do not read green as \"class closed forever\".

@@ -1,7 +1,6 @@
 # Construction → consumer codomain law (fifth hierarchy-lie class)
 
 **Instrument:** `implementations/python/sugar-lift-py-tests/scripts/construction_consumer_codomain_law.py`  
-**CI enrollment:** `tools/run_static_sole_construction_floors.sh` (and `run_sole_construction_floors.sh`)  
 **Axes:** `R_construction_consumer_codomain discrimination` + `R_construction_consumer_codomain = 0`
 
 ## Question

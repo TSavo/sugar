@@ -90,8 +90,7 @@ def main(argv: list[str] | None = None) -> int:
             "R_construction_panics (control-effect recensus); four green "
             "process floors alone are Partial"
         )
-        # Exit 0: partial is success for this CLI. Use
-        # commit_measurement_gate --require-complete only for tip-complete claims.
+        # Exit 0: partial is success for this CLI.
         return 0
     # CompleteVector has no scalar total across mixed units (locus vs file vs
     # construction-panic). valuesByUnit is a per-unit bag, not a residual sum.

@@ -11,7 +11,6 @@ from repo_root_test_support import resolve_repo_root
 
 ROOT = resolve_repo_root()
 SCRIPTS = ROOT / "implementations/python/sugar-lift-py-tests/scripts"
-TOOLS = ROOT / "tools"
 
 
 def _load(name: str, path: Path):
@@ -54,50 +53,6 @@ def test_conservation_failure_emits_unmeasured_without_residual_mass(
     assert "missing=1 extra=0 duplicateKeys=0" in reason
     assert "missingSample=['b.py']" in reason
 
-    enr = _load(
-        "sole_construction_floor_enrollment",
-        TOOLS / "sole_construction_floor_enrollment.py",
-    )
-    reading = enr.load_floor_measurement_from_summary(
-        out, residual_key="R_native_crashes"
-    )
-    assert reading.residual_count is None
-    assert reading.unmeasured_reason.startswith(
-        "floor summary conservation failed: ValueError: floor rows must account "
-        "for every corpus file exactly once"
-    )
-    assert "expectedRows=2 observedRows=1" in reading.unmeasured_reason
-
-
-def test_legacy_fallback_residual_is_rejected_not_resealed(tmp_path: Path) -> None:
-    """#7051 fallback bodies carried unverified mass; readers fail them closed."""
-    out = tmp_path / "floor-summary.json"
-    out.write_text(
-        json.dumps(
-            {
-                "kind": "floor-residual-v1",
-                "floor": "native-crash",
-                "residualKey": "R_native_crashes",
-                "residualCount": 47,
-                "emissionFallback": (
-                    "ValueError: floor rows must account for every corpus file "
-                    "exactly once"
-                ),
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    enr = _load(
-        "sole_construction_floor_enrollment_legacy_refusal",
-        TOOLS / "sole_construction_floor_enrollment.py",
-    )
-    reading = enr.load_floor_measurement_from_summary(
-        out, residual_key="R_native_crashes"
-    )
-    assert reading.residual_count is None
-    assert "unconserved #7051 fallback" in reading.unmeasured_reason
-
 
 def test_full_summary_when_conservation_holds(tmp_path: Path) -> None:
     pfs = _load("pandas_floor_summary", SCRIPTS / "pandas_floor_summary.py")
@@ -127,28 +82,3 @@ def test_full_summary_when_conservation_holds(tmp_path: Path) -> None:
     )
     assert witness["inputKeyManifestCid"] == witness["outputKeyManifestCid"]
     assert witness["inputKeyCount"] == witness["outputKeyCount"] == 2
-
-
-def test_measured_floor_body_without_conservation_witness_is_unmeasured(
-    tmp_path: Path,
-) -> None:
-    pfs = _load("pandas_floor_summary_missing_witness", SCRIPTS / "pandas_floor_summary.py")
-    out = tmp_path / "floor-summary.json"
-    body = pfs.floor_summary(
-        floor="timeout",
-        files=["a.py"],
-        rows=[{"file": "a.py", "category": "completed"}],
-        totals={"R_timeouts": 0},
-        measured=True,
-    )
-    body.pop("conservationWitness")
-    out.write_text(json.dumps(body) + "\n", encoding="utf-8")
-    enr = _load(
-        "sole_construction_floor_enrollment_missing_witness",
-        TOOLS / "sole_construction_floor_enrollment.py",
-    )
-    reading = enr.load_floor_measurement_from_summary(
-        out, residual_key="R_timeouts"
-    )
-    assert reading.residual_count is None
-    assert "lacks conservationWitness" in reading.unmeasured_reason

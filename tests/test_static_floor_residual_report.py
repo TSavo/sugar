@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 import sys
 from pathlib import Path
 
@@ -19,7 +18,7 @@ def _load(name: str, path: Path):
     return module
 
 
-def test_static_residual_is_witnessed_and_consumer_accepted(tmp_path: Path) -> None:
+def test_static_residual_is_witnessed() -> None:
     mint = _load("static_floor_residual_report", ROOT / "tools/static_floor_residual_report.py")
     body, code = mint.mint_static_residual(
         input_axes=["a", "b"], green_axes=["a"], red_axes=["b"]
@@ -28,17 +27,6 @@ def test_static_residual_is_witnessed_and_consumer_accepted(tmp_path: Path) -> N
     assert body["measurement"] == "measured"
     assert body["residualCount"] == 1
     assert body["conservationWitness"]["status"] == "passed"
-    path = tmp_path / "floor-static-residual.json"
-    path.write_text(json.dumps(body), encoding="utf-8")
-    enrollment = _load(
-        "static_floor_enrollment_reader",
-        ROOT / "tools/sole_construction_floor_enrollment.py",
-    )
-    reading = enrollment.load_floor_measurement_from_summary(
-        path, residual_key="R_static_sole_construction"
-    )
-    assert reading.residual_count == 1
-    assert reading.conservation_witness is not None
 
 
 def test_static_partition_failure_emits_no_magnitude() -> None:
