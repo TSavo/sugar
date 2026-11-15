@@ -224,9 +224,10 @@ def test_the_lying_half_of_each_of_the_five_halts(shape: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# The same twins through the real solver.  A lying half that halts before the
-# assert has no assertion row: halted arms of a reduction are not emitted
-# (#7766), so the harness reports "no assertion rows", not ``unsat``.
+# The same twins through the real solver.  A lying half halts before the
+# assert on its every arm: no arm of the test function completes, so the
+# assert no arm reached states the halted arms' guards negated, and a halt
+# under truth reads ``unsat`` (#7766): the test certainly raises, so it fails.
 # ---------------------------------------------------------------------------
 
 
@@ -254,13 +255,12 @@ def test_the_truthful_half_is_sat(shape: str, tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("shape", sorted(_SOLVER))
-def test_the_lying_half_has_no_assertion_row(shape: str, tmp_path: Path) -> None:
+def test_the_lying_half_is_unsat(shape: str, tmp_path: Path) -> None:
     lying = run_source_through_real_solver(
         tmp_path / "l", _solver_source(_SOLVER[shape].format(x="1 // 0"))
     )
 
-    with pytest.raises(WitnessPipelineError, match="no assertion rows"):
-        lying.verdict
+    assert lying.verdict == "unsat"
 
 
 def test_a_raising_default_is_not_sat(tmp_path: Path) -> None:
@@ -297,7 +297,7 @@ def test_the_lying_half_of_each_of_the_five_is_not_sat(
     try:
         verdict = result.verdict
     except WitnessPipelineError as exc:
-        # The halt before the assert: no row, as for the fixed shapes.
+        # No assertion row at all: nothing about the claim was stated.
         assert "no assertion rows" in str(exc)
         return
     assert verdict != "sat"

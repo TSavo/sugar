@@ -520,7 +520,10 @@ def prove_verdict(prove_doc: dict) -> Verdict:
     portfolio. Panic-site rows are separate obligations: they are not read
     here. Each halted arm of the reduction has one (the function contract's
     ``panicLoci``, #7766), and it stays ``undecidable`` while nothing links a
-    Python halt. ``open``: the claim was not
+    Python halt. A test that certainly raises is decided here all the same:
+    in a function no arm of which completes, every ``assert`` no arm reached
+    has its row, the halted arms' guards negated, so a certain halt reads
+    ``unsat`` through this one reader. ``open``: the claim was not
     decided. A lone claim about a call coordinate nothing binds is refused as
     vacuous, so an unbound edge is open and never ``sat`` (#3896).
     """

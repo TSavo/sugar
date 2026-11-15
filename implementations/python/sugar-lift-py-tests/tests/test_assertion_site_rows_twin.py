@@ -9,7 +9,10 @@ and real ``sugar prove``. What the solver decides here is a constant: the
 comparison itself was decided by the floor at lift time.
 
 The row twins pin where an assertion's row comes from: the reduction, never the
-source text. An ``assert`` no arm evaluated has no row.
+source text. In a function that completes, an ``assert`` no arm evaluated has
+no row. In a function no arm of which completes, every ``assert`` no arm
+reached states the halted arms' guards (``not g`` over each), so a test that
+certainly raises is refuted at prove.
 """
 
 from __future__ import annotations
@@ -225,6 +228,58 @@ def test_a_fact_held_before_a_later_halt_is_not_refuted(tmp_path: Path) -> None:
     halted arm had already passed."""
     rows = _assertion_rows(tmp_path, "def f():\n    assert 1 == 1\n    assert 2 == 3\n")
     assert rows == [(3, _FALSE)]
+
+
+def test_an_assert_after_a_certain_halt_states_the_halting_guards(
+    tmp_path: Path,
+) -> None:
+    """No arm completes, so no completed arm reaches the ``assert``: its row
+    is the conjunction over the halted arms of ``not g``. One halt under
+    truth folds to ``false``. Twin: one statement apart."""
+    completes = _assertion_rows(tmp_path, "def f():\n    y = 1\n    assert 1 == 1\n")
+    halts = _assertion_rows(
+        tmp_path, "def f():\n    raise ValueError('no')\n    assert 1 == 1\n"
+    )
+    assert completes == [(3, _TRUE)]
+    assert halts == [(3, _FALSE)]
+
+
+def test_an_assert_passed_before_a_certain_halt_states_no_row(tmp_path: Path) -> None:
+    """The halted arm held the first ``assert`` on its way to the halt: that
+    one rode its record and is not refuted. Only the one no arm reached
+    states the halting guards."""
+    rows = _assertion_rows(
+        tmp_path,
+        "def f():\n    assert 1 == 1\n    raise ValueError('no')\n    assert 2 == 2\n",
+    )
+    assert rows == [(4, _FALSE)]
+
+
+_CERTAIN_HALT = (
+    "def boom():\n"
+    "{body}\n"
+    "\n"
+    "\n"
+    "def test_boom():\n"
+    "    boom()\n"
+    "    assert 1 == 1\n"
+)
+
+
+def test_a_test_that_certainly_raises_is_refuted(tmp_path: Path) -> None:
+    """A twin's verdict answers "does the test pass". The floor decides
+    ``boom()`` (a same-file call it constructs). Truthful: it returns, the
+    ``assert`` holds on the one completed arm. Lying: it always raises, the
+    test function's every arm halts before the ``assert``, and its row states
+    the halt's guard ``true`` negated: ``false``. Twin: one statement apart."""
+    truthful = run_source_through_real_solver(
+        tmp_path / "t", _CERTAIN_HALT.format(body="    return None")
+    )
+    lying = run_source_through_real_solver(
+        tmp_path / "l", _CERTAIN_HALT.format(body="    raise ValueError('no')")
+    )
+    assert truthful.verdict == "sat"
+    assert lying.verdict == "unsat"
 
 
 def _refused_row(seat_state: str) -> dict:

@@ -263,6 +263,8 @@ def exit_arms_payload_rows(
     halted_assertion_sites,
     halt_loci,
     def_memento,
+    unreached_assertion_sites,
+    halted_guards,
 ):
     """Every arm of one reduction, projected to the wire (#7766).
 
@@ -270,7 +272,10 @@ def exit_arms_payload_rows(
     ``halted_assertion_sites`` are the ``assert`` statements at which a halted
     arm of the SAME reduction left: the reduction reached the assertion and
     control halted there. ``halt_loci`` are the reduction's halted arms, one
-    ``PanicLocusDto`` each, wherever they left.
+    ``PanicLocusDto`` each, wherever they left. ``halted_guards`` are those
+    arms' guards. ``unreached_assertion_sites`` are, for a reduction with no
+    completed arm, the function's own ``assert`` statements no arm reached
+    (``tree_enumerate.unreached_assertion_sites``).
 
     * post: the conjunction over completed arms of ``g_i -> post_i``, and
       nothing else. A halted arm adds nothing to it, so a function that only
@@ -284,18 +289,35 @@ def exit_arms_payload_rows(
       that can be made false must not satisfy it, so this is never
       ``g -> fact``. A site an arm halted at and no completed arm holds states
       the OR over nothing: false.
+    * when no arm completed, one contract row per ``assert`` of the function
+      no arm reached: the conjunction over the halted arms of ``not g_h``.
+      Every execution the reduction states halts before it, so an execution
+      reaching it is one no halted arm's guard admits; the OR over completed
+      arms is over nothing, and the halted guards are what prove reads to
+      decide that. Halted arms whose guards cover every execution (a certain
+      halt) state a claim no execution satisfies (``false`` where the guards
+      fold, as a halt under truth does), so a test that certainly raises is
+      refuted at prove; a halt under a guard that may be false states a
+      satisfiable claim and is never refuted.
 
-    Every site comes from the reduction. An ``assert`` no arm evaluated (dead
-    code: a handler that never runs, a branch the floor decided away) has no
-    row, because nothing was reduced there; and a fact held on an arm that
-    later halts elsewhere is not a completed arm's fact.
+    Where a completed arm exists, every site comes from the reduction. An
+    ``assert`` no arm evaluated there (dead code: a handler that never runs, a
+    branch the floor decided away) has no row, because the function completes
+    without it; and a fact held on an arm that later halts elsewhere is not a
+    completed arm's fact.
 
     This is the ONE projection from a reduction to rows; a single arm under
     guard true is its one-arm case and keeps the rows it always had.
     """
     from sugar_lift_py_tests.floor.inv_value import InvValue
     from sugar_lift_py_tests.ir import and_, implies, or_
-    from sugar_lift_py_tests.outcome.exit_set import _is_true, false_guard
+    from sugar_lift_py_tests.outcome.exit_set import (
+        _and_guards,
+        _is_true,
+        complement_guard,
+        false_guard,
+        true_guard,
+    )
 
     if len(arms) == 1 and _is_true(arms[0][0]):
         guard, value = arms[0]
@@ -397,5 +419,15 @@ def exit_arms_payload_rows(
             continue
         reached.add(key)
         never_held.append(InvValue(false_guard(), site))
+    if unreached_assertion_sites:
+        no_halt = true_guard()
+        for guard in halted_guards:
+            no_halt = _and_guards(no_halt, complement_guard(guard))
+        for site in unreached_assertion_sites:
+            key = assertion_site_key(site)
+            if key in reached:
+                continue
+            reached.add(key)
+            never_held.append(InvValue(no_halt, site))
     rows.extend(mint_rows(name, formals, never_held))
     return rows
