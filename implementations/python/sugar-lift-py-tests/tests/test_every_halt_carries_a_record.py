@@ -401,6 +401,38 @@ def test_a_handler_sees_the_stores_made_before_a_raise_at_a_head(head: str) -> N
     assert _returned_value(outcome) == _ONE
 
 
+# A ``for`` (live loop) or a ``with`` gave the enclosing ``try`` one halt edge
+# for the whole statement: a halt in its header (the iterable, ``__enter__``)
+# was joined with the halts of its body, which append to ``acc``, so the
+# handler read ``acc`` undecided although no body code ran when the header
+# raised.  The header has an edge of its own now (``Try._body_halt_edges``,
+# ``_header_halt_state``), named by the halt's occurrence
+# (``_header_occurrence_keys``; ``__enter__`` is called at its own step's
+# site, ``protocol_step_site``, never the exit face ``__exit__`` is called at).
+_HEADER_EDGE_HEADS = ("loop-iterable", "with-enter")
+
+
+@pytest.mark.parametrize("head", _HEADER_EDGE_HEADS)
+def test_the_truthful_half_returns_the_state_at_the_header_that_raised(
+    head: str,
+) -> None:
+    # TRUTHFUL: ``acc.append(1)`` ran, then the header raised before the
+    # body; the handler returns ``[1]``.
+    outcome = function_universe_outcome(_function(_caught(*_HEADS[head])))
+    assert _returned_value(outcome) == _ONE
+
+
+@pytest.mark.parametrize("head", _HEADER_EDGE_HEADS)
+def test_the_lying_half_reads_acc_as_the_body_may_have_left_it(head: str) -> None:
+    # LYING: ``acc`` undecided at the handler (the header's halt joined with
+    # the body's), or holding what the body appends.
+    returned = _returned_value(
+        function_universe_outcome(_function(_caught(*_HEADS[head])))
+    )
+    assert isinstance(returned, ListValue), returned
+    assert returned.elements[1:] == (), returned
+
+
 @pytest.mark.parametrize("head", sorted(_HEADS))
 def test_every_halt_leaving_a_head_carries_a_record_with_what_ran_before(
     head: str,

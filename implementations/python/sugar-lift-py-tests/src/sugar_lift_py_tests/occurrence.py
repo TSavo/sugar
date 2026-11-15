@@ -151,7 +151,9 @@ def site_coordinate_cid(site) -> str:
     - a ``SourceFragmentCoordinateV1``: its CID;
     - a string: a synthetic call's content-addressed slot id (a manager
       protocol's ``__enter__``/``__exit__`` call has no source call of its
-      own; its site is the with-item's ``…#exit_face`` slot, already content);
+      own; its site is the with-item's ``…#exit_face`` slot for ``__exit__``
+      and that slot's ``__enter__`` step for ``__enter__``
+      (``context_manager_contract.protocol_step_site``), already content);
       a string spelling a fragment's repr is refused.
 
     Anything else is refused by name, never spelled some other way (#7808).

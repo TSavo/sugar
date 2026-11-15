@@ -100,8 +100,8 @@ def _observed():
         Try._body_halt_edges,
     )
 
-    def spy_edges(self, edge_states, scope):
-        result = edges(self, edge_states, scope)
+    def spy_edges(self, edge_states, scope, **options):
+        result = edges(self, edge_states, scope, **options)
         log["edges"].append(result)
         return result
 
