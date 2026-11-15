@@ -19,9 +19,26 @@ from sugar_lift_py_tests.ir import (
     atomic,
     ctor,
     formula_to_value,
+    py_eq,
+    py_ge,
+    py_gt,
+    py_le,
+    py_lt,
     str_const,
     term_to_value,
 )
+
+# A comparison operator's demand name -> the operator kind its undecided
+# completes atom names (``python:compare(<kind>, left, right, <key>)``) and
+# the predicate it completes with: the one undecided comparison form
+# (``comparison_op_sugar.undecided_dispatch_faces``).
+_COMPARISON_BY_OPERATOR = {
+    "equals": ("Eq", py_eq),
+    "less_than": ("Lt", py_lt),
+    "less_equal": ("LtE", py_le),
+    "greater_than": ("Gt", py_gt),
+    "greater_equal": ("GtE", py_ge),
+}
 
 
 class NativeOperationResolutionV1:
@@ -989,8 +1006,11 @@ class NativeOperationExitCarrierV1:
         ``python:subscript.completes(python:subscript(<term>, <key>))``
         (``FloorValue.undecided_subscript``), and
         ``python:binary_result(op, left, right, <key>)`` completing under
-        ``python:binary_op.completes`` (``undecided_binary_terms``). Any other
-        operator names only the operator and the occurrence. A formal with
+        ``python:binary_op.completes`` (``undecided_binary_terms``). ``==`` and
+        an ordering take the one undecided comparison form, the predicate
+        under ``python:compare.completes(python:compare(<op>, left, right,
+        <key>))``. Any other operator names only the operator and the
+        occurrence. A formal with
         no actual is reduced only in its function's own proof (``FormalRefSugar.desugar``), whose
         formals are the proof's own, so the post states the read over the
         formal, and a caller's actual joined on it (step 9) decides it where
@@ -1035,13 +1055,23 @@ class NativeOperationExitCarrierV1:
             value, guard = undecided_binary_terms(
                 binary, left, right, occurrence_key(site)
             )
-        elif self.demand.operator == "equals" and len(self.demand.operand_terms) == 2:
-            # ``==`` takes the one form every undecided equality takes
-            # (``comparison_op_sugar.undecided_dispatch_faces``): the
-            # predicate ``py.eq(left, right)`` completing under
-            # ``python:compare.completes(python:compare("Eq", left, right,
+        elif (
+            self.demand.operator in _COMPARISON_BY_OPERATOR
+            and len(self.demand.operand_terms) == 2
+        ):
+            # ``==`` and an ordering (``<``, ``<=``, ``>``, ``>=``) take the one
+            # form every undecided comparison takes
+            # (``comparison_op_sugar.undecided_dispatch_faces``): the predicate
+            # (``py.eq`` / ``py.lt`` / ``py.le`` / ``py.gt`` / ``py.ge`` over
+            # left and right) completing under
+            # ``python:compare.completes(python:compare(<op>, left, right,
             # <key>))``, over the demand's own operand terms, so the inputs
             # bound at prove (a caller's actual, a stated global) decide it.
+            # An ordering over a formal is no second, generic unanswered
+            # operation keyed on its site alone: that form names no operand,
+            # so a caller's actual joined on the formal decided nothing
+            # (#7757 step 9).
+            op_kind, _predicate = _COMPARISON_BY_OPERATOR[self.demand.operator]
             left, right = self.demand.operand_terms
             value = None
             guard = atomic(
@@ -1049,7 +1079,12 @@ class NativeOperationExitCarrierV1:
                 [
                     ctor(
                         "python:compare",
-                        (str_const("Eq"), left, right, str_const(occurrence_key(site))),
+                        (
+                            str_const(op_kind),
+                            left,
+                            right,
+                            str_const(occurrence_key(site)),
+                        ),
                     )
                 ],
             )
@@ -1063,9 +1098,11 @@ class NativeOperationExitCarrierV1:
             guard = self._completes_where_the_store_is_plain(guard)
         if value is None:
             from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-            from sugar_lift_py_tests.ir import py_eq
 
-            completed = PredicateValue(py_eq(*self.demand.operand_terms), self.site)
+            _op_kind, predicate = _COMPARISON_BY_OPERATOR[self.demand.operator]
+            completed = PredicateValue(
+                predicate(*self.demand.operand_terms), self.site
+            )
         else:
             completed = SymbolicValue(value)
         return ExitSet.two_faced(
