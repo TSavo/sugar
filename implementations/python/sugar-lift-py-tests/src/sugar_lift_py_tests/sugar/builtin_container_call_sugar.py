@@ -596,6 +596,17 @@ class PathContainerCallSugar(ConstructedTermSugar):
     def _apply(self, receiver, operands, ctx) -> ExitSet:
         from sugar_lift_py_tests.floor import builtin_container_method as law
 
+        # Every operand of the store, delete or in-place operator is projected
+        # to its value before the operation, through the one projection every
+        # store operand takes (``project_operation_receiver``, as
+        # ``SubscriptStoreEffectSugar.project_setitem`` does): ``a[f()] = 9``
+        # stores at what ``f`` returns, never at the unapplied call.
+        operands = tuple(
+            operand.project_operation_receiver(
+                ctx, owner=f"{type(self).__name__} operand"
+            )
+            for operand in operands
+        )
         kind = law.container_kind(receiver)
         if kind is not None and self.method in law.MUTATING_METHODS[kind]:
             decided = law.apply(kind, self.method, receiver, operands, self.site, ctx)
