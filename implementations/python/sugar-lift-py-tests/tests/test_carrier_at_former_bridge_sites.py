@@ -338,44 +338,6 @@ def test_discharge_projector_answering_a_carrier_is_refused_by_name(monkeypatch)
     _refused(excinfo, "NativeOperationExitCarrierV1.discharge")
 
 
-# --- contract_expression ----------------------------------------------------
-
-
-def _contract_answering(monkeypatch, answer):
-    from sugar_lift_py_tests import contract_expression
-
-    real = contract_expression._contract_body
-
-    def contract_body(expr, available_names):
-        node = real(expr, available_names)
-        monkeypatch.setattr(
-            type(node),
-            "substitute",
-            lambda self, scope: SimpleNamespace(sugar=lambda: _Answer(answer)),
-        )
-        return node
-
-    monkeypatch.setattr(contract_expression, "_contract_body", contract_body)
-    return contract_expression.parse_contract_expression
-
-
-def test_contract_expression_value_carrier_is_refused_by_name(monkeypatch):
-    carrier, _, _ = _carrier()
-    parse = _contract_answering(monkeypatch, carrier)
-    with pytest.raises(ConstructionPanic) as excinfo:
-        parse("x", ["x"])
-    _refused(excinfo, "parse_contract_expression")
-
-
-def test_contract_expression_truth_carrier_is_refused_by_name(monkeypatch):
-    carrier, _, _ = _carrier()
-    value = SimpleNamespace(truth=lambda fragment: carrier)
-    parse = _contract_answering(monkeypatch, ExitSet.completed(value))
-    with pytest.raises(ConstructionPanic) as excinfo:
-        parse("x", ["x"])
-    _refused(excinfo, "parse_contract_expression")
-
-
 # --- guarded_binding_read_sugar ---------------------------------------------
 
 

@@ -208,11 +208,7 @@ def test_sole_path_packages_are_green() -> None:
         row
         for row in offenders
         if row.kind == "foreign-ast-import"
-        and (
-            "import_binding" in row.path
-            or "contract_expression" in row.path
-            or "verify_dialect" in row.path
-        )
+        and ("import_binding" in row.path or "verify_dialect" in row.path)
     ]
     assert sole_foreign == []
 

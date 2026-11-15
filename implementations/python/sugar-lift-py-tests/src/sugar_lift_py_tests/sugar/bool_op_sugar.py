@@ -32,8 +32,7 @@ def truth_of(value, site, *, owner: str):
     ``a != b`` and ``a not in b``, an ``if`` / ``while`` / ``assert`` /
     conditional-expression test, a generator body's branch guard
     (``GeneratorConstructionV1._guard_truth``), each arm of a guarded value
-    (``GuardedValue.truth``), an embedded contract expression
-    (``contract_expression.parse_contract_expression``), a ground call
+    (``GuardedValue.truth``), a ground call
     result's dug body (``CallSiteValue._construct_decidable_truth``), and the
     native operation carrier's ``truth`` / ``boolop_truth`` / ``unary_truth``
     discharge on the caller's actual.
