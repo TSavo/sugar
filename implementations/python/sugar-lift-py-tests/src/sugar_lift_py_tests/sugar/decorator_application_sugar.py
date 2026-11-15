@@ -173,6 +173,12 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
     # decorators receive carries them (``LambdaCallable.defaults``) and
     # every call of it binds them (``object_value.bind_call``).
     defaults: tuple = field(default=(), compare=False)
+    # The sugar of each annotation Python evaluates where the ``def``
+    # statement runs (``nodes._evaluated_annotations``), after the defaults
+    # and before the function is built.  Its value is bound under no key;
+    # every face of it is the statement's (``def f(a: Missing)`` raises
+    # NameError where the statement runs).
+    annotations: tuple = field(default=(), compare=False)
     # True on the statement's own application
     # (``nodes._decorated_statement_sugar``): a decorated ``class`` statement
     # runs its body there, once, as an undecorated one does
@@ -349,8 +355,8 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
         return ModuleFinalValue(self.module_run, self.evaluation).read()
 
     def _evaluate(self, remaining: tuple, evaluated: tuple, ctx) -> ExitSet:
-        # The decorator expressions, top to bottom, then the defaults, before
-        # the definition.
+        # The decorator expressions, top to bottom, then the defaults, then
+        # the evaluated annotations, before the definition.
         if remaining:
             head, *rest = remaining
             return head.evaluated(
@@ -367,7 +373,12 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
                 lambda value: self._decorated(evaluated, value, ctx)
             )
 
-        return self._evaluated_defaults(ctx, define)
+        return self._evaluated_defaults(
+            ctx,
+            lambda defaults: _evaluated_in_order(
+                self.annotations, ctx, lambda: define(defaults)
+            ),
+        )
 
     def _evaluated_defaults(self, ctx, then) -> ExitSet:
         """The ``def``'s defaults evaluated where the statement runs, left to

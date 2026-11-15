@@ -1235,6 +1235,23 @@ def test_decorator():
     assert _raises(raising, "ZeroDivisionError") != []
 
 
+def test_a_def_statement_evaluates_its_annotations() -> None:
+    """Without ``from __future__ import annotations`` Python evaluates a
+    ``def``'s annotations when the statement runs, after its defaults: an
+    annotation that raises raises there, whether or not the function is ever
+    called."""
+    raising = _test_function_outcome(
+        """\
+def test_annotation():
+    def f(a: 1 // 0):
+        return a
+
+    assert 1 == 1
+"""
+    )
+    assert _raises(raising, "ZeroDivisionError") != []
+
+
 def test_the_statement_and_the_frame_name_one_default_key() -> None:
     """The ``def`` statement binds each default under the key every frame
     of the definition reads."""

@@ -419,6 +419,35 @@ def test_module_bare_attribute_annotation_never_substituted_refuses_by_name():
     assert refused.value.owner == "AnnAssign._construct_sugar"
 
 
+def test_module_annotated_name_evaluates_its_annotation_after_the_store():
+    """``x: T = v`` and ``x: T`` in a module body: Python stores the value
+    (if any), then evaluates the annotation (#7757).  The statement is the
+    assignment (or nothing, bare), then the annotation as an expression
+    statement, spliced into the module block."""
+    body = _module("x: int = 1\ny: int\n").substitute({}).body
+    assert [statement.kind for statement in body] == [
+        "AnnAssign",
+        "Expr",
+        "AnnAssign",
+        "Expr",
+    ]
+    assert all(body[index].value.id == "int" for index in (1, 3))
+
+
+def test_module_annotated_name_under_postponed_annotations_is_the_assignment():
+    future = "from __future__ import annotations\n"
+    body = _module(future + "x: int = 1\n").substitute({}).body
+    assert [statement.kind for statement in body] == ["ImportFrom", "AnnAssign"]
+
+
+def test_module_annotated_name_never_substituted_refuses_by_name():
+    statement = _module("x: int = 1\n").body[-1]
+    assert statement.kind == "AnnAssign"
+    with pytest.raises(SugarNotWritten) as refused:
+        statement.sugar()
+    assert refused.value.owner == "AnnAssign._construct_sugar"
+
+
 def test_bare_annotated_store_target_stores_nothing():
     """``o[k]: int`` with no value stores nothing: it never becomes a
     store."""
