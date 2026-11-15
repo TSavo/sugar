@@ -585,7 +585,6 @@ def test_stored_expression_constructs_once_then_projects_testimony(
 def _forge_state(state, **overrides):
     values = {
         "object_coordinate": state.object_coordinate,
-        "class_definition_cid": state.class_definition_cid,
         "construction_testimony": state.construction_testimony,
         "object_identity_cid": state.object_identity_cid,
         "base": state.base,
@@ -598,7 +597,6 @@ def _forge_state(state, **overrides):
             state.span,
             (
                 ("object_coordinate", Leaf(values["object_coordinate"])),
-                ("class_definition_cid", Leaf(values["class_definition_cid"])),
                 ("construction_testimony", Leaf(values["construction_testimony"])),
                 ("object_identity_cid", Leaf(values["object_identity_cid"])),
                 ("base", Child(_handle_of(values["base"]))),

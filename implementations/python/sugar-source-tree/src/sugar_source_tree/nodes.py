@@ -15117,9 +15117,6 @@ class Assign(Statement):
         if not isinstance(constructor, Node):
             return None
         testimony = _occurrence_testimony(constructor)
-        # The class statement's content address is a fact of its sugar; the
-        # statement is not reduced to read it.
-        class_definition_cid = definition.sugar().class_definition_cid
         from .object_identity import SourceObjectCoordinateV1
 
         object_coordinate = SourceObjectCoordinateV1.mint(
@@ -15139,7 +15136,6 @@ class Assign(Statement):
                 self.targets[0].span,
                 (
                     ("object_coordinate", Leaf(object_coordinate)),
-                    ("class_definition_cid", Leaf(class_definition_cid)),
                     ("construction_testimony", Leaf(testimony)),
                     ("object_identity_cid", Leaf(object_coordinate.cid)),
                     ("base", Child(_handle_of(constructor))),
@@ -24191,7 +24187,6 @@ class ObjectPlaceStateV1(Expression):
     """
 
     object_coordinate: object
-    class_definition_cid: str
     construction_testimony: object
     object_identity_cid: str
     base: Expression
