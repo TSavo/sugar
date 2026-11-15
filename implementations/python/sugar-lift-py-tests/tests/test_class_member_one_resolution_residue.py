@@ -90,6 +90,23 @@ def _halt_names(outcome) -> list:
     ]
 
 
+def _the_edge(outcome) -> None:
+    """The call of the member the one resolution selected is its coordinate
+    and edge (#7757 steps 5 and 6, #8705, #8738): one completion under the
+    unanswered call's ``completes`` atom, whose value is the call with no body
+    applied, and one halt no exception names here.  What the member's body
+    raises is its contract's halt, joined at prove; before steps 5 and 6 the
+    body was applied here and its own exception named."""
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.outcome import Completed
+
+    assert _halt_names(outcome) == [None]
+    (completed,) = (face for face in outcome.exits if isinstance(face, Completed))
+    assert "python:unknown_callee_call.completes" in repr(completed.guard)
+    assert isinstance(completed.value, CallSiteValue)
+    assert completed.value.body is None
+
+
 def _unanswered(outcome, target: str) -> None:
     (halt,) = outcome.halts()
     assert isinstance(halt.effect, UndeterminedRaiseEffect)
@@ -113,12 +130,13 @@ def test_cls_m_is_the_def_after_a_property_never_a_count_of_names() -> None:
     receiver = box.fresh_receiver("receiver", allocation=FRAME_FRESH)
 
     # Two roster functions are named ``m``; the body's last binding is the
-    # member, read off the class unbound: the receiver is written.
+    # member, read off the class unbound: the receiver is written.  Its call
+    # is the edge; ``raise ValueError`` is the def's contract, joined at prove.
     outcome = box.call_method_value(
         "m", (receiver,), owner="test", blame="cls-m", ctx=context
     )
 
-    assert _halt_names(outcome) == ["ValueError"]
+    _the_edge(outcome)
 
 
 def test_cls_m_of_a_lambda_class_field_is_the_function_unbound() -> None:
@@ -128,8 +146,9 @@ def test_cls_m_of_a_lambda_class_field_is_the_function_unbound() -> None:
         "f", (TermValue(3),), owner="test", blame="cls-f", ctx=context
     )
 
-    # No receiver is bound: the one written actual is ``n``.
-    assert _halt_names(outcome) == ["ZeroDivisionError"]
+    # No receiver is bound: the one written actual is ``n``.  The lambda's
+    # call is the edge; its ``ZeroDivisionError`` is joined at prove.
+    _the_edge(outcome)
 
 
 def test_cls_m_after_an_assignment_never_runs_the_earlier_def() -> None:
@@ -167,7 +186,9 @@ def test_super_m_is_the_last_binding_a_lambda_bound_to_the_receiver() -> None:
     )
 
     # Base's namespace holds the lambda, bound to the receiver: ``n`` is 3.
-    assert _halt_names(outcome) == ["ZeroDivisionError"]
+    # The lambda's call is the edge; its ``ZeroDivisionError`` is joined at
+    # prove, never the earlier ``def``'s ``ValueError``.
+    _the_edge(outcome)
 
 
 def test_super_m_of_a_rewritten_def_is_the_unanswered_call() -> None:

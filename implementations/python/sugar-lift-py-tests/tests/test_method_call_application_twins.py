@@ -552,14 +552,18 @@ def test_lookup():
 def test_unknown_receiver_method_call_is_two_faced_in_process() -> None:
     """Reduction level: the completion is guarded and the raise is a face.
 
-    A receiver the lifter holds applies the method body and completes alone;
-    a receiver it does not hold is the plain unknown call, completing only
-    under ``python:unknown_callee_call.completes`` and raising otherwise.
+    A receiver the lifter does not hold is the plain unknown call, completing
+    only under ``python:unknown_callee_call.completes`` and raising otherwise.
+    A receiver made by a same-file class call (``Registry()``) no longer
+    completes alone: the class call is its coordinate and edge and the method
+    of its result is not dispatched at the reduction (#7757 step 6, #8738), so
+    it gives the same undecided faces.  Before step 6 the method body was
+    applied and the call completed alone.
     """
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
-    assert _test_function_outcome(_HELD_RECEIVER).completed_value() is not None
+    _undecided_faces(_test_function_outcome(_HELD_RECEIVER))
     outcome = _test_function_outcome(_UNKNOWN_RECEIVER.format(claim=3))
     assert isinstance(outcome, ExitSet), outcome
     completed = [face for face in outcome.exits if isinstance(face, Completed)]

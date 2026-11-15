@@ -203,6 +203,15 @@ def test_a_source_method_after_dict_in_the_mro_does_not_win() -> None:
 
 
 def test_getitem_dispatches_the_source_override() -> None:
+    """The source override wins the lookup, and its call is the override's
+    coordinate and edge (#7757 step 6, #8738): one completion under the
+    unanswered call's ``completes`` atom whose value names
+    ``Override.__getitem__`` with no body applied, and one halt no exception
+    names here.  ``return 7`` is the override's contract, joined at prove.
+    Before step 6 the override's body was applied and the call completed
+    alone."""
+    from sugar_lift_py_tests.outcome import Completed, Halted
+
     context, receivers = _receivers()
 
     outcome = receivers["Override"].call_method_value(
@@ -213,7 +222,13 @@ def test_getitem_dispatches_the_source_override() -> None:
         ctx=context,
     )
 
-    assert isinstance(outcome.completed_value(), CallSiteValue)
+    (completed,) = (face for face in outcome.exits if isinstance(face, Completed))
+    (halted,) = (face for face in outcome.exits if isinstance(face, Halted))
+    assert "python:unknown_callee_call.completes" in repr(completed.guard)
+    assert isinstance(completed.value, CallSiteValue)
+    assert completed.value.body is None
+    assert completed.value.target_name.endswith("Override.__getitem__")
+    assert halted.effect.exception_name is None
 
 
 def test_a_door_without_context_refuses_a_source_override() -> None:
