@@ -220,35 +220,61 @@ def test_lying_body_without_matching_halt_carries_none(
     ), (family, outcome)
 
 
-def test_callsite_not_is_not_refused_for_manager_derivation() -> None:
-    """Shared fix pin: ``not CallSiteValue`` reaches truth, not SugarNotWritten."""
+def test_callsite_not_is_not_refused_for_manager_derivation(tmp_path: Path) -> None:
+    """Shared fix pin: ``not CallSiteValue`` reaches truth, not SugarNotWritten.
+
+    A call result's type is undecided, so ``bool()`` of it may run its
+    ``__bool__`` / ``__len__``.  The one truth rule (``bool_op_sugar.truth_of``)
+    answers the undecided member's two faces: the negated truth under the
+    site's ``truth.completes`` guard, or an undetermined raise.  Nothing is
+    refused, and nothing is claimed as one unconditional completion.
+
+    The operand is a constructed term sugar and the site a real source
+    fragment, the only shapes ``UnaryOpSugar`` receives
+    (``require_constructed_term_sugar``; the truth is keyed by the site's
+    coordinate).
+    """
+    from dataclasses import dataclass
+
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.floor import CallSiteValue
     from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
     from sugar_lift_py_tests.sugar.unary_op_sugar import UnaryOpSugar
-    from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
-    class _Site:
-        filename = "first_auth_exit_vertical_slices.py"
-        line = 1
-        col = 0
-        unit = type("_Unit", (), {"source": "not call_result\n"})()
+    path = tmp_path / "not_call_result.py"
+    path.write_text("result = not call_result\n")
+    tree = SourceFile(workspace_path_source(str(path), root=str(tmp_path)))
+    site = next(node for node in tree.nodes() if isinstance(node, UnaryOp)).fragment
 
-    class _Operand(Sugar):
+    @dataclass(frozen=True)
+    class _Operand(ConstructedTermSugar):
+        value: object
+
         def desugar(self, ctx=None):
             del ctx
-            return ExitSet.completed(
-                CallSiteValue(
-                    "source-constructor",
-                    (),
-                    (),
-                    ctor("call:source-constructor", []),
-                    None,
-                )
-            )
+            return ExitSet.completed(self.value)
 
         @classmethod
         def witnesses(cls):
             return ()
 
-    outcome = UnaryOpSugar("Not", _Operand(), _Site()).desugar(None)
-    assert outcome.completed_value() is not None
+        def to_term(self, *, owner):
+            return self.value.to_term(owner=owner)
+
+    call_result = CallSiteValue(
+        "source-constructor",
+        (),
+        (),
+        ctor("call:source-constructor", []),
+        None,
+    )
+    outcome = UnaryOpSugar("Not", _Operand(call_result), site).desugar(None)
+
+    completed = [exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)]
+    halted = outcome.halts()
+    assert len(completed) == 1 and len(halted) == 1, outcome
+    assert completed[0].value is not None
+    assert isinstance(halted[0].effect, UndeterminedRaiseEffect), halted[0].effect
+    assert halted[0].effect.producer_node_owner == "UnaryOpSugar.not"
