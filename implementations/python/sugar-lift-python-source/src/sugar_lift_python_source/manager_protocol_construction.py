@@ -1,22 +1,18 @@
 """The protocol of the manager a ``with`` head reduced to (#7757).
 
 ``ReducedManagerProtocolV1`` reads ``__enter__`` / ``__exit__`` on the value
-the head reduced to; the helpers below bind and apply those methods as every
-call is bound and applied."""
+the head reduced to; the helpers below call those methods as every implicit
+special-method call is made: a method on a decided receiver is its coordinate
+and edge, joined at prove (#7757 step 6), never its body applied here."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
 from sugar_lift_py_tests.floor import (
-    BlockValue,
-    CallSiteValue,
     EnteredManagerStateValue,
     FloorValue,
-    GuardedReceiverFieldStoreValue,
-    ObjectField,
     ObjectValue,
-    ReceiverFieldStoreValue,
 )
 from sugar_lift_py_tests.floor.manager_coordinate import (
     ExitTracebackCoordinate,
@@ -197,8 +193,8 @@ class ReducedManagerProtocolV1:
     on that value's own type, as Python reads them (8.5):
 
     * a receiver whose type the one class-namespace lookup decides selects
-      both methods: each is bound and applied as every call is
-      (``_call_protocol_method``);
+      both methods: each is called as every method call is, its coordinate
+      and edge, joined at prove (``_call_protocol_method``, #7757 step 6);
     * a receiver whose type it decides lacks either: the ``with`` raises the
       interpreter's own TypeError before any enter and before the body;
     * any other value is the undecided manager: ``__enter__`` and
@@ -329,19 +325,22 @@ class ReducedManagerProtocolV1:
 
 
 def _call_protocol_method(receiver, name, arguments, site, ctx):
-    """``receiver.<name>(*arguments)``: bound, then applied, as every call is.
-
-    The protocol method binds through ``bind_method_call`` (the receiver's
-    ``bound_method_call``), so its frame is read again at the module
-    execution site the With runs at (#7972), and is applied by
-    ``_apply_protocol_call`` (``CallSiteValue.producer_outcome``).  ``site``
-    is the call's site: the item's exit face for ``__exit__``, its
-    ``__enter__`` step's site for ``__enter__`` (``protocol_step_site``).
+    """``receiver.<name>(*arguments)``: the implicit special-method call
+    ``type(receiver).<name>(receiver, *arguments)`` the ``with`` statement
+    makes, through the one door every implicit dunder call takes
+    (``ObjectValue.call_method_value``).  A method the one class-namespace
+    lookup selects on a receiver whose class is decided is its coordinate and
+    edge, joined at prove (``method_edge_call``, #7757 step 6); a receiver
+    that arrived by binding, or a lookup not decided, is the unanswered call.
+    The method's body is never applied here: what it returns and what it
+    does to the receiver are what its contract states.  ``site`` is the
+    call's site: the item's exit face for ``__exit__``, its ``__enter__``
+    step's site for ``__enter__`` (``protocol_step_site``).
     """
     from sugar_source_tree.panic import SugarNotWritten
 
-    bound_method_call = getattr(receiver, "bound_method_call", None)
-    if not callable(bound_method_call):
+    call_method_value = getattr(receiver, "call_method_value", None)
+    if not callable(call_method_value):
         raise SugarNotWritten(
             blame=site,
             owner="ConstructedManagerProtocolV1.protocol_method",
@@ -349,144 +348,32 @@ def _call_protocol_method(receiver, name, arguments, site, ctx):
             requested=f"authenticated {name} call over projected receiver state",
             fix="preserve the exact receiver method frame or keep protocol loud",
         )
-    return _apply_protocol_call(
-        bound_method_call(
-            name,
-            arguments,
-            owner="ConstructedManagerProtocolV1.protocol_method",
-            blame=site,
-            ctx=ctx,
-        ),
-        ctx,
+    return call_method_value(
+        name,
+        tuple(arguments),
+        owner="ConstructedManagerProtocolV1.protocol_method",
+        blame=site,
+        ctx=ctx,
     )
-
-
-def _apply_protocol_call(call: CallSiteValue, ctx):
-    """The one application of a bound ``__enter__``/``__exit__`` call.
-
-    ``CallSiteValue.producer_outcome`` applies it, as it applies every call
-    (#7757 entry 6, #7969): each halt of the body is the call's own, and a
-    deferred native operation over a formal is discharged against the bound
-    actuals.  The With reads what the body did (its receiver stores and its
-    return), so each completed face carries the body completion the Call
-    retained (``retained_source_completion_outcome``), never a second
-    reduction of the body.
-    """
-    from sugar_lift_py_tests.gap.panic import construction_panic_gap
-    from sugar_lift_py_tests.outcome import ExitSet
-
-    if call.body is None:
-        # ``producer_outcome`` answers a bodiless call with the call itself;
-        # a protocol method with no source body stays the refusal it was.
-        construction_panic_gap(
-            owner="ConstructedManagerProtocolV1.protocol_method",
-            blame=call.target_name,
-            observed="protocol method call has no source body",
-            requested="the constructed source body of the protocol method",
-            fix="retain the source-visible call frame or keep the call loud",
-        )
-    outcome = call.producer_outcome(ctx)
-    if not isinstance(outcome, ExitSet):
-        return outcome
-
-    def body_completion(value):
-        # Each completed face continues as the body completion it retained
-        # (``ExitSet.and_then``): its guard, faces and ``owed`` ride on. Each
-        # halt of the body stands as the call's own.
-        if isinstance(value, CallSiteValue) and value.term is call.term:
-            retained = value.retained_source_completion_outcome()
-            if retained is not None:
-                return ExitSet.completed(retained.completed_value())
-        return ExitSet.completed(value)
-
-    return outcome.and_then(body_completion)
 
 
 def _resource_enter_transitions(receiver: ObjectValue, enter_outcome, *, blame: object):
-    from sugar_lift_py_tests.ir import not_
-    from sugar_lift_py_tests.outcome import ExitSet
-    from sugar_lift_py_tests.outcome.exit_set import partition
-    from sugar_source_tree.panic import SugarNotWritten
+    """Each completed ``__enter__`` face entered: the value the call
+    completed with (its coordinate, ``as x`` reads it) and the receiver.
 
-    # Each enter face becomes one resource transition: an enter that is a
-    # deferred native-operation carrier is refused by name.
+    ``__enter__`` is an edge (``_call_protocol_method``): what it did to the
+    receiver is what its contract states, joined at prove (#7757 step 7), so
+    the receiver the ``with`` exits is the one it entered.  An enter that is a
+    deferred native-operation carrier is refused by name; every halted enter
+    face leaves the With as itself."""
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    del blame
     enter_exits = _require_exit_set(
         enter_outcome, owner="ConstructedManagerProtocolV1.resource_enter_transitions"
     )
-
-    def stored(state, statement):
-        """The receiver states after one acquisition store, beneath ``state``.
-
-        A guarded store splits the state: each side is one fresh arm
-        (``ExitSet.completed``) restricted to its face of the split, and the
-        two sides join through the one join."""
-        if isinstance(statement, GuardedReceiverFieldStoreValue):
-            then_face, else_face = partition(
-                ("resource-enter-store", statement.to_term(owner=receiver.identity))
-            )
-            return (
-                ExitSet.completed(_apply_receiver_store(state, statement, blame=blame))
-                .guarded(statement.guard, then_face)
-                .union(
-                    ExitSet.completed(state).guarded(
-                        not_(statement.guard), else_face
-                    )
-                )
-            )
-        if isinstance(statement, ReceiverFieldStoreValue):
-            return ExitSet.completed(
-                _apply_receiver_store(state, statement, blame=blame)
-            )
-        return ExitSet.completed(state)
-
-    def transitions(block):
-        if not isinstance(block, BlockValue):
-            raise SugarNotWritten(
-                blame=blame,
-                owner="ConstructedManagerProtocolV1.enter_resource_outcome_for",
-                observed=type(block).__name__,
-                requested="completed enter block carrying exact acquisition stores",
-                fix="preserve the ordinary enter block or keep resource state loud",
-            )
-        # Each store runs beneath every state the stores before it reached
-        # (``ExitSet.and_then``), so each split's guard and face ride on.
-        states = ExitSet.completed(receiver)
-        for statement in block.statements:
-            states = states.and_then(
-                lambda state, statement=statement: stored(state, statement)
-            )
-        return states.and_then(
-            lambda state: ExitSet.completed(EnteredManagerStateValue(block, state))
-        )
-
     # Every transition runs beneath its enter face (``ExitSet.and_then``):
-    # the face's guard, faces and ``owed`` ride onto each one. A halted enter
-    # face leaves the With as itself.
-    return enter_exits.and_then(transitions)
-
-
-def _apply_receiver_store(
-    receiver: ObjectValue, statement: ReceiverFieldStoreValue, *, blame: object
-) -> ObjectValue:
-    from sugar_source_tree.panic import SugarNotWritten
-
-    if statement.receiver.identity != receiver.identity:
-        raise SugarNotWritten(
-            blame=blame,
-            owner="ConstructedManagerProtocolV1.enter_resource_outcome_for",
-            observed="receiver coordinate mismatch",
-            requested="acquisition store from the exact authenticated receiver",
-            fix="preserve ObjectValue.identity across the enter transition",
-        )
-    fields = {field.name: field.value for field in receiver.fields}
-    fields[statement.attr] = statement.value
-    return ObjectValue(
-        receiver.class_name,
-        tuple(ObjectField(name, fields[name]) for name in sorted(fields)),
-        methods=receiver.methods,
-        class_fields=receiver.class_fields,
-        identity=receiver.identity,
-        # The same object: it keeps its ``allocation`` and ``arrival``.
-        allocation=receiver.allocation,
-        arrival=receiver.arrival,
+    # the face's guard, faces and ``owed`` ride onto each one.
+    return enter_exits.and_then(
+        lambda value: ExitSet.completed(EnteredManagerStateValue(value, receiver))
     )
