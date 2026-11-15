@@ -105,11 +105,12 @@ def test_generator_construction_module_is_the_named_replacement_shape():
 
 def test_throw_runs_constructed_finally_and_restores_exact_incoming_effect():
     api = _api()
-    from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
 
+    # ``try: yield 7`` / ``finally: 0``: a cleanup statement is its term
+    # sugar (``FinallyStepV1.statements`` admits only ConstructedTermSugar).
     yielded = _machine(
         api.YieldStepV1(_int(7)),
-        api.FinallyStepV1((InertSugar(site="cleanup"),)),
+        api.FinallyStepV1((_int(0),)),
         api.ReturnStepV1(),
     ).resume()
     incoming = RaiseEffect.for_builtin("ValueError", occurrence="body:8")
@@ -124,11 +125,10 @@ def test_throw_runs_constructed_finally_and_restores_exact_incoming_effect():
 def test_close_runs_constructed_finally_and_returns_termination_face():
     api = _api()
     from sugar_lift_py_tests.outcome import Completed, ExitSet
-    from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
 
     yielded = _machine(
         api.YieldStepV1(_int(7)),
-        api.FinallyStepV1((InertSugar(site="cleanup"),)),
+        api.FinallyStepV1((_int(0),)),
         api.ReturnStepV1(_int(9)),
     ).resume()
 

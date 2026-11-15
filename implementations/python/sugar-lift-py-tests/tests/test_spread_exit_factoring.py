@@ -17,6 +17,7 @@ concrete per-assignment outcomes and compares those.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import itertools
 
 import pytest
@@ -46,6 +47,7 @@ from sugar_lift_py_tests.sugar.spread_sugar import (
     SpreadCollectionSugar,
     SpreadDictSugar,
 )
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 # --- the corpus shape: k elements, each with its own completed partition -----
 
@@ -69,23 +71,43 @@ _DISTINCT_BUILTIN_EXCEPTIONS = (
 )
 
 
-class _TwoFacedElement:
+@dataclass(frozen=True)
+class _TwoFacedElement(ConstructedTermSugar):
     """One spread element whose value depends on a guard, and which can halt.
 
     Three arms, pairwise contradictory: halted under ``h``, and two completed
     faces under ``not h and g`` / ``not h and not g``.  This is the shape a
     branch join or a guarded binding hands to a spread operand, and it is the
     shape whose Cartesian product exploded.
+
+    A constructed operand: a spread's element slot admits only a
+    ``ConstructedTermSugar`` (``require_constructed_term_sugar``).
     """
 
-    def __init__(self, index: int) -> None:
-        self.index = index
-        self.guard = _atom(f"g{index}")
-        self.halt_guard = _atom(f"h{index}")
-        self.effect = RaiseEffect.for_builtin(
-            _DISTINCT_BUILTIN_EXCEPTIONS[index],
-            occurrence="implementations/python/sugar-lift-py-tests/tests/test_spread_exit_factoring.py:72:0",
+    index: int
+    guard: object = field(init=False, compare=False, repr=False)
+    halt_guard: object = field(init=False, compare=False, repr=False)
+    effect: object = field(init=False, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "guard", _atom(f"g{self.index}"))
+        object.__setattr__(self, "halt_guard", _atom(f"h{self.index}"))
+        object.__setattr__(
+            self,
+            "effect",
+            RaiseEffect.for_builtin(
+                _DISTINCT_BUILTIN_EXCEPTIONS[self.index],
+                occurrence="implementations/python/sugar-lift-py-tests/tests/test_spread_exit_factoring.py:72:0",
+            ),
         )
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def to_term(self, *, owner: str):
+        del owner
+        return ctor(f"two_faced{self.index}", [])
 
     def desugar(self, ctx=None):
         del ctx
@@ -105,11 +127,19 @@ class _TwoFacedElement:
         )
 
 
-class _SingleFacedElement:
+@dataclass(frozen=True)
+class _SingleFacedElement(ConstructedTermSugar):
     """One spread element with exactly one completed arm and no halt."""
 
-    def __init__(self, index: int) -> None:
-        self.index = index
+    index: int
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def to_term(self, *, owner: str):
+        del owner
+        return ctor(f"only{self.index}", [])
 
     def desugar(self, ctx=None):
         del ctx
