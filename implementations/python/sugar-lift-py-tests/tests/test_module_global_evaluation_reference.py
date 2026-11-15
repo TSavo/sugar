@@ -863,6 +863,20 @@ def test_a_deleted_global_read_is_a_name_error_halt() -> None:
 # it may bind is undecided; before it, each name keeps what its own
 # statements bound.  The lifter reads no imported module's export list, so
 # ``from opaque import *`` may bind any name.
+def _globals_supplied(term) -> dict:
+    """``{name: value term}`` of each ``py.global(name, value)`` anywhere
+    under ``term``: what a call of a same-file function supplies for each
+    ``global:`` input of its contract (``definition_edge_call``)."""
+    supplied = {}
+    stack = [term]
+    while stack:
+        item = stack.pop()
+        if getattr(item, "name", None) == "py.global":
+            supplied[item.args[0].value] = item.args[1]
+        stack.extend(getattr(item, "args", ()) or ())
+    return supplied
+
+
 STAR_AFTER_A_CALL = (
     "X = 1\ndef f():\n    return X\nY = f()\nfrom opaque import *\n"
     "def g():\n    return Y\n"
@@ -895,12 +909,20 @@ def test_a_read_before_a_star_import_is_decided_by_the_module_run(
     half: str, claim: int, holds: bool
 ) -> None:
     # Python runs ``Y = f()`` before ``from opaque import *``: ``f`` returns
-    # ``X = 1``'s value, 1, whatever the star import binds later.  The module
-    # run binds ``Y``'s key to it; the truthful claim holds, the lying one
-    # does not.
+    # ``X = 1``'s value, 1, whatever the star import binds later.  ``f()``
+    # is ``f``'s coordinate and edge (#7757 step 5, #8705), and the run binds
+    # ``Y``'s key to its result: the call supplies ``f``'s input
+    # ``global:X`` as the binding standing at the call, ``py.global(X, 1)``
+    # (``global_value_at_call``), never what the star import binds later.
+    # Prove reads ``f``'s post (``out == global:X``) at that input: the
+    # truthful claim holds, the lying one does not.  Before step 5 ``f``'s
+    # body was followed and the run bound ``Y`` to 1 itself.
+    from sugar_lift_py_tests.ir import num
+
     tree = _source(STAR_AFTER_A_CALL)
     (key,) = _assignment_keys(tree, "Y")
-    assert (_module_end_value(tree, key) == TermValue(claim)) is holds, half
+    supplied = _globals_supplied(_module_end_value(tree, key).to_term(owner="test"))
+    assert (supplied.get("X") == num(claim)) is holds, (half, supplied)
 
 
 def test_a_name_bound_after_a_star_import_is_decided_again() -> None:
@@ -1401,12 +1423,32 @@ def _returned_value(outcome):
     return returned.value
 
 
+def _reads_its_global_input(value, name: str) -> bool:
+    """Whether ``value`` is the free input ``global:<name>`` of the function
+    reduced on its own (#7757 step 5, #8704): its contract is stated over
+    the input, and the row states the module-final value beside it
+    (``stated_global_values``) for prove's one binder."""
+    return getattr(getattr(value, "term", None), "name", None) == f"global:{name}"
+
+
+def _stated(function) -> dict:
+    """``{formal: term}``: the value the module's one run left for each
+    ``global:`` input the function's row states (``inputValues``)."""
+    from sugar_lift_py_tests.sugar.call_site_sugar import stated_global_values
+
+    return dict(stated_global_values(function))
+
+
 def test_a_function_reduced_on_its_own_reads_the_module_final_binding() -> None:
+    # The body reads its free input ``global:X`` (#8704); the module-final
+    # binding, 2, is the value its row states for it, which prove binds.
+    from sugar_lift_py_tests.ir import num
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
     tree = _source("X = 1\ndef f():\n    return X\nX = 2\n")
     outcome = function_universe_outcome(_function(tree))
-    assert _returned_value(outcome) == TermValue(2)
+    assert _reads_its_global_input(_returned_value(outcome), "X")
+    assert _stated(_function(tree)) == {"global:X": num(2)}
 
 
 def test_a_call_after_import_binds_the_final_key_at_frame_entry() -> None:
@@ -1508,10 +1550,14 @@ def test_an_augmented_final_binding_reads_the_module_runs_value() -> None:
     # it, and the function reduced on its own reads that value.
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
+    # Read as the free input ``global:x`` (#8704), stated at that value.
     tree = _source("x = 1\nx += 1\ndef f():\n    return x\n")
     (key,) = _module_evaluations(tree)
     outcome = function_universe_outcome(_function(tree))
-    assert _returned_value(outcome) == _module_end_value(tree, key)
+    assert _reads_its_global_input(_returned_value(outcome), "x")
+    assert _stated(_function(tree)) == {
+        "global:x": _module_end_value(tree, key).to_term(owner="test")
+    }
 
 
 CALL_THEN_AUGMENTED = (
@@ -1523,39 +1569,47 @@ CALL_THEN_AUGMENTED = (
 
 
 def test_a_standalone_function_reads_the_module_runs_value_of_a_call() -> None:
-    # ``X = g(); X += 1``: the run called ``g`` once and added once; ``f``
-    # reduced on its own reads what the run bound under ``X += 1``'s key,
-    # and evaluates neither write again.
+    # ``X = g(); X += 1``: the run called ``g`` once and added once, and
+    # evaluates neither write again for ``f``.  ``g()`` is ``g``'s coordinate
+    # and edge (#7757 step 5, #8705), so the run's value of ``X`` is
+    # ``call_result(g()) + 1``, owing ``g``'s call.  ``f`` reduced on its own
+    # reads its free input ``global:X`` (#8704), and its row states no value
+    # for it: a value whose making owes a call is not stated
+    # (``stated_global_values``), so a claim over ``X`` stays undecided at
+    # prove.  Before step 5 ``g``'s body was followed and ``f`` returned 2.
+    from sugar_lift_py_tests.ir import num
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
     tree = _source(CALL_THEN_AUGMENTED)
     (key,) = _module_evaluations(tree)
     outcome = function_universe_outcome(_function(tree))
-    assert _returned_value(outcome) == _module_end_value(tree, key)
+    assert _reads_its_global_input(_returned_value(outcome), "X")
+    assert _module_end_value(tree, key) != TermValue(2)
+    assert "call_result" in repr(_module_end_value(tree, key).to_term(owner="test"))
+    assert "global:X" not in _stated(_function(tree))
+    assert num(2) not in _stated(_function(tree)).values()
 
 
 def test_a_function_reduced_on_its_own_reads_a_module_loops_publication() -> None:
     # ``for i in g(): last = i`` at module level, then ``f`` reads ``last``
-    # on its own: the frame entry binds the loop's post-loop key to what the
-    # run's loop left it as (the last item, 2) and decides the loop's write
-    # slot as the run decided it (an item wrote it), each read where the
-    # read selects and reads, so the read takes the post-loop key alone --
-    # never the ``NameError`` arm no run took.
-    from sugar_lift_py_tests.sugar.call_site_sugar import branch_result_read
-    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+    # on its own.  ``g()`` is ``g``'s coordinate and edge (#7757 step 5,
+    # #8705): the run iterates the call's result as the one undecided read
+    # (``CallSiteValue.iter_with``, #8775), so it completes, but how many
+    # items it ran -- and so whether ``last`` was written, and to what -- is
+    # not decided here.  ``f`` reads its free input ``global:last`` (#8704),
+    # and its row states no value for it, so a claim over ``last`` stays
+    # undecided at prove.  Before step 5 ``g``'s body was followed: the run
+    # wrote ``last = 2`` and ``f`` returned 2.
+    from sugar_lift_py_tests.tree_enumerate import (
+        function_universe_outcome,
+        module_end_contexts,
+    )
 
     tree = _source(LOOP_FIRST_BOUND)
-    final = _function(tree).unit.module_bindings_at(None, {"last"})["last"]
-    ctx = _entered(tree)
-    assert isinstance(
-        branch_result_read(ctx.ground_branch_results, final.slot.slot_id),
-        TrueBoolLiteralSugar,
-    )
-    read = ctx.temporal.key_read(final.when_true.evaluation)
-    assert read.completed_value() == TermValue(2)
-    assert ctx.temporal.value_if_bound("last") is None
+    assert module_end_contexts(_function(tree).unit)
     outcome = function_universe_outcome(_function(tree))
-    assert _returned_value(outcome) == TermValue(2)
+    assert _reads_its_global_input(_returned_value(outcome), "last")
+    assert "global:last" not in _stated(_function(tree))
 
 
 @pytest.mark.skipif(not hasattr(ast, "TypeAlias"), reason="needs type aliases")
@@ -1570,10 +1624,15 @@ def test_a_module_whose_other_function_refuses_still_lets_f_read_x() -> None:
         "def bad():\n    type Alias = int\n    return Alias\n"
         "def f():\n    return X\n"
     )
+    # ``f`` reads its free input ``global:X`` (#8704), stated at the value
+    # the run left, 1.
+    from sugar_lift_py_tests.ir import num
+
     (key,) = _assignment_keys(tree, "X")
     outcome = function_universe_outcome(_function(tree))
-    assert _returned_value(outcome) == TermValue(1)
+    assert _reads_its_global_input(_returned_value(outcome), "X")
     assert _module_end_value(tree, key) == TermValue(1)
+    assert _stated(_function(tree)) == {"global:X": num(1)}
     with pytest.raises((SugarNotWritten, ConstructionPanic)):
         function_universe_outcome(_function(tree, "bad"))
 
@@ -1609,18 +1668,27 @@ def test_a_module_with_an_lru_cache_function_still_lets_f_read_x() -> None:
         "def cached(n):\n    return n\n"
         "def f():\n    return X\n"
     )
+    # ``f`` reads its free input ``global:X`` (#8704).  The run's value of
+    # ``X`` is 1, but the arm that bound it owes the unanswered
+    # ``lru_cache`` application, so the row states no value for the input
+    # (``stated_global_values``: a value whose read owes a call is not
+    # stated) and a claim over ``X`` stays undecided at prove.
     (key,) = _assignment_keys(tree, "X")
     outcome = function_universe_outcome(_function(tree))
-    assert _returned_value(outcome) == TermValue(1)
+    assert _reads_its_global_input(_returned_value(outcome), "X")
     assert _module_end_value(tree, key) == TermValue(1)
+    assert "global:X" not in _stated(_function(tree))
     run = owner_reduction(None, tree).outcome
     assert "python:functools.lru_cache" in {item.symbol for item in owed_calls(run)}
 
 
 def test_a_decorated_module_class_applies_its_decorators_in_the_run() -> None:
     # The module body's run applies a decorated class's decorators through
-    # the one decorator application, as a function body does: a source
-    # decorator that raises is the run's raise.
+    # the one decorator application, as a function body does.  ``mark(C)``
+    # is ``mark``'s coordinate and edge (#7757 step 5, #8705): the run has
+    # the call's two faces, and ``mark``'s ``ValueError`` is its contract's
+    # halt, joined at prove (#8690).  Before step 5 ``mark``'s body was
+    # followed and the run's one face was the ``ValueError``.
     from sugar_lift_py_tests.tree_enumerate import owner_reduction
 
     tree = _source(
@@ -1632,10 +1700,11 @@ def test_a_decorated_module_class_applies_its_decorators_in_the_run() -> None:
     )
     exits = owner_reduction(None, tree).outcome.exits
     halts = [exit_ for exit_ in exits if isinstance(exit_, Halted)]
-    assert [getattr(face.effect, "exception_name", None) for face in halts] == [
-        "ValueError"
+    assert halts, exits
+    assert "ValueError" not in [
+        getattr(face.effect, "exception_name", None) for face in halts
     ], exits
-    assert not [exit_ for exit_ in exits if isinstance(exit_, Completed)], exits
+    assert [exit_ for exit_ in exits if isinstance(exit_, Completed)], exits
 
 
 def test_a_module_class_under_an_unknown_decorator_is_undecided() -> None:
@@ -1654,22 +1723,38 @@ def test_a_module_class_under_an_unknown_decorator_is_undecided() -> None:
         "X = 1\n"
         "def f():\n    return X\n"
     )
+    # ``f`` reads its free input ``global:X`` (#8704); the run's arm that
+    # bound ``X`` owes ``register``'s application, so the row states no
+    # value for it (``stated_global_values``) and a claim over ``X`` stays
+    # undecided at prove.
     outcome = function_universe_outcome(_function(tree))
-    assert _returned_value(outcome) == TermValue(1)
+    assert _reads_its_global_input(_returned_value(outcome), "X")
+    assert "global:X" not in _stated(_function(tree))
     run = owner_reduction(None, tree).outcome
     assert "python:elsewhere.register" in {item.symbol for item in owed_calls(run)}
 
 
-def test_a_module_run_that_halts_refuses_the_read_by_its_key() -> None:
+def test_a_module_run_that_halts_states_no_value_for_the_read() -> None:
     # The module body's run completes on no arm: no import completed, so no
-    # module-final value exists, and the read is refused by name.
-    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+    # module-final value exists.  ``f`` reduced on its own reads its free
+    # input ``global:X`` (#8704) and never asks for the run; its row states
+    # no value for the input (``stated_global_values``), so a claim over
+    # ``X`` is undecidable at prove, never decided from a run that never
+    # completed.  Before #8704 the read itself asked for the run and was
+    # refused by name at the key.
+    from sugar_lift_py_tests.tree_enumerate import (
+        function_universe_outcome,
+        module_end_contexts,
+        module_run_halts,
+    )
 
     tree = _source("X = 1\ndef f():\n    return X\nraise ValueError('import fails')\n")
-    (key,) = _assignment_keys(tree, "X")
-    with pytest.raises(ConstructionPanic) as refused:
-        function_universe_outcome(_function(tree))
-    assert key in refused.value.info.observed
+    unit = _function(tree).unit
+    assert module_end_contexts(unit) == ()
+    assert module_run_halts(unit)
+    outcome = function_universe_outcome(_function(tree))
+    assert _reads_its_global_input(_returned_value(outcome), "X")
+    assert _stated(_function(tree)) == {}
 
 
 # -- a refused module run is asked for at a read, once ------------------------
@@ -1738,22 +1823,34 @@ def test_a_function_reading_no_final_binding_completes_in_a_refused_module(
 
 
 def test_a_final_binding_read_is_refused_by_the_refused_run(monkeypatch) -> None:
+    # ``f`` reduced on its own reads its free input ``global:X`` (#8704), so
+    # its reduction never asks for the run.  The value its row states for
+    # the input is read where the row is stated (``stated_global_values``,
+    # which ``function_contract_rows`` calls), and that read asks for the
+    # run and is refused by the run's own refusal: the refusal still
+    # reaches ``f``'s row, by name, never a silently unstated input.
+    from sugar_lift_py_tests.sugar.call_site_sugar import stated_global_values
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
     runs = _refusing_module_runs(monkeypatch)
     tree = _source(
         "X = 1\ndef f():\n    return X\n# a refused run that one read asks for\n"
     )
+    outcome = function_universe_outcome(_function(tree))
+    assert _reads_its_global_input(_returned_value(outcome), "X")
+    assert runs == []
     with pytest.raises(ConstructionPanic) as refused:
-        function_universe_outcome(_function(tree))
+        stated_global_values(_function(tree))
     assert "the module body's run refuses" in refused.value.info.observed
     assert len(runs) == 1
 
 
 def test_two_readers_of_a_refused_module_ask_for_one_run(monkeypatch) -> None:
     # The second reader is refused by the run the first asked for: the same
-    # refusal, remembered, never a second run.
-    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+    # refusal, remembered, never a second run.  Each reader's row asks for
+    # the run where it states its input's value (``stated_global_values``,
+    # #8704).
+    from sugar_lift_py_tests.sugar.call_site_sugar import stated_global_values
 
     runs = _refusing_module_runs(monkeypatch)
     tree = _source(
@@ -1763,9 +1860,9 @@ def test_two_readers_of_a_refused_module_ask_for_one_run(monkeypatch) -> None:
         "# a refused run two reads ask for\n"
     )
     with pytest.raises(ConstructionPanic) as first:
-        function_universe_outcome(_function(tree))
+        stated_global_values(_function(tree))
     with pytest.raises(ConstructionPanic) as second:
-        function_universe_outcome(_function(tree, "h"))
+        stated_global_values(_function(tree, "h"))
     assert second.value is first.value
     assert len(runs) == 1
 
