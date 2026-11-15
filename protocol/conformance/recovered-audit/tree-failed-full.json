@@ -10,7 +10,7 @@
   },
   "panics": [
     {
-      "kind": "FactoryPanic",
+      "kind": "ConstructionPanic",
       "status": "mandatory-panic",
       "reason": "missing floor",
       "locus": "numpy/core.py:7:4",
@@ -78,7 +78,7 @@
   "suppressedDescendants": [
     {
       "locus": "numpy/core.py:9:2",
-      "reason": "ancestor FactoryPanic poisoned this source locus",
+      "reason": "ancestor ConstructionPanic poisoned this source locus",
       "demandedBody": {
         "kind": "source-memento",
         "file": "numpy/core.py",

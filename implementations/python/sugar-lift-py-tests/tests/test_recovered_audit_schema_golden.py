@@ -1,8 +1,12 @@
 """#4264: shared recovered-audit goldens round-trip in Python.
 
-Fixtures live once under ``protocol/conformance/recovered-audit/`` and are
-also exercised by the Rust leaf/tree readers. A writer field the reader
-cannot parse must fail here before merge.
+Fixtures live once under ``protocol/conformance/recovered-audit/``. A writer
+field the reader cannot parse must fail here before merge.
+
+A panic row's ``kind`` is ``ConstructionPanic``, the one name the writer
+emits (``lift_rpc``) and the reader accepts (``recovered_audit_dto``). The
+goldens said ``FactoryPanic``, the name from before the factory was deleted.
+No Rust source reads these fixtures today.
 """
 
 from __future__ import annotations

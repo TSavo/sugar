@@ -5,7 +5,7 @@
     "status": "failed",
     "panics": [
       {
-        "kind": "FactoryPanic",
+        "kind": "ConstructionPanic",
         "status": "mandatory-panic",
         "reason": "missing floor construction",
         "locus": "pkg.py:1:0",
@@ -33,7 +33,7 @@
     "suppressedDescendants": [
       {
         "locus": "pkg.py:3:4",
-        "reason": "ancestor FactoryPanic poisoned this source locus"
+        "reason": "ancestor ConstructionPanic poisoned this source locus"
       }
     ]
   },
