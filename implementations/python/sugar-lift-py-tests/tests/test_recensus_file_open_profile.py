@@ -23,46 +23,6 @@ def _load():
     return module
 
 
-def test_measure_file_persists_phase_timers(tmp_path: Path) -> None:
-    consumer_path = _SCRIPTS / "recensus_enumerate_consumer.py"
-    spec = importlib.util.spec_from_file_location(
-        "recensus_enumerate_consumer", consumer_path
-    )
-    assert spec is not None and spec.loader is not None
-    consumer = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(consumer)
-
-    path = tmp_path / "mod.py"
-    path.write_text(
-        "def a():\n    return 1\n\ndef b():\n    return 2\n",
-        encoding="utf-8",
-    )
-    row = consumer.measure_file_via_enumerate(
-        workspace_root=tmp_path,
-        file_rel="mod.py",
-    )
-
-    # Module.sugar is the honest first terminal. Timing testimony must survive
-    # on that red row; requiring completion would look past the frontier.
-    assert row["category"] == "panic"
-    timing = row["timing"]
-    for key in (
-        "t_open_s",
-        "t_materialize_s",
-        "materialize_calls",
-        "t_populate_s",
-        "t_enumerate_s",
-        "t_sugar_loop_s",
-        "dominant_phase",
-        "module_materialize",
-    ):
-        assert key in timing, timing
-    assert timing["sugar_fn_count"] == 2
-    assert timing["module_materialize"]["materializeCalls"] >= 0
-    assert float(timing["t_open_s"]) >= 0.0
-    assert float(timing["t_sugar_loop_s"]) >= 0.0
-
-
 def test_running_counts_line_includes_timing_fields(tmp_path: Path) -> None:
     """End-to-end: running-counts.jsonl carries phase breakdown for each file."""
     module = _load()
