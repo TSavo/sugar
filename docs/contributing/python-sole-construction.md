@@ -49,8 +49,6 @@ Scripts:
   (measure via `--from-json` recensus/audit payload; refuses missing measurement;
   **not** subsumed by `R_silent=0`)
 
-CI: `.github/workflows/factory-zero-tolerance.yml` (no baselines, no allowlists).
-
 ## How every frontier is fixed
 
 For each fresh recensus owner:

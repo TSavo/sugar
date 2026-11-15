@@ -118,8 +118,6 @@ def exemption(path: str, line: str, reason: str) -> str | None:
         return "cargo run builds the fixture generator example, not the sugar CLI"
     if "--example synthetic_rss_fixture" in line:
         return "cargo run builds the RSS fixture generator example, not the sugar CLI"
-    if path == ".github/workflows/ci.yml" and "subject-path: implementations/rust/target/release/sugar" in line:
-        return "CI attestation names the release artifact subject, not a consumer acquisition"
     if path == "tests/bcargo_remote_root_cleanup.sh" and 'target/debug/sugar' in line:
         return "cleanup test asserts stale remote target removal, not binary acquisition"
     if path == "tests/sugarbin_artifact_manifest.sh" and "$tmp/target/release/sugar" in line:

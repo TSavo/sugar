@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
 # LOCAL / serial convenience: run the full sole-construction floor set in-process.
 #
-# CI is parallel: .github/workflows/factory-zero-tolerance.yml runs each process
-# axis as its own job + a static-laws job, with enrollment roll call. Prefer
-# that on push. This script remains for workstation re-runs and binding checks.
-#
 # `if: always()` semantics: EVERY axis runs, failures collected, exit non-zero
 # if any axis was red. R > 0 ⇒ red on every residual axis.
 #

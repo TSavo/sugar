@@ -295,7 +295,7 @@ make ci    # exercises all solvers
 
 ## CI and GitHub Actions
 
-Sugar runs on **self-hosted Linux runners** (via GitHub Actions) and macOS (Swift only). The CI workflow is at `.github/workflows/ci.yml`.
+Sugar runs on **self-hosted Linux runners** (via GitHub Actions) and macOS (Swift only).
 
 **What CI does:**
 1. Runs `make ci` (conformance + test-rust + test-python + showcase verifications).
@@ -416,4 +416,3 @@ CI=1 cargo build --release
 - [docs/contributing/overview.md](docs/contributing/overview.md) — contributor on-ramp (kit authorship, adapter writing, releases)
 - [examples/](examples/) — runnable demonstrations across all supported languages
 - [protocol/specs/2026-05-02-multi-solver-protocol-v2.md](protocol/specs/2026-05-02-multi-solver-protocol-v2.md) — solver portfolio spec
-- [.github/workflows/ci.yml](.github/workflows/ci.yml) — CI configuration (system deps, full test matrix)

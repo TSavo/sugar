@@ -9,9 +9,8 @@ from sugar_lift_py_tests.repo_root import resolve_repo_root
 ROOT = resolve_repo_root()
 
 
-def test_black_format_check_is_installed_and_required_by_ci() -> None:
+def test_black_format_check_is_installed_and_required_by_make_ci() -> None:
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
-    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     pyproject = (
         ROOT / "implementations/python/sugar-lift-py-tests/pyproject.toml"
     ).read_text(encoding="utf-8")
@@ -24,5 +23,3 @@ def test_black_format_check_is_installed_and_required_by_ci() -> None:
     ci_target = re.search(r"^ci:(?P<deps>.*)$", makefile, re.MULTILINE)
     assert ci_target is not None
     assert "test-python-format" in ci_target.group("deps").split()
-
-    assert "run: make ci" in workflow
