@@ -40,34 +40,36 @@ def _test_line(module: str) -> int:
 # coordinate and edge, and what ``f`` then needs is the class of the call's
 # result: the method a ``with`` calls on it (``__enter__``, #8744), the
 # class ``isinstance`` tests, the class an ``except`` tests against the
-# raised instance.  Neither the reduction nor the class's contract decides
-# that today (the contract states fields, never the instance's class), so
-# ``f``'s row reads an undecided value and both halves read ``open`` on main
-# (scorecard 43738710481; the truthful halves measured, the lies set by
-# reasoning), listed on #7661.  The resolver itself (each read of the class
-# name denotes the one class statement) is what the halves will witness
-# once the class of the call's result is stated.
+# raised instance.  Before step 8 stated the class (below), ``f``'s row read
+# an undecided value and both halves read ``open`` on main (scorecard
+# 43738710481; the truthful halves measured, the lies set by reasoning),
+# listed on #7661.  The resolver itself (each read of the class name
+# denotes the one class statement) is what the halves will witness once
+# each claim's remaining reason is stated.
 #
-# Step 8 as merged (#8750 prove, #8778 and #8799 lift) does not state it
-# here.  It supplies a receiver class (``python:instance(<class>,
-# <field>...)``) only for the result of a class whose construction runs no
-# source code (``_bare_instance_symbol``), and only to a method call on it:
-# - ``Box`` and ``Marker`` run a source ``__init__``, so their call's result
-#   names no class (the field set is the class contract's, which dispatch
-#   does not read).  ``Box.__exit__(self, *exc)`` would not fit prove's one
-#   binder either (no ``*args``), and ``box.value`` reads a field of
-#   ``__enter__``'s result, which no contract states.
-# - ``isinstance`` and an ``except`` test read the class of a value, not a
-#   method: a type test reads no object off a call
-#   (``class_definition_value._instance_held_by``), and ``with_raised_types``
-#   types only a call's own raise (``python:raised(<call>, ...)``), never a
-#   raised value made by a class call (``raise Boom()``).
-# None of these is step 7 part 1 (what a callee leaves in what it was
-# handed): each needs the class of a class call's result stated at prove.
+# Step 8 now states the class of a class call's result wherever
+# ``type.__call__`` makes it with a builtin ``__new__``: the class's
+# contract states ``python:type_is`` and ``python:may_hold`` on every
+# completed face, a method call and a ``with``'s ``__enter__``/``__exit__``
+# on the result are dispatched over it (``python:constructed``), and
+# ``__exit__(self, *exc)`` fits the one binder (#8838).  Each twin below is
+# still ``open``, by a named reason that is not the class of the result:
+# - ``with Box(3) as box``: ``box`` is ``__enter__``'s result, and
+#   ``box.value`` reads a field of it, which no contract states
+#   (``__enter__`` returns ``self``, a receiver that arrived by binding).
+# - ``isinstance(Marker(), Marker)``: a type test reads no object off a call
+#   (``class_definition_value._instance_held_by``).  The class's contract
+#   states ``python:type_is`` as an atom, but the ``bool`` the test returns
+#   is a term, which the solver does not relate to that atom.
+# - ``raise Boom()`` / ``except Boom``: the lie is refuted (#8831).  The
+#   raise already carries ``Boom``'s class (``Raise._raised_operand_sugar``
+#   stamps the call with it), so the truthful half is not held open by the
+#   class of the call's result; what keeps it open (the arm where the
+#   handler does not take a raise) is not traced here.
 _OPEN_UNTIL_STEP_8 = (
-    "the class of a same-file class call's result is not stated at prove "
-    "(#7757 step 8 supplies it only to a method call on a class whose "
-    "construction runs no source code)"
+    "the claim reads something step 8 does not state: a field of "
+    "__enter__'s result, a type test's bool as a term, or (Boom) an arm the "
+    "handler does not take"
 )
 
 

@@ -45,6 +45,28 @@ DISPATCH_READ_MARK = "."
 #: its ``__dict__`` may hold at the call (``consistency::PYTHON_INSTANCE``).
 INSTANCE = "python:instance"
 
+#: ``python:constructed(<class symbol>)``: the class of a same-file class
+#: call's result as it stands where its construction left it -- an instance
+#: of that class whose ``__dict__`` holds what the class's contract states
+#: on every completed face (``constructed_class_facts``).  Prove binds it to
+#: ``python:instance(<class symbol>, <field>...)`` read off that statement
+#: (``consistency::PYTHON_CONSTRUCTED``) before it dispatches.
+CONSTRUCTED = "python:constructed"
+
+#: ``python:type_is(<object>, <class symbol>)``: ``type(<object>)`` is the
+#: class the symbol names (``consistency::PYTHON_TYPE_IS``).  A class's
+#: contract states it of the instance it makes.
+TYPE_IS = "python:type_is"
+
+#: ``python:may_hold(<object>, <name>)``: the object's ``__dict__`` may hold
+#: ``<name>`` (``consistency::PYTHON_MAY_HOLD``), one fact per name.
+MAY_HOLD = "python:may_hold"
+
+#: ``python:class_undecided(<object>)``: what the object's class is, or what
+#: its ``__dict__`` holds, is not decided (``consistency::
+#: PYTHON_CLASS_UNDECIDED``).
+CLASS_UNDECIDED = "python:class_undecided"
+
 #: The named argument that supplies a class input (``consistency::
 #: PYTHON_CLASS``).
 CLASS_ARGUMENT = "py.class"
@@ -168,6 +190,54 @@ def instance_term(symbol: str, fields=()):
     )
 
 
+def constructed_term(symbol: str):
+    """``python:constructed(<symbol>)``: an instance of the class ``symbol``
+    names as its construction left it (``CONSTRUCTED``)."""
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    return ctor(CONSTRUCTED, [str_const(symbol)])
+
+
+def constructed_class_facts(instance, constructed):
+    """What a class's constructor contract states of the class of the
+    instance it makes, on one completed face (#7757 step 8), ``constructed``
+    the term the contract names that instance by (``python:after(out,
+    "out")``):
+
+    - ``python:type_is(<constructed>, <class symbol>)``: the class the
+      construction made it of (``class_value``);
+    - ``python:may_hold(<constructed>, <name>)`` for every name its
+      ``__dict__`` holds where it is left (``class_value``'s fields).
+
+    Prove reads them off the row (``consistency::constructed_instance``):
+    the class and the union of the names over every completed face is the
+    ``python:instance(<class symbol>, <field>...)`` a caller's
+    ``python:constructed(<class>)`` is bound to before a method on the
+    result is dispatched.  Each is an atom of fixed arity, never a
+    ``python:instance`` term, whose arity varies with its fields.
+
+    Where the face does not decide them -- an instance handed to code or
+    otherwise not current, one whose ``__class__`` was stored, no class
+    symbol, anything but an instance -- it states only
+    ``python:class_undecided(<constructed>)``: prove binds no class, and the
+    dispatch over the result stays owed by name."""
+    from sugar_lift_py_tests.floor.object_value import ObjectValue
+    from sugar_lift_py_tests.ir import atomic
+
+    term = None
+    if isinstance(instance, ObjectValue) and "__class__" not in (
+        item.name for item in instance.fields
+    ):
+        term = class_value(instance)
+    if term is None:
+        return [atomic(CLASS_UNDECIDED, [constructed])]
+    symbol, *fields = term.args
+    return [
+        atomic(TYPE_IS, [constructed, symbol]),
+        *(atomic(MAY_HOLD, [constructed, field]) for field in fields),
+    ]
+
+
 def class_value(value):
     """The class ``value``'s class input is bound to at a call, or None when
     it is not decided here:
@@ -175,11 +245,14 @@ def class_value(value):
     - an instance of a source class a construction in this frame made, whose
       fields are its fields now (``object_identity.contents_current``): its
       class's join symbol and those fields;
-    - the result of a call of a same-file class whose construction runs no
-      source code (``CallSiteValue.instance_of``: ``object.__new__`` and
-      ``object.__init__``), as that construction left it
-      (``constructed_by_edge``: a store on it or code it is handed leaves
-      another value): its class, no field.
+    - the result of a call of a same-file class that ``type.__call__``
+      makes with a builtin ``__new__`` (``CallSiteValue.instance_of``), as
+      that construction left it (``constructed_by_edge``: a store on it or
+      code it is handed leaves another value):
+      ``python:constructed(<class symbol>)``, bound at prove to the class
+      and fields the class's contract states on every completed face
+      (``constructed_term``).  The lift never reads what its ``__init__``
+      left.
 
     Anything else -- an instance that arrived by binding, a formal, a call's
     result of any other class -- is None: no class is supplied."""
@@ -190,7 +263,7 @@ def class_value(value):
     if isinstance(value, CallSiteValue):
         symbol = getattr(value, "instance_of", None)
         if symbol and getattr(value, "constructed_by_edge", False):
-            return instance_term(symbol)
+            return constructed_term(symbol)
         return None
     if isinstance(value, ObjectValue) and contents_current(value):
         definition = getattr(value.defining_class, "class_definition", None)
@@ -246,11 +319,12 @@ def dispatch_on_receiver(name, receiver, positional, kw_values, site, *, unit):
       class is ``class:<param>``, bound by the caller -- ``super().
       __init__()`` from a subclass supplies the subclass -- under the same
       method-name guard as a formal;
-    - ``receiver`` is a same-file class's call result whose construction runs
-      no source code (``class_value``), in a module that is not dynamic
+    - ``receiver`` is a same-file class's call result that ``type.__call__``
+      makes with a builtin ``__new__`` (``class_value``:
+      ``python:constructed(<class>)``), in a module that is not dynamic
       (``module_attribute_names``: no computed store, no ``__class__``
-      store): its class is decided, and prove resolves the method on it as
-      on any other.
+      store): prove binds its class to what the class's contract states and
+      resolves the method on it as on any other.
 
     An instance a construction in this frame made is dispatched where the
     one attribute lookup selected a method (``ObjectValue.call_member``,

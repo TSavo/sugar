@@ -51,6 +51,22 @@ def test_a_class_states_the_fields_its_initializer_sets(tmp_path):
     assert "py.object.identity" not in post
 
 
+def test_a_class_states_the_class_of_the_instance_it_makes(tmp_path):
+    """Every completed face states the class the construction made the
+    instance of and each name its ``__dict__`` holds (#7757 step 8): what a
+    caller's dispatch over ``Box(3)`` is bound to at prove."""
+    row = _contract_row(
+        tmp_path,
+        "class Box:\n    def __init__(self, n):\n        self.n = n\n",
+        "Box",
+    )
+
+    post = repr(row.post.ir_formula)
+    assert "python:type_is" in post
+    assert "python:may_hold" in post
+    assert "python:class_undecided" not in post
+
+
 def test_a_field_a_class_member_shadows_states_no_read(tmp_path):
     """A class that binds the field's name (here a method) decides the read
     by its member, not the ``__dict__`` entry alone: the value is stated, a

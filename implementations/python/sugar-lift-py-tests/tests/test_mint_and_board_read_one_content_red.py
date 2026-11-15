@@ -72,20 +72,16 @@ def test_a_with_over_a_same_module_manager_reaches_the_solver(tmp_path: Path) ->
     # was set to ``open`` by reasoning (the truthful half failed first): it
     # reads the same undecided value, never ``sat``.
     #
-    # Step 8 (#8750, #8778, #8799) does not decide it, for three named
-    # reasons:
-    # 1. ``Resource`` runs a source ``__init__``, so no receiver class is
-    #    supplied for the call's result (``_bare_instance_symbol`` names only
-    #    a class whose construction runs no source code; the instance's
-    #    field set is its contract's, which dispatch does not read).
-    # 2. Even dispatched, ``__enter__``'s own contract returns
-    #    ``self.target``, a field read of a receiver that arrived by binding:
-    #    the undecided read, owed.  ``class:self`` binds the class and the
-    #    field names (``python:instance``), never the field values the caller
-    #    holds; the value the construction left (``attr:target(python:after(
-    #    <Resource(1)>, "out")) == 1``, #8746) is stated on the caller's side
-    #    and nothing binds the method's ``self`` to it.
-    # 3. ``__exit__(self, *exc)`` does not fit prove's one binder (no
-    #    ``*args``), so the protocol's exit stays owed.
+    # Step 8 dispatches the ``with``'s ``__enter__``/``__exit__`` on
+    # ``Resource(1)`` over the class its contract states (``python:
+    # constructed``), and ``__exit__(self, *exc)`` fits the one binder
+    # (#8838).  It still does not decide the claim, for one named reason:
+    # ``__enter__``'s own contract returns ``self.target``, a field read of
+    # a receiver that arrived by binding: the undecided read, owed.
+    # ``class:self`` binds the class and the field names (``python:
+    # instance``), never the field values the caller holds; the value the
+    # construction left (``attr:target(python:after(<Resource(1)>, "out"))
+    # == 1``, #8746) is stated on the caller's side and nothing binds the
+    # method's ``self`` to it (the receiver's state as an input).
     assert claim_verdict(truthful.prove_doc, claims_from_line=test_line) == "open"
     assert lying.verdict == "open"
