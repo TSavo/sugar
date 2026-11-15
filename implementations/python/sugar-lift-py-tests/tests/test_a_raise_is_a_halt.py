@@ -36,6 +36,19 @@ module ``def``'s name is that function, #7757), and ``f()`` inside ``h``
 applies it through the one call door.  Through the solver no lying half of
 the five is ``sat``: a call that is not reduced is the unanswered call, which
 owes its member.
+
+Since #7757 steps 5 and 6 (the owner's ruling of 2026-11-15, "Edge, join at
+prove"; #8705, #8738) a call of a same-file function or class is its
+coordinate and an edge to the callee's join symbol: the reduction never
+follows the callee's body.  At the reduction such a call is the edge's two
+faces -- it completes under its atom, and the undetermined raise (no
+exception name) under the complement -- whatever the callee does; what the
+callee raises is its contract's panic loci, joined at prove.  The shapes
+whose raise sits in a callee read that way below (``_CALL_EDGE``).  A raise
+the reduction itself reaches (the ``match`` subject, a class statement that
+halts in the module's run) still halts there.  Since #8751 no path
+binds a body to a call, so a lambda bound to a local name and called is an
+edge too.
 """
 
 from __future__ import annotations
@@ -154,20 +167,34 @@ _FIXED = {
 _TRUTHFUL = {"match-subject": "2", "class-field-7799": "3"}
 _ALL_TRUTHFUL = {**_FIXED, "default-argument": _DEFAULT}
 
+# A same-file call at the reduction (#7757 steps 5 and 6): the edge's two
+# faces, one completion and the undetermined raise, which names no exception
+# (``UnknownCalleeCallV1.faces``).  What the callee raises is decided at prove
+# from its contract's panic loci, never here.
+_CALL_EDGE = (1, (None,))
+# ``a = g()``, ``a = f()``, ``a = Box(1)``: the truthful half's call is an
+# edge.  The lying ``class-field-7799`` half is not: its class statement
+# halts in the module's run, so its read of ``Box`` is that halt.
+_TRUTHFUL_CALL_EDGE = {"call-7820", "class-field-7799", "default-argument"}
+_LYING_CALL_EDGE = {"call-7820"}
+
 
 @pytest.mark.parametrize("shape", sorted(_ALL_TRUTHFUL))
 def test_the_truthful_half_completes(shape: str) -> None:
     source = _ALL_TRUTHFUL[shape].format(x=_TRUTHFUL.get(shape, "1"))
 
-    assert _faces(_function(source)) == (1, ())
+    expected = _CALL_EDGE if shape in _TRUTHFUL_CALL_EDGE else (1, ())
+    assert _faces(_function(source)) == expected
 
 
 @pytest.mark.parametrize("shape", sorted(_FIXED))
 def test_the_lying_half_halts_with_the_raise(shape: str) -> None:
-    assert _faces(_function(_FIXED[shape].format(x="1 // 0"))) == (
-        0,
-        ("ZeroDivisionError",),
+    # ``f()`` over ``def f(): return 1 // 0`` is the edge's two faces: the
+    # ``ZeroDivisionError`` is ``f``'s contract's panic locus, joined at prove.
+    expected = (
+        _CALL_EDGE if shape in _LYING_CALL_EDGE else (0, ("ZeroDivisionError",))
     )
+    assert _faces(_function(_FIXED[shape].format(x="1 // 0"))) == expected
 
 
 def test_a_raising_default_is_refused_by_name_not_bound_as_a_value() -> None:
@@ -220,11 +247,26 @@ _FIVE_HALVES = {
 # to one), so ``f()`` applies it through the one call door, as ``g()`` does.
 # It was pinned undecided (one completion beside an undetermined raise) while
 # the read was the bare name with no function value behind it (#7757).
+#
+# Since #7757 steps 5 and 6, ``Box()`` and ``h(g)`` are calls of a same-file
+# class and function: the edge's two faces at the reduction, whatever the
+# class, ``h`` or the lambda runs (``_FIVE_CALL_EDGE``): since #8751 no
+# path binds a body to a call, a lambda bound to a local name included.
+_FIVE_CALL_EDGE = {
+    "function-passed-as-argument",
+    "lambda-call",
+    "raise-in-class-body",
+    "raising-base",
+    "raising-new",
+}
+
+
 @pytest.mark.parametrize("shape", sorted(_FIVE))
 def test_the_truthful_half_of_each_of_the_five_completes(shape: str) -> None:
     truthful, _lying = _FIVE_HALVES[shape]
 
-    assert _faces(_function(_FIVE[shape].format(x=truthful))) == (1, ())
+    expected = _CALL_EDGE if shape in _FIVE_CALL_EDGE else (1, ())
+    assert _faces(_function(_FIVE[shape].format(x=truthful))) == expected
 
 
 # A lambda bound to a local name and called (``g = lambda: 1 // 0; g()``) is
@@ -247,12 +289,27 @@ def test_the_truthful_half_of_each_of_the_five_completes(shape: str) -> None:
 # (``tree_enumerate.module_run_halts``).  It was refused by name as an
 # unsupported conditional class member, which the strict expected-red mark
 # held; the mark is gone and the assertion stands.
+#
+# Since #7757 steps 5 and 6 (and #8751, which deleted the last application
+# of a callee body at lift) the lying ``Box()`` over a raising ``__new__``,
+# ``h(g)`` and ``g()`` over ``g = lambda: 1 // 0`` are edges: the edge's two
+# faces at the reduction, the raise being the callee's contract's panic
+# locus, joined at prove (``_FIVE_LYING_CALL_EDGE``).  The raising base and
+# the raise in the class body halt the class statement in the module's run,
+# so the read of ``Box`` is that halt, as before.
+_FIVE_LYING_CALL_EDGE = {"function-passed-as-argument", "lambda-call", "raising-new"}
+
+
 @pytest.mark.parametrize("shape", sorted(_FIVE))
 def test_the_lying_half_of_each_of_the_five_halts(shape: str) -> None:
     _truthful, lying = _FIVE_HALVES[shape]
 
-    completed, halts = _faces(_function(_FIVE[shape].format(x=lying)))
+    faces = _faces(_function(_FIVE[shape].format(x=lying)))
 
+    if shape in _FIVE_LYING_CALL_EDGE:
+        assert faces == _CALL_EDGE
+        return
+    completed, halts = faces
     assert completed == 0
     assert len(halts) == 1
 
@@ -279,6 +336,10 @@ _SOLVER = {
 _ALL_SOLVER_TRUTHFUL = {**_SOLVER, "default-argument": _DEFAULT}
 
 
+# A same-file call's completion is stated over its call term, read or
+# discarded, and prove joins the callee's halts under it (#8753): the
+# truthful ``f()``/``g()``/``Box()`` completes, the lying ``f()`` certainly
+# halts, decided at prove rather than at the reduction.
 @pytest.mark.parametrize("shape", sorted(_ALL_SOLVER_TRUTHFUL))
 def test_the_truthful_half_is_sat(shape: str, tmp_path: Path) -> None:
     source = _ALL_SOLVER_TRUTHFUL[shape].format(x=_TRUTHFUL.get(shape, "1"))
@@ -332,6 +393,8 @@ def test_the_truthful_half_of_each_of_the_five_is_sat(
         tmp_path / "t", _solver_source(_FIVE[shape].format(x=truthful))
     )
 
+    # ``Box()`` is an edge: its completion, stated over its call term, is
+    # joined to the class's contract at prove (#8753).
     assert result.verdict == "sat"
 
 
