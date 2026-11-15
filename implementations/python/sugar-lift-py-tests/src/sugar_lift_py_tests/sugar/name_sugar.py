@@ -78,14 +78,15 @@ class NameSugar(ConstructedTermSugar):
                 and binding.value is not None
                 and not is_builtin_floor_binding(binding)
             ):
-                from sugar_lift_py_tests.temporal.temporal_context import (
-                    FORMAL_ACTUAL_BLAME,
+                from sugar_lift_py_tests.temporal.temporal_binding import (
+                    FormalActualBinding,
                 )
 
-                if binding.blame == FORMAL_ACTUAL_BLAME:
+                if isinstance(binding, FormalActualBinding):
                     # A formal a followed call bound to the caller's actual
-                    # (a lambda's parameter): that actual, with the caller's
-                    # currency (``object_identity.contents_current``).
+                    # (a lambda's parameter): that actual as the formal holds
+                    # it (``object_identity.as_bound_formals``), with the
+                    # caller's currency where no other actual may reach it.
                     return ExitSet.completed(binding.value)
                 from sugar_lift_py_tests.floor.object_identity import arrived
 
