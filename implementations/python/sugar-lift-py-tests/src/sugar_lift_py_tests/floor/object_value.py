@@ -23,6 +23,12 @@ if TYPE_CHECKING:
     from sugar_lift_py_tests.outcome import ExitSet
 
 
+# ``object.__class__``: the one builtin data descriptor whose delete is read
+# here.  Its setter (``object_set_class``) refuses a missing value with
+# ``TypeError`` whatever the object (``ObjectValue._builtin_descriptor_delete``).
+_OBJECT_CLASS_SLOT = vars(object)["__class__"]
+
+
 def _sugar_receiver_field_names(value, seen: set[int] | None = None) -> set[str]:
     """Read authenticated helper-body store shape without executing the helper:
     the fields the one field store (``ReceiverFieldStoreSugar``) puts on the
@@ -788,9 +794,19 @@ class ObjectValue(FloorValue):
             )
         if kind == "plain":
             return ExitSet.completed(self.with_field_store(name, value))
+        return self._after_attribute_call(
+            self.field_store_call(name, value, site, ctx), site
+        )
+
+    def _after_attribute_call(self, outcome, site):
+        """What a store or delete that is a call (``field_store_call``, the
+        unanswered ``type(self).__delattr__``) completes with: this receiver
+        after the call (``after_field_store_call``); its halts are the
+        statement's."""
+        from sugar_lift_py_tests.outcome import ExitSet
+
         from .named_expression_value import carry_walrus_binds, peel_walrus_binds
 
-        outcome = self.field_store_call(name, value, site, ctx)
         if not isinstance(outcome, ExitSet):
             # A deferred native operation of the body: the caller's to
             # discharge, as for any call.
@@ -818,6 +834,11 @@ class ObjectValue(FloorValue):
         stored or deleted the name since: the delete is undecided
         (``_undecided_delattr``), never ``AttributeError`` decided from the
         fields it arrived with.
+
+        A name a builtin owner binds to a data descriptor
+        (``_class_data_descriptor``: ``object.__class__``) is that
+        descriptor's delete, never the instance-field delete
+        (``_builtin_descriptor_delete``).
         """
         from sugar_lift_py_tests.outcome import ExitSet
 
@@ -834,6 +855,8 @@ class ObjectValue(FloorValue):
                 site=site,
                 owner="ObjectValue.delattr",
             )
+        if self._class_data_descriptor(name):
+            return self._builtin_descriptor_delete(name, site)
         current = contents_current(self)
         remaining = tuple(field for field in self.fields if field.name != name)
         if current and len(remaining) == len(self.fields):
@@ -858,6 +881,49 @@ class ObjectValue(FloorValue):
         if not current:
             return self._undecided_delattr(name, after, site)
         return ExitSet.completed(after)
+
+    def _builtin_descriptor_delete(self, name, site):
+        """``del self.name`` where a builtin owner binds ``name`` to a data
+        descriptor (``_class_data_descriptor``).  The delete is
+        ``type(self).__delattr__(self, name)`` (``PyObject_SetAttr`` with no
+        value), an implicit lookup on the type.
+
+        Where the one class-namespace lookup decides that ``__delattr__`` is
+        ``object``'s (``PyObject_GenericSetAttr``) and the descriptor is
+        ``object.__class__`` (``_OBJECT_CLASS_SLOT``), its setter
+        (``object_set_class``, Objects/typeobject.c) is called with no value
+        and raises ``TypeError`` ("can't delete __class__ attribute") before
+        anything changes, whatever the object: the certain halt.
+
+        Anything else -- a ``__delattr__`` the lookup does not decide to be
+        ``object``'s, or another builtin descriptor whose ``__delete__`` is
+        not read here -- is the one unanswered call
+        ``type(self).__delattr__`` (two-faced, owed), the object after it the
+        one ``after_field_store_call`` states.  Nothing is guessed of what it
+        runs."""
+        from .string_value import StringValue
+
+        definition = self.defining_class.class_definition
+        decided, owner = definition.namespace_owner(name)
+        delattr_decided, delattr_owner = definition.namespace_owner("__delattr__")
+        if (
+            decided
+            and delattr_decided
+            and owner == "object"
+            and delattr_owner == "object"
+            and vars(object).get(name) is _OBJECT_CLASS_SLOT
+        ):
+            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+            return ground_exceptional_exit(
+                exception_name="TypeError",
+                site=site,
+                owner="ObjectValue.delattr",
+            )
+        return self._after_attribute_call(
+            self.unanswered_method_call("__delattr__", (StringValue(name),), (), site),
+            site,
+        )
 
     def _undecided_delattr(self, name, after, site):
         """``del self.name`` on an instance whose fields are not current: two
