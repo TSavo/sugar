@@ -133,13 +133,11 @@ class ComputedCallSugar(ConstructedTermSugar):
         if remaining:
             head, *rest = remaining
             return evaluated_after((callee, *accumulated), head, ctx).and_then(
-                lambda value: _actual(value, ctx, owner="positional").and_then(
-                    lambda actual: self._collect(
-                        callee,
-                        tuple(rest),
-                        accumulated + (actual,),
-                        written_by(actual, ctx),
-                    )
+                lambda value: self._collect(
+                    callee,
+                    tuple(rest),
+                    accumulated + (value,),
+                    written_by(value, ctx),
                 )
             )
         return self._collect_kwargs(callee, self.keywords, (), accumulated, ctx)
@@ -156,14 +154,12 @@ class ComputedCallSugar(ConstructedTermSugar):
             (name, sugar), *rest = remaining
             earlier = (callee, *positional, *(value for _name, value in kw_values))
             return evaluated_after(earlier, sugar, ctx).and_then(
-                lambda value: _actual(value, ctx, owner="keyword").and_then(
-                    lambda actual: self._collect_kwargs(
-                        callee,
-                        tuple(rest),
-                        kw_values + ((name, actual),),
-                        positional,
-                        written_by(actual, ctx),
-                    )
+                lambda value: self._collect_kwargs(
+                    callee,
+                    tuple(rest),
+                    kw_values + ((name, value),),
+                    positional,
+                    written_by(value, ctx),
                 )
             )
         from sugar_lift_py_tests.floor.named_expression_value import (
@@ -285,24 +281,6 @@ class ComputedCallSugar(ConstructedTermSugar):
             captured=captured_values,
             call_occurrence=self.call_occurrence,
         )
-
-
-def _actual(value, ctx, *, owner: str) -> ExitSet:
-    """``value`` -- an actual just evaluated -- as the value the callee
-    receives: a call's value is what it returned
-    (``project_operation_receiver_outcome``: its one authenticated return,
-    else the call itself), as every call binds its actuals
-    (``CallSiteSugar._collect``).  The walrus binds the actual carries ride
-    the projected value through the one operand door
-    (``consume_operands``)."""
-    from sugar_lift_py_tests.floor.named_expression_value import consume_operands
-
-    return consume_operands(
-        lambda presented: presented.project_operation_receiver_outcome(
-            ctx, owner=f"ComputedCallSugar {owner} actual"
-        ),
-        value,
-    )
 
 
 def apply_callee(
