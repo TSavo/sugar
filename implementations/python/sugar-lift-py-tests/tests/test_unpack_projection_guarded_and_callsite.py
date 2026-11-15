@@ -26,9 +26,11 @@ violated, so a fix that merely stops the panic does not pass:
 5. A callsite RHS retains the typed unpack obligation over the CALLSITE'S OWN
    term -- the count belongs to ``__iter__`` at runtime and no member is
    invented. Discrimination: a different arity is a different obligation.
-6. A callsite whose body floors to a display is DECIDABLE and binds the members
-   already in hand, rather than falling to the runtime arm. This is the half
-   that makes law 5 a routing decision instead of a blanket red.
+6. A display is DECIDABLE and binds the members already in hand, rather than
+   falling to the runtime arm. This is the half that makes law 5 a routing
+   decision instead of a blanket red. A call of a same-file function is no
+   display: it is its coordinate and edge, joined at prove (#7757 steps 5 and
+   6, #8705), so its result is unpacked by law 5 like any callsite's.
 """
 
 from __future__ import annotations
@@ -153,14 +155,14 @@ def test_guarded_rejoin_threads_to_the_rest_of_the_block() -> None:
 # the fragment that owns the boundary. A synthetic `blame="twin-site"` is exactly
 # the reconstructed-evidence shape it exists to reject, so the arm has to come
 # from real source rather than a hand-built operation.
-GUARDED_SYMBOLIC_ELSE = (
-    "def pair(p, q):\n"
-    "    return p, q\n"
-    "\n"
-    "def A(c, p, q):\n"
-    "    a, b = (pair(p, q) if c else p)\n"
-    "    return a\n"
-)
+#
+# The ``if`` arm is the display ``(p, q)`` itself.  It used to be ``pair(p, q)``
+# with ``def pair(p, q): return p, q``, whose body the call applied; a same-file
+# call is now its coordinate and edge (#7757 steps 5 and 6, #8705), so its
+# result is a callsite unpacked at runtime (law 5) and the arm would owe an
+# unpack of its own.  The display keeps the law under test: only the ``else``
+# arm is a runtime unpack.
+GUARDED_SYMBOLIC_ELSE = "def A(c, p, q):\n    a, b = ((p, q) if c else p)\n    return a\n"
 
 
 def _discharged_on_an_undecided_condition(tmp_path: Path, source: str, stem: str):
@@ -213,9 +215,8 @@ def test_guarded_arm_effect_rides_the_branch_guard(tmp_path: Path) -> None:
     complement of that arm's completes atom).
 
     Only the ``else`` arm is a runtime unpack: ``p``, a value no caller has
-    supplied.  The ``if`` arm calls ``pair``, defined in this file: the call
-    is applied (step 6), its return floors to the display ``p, q``, and a
-    2-tuple always unpacks into two names -- Python never raises there, so no
+    supplied.  The ``if`` arm is the display ``(p, q)``, and a 2-tuple
+    always unpacks into two names -- Python never raises there, so no
     unpack halt is owed on that arm (law 6).  The one halt rides
     ``not py.truthy(c)``, never ``py.truthy(c)``.
     """
@@ -329,19 +330,18 @@ def test_callsite_arity_is_the_target_count(tmp_path: Path) -> None:
     assert str(two.guard) != str(three.guard)
 
 
-def test_callsite_whose_body_floors_to_a_display_binds_its_members(
-    tmp_path: Path,
-) -> None:
-    """Law 6: ``pair`` is defined in the same file and returns the display
-    ``p, q``, so ``a, b = pair(p, q)`` unpacks a 2-tuple into two targets.
+def test_a_same_file_call_rhs_is_a_callsite_unpack(tmp_path: Path) -> None:
+    """Law 5 for a call of a function defined in this file.
 
-    Python never raises there: a 2-tuple always unpacks into two names, and
-    building it cannot raise.  The call binds ``pair``'s body (a same-file
-    call is applied, step 6), its return floors to the display, and the
-    unpack binds the members already in hand.  ``A`` is one completion under
-    truth with no halt -- no unpack obligation is owed, because there is no
-    raise for it to stand for.  The opaque arm (law 5) is the receiver the
-    caller does not have: ``o.copy()`` above.
+    ``pair`` returns the display ``p, q``.  This used to be law 6: the call
+    applied ``pair``'s body, its return floored to the display, and ``A``
+    completed with no halt.  A same-file call is now its coordinate and edge,
+    joined at prove (#7757 steps 5 and 6, the owner's ruling "Edge, join at
+    prove", #8705): the lifter never reads ``pair``'s body at the call, so the
+    unpack retains its obligation over the call's own term, and whether it
+    can raise is decided at prove, where ``pair``'s contract joins the edge.
+    The call's own halt (the unanswered call's complement face) stands
+    beside it.
     """
     source = (
         "def pair(p, q):\n"
@@ -352,6 +352,7 @@ def test_callsite_whose_body_floors_to_a_display_binds_its_members(
         "    return a\n"
     )
     outcome = _outcome(tmp_path, source, "callsite_display")
-    assert outcome.halts() == ()
-    assert outcome.completed_value() is not None, outcome
-    assert "python:unpack.destructure" not in repr(outcome)
+    halt = _callsite_unpack_halt(outcome)
+    assert halt.effect.exception_type_coordinate is None
+    assert "python:unpack.destructure" in str(halt.guard)
+    assert "call:" in str(halt.guard) and "pair" in str(halt.guard)
