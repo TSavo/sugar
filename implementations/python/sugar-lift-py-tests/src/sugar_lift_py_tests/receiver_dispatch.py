@@ -45,9 +45,19 @@ CLASS_ARGUMENT = "py.class"
 
 # A read of any of these names, or of these attributes, may store any name
 # on any object: ``setattr(o, name, v)``, ``vars(o)[name] = v``,
-# ``o.__dict__[name] = v``, ``object.__setattr__(o, name, v)``.
+# ``o.__dict__[name] = v``, ``object.__setattr__(o, name, v)`` -- and so
+# ``setattr(o, "__class__", C)`` and ``object.__setattr__(o, "__class__",
+# C)``, which give ``o`` another class.
 _DYNAMIC_NAMES = frozenset({"setattr", "delattr", "vars"})
 _DYNAMIC_ATTRIBUTES = frozenset({"__dict__", "__setattr__", "__delattr__"})
+
+# A store to (or delete of) this attribute anywhere in the module may give an
+# object another class: ``o.__class__ = C`` (``object.__class__``'s setter,
+# ``object_set_class``).  A class input bound to the class the caller saw,
+# or the class an instance was made of, would then name a class the object
+# no longer has, so the module is dynamic exactly as for ``setattr``.  A read
+# (``self.__class__.__name__``) changes nothing.
+_CLASS_ATTRIBUTE = "__class__"
 
 # Module -> (module, answer), the last few typed modules read.
 _ATTRIBUTE_NAMES: dict = {}
@@ -58,13 +68,16 @@ def module_attribute_names(unit) -> tuple:
     name the module spells anywhere but as the callee of a call
     (``o.m(...)``) -- a store ``o.n = v``, ``del o.n``, a read ``o.n`` -- and
     whether it spells a way to store a computed name (``setattr``, ``vars``,
-    ``__dict__``, ``__setattr__``).
+    ``__dict__``, ``__setattr__``) or to give an object another class (a
+    store to or delete of ``o.__class__``, ``_class_stores``).
 
     A method call on a parameter is dispatched only for a name this module
     never spells otherwise (``dispatch_on_receiver``): a store of a field of
     that name in the frame before the call would leave the formal standing
     as it was (``ReceiverFieldStoreStateSugar``), and the field would shadow
-    the method.  Read once per typed module."""
+    the method.  In a dynamic module nothing is dispatched over a class
+    input: the class a caller binds it to may not be the object's class at
+    the call.  Read once per typed module."""
     from sugar_source_tree.nodes import Attribute, Call, Name
 
     module = getattr(unit, "typed_module", None)
@@ -82,7 +95,7 @@ def module_attribute_names(unit) -> tuple:
         if isinstance(node, Call) and isinstance(node.func, Attribute)
     }
     names = set()
-    dynamic = False
+    dynamic = _class_stores(nodes)
     for node in nodes:
         if isinstance(node, Attribute):
             if node.attr in _DYNAMIC_ATTRIBUTES:
@@ -96,6 +109,47 @@ def module_attribute_names(unit) -> tuple:
         _ATTRIBUTE_NAMES.clear()
     _ATTRIBUTE_NAMES[id(module)] = (module, answer)
     return answer
+
+
+def _class_stores(nodes) -> bool:
+    """Whether any of ``nodes`` stores to or deletes ``<x>.__class__``: an
+    attribute ``__class__`` in a target position -- an assignment's target
+    (plain, augmented, annotated), a ``del``, a ``for`` or comprehension
+    target, a ``with ... as`` target -- at any depth of a tuple, list or
+    starred target."""
+    from sugar_source_tree.nodes import (
+        AnnAssign,
+        Assign,
+        AsyncFor,
+        Attribute,
+        AugAssign,
+        Comprehension,
+        Delete,
+        For,
+        List,
+        Starred,
+        Tuple_,
+        WithItem,
+    )
+
+    targets = []
+    for node in nodes:
+        if isinstance(node, (Assign, Delete)):
+            targets.extend(node.targets)
+        elif isinstance(node, (AugAssign, AnnAssign, For, AsyncFor, Comprehension)):
+            targets.append(node.target)
+        elif isinstance(node, WithItem) and node.optional_vars is not None:
+            targets.append(node.optional_vars)
+    while targets:
+        target = targets.pop()
+        if isinstance(target, Attribute):
+            if target.attr == _CLASS_ATTRIBUTE:
+                return True
+        elif isinstance(target, (Tuple_, List)):
+            targets.extend(target.elts)
+        elif isinstance(target, Starred):
+            targets.append(target.value)
+    return False
 
 
 def instance_term(symbol: str, fields=()):
@@ -187,8 +241,10 @@ def dispatch_on_receiver(name, receiver, positional, kw_values, site, *, unit):
       __init__()`` from a subclass supplies the subclass -- under the same
       method-name guard as a formal;
     - ``receiver`` is a same-file class's call result whose construction runs
-      no source code (``class_value``): its class is decided, and prove
-      resolves the method on it as on any other.
+      no source code (``class_value``), in a module that is not dynamic
+      (``module_attribute_names``: no computed store, no ``__class__``
+      store): its class is decided, and prove resolves the method on it as
+      on any other.
 
     An instance a construction in this frame made is dispatched where the
     one attribute lookup selected a method (``ObjectValue.call_member``,
@@ -215,6 +271,11 @@ def _receiver_class(name, receiver, unit):
     from sugar_lift_py_tests.ir import make_var
 
     if isinstance(receiver, CallSiteValue):
+        # A store on the result itself leaves another value
+        # (``constructed_by_edge``); one through an alias, or a computed
+        # store, in a dynamic module may give it another class unseen.
+        if module_attribute_names(unit)[1]:
+            return None
         return class_value(receiver)
     if isinstance(receiver, ObjectValue):
         if receiver.allocation is not None or receiver.arrival is None:

@@ -403,6 +403,57 @@ def test_a_base_init_dispatches_self_m_on_the_subclass_reaching_it(
     assert lie.verdict != "sat"
 
 
+# A store to ``item.__class__`` gives the object another class
+# (``object.__class__``'s setter).  The caller supplies the class it made the
+# object of (``Plain``), so a dispatch over ``class:item`` would resolve
+# ``item.kind()`` on ``Plain`` and read ``1`` -- the lie -- as ``sat``.  A
+# ``__class__`` store makes the module dynamic (``receiver_dispatch.
+# module_attribute_names``): nothing is dispatched over a class input, the call
+# stays owed, and neither half is decided.
+_CLASS_STORE = """\
+class Plain:
+    def kind(self):
+        return 1
+
+
+class Other:
+    def kind(self):
+        return 2
+
+
+def morph(item):
+    item.__class__ = Other
+    return item.kind()
+
+
+def test_morph():
+    value = morph(Plain())
+    assert value == {expected}
+"""
+
+
+def test_a_class_store_on_the_receiver_is_never_dispatched_on_the_callers_class(
+    tmp_path: Path,
+) -> None:
+    """``morph(Plain())`` with ``item.__class__ = Other`` before
+    ``item.kind()``: Python runs ``Other.kind`` (``2``).  Truthful claims
+    ``2``, lying claims ``1`` (what ``Plain.kind`` returns).  Read on the
+    test function's own claims (``morph``'s own proof owes its call either
+    way), the lie is never ``sat``: dispatching on the class the caller
+    supplied would read it ``sat``.  Not bridged: the class after the store
+    is not decided here, so both halves are ``open``."""
+    truthful = _CLASS_STORE.format(expected=2)
+    lying = _CLASS_STORE.format(expected=1)
+    t = run_source_through_real_solver(tmp_path / "class-store-truthful", truthful)
+    lie = run_source_through_real_solver(tmp_path / "class-store-lying", lying)
+    print(json.dumps({"truthful": t.verdict, "lying": lie.verdict}, sort_keys=True))
+    test_line = truthful.splitlines().index("def test_morph():") + 1
+    lie_claim = claim_verdict(lie.prove_doc, claims_from_line=test_line)
+    assert lie_claim != "sat"
+    assert lie_claim == "open"
+    assert claim_verdict(t.prove_doc, claims_from_line=test_line) == "open"
+
+
 # ---------------------------------------------------------------------------
 # The same pairs in process (a unit check, not a twin): the lifter's own
 # outcome for the test function.  Lying carries only the method's raise;

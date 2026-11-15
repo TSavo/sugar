@@ -651,7 +651,9 @@ class ObjectValue(FloorValue):
           the descriptor;
           ``("plain", None)``, no class binding ``name``, or a function (a
           non-data descriptor), or a value that is no data descriptor -- the
-          instance-field store (``with_field_store``).
+          instance-field store (``with_field_store``).  A name a builtin
+          owner binds to a data descriptor (``_class_data_descriptor``:
+          ``object.__class__``) is not the plain store: undecided, below.
         - ``("undecided", None)``: anything else.  A lookup of
           ``__setattr__`` or of ``name`` that is not decided (an unread
           base, a decorator, a store on the class, ``@x.setter``); a builtin
@@ -692,6 +694,14 @@ class ObjectValue(FloorValue):
                 return "refused", None
             return "plain", None
         if value is None:
+            if self._class_data_descriptor(name):
+                # A builtin owner's data descriptor answers the store, not
+                # the instance ``__dict__``: ``o.__class__ = C`` is
+                # ``object.__class__``'s setter (``object_set_class``), which
+                # gives the object another class or raises ``TypeError``.
+                # Its ``__set__`` is not read here: the unanswered call, and
+                # the object after it of a class this frame does not know.
+                return undecided
             return "plain", None
         return _descriptor_route(value)
 

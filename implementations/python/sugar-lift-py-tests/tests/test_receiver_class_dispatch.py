@@ -132,6 +132,61 @@ def test_a_field_stored_under_the_method_s_name_keeps_the_call_undispatched() ->
     assert "UnknownCallee:dispatch:check" not in owners
 
 
+_CLASS_STORE = """\
+class Box:
+    def run(self):
+        return self.check()
+
+    def check(self):
+        return None
+
+
+class Other:
+    def check(self):
+        raise ValueError('other')
+
+
+def patch(box):
+{store}
+"""
+
+
+@pytest.mark.parametrize(
+    "store",
+    [
+        "    box.__class__ = Other",
+        "    box.__class__, n = Other, 1",
+        "    [*box.__class__] = [Other]",
+        "    del box.__class__",
+        "    for box.__class__ in (Other,):\n        pass",
+        "    object.__setattr__(box, '__class__', Other)",
+        "    setattr(box, '__class__', Other)",
+    ],
+)
+def test_a_class_store_anywhere_keeps_the_call_undispatched(store: str) -> None:
+    """The module may give an object another class (``x.__class__ = C``,
+    ``setattr(x, "__class__", C)``, ``object.__setattr__``): the class a
+    caller binds ``class:self`` to may not be the object's class at the
+    call, so the call is not dispatched (owed, #7757 step 8)."""
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    tree = _tree(_CLASS_STORE.format(store=store))
+    outcome = function_universe_outcome(_function(tree, "run"))
+    owners = {halt.effect.producer_node_owner for halt in outcome.halts()}
+    assert "UnknownCallee:dispatch:check" not in owners
+
+
+def test_a_class_read_keeps_the_call_dispatched() -> None:
+    """A read of ``__class__`` changes no object's class: the call is
+    dispatched as before."""
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    tree = _tree(_CLASS_STORE.format(store="    return box.__class__.__name__"))
+    outcome = function_universe_outcome(_function(tree, "run"))
+    owners = {halt.effect.producer_node_owner for halt in outcome.halts()}
+    assert "UnknownCallee:dispatch:check" in owners
+
+
 _INITIALIZER = """\
 class Base:
     def __init__(self):
