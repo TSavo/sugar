@@ -8,7 +8,9 @@
 //     reason is a different member CID;
 //   - add_undecided_members: one row per member, status `undecidable`,
 //     reason `owed: <owner>: <observed>`, the site as its locus, and
-//     `owed` counts it.
+//     `owed` counts it;
+//   - a member the join answers (its symbol bound to an imported contract)
+//     is not owed; a member with no symbol at the same line still is.
 
 use std::fs;
 use std::path::PathBuf;
@@ -16,8 +18,9 @@ use std::path::PathBuf;
 use sugar_canonicalizer::{blake3_512_of, cid_hex};
 use sugar_claim_envelope::{mint_undecided, MintUndecidedArgs};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, AtomCid, Ed25519Seed, ProofEnvelopeInput,
-    ProofGraph, UndecidedMember, UndecidedMemento, UndecidedReason, UndecidedSite,
+    build_proof_envelope, ed25519_pubkey_string, AtomCid, Ed25519Seed, MementoCid, MementoPool,
+    ProofEnvelopeInput, ProofGraph, UndecidedMember, UndecidedMemento, UndecidedReason,
+    UndecidedSite,
 };
 use sugar_verifier::{load_all_proofs, ObligationVerdict, Report};
 
@@ -212,6 +215,123 @@ fn an_imported_proofs_owed_members_are_its_own_never_the_importers() {
         assert_eq!(row.callsite.file.as_deref(), Some("b64vendor.py"));
     }
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// The pool form of a minted `undecided` member: its header, `cid` included.
+fn undecided_envelope(member: &UndecidedMember) -> serde_json::Value {
+    let mut header = member.header_preimage();
+    header["cid"] = serde_json::Value::String(member.header_cid());
+    serde_json::json!({ "header": header })
+}
+
+fn pool_cid(raw: String) -> MementoCid {
+    MementoCid::try_parse(raw).expect("a blake3-512 CID")
+}
+
+/// One line of a consumer test: `assert encodeBase64("xyz") == "eHl6"`.
+/// The call is the unanswered member with the import door's symbol; the
+/// `==` on its result is a second member at the same line with no symbol.
+fn consumer_line_nine() -> (UndecidedMember, UndecidedMember) {
+    let site = |start_col, end_col| UndecidedSite {
+        file: "test_consumer.py".into(),
+        source_cid: AtomCid::try_parse(format!("blake3-512:{}", "c".repeat(128))).unwrap(),
+        start_line: 9,
+        start_col,
+        end_line: 9,
+        end_col,
+    };
+    let call = UndecidedMember {
+        symbol: Some("python:b64vendor.encodeBase64".into()),
+        site: site(11, 28),
+        reason: UndecidedReason::Unanswered,
+    };
+    let compare = UndecidedMember {
+        symbol: None,
+        site: site(11, 38),
+        reason: UndecidedReason::Unanswered,
+    };
+    (call, compare)
+}
+
+fn consumer_pool(staged: bool) -> MementoPool {
+    let (call, compare) = consumer_line_nine();
+    let mut pool = MementoPool::default();
+    for member in [&call, &compare] {
+        let cid = pool_cid(member.header_cid());
+        pool.insert_unanchored_for_tests(cid, undecided_envelope(member));
+    }
+    if staged {
+        // The vendor's proof: a contract stating a post for the symbol, and
+        // the bridge from the symbol to it.
+        let contract_cid = blake3_512_of(b"vendor-encodeBase64-contract");
+        pool.insert_unanchored_for_tests(
+            pool_cid(contract_cid.clone()),
+            serde_json::json!({
+                "evidence": {
+                    "kind": "contract",
+                    "body": {
+                        "contractName": "encodeBase64",
+                        "formals": ["value"],
+                        "outBinding": "out",
+                        "post": {
+                            "kind": "atomic",
+                            "name": "=",
+                            "args": [
+                                {"kind": "var", "name": "out"},
+                                {"kind": "var", "name": "value"}
+                            ]
+                        }
+                    }
+                }
+            }),
+        );
+        pool.insert_unanchored_for_tests(
+            pool_cid(blake3_512_of(b"vendor-encodeBase64-bridge")),
+            serde_json::json!({
+                "evidence": {
+                    "kind": "bridge",
+                    "body": {
+                        "sourceSymbol": "python:b64vendor.encodeBase64",
+                        "targetContractCid": contract_cid
+                    }
+                }
+            }),
+        );
+    }
+    pool
+}
+
+fn owed_names(pool: &MementoPool) -> Vec<String> {
+    let mut report = Report::default();
+    sugar_verifier::report::add_undecided_members(pool, &mut report);
+    assert_eq!(report.owed, report.rows.len());
+    let mut names: Vec<_> = report
+        .rows
+        .iter()
+        .map(|row| row.callsite.property_name.clone())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn a_member_the_join_answers_is_not_owed() {
+    // Unstaged: nothing answers the call; both members are owed.
+    assert_eq!(
+        owed_names(&consumer_pool(false)),
+        vec![
+            "undecided:python:b64vendor.encodeBase64".to_string(),
+            "undecided:test_consumer.py:9".to_string(),
+        ]
+    );
+    // Staged: the join binds the call's symbol to the vendor's contract, so
+    // the call is answered and leaves `owed`. The `==` member at the same
+    // line names no symbol: nothing joins it, and it stays owed under its
+    // site, `undecided:test_consumer.py:9`.
+    assert_eq!(
+        owed_names(&consumer_pool(true)),
+        vec!["undecided:test_consumer.py:9".to_string()]
+    );
 }
 
 #[test]
