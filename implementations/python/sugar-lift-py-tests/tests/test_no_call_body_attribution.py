@@ -410,99 +410,73 @@ def test_conservation_shortfall_is_a_hard_loud_failure() -> None:
     assert "conservationShortfall=1" in report.render()
 
 
-def test_resolved_demand_without_matching_with_is_named_not_silent(
+def test_a_with_whose_head_is_not_import_bound_takes_no_part(
     tmp_path,
 ) -> None:
-    """Lying twin: a resolved demand cannot vanish via bare continue."""
-    from sugar_lift_python_source.canonical import blake3_512_of
-
+    """Lying twin: the same body under a head the import table does not bind
+    (a same-file function, a formal) is not in the population: no probe and
+    no exclusion.  Membership is read off the tree, never granted by a row."""
     package = tmp_path / "pandas"
     package.mkdir()
-    path = package / "missing_with.py"
-    source = "def f():\n    return 1\n"
-    path.write_text(source, encoding="utf-8")
-    source_cid = blake3_512_of(source.encode())
-    rows = [
-        {
-            "kind": "context-manager-demand",
-            "gapKind": None,
-            "useSite": {
-                "sourceCid": source_cid,
-                "startLine": 99,
-                "startCol": 0,
-                "endLine": 99,
-                "endCol": 4,
-            },
-        }
-    ]
+    (package / "local_head.py").write_text(
+        "def boundary(kind):\n"
+        "    return kind\n"
+        "def f(values):\n"
+        "    with boundary(TypeError):\n"
+        "        values[2]\n",
+        encoding="utf-8",
+    )
+    (package / "formal_head.py").write_text(
+        "def g(manager, values):\n" "    with manager:\n" "        values[2]\n",
+        encoding="utf-8",
+    )
 
-    with pytest.raises(AttributionInvariantError, match="no-matching-with"):
-        discover_no_call_body_probes({"rows": rows}, package)
+    disposition = discover_no_call_body_probes(package)
+
+    assert disposition.probes == ()
+    assert disposition.named_exclusions == ()
 
 
 def test_discovery_classifies_the_body_root_and_excludes_root_calls(
     tmp_path,
 ) -> None:
-    from sugar_lift_py_tests.context_manager_resolution import (
-        TreeConstructionContextV1,
-    )
-    from sugar_lift_python_source.canonical import blake3_512_of
-    from sugar_source_tree.nodes import With
-    from sugar_source_tree.tree import SourceFile
-
     package = tmp_path / "pandas"
     package.mkdir()
+    # Each head is a call the file's own import binds: that, read off the
+    # tree, is what puts the item in the population.  The two spellings bind
+    # different targets; neither selects a family.
     subscript_path = package / "subscript_body.py"
     subscript_source = (
-        "def f(values):\n" "    with boundary(TypeError):\n" "        values[2]\n"
+        "from pytest import raises as boundary\n"
+        "def f(values):\n"
+        "    with boundary(TypeError):\n"
+        "        values[2]\n"
     )
     subscript_path.write_text(subscript_source, encoding="utf-8")
     call_path = package / "call_body.py"
-    call_source = "def g():\n    with boundary(TypeError):\n        opaque()\n"
+    call_source = (
+        "from pytest import raises as boundary\n"
+        "def g():\n"
+        "    with boundary(TypeError):\n"
+        "        opaque()\n"
+    )
     call_path.write_text(call_source, encoding="utf-8")
     binop_path = package / "binop_body.py"
     binop_source = (
-        "def h():\n" "    with boundary(TypeError):\n" "        opaque() + 1\n"
+        "from native import boundary\n"
+        "def h():\n"
+        "    with boundary(TypeError):\n"
+        "        opaque() + 1\n"
     )
     binop_path.write_text(binop_source, encoding="utf-8")
 
-    rows = []
-    for path, source in (
-        (subscript_path, subscript_source),
-        (call_path, call_source),
-        (binop_path, binop_source),
-    ):
-        source_cid = blake3_512_of(source.encode())
-        tree = SourceFile(
-            (source, str(path), source_cid),
-            construction_context=TreeConstructionContextV1.for_source_call_construction(),
-        )
-        node = next(item for item in tree.nodes() if isinstance(item, With))
-        span = node.items[0].context_expr.line_col_span()
-        rows.append(
-            {
-                "kind": "context-manager-demand",
-                "gapKind": None,
-                "targetSymbol": (
-                    "native.boundary" if path == binop_path else "pytest.raises"
-                ),
-                "useSite": {
-                    "sourceCid": source_cid,
-                    "startLine": span.start_line,
-                    "startCol": span.start_col,
-                    "endLine": span.end_line,
-                    "endCol": span.end_col,
-                },
-            }
-        )
-
-    disposition = discover_no_call_body_probes({"rows": rows}, package)
+    disposition = discover_no_call_body_probes(package)
     assert isinstance(disposition, DiscoveryDisposition)
     probes = disposition.probes
 
     assert [(probe.family, probe.body_id) for probe in probes] == [
-        (ProducerFamily.BINOP, "binop_body.py:3:BinOp"),
-        (ProducerFamily.SUBSCRIPT, "subscript_body.py:3:Subscript"),
+        (ProducerFamily.BINOP, "binop_body.py:4:BinOp"),
+        (ProducerFamily.SUBSCRIPT, "subscript_body.py:4:Subscript"),
     ]
     # Call root is a named exclusion on the disposition object — never a
     # function-attribute side channel and never a silent continue.
@@ -513,10 +487,10 @@ def test_discovery_classifies_the_body_root_and_excludes_root_calls(
     )
 
     binop_only = discover_no_call_body_probes(
-        {"rows": rows}, package, families=frozenset({ProducerFamily.BINOP})
+        package, families=frozenset({ProducerFamily.BINOP})
     )
     assert [(probe.family, probe.body_id) for probe in binop_only.probes] == [
-        (ProducerFamily.BINOP, "binop_body.py:3:BinOp")
+        (ProducerFamily.BINOP, "binop_body.py:4:BinOp")
     ]
     # Family filter is a post-recognition disposition (not root-outside).
     assert any(
@@ -531,60 +505,37 @@ def test_discovery_classifies_the_body_root_and_excludes_root_calls(
 
 
 def test_population_selection_never_reads_manager_target_symbol() -> None:
-    """All resolved managers enroll; manager spelling grants no membership."""
+    """All import-bound managers enroll; manager spelling grants no membership."""
     assert "targetSymbol" not in discover_no_call_body_probes.__code__.co_consts
 
 
 def test_discovery_projects_one_family_through_one_typed_construction_per_source(
     tmp_path, monkeypatch
 ) -> None:
-    from sugar_lift_py_tests.context_manager_resolution import (
-        TreeConstructionContextV1,
-    )
     from sugar_lift_python_source.canonical import blake3_512_of
-    from sugar_source_tree.nodes import With
     from sugar_source_tree.tree import SourceFile
 
     package = tmp_path / "pandas"
     package.mkdir()
     sources = {
         "attribute_body.py": (
+            "from pytest import raises as boundary\n"
             "def f(series):\n"
             "    with boundary(AttributeError):\n"
             "        series.bad\n"
         ),
         "subscript_body.py": (
-            "def g(value):\n    with boundary(IndexError):\n        value[2]\n"
+            "from pytest import raises as boundary\n"
+            "def g(value):\n"
+            "    with boundary(IndexError):\n"
+            "        value[2]\n"
         ),
     }
-    rows = []
-    subscript_cid = None
+    source_cids = []
     for filename, source in sources.items():
         path = package / filename
         path.write_text(source, encoding="utf-8")
-        source_cid = blake3_512_of(source.encode())
-        if filename == "subscript_body.py":
-            subscript_cid = source_cid
-        tree = SourceFile(
-            (source, str(path), source_cid),
-            construction_context=TreeConstructionContextV1.for_source_call_construction(),
-        )
-        node = next(item for item in tree.nodes() if isinstance(item, With))
-        span = node.items[0].context_expr.line_col_span()
-        rows.append(
-            {
-                "kind": "context-manager-demand",
-                "gapKind": None,
-                "targetSymbol": "pytest.raises",
-                "useSite": {
-                    "sourceCid": source_cid,
-                    "startLine": span.start_line,
-                    "startCol": span.start_col,
-                    "endLine": span.end_line,
-                    "endCol": span.end_col,
-                },
-            }
-        )
+        source_cids.append(blake3_512_of(source.encode()))
 
     from sugar_lift_py_tests import lift_rpc
 
@@ -607,21 +558,14 @@ def test_discovery_projects_one_family_through_one_typed_construction_per_source
     monkeypatch.setattr(lift_rpc, "open_source_file_for_construction", record_open)
     monkeypatch.setattr(SourceFile, "nodes", refuse_second_traversal)
     probes = discover_no_call_body_probes(
-        {"rows": rows}, package, families=frozenset({ProducerFamily.ATTRIBUTE})
+        package, families=frozenset({ProducerFamily.ATTRIBUTE})
     ).probes
 
-    assert [probe.body_id for probe in probes] == ["attribute_body.py:3:Attribute"]
-    assert constructed_source_cids == [rows[0]["useSite"]["sourceCid"], subscript_cid]
+    assert [probe.body_id for probe in probes] == ["attribute_body.py:4:Attribute"]
+    assert constructed_source_cids == source_cids
 
 
 def test_discovery_carries_source_property_binding_to_attribute_exit(tmp_path) -> None:
-    from sugar_lift_py_tests.context_manager_resolution import (
-        TreeConstructionContextV1,
-    )
-    from sugar_lift_python_source.canonical import blake3_512_of
-    from sugar_source_tree.nodes import With
-    from sugar_source_tree.tree import SourceFile
-
     package = tmp_path / "pandas"
     package.mkdir()
     path = package / "property_body.py"
@@ -636,29 +580,7 @@ def test_discovery_carries_source_property_binding_to_attribute_exit(tmp_path) -
         "        Receiver().value\n"
     )
     path.write_text(source, encoding="utf-8")
-    source_cid = blake3_512_of(source.encode())
-    tree = SourceFile(
-        (source, str(path), source_cid),
-        construction_context=TreeConstructionContextV1.for_source_call_construction(),
-    )
-    with_node = next(node for node in tree.nodes() if isinstance(node, With))
-    span = with_node.items[0].context_expr.line_col_span()
     probes = discover_no_call_body_probes(
-        {
-            "rows": [
-                {
-                    "kind": "context-manager-demand",
-                    "gapKind": None,
-                    "useSite": {
-                        "sourceCid": source_cid,
-                        "startLine": span.start_line,
-                        "startCol": span.start_col,
-                        "endLine": span.end_line,
-                        "endCol": span.end_col,
-                    },
-                }
-            ]
-        },
         package,
         families=frozenset({ProducerFamily.ATTRIBUTE}),
     ).probes

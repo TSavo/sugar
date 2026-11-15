@@ -18,7 +18,6 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     attribute_body_probes,
     discover_no_call_body_probes,
     require_expected_denominators,
-    with_demand_rows,
 )
 from sugar_lift_py_tests.outcome import ExitSet
 
@@ -88,10 +87,8 @@ def test_one_silent_compare_completion_is_row_level_red() -> None:
 
 def test_all_34_compare_completions_publish_authenticated_compare_exits() -> None:
     corpus = authenticated_pandas_corpus()
-    payload = with_demand_rows(corpus.root)
     compare_inventory = require_expected_denominators(
         discover_no_call_body_probes(
-            payload,
             corpus.root,
             families=frozenset({ProducerFamily.COMPARE}),
         ).probes,

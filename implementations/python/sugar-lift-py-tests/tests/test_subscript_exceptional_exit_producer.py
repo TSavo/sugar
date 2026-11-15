@@ -36,7 +36,6 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     attribute_body_probes,
     discover_no_call_body_probes,
     require_expected_denominators,
-    with_demand_rows,
 )
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_python_source.source_oracle import workspace_path_source
@@ -197,10 +196,8 @@ def test_non_vendor_subscript_seed_is_real_and_has_no_call_descendant(
 
 def test_authenticated_subscript_family_owns_no_construction_panics() -> None:
     corpus = authenticated_pandas_corpus()
-    payload = with_demand_rows(corpus.root)
     inventory = require_expected_denominators(
         discover_no_call_body_probes(
-            payload,
             corpus.root,
             families=frozenset({ProducerFamily.SUBSCRIPT}),
         ).probes,

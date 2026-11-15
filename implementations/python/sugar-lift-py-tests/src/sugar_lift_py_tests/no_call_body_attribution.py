@@ -1,8 +1,9 @@
 """Per-family attribution for assertion bodies whose root is not a Call.
 
-The authenticated runner owns discovery; its With demand rows come from the
-one per-source derivation (``lift_rpc._PerSourceDemandRows``).  This
-module owns the closed accounting algebra: every completed probe is attributed
+The authenticated runner owns discovery, read off each file's tree: the
+``with`` items whose head is a call the file's one import table binds
+(#7757).  No demand row is read.  This module owns the closed accounting
+algebra: every completed probe is attributed
 to exactly one producer family and one closed outcome. A named
 ``SugarNotWritten`` refusal is accounted semantics, not a failure.
 ``ConstructionPanic`` never enters this accounting boundary; it remains
@@ -497,22 +498,24 @@ def _use_site_coordinate(
 
 
 def discover_no_call_body_probes(
-    payload: dict,
     corpus_root: Path,
     *,
     families: frozenset[ProducerFamily] | None = None,
     source_workspace_root: Path | None = None,
 ) -> DiscoveryDisposition:
-    """Project authenticated assertion demands to their native body producer.
+    """Project import-bound ``with`` heads to their native body producer.
 
-    Every resolved context-manager demand participates.  The native body root
-    selects the producer family; no manager or vendor spelling selects it or
-    grants semantic behavior to a producer.
+    Read off the tree (#7757): every ``with`` item whose head is a call the
+    file's one import table binds (``SourceUnit.import_reference_of`` at the
+    callee's own coordinate, the read ``Call`` construction makes) takes
+    part.  No demand row is read.  The native body root selects the producer
+    family; no manager or vendor spelling selects it or grants semantic
+    behavior to a producer.
 
-    One door: return ``DiscoveryDisposition(probes, named_exclusions)``. A resolved
-    demand that does not enroll is either a ``NamedDemandExclusion`` on that
-    object or an ``AttributionInvariantError`` that names the coordinate and
-    reason. There is no function-attribute side channel.
+    One door: return ``DiscoveryDisposition(probes, named_exclusions)``. An
+    import-bound item that does not enroll is either a ``NamedDemandExclusion``
+    on that object or an ``AttributionInvariantError`` that names the
+    coordinate and reason. There is no function-attribute side channel.
     """
     from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
     from sugar_lift_python_source.canonical import blake3_512_of
@@ -521,6 +524,7 @@ def discover_no_call_body_probes(
         Attribute,
         BinOp,
         BoolOp,
+        Call,
         Compare,
         Expr,
         Subscript,
@@ -544,27 +548,12 @@ def discover_no_call_body_probes(
     for path in SourceTree(corpus_root).paths():
         paths_by_cid[blake3_512_of(path.read_bytes())] = path
 
-    demands_by_source: dict[str, list[dict]] = {}
-    for row in payload["rows"]:
-        if (
-            row.get("kind") != "context-manager-demand"
-            or row.get("gapKind") is not None
-        ):
-            continue
-        use_site = row.get("useSite") or {}
-        source_cid = use_site.get("sourceCid")
-        if isinstance(source_cid, str):
-            demands_by_source.setdefault(source_cid, []).append(use_site)
-
     probes = []
     seen = set()
     named_exclusions: list[NamedDemandExclusion] = []
-    for source_cid, demands in demands_by_source.items():
-        path = paths_by_cid.get(source_cid)
-        if path is None:
-            raise AttributionInvariantError(
-                f"demand table names source CID absent from authenticated corpus: {source_cid}"
-            )
+    # One open per distinct content: files with identical bytes share one
+    # source CID and are read once, at the last seat the tree lists.
+    for source_cid, path in paths_by_cid.items():
         # The one opener: the same seated, populated unit the board reads,
         # with a registration channel seated as every enumerate door seats
         # one (#7374). A tree opened on NULL_REPORTER owns no registration,
@@ -578,9 +567,10 @@ def discover_no_call_body_probes(
             source_workspace_root=source_workspace_root,
         )
         # Index every With by manager span — body-shape filtering happens after
-        # a demand matches, so a resolved demand can never vanish as "no managers"
+        # an item is found import-bound, so such an item can never vanish
         # merely because its body was multi-statement or a Call root.
         managers_by_span: dict[tuple[int, int, int, int], list[With]] = {}
+        import_bound_spans: list[tuple[int, int, int, int]] = []
         registered = (
             tree.constructed_module.construction_event_receipt.registered_occurrences
         )
@@ -588,40 +578,43 @@ def discover_no_call_body_probes(
             if not isinstance(node, With):
                 continue
             for item in node.items:
-                span = item.context_expr.line_col_span()
-                managers_by_span.setdefault(
-                    (
-                        span.start_line,
-                        span.start_col,
-                        span.end_line,
-                        span.end_col,
-                    ),
-                    [],
-                ).append(node)
-        for use_site in demands:
+                head = item.context_expr
+                span = head.line_col_span()
+                key = (
+                    span.start_line,
+                    span.start_col,
+                    span.end_line,
+                    span.end_col,
+                )
+                managers = managers_by_span.setdefault(key, [])
+                managers.append(node)
+                # The head takes part when it is a call whose callee the one
+                # import table binds: presence of the row only, never what it
+                # names.
+                if (
+                    len(managers) == 1
+                    and isinstance(head, Call)
+                    and tree.unit.import_reference_of(head.func) is not None
+                ):
+                    import_bound_spans.append(key)
+        for key in import_bound_spans:
+            use_site = {
+                "sourceCid": source_cid,
+                "startLine": key[0],
+                "startCol": key[1],
+                "endLine": key[2],
+                "endCol": key[3],
+            }
             coordinate = _use_site_coordinate(
                 path,
                 corpus_root,
                 use_site,
                 source_workspace_root=source_workspace_root,
             )
-            managers = managers_by_span.get(
-                (
-                    use_site.get("startLine"),
-                    use_site.get("startCol"),
-                    use_site.get("endLine"),
-                    use_site.get("endCol"),
-                ),
-                (),
-            )
-            if not managers:
-                raise AttributionInvariantError(
-                    "resolved demand dropped: reason=no-matching-with "
-                    f"coordinate={coordinate} sourceCid={source_cid}"
-                )
+            managers = managers_by_span[key]
             if len(managers) != 1:
                 raise AttributionInvariantError(
-                    f"assertion demand resolves to {len(managers)} With nodes: "
+                    f"with item coordinate names {len(managers)} With nodes: "
                     f"coordinate={coordinate} useSite={use_site!r}"
                 )
             with_node = managers[0]
@@ -721,8 +714,7 @@ def run_authenticated_attribution(
             f"launcher selected unexpected corpus {corpus.manifest_cid} "
             f"over {corpus.file_count} files"
         )
-    payload = with_demand_rows(corpus.root)
-    disposition = discover_no_call_body_probes(payload, corpus.root, families=families)
+    disposition = discover_no_call_body_probes(corpus.root, families=families)
     probes = require_expected_denominators(
         disposition.probes,
         families=families,
