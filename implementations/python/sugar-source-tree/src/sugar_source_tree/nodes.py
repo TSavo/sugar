@@ -6094,21 +6094,49 @@ def _arm_walruses(arm):
     """The keyed walruses (plain name target, ``evaluation`` minted) a
     conditional expression's arm runs when it runs: every one under ``arm``
     except those in a lambda or a generator expression, which run later if
-    at all."""
-    found = []
-    stack = [arm]
+    at all.
+
+    One entry per path from ``arm`` to a walrus, first child first: a node's
+    walruses are itself (when it is one) and then each child's, in declared
+    order.  That list is built once per node.  A threaded term is a DAG of
+    shared nodes (a phi's two arms both hold the binding before the ``if``;
+    a value after a call holds the value before it), and an arm with no
+    walrus under it -- nearly every arm -- was walked once per path, which
+    is exponential in the number of joins above it."""
+    # ``id(node) -> its walruses``; ``alive`` keeps every keyed node's
+    # address from being reused while the table is read.
+    below: dict[int, tuple] = {}
+    alive = []
+    stack = [(arm, False)]
     while stack:
-        node = stack.pop()
-        if node.kind in ("Lambda", "GeneratorExp"):
+        node, expanded = stack.pop()
+        key = id(node)
+        if key in below:
             continue
+        if node.kind in ("Lambda", "GeneratorExp"):
+            alive.append(node)
+            below[key] = ()
+            continue
+        children = [child for _field, _index, child in node.children()]
+        if not expanded:
+            # Children first (each once), then this node again to join them.
+            stack.append((node, True))
+            stack.extend(
+                (child, False) for child in reversed(children) if id(child) not in below
+            )
+            continue
+        found = []
         if (
             node.kind == "NamedExpr"
             and isinstance(node.target, Name)
             and isinstance(getattr(node, "evaluation", None), str)
         ):
             found.append(node)
-        stack.extend(child for _field, _index, child in reversed(node.children()))
-    return found
+        for child in children:
+            found.extend(below[id(child)])
+        alive.append(node)
+        below[key] = tuple(found)
+    return list(below[id(arm)])
 
 
 def _scope_after(scope, evaluated, substituted):
