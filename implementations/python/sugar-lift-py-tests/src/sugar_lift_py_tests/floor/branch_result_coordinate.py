@@ -34,6 +34,53 @@ def branch_result_guard(slot, site):
     return predicate_formula(BranchResultCoordinate(slot, site), site)
 
 
+def slots_read_as_tests(ctx, readings):
+    """``ctx`` in which each slot of ``readings`` (``(slot_id, formula)``)
+    reads as ``formula``: the condition of the symbolic ``if`` that owns the
+    slot, as that ``if`` observed it on this path (``GuardedFaces.readings``).
+
+    The reading rides in the decision table (``ground_branch_results``) as
+    a ``PredicateValue``, beside the ground decisions, in a new table: the
+    path the ``if`` continues on reads it, and no other path does.  A phi
+    after the ``if`` (``IfExp`` on a ``BranchResultRef``) and a guarded
+    binding read then select by the test's own condition, never by the
+    slot's coordinate, which no contract row ties to the test (#7757)."""
+    if not readings or ctx is None:
+        return ctx
+    from dataclasses import is_dataclass, replace
+
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+
+    table = getattr(ctx, "ground_branch_results", None)
+    if not isinstance(table, dict) or not is_dataclass(ctx):
+        return ctx
+    return replace(
+        ctx,
+        ground_branch_results={
+            **table,
+            **{slot_id: PredicateValue(formula) for slot_id, formula in readings},
+        },
+    )
+
+
+def branch_result_reading(slot, ctx):
+    """The test's condition the slot ``slot`` reads as in ``ctx``
+    (``slots_read_as_tests``, as the live loop item running now qualifies
+    it: ``branch_slot_here``), else ``None`` where no ``if`` on this path
+    recorded one (a ground decision, a ``try``'s route, a loop's write
+    slot: each is read as it was before)."""
+    table = getattr(ctx, "ground_branch_results", None)
+    if not isinstance(table, dict) or slot is None:
+        return None
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.sugar.evaluation_ref_sugar import branch_slot_here
+
+    reading = table.get(branch_slot_here(slot, table).slot_id)
+    if isinstance(reading, PredicateValue):
+        return reading.formula
+    return None
+
+
 @dataclass(frozen=True)
 class BranchResultAuthentication(FloorValue):
     slot: BranchResultSlot

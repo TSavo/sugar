@@ -30,11 +30,22 @@ class GuardedFaces(FloorValue):
     # that bound one key to different values carry each arm's value under
     # that arm's guard (``if_sugar._arm_evaluations``).
     evaluations: tuple = ()
+    # ``(slot_id, formula)``: each branch-result slot read as its ``if``'s
+    # test on the path after this ``if`` -- its own slot as its test's
+    # condition, and each slot an ``if`` nested in a completed arm read
+    # (``if_sugar._arm_readings``).  The phi after the ``if`` selects by that
+    # condition (``branch_result_reading``), never by the slot's coordinate.
+    readings: tuple = ()
 
     def contribution(self):
         return (*self.unconditional_entries, *self.entries)
 
     def extend_scope(self, ctx):
+        from sugar_lift_py_tests.floor.branch_result_coordinate import (
+            slots_read_as_tests,
+        )
+
+        ctx = slots_read_as_tests(ctx, self.readings)
         if not self.evaluations:
             return ctx
         from dataclasses import replace
