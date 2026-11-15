@@ -40,7 +40,6 @@ from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import and_
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
-from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import (
     Assign,
@@ -415,8 +414,11 @@ def test_keyword_binding_does_not_accept_an_unknown_formal() -> None:
         if isinstance(node, BinOp) and isinstance(node.left, Call)
     )
 
+    # The frame's binding gap is the call's one named refusal
+    # (``object_value.bind_call``'s ``refuse``): ``SugarNotWritten`` owned by
+    # the call, stating what did not bind.
     with pytest.raises(
-        SourceCallBindingGap, match="missing required formal|unconsumed"
+        SugarNotWritten, match="missing required formal|unconsumed"
     ):
         outer.sugar().desugar(None)
 
@@ -484,10 +486,12 @@ def test_lambda_rejects_foreign_body_and_formal_coordinate_testimony() -> None:
     assert len(lambdas) == 2
     left, right = tuple(node.substitute({}).sugar() for node in lambdas)
 
-    with pytest.raises(TypeError, match="exact source body testimony"):
+    # Each foreign testimony is refused by name (``LambdaSugar.__post_init__``),
+    # never a TypeError.
+    with pytest.raises(SugarNotWritten, match=r"LambdaSugar\.body"):
         replace(left, body=right.body)
 
-    with pytest.raises(TypeError, match="producer-authenticated testimony"):
+    with pytest.raises(SugarNotWritten, match=r"LambdaSugar\.formal_coordinate_cids"):
         replace(left, formal_coordinate_cids=right.formal_coordinate_cids)
 
 
