@@ -232,6 +232,19 @@ def refuse_unbound_evaluation(*, name: str, key, evaluation, site):
     )
 
 
+def _member_read(bound, site) -> ExitSet:
+    """A read, at ``site``, of the comprehension member ``bound``: a finite
+    member reads as it is; the symbolic member, which nothing outside the
+    fold's lambda binds, owes the undecided member by the one rule
+    (``read_of_bound_value``, #7757), so a halt guard over it (``1 // 0 if
+    not i else 0``) is owed, never decided by the solver choosing it.  The
+    halt still stands: the debt rides on every arm that follows the read."""
+    from sugar_lift_py_tests.sugar.loop_recurrence_sugar import read_of_bound_value
+
+    read = read_of_bound_value(bound, site)
+    return read if isinstance(read, ExitSet) else ExitSet.completed(read)
+
+
 @dataclass(frozen=True)
 class EvaluationRefSugar(ConstructedTermSugar):
     evaluation: str
@@ -433,9 +446,10 @@ class EvaluationRefSugar(ConstructedTermSugar):
         of a name its walrus writes.  Unbound, no write and no one plain
         prior binding of the name reaches the read in evaluation order, and
         the read is refused by name (``SugarNotWritten``): it is never the
-        binding before the comprehension read again."""
-        from sugar_lift_py_tests.outcome import ExitSet
+        binding before the comprehension read again.
 
+        A symbolic member is read by the one rule (``_member_read``): it
+        owes the undecided member."""
         if self.current is not None:
             return self._cell_at_the_call(temporal)
         bound = (
@@ -482,7 +496,7 @@ class EvaluationRefSugar(ConstructedTermSugar):
                     "every member under its coordinate"
                 ),
             )
-        return ExitSet.completed(bound)
+        return _member_read(bound, self.site)
 
     def _cell_at_the_call(self, temporal) -> ExitSet:
         """The comprehension cell a lambda made in the comprehension reads,
@@ -526,7 +540,7 @@ class EvaluationRefSugar(ConstructedTermSugar):
             if made is running:
                 current = temporal.value_if_bound(self.current)
                 if current is not None:
-                    return ExitSet.completed(current)
+                    return _member_read(current, self.site)
                 placement = "inside the evaluation that made it, with no member"
             else:
                 placement = (

@@ -157,7 +157,16 @@ def holds_recurrence_value(value) -> bool:
     generator kind, ``ComprehensionSugar._fold_term``), a constructor prove
     does not interpret, so the list, set or dict it accumulates (and what a
     generator yields) is a value the solver chooses.  One whose owner
-    projected every member (``finite_elements``) is decided."""
+    projected every member (``finite_elements``) is decided.
+
+    So is the fold's symbolic member (``SymbolicValue.recurrence_member``,
+    bound by ``ComprehensionSugar._symbolic_member_ctx``): the variable the
+    fold's lambda binds, and each leaf's projection of it.  Inside the fold
+    the lambda binds it; on an element's or condition's halt arm, which never
+    reaches the fold, the halt's guard reads it free, so a claim about that
+    halt (an ``except`` around the comprehension) would be decided by the
+    solver choosing the member.  A finite member is the member's own value,
+    never marked."""
     from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
     from sugar_lift_py_tests.floor.guarded_value import GuardedValue
     from sugar_lift_py_tests.ir import _Ctor
@@ -171,6 +180,8 @@ def holds_recurrence_value(value) -> bool:
             if current.finite_elements is None:
                 return True
         elif isinstance(current, SymbolicValue):
+            if current.recurrence_member:
+                return True
             term = current.term
             if isinstance(term, _Ctor) and term.name in _RECURRENCE_VALUES:
                 return True
@@ -186,7 +197,8 @@ def read_of_bound_value(value, site):
     target's key (``EvaluationRefSugar``), and a comprehension's symbolic
     fold, read where the comprehension completes with it
     (``ComprehensionSugar._complete``) and through any key it is bound
-    under -- the undecided member, as a slot
+    under, and the fold's symbolic member read in its element, key, value or
+    condition (``EvaluationRefSugar._member``) -- the undecided member, as a slot
     nothing decided is (``branch_result_coordinate.undecided_slot_debt``):
     the value still stands, and every claim that reads it owes, never
     decided by a value the solver selects (#7757)."""

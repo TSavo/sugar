@@ -202,7 +202,10 @@ def test_a_symbolic_member_is_bound_before_the_element_reads_it() -> None:
     inner = sugar._symbolic_member_ctx(generator, ctx)
     member = SymbolicValue(make_var(coordinate))
     assert inner.temporal.value_if_bound(coordinate) == member
-    assert sugar.element.desugar(inner) == ExitSet.completed(member)
+    read = sugar.element.desugar(inner)
+    assert read == ExitSet.completed(member)
+    # Nothing outside the fold binds the member: its read owes (#7757).
+    assert read.owed_items(), read
 
 
 def test_a_symbolic_member_binds_without_a_context() -> None:
