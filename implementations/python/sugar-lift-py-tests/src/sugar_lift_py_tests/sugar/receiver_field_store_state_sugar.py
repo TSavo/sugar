@@ -25,7 +25,9 @@ class ReceiverFieldStoreStateSugar(ConstructedTermSugar):
     class (``ObjectValue``) whose class takes the plain store
     (``ObjectValue.field_store_route``) with the field stored -- known on it
     whether it was made here or arrived (``ObjectValue.stored_fields``), the
-    rest of it as its currency says; an instance whose store ran code (a
+    rest of it as its currency says -- and whose class refuses the store (a
+    property with no setter the lookup selects) the ``AttributeError`` its
+    store raises (``ObjectValue.setattr``); an instance whose store ran code (a
     ``__setattr__``, a descriptor's ``__set__``, an undecided class lookup)
     as that call left it, read through the key the statement bound it under
     (``after``) -- unknown where the statement bound none, never the object
@@ -79,7 +81,13 @@ class ReceiverFieldStoreStateSugar(ConstructedTermSugar):
             if isinstance(receiver, ObjectValue):
                 if receiver.field_store_runs_code(self.attr):
                     return ExitSet.completed(self._left(ctx))
-                return ExitSet.completed(receiver.with_field_store(self.attr, value))
+                # The store the one class lookup decides
+                # (``ObjectValue.field_store_route``), answered by the
+                # receiver's own store: the plain store completes with the
+                # field stored, a property with no setter the lookup selects
+                # halts with ``AttributeError`` -- the same answer the store
+                # statement gives (``ReceiverFieldStoreSugar``).
+                return receiver.setattr(self.attr, value, self.site, ctx)
             if (
                 getattr(receiver, "formal_coordinate", None) is None
                 and receiver.runtime_type_is_decided()

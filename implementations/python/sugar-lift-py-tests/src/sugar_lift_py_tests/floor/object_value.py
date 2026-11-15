@@ -530,24 +530,25 @@ class ObjectValue(FloorValue):
         return GuardedReceiverStateValue(self, formula)
 
     def with_field_store(self, name: str, value: FloorValue) -> "ObjectValue":
-        """Return this receiver identity after one authenticated field store."""
-        descriptor = self._store_descriptor(name)
-        if descriptor is not False:
+        """Return this receiver identity after one plain field store.
+
+        The plain store is the one the class lookup decides
+        (``field_store_route``); every store reaches this through that
+        decision (``setattr``), never a decision of its own.  Reached for a
+        store the route does not decide plain -- a refused property, whose
+        store halts with ``AttributeError`` in ``setattr``, or a store that
+        runs code -- it refuses by name: the object with the field assumed
+        stored is never answered."""
+        kind, _member = self.field_store_route(name)
+        if kind != "plain":
             from sugar_source_tree.panic import SugarNotWritten
 
             raise SugarNotWritten(
                 blame=f"{self.class_name}.{name}",
                 owner="ObjectValue.with_field_store",
-                observed=(
-                    "source-authenticated property data descriptor"
-                    if descriptor
-                    else "a class member the one class-namespace lookup does not decide"
-                ),
-                requested="the descriptor's authenticated assignment behavior",
-                fix=(
-                    "construct the property's setter before treating the write "
-                    "as an instance-field store"
-                ),
+                observed=f"field store route {kind!r}, not the plain store",
+                requested="the store the one class lookup decides (setattr)",
+                fix="reach the store through ObjectValue.setattr",
             )
         remaining = tuple(field for field in self.fields if field.name != name)
         # Restore retires the deleted-field mark for this name.
