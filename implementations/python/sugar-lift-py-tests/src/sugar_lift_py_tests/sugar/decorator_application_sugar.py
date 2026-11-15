@@ -210,11 +210,28 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
             "def A(z):\n"
             "    return z\n\n"
         )
-        return _call_pair(
-            name="decorator_application",
-            owner_sugar="DecoratorApplicationSugar",
-            truthful=prefix + "def test_a():\n    assert A(2) == 20\n",
-            lying=prefix + "def test_a():\n    assert A(2) == 2\n",
+        # A local plain ``def`` binds its name to the function value its
+        # statement built, carrying the default it evaluated there: the call
+        # of the name is the call of that value (``nodes._binds_function_value``).
+        local = (
+            "def A(z):\n"
+            "    def g(a=z):\n"
+            "        return a + 1\n"
+            "    return g()\n\n"
+        )
+        return (
+            _call_pair(
+                name="decorator_application",
+                owner_sugar="DecoratorApplicationSugar",
+                truthful=prefix + "def test_a():\n    assert A(2) == 20\n",
+                lying=prefix + "def test_a():\n    assert A(2) == 2\n",
+            ),
+            _call_pair(
+                name="local_def_value",
+                owner_sugar="DecoratorApplicationSugar",
+                truthful=local + "def test_a():\n    assert A(2) == 3\n",
+                lying=local + "def test_a():\n    assert A(2) == 2\n",
+            ),
         )
 
     def to_term(self, *, owner: str):
