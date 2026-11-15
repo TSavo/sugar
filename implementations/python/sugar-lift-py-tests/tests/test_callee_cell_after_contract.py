@@ -7,10 +7,14 @@ result>, "cell:<name>")``, keyed on the call
 states that term over ``out`` on each completed arm
 (``UniverseValue.after_facts``), so the join decides the caller's read.  The
 contract states only a value its own inputs determine
-(``universe_value.stated_by_its_inputs``): what it does not determine (an
-append on a cell whose type nothing here decides) is not stated, and the
-caller's read stays undecided by name.  These are unit checks of the
-contract; the twins are ``test_function_value_application_twins``.
+(``universe_value.stated_by_its_inputs``): what it does not determine is
+not stated, and the caller's read stays undecided by name.  An append on a
+cell or a parameter is the dispatched edge over its class input
+(``class:cell:<name>``, ``class:<param>``), and the object is stated as that
+call leaves its receiver, ``python:after(<call result>, "0")``, which prove
+decides where the caller binds the class to a builtin whose law answers the
+call (#7757 step 7).  These are unit checks of the contract; the twins are
+``test_function_value_application_twins``.
 """
 
 from __future__ import annotations
@@ -79,11 +83,41 @@ def test_append():
 """
 
 
-def test_an_append_on_an_undecided_cell_is_not_stated() -> None:
-    # ``xs`` is not rebound, and what the append leaves in an object of a
-    # type nothing here decides is not determined by the contract's inputs.
-    for post in _posts(_APPENDED, "add"):
-        assert "python:after" not in post, post
+def test_an_append_on_a_cell_is_stated_over_the_dispatched_call() -> None:
+    # ``xs.append(1)`` on the cell's input is the dispatched edge over its
+    # class input ``class:cell:xs`` (#7757 step 7): the cell is stated as
+    # that call leaves its receiver, ``python:after(<call result>, "0")``,
+    # over the contract's own inputs; never the cell's input itself.
+    posts = _posts(_APPENDED, "add")
+    stated = [post for post in posts if "python:after" in post]
+    assert stated, posts
+    for post in stated:
+        assert "cell:xs" in post, post
+        assert "dispatch:append" in post, post
+        assert "class:cell:xs" in post, post
+
+
+_APPENDED_TO_A_PARAMETER = """\
+def add(xs):
+    xs.append(1)
+
+
+def test_append():
+    ys = []
+    add(ys)
+    assert len(ys) == 1
+"""
+
+
+def test_an_append_on_a_parameter_is_stated_over_the_dispatched_call() -> None:
+    # The parameter's object after the call, under the parameter's own
+    # name: as the dispatched ``append`` over ``class:xs`` left it.
+    posts = _posts(_APPENDED_TO_A_PARAMETER, "add")
+    stated = [post for post in posts if "python:after" in post]
+    assert stated, posts
+    for post in stated:
+        assert "dispatch:append" in post, post
+        assert "class:xs" in post, post
 
 
 _BRANCH = """\

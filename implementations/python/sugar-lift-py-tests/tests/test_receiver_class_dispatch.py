@@ -67,6 +67,12 @@ class Box:
         ("        super().check()\n        return self.check()", ()),
         # No method call on the parameter: no input.
         ("        return self.n", ()),
+        # An item store or delete is ``type(other).__setitem__`` /
+        # ``__delitem__``, dispatched as a method call is (#7757 step 7).
+        ("        other[0] = 1\n        return self.check()", ("self", "other")),
+        ("        del other[0]\n        return self.check()", ("self", "other")),
+        # An item read hands the object to code the frame does not see.
+        ("        other.append(other[0])\n        return self.check()", ("self",)),
     ],
 )
 def test_a_parameter_s_class_is_an_input_where_nothing_unseen_may_change_it(
@@ -88,6 +94,60 @@ def test_a_generator_states_no_class_input() -> None:
         "        return None\n"
     )
     assert _receiver_class_parameters(_function(tree, "run")) == ()
+
+
+_CELL = """\
+def test_append():
+    xs = []
+
+    def add():
+{body}
+
+    add()
+"""
+
+
+@pytest.mark.parametrize(
+    ("body", "inputs"),
+    [
+        # A method call on the cell's object: its class is an input.
+        ("        xs.append(1)", ("xs",)),
+        # An item store is ``type(xs).__setitem__``, dispatched too.
+        ("        xs[0] = 1", ("xs",)),
+        # Handed to code: its contents may change unseen.
+        ("        helper(xs)\n        xs.append(1)", ()),
+        # Declared ``nonlocal``: the cell is rebound, never only mutated.
+        ("        nonlocal xs\n        xs.append(1)", ()),
+    ],
+)
+def test_a_cell_s_class_is_an_input_where_the_body_mutates_its_object(
+    body: str, inputs: tuple
+) -> None:
+    """#7757 step 7: a captured cell the body mutates through a method or an
+    item store takes ``class:cell:<name>``, under a parameter's rules."""
+    from sugar_source_tree.nodes import _receiver_class_cells
+
+    tree = _tree(_CELL.format(body=body))
+    assert _receiver_class_cells(_function(tree, "add")) == inputs
+
+
+def test_a_builtin_value_s_class_is_its_exact_builtin_class() -> None:
+    """#7757 step 7: a caller supplies ``python:builtin("<name>")`` for a
+    value whose builtin class the lifter decides; never for a ``bool``,
+    whose class is not ``int``."""
+    from sugar_lift_py_tests.floor.list_value import ListValue
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.receiver_dispatch import class_value
+
+    def builtin(name):
+        return ctor("python:builtin", [str_const(name)])
+
+    assert class_value(ListValue((), allocation="here")) == builtin("list")
+    assert class_value(StringValue("a")) == builtin("str")
+    assert class_value(TermValue(3)) == builtin("int")
+    assert class_value(TermValue(True)) is None
 
 
 def test_a_method_call_on_a_receiver_whose_class_is_an_input_is_dispatched() -> None:
