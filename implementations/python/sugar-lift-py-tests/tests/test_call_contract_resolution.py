@@ -316,19 +316,14 @@ def test_an_imported_call_takes_its_symbol_from_the_one_import_table(tmp_path):
 
 
 def test_producer_contract_exports_the_same_module_qualified_symbol(tmp_path):
-    from sugar_lift_python_source.source_oracle import path_source
-    from sugar_lift_py_tests.context_manager_resolution import (
-        TreeConstructionContextV1,
-    )
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
     from sugar_lift_py_tests.tree_enumerate import function_contract_rows
-    from sugar_source_tree.tree import SourceFile
 
     producer = tmp_path / "producer.py"
     producer.write_text("def pair():\n    return (1, 2)\n")
-    tree = SourceFile(
-        path_source(str(producer)),
-        construction_context=TreeConstructionContextV1(workspace_root=str(tmp_path)),
-    )
+    # The producer's symbol is read off its workspace-relative locus, so it
+    # opens through the one construction door, never by absolute path.
+    tree = open_source_file_for_construction(producer, root=tmp_path)
     function = next(tree.functions())
 
     _, rows = function_contract_rows(function, "producer.py")
@@ -338,11 +333,7 @@ def test_producer_contract_exports_the_same_module_qualified_symbol(tmp_path):
 
 
 def test_only_module_level_function_publishes_import_export_symbol(tmp_path):
-    from sugar_lift_python_source.source_oracle import path_source
-    from sugar_lift_py_tests.context_manager_resolution import (
-        TreeConstructionContextV1,
-    )
-    from sugar_source_tree.tree import SourceFile
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 
     producer = tmp_path / "producer.py"
     producer.write_text(
@@ -350,10 +341,7 @@ def test_only_module_level_function_publishes_import_export_symbol(tmp_path):
         "class C:\n    def pair(self):\n        return 2\n"
         "def outer():\n    def pair():\n        return 3\n    return pair()\n"
     )
-    tree = SourceFile(
-        path_source(str(producer)),
-        construction_context=TreeConstructionContextV1(workspace_root=str(tmp_path)),
-    )
+    tree = open_source_file_for_construction(producer, root=tmp_path)
     functions = list(tree.functions())
 
     assert functions[0].sugar().bridge_source_symbol == "python:producer.pair"
