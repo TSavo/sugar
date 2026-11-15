@@ -5,15 +5,11 @@
 closed outcome set, and `_with_census_partition` counts them into buckets.
 They are two doors onto one question, and the gate runs FIRST.
 
-#7388 added `cited-opaque` to the conservation identity and to the partition
-and left the gate's set at two values. Every cited row was then rejected as a
-malformed event before the bucket built for it could count it -- 86 instrument
-failures in run 31128314243 where the previous census had zero. An instrument
-failure voids the whole file, so this did not merely miscount: it destroyed the
-measurement for every file containing a cited manager.
+When the two sets disagreed (#7388), every row the partition had a bucket for
+was rejected at intake as a malformed event, and an instrument failure voids
+the whole file.
 
-The repair is one vocabulary read by both doors. These teeth fail if they
-diverge again.
+One vocabulary is read by both doors. These teeth fail if they diverge.
 """
 
 from __future__ import annotations
@@ -53,16 +49,6 @@ def test_the_identity_names_exactly_the_vocabulary_the_gate_admits() -> None:
             f"gate admits {outcome!r} but the conservation identity does not "
             f"name it: {identity!r}"
         )
-
-
-def test_cited_opaque_is_admitted_by_the_intake_gate() -> None:
-    """The planted arm: a cited row must survive intake.
-
-    Before the repair this raised `malformed With resolution event` and the
-    file became an instrument failure.
-    """
-    cer = _load()
-    assert "cited-opaque" in cer._WITH_RESOLUTION_OUTCOMES
 
 
 def test_the_partition_counts_every_outcome_the_gate_admits() -> None:

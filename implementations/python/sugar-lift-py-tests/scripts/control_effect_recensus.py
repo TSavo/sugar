@@ -350,15 +350,14 @@ def _occurrence_key(
 # Conservation: every sync with-item constructs or does not.
 # No kind vocabulary. Unconstructed rows are panics waiting to be written.
 WITH_CENSUS_CONSERVATION_IDENTITY = (
-    "site:with-item == constructed + cited-opaque + unconstructed "
+    "site:with-item == constructed + unconstructed "
     "(no residual kind taxonomy)"
 )
 
 # The outcome vocabulary the identity above names, in ONE place. The intake
 # gate and the partition MUST read the same set: they are two doors onto one
-# question, and when they disagreed the gate rejected `cited-opaque` as a
-# malformed event before the partition could count it.
-_WITH_RESOLUTION_OUTCOMES = frozenset({"constructed", "cited-opaque", "unconstructed"})
+# question.
+_WITH_RESOLUTION_OUTCOMES = frozenset({"constructed", "unconstructed"})
 
 
 def _tally_cm_resolutions(
@@ -388,13 +387,9 @@ def _tally_cm_resolutions(
         if (
             not isinstance(key, dict)
             or key.get("sourceCid") != source_cid
-            # The SAME three facts the partition below counts. This gate
-            # runs upstream of `_with_census_partition`, so a value it
-            # rejects never reaches the bucket built for it: #7388 added
-            # `cited-opaque` to the law and to the partition and left this
-            # closed set at two. Every cited row then failed here as a
-            # malformed event and voided its whole file -- 86 instrument
-            # failures in run 31128314243 where the census before had zero.
+            # The SAME facts the partition below counts. This gate runs
+            # upstream of `_with_census_partition`, so a value it rejects
+            # never reaches a bucket.
             or outcome not in _WITH_RESOLUTION_OUTCOMES
             or not isinstance(observed_type, str)
             or "." not in observed_type
@@ -428,21 +423,10 @@ def _with_census_partition(
     unconstructed_rows = [
         dict(row) for row in cm_resolution_rows if row.get("outcome") == "unconstructed"
     ]
-    # THREE buckets, because there are three facts. A cited-opaque With
-    # CONSTRUCTED -- so it is not unconstructed -- but sugar holds no enter/exit
-    # contract for it, so calling it constructed would report knowledge nobody
-    # has. Known, unknown and absent each get their own column, here and on the
-    # board, or the sealed numbers cannot say what was observed (#7384, #7387).
-    cited_opaque_rows = [
-        dict(row) for row in cm_resolution_rows if row.get("outcome") == "cited-opaque"
-    ]
-    if (
-        len(constructed_rows) + len(cited_opaque_rows) + len(unconstructed_rows)
-        != len(cm_resolution_rows)
-    ):
+    if len(constructed_rows) + len(unconstructed_rows) != len(cm_resolution_rows):
         raise TypeError("With partition received a row outside its closed outcomes")
     input_keys = [dict(row["inputKey"]) for row in cm_resolution_rows]
-    output_rows = [*constructed_rows, *cited_opaque_rows, *unconstructed_rows]
+    output_rows = [*constructed_rows, *unconstructed_rows]
     output_keys = [dict(row["inputKey"]) for row in output_rows]
     edge_witness = key_edge_witness(
         stage_id=STAGE_WITH_TALLY_PARTITION,
@@ -462,16 +446,14 @@ def _with_census_partition(
         )
     total = int(ast_sites.get("site:with-item", 0))
     constructed = len(constructed_rows)
-    cited_opaque = len(cited_opaque_rows)
     unconstructed = len(unconstructed_rows)
-    accounted = constructed + cited_opaque + unconstructed
+    accounted = constructed + unconstructed
     if accounted != total:
         unaccounted = total - accounted
         raise ValueError(
             "With census does not conserve. "
             f"LAW: {WITH_CENSUS_CONSERVATION_IDENTITY}. "
             f"REFUSED: with_items_total={total} constructed={constructed} "
-            f"citedOpaque={cited_opaque} "
             f"unconstructed={unconstructed} accounted={accounted} "
             f"unaccounted={unaccounted}. "
             "Construct or panic — fix the partition or write the missing construction."
@@ -480,17 +462,14 @@ def _with_census_partition(
         "conservationIdentity": WITH_CENSUS_CONSERVATION_IDENTITY,
         "edgeWitness": edge_witness,
         "constructedRows": constructed_rows,
-        "citedOpaqueRows": cited_opaque_rows,
         "unconstructedRows": unconstructed_rows,
         "with_items_total": total,
         "constructed": constructed,
-        "citedOpaque": cited_opaque,
         "unconstructed": unconstructed,
         "accounted": accounted,
         "unaccounted": 0,
         "reconciliation": (
-            f"{total} = {constructed} constructed + {cited_opaque} cited-opaque "
-            f"+ {unconstructed} unconstructed"
+            f"{total} = {constructed} constructed + {unconstructed} unconstructed"
         ),
         "conserves": True,
     }
@@ -1632,7 +1611,6 @@ def main() -> int:
                             row["withResolutionRows"] = resolution_rows
                             row["cmResolutions"] = {
                                 "constructed": with_partition["constructed"],
-                                "citedOpaque": with_partition["citedOpaque"],
                                 "unconstructed": with_partition["unconstructed"],
                             }
                             row["astSites"] = dict(sites)
@@ -1737,11 +1715,6 @@ def main() -> int:
 
                 # Durable running counts — crash at file 900 still leaves 899 rows
                 # on checkpoint AND a jsonl tail of counts on stdout-equivalent disk.
-                # Phase timers + module materialize counts PERSIST here (not only
-                # on the progress bar — that was measured, displayed, thrown away).
-                row_timing = row.get("timing") if isinstance(row, dict) else None
-                if not isinstance(row_timing, dict):
-                    row_timing = {}
                 running = {
                     "schema": "control-effect-recensus-running-v1",
                     "index": live_done,
@@ -1757,20 +1730,6 @@ def main() -> int:
                     "fn_clean": live_clean,
                     "fn_total": live_fns,
                     "phase": "per_file_lift",
-                    "t_open_s": row_timing.get("t_open_s"),
-                    "t_materialize_s": row_timing.get("t_materialize_s"),
-                    "materialize_calls": row_timing.get("materialize_calls"),
-                    "t_populate_s": row_timing.get("t_populate_s"),
-                    "t_enumerate_s": row_timing.get("t_enumerate_s"),
-                    "t_sugar_loop_s": row_timing.get("t_sugar_loop_s"),
-                    "t_context_s": row_timing.get("t_context_s"),
-                    "t_cm_tally_s": row_timing.get("t_cm_tally_s"),
-                    "t_gap_tally_s": row_timing.get("t_gap_tally_s"),
-                    "dominant_phase": row_timing.get("dominant_phase"),
-                    "dominant_phase_s": row_timing.get("dominant_phase_s"),
-                    "slowest_fn": row_timing.get("slowest_fn"),
-                    "slowest_fn_s": row_timing.get("slowest_fn_s"),
-                    "module_materialize": row_timing.get("module_materialize"),
                 }
                 with running_counts_path.open("a", encoding="utf-8") as rc_stream:
                     rc_stream.write(
@@ -1787,8 +1746,8 @@ def main() -> int:
                 # process exits the lift phase.
                 if carried_row is None:  # a carried row measured nothing now
                     lpt_prior_rows.append((path, file_s, relative))
-                # One-line cause for slow files (always for first/last/every-N,
-                # and always when wall exceeds 5s so a long open names its phase).
+                # One line per slow file (always for first/last/every-N, and
+                # always when wall exceeds 5s).
                 slow = file_s >= 5.0
                 if (
                     live_done == 1
@@ -1796,24 +1755,10 @@ def main() -> int:
                     or live_done == len(file_names)
                     or slow
                 ):
-                    mm = row_timing.get("module_materialize") or {}
                     _narrate(
                         "RECENSUS FILE END "
                         f"{live_done}/{len(file_names)} file={relative} "
                         f"category={cat} file_s={file_s:.3f} "
-                        f"dominant={row_timing.get('dominant_phase')}:"
-                        f"{row_timing.get('dominant_phase_s')}s "
-                        f"open={row_timing.get('t_open_s')}s "
-                        f"materialize={row_timing.get('t_materialize_s')}s "
-                        f"materialize_calls={row_timing.get('materialize_calls')} "
-                        f"populate={row_timing.get('t_populate_s')}s "
-                        f"enumerate={row_timing.get('t_enumerate_s')}s "
-                        f"sugar_loop={row_timing.get('t_sugar_loop_s')}s "
-                        f"slowest_fn={row_timing.get('slowest_fn')}:"
-                        f"{row_timing.get('slowest_fn_s')}s "
-                        f"mod_mat_calls={mm.get('materializeCalls')} "
-                        f"mod_mat_s={mm.get('materialize_s')} "
-                        f"mod_top={mm.get('top')} "
                         f"elapsed_s={time.time() - started:.1f} "
                         f"snw={live_snw} other_gaps={live_other_gaps} "
                         f"cpanic={live_panic} defect={live_defect} "
