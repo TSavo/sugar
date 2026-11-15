@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from sugar_lift_py_tests.floor import OpaqueOpCallsite, TermValue
-from sugar_lift_py_tests.ir import ctor, num
+from sugar_lift_py_tests.ir import ctor, num, str_const
 from sugar_source_tree.panic import SugarNotWritten
 
 
@@ -25,11 +25,21 @@ def test_opaque_operator_arithmetic_cites_coordinates(method, operator) -> None:
 
     value = OpaqueOpCallsite("len", TermValue(9), computed=None)
     outcome = getattr(value, method)(TermValue(2), "t.py:1", None)
-    # The success face cites the coordinates; an undecided operand's halted
-    # face (if any) is the other arm, not discarded by this read.
+    # An opaque call result has no decided runtime type, so the operator's
+    # dunder is selected by types nobody looked at: the success face is the
+    # undecided result of THIS occurrence citing both coordinates, never the
+    # integer operator folded over them, and the other face is the halt.
     assert sole_completed_value(outcome).to_term(owner="test") == ctor(
-        operator, [ctor("call:len", [num(9)]), num(2)]
+        "python:binary_result",
+        [
+            str_const(operator),
+            ctor("call:len", [num(9)]),
+            num(2),
+            str_const("t.py:1"),
+        ],
     )
+    (halt,) = outcome.halts()
+    assert halt.effect.producer_node_owner == f"UndecidedBinary:{operator}"
 
 
 def test_opaque_operator_unary_minus_is_named_refusal() -> None:
