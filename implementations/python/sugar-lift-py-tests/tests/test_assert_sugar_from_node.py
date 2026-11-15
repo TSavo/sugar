@@ -82,23 +82,40 @@ def test_assert_support_retains_its_own_occurrence_not_a_foreign_site():
 
 def test_an_unbuilt_message_refuses_the_assert_at_construction():
     # The message is a child built with the statement: one with no sugar
-    # refuses the assert by name, even where the assert cannot fail.
+    # refuses the assert by name, even where the assert cannot fail. ``await``
+    # is a node with no sugar written (``Yield`` has one now, see below).
+    import pytest
+
     from sugar_source_tree.panic import SugarNotWritten
 
-    node = _assert_node("assert 1 == 1, (yield 2)\n")
-    try:
+    node = _assert_node("assert 1 == 1, (await 2)\n")
+    with pytest.raises(SugarNotWritten) as refused:
         node.sugar()
-        assert False, "the Yield message gap must refuse the assert"
-    except SugarNotWritten as panic:
-        assert panic.owner == "Yield.sugar"
+    assert refused.value.owner == "Await.sugar"
 
 
 def test_unbuilt_condition_child_preserves_its_own_gap():
+    import pytest
+
     from sugar_source_tree.panic import SugarNotWritten
 
-    node = _assert_node("assert (yield 1)\n")
-    try:
+    node = _assert_node("assert (await 1)\n")
+    with pytest.raises(SugarNotWritten) as refused:
         node.sugar()
-        assert False, "the Yield child gap must remain loud"
-    except SugarNotWritten as panic:
-        assert panic.owner == "Yield.sugar"
+    assert refused.value.owner == "Await.sugar"
+
+
+def test_a_yield_child_is_built_with_the_statement():
+    # ``Yield`` constructs its own sugar, so an assert holding one as its
+    # message or its test is built whole: the child is the Yield node's sugar.
+    from sugar_lift_py_tests.sugar.yield_suspension_sugar import (
+        YieldSuspensionSugar,
+    )
+
+    message = _assert_node("assert 1 == 1, (yield 2)\n")
+    assert isinstance(message.sugar().message, YieldSuspensionSugar)
+    assert message.sugar().message == message.msg.sugar()
+
+    test = _assert_node("assert (yield 1)\n")
+    assert isinstance(test.sugar().test, YieldSuspensionSugar)
+    assert test.sugar().test == test.test.sugar()
