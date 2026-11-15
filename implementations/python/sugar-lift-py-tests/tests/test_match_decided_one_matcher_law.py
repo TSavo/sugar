@@ -159,12 +159,23 @@ def test_sourcefile_construction_door_auditor_is_blind_to_fabricated_match_decid
     # Positive pin: the auditor's documented axes.
     assert "SourceFile" in auditor_src
     assert "materialize_module" in auditor_src or "constructed_module" in auditor_src
-    # Negative pin: it does not name this sin class.
-    assert "MatchDecided" not in auditor_src, (
-        "sourcefile_construction_door_auditor now mentions MatchDecided — either wire fabricated "
-        "decided-miss into its receipt, or update this blindness pin"
+    # The auditor's own docstring states this blindness ("Not this
+    # instrument"): it names the sin class there and nowhere else.
+    module = ast.parse(auditor_src)
+    docstring = module.body[0]
+    assert isinstance(docstring, ast.Expr)
+    assert isinstance(docstring.value, ast.Constant)
+    assert isinstance(docstring.value.value, str)
+    assert "Not this instrument" in docstring.value.value
+    assert "MatchDecided" in docstring.value.value
+    lines = auditor_src.splitlines()
+    code = "\n".join(lines[: docstring.lineno - 1] + lines[docstring.end_lineno :])
+    # Negative pin: no code of the auditor names this sin class.
+    assert "MatchDecided" not in code, (
+        "sourcefile_construction_door_auditor code now mentions MatchDecided — either wire "
+        "fabricated decided-miss into its receipt, or update this blindness pin"
     )
-    assert "fabricated decided" not in auditor_src.lower()
+    assert "fabricated decided" not in code.lower()
 
 
 def test_planted_fabricated_miss_is_detected() -> None:
