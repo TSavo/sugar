@@ -85,6 +85,22 @@ def _calls_named(tree, name: str) -> list[Call]:
     ]
 
 
+def _carried_frame(call: Call, enrolled):
+    """The frame ``call`` carries, checked against the frame ``enrolled`` at
+    its coordinate.
+
+    ``Call._construct_call_sugar`` reads a lexical call's frame once, at
+    construction -- the frame seated at the call's coordinate, its actuals
+    bound (``bind_node_actuals``) -- and carries it as ``source_call_frame``;
+    desugar never reads it out of the table again (#8210).  A bound frame is
+    its own frame, with its own CID, whose declaration is the enrolled frame
+    (``declaration_frame_cid``)."""
+    frame = call.sugar().source_call_frame
+    assert frame is not None, call
+    assert frame.declaration_frame_cid == enrolled.frame_cid
+    return frame
+
+
 NESTED = "def inner():\n" "    return 3\n" "def outer():\n" "    return inner()\n"
 
 
@@ -101,8 +117,10 @@ def test_inner_alone_projects_return_floor() -> None:
     assert outcome.completed_value() is not None
     assert isinstance(outcome.completed_value(), CallSiteValue)
     assert outcome.completed_value().body is not None
-    # Authenticated source call: coordinate is frame CID, not bare spelling.
-    assert outcome.completed_value().source_call_frame_cid == frame.frame_cid
+    # Authenticated source call: coordinate is the CID of the frame the call
+    # carries -- the one enrolled at its coordinate -- not bare spelling.
+    carried = _carried_frame(call, frame)
+    assert outcome.completed_value().source_call_frame_cid == carried.frame_cid
     floor = outcome.completed_value().force_floor(None, owner="inner-alone", project_callsite=False)
     assert isinstance(floor.statements[0], ReturnValue)
     assert floor.statements[0].value == TermValue(3)
@@ -116,7 +134,8 @@ def test_outer_alone_carries_inner_call_in_body() -> None:
     outcome = call.sugar().desugar(None)
     assert outcome.completed_value() is not None
     assert isinstance(outcome.completed_value(), CallSiteValue)
-    assert outcome.completed_value().source_call_frame_cid == frame.frame_cid
+    carried = _carried_frame(call, frame)
+    assert outcome.completed_value().source_call_frame_cid == carried.frame_cid
     assert outcome.completed_value().body is not None
     # Outer body reduces; dig may surface CallSiteValue(inner) or BlockValue.
     dug = outcome.completed_value()._dig_floor_or_none(None, owner="outer-alone")
@@ -236,14 +255,14 @@ def test_recursion_by_name_is_not_the_transport() -> None:
     a = alpha_call.sugar().desugar(None).completed_value()
     b = beta_call.sugar().desugar(None).completed_value()
     # Frame CIDs distinguish alpha vs beta — not target_name spelling.
-    assert (
-        a.source_call_frame_cid
-        == context.source_call_frames[_coordinate(alpha_call)].frame_cid
+    alpha_frame = _carried_frame(
+        alpha_call, context.source_call_frames[_coordinate(alpha_call)]
     )
-    assert (
-        b.source_call_frame_cid
-        == context.source_call_frames[_coordinate(beta_call)].frame_cid
+    beta_frame = _carried_frame(
+        beta_call, context.source_call_frames[_coordinate(beta_call)]
     )
+    assert a.source_call_frame_cid == alpha_frame.frame_cid
+    assert b.source_call_frame_cid == beta_frame.frame_cid
     assert a.source_call_frame_cid != b.source_call_frame_cid
     af = a.force_floor(None, owner="alpha", project_callsite=False)
     bf = b.force_floor(None, owner="beta", project_callsite=False)
@@ -314,10 +333,10 @@ def test_two_hop_preserves_outer_and_inner_occurrences_on_dig_path() -> None:
     inner_call = _calls_named(tree, "inner")[0]
     outer_cs = outer_call.sugar().desugar(None).completed_value()
     assert outer_cs.source_call_frame_cid is not None
-    assert (
-        outer_cs.source_call_frame_cid
-        == context.source_call_frames[_coordinate(outer_call)].frame_cid
+    outer_frame = _carried_frame(
+        outer_call, context.source_call_frames[_coordinate(outer_call)]
     )
+    assert outer_cs.source_call_frame_cid == outer_frame.frame_cid
     # Inner frame remains enrolled under its own coordinate after outer desugar.
     inner_frame = context.source_call_frames[_coordinate(inner_call)]
     assert inner_frame.frame_cid != outer_cs.source_call_frame_cid
