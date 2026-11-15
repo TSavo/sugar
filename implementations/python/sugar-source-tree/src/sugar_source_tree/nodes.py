@@ -13790,10 +13790,13 @@ class Delete(Statement):
             # through a path (``del a.b[k]``, ``del a[i][j]``): the value the
             # receiver holds at reduce decides it.
             # Each part substitutes as every store target's does
-            # (``_substituted_store_target``): a read the rewrite replaced
-            # answers by that substitution.
-            receiver, _changed = self._substitute_field(target.value, scope)
-            args = (self._substitute_field(target.slice_, scope)[0],)
+            # (``_substituted_store_target_parts``: the key read after the
+            # receiver): a read the rewrite replaced answers by that
+            # substitution.
+            _rewritten, receiver, index = _substituted_store_target_parts(
+                self, target, scope
+            )
+            args = (index,)
             if isinstance(target.value, Name):
                 mutation = name_mutation_statement(
                     self,
@@ -13830,21 +13833,26 @@ class Delete(Statement):
                     **current,
                     target.id: UnboundBinding(name=target.id, cause=target.fragment),
                 }
-            elif isinstance(target, Attribute):
+            else:
                 # Each part substitutes as the one door's does (above): a
                 # read the rewrite replaced (``del o.a`` on a formal or a
                 # local) answers by that substitution, and the node that
                 # replaced it answers where the operation builds it.
-                operation = self._make_delete_attribute(
-                    self._substitute_field(target.value, current)[0],
-                    target.attr,
-                    target.span,
+                rewritten, receiver, index = _substituted_store_target_parts(
+                    self, target, current
                 )
-            else:
-                operation = self._make_delete_subscript(
-                    self._substitute_field(target.value, current)[0],
-                    self._substitute_field(target.slice_, current)[0],
-                    target.span,
+                if isinstance(target, Attribute):
+                    operation = self._make_delete_attribute(
+                        receiver, target.attr, target.span
+                    )
+                else:
+                    operation = self._make_delete_subscript(
+                        receiver, index, target.span
+                    )
+                # A later target is evaluated after this one and its delete
+                # (``_scope_after_store_target``).
+                current = _scope_after_store_target(
+                    current, target, rewritten, receiver
                 )
             if not isinstance(target, Name):
                 # The delete operation IS its target's site (``del o.a``'s
@@ -13952,17 +13960,62 @@ def _substituted_store_target(statement, target, scope):
     object place or a constructed receiver into the store. The index stays the
     key expression: the statement evaluates it, once, at reduce; which field
     it names is decided by its ground value only (``ground_subscript_key``).
-    Returns the rewritten target, or ``None`` when nothing changed.
+    Returns the rewritten target, or ``None`` when nothing changed
+    (``_substituted_store_target_parts``).
     """
+    return _substituted_store_target_parts(statement, target, scope)[0]
+
+
+def _substituted_store_target_parts(statement, target, scope):
+    """``(rewritten, receiver, index)``: a store or delete target's receiver
+    and, for a subscript, its index (None for an attribute), each
+    substituted in the order Python evaluates them, ``scope`` the scope the
+    target is read in; ``rewritten`` the target around them, or None when
+    nothing changed.
+
+    Python evaluates the receiver, then the index: the index is read in the
+    scope the receiver leaves (``_scope_after``'s ``rebinds``), so a name
+    code the receiver runs may rebind (a ``nonlocal`` cell, a module global
+    code may rebind) is read in the index as another evaluation, as between
+    any two sub-expressions of one statement (``f()[G] = v``).  What the
+    target is evaluated after (an assignment's value, an earlier target)
+    is the caller's ``scope``; what is evaluated after the target reads
+    ``_scope_after_store_target``."""
     from .shadow import rewrite
 
     receiver, receiver_changed = statement._substitute_field(target.value, scope)
     changes = {"value": receiver} if receiver_changed else {}
+    index = None
     if isinstance(target, Subscript):
-        index, index_changed = statement._substitute_field(target.slice_, scope)
+        index, index_changed = statement._substitute_field(
+            target.slice_, _scope_after(scope, target.value, receiver, rebinds=True)
+        )
         if index_changed:
             changes["slice_"] = index
-    return rewrite(target, **changes) if changes else None
+    rewritten = rewrite(target, **changes) if changes else None
+    return rewritten, receiver, index
+
+
+def _scope_after_store_target(scope, target, rewritten, receiver):
+    """``scope`` (the one the store or delete target ``target`` was read in,
+    ``_substituted_store_target_parts``: ``rewritten`` and ``receiver``) for
+    what Python evaluates after the target, later in the same statement: an
+    augmented store's value, a later target of the same list.
+
+    The one rule between a statement's sub-expressions (``_scope_after``'s
+    ``rebinds``): each name code the target's receiver and index run may
+    rebind is read after it as another evaluation, keyed by the target's
+    own, and so is each name the dunder the statement runs on the receiver
+    there may rebind (``operated``: an augmented store's item or field read,
+    a store's or delete's ``__setitem__`` / ``__setattr__`` /
+    ``__delitem__`` / ``__delattr__``)."""
+    return _scope_after(
+        scope,
+        target,
+        target if rewritten is None else rewritten,
+        rebinds=True,
+        operated=(receiver,) if isinstance(receiver, Node) else (),
+    )
 
 
 def _has_store_leaf(target) -> bool:
@@ -14073,6 +14126,13 @@ def _threaded_store_targets(statement, scope, store_for, *, rewrite_targets=Fals
     ``a = a[0] = v`` stores into the new ``a``, ``a[0] = a = v`` into the
     one before the statement, and ``a = o.x = 5; return o.x`` reads 5.
 
+    When ``rewrite_targets`` (the statement's substitution), a target after a
+    store target is also read in the scope that target and its store leave
+    (``_scope_after_store_target``): a name code they run may rebind is read
+    there as another evaluation, as between any two sub-expressions of one
+    statement; the first target is read in the scope the value leaves
+    (``Assign._substituted_store_targets``).
+
     ``binding`` is what the statement binds for the rest of the block: each
     name bound to what the last target that wrote it left.  ``targets`` is
     the target list with each store target's receiver and key substituted
@@ -14094,15 +14154,22 @@ def _threaded_store_targets(statement, scope, store_for, *, rewrite_targets=Fals
 
     def visit(target):
         if isinstance(target, (Attribute, Subscript)):
-            rewritten = (
-                _substituted_store_target(statement, target, state["scope"])
-                if rewrite_targets
-                else None
-            )
-            store = store_for(len(stores), target, state["scope"])
+            before = state["scope"]
+            rewritten = receiver = None
+            if rewrite_targets:
+                rewritten, receiver, _index = _substituted_store_target_parts(
+                    statement, target, before
+                )
+                # A later target is evaluated after this one and its store:
+                # a name their code may rebind is read there as another
+                # evaluation (``_scope_after_store_target``).
+                state["scope"] = _scope_after_store_target(
+                    before, target, rewritten, receiver
+                )
+            store = store_for(len(stores), target, before)
             if store is not None:
                 stores.append(store)
-                threaded = _store_statement_binding(store, state["scope"])
+                threaded = _store_statement_binding(store, before)
                 binding.update(threaded)
                 state["scope"] = {**state["scope"], **threaded}
             if rewritten is None:
@@ -14563,7 +14630,13 @@ class Assign(Statement):
             return self._substituted_store_targets(new_value, scope)
         changes = {"value": new_value} if changed else {}
         if single_store:
-            new_target = _substituted_store_target(self, self.targets[0], scope)
+            # Python evaluates the value before the target (``f()[G] =
+            # g()``): the target is read in the scope the value leaves.
+            new_target = _substituted_store_target(
+                self,
+                self.targets[0],
+                _scope_after(scope, self.value, new_value, rebinds=True),
+            )
             if new_target is not None:
                 changes["targets"] = (new_target,)
         # No retention: the relation is keyed by SOURCE OCCURRENCE, and the
@@ -14631,8 +14704,15 @@ class Assign(Statement):
             )
             return single.substitute(state)
 
+        # Python evaluates the value before any target: the targets are read
+        # in the scope it leaves (``_scope_after``'s ``rebinds``), so a name
+        # code the value runs may rebind is read in a target as another
+        # evaluation (``d[G], b = g(), 1``).
         targets, stores, _binding = _threaded_store_targets(
-            keyed, scope, store_for, rewrite_targets=True
+            keyed,
+            _scope_after(scope, self.value, new_value, rebinds=True),
+            store_for,
+            rewrite_targets=True,
         )
         children = {}
         if targets is not None:
@@ -15024,18 +15104,24 @@ class Assign(Statement):
             # reduce decides it, whatever it was given.  Each part substitutes
             # as every store target's does (``_substituted_store_target``): a
             # read the rewrite replaced answers by that substitution.
-            receiver, _changed = self._substitute_field(target.value, scope)
-            args = (
-                self._substitute_field(target.slice_, scope)[0],
-                self._substitute_field(self.value, scope)[0],
+            # Python evaluates ``v`` first, then the receiver, then the key:
+            # the target is read in the scope the value leaves
+            # (``_scope_after``'s ``rebinds``), as a field store's receiver is
+            # (``_receiver_field_store_state``), so ``d[G] = g()`` reads ``G``
+            # after ``g()`` as another evaluation.
+            value = self._substitute_field(self.value, scope)[0]
+            after_value = _scope_after(scope, self.value, value, rebinds=True)
+            _rewritten, receiver, index = _substituted_store_target_parts(
+                self, target, after_value
             )
+            args = (index, value)
             if not isinstance(target.value, Name):
                 # ``a.b[k] = v``, ``a[i][j] = v``: the store on the object
                 # the path reaches; a receiver that is no path from a name
                 # is an ordinary store.
                 return path_item_statement(
                     self,
-                    scope,
+                    after_value,
                     site=target,
                     receiver=receiver,
                     method="__setitem__",
@@ -15043,7 +15129,7 @@ class Assign(Statement):
                 )
             return name_mutation_statement(
                 self,
-                scope,
+                after_value,
                 site=target,
                 name=target.value.id,
                 receiver=receiver,
@@ -15996,11 +16082,20 @@ class AugAssign(Statement):
         target = self.target
         # Each part substitutes as every store target's does
         # (``_substituted_store_target``): a read the rewrite replaced answers
-        # by that substitution.
-        receiver, _changed = self._substitute_field(target.value, scope)
+        # by that substitution.  Python evaluates the receiver, the key, reads
+        # the item (``__getitem__`` on the receiver), then evaluates ``v``:
+        # ``v`` is read in the scope the target leaves
+        # (``_scope_after_store_target``), so ``d[g()] += G`` reads ``G``
+        # after ``g()`` as another evaluation.
+        rewritten, receiver, index = _substituted_store_target_parts(
+            self, target, scope
+        )
         args = (
-            self._substitute_field(target.slice_, scope)[0],
-            self._substitute_field(self.value, scope)[0],
+            index,
+            self._substitute_field(
+                self.value,
+                _scope_after_store_target(scope, target, rewritten, receiver),
+            )[0],
         )
         if not isinstance(target.value, Name):
             mutation = path_item_statement(
