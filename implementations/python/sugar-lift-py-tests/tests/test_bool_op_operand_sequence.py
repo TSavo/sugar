@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-import pytest
-
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
@@ -25,7 +23,6 @@ from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import BoolOp
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -335,14 +332,23 @@ def test_wrong_boundary_type_does_not_consume_caller_truth_halt() -> None:
     assert len(surviving) == 1
 
 
-def test_undecided_caller_actual_remains_named_refusal() -> None:
+def test_undecided_caller_actual_is_the_two_faced_truth() -> None:
+    """A bare symbolic actual's ``bool`` may run code: the ``boolop_truth``
+    discharge takes it through the one truth rule, so it halts undetermined
+    under the complement of its completion, and its completed truth selects
+    the faces, the stopping one returning the actual itself."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
     carrier, formal, _, _ = _formal_carrier()
-    with pytest.raises(SugarNotWritten) as caught:
-        carrier.discharge(
-            None,
-            {formal.coordinate_cid: SymbolicValue(make_var("still_unknown"))},
-        )
-    assert caught.value.owner == "boolean_operation_exception_floor"
+    actual = SymbolicValue(make_var("still_unknown"))
+    exits = carrier.discharge(None, {formal.coordinate_cid: actual})
+    halted = [face for face in exits.exits if isinstance(face, Halted)]
+    assert len(halted) == 1
+    assert type(halted[0].effect) is UndeterminedRaiseEffect
+    assert halted[0].effect.producer_node_owner == "BoolOpSugar.truth"
+    completed = [face for face in exits.exits if not isinstance(face, Halted)]
+    assert any(face.value is actual for face in completed)
+    assert all("python:truth.completes" in repr(face.guard) for face in completed)
 
 
 def test_lying_bool_coercion_cannot_replace_selected_operand() -> None:

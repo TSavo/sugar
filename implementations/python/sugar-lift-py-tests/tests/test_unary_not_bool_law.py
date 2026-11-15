@@ -11,8 +11,9 @@ Python semantic law made constructible here (distinct from BoolOp #6595):
      ``pytest.raises`` expectation.
 
 Producer method: ``UnaryOpSugar.desugar`` (op_kind ``Not``).
-Floor consumer methods: ``FloorValue.unary_truth`` (carrier adapter),
-``FloorValue.truth``, and bool-literal ``negate``.
+Floor consumer methods: ``FloorValue.truth`` through the one truth rule
+(``bool_op_sugar.truth_of``, also the carrier's ``unary_truth`` discharge),
+and bool-literal ``negate``.
 Carrier: existing ``NativeOperationExitCarrierV1`` / three-way resolution.
 
 Corpus coordinates (pandas 3.0.3, verified by line content, not by path alone):
@@ -397,16 +398,52 @@ def test_formal_not_halt_bypasses_negate_continuation() -> None:
     )
 
 
-def test_undecided_actual_stays_named_refusal_on_discharge() -> None:
+def test_undecided_actual_is_the_two_faced_truth_on_discharge() -> None:
+    """A bare symbolic actual's ``bool`` may run code: the discharge takes it
+    through the one truth rule, so it is the two faces, and only the
+    completed truth is negated.  No exception type is named."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.ir import not_, py_truthy
+
     carrier, formal = _carrier()
-    with pytest.raises(SugarNotWritten) as caught:
-        carrier.discharge(
-            None,
-            {formal.coordinate_cid: SymbolicValue(make_var("still_unknown"))},
-        )
-    # Undecided actual has no unary_truth / truth completion — loud, not Halted.
-    assert caught.value.owner == "unary_operation_exception_floor"
-    assert "TypeError" not in str(caught.value)
+    exits = carrier.discharge(
+        None,
+        {formal.coordinate_cid: SymbolicValue(make_var("still_unknown"))},
+    )
+    halted = [face for face in exits.exits if isinstance(face, Halted)]
+    completed = [face for face in exits.exits if isinstance(face, Completed)]
+    assert len(halted) == 1 and len(completed) == 1
+    assert type(halted[0].effect) is UndeterminedRaiseEffect
+    assert halted[0].effect.producer_node_owner == "UnaryOpSugar.not"
+    assert "TypeError" not in repr(halted[0])
+    assert "python:truth.completes" in repr(completed[0].guard)
+    assert isinstance(completed[0].value, PredicateValue)
+    assert completed[0].value.formula == not_(py_truthy(make_var("still_unknown")))
+
+
+def test_formal_not_with_no_actual_negates_the_truth_of_the_unanswered_result() -> (
+    None
+):
+    """With no actual, the ``unary_truth`` operation is unanswered: its
+    result is a value whose truth is taken through the one truth rule before
+    it is negated, never asked to negate itself."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+
+    carrier, _formal = _carrier()
+    exits = carrier.discharge(None, {})
+    completed = [face for face in exits.exits if isinstance(face, Completed)]
+    halted = [face for face in exits.exits if isinstance(face, Halted)]
+    assert len(completed) == 1
+    assert isinstance(completed[0].value, PredicateValue)
+    assert "python:native_operation_result" in repr(completed[0].value.formula)
+    assert "python:truth.completes" in repr(completed[0].guard)
+    assert "UnaryOpSugar.not" in {
+        face.effect.producer_node_owner
+        for face in halted
+        if type(face.effect) is UndeterminedRaiseEffect
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -532,11 +569,17 @@ def test_lying_expected_type_substitution_does_not_authenticate_nameless_halt() 
 
 def test_producer_and_consumer_methods_are_the_named_seams() -> None:
     """Document the exact methods this PR owns (before any further edit)."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        _NATIVE_OPERATION_PROJECTORS,
+    )
+
     assert hasattr(UnaryOpSugar, "desugar")
-    assert hasattr(FloorValue, "unary_truth")
+    assert not hasattr(FloorValue, "unary_truth")
     assert hasattr(FloorValue, "truth")
     assert callable(getattr(TrueBoolLiteralSugar(_Site()), "negate"))
     assert callable(getattr(FalseBoolLiteralSugar(_Site()), "negate"))
-    # Adapter is a thin carrier door onto truth.
+    # The carrier's discharge is the one truth rule on the actual.
     probe = TermValue(0)
-    assert probe.unary_truth(NoneValue(), _Site()) == probe.truth(_Site())
+    assert _NATIVE_OPERATION_PROJECTORS["unary_truth"](
+        probe, NoneValue(), _Site(), None
+    ) == probe.truth(_Site())

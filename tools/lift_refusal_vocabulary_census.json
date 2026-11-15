@@ -2,7 +2,7 @@
   "identity": "path + normalized text digest + duplicate ordinal; line is display only",
   "issue": "#3632",
   "law": "REFUSE is the verifier verb; lift outputs are reduced meaning or typed effects.",
-  "lift_output_backlog": 2186,
+  "lift_output_backlog": 2174,
   "occurrences": [
     {
       "key": "implementations/python/sugar-build-witness/src/sugar_build_witness/discharge_cli.py:523c0ad6c899be9b:1",
@@ -1665,16 +1665,6 @@
       "wire_marker": "internal-only"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py:c5bd1246ec562325:1",
-      "line": 718,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "An actual whose runtime type remains undecided stays a named refusal;",
-      "wire_marker": "internal-only"
-    },
-    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py:d23f6b298ecf0095:1",
       "line": 1052,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/floor_value.py",
@@ -3015,16 +3005,6 @@
       "wire_marker": "internal-only"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/bool_op_sugar.py:595b05dfbe541829:1",
-      "line": 35,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/bool_op_sugar.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "stay refused until source-visible type testimony decides.",
-      "wire_marker": "internal-only"
-    },
-    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/bool_op_sugar.py:70a93924a849931f:1",
       "line": 58,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/bool_op_sugar.py",
@@ -3032,26 +3012,6 @@
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
       "text": "\"from source, or retain this named refusal without inventing an \"",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/bool_op_sugar.py:79d8e493db3bb466:1",
-      "line": 143,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/bool_op_sugar.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "refuse_undecided_boolean_truth(value, site, op_kind)",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/bool_op_sugar.py:dc1afd7e976b099a:1",
-      "line": 27,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/bool_op_sugar.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "def refuse_undecided_boolean_truth(value, site, op_kind: str) -> None:",
       "wire_marker": "internal-only"
     },
     {
@@ -3162,16 +3122,6 @@
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
       "text": "Observation lives in ``generator_entry_refusal`` (vendor conversion).",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/generator_with_sugar.py:7a3ab7ea8b1d8b2b:1",
-      "line": 115,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/generator_with_sugar.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "def _entry_refusal_exit(manager_exit, termination: GeneratorTerminationV1):",
       "wire_marker": "internal-only"
     },
     {
@@ -3335,26 +3285,6 @@
       "wire_marker": "internal-only"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/unary_op_sugar.py:23b6867a1d19bf8f:1",
-      "line": 96,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/unary_op_sugar.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "\"from source, or retain this named refusal without inventing an \"",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/unary_op_sugar.py:2a89abad7761fbd4:1",
-      "line": 63,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/unary_op_sugar.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "``bool`` completion. Refusing it here collapses installed-source manager",
-      "wire_marker": "internal-only"
-    },
-    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/unary_op_sugar.py:4950bc6391294653:1",
       "line": 117,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/unary_op_sugar.py",
@@ -3362,36 +3292,6 @@
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
       "text": "fix=f\"enroll {self.op_kind!r} in UnaryOpSugar or refuse earlier\",",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/unary_op_sugar.py:55a2db06a597a681:1",
-      "line": 57,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/unary_op_sugar.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "Formals are not refused here: their type arrives at caller discharge on the",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/unary_op_sugar.py:5a06b822e1e150d8:1",
-      "line": 47,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/unary_op_sugar.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "def refuse_undecided_unary_truth(value, site) -> None:",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/unary_op_sugar.py:c2335d26523fd148:1",
-      "line": 193,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/unary_op_sugar.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "refuse_undecided_unary_truth(value, self.site)",
       "wire_marker": "internal-only"
     },
     {
@@ -3412,26 +3312,6 @@
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
       "text": "# the body before truth refusal. Opaque CallSiteValue is neither",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/unary_op_sugar.py:f0ac04f4b2e74581:1",
-      "line": 79,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/unary_op_sugar.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "# Authenticated call coordinates own a lawful truth floor; do not refuse them.",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/unary_op_sugar.py:f690524871f53cb4:1",
-      "line": 54,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/unary_op_sugar.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "an exception identity invents the failure. Both stay refused until",
       "wire_marker": "internal-only"
     },
     {
@@ -22839,10 +22719,10 @@
   "speaker_counts": {
     "emitter-provenance-guard": 3,
     "instrument-prose": 8,
-    "lift-output-backlog": 2186,
+    "lift-output-backlog": 2174,
     "provenance-oracle-guard": 57,
     "vendor-language-identifier": 2,
     "verifier-verdict-quote": 32
   },
-  "total_occurrences": 2288
+  "total_occurrences": 2276
 }

@@ -603,6 +603,45 @@ def _project_bitwise_invert(value, site, ctx):
     return value.bitwise_invert(site)
 
 
+def _project_truth(value, site, ctx):
+    """``bool(value)`` on the caller's actual (an ``if`` / ``while`` /
+    ``assert`` / conditional-expression test on a formal), through the one
+    truth rule (``bool_op_sugar.truth_of``)."""
+    del ctx
+    from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
+
+    return truth_of(
+        value, site, operator="truth", owner="truth", floor="truth_exception_floor"
+    )
+
+
+def _project_boolop_truth(value, site, ctx):
+    """``a and b`` / ``a or b`` on the caller's actual for a formal operand:
+    its truth through the one truth rule, keeping the actual, which the
+    stopping face returns (``bool_op_sugar.boolop_truth_selection``)."""
+    del ctx
+    from sugar_lift_py_tests.sugar.bool_op_sugar import boolop_truth_selection
+
+    return boolop_truth_selection(value, site, operator="BoolOp truth")
+
+
+def _project_unary_truth(value, unit, site, ctx):
+    """``bool(value)`` under ``not`` on the caller's actual for a formal
+    operand, through the one truth rule (``bool_op_sugar.truth_of``).  The
+    second slot is the inert unit the one-operand carrier records; the
+    negation is the producer's continuation (``UnaryOpSugar``)."""
+    del unit, ctx
+    from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
+
+    return truth_of(
+        value,
+        site,
+        operator="not",
+        owner="UnaryOpSugar.not",
+        floor="unary_operation_exception_floor",
+    )
+
+
 def _project_method_call(receiver, name, keyword_names, *operands_site_and_ctx):
     """``receiver.<name>(*args, **kwargs)`` re-dispatched on resolved actuals.
 
@@ -657,10 +696,10 @@ def _project_slice(lower, upper, step, site, ctx):
 _NATIVE_OPERATION_PROJECTORS = {
     # Receiver-selected method call (formal receiver or operand).
     "method_call": _project_method_call,
-    # Unary / adapter Floor methods.
-    "truth": lambda value, site, ctx: value.truth(site),
-    "boolop_truth": lambda value, site, ctx: value.boolop_truth(site),
-    "unary_truth": lambda value, unit, site, ctx: value.unary_truth(unit, site),
+    # Truth questions: each through the one truth rule.
+    "truth": _project_truth,
+    "boolop_truth": _project_boolop_truth,
+    "unary_truth": _project_unary_truth,
     # Formal arithmetic / bitwise unary (``-x`` / ``+x`` / ``~x``).
     # Production mints from SymbolicValue when formal_coordinate is present;
     # ground TermValue folds on the free Floor methods these projectors call.

@@ -63,9 +63,16 @@ def _refuse_undecided_truth(value, site, *, operator: str, floor: str) -> None:
 def truth_of(value, site, *, operator: str, owner: str, floor: str):
     """``bool(value)`` taken once at ``site``: the one truth rule.
 
-    ``a and b`` / ``a or b`` (on each non-final operand), ``not x`` and the
-    negation in ``a != b`` all take the operand's truth through here.
+    Every truth question takes the operand's truth through here: ``a and b``
+    / ``a or b`` (on each non-final operand), ``not x``, the negation in
+    ``a != b`` and ``a not in b``, an ``if`` / ``while`` / ``assert`` /
+    conditional-expression test, and the native operation carrier's
+    ``truth`` / ``boolop_truth`` / ``unary_truth`` discharge on the caller's
+    actual.
 
+    - A formal's truth waits on its caller's actual: the value defers it on
+      the native operation carrier (``SymbolicValue.truth``), whose ``truth``
+      discharge answers through this rule on the actual.
     - An opaque call result or a bare symbolic operand (no formal coordinate)
       of undecided runtime type has undecided ``__bool__`` / ``__len__``, and
       taking its truth may run code (#7585 / #7681): its truth completes with
@@ -78,9 +85,12 @@ def truth_of(value, site, *, operator: str, owner: str, floor: str):
     - Any other undecided-type value is refused by name (``floor``).
     - A decided value answers through its own truth floor.
 
-    A formal's truth is not taken here: its producer defers it to the
-    caller's actual on the native operation carrier.
+    ``a and b`` and ``not x`` mint their own carrier for a formal operand
+    (``boolop_truth`` / ``unary_truth``), since what follows the truth
+    differs; that carrier's discharge comes back here.
     """
+    if getattr(value, "formal_coordinate", None) is not None:
+        return value.truth(site)
     if _is_undecided_call_result(value) or _is_undecided_symbolic_operand(value):
         from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
         from sugar_lift_py_tests.ir import atomic, ctor, str_const
@@ -109,6 +119,44 @@ def truth_of(value, site, *, operator: str, owner: str, floor: str):
         )
     _refuse_undecided_truth(value, site, operator=operator, floor=floor)
     return value.truth(site)
+
+
+def negated_truth_of(value, site, *, operator: str, owner: str, floor: str):
+    """``not bool(value)``: the one truth rule, then only its completed truth
+    negated.
+
+    ``not x``, ``a != b`` (``not (a == b)``) and ``a not in b`` (``not (a in
+    b)``) negate through here.  A halted truth has no bool to flip, so it
+    stands as it is; the value is never asked to negate itself, so an
+    unanswered result (a formal's operation its caller had no actual for)
+    takes its truth by the same rule first.
+    """
+    return truth_of(
+        value, site, operator=operator, owner=owner, floor=floor
+    ).and_then(lambda truth: truth.negate())
+
+
+def boolop_truth_selection(value, site, *, operator: str):
+    """``bool(value)`` for ``a and b`` / ``a or b``, keeping ``value``.
+
+    The truth is taken through the one truth rule; the operand itself is
+    what the stopping face returns.  The non-formal operand reaches this at
+    construction, a formal's actual at the carrier's ``boolop_truth``
+    discharge.
+    """
+    from sugar_lift_py_tests.floor.boolop_truth_selection import (
+        BoolOpTruthSelection,
+    )
+
+    return truth_of(
+        value,
+        site,
+        operator=operator,
+        owner="BoolOpSugar.truth",
+        floor="boolean_operation_exception_floor",
+    ).and_then(
+        lambda truth_value: ExitSet.completed(BoolOpTruthSelection(value, truth_value))
+    )
 
 
 def _is_undecided_call_result(value) -> bool:
@@ -240,20 +288,8 @@ def select_boolop_operand(
     else:
         # The operand's truth is taken once through the one truth rule; the
         # operand itself is what the stopping face returns.
-        from sugar_lift_py_tests.floor.boolop_truth_selection import (
-            BoolOpTruthSelection,
-        )
-
-        tested = truth_of(
-            value,
-            site,
-            operator=_BOOL_OPERATOR_COORDINATE[op_kind],
-            owner="BoolOpSugar.truth",
-            floor="boolean_operation_exception_floor",
-        ).and_then(
-            lambda truth_value: ExitSet.completed(
-                BoolOpTruthSelection(value, truth_value)
-            )
+        tested = boolop_truth_selection(
+            value, site, operator=_BOOL_OPERATOR_COORDINATE[op_kind]
         )
 
     return tested.and_then(
