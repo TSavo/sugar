@@ -495,17 +495,27 @@ def test_put():
 _ITEM_STORE_SPELLINGS = (
     "    a[0] = 2",
     "    n, a[0] = 1, 2",
-    "    for a[0] in [2]:\n        pass",
 )
+
+# A ``for`` whose target binds no name is refused by name at construction
+# (``For.substitute``, #8902: the per-item ``__setitem__`` store is a construct
+# not written), so ``put`` and ``test_put`` are each their refused member.
+_FOR_TARGET_ITEM_STORE = "    for a[0] in [2]:\n        pass"
 
 
 def test_an_item_store_on_a_formal_is_one_store_whatever_its_spelling(
     tmp_path: Path,
 ):
-    """``a[0] = 2``, ``n, a[0] = 1, 2`` and ``for a[0] in [2]`` are one
-    store on the formal's object: each makes ``a`` a ``class:`` input and
-    is the dispatched ``__setitem__`` (``nodes._receiver_uses``), so the
-    caller's claims get one verdict, and the lie is never ``sat``."""
+    """``a[0] = 2`` and ``n, a[0] = 1, 2`` are one store on the formal's
+    object: each makes ``a`` a ``class:`` input and is the dispatched
+    ``__setitem__`` (``nodes._receiver_uses``), so the caller's claims get
+    one verdict, and the lie is never ``sat``.
+
+    ``for a[0] in [2]`` is the same store in Python, but the lifter refuses a
+    ``for`` target that binds no name (``For.substitute``, #8902, step 5:
+    construct or refuse by name), so it states no store: both halves are
+    ``open``, the refusal, never a verdict of their own.  The day the
+    per-item store is written, it joins the spellings above."""
     verdicts = []
     for index, store in enumerate(_ITEM_STORE_SPELLINGS):
         source = _ITEM_STORE_ON_A_FORMAL.format(store=store)
@@ -520,3 +530,13 @@ def test_an_item_store_on_a_formal_is_one_store_whatever_its_spelling(
         assert f.verdict != "sat"
         verdicts.append((t.verdict, f.verdict))
     assert len(set(verdicts)) == 1, verdicts
+
+    source = _ITEM_STORE_ON_A_FORMAL.format(store=_FOR_TARGET_ITEM_STORE)
+    t = run_source_through_real_solver(
+        tmp_path / "store-for-true", source.format(claim="2")
+    )
+    f = run_source_through_real_solver(
+        tmp_path / "store-for-false", source.format(claim="0")
+    )
+    print(json.dumps({"store": "for", "true": t.verdict, "false": f.verdict}))
+    assert (t.verdict, f.verdict) == ("open", "open")
