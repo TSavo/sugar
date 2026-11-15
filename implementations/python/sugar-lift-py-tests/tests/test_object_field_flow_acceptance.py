@@ -191,7 +191,11 @@ def test_positive_object_field_flow_acceptance_is_not_typed_loud(case):
     truthful_and_lying_twins``): where the lift decides the reads it states
     exactly that -- every arm a named ``AssertionError`` -- which is the
     answer, not loudness; where it does not decide them it is answered as
-    the truthful twin is, with the assert's failure among its faces."""
+    the truthful twin is: the assert's undecided test either fails on a face
+    of its own, or -- a symbolic predicate -- is stated as the fact the
+    prover refutes (``PredicateValue.stated``: an ``InvValue``; the lift
+    invents no failing arm for it, ``AssertSugar``).  Never a completion
+    with the assert gone: that would be the lying claim decided true."""
     path = FIXTURES / case["file"]
     for names in (case["canonical"], case["renamed"]):
         truthful = _outcome_or_panic(path, names["truthful"])
@@ -199,7 +203,18 @@ def test_positive_object_field_flow_acceptance_is_not_typed_loud(case):
         lying = _outcome_or_panic(path, names["lying"])
         assert _decided_assertion_failure(lying) or not _is_typed_loud(lying), lying
         if isinstance(lying, ExitSet):
-            assert lying.halts(), lying
+            assert lying.halts() or all(
+                _states_its_assert(exit_.value)
+                for exit_ in lying.exits
+                if exit_ not in lying.halts()
+            ), lying
+
+
+def _states_its_assert(value) -> bool:
+    """A completed function universe whose record states a fact (``invs``):
+    the lying twin's undecided assert, stated for the prover to refute."""
+    invs = getattr(value, "invs", None)
+    return callable(invs) and bool(invs())
 
 
 def _decided_assertion_failure(result) -> bool:
