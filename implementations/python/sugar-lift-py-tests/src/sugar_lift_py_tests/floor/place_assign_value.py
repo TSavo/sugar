@@ -15,21 +15,13 @@ class PlaceAssignValue(FloorValue):
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor, str_const
 
-        receiver = self.receiver.to_term(owner=owner)
-        if self.selector_kind == "attribute":
-            target = ctor(
-                "python:attribute",
-                [receiver, str_const(self.selector)],
-            )
-        elif self.selector_kind == "subscript":
-            if not isinstance(self.selector, FloorValue):
-                raise ValueError("subscript selector must be one FloorValue")
-            target = ctor(
-                "python:subscript",
-                [receiver, self.selector.to_term(owner=owner)],
-            )
-        else:
+        if self.selector_kind != "attribute":
             raise ValueError(f"unknown place selector kind {self.selector_kind!r}")
+        receiver = self.receiver.to_term(owner=owner)
+        target = ctor(
+            "python:attribute",
+            [receiver, str_const(self.selector)],
+        )
         return ctor(
             "python:assign",
             [target, self.value.to_term(owner=owner)],
