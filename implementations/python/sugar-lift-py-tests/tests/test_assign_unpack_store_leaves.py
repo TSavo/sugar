@@ -30,7 +30,6 @@ in value pairing or in store order MUST project differently.
 
 from __future__ import annotations
 
-import hashlib
 import re
 from pathlib import Path
 
@@ -193,19 +192,24 @@ TWO_ATTRIBUTE = "def f(p, q):\n    o.x, o.y = p, q\n    return p\n"
 
 
 def test_rhs_member_is_one_retained_occurrence(tmp_path: Path) -> None:
-    """`o.x, o.y = p, p` must retain ONE constructed occurrence of `p`.
+    """`o.x, o.y = p, p` evaluates each RHS member ONCE, never once per target.
 
-    Proven at the layer that owns it: construction identity of the retained
-    occurrence. No counter, no instrumented call tally -- if the RHS were
-    re-evaluated (reconstructed) per target, the two stores would hold two
-    distinct constructed objects.
+    Proven at the layer that owns it: the statement holds one member per RHS
+    element, each under its own key, and each store reads its member through
+    that key. ``p, p`` is two reads of one formal (Python loads ``p`` twice):
+    two occurrences, each at its own source site, of the same coordinate.
     """
     shared = "def f(p):\n    o.x, o.y = p, p\n    return p\n"
     unpack = _unpack(tmp_path, shared)
+    (first_key, first), (second_key, second) = unpack.members
+    assert first == second, (first, second)
+    assert first.coordinate == second.coordinate
+    assert first.site != second.site, (first.site, second.site)
+    assert first_key != second_key
     # Each store leaf reads its member through its member key; the member
     # itself is the retained occurrence the statement evaluates.
-    (_, first), (_, second) = unpack.members
-    assert first is second, (first, second)
+    assert unpack.stores[0].value.evaluation == first_key
+    assert unpack.stores[1].value.evaluation == second_key
 
     # ...and RHS-once holds on BOTH arms: the arm that halted at the second
     # store carries the SAME projected occurrence for the first store as the
@@ -501,52 +505,47 @@ def test_name_leaf_binding_is_discharged_beside_the_store_effect(
 # Law 8 -- pure-name MultiAssign is unchanged vs origin/main.
 # ---------------------------------------------------------------------------
 
-# Statement-shape fingerprints for the pure-name path. Returns avoid BinOp so
-# binary-dispatch ExitSet growth cannot re-pin this as a false unpack regression.
+# Statement shapes for the pure-name path, each with the one assign statement
+# kind it constructs. Returns avoid BinOp so binary dispatch has no face here.
 PURE_NAME_SHAPES = (
-    (
-        "def f(p, q):\n    a, b = p, q\n    return a\n",
-        "226ca945216c831f574a9b28697fc4f1",  # MultiAssignSugar + ExitSet face
-    ),
-    (
-        "def f(p, q, r):\n    a, b, c = p, q, r\n    return a\n",
-        "226ca945216c831f574a9b28697fc4f1",  # same inert MultiAssign face
-    ),
-    (
-        "def f(p):\n    x = y = p\n    return x\n",
-        "821c4398b70779143e38f47459ea4be3",  # ChainedAssignSugar + ExitSet face
-    ),
+    ("def f(p, q):\n    a, b = p, q\n    return a\n", "MultiAssignSugar"),
+    ("def f(p, q, r):\n    a, b, c = p, q, r\n    return a\n", "MultiAssignSugar"),
+    ("def f(p):\n    x = y = p\n    return x\n", "ChainedAssignSugar"),
 )
 
 
-def _shape_fingerprint(tmp_path: Path, source: str, stem: str) -> str:
+def _assign_faces(tmp_path: Path, source: str, stem: str) -> list:
+    """``(statement kind, its own reduced face)`` per assignment statement.
+
+    The kinds are read by name off the statement roster, so a pure-name shape
+    built as any other assignment kind (an unpack store, a dynamic unpack)
+    shows up as that kind here.
+    """
     sugar = _function_sugar(tmp_path, source, stem)
-    # Pure-name MultiAssign/ChainedAssign are inert at desugar; pin the sugar
-    # roster and each assign statement's own completed face only.
-    assign_faces = []
-    for stmt in sugar.statements:
-        if type(stmt).__name__ in (
-            "MultiAssignSugar",
-            "ChainedAssignSugar",
-            "AssignSugar",
-        ):
-            face = stmt.desugar(None)
-            assign_faces.append(f"{type(stmt).__name__}:{type(face).__name__}")
-    text = "\n".join(
-        [*(type(stmt).__name__ for stmt in sugar.statements), *assign_faces]
-    )
-    return hashlib.blake2b(text.encode(), digest_size=16).hexdigest()
+    return [
+        (type(stmt).__name__, stmt.desugar(None))
+        for stmt in sugar.statements
+        if "Assign" in type(stmt).__name__
+    ]
 
 
 def test_pure_name_multi_assign_construction_is_unchanged(tmp_path: Path) -> None:
     """Pure-name destructure/chain stays MultiAssign/ChainedAssign — not unpack stores.
 
     This branch must not convert name-only targets into UnpackStoreAssignSugar.
-    Fingerprints pin statement kinds and inert assign desugar faces.
+    Each shape constructs exactly one assignment statement, of the named kind,
+    and that statement's own face is an ``ExitSet`` with no halt: binding
+    names to formals cannot raise.
     """
-    for index, (source, expected) in enumerate(PURE_NAME_SHAPES):
-        stem = f"pure{index}"
-        assert _shape_fingerprint(tmp_path, source, stem) == expected, source
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    for index, (source, expected_kind) in enumerate(PURE_NAME_SHAPES):
+        faces = _assign_faces(tmp_path, source, f"pure{index}")
+        assert [kind for kind, _face in faces] == [expected_kind], source
+        ((_kind, face),) = faces
+        assert isinstance(face, ExitSet), source
+        assert face.halts() == (), (source, face)
+        assert any(isinstance(exit_, Completed) for exit_ in face.exits), source
 
     sugar = _function_sugar(tmp_path, PURE_NAME_SHAPES[0][0], stem="purekind")
     assert any(isinstance(stmt, MultiAssignSugar) for stmt in sugar.statements)
@@ -770,10 +769,16 @@ def test_a_chained_attribute_store_reads_a_formal_receiver_through_its_key(
 def test_a_chained_subscript_store_reads_its_receiver_and_key_through_their_keys(
     tmp_path: Path,
 ) -> None:
-    from sugar_lift_py_tests.sugar.formal_ref_sugar import FormalRefSugar
-    from sugar_lift_py_tests.sugar.store_effect_sugar import (
-        SubscriptStoreEffectSugar,
+    """A chain's subscript target is the one item store (``d[k] = v`` alone
+    is the same statement): the receiver's ``__setitem__`` with the key and
+    the value, the receiver and the key each read through their formal's
+    coordinate, never a name looked up at reduce."""
+    from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+        ContainerMutationStatementSugar,
+        PathContainerCallSugar,
     )
+    from sugar_lift_py_tests.sugar.formal_ref_sugar import FormalRefSugar
+    from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 
     chained = _statement(
         tmp_path,
@@ -782,10 +787,16 @@ def test_a_chained_subscript_store_reads_its_receiver_and_key_through_their_keys
         "ChainedAssignSugar",
     )
     (store,) = chained.stores
-    assert isinstance(store, SubscriptStoreEffectSugar)
-    assert isinstance(store.receiver, FormalRefSugar)
-    assert isinstance(store.index, FormalRefSugar)
-    assert store.receiver.coordinate != store.index.coordinate
+    assert isinstance(store, ContainerMutationStatementSugar)
+    call = store.evaluated[0]
+    assert isinstance(call, PathContainerCallSugar)
+    assert call.method == "__setitem__"
+    key, _value = call.args
+    assert isinstance(call.receiver, FormalRefSugar)
+    assert isinstance(key, FormalRefSugar)
+    assert not isinstance(call.receiver, NameSugar)
+    assert not isinstance(key, NameSugar)
+    assert call.receiver.coordinate != key.coordinate
 
 
 def test_a_chained_receiver_reads_a_name_an_earlier_target_bound(
@@ -821,7 +832,8 @@ def test_a_chained_receiver_reads_a_name_an_earlier_target_bound(
         "ChainedAssignSugar",
     )
     (store,) = before.stores
-    assert isinstance(store.receiver, FormalRefSugar)
+    assert isinstance(store, ContainerMutationStatementSugar)
+    assert isinstance(store.evaluated[0].receiver, FormalRefSugar)
 
 
 def test_a_nested_unpack_store_leaf_is_one_unpack_with_its_receiver_substituted(

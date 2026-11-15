@@ -165,11 +165,13 @@ def test_verified_pandas_303_name_subscript_unpack_reproducer_is_content_pinned(
 
 
 def test_corpus_name_subscript_unpack_constructs_then_stays_undischarged() -> None:
-    """Real corpus site: construction admits the leaf; formal actuals stay loud.
+    """Real corpus site: construction admits the leaf; the store is undecided.
 
-    Missing Floor / carrier: n-ary setitem discharge over runtime-selected
-    receivers (formal ``codes``). Until that door exists, the pair is
-    Undischarged — named refusal, not a fabricated completed face.
+    The statement is read off the raw tree, so nothing decides the receiver
+    ``codes``: the unpack does not complete unconditionally. It halts on some
+    face (#7585: a store over an undecided receiver completes only under its
+    own ``completes`` atom and raises under the complement) -- never a
+    fabricated completed face, and no longer a construction panic.
     """
     corpus = authenticated_pandas_corpus()
     path = corpus.root / CORPUS_REL
@@ -205,9 +207,11 @@ def test_corpus_name_subscript_unpack_constructs_then_stays_undischarged() -> No
     assert isinstance(sugar.stores[0], SubscriptStoreEffectSugar)
 
     # Desugar of the full enclosing function is not required: the site itself
-    # carries formal/undecided receivers. Direct store desugar is undischarged.
-    with pytest.raises(SugarNotWritten, match="undischarged subscript store|undecided"):
-        sugar.desugar(None)
+    # carries undecided receivers. The statement is not one unconditional
+    # completion, and it can halt.
+    outcome = sugar.desugar(None)
+    assert outcome.completed_value() is None, outcome
+    assert outcome.halts(), outcome
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +246,22 @@ def test_name_and_subscript_display_unpack_constructs(tmp_path: Path) -> None:
     assert len(unpack.bindings) == 1
     assert unpack.bindings[0][0] == "x"
     assert len(unpack.stores) == 1
-    assert isinstance(unpack.stores[0], SubscriptStoreEffectSugar)
+    # The store leaf is the single-target store's own statement (#7757 item
+    # 7): the receiver's ``__setitem__``, the receiver read through its
+    # formal's coordinate.
+    from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+        ContainerMutationStatementSugar,
+        PathContainerCallSugar,
+    )
+    from sugar_lift_py_tests.sugar.formal_ref_sugar import FormalRefSugar
+
+    (store,) = unpack.stores
+    assert isinstance(store, ContainerMutationStatementSugar)
+    call = store.evaluated[0]
+    assert isinstance(call, PathContainerCallSugar)
+    assert call.method == "__setitem__"
+    assert isinstance(call.receiver, FormalRefSugar)
+    assert call.receiver.name == "a"
 
 
 def test_dual_subscript_display_unpack_constructs_distinct_pairings(
@@ -265,9 +284,16 @@ def test_dual_subscript_display_unpack_constructs_distinct_pairings(
     assert left.members[0][1] is not right.members[0][1] or (
         str(left.members[0][1]) != str(right.members[0][1])
     )
-    assert [store.value.evaluation for store in left.stores] == [
+    # Each store is the receiver's ``__setitem__(key, value)``; its value
+    # operand reads the store's own member key, in target order.
+    assert [store.evaluated[0].method for store in left.stores] == [
+        "__setitem__",
+        "__setitem__",
+    ]
+    assert [store.evaluated[0].args[-1].evaluation for store in left.stores] == [
         key for key, _member in left.members
     ]
+    assert [store.evaluated[0].receiver.name for store in left.stores] == ["a", "b"]
 
 
 def test_formal_receiver_stays_undischarged_not_completed(tmp_path: Path) -> None:
