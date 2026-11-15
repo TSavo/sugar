@@ -184,15 +184,15 @@ def test_a_read_through_the_raising_class_call_is_undecided_by_name() -> None:
     )
 
 
-def test_naming_the_raising_class_without_calling_it_completes() -> None:
+def test_naming_the_raising_class_without_calling_it_is_undecided() -> None:
     """``b = Box`` calls nothing, so the function has no raise of its own:
-    Python raised at the class statement, when the module ran.  Nothing
-    reduces the module block today, so that raise has no row (#7794)."""
-    completed, halts = _faces(
-        _function(_ALWAYS_RAISES["only-field"], "    b = Box\n    return 3\n")
+    Python raised at the class statement, when the module ran, and bound no
+    ``Box``.  The read is that key's, which the run never bound: refused by
+    name, the same as a call of it.  It is never a class read off the
+    statement reduced again (#7757 item 21)."""
+    _refused_for_the_unbound_class(
+        lambda: _function(_ALWAYS_RAISES["only-field"], "    b = Box\n    return 3\n")
     )
-
-    assert (completed, halts) == (1, ())
 
 
 # ---------------------------------------------------------------------------
@@ -510,14 +510,18 @@ def test_a_function_that_calls_a_class_reading_an_undefined_name_is_undecided(
 # The twin, through the real solver.  One thing differs: the class field.
 #
 # Truthful: the class exists, the call completes, the assert after it holds:
-# ``sat``.  Lying: the class body raises, so the call raises and the assert
-# after it is never reached.  Before this change the solver answered ``sat``
-# to the lying half too.
+# ``sat``.  Lying: the class body raises at the class statement, in the
+# module's run, so no class is bound and the module's import fails.
 #
-# The function's only arm is halted at the call, so no arm completes and the
-# assert no arm reached states the halted arm's guard negated: the halt is
-# under truth, so the row is ``false`` and the lying half reads ``unsat``
-# (#7766).  The test certainly raises, so it fails.
+# The lying half is "not ``sat``".  The class statement's halt is the module
+# run's, and is no face of ``test_box`` (#7757 item 21): ``test_box`` reads
+# ``Box`` through the statement's key, which the run never bound, so it is
+# refused by name and stated ``undecided`` (``refused_function_row``).  The
+# ``unsat`` this half should read needs the module run's halt stated as a
+# row of its own (the module reduction reaches no row today, #7766); until
+# then it is never ``sat``.  Before #7757 item 21 the halt was read off a
+# second reduction of the class statement at the call, which Python never
+# does.
 # ---------------------------------------------------------------------------
 
 _TWIN = (
@@ -537,16 +541,17 @@ def test_an_assert_after_a_call_of_a_class_that_exists_is_sat(tmp_path: Path) ->
     assert truthful.verdict == "sat"
 
 
-def test_an_assert_after_a_call_of_a_raising_class_is_unsat(tmp_path: Path) -> None:
+def test_an_assert_after_a_call_of_a_raising_class_is_not_sat(tmp_path: Path) -> None:
     lying = run_source_through_real_solver(tmp_path / "l", _TWIN.format(field="1 // 0"))
 
-    assert lying.verdict == "unsat"
+    assert lying.verdict != "sat"
 
 
 # #7799's own program: the class has an ``__init__``.  Its universe runs on the
 # receiver the class call makes (``tree_enumerate.function_universe_outcome``),
-# so when the statement halts, the universe is that halt, as the call in
-# ``test_box`` is: no arm reaches the assert, and its row states the halt.
+# on the class the module's run bound.  When the statement halts the run binds
+# none, so the universe and ``test_box`` are both refused by name, as above:
+# the lying half is "not ``sat``".
 _TWIN_WITH_INITIALIZER = (
     "class Box:\n"
     "    limit = {field}\n"
@@ -569,9 +574,9 @@ def test_a_field_of_an_object_of_a_class_that_exists_is_sat(tmp_path: Path) -> N
     assert truthful.verdict == "sat"
 
 
-def test_a_raising_class_with_an_initializer_is_unsat(tmp_path: Path) -> None:
+def test_a_raising_class_with_an_initializer_is_not_sat(tmp_path: Path) -> None:
     lying = run_source_through_real_solver(
         tmp_path / "l", _TWIN_WITH_INITIALIZER.format(field="1 // 0")
     )
 
-    assert lying.verdict == "unsat"
+    assert lying.verdict != "sat"
