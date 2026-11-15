@@ -1150,19 +1150,40 @@ class NativeOperationExitCarrierV1:
         # Otherwise the projected arms stand as they are: a completion is
         # already its one completed arm, and its ``owed`` rides on it. A
         # projector is an expression: its halt offers no record of its own
-        # (an undecided operand's two faces, ``ExitSet.two_faced``). The
-        # block that enrolled this carrier holds the state the operation
-        # began from, so that halt leaves from it -- the record the
-        # unanswered operation's halt and the exceptional resolution leave
-        # from -- and a suite resuming after it (a ``finally``, a handler)
-        # resumes from what ran before the operation, never from nothing.
-        if self.pre_effect_state is not None:
-            from sugar_lift_py_tests.sugar.function_universe_sugar import (
-                halts_recorded,
-            )
+        # (an undecided operand's two faces, ``ExitSet.two_faced``), and
+        # leaves from the state this carrier's block enrolled
+        # (``_halts_leave_enrolled_state``).
+        return self._halts_leave_enrolled_state(exits)
 
-            exits = halts_recorded(exits, self.pre_effect_state.state)
-        return exits
+    def _halts_leave_enrolled_state(self, exits):
+        """``exits`` with every halt that offers no record of its own leaving
+        from the state this carrier's block enrolled (``halts_recorded``).
+
+        THE ONE RECORD of a halt minted while this carrier discharges. The
+        operation and every continuation enrolled on it before the block's
+        own projection are one statement's expression: a halt of it is an
+        expression's, with no record (an undecided operand's two faces,
+        ``ExitSet.two_faced``). The block that enrolled the carrier holds the
+        state that statement began from, so the halt leaves from it -- the
+        record the unanswered operation's halt and the exceptional resolution
+        leave from -- whether the operation's own projector minted it
+        (``_projected_exits``) or a continuation did on the value the
+        operation completed with (``discharge``: ``assert claim`` on an
+        unanswered formal takes the truth of the unanswered result, whose
+        raise face is minted by the assert's continuation). A suite resuming
+        after it (a ``finally``, a handler) and a join it reaches (an
+        ``if``'s) read what ran before the statement, never nothing.
+
+        A halt that carries its own record keeps it (a later statement's,
+        recorded by its block; a nested suite's). A carrier no block enrolled
+        holds no state: its halts stand as they are, an expression's, for the
+        statement that runs them to record.
+        """
+        if self.pre_effect_state is None:
+            return exits
+        from sugar_lift_py_tests.sugar.function_universe_sugar import halts_recorded
+
+        return halts_recorded(exits, self.pre_effect_state.state)
 
     def discharge(self, ctx, actuals_by_formal_coordinate):
         """Evaluate against authenticated actual operands and project exits.
@@ -1177,7 +1198,10 @@ class NativeOperationExitCarrierV1:
         leaves the operation unanswered (:meth:`_unanswered_exits`): its
         position is the cited two-faced arm, and every continuation and
         ExitSet-wide step still runs, so the arms composed beside it stand. A
-        halt is never dropped (#7825).
+        halt is never dropped (#7825), and none leaves record-less from a
+        carrier a block enrolled: the operation's halt and a halt a
+        continuation mints on its completed value both leave from the
+        enrolled state (:meth:`_halts_leave_enrolled_state`).
         """
         from sugar_lift_py_tests.outcome import ExitSet, true_guard
         from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
@@ -1297,6 +1321,12 @@ class NativeOperationExitCarrierV1:
                             self.pre_effect_state
                         )
                     return next_outcome.discharge(ctx, actuals_by_formal_coordinate)
+                if isinstance(next_outcome, ExitSet):
+                    # A halt the continuation minted on the completed value
+                    # is this statement's too: it leaves from the enrolled
+                    # state, as the operation's own halt does. Anything that
+                    # is not exits is refused by ``and_then`` below.
+                    return self._halts_leave_enrolled_state(next_outcome)
                 return next_outcome
 
             exits = exits.and_then(resume)
