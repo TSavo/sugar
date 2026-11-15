@@ -790,12 +790,19 @@ def test_formal_augassign_discharges_an_object_actual_through_the_door() -> None
 
 
 def test_attribute_augassign_is_attribute_path_not_subscript_path() -> None:
-    """Attribute OP= uses AttributeAugAssignSugar; an item target the door."""
+    """Attribute OP= uses AttributeAugAssignSugar; an item target the door.
+
+    ``o.x += v`` is the one field store, keyed as every statement that
+    writes is (``KeyedStoreSugar``, #8287): the keyed statement holds the
+    attribute read-modify-store, never the subscript door's."""
+    from sugar_lift_py_tests.sugar.assign_sugar import KeyedStoreSugar
     from sugar_lift_py_tests.sugar.augassign_sugar import AttributeAugAssignSugar
 
     tree = _tree("def helper(obj, rhs):\n    obj.field += rhs\n", "attr_aug.py")
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     aug = next(node for node in function.body if isinstance(node, AugAssign))
     sugar = aug.sugar()
-    assert isinstance(sugar, AttributeAugAssignSugar)
+    assert isinstance(sugar, KeyedStoreSugar)
+    assert isinstance(sugar.value, AttributeAugAssignSugar)
+    assert not isinstance(sugar.value, ContainerMutationStatementSugar)
     assert not isinstance(sugar, ContainerMutationStatementSugar)
