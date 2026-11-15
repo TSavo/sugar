@@ -57,7 +57,7 @@ def test_the_identity_post_is_stated_inline(tmp_path: Path) -> None:
     mint = mint_project(vendor)
     assert mint.returncode == 0, mint.stderr
 
-    post = _contract_posts(vendor)["ident"]
+    post = _contract_posts(vendor)["python:idn.ident"]
     assert post == {"kind": "atomic", "name": "=", "args": [_var("out"), _var("x")]}
 
 
@@ -75,6 +75,6 @@ def test_a_compound_post_is_stated_inline(tmp_path: Path) -> None:
     mint = mint_project(project)
     assert mint.returncode == 0, mint.stderr
 
-    post = _contract_posts(project)["consume"]
+    post = _contract_posts(project)["python:test_witness.consume"]
     assert TERM_REF_BYTES not in json.dumps(post, separators=(",", ":")).encode()
     assert post["args"][0] == _var("out")
