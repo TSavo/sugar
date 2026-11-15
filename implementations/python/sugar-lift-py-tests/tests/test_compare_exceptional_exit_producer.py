@@ -261,51 +261,16 @@ def test_launcher_authenticates_content_manifest_not_path_shape() -> None:
     assert corpus.file_count == 1421
 
 
-def test_shared_table_authenticates_the_exact_compare_site(tmp_path: Path) -> None:
-    from sugar_lift_py_tests.no_call_body_attribution import (
-        shared_demand_table_content_key,
-    )
+def test_per_source_door_enrolls_the_exact_compare_site() -> None:
+    """The one per-source derivation states this site's row: the With item at
+    its coordinate, joined to the authenticated ``pytest.raises`` import."""
+    from sugar_lift_py_tests.lift_rpc import _PerSourceDemandRows
 
-    output = tmp_path / "table.json"
-    pulled = subprocess.run(
-        [
-            str(_repo_root() / "bin/sugarbin"),
-            "artifact",
-            "pull",
-            "--kind",
-            "python-demand-table",
-            "--content-key",
-            shared_demand_table_content_key(),
-            "--output",
-            str(output),
-            "--runtime",
-            "cpython-3.12.13",
-        ],
-        cwd=_repo_root(),
-        capture_output=True,
-        text=True,
-        check=False,
-        env={
-            **dict(__import__("os").environ),
-            "SUGAR_BINARY_ALLOW_BUILD": "0",
-            "SUGAR_BINARY_PUBLISH": "0",
-        },
-    )
-    assert pulled.returncode == 0 and output.is_file(), (
-        "the authenticated #6464 demand table is absent; do not rebuild it: "
-        + pulled.stderr
-    )
-    table = json.loads(output.read_text(encoding="utf-8"))
-    assert table["authentication"]["python"] == "cpython-3.12.13"
-    assert table["authentication"]["authenticatedCorpusManifestCid"] == MANIFEST_CID
-    assert table["authentication"]["pandas"] == "3.0.3"
-    assert table["identity"]["fileCount"] == 1421
-    assert table["authentication"]["authenticatedCorpusManifestCid"] != (
-        HISTORICAL_PATH_SHAPE_DIGEST
-    )
     rows = tuple(
         row
-        for row in table["rows"]
+        for row in _PerSourceDemandRows(_corpus_root()).rows_for_source(
+            COL_SOURCE_CID
+        )
         if row.get("kind") == "context-manager-demand"
         and row.get("targetSymbol") == "pytest.raises"
         and row.get("gapKind") is None

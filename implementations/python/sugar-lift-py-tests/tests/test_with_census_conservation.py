@@ -331,10 +331,6 @@ def test_enumerate_with_rows_reach_partition_with_identical_keys(
     """The production enumerate door and partition conserve the same members."""
     module = _load()
     from recensus_enumerate_consumer import demand_context_manager_resolution_events
-    from sugar_lift_py_tests.lift_rpc import (
-        install_provisional_contract_refs,
-        provisional_contract_refs_from_demands,
-    )
     from sugar_lift_python_source.source_oracle import path_source
 
     path = tmp_path / "opaque.py"
@@ -342,8 +338,6 @@ def test_enumerate_with_rows_reach_partition_with_identical_keys(
         "def run():\n" "    with mystery():\n" "        pass\n",
         encoding="utf-8",
     )
-    refs = provisional_contract_refs_from_demands(tmp_path)
-    install_provisional_contract_refs(tmp_path, refs)
     source_cid = path_source(str(path))[2]
 
     events, gaps = demand_context_manager_resolution_events(
@@ -381,10 +375,6 @@ def test_resolution_enumeration_keeps_rows_when_provider_projection_reaches_gap(
     """The raw producer keeps a provider construction terminal loud."""
     _load()
     from recensus_enumerate_consumer import demand_context_manager_resolution_events
-    from sugar_lift_py_tests.lift_rpc import (
-        install_provisional_contract_refs,
-        provisional_contract_refs_from_demands,
-    )
     from sugar_lift_python_source.source_oracle import path_source
     from sugar_source_tree.panic import ContextManagerResolutionConstructionGap
 
@@ -396,8 +386,6 @@ def test_resolution_enumeration_keeps_rows_when_provider_projection_reaches_gap(
         "        return payload\n",
         encoding="utf-8",
     )
-    refs = provisional_contract_refs_from_demands(tmp_path)
-    install_provisional_contract_refs(tmp_path, refs)
     source_cid = path_source(str(path))[2]
 
     with pytest.raises(ContextManagerResolutionConstructionGap):
@@ -414,7 +402,6 @@ def test_provider_resolution_gap_is_enrolled_once_without_losing_with_key(
     """A logged provider gap is one panic terminal, never completed testimony."""
     _load()
     from recensus_enumerate_consumer import measure_file_via_enumerate
-    from sugar_lift_py_tests.lift_rpc import provisional_contract_refs_from_demands
 
     path = tmp_path / "provider.py"
     path.write_text(
@@ -424,12 +411,10 @@ def test_provider_resolution_gap_is_enrolled_once_without_losing_with_key(
         "        return payload\n",
         encoding="utf-8",
     )
-    refs = provisional_contract_refs_from_demands(tmp_path)
 
     row = measure_file_via_enumerate(
         workspace_root=tmp_path,
         file_rel="provider.py",
-        contract_refs=refs,
     )
 
     assert row["category"] == "panic", row

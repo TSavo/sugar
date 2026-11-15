@@ -12,6 +12,21 @@ CATALOG_CID = "blake3-512:" + "3" * 128
 TABLE_CID = "blake3-512:" + "6" * 128
 
 
+def _call_use_rows(root):
+    """Every enrolled file's imported call uses, by the per-source door's pass."""
+    units = lift_rpc._corpus_source_units(root)
+    return lift_rpc._call_use_rows_for_units(
+        root, units, lift_rpc._module_identities_for_units(root, units)
+    )
+
+
+def _with_demand_rows(root):
+    """Every source's With demand rows, from the one per-source derivation."""
+    from sugar_lift_py_tests.no_call_body_attribution import with_demand_rows
+
+    return with_demand_rows(root)["rows"]
+
+
 def test_an_unresolved_reference_stays_loud():
     unresolved = CallSiteSugar(
         target_name="missing",
@@ -86,7 +101,7 @@ def test_import_demand_enrollment_has_positional_arity_and_module_identity(tmp_p
         "from producer import pair\n" "value = pair(1)\n" "not_enrolled = pair(x=1)\n"
     )
 
-    rows = lift_rpc._call_use_rows(tmp_path)
+    rows = _call_use_rows(tmp_path)
 
     assert len(rows) == 1
     assert rows[0]["targetSymbol"] == "python:producer.pair"
@@ -107,7 +122,7 @@ def test_import_binding_authenticates_alias_and_module_identity(tmp_path):
         "c = pair()\n"
     )
 
-    rows = lift_rpc._call_use_rows(tmp_path)
+    rows = _call_use_rows(tmp_path)
 
     assert [row["targetSymbol"] for row in rows] == [
         "python:first.pair",
@@ -156,7 +171,7 @@ def test_global_and_method_lookup_never_inherit_enclosing_or_class_import(tmp_pa
         "        return pair(2)\n"
     )
 
-    rows = lift_rpc._call_use_rows(tmp_path)
+    rows = _call_use_rows(tmp_path)
 
     assert [row["targetSymbol"] for row in rows] == [
         "python:right.pair",
@@ -254,7 +269,7 @@ def test_demand_table_carries_with_demands_only(tmp_path):
         "    raise ValueError('bad')\n"
     )
 
-    rows = lift_rpc._preconstruction_demand_rows(tmp_path)
+    rows = _with_demand_rows(tmp_path)
 
     assert [row["kind"] for row in rows] == ["context-manager-demand"]
     assert rows[0]["targetSymbol"] == "pytest.raises"
@@ -272,7 +287,7 @@ def test_shadowed_local_raises_does_not_inherit_pytest_provider_contract(tmp_pat
 
     row = next(
         row
-        for row in lift_rpc._preconstruction_demand_rows(tmp_path)
+        for row in _with_demand_rows(tmp_path)
         if row["kind"] == "context-manager-demand"
     )
 

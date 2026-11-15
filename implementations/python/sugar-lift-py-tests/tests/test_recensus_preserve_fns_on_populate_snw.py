@@ -60,7 +60,6 @@ def test_open_snw_preserves_authenticated_ast_function_denominator(
     row = module.measure_file_via_enumerate(
         workspace_root=tmp_path,
         file_rel="broken.py",
-        contract_refs={},
     )
     # The plant must be on the path the open walks; a move of the entry turns
     # this red instead of letting the row below pass for another reason.

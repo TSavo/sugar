@@ -31,10 +31,7 @@ import pytest
 from sugar_lift_py_tests.context_manager_resolution import (
     TreeConstructionContextV1,
 )
-from sugar_lift_py_tests.lift_rpc import (
-    _context_manager_rows_for_paths,
-    provisional_contract_refs_from_demand_rows,
-)
+from sugar_lift_py_tests.lift_rpc import per_source_provisional_contract_refs
 from sugar_lift_py_tests.no_call_body_attribution import (
     AttributionOutcome,
     BodyProbe,
@@ -84,9 +81,7 @@ def _build_slice(
     path.write_text(source, encoding="utf-8")
     root = tmp_path
     context = TreeConstructionContextV1(
-        contract_refs=provisional_contract_refs_from_demand_rows(
-            _context_manager_rows_for_paths([path], root=root)
-        ),
+        contract_refs=per_source_provisional_contract_refs(root),
     )
     tree = SourceFile(
         workspace_path_source(str(path), root=str(root)),

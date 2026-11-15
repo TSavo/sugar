@@ -272,19 +272,10 @@ def test_authenticated_pandas_303_temp_file_population_is_partitioned_by_formal(
     from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
     from sugar_lift_py_tests.no_call_body_attribution import (
         CANONICAL_CORPUS_MANIFEST_CID,
-        pull_shared_demand_table,
-        shared_demand_table_content_key,
     )
 
     corpus = authenticated_pandas_corpus()
     assert corpus.manifest_cid == CANONICAL_CORPUS_MANIFEST_CID
-    with tempfile.TemporaryDirectory() as scratch:
-        demand_table = pull_shared_demand_table(
-            resolve_repo_root(),
-            Path(scratch) / "python-demand-table.json",
-        )
-    assert demand_table["contentKey"] == shared_demand_table_content_key()
-    assert len(demand_table["rows"]) == 107_433
     census = _census_formal_parameter_resources(corpus.root, "temp_file")
 
     assert census.lexical_mentions == 1_002

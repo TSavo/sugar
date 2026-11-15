@@ -62,7 +62,6 @@ def test_supervised_timeout_restarts_and_continues(tmp_path: Path, monkeypatch) 
     supervisor = _SUP.SupervisedEnumSupervisor(
         corpus_root=tmp_path,
         file_timeout=1.0,
-        allow_local_demand_derivation=True,
     )
     try:
         timed_out = supervisor.lift_file(sleeper, "sleep.py")
@@ -135,7 +134,7 @@ def test_context_init_timeout_names_phase_not_none(
     """Init timeout must name phase + corpus_root — never 'refused: None'.
 
     Floors 30728650857 banked refused: None because the 30s per-file budget
-    gated multi-minute provisional demand derivation over authenticated pandas.
+    gated corpus-scale context initialization over authenticated pandas.
     """
     _write(tmp_path, "clean.py", "def a(z):\n    return z\n")
     monkeypatch.setenv("SUGAR_SUPERVISOR_PLANT_INIT_HANG", "1")
@@ -143,7 +142,6 @@ def test_context_init_timeout_names_phase_not_none(
         corpus_root=tmp_path,
         file_timeout=30.0,
         context_init_timeout=1.0,
-        allow_local_demand_derivation=True,
     )
     try:
         with pytest.raises(RuntimeError) as raised:
@@ -175,7 +173,6 @@ def test_tiny_population_init_hang_fails_in_seconds_not_corpus_budget(
     supervisor = _SUP.SupervisedEnumSupervisor(
         corpus_root=tmp_path,
         file_timeout=30.0,
-        allow_local_demand_derivation=True,
     )
     assert supervisor.population_file_count == 1
     assert supervisor.context_init_timeout <= 60.0
@@ -215,7 +212,6 @@ def test_context_init_missing_corpus_root_names_artifact(tmp_path: Path) -> None
                 {
                     "kind": "initialize",
                     "corpus_root": "",
-                    "allow_local_demand_derivation": True,
                 }
             )
             + "\n"
@@ -244,7 +240,6 @@ def test_context_init_nonexistent_root_names_path(tmp_path: Path) -> None:
         corpus_root=missing,
         file_timeout=30.0,
         context_init_timeout=30.0,
-        allow_local_demand_derivation=True,
     )
     try:
         with pytest.raises(RuntimeError) as raised:
@@ -278,7 +273,6 @@ def test_lift_error_incomplete_payload_names_artifact(
     source = _write(tmp_path, "clean.py", "def a(z):\n    return z\n")
     supervisor = _SUP.SupervisedEnumSupervisor(
         corpus_root=tmp_path,
-        allow_local_demand_derivation=True,
     )
     try:
         supervisor.start()

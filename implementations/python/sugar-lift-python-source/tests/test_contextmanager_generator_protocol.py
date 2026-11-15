@@ -57,10 +57,7 @@ def _imported(tmp_path: Path, implementation: str, body: str, *, contextlib_enro
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
     )
-    from sugar_lift_py_tests.lift_rpc import (
-        _context_manager_rows_for_paths,
-        provisional_contract_refs_from_demand_rows,
-    )
+    from sugar_lift_py_tests.lift_rpc import per_source_provisional_contract_refs
     from sugar_lift_python_source.canonical import blake3_512_of
     from sugar_source_tree.tree import SourceFile
 
@@ -72,9 +69,7 @@ def _imported(tmp_path: Path, implementation: str, body: str, *, contextlib_enro
     path = tmp_path / "consumer.py"
     path.write_text(consumer, encoding="utf-8")
     context = TreeConstructionContextV1(
-        contract_refs=provisional_contract_refs_from_demand_rows(
-            _context_manager_rows_for_paths([path], root=tmp_path)
-        ),
+        contract_refs=per_source_provisional_contract_refs(tmp_path),
     )
     tree = SourceFile(
         (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),

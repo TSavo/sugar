@@ -30,9 +30,9 @@ from sugar_lift_py_tests.repo_root import resolve_repo_root
 
 _WORKER = Path(__file__).resolve().parent / "_supervised_enum_worker.py"
 
-# Context init walks the full corpus for provisional demand rows when no
-# shared demand table is supplied. Authenticated pandas (~1421 files) is
-# multi-minute work — never share the 30s per-file lift timeout.
+# Context init opens the per-source With demand door, which content-addresses
+# every enrolled file. On authenticated pandas (~1421 files) that is not
+# per-file work — never share the 30s per-file lift timeout.
 # Floors run 30728650857: POPULATION → refused: None at ~30.0s exactly.
 #
 # CRITICAL: unit tests must NOT inherit the corpus budget. Suite shard 3
@@ -73,7 +73,7 @@ def context_init_timeout_for_population(population_file_count: int) -> float:
     """Seconds for worker context init, scaled by declared population.
 
     - Full corpus order-of-magnitude (≥500 .py, authenticated pandas ~1421):
-      multi-minute provisional demand derivation → 1800s.
+      the corpus budget → 1800s.
     - Tiny / fixture populations (unit tests): seconds-scale so a hung init
       fails the suite fast instead of parking a shard for half an hour.
     - Env ``SUGAR_SUPERVISED_CONTEXT_INIT_TIMEOUT`` overrides when set.
@@ -148,8 +148,6 @@ class SupervisedEnumSupervisor:
         env: Mapping[str, str] | None = None,
         corpus_root: Path,
         source_workspace_root: Path | None = None,
-        demand_table_path: Path | None = None,
-        allow_local_demand_derivation: bool = False,
     ) -> None:
         if file_timeout > 30:
             raise ValueError("per-file timeout may not exceed 30 seconds")
@@ -163,10 +161,6 @@ class SupervisedEnumSupervisor:
             if source_workspace_root is None
             else source_workspace_root.resolve()
         )
-        self.demand_table_path = (
-            None if demand_table_path is None else demand_table_path.resolve()
-        )
-        self.allow_local_demand_derivation = allow_local_demand_derivation
         self.population_file_count = count_python_population(self.corpus_root)
         if context_init_timeout is None:
             self.context_init_timeout = context_init_timeout_for_population(
@@ -223,15 +217,10 @@ class SupervisedEnumSupervisor:
         proc = self._proc
         rc = proc.poll() if proc is not None else None
         stderr_tail = self._worker_stderr_tail()
-        demand = (
-            str(self.demand_table_path) if self.demand_table_path is not None else None
-        )
         parts = [
             "supervised enum worker context initialization refused",
             "coordinate=supervised-enum-worker.construction-context",
             f"corpus_root={self.corpus_root}",
-            f"demand_table_path={demand!r}",
-            f"allow_local_demand_derivation={self.allow_local_demand_derivation}",
             f"population_file_count={self.population_file_count}",
             f"context_init_timeout_s={self.context_init_timeout}",
             f"elapsed_s={elapsed:.1f}",
@@ -239,11 +228,11 @@ class SupervisedEnumSupervisor:
         if timed_out:
             parts.append("mode=timeout")
             parts.append(
-                "fix=pass demand_table_path (shared python-demand-table) or "
-                "raise context_init_timeout; local provisional demand derivation "
-                "over authenticated pandas is multi-minute work and must not "
-                "share the 30s per-file lift timeout; unit tests must use a "
-                "population-scaled budget (tiny trees fail in seconds, not 1800s)"
+                "fix=raise context_init_timeout; opening the per-source demand "
+                "door over authenticated pandas content-addresses the corpus "
+                "and must not share the 30s per-file lift timeout; unit tests "
+                "must use a population-scaled budget (tiny trees fail in "
+                "seconds, not 1800s)"
             )
         elif rc is not None:
             parts.append("mode=worker-exited")
@@ -329,9 +318,7 @@ class SupervisedEnumSupervisor:
             "supervised-enum-context-init: "
             f"population_file_count={self.population_file_count} "
             f"context_init_timeout_s={self.context_init_timeout} "
-            f"corpus_root={self.corpus_root} "
-            f"demand_table_path="
-            f"{self.demand_table_path if self.demand_table_path else None}",
+            f"corpus_root={self.corpus_root}",
             flush=True,
         )
         initialize = {
@@ -339,9 +326,6 @@ class SupervisedEnumSupervisor:
             "corpus_root": str(self.corpus_root),
             "source_workspace_root": str(self.source_workspace_root),
         }
-        if self.demand_table_path is not None:
-            initialize["demand_table_path"] = str(self.demand_table_path)
-        initialize["allow_local_demand_derivation"] = self.allow_local_demand_derivation
         self._proc.stdin.write(json.dumps(initialize) + "\n")
         self._proc.stdin.flush()
 
@@ -656,7 +640,6 @@ class SupervisedEnumSupervisor:
             ProcessFloorTerminalCache,
             CacheRefuse,
             corpus_manifest_cid_for_paths,
-            demand_table_cid,
             file_content_cid,
             payload_to_file_terminal,
             resolve_cache_root,
@@ -669,7 +652,6 @@ class SupervisedEnumSupervisor:
             ProcessFloorTerminalCache(cache_root) if cache_root is not None else None
         )
         tip = resolve_measurement_tip()
-        demand_cid = demand_table_cid(self.demand_table_path)
         timeout_ms = int(round(self.file_timeout * 1000))
         path_list = [path for path, _rel in paths]
         corpus_cid = corpus_manifest_cid_for_paths(self.corpus_root, path_list)
@@ -686,7 +668,6 @@ class SupervisedEnumSupervisor:
                     corpus_manifest_cid=corpus_cid,
                     axis=DEFAULT_AXIS,
                     file_content_cid=file_content_cid(path),
-                    demand_table_cid=demand_cid,
                     file_timeout_ms=timeout_ms,
                 )
                 try:
@@ -707,7 +688,6 @@ class SupervisedEnumSupervisor:
                     corpus_manifest_cid=corpus_cid,
                     axis=DEFAULT_AXIS,
                     file_content_cid=file_content_cid(path),
-                    demand_table_cid=demand_cid,
                     file_timeout_ms=timeout_ms,
                 )
                 pending.append((index, path, rel, key))
@@ -804,7 +784,6 @@ def scan_paths(
     source_workspace_root: Path | None = None,
     file_timeout: float = 30.0,
     context_init_timeout: float | None = None,
-    demand_table_path: Path | None = None,
 ) -> list[FileTerminal]:
     """Scan paths under root.
 
@@ -817,7 +796,5 @@ def scan_paths(
         context_init_timeout=context_init_timeout,
         corpus_root=root,
         source_workspace_root=source_workspace_root,
-        demand_table_path=demand_table_path,
-        allow_local_demand_derivation=demand_table_path is None,
     )
     return supervisor.scan(pairs)

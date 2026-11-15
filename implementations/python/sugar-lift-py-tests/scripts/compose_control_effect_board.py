@@ -1379,7 +1379,6 @@ def build_plan(
     estimated_loads: Sequence[float],
     demand_table_cid: str | None = None,
     demand_table_identity: Mapping[str, Any] | None = None,
-    demand_table_path: str | None = None,
 ) -> dict[str, Any]:
     enrolled = sorted(enrolled_files)
     bin_lists = [list(b) for b in bins]
@@ -1410,8 +1409,9 @@ def build_plan(
         "bins": bin_lists,
         "estimatedLoadS": [float(x) for x in estimated_loads],
     }
-    # One plan-time demand-table authority.  The payload CID and the complete
-    # meaning preimage are both inside planCid; a path is transport only.
+    # One plan-time demand-table authority.  The table's address and the
+    # complete meaning preimage are both inside planCid; each shard derives
+    # the table per source and states the same pair (#7757 item 46).
     if demand_table_cid is not None or demand_table_identity is not None:
         claimed_cid, claimed_identity = _demand_table_claim(
             {
@@ -1422,8 +1422,6 @@ def build_plan(
         )
         plan["demandTableCid"] = claimed_cid
         plan["demandTableIdentity"] = claimed_identity
-    if demand_table_path is not None:
-        plan["demandTablePath"] = demand_table_path
     plan["planCid"] = canonical_cid({k: v for k, v in plan.items() if k != "planCid"})
     return plan
 

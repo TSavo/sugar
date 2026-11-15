@@ -32,13 +32,11 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     FAMILY_DENOMINATORS,
     HISTORICAL_PATH_SHAPE_DIGEST,
     AttributionOutcome,
-    DemandTableRefusal,
     ProducerFamily,
     attribute_body_probes,
     discover_no_call_body_probes,
-    pull_shared_demand_table,
     require_expected_denominators,
-    validate_shared_demand_table,
+    with_demand_rows,
 )
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_python_source.source_oracle import workspace_path_source
@@ -53,58 +51,6 @@ SITE_SHA256 = "0308786b24b61a2b98be5d649e57ee847d7993ae1d0e1823d7f760408523131f"
 # sha256:a223… is historical negative testimony only — never identity.
 MANIFEST_SHA256 = CANONICAL_CORPUS_MANIFEST_SHA256
 
-
-def test_pull_shared_demand_table_executes_authenticated_miss_fallback(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The CAS-miss arm must execute, not merely compile."""
-    import subprocess
-    import sugar_lift_py_tests.authenticated_pytest as auth
-    import sugar_lift_py_tests.no_call_body_attribution as module
-    import sugar_lift_py_tests.prebuilt_demand_table as prebuilt
-
-    class FakeCorpus:
-        pass
-
-    table = SimpleNamespace(
-        semantic_identity=SimpleNamespace(
-            content_key=module.shared_demand_table_content_key()
-        ),
-        rows=({"kind": "test-row"},),
-        corpus_pin=SimpleNamespace(
-            version=module.AUTHENTICATED_PANDAS,
-            aggregate_hash=module.CANONICAL_CORPUS_MANIFEST_CID,
-            file_count=module.AUTHENTICATED_FILE_COUNT,
-        ),
-    )
-    monkeypatch.setattr(
-        subprocess,
-        "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 1, "", "miss"),
-    )
-    monkeypatch.setattr(auth, "authenticated_pandas_corpus", lambda: FakeCorpus())
-    monkeypatch.setattr(prebuilt, "mint_prebuilt_demand_table", lambda _: table)
-    monkeypatch.setattr(
-        prebuilt,
-        "write_prebuilt_demand_table",
-        lambda value, path: path.write_text(
-            json.dumps({"schema": "python-provisional-demand-table/v1", "rows": list(value.rows)})
-            + "\n",
-            encoding="utf-8",
-        ),
-    )
-    monkeypatch.setattr(prebuilt, "load_prebuilt_demand_table", lambda *args, **kwargs: table)
-
-    output = tmp_path / "demand.json"
-    result = module.pull_shared_demand_table(Path("/repo"), output)
-
-    assert result["contentKey"] == module.shared_demand_table_content_key()
-    assert json.loads(output.read_text(encoding="utf-8"))["schema"] == (
-        "python-provisional-demand-table/v1"
-    )
-    assert json.loads(output.read_text(encoding="utf-8"))["rows"] == [
-        {"kind": "test-row"}
-    ]
 
 REJECTED_VENDOR_FILTER_SEEDS = (
     (
@@ -202,27 +148,6 @@ def test_launcher_authenticates_the_exact_corpus() -> None:
     )
 
 
-def test_historical_path_shape_digest_is_refused_as_corpus_identity() -> None:
-    payload = {
-        "contentKey": "blake3-512:" + "d" * 128,
-        "authentication": {
-            "python": "cpython-3.12.13",
-            "authenticatedCorpusManifestCid": HISTORICAL_PATH_SHAPE_DIGEST,
-            "pandas": "3.0.3",
-        },
-        "identity": {
-            "corpusManifestCid": HISTORICAL_PATH_SHAPE_DIGEST,
-            "fileCount": 1421,
-        },
-        "rows": [],
-    }
-
-    with pytest.raises(DemandTableRefusal, match="historical path-shape"):
-        validate_shared_demand_table(
-            payload, expected_content_key=payload["contentKey"]
-        )
-
-
 @pytest.mark.parametrize(
     "relative_path,line,expected_expression,expected_manager",
     REJECTED_VENDOR_FILTER_SEEDS,
@@ -270,12 +195,9 @@ def test_non_vendor_subscript_seed_is_real_and_has_no_call_descendant(
     )
 
 
-def test_authenticated_subscript_family_owns_no_construction_panics(
-    tmp_path,
-) -> None:
+def test_authenticated_subscript_family_owns_no_construction_panics() -> None:
     corpus = authenticated_pandas_corpus()
-    repo_root = resolve_repo_root()
-    payload = pull_shared_demand_table(repo_root, tmp_path / "python-demand-table.json")
+    payload = with_demand_rows(corpus.root)
     inventory = require_expected_denominators(
         discover_no_call_body_probes(
             payload,

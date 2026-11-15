@@ -58,5 +58,5 @@ def test_process_floor_runtime_module_is_the_tracked_scripts_file() -> None:
 
 def test_process_floor_runtime_exports_required_cli_helpers() -> None:
     """Partition tests must not pass while the scanner module loses its API."""
-    for name in ("add_demand_table_arg", "require_demand_table", "apply_lpt_file_shard"):
+    for name in ("add_lpt_shard_args", "apply_lpt_file_shard"):
         assert callable(getattr(_enum_floor_runtime, name, None)), name

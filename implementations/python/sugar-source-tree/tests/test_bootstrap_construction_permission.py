@@ -1,6 +1,6 @@
 """The bootstrap's permission to construct bare, stated as an obligation.
 
-``mint_prebuilt_demand_table`` -> ``_call_use_rows`` ->
+``provisional_contract_refs_from_demands`` -> ``_call_use_rows_for_units`` ->
 ``authenticated_import_uses`` -> ``_run_lexical_import_pass`` ->
 ``SourceFile.__new__`` -> ``materialize_module`` -> ``_materialize_module_body``
 constructs sugar BEFORE any construction context exists. The context is a

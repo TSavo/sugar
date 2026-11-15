@@ -163,7 +163,7 @@ bin/brun \
 Plan is not a measurement. Measure a seat with the production worker shape:
 
 ```bash
-# After plan.json and its plan-bound demand-table.json exist under
+# After plan.json exists under
 # .sugar/pandas-control-effect/ (from the CI plan job or
 # tools/plan_control_effect_recensus_shards.py on battleaxe):
 SUGAR_BX_REQUIRE_QUIET=1 \
@@ -186,7 +186,6 @@ bin/brun \
       --require-corpus-pin docs/ledgers/pins/pandas-3.0.3.pin.json \
       --out-dir "$OUT" \
       --plan-json "$OUT/plan.json" \
-      --demand-table-path "$OUT/demand-table.json" \
       --shard-index "$SHARD" \
       --partial-out "$OUT/partial-s$(printf %02d "$SHARD").json"
     cp "$OUT/partial-s$(printf %02d "$SHARD").json" /tmp/sugar-bx-measure.json

@@ -30,9 +30,7 @@ from _enum_floor_runtime import (  # noqa: E402
     require_explicit_scan_roots,
     require_python_paths,
     add_lpt_shard_args,
-    add_demand_table_arg,
     apply_lpt_file_shard,
-    require_demand_table,
 )
 from _production_lift_child import production_lift_bootstrap_error  # noqa: E402
 from _supervised_enum_supervisor import FileTerminal, scan_paths  # noqa: E402
@@ -77,7 +75,6 @@ def audit_paths(
     *,
     root: Path,
     file_timeout: int,
-    demand_table_path: Path,
     progress_path: Path | None = None,
 ) -> AuditSummary:
     """Measure every path. Durable reuse is the content-addressed process-floor
@@ -89,7 +86,6 @@ def audit_paths(
         paths,
         root=root,
         file_timeout=float(file_timeout),
-        demand_table_path=demand_table_path,
     )
     if progress_path is not None:
         progress_path.parent.mkdir(parents=True, exist_ok=True)
@@ -129,14 +125,7 @@ def main() -> int:
     parser.add_argument("--engine-log", type=Path, default=None)
     parser.add_argument("--progress", type=Path, default=None)
     add_lpt_shard_args(parser)
-    add_demand_table_arg(parser)
     args = parser.parse_args()
-
-    try:
-        demand_table_path = require_demand_table(args.demand_table_path)
-    except ValueError as error:
-        print(f"TIMEOUT ZERO-TOLERANCE UNMEASURED: {error}")
-        return 2
 
     boot_error = production_lift_bootstrap_error()
     if boot_error is not None:
@@ -177,7 +166,6 @@ def main() -> int:
         paths,
         root=args.repo_root,
         file_timeout=args.file_timeout,
-        demand_table_path=demand_table_path,
         progress_path=progress_path,
     )
     rows = summary.rows

@@ -236,7 +236,6 @@ def _timed_construct(module_source: str, bound_s: float) -> tuple[str, float]:
             row = consumer.measure_file_via_enumerate(
                 workspace_root=root,
                 file_rel="synth/subject.py",
-                contract_refs=None,
             )
             kind = row.get("terminalKind")
             if kind is None:

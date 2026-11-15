@@ -11,9 +11,9 @@ that way, because their rows are what the context's table is built from.
 **CORRECTION — this file used to claim "a demand-table scan ... because none of
 them construct". The demand-table scan CONSTRUCTS.**
 
-    mint_prebuilt_demand_table
-      -> _preconstruction_demand_rows        lift_rpc.py
-      -> _call_use_rows                      lift_rpc.py
+    provisional_contract_refs_from_demands  lift_rpc.py
+      -> _PerSourceDemandRows.rows_for_source lift_rpc.py
+      -> _call_use_rows_for_units            lift_rpc.py
       -> authenticated_import_uses           import_binding.py
       -> _run_lexical_import_pass            import_binding.py
       -> SourceFile.__new__ -> materialize_module -> _materialize_module_body

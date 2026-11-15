@@ -59,24 +59,12 @@ def main(argv: list[str] | None = None) -> int:
 
     from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
     from sugar_lift_python_source.source_oracle import install_root_for
-    from sugar_lift_py_tests.prebuilt_demand_table import (
-        install_prebuilt_demand_table,
-        mint_prebuilt_demand_table,
-    )
-    from sugar_lift_py_tests.lift_rpc import install_provisional_contract_refs
     from sugar_source_tree.nodes import ClassDef, FunctionDef, Name, SourceUnit
 
     import recensus_enumerate_consumer as consumer
 
     authenticated = authenticated_pandas_corpus()
     corpus = authenticated.root
-    table = mint_prebuilt_demand_table(authenticated)
-    contract_refs = install_prebuilt_demand_table(table, root=corpus)
-    install_provisional_contract_refs(corpus, contract_refs)
-    print(
-        f"CENSUS_DEMAND_TABLE contentCid={table.content_cid} rows={len(table.rows)}",
-        flush=True,
-    )
 
     roster = _roster(corpus)
     if args.seat:
@@ -160,7 +148,6 @@ def main(argv: list[str] | None = None) -> int:
                 consumer.measure_file_via_enumerate(
                     workspace_root=corpus,
                     file_rel=seat,
-                    contract_refs=contract_refs,
                     source_workspace_root=locus_root,
                 )
             except LifterRefusal:

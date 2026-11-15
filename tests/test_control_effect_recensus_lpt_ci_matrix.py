@@ -47,8 +47,12 @@ def test_recensus_workflow_is_lpt_k8_matrix_not_serial_monolith() -> None:
     assert "Phase: measure shard partial only" in text
 
 
-def test_plan_publishes_one_demand_table_and_every_shard_loads_it() -> None:
-    """The matrix transports one plan-bound table; workers never mint eight."""
+def test_plan_states_the_demand_table_and_no_shard_loads_one() -> None:
+    """The plan states the table's identity; every shard derives it per source.
+
+    No demand-table artifact is minted, uploaded or handed to a shard
+    (#7757 item 46): the plan and each shard open the same per-source door.
+    """
     workflow = WORKFLOW.read_text(encoding="utf-8")
     planner = (ROOT / "tools/plan_control_effect_recensus_shards.py").read_text(
         encoding="utf-8"
@@ -58,13 +62,16 @@ def test_plan_publishes_one_demand_table_and_every_shard_loads_it() -> None:
         / "implementations/python/sugar-lift-py-tests/scripts/control_effect_recensus.py"
     ).read_text(encoding="utf-8")
 
-    assert "--demand-table-out \"$OUT/demand-table.json\"" in workflow
-    assert ".sugar/pandas-control-effect/demand-table.json" in workflow
-    assert "--demand-table-path \"$DEMAND_TABLE\"" in workflow
-    assert "mint_prebuilt_demand_table(authenticated_corpus)" in planner
-    assert "publish_prebuilt_demand_table(demand_table" in planner
-    assert planner.index("mint_prebuilt_demand_table") < planner.index("build_plan(")
-    assert "load_plan_bound_demand_table(" in worker
+    assert "demand-table.json" not in workflow
+    assert "--demand-table-path" not in workflow
+    assert "--demand-table-out" not in workflow
+    assert "prebuilt_demand_table" not in planner
+    assert "provisional_contract_refs_from_demands(demanded_root)" in planner
+    assert planner.index("provisional_contract_refs_from_demands(") < planner.index(
+        "build_plan("
+    )
+    assert "prebuilt_demand_table" not in worker
+    assert "provisional_contract_refs_from_demands(workspace_root)" in worker
     assert "plan-demand-table-testimony-absent" in worker
 
 

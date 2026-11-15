@@ -10,8 +10,10 @@ Key (everything that can change the answer — put it in, never omit):
     × corpusManifestCid
     × axis
     × fileContentCid
-    × demandTableCid
     × fileTimeoutMs
+
+A file's With demand rows are a function of the tip and the corpus manifest
+(the per-source door derives them), so no table identity is a key of its own.
 
 Stored row carries the full key. A hit is accepted only when the stored key
 equals the lookup key field-for-field (verifiable, not assumed).
@@ -64,12 +66,6 @@ def _blake3_512(data: bytes) -> str:
 
 def file_content_cid(path: Path) -> str:
     return _blake3_512(path.read_bytes())
-
-
-def demand_table_cid(demand_table_path: Path | None) -> str:
-    if demand_table_path is None:
-        return "demand:local-derivation"
-    return _blake3_512(Path(demand_table_path).read_bytes())
 
 
 def resolve_measurement_tip() -> str:
@@ -138,7 +134,6 @@ class MeasurementKey:
     corpus_manifest_cid: str
     axis: str
     file_content_cid: str
-    demand_table_cid: str
     file_timeout_ms: int
 
     def to_json(self) -> dict[str, object]:
@@ -147,7 +142,6 @@ class MeasurementKey:
             "corpusManifestCid": self.corpus_manifest_cid,
             "axis": self.axis,
             "fileContentCid": self.file_content_cid,
-            "demandTableCid": self.demand_table_cid,
             "fileTimeoutMs": self.file_timeout_ms,
         }
 
@@ -158,7 +152,6 @@ class MeasurementKey:
             corpus_manifest_cid=str(data["corpusManifestCid"]),
             axis=str(data["axis"]),
             file_content_cid=str(data["fileContentCid"]),
-            demand_table_cid=str(data["demandTableCid"]),
             file_timeout_ms=int(data["fileTimeoutMs"]),
         )
 

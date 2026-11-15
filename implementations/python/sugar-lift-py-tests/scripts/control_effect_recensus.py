@@ -36,9 +36,9 @@ So this instrument states its denominator before it states any number:
 One process. Two named axes (never merged into one R):
 
     SourceTree(corpus).paths()
-      → mint prebuilt demand table ONCE (or LOAD plan-time artifact)
-      → install into process memo (shards: zero walk)
-      → measure_file_via_enumerate(contract_refs=…)  # D2/D3 sugar.enumerate
+      → open the per-source With demand door (a file's rows are derived
+        when that file is measured; no table is minted, loaded or installed)
+      → measure_file_via_enumerate(…)  # D2/D3 sugar.enumerate
       → (legacy path) open_source_file_for_construction + sugar/desugar
 
 Construction R answers "is the tree total?". Desugar R answers "is meaning
@@ -920,25 +920,6 @@ def main() -> int:
         help="where to write the shard partial JSON (default: <out-dir>/partial-sXX.json)",
     )
     parser.add_argument(
-        "--demand-table-path",
-        type=Path,
-        default=None,
-        help=(
-            "load a plan-time prebuilt provisional demand table (content-addressed). "
-            "Shards MUST use this so cold processes do not re-walk 1421 files. "
-            "Corpus pin on the table must match the observed pin or refuse."
-        ),
-    )
-    parser.add_argument(
-        "--write-demand-table",
-        type=Path,
-        default=None,
-        help=(
-            "after deriving the provisional demand table once, write the "
-            "content-addressed artifact for shards to load"
-        ),
-    )
-    parser.add_argument(
         "--slice",
         default=None,
         metavar="I/K",
@@ -1208,232 +1189,95 @@ def main() -> int:
         )
     pending: list[str] = list(file_names)
 
-    # One provisional demand→gap table for the whole corpus ROOT. Shared across
-    # files; each file still gets a fresh TreeConstructionContextV1 so
-    # source-derived manager refs do not leak between files. Deriving this from
-    # anything but the root is the corpus-context drift defect.
-    #
-    # k=8 law: the walk is O(corpus) per cold process. Plan time derives once
-    # and writes a content-addressed artifact; every shard LOADS it so D2 never
-    # re-walks. Process memo alone is not enough — each shard is a new process.
-    from sugar_lift_py_tests.lift_rpc import install_provisional_contract_refs
-    from sugar_lift_py_tests.prebuilt_demand_table import (
-        DemandTableArtifactRefusal,
-        DemandTablePinMismatch,
-        PlanDemandTableRefusal,
-        install_prebuilt_demand_table,
-        load_plan_bound_demand_table,
-        load_prebuilt_demand_table,
-        mint_prebuilt_demand_table,
-        publish_prebuilt_demand_table,
-        validate_prebuilt_demand_table,
-        write_prebuilt_demand_table,
+    # The With demand table for the corpus ROOT is the per-source door: a
+    # source's rows are derived when that source is measured, so a one-file
+    # run costs one file's derivation. Opening the door content-addresses the
+    # corpus for module identities and parses nothing. Every process (a
+    # serial run, a slice seat, a shard) opens the same door on the same
+    # root; no table is minted, written, loaded or installed in its place
+    # (#7757 item 46). Opening it on anything but the root is the
+    # corpus-context drift defect.
+    from sugar_lift_py_tests.demand_table_identity import (
+        semantic_identity_for_corpus,
+    )
+    from sugar_lift_py_tests.lift_rpc import (
+        provisional_contract_refs_from_demands,
     )
 
-    pin_identity = {
-        "distribution": observed_pin.distribution,
-        "version": observed_pin.version,
-        "fileCount": observed_pin.file_count,
-        "aggregateHash": observed_pin.aggregate_hash,
-    }
-    demand_table_cid: str | None = None
-    demand_table_identity: Mapping[str, object] | None = None
-    # Plan may carry demandTableCid / demandTablePath for shard workers.
-    plan_demand_path = args.demand_table_path
-    plan_demand_cid = None
+    contract_refs = _phase_call(
+        "demand_table_derivation",
+        lambda: provisional_contract_refs_from_demands(workspace_root),
+    )
+    # The table's address is what every row is a function of (the enrolled
+    # paths and their source CIDs); its meaning key is a function of the
+    # inputs (corpus bytes, producer source, parser). Neither derives a row.
+    demand_table_cid: str | None = contract_refs.table_cid
+    demand_table_identity: Mapping[str, object] | None = (
+        semantic_identity_for_corpus(workspace_root).as_dict()
+    )
+    _narrate(
+        "RECENSUS DEMAND_TABLE per-source door open "
+        f"(identityCid={demand_table_cid}; zero corpus parse)"
+    )
     if shard_plan is not None:
+        # The plan states the demand table every shard measures under. This
+        # shard states the one its own door observed; a shard on a different
+        # corpus, producer or parser owes compose a receipt, not a measurement.
         plan_demand_cid = shard_plan.get("demandTableCid")
         plan_demand_identity = shard_plan.get("demandTableIdentity")
-        if plan_demand_path is None and shard_plan.get("demandTablePath"):
-            plan_demand_path = Path(str(shard_plan["demandTablePath"]))
-        if (
-            plan_demand_path is None
-            or not isinstance(plan_demand_cid, str)
-            or not isinstance(plan_demand_identity, Mapping)
+        if not isinstance(plan_demand_cid, str) or not isinstance(
+            plan_demand_identity, Mapping
         ):
             print(
                 "plan-demand-table-testimony-absent: shard plan must carry "
-                "demandTableCid and demandTableIdentity and workflow must supply "
-                "the exact demand-table artifact path",
+                "demandTableCid and demandTableIdentity",
                 file=sys.stderr,
                 flush=True,
             )
             return 78
-    else:
-        plan_demand_identity = None
-
-    if plan_demand_path is not None:
-        _narrate(
-            f"RECENSUS DEMAND_TABLE loading prebuilt path={plan_demand_path} "
-            f"planCid={plan_demand_cid or 'none'}"
-        )
-        try:
-            from sugar_lift_py_tests.authenticated_pytest import (
-                authenticated_pandas_corpus,
+        if plan_demand_cid != demand_table_cid or dict(plan_demand_identity) != dict(
+            demand_table_identity
+        ):
+            mismatch = (
+                (
+                    "plan-demand-table-cid-mismatch: "
+                    f"observed={demand_table_cid!r} plan={plan_demand_cid!r}"
+                )
+                if plan_demand_cid != demand_table_cid
+                else (
+                    "plan-demand-table-semantic-mismatch: "
+                    f"observed={dict(demand_table_identity)!r} "
+                    f"plan={dict(plan_demand_identity)!r}"
+                )
             )
+            print(mismatch, file=sys.stderr, flush=True)
+            from compose_control_effect_board import mint_partial
 
-            authenticated_corpus = authenticated_pandas_corpus()
-            if authenticated_corpus.root.resolve() != workspace_root.resolve():
-                raise DemandTableArtifactRefusal(
-                    "plan-demand-table-corpus-root-mismatch: "
-                    f"authenticated={authenticated_corpus.root} "
-                    f"worker={workspace_root}"
-                )
-            if shard_plan is not None:
-                prebuilt = load_plan_bound_demand_table(
-                    plan_demand_path,
-                    corpus=authenticated_corpus,
-                    expected_content_cid=str(plan_demand_cid),
-                    expected_semantic_identity=dict(plan_demand_identity),
-                )
-            else:
-                prebuilt = load_prebuilt_demand_table(
-                    plan_demand_path,
-                    expected_corpus_pin=pin_identity,
-                    expected_content_cid=plan_demand_cid,
-                )
-                validate_prebuilt_demand_table(prebuilt, authenticated_corpus)
-        except (DemandTablePinMismatch, DemandTableArtifactRefusal) as refuse:
-            print(str(refuse), file=sys.stderr, flush=True)
-            if shard_plan is not None:
-                # A shard that reached the plan but could not authenticate its
-                # assigned table still owes compose a receipt.  Preserve an
-                # observed lying claim when the artifact itself was readable;
-                # absence stays absent.  Compose can then distinguish mismatch
-                # from missing testimony instead of seeing a generic lost seat.
-                from compose_control_effect_board import mint_partial
-
-                observed_cid = (
-                    refuse.observed_content_cid
-                    if isinstance(refuse, PlanDemandTableRefusal)
-                    else None
-                )
-                observed_identity = (
-                    refuse.observed_semantic_identity
-                    if isinstance(refuse, PlanDemandTableRefusal)
-                    else None
-                )
-                assert args.shard_index is not None
-                partial = mint_partial(
-                    plan=shard_plan,
-                    shard_index=args.shard_index,
-                    terminal_rows=[],
-                    measured_commit=tip,
-                    status="unmeasured",
-                    unmeasured_reason=str(refuse),
-                    demand_table_cid=observed_cid,
-                    demand_table_identity=observed_identity,
-                    runtime_attestation=runtime_attestation,
-                )
-                partial_path = args.partial_out or (
-                    out / f"partial-s{args.shard_index:02d}.json"
-                )
-                partial_path.parent.mkdir(parents=True, exist_ok=True)
-                partial_path.write_text(
-                    json.dumps(partial, indent=2, sort_keys=True) + "\n",
-                    encoding="utf-8",
-                )
-                _narrate(
-                    "RECENSUS PARTIAL UNMEASURED demand-table authentication "
-                    f"shard={args.shard_index} reason={refuse} path={partial_path}"
-                )
-                return 2
-            return 78
-        contract_refs = _phase_call(
-            "demand_table_load",
-            lambda: install_prebuilt_demand_table(prebuilt, root=workspace_root),
-        )
-        demand_table_cid = prebuilt.content_cid
-        demand_table_identity = prebuilt.semantic_identity.as_dict()
-        _narrate(
-            "RECENSUS DEMAND_TABLE loaded "
-            f"contentCid={demand_table_cid} rows={len(prebuilt.rows)} "
-            f"(zero corpus walk)"
-        )
-    elif args.write_demand_table is None:
-        # No table was asked for and none was supplied: resolve each source's
-        # demands when that source is measured. Opening the door hashes the
-        # corpus for module identities and parses nothing, so a one-file run
-        # costs one file's derivation, not the corpus's.
-        from sugar_lift_py_tests.lift_rpc import (
-            provisional_contract_refs_from_demands,
-        )
-
-        contract_refs = _phase_call(
-            "demand_table_derivation",
-            lambda: provisional_contract_refs_from_demands(workspace_root),
-        )
-        demand_table_cid = contract_refs.table_cid
-        # The meaning key is a function of the inputs, not of derived rows, so
-        # the board states the same semantic identity a minted table carries.
-        from sugar_lift_py_tests.prebuilt_demand_table import (
-            semantic_identity_for_corpus,
-        )
-
-        demand_table_identity = semantic_identity_for_corpus(
-            workspace_root
-        ).as_dict()
-        _narrate(
-            "RECENSUS DEMAND_TABLE per-source door open "
-            f"(identityCid={demand_table_cid}; zero corpus parse)"
-        )
-    else:
-        # Minting the whole table is a corpus walk and is only done when the
-        # caller explicitly asks for the artifact (--write-demand-table).
-        _narrate(
-            f"RECENSUS DEMAND_TABLE minting whole table from "
-            f"workspace_root={workspace_root}"
-        )
-
-        def _derive_and_maybe_write():
-            from sugar_lift_py_tests.authenticated_pytest import (
-                AuthenticatedPandasCorpus,
+            assert args.shard_index is not None
+            partial = mint_partial(
+                plan=shard_plan,
+                shard_index=args.shard_index,
+                terminal_rows=[],
+                measured_commit=tip,
+                status="unmeasured",
+                unmeasured_reason=mismatch,
+                demand_table_cid=demand_table_cid,
+                demand_table_identity=demand_table_identity,
+                runtime_attestation=runtime_attestation,
             )
-
-            authenticated_corpus = AuthenticatedPandasCorpus(
-                root=workspace_root,
-                distribution=observed_pin.distribution,
-                version=observed_pin.version,
-                manifest_cid=observed_pin.aggregate_hash,
-                file_count=observed_pin.file_count,
+            partial_path = args.partial_out or (
+                out / f"partial-s{args.shard_index:02d}.json"
             )
-            table = mint_prebuilt_demand_table(
-                authenticated_corpus,
+            partial_path.parent.mkdir(parents=True, exist_ok=True)
+            partial_path.write_text(
+                json.dumps(partial, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
             )
-            write_path = Path(args.write_demand_table)
-            write_prebuilt_demand_table(table, write_path)
             _narrate(
-                f"RECENSUS DEMAND_TABLE wrote path={write_path} "
-                f"contentCid={table.content_cid}"
+                "RECENSUS PARTIAL UNMEASURED demand-table agreement "
+                f"shard={args.shard_index} reason={mismatch} path={partial_path}"
             )
-            try:
-                publish_prebuilt_demand_table(table, write_path)
-                _narrate(
-                    "RECENSUS DEMAND_TABLE published CAS "
-                    f"contentCid={table.content_cid} runtime=cpython-3.12.13"
-                )
-            except DemandTableArtifactRefusal as refuse:
-                # Derivation is authenticated product input; CAS publication
-                # is only a sharing optimisation. Keep the local table, but
-                # never claim it was published or install it as a cache hit.
-                _narrate(
-                    "RECENSUS DEMAND_TABLE CAS publication refused after "
-                    f"successful derivation; continuing locally: {refuse}"
-                )
-            refs = install_prebuilt_demand_table(table, root=workspace_root)
-            return refs, table.content_cid, table.semantic_identity.as_dict()
-
-        contract_refs, demand_table_cid, demand_table_identity = _phase_call(
-            "demand_table_derivation",
-            _derive_and_maybe_write,
-        )
-        # Also keep the process memo path warm for any code that still calls
-        # provisional_contract_refs_from_demands directly.
-        install_provisional_contract_refs(workspace_root, contract_refs)
-        _narrate(
-            "RECENSUS DEMAND_TABLE ready "
-            f"(type={type(contract_refs).__name__} contentCid={demand_table_cid})"
-        )
+            return 2
 
     from pandas_census_checkpoint import Checkpoint
 
@@ -1793,7 +1637,6 @@ def main() -> int:
                         row = measure_file_via_enumerate(
                             workspace_root=corpus_root,
                             file_rel=relative,
-                            contract_refs=contract_refs,
                             source_workspace_root=locus_root,
                         )
                         if row.get("terminalKind") in {

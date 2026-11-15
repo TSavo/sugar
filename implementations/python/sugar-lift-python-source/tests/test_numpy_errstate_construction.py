@@ -44,10 +44,7 @@ def test_imported_errstate_is_the_heads_reduced_value(tmp_path) -> None:
         UNDECIDED_GAP_KIND,
         TreeConstructionContextV1,
     )
-    from sugar_lift_py_tests.lift_rpc import (
-        _context_manager_rows_for_paths,
-        provisional_contract_refs_from_demand_rows,
-    )
+    from sugar_lift_py_tests.lift_rpc import per_source_provisional_contract_refs
     from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
         WithReducedManagerSugar,
     )
@@ -57,9 +54,7 @@ def test_imported_errstate_is_the_heads_reduced_value(tmp_path) -> None:
     root = _corpus(tmp_path, **{"e.py": ERRSTATE})
     path = root / "e.py"
     source = path.read_text(encoding="utf-8")
-    refs = provisional_contract_refs_from_demand_rows(
-        _context_manager_rows_for_paths([path], root=root)
-    )
+    refs = per_source_provisional_contract_refs(root)
     (row,) = refs.by_use_site.values()
     assert row.kind == UNDECIDED_GAP_KIND
     tree = SourceFile(
