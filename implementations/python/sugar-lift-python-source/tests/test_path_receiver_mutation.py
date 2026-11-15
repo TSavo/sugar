@@ -1796,9 +1796,10 @@ def test_a_value_the_object_only_holds_keeps_its_state_after_a_field_store(
     assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1))
 
 
-# A ``super().m(...)`` nested in a larger expression of the initializer is a
-# call on ``self`` through the one door: the base method reads ``self`` as the
-# statement reads it, and ``self`` after it is what the call left.
+# A ``super().m(...)`` anywhere in an expression of the initializer is the one
+# call on ``self``, evaluated in place: the base method reads ``self`` as the
+# expression reads it there, and everything evaluated after it reads ``self``
+# as the call left it.
 
 _BASE_DOUBLES_X = (
     "class B:\n"
@@ -1867,3 +1868,51 @@ def test_a_super_call_in_an_if_test_lands_its_stores_on_self(tmp_path):
     )
     returns, _halts = _returns(tmp_path, source)
     assert TupleValue(_ints(1, 3)) in returns
+
+
+_BASE_SETS_Z = (
+    "class B:\n"
+    "    def setup(self):\n"
+    "        self.z = 3\n"
+    "        return 1\n"
+)
+
+
+def test_an_operand_after_a_super_call_reads_self_as_the_call_left_it(tmp_path):
+    source = _BASE_SETS_Z + (
+        "class D(B):\n"
+        "    def __init__(self):\n"
+        "        self.z = 0\n"
+        "        self.y = super().setup() + self.z\n"
+        "def f():\n"
+        "    d = D()\n"
+        "    return (d.y, d.z)\n"
+    )
+    assert _only_return(tmp_path, source) == TupleValue(_ints(4, 3))
+
+
+def test_a_second_super_call_reads_self_as_the_first_left_it(tmp_path):
+    source = _BASE_DOUBLES_X + (
+        "class D(B):\n"
+        "    def __init__(self):\n"
+        "        self.x = 2\n"
+        "        self.y = super().double() + super().double()\n"
+        "def f():\n"
+        "    return D().y\n"
+    )
+    assert _only_return(tmp_path, source) == TermValue(8)
+
+
+def test_a_super_call_in_a_conditional_operand_leaves_self_undecided(tmp_path):
+    # Whether the call ran is the operand's position, not decided here: the
+    # object after the statement is the undecided member, never its state
+    # before the call (``z`` 0).
+    source = _BASE_SETS_Z + (
+        "class D(B):\n"
+        "    def __init__(self):\n"
+        "        self.z = 0\n"
+        "        v = 1 and super().setup()\n"
+        "def f():\n"
+        "    return D()\n"
+    )
+    assert _unknown_after_call(_only_return(tmp_path, source))

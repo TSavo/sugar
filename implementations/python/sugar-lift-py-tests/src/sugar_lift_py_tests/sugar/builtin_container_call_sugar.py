@@ -175,11 +175,19 @@ def _may_change(value, method, pure, sharer) -> bool:
 
 @dataclass(frozen=True)
 class BuiltinContainerProjectionSugar(ConstructedTermSugar):
-    """Element ``index`` of the pair: 0 the post-state, 1 the call's value."""
+    """Element ``index`` of the pair: 0 the post-state, 1 the call's value.
+
+    ``binds``: a call on ``self`` evaluated in place
+    (``nodes._call_on_self_in_place``): the pair is bound under that key as
+    the call completes, as a walrus binds its value
+    (``NamedExpressionValue``, riding the value through every operand door
+    to the statement), and the receiver after the call reads it there
+    (``PathAfterCall``)."""
 
     call: Sugar
     index: int
     site: object = dataclass_field(compare=False)
+    binds: str | None = None
 
     @classmethod
     def witnesses(cls):
@@ -198,6 +206,7 @@ class BuiltinContainerProjectionSugar(ConstructedTermSugar):
 
     def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor.named_expression_value import (
+            NamedExpressionValue,
             consume_operands,
         )
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
@@ -205,7 +214,14 @@ class BuiltinContainerProjectionSugar(ConstructedTermSugar):
         def project(pair):
             if type(pair) is not TupleValue or len(pair.elements) != 2:
                 return ExitSet.completed(pair)
-            return ExitSet.completed(pair.elements[self.index])
+            value = pair.elements[self.index]
+            if self.binds is None:
+                return ExitSet.completed(value)
+            return ExitSet.completed(
+                NamedExpressionValue.carrying(
+                    self.binds, pair, value, evaluation=self.binds
+                )
+            )
 
         # The pair is this projection's operand: a walrus the call's operands
         # carried rides the projection, never stands in for the pair.
@@ -419,7 +435,8 @@ class PathContainerCallSugar(ConstructedTermSugar):
     operator_site: object = dataclass_field(default=None, compare=False)
     # ``super().m(...)``: the frame's receiver formal, whose object the
     # call runs on -- ``receiver`` is its read here, and the call's
-    # zero-argument ``super()`` reads the formal (``nodes._super_door``).
+    # zero-argument ``super()`` reads the formal
+    # (``nodes._call_on_self_in_place``).
     frame_receiver: str | None = dataclass_field(default=None, compare=False)
 
     @classmethod
