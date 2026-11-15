@@ -11,7 +11,7 @@ runtime TYPE is undecided, Python's own operator dispatch for the pair is
 undecided, so the operation may raise anything (the #7585 law, as for
 ordering in #7622): it completes with the undecided
 ``python:binary_result(op, left, right, <occurrence>)`` only under
-``python:binary_op.completes(python:binary_op(op, <occurrence>))`` and halts
+``python:binary_op.completes(python:binary_op(<result>, <occurrence>))`` and halts
 with an ``UndeterminedRaiseEffect`` (owner ``UndecidedBinary:<op>``) under the
 complement.  No exception type is named and no result is folded.
 

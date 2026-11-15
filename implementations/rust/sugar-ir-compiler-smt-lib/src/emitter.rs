@@ -51,6 +51,18 @@ fn emit_term_with_expected(term: &Term, expected_ret: Option<&str>) -> String {
             if let Some(folded) = emit_grounded_int_bitwise(name, args) {
                 return folded;
             }
+            // A Python operation whose every operand's builtin type is decided
+            // (#7763): its value in SMT theory where Python completes it, else
+            // the uninterpreted application it always was. See
+            // `py_decided_operation`.
+            if matches!(expected_ret, None | Some("Int"))
+                && !crate::literal_encoding::term_is_string_tainted(term)
+            {
+                if let Some(decided) = py_decided_operation(name, args) {
+                    let uninterpreted = emit_ctor_application(name, args, expected_ret);
+                    return py_universe_value(&decided, &uninterpreted);
+                }
+            }
             if name == "to_real" && args.len() == 1 {
                 return format!(
                     "(to_real {})",
@@ -132,22 +144,7 @@ fn emit_term_with_expected(term: &Term, expected_ret: Option<&str>) -> String {
                     return rendered;
                 }
             }
-            if args.is_empty() {
-                if name == OPT_NONE && expected_ret == Some("SugarOptionOption") {
-                    return smt_quote(OPT_NONE_OPTION);
-                }
-                return smt_ctor_head(name, args.len());
-            };
-            let arg_sorts = ctor_arg_sorts(name, args);
-            let head = monadic_ctor_head_for_signature(name, expected_ret, &arg_sorts)
-                .map(smt_quote)
-                .unwrap_or_else(|| smt_ctor_head_for_signature(name, args.len(), &arg_sorts));
-            let args_str: Vec<String> = args
-                .iter()
-                .zip(arg_sorts.iter())
-                .map(|(arg, sort)| emit_term_with_expected(arg, Some(sort)))
-                .collect();
-            format!("({} {})", head, args_str.join(" "))
+            emit_ctor_application(name, args, expected_ret)
         }
         Term::Lambda {
             param_name,
@@ -178,6 +175,27 @@ fn emit_term_with_expected(term: &Term, expected_ret: Option<&str>) -> String {
             format!("(let ({}) {})", binding_strs.join(" "), body_str)
         }
     }
+}
+
+/// The generic application of a ctor head: an uninterpreted function symbol
+/// (declared by the ctor-decl pass) applied to its arguments.
+fn emit_ctor_application(name: &str, args: &[Term], expected_ret: Option<&str>) -> String {
+    if args.is_empty() {
+        if name == OPT_NONE && expected_ret == Some("SugarOptionOption") {
+            return smt_quote(OPT_NONE_OPTION);
+        }
+        return smt_ctor_head(name, args.len());
+    };
+    let arg_sorts = ctor_arg_sorts(name, args);
+    let head = monadic_ctor_head_for_signature(name, expected_ret, &arg_sorts)
+        .map(smt_quote)
+        .unwrap_or_else(|| smt_ctor_head_for_signature(name, args.len(), &arg_sorts));
+    let args_str: Vec<String> = args
+        .iter()
+        .zip(arg_sorts.iter())
+        .map(|(arg, sort)| emit_term_with_expected(arg, Some(sort)))
+        .collect();
+    format!("({} {})", head, args_str.join(" "))
 }
 
 /// Emit a sort as SMT-LIB surface syntax. Returns (smt_string, reason_code)
@@ -310,42 +328,10 @@ fn connective_smt(name: &str, unit: &str, operands: Vec<String>) -> String {
 pub fn emit_formula(formula: &Formula) -> Result<String, CompileError> {
     match formula {
         Formula::Atomic { name, args } => {
-            if name == "identity" && args.len() == 2 {
-                return Ok(format!(
-                    "(= {} {})",
-                    emit_identity_term(&args[0]),
-                    emit_identity_term(&args[1])
-                ));
-            }
-            if let Some(rendered) = emit_string_theory_atomic(name, args)? {
+            if let Some(rendered) = emit_python_value_atomic(name, args)? {
                 return Ok(rendered);
             }
-            if let Some(rendered) = emit_bv32_theory_atomic(name, args)? {
-                return Ok(rendered);
-            }
-            // Monadic ADT discriminant testers (`adt.is_some`/.../`adt.is_err`):
-            // rendered as NATIVE datatype testers `((_ is |opt:some|) x)` routed
-            // by operand ADT sort. NEVER a generic (EUF) atomic application -- an
-            // uninterpreted tester collapses the sum. A branch BEFORE generic
-            // atomic rendering (T's Part-1 ruling, #3445).
-            if let Some(rendered) = emit_monadic_adt_tester_atomic(name, args)? {
-                return Ok(rendered);
-            }
-            // The head is spelled exactly as the predicate-decl pass declares
-            // it (`smt_ctor_head`): a lifted predicate such as
-            // `python:call_result.completes` holds a `:`, and an unquoted `:`
-            // reads as a keyword (z3: "invalid expression, unexpected
-            // keyword"). Theory predicates (`=`, `distinct`, `<`, ...) are
-            // simple symbols and come out unchanged.
-            if args.is_empty() {
-                return Ok(smt_quote(smt_atomic_name(name)));
-            };
-            let smt_name = smt_ctor_head(smt_atomic_name(name), args.len());
-            let expected = expected_atomic_arg_sort(name, args);
-            let args_str = args.iter();
-            let args_str = args_str.map(|arg| emit_term_with_expected(arg, expected.as_deref()));
-            let args_str: Vec<String> = args_str.collect();
-            Ok(format!("({} {})", smt_name, args_str.join(" ")))
+            emit_atomic(name, args)
         }
         Formula::And { operands } => {
             let ops_str: Result<Vec<String>, CompileError> =
@@ -433,6 +419,47 @@ pub fn emit_formula(formula: &Formula) -> Result<String, CompileError> {
             )
         }
     }
+}
+
+/// An atomic formula as every theory route but the Python-value one renders
+/// it (`emit_python_value_atomic` falls back to this rendering).
+fn emit_atomic(name: &str, args: &[Term]) -> Result<String, CompileError> {
+    if name == "identity" && args.len() == 2 {
+        return Ok(format!(
+            "(= {} {})",
+            emit_identity_term(&args[0]),
+            emit_identity_term(&args[1])
+        ));
+    }
+    if let Some(rendered) = emit_string_theory_atomic(name, args)? {
+        return Ok(rendered);
+    }
+    if let Some(rendered) = emit_bv32_theory_atomic(name, args)? {
+        return Ok(rendered);
+    }
+    // Monadic ADT discriminant testers (`adt.is_some`/.../`adt.is_err`):
+    // rendered as NATIVE datatype testers `((_ is |opt:some|) x)` routed
+    // by operand ADT sort. NEVER a generic (EUF) atomic application -- an
+    // uninterpreted tester collapses the sum. A branch BEFORE generic
+    // atomic rendering (T's Part-1 ruling, #3445).
+    if let Some(rendered) = emit_monadic_adt_tester_atomic(name, args)? {
+        return Ok(rendered);
+    }
+    // The head is spelled exactly as the predicate-decl pass declares
+    // it (`smt_ctor_head`): a lifted predicate such as
+    // `python:call_result.completes` holds a `:`, and an unquoted `:`
+    // reads as a keyword (z3: "invalid expression, unexpected
+    // keyword"). Theory predicates (`=`, `distinct`, `<`, ...) are
+    // simple symbols and come out unchanged.
+    if args.is_empty() {
+        return Ok(smt_quote(smt_atomic_name(name)));
+    };
+    let smt_name = smt_ctor_head(smt_atomic_name(name), args.len());
+    let expected = expected_atomic_arg_sort(name, args);
+    let args_str = args.iter();
+    let args_str = args_str.map(|arg| emit_term_with_expected(arg, expected.as_deref()));
+    let args_str: Vec<String> = args_str.collect();
+    Ok(format!("({} {})", smt_name, args_str.join(" ")))
 }
 
 fn emit_string_theory_atomic(name: &str, args: &[Term]) -> Result<Option<String>, CompileError> {
@@ -3563,6 +3590,476 @@ fn emit_grounded_int_bitwise(name: &str, args: &[Term]) -> Option<String> {
     })
 }
 
+// ── Python values over decided builtin operands (#7763) ────────────────────
+//
+// A Python value lives in this backend's Int universe: an int is its own value,
+// a str literal a hash-named opaque constant (`literal_encoding`), any other
+// value an uninterpreted term. The Python kit states an undecided operation
+// one way: its result term -- `py.subscript(r, i)`, `py.ord(c)`, `py.chr(i)`,
+// `python:binary_result(op, l, r, <key>)` -- completing under
+// `python:<p>.completes(python:<p>(<result term>, <key>))`. When every operand
+// of such a term is a value whose builtin type this backend decides (a `str`
+// or `int` literal, or another such operation), the operation is written here,
+// once, in SMT theory: `str` as an SMT string (`str.at`, `str.len`, `str.++`,
+// `str.to_code`, `str.from_code`), `int` as an SMT integer (`+`, `-`, `*`;
+// `div` / `*` by a power of two for a constant shift; `mod` for a low-bit
+// mask; 64-bit bit-vectors for `&` / `|` / `^` within range). An operand whose
+// type is not decided (a formal, a call's result) leaves the term and its
+// completes atom exactly the uninterpreted application they were: no operation
+// is decided on an undecided operand, and its undecided member stays owed.
+//
+// A decided operation carries four SMT parts: `ready` (its operands completed
+// with values this backend holds), `law` (Python completes the operation on
+// them: an index in range, a one-character `ord` operand, a non-negative
+// shift), `defined` (the value expression is exact), and `value` (an SMT
+// `String` or `Int`). Its completes atom is `(ite ready law <atom>)`; its
+// universe value `(ite (and ready law defined) <value> <term>)`, a `str`
+// result entering the universe through the uninterpreted `python:value.of_str`.
+//
+// `py.eq` over two decided values is SMT equality (a `str` and an `int` are
+// unequal). Over one decided value and one undecided Int-universe value it is
+// guarded by the undecided operand's exact builtin type
+// (`python:value.is_str` / `python:value.is_int`, the `str` content
+// `python:value.str`); when neither guard holds it is the uninterpreted `py.eq`
+// application it was. An `=` binding an undecided value to a decided operation
+// (a joined post's `out = <value>`) states that type and content, so a `py.eq`
+// over the same value reads them.
+
+const PY_VALUE_OF_STR: &str = "|python:value.of_str|";
+const PY_VALUE_STR: &str = "|python:value.str|";
+const PY_VALUE_IS_STR: &str = "|python:value.is_str|";
+const PY_VALUE_IS_INT: &str = "|python:value.is_int|";
+const BV64_BOUND: &str = "18446744073709551616";
+
+thread_local! {
+    // Set when a rendering used the Python-value functions; read when the
+    // preamble declares them. Reset per compile.
+    static PY_VALUE_USED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn note_py_value_functions() {
+    PY_VALUE_USED.with(|used| used.set(true));
+}
+
+fn reset_py_value_functions() {
+    PY_VALUE_USED.with(|used| used.set(false));
+}
+
+/// The Python-value function declarations, when the body used them.
+fn py_value_preamble() -> String {
+    if !PY_VALUE_USED.with(|used| used.get()) {
+        return String::new();
+    }
+    format!(
+        "(declare-fun {PY_VALUE_OF_STR} (String) Int)\n\
+         (declare-fun {PY_VALUE_STR} (Int) String)\n\
+         (declare-fun {PY_VALUE_IS_STR} (Int) Bool)\n\
+         (declare-fun {PY_VALUE_IS_INT} (Int) Bool)\n"
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PyType {
+    Str,
+    Int,
+}
+
+#[derive(Debug, Clone)]
+struct PyDecided {
+    ty: PyType,
+    ready: String,
+    law: String,
+    defined: String,
+    value: String,
+}
+
+impl PyDecided {
+    fn literal(ty: PyType, value: String) -> Self {
+        PyDecided {
+            ty,
+            ready: "true".to_string(),
+            law: "true".to_string(),
+            defined: "true".to_string(),
+            value,
+        }
+    }
+
+    fn operation(
+        ty: PyType,
+        operands: &[&PyDecided],
+        law: String,
+        defined: String,
+        value: String,
+    ) -> Self {
+        let held: Vec<String> = operands.iter().map(|operand| operand.holds()).collect();
+        let held: Vec<&str> = held.iter().map(String::as_str).collect();
+        PyDecided {
+            ty,
+            ready: smt_and(&held),
+            law,
+            defined,
+            value,
+        }
+    }
+
+    /// `value` is this term's Python value: its operands are ready, Python
+    /// completes it, and the expression is exact.
+    fn holds(&self) -> String {
+        smt_and(&[
+            self.ready.as_str(),
+            self.law.as_str(),
+            self.defined.as_str(),
+        ])
+    }
+}
+
+fn smt_and(parts: &[&str]) -> String {
+    let mut kept: Vec<&str> = Vec::new();
+    for part in parts {
+        match *part {
+            "true" => {}
+            "false" => return "false".to_string(),
+            other => {
+                if !kept.contains(&other) {
+                    kept.push(other);
+                }
+            }
+        }
+    }
+    match kept.len() {
+        0 => "true".to_string(),
+        1 => kept[0].to_string(),
+        _ => format!("(and {})", kept.join(" ")),
+    }
+}
+
+fn smt_ite(condition: &str, then: &str, otherwise: &str) -> String {
+    match condition {
+        "true" => then.to_string(),
+        "false" => otherwise.to_string(),
+        _ => format!("(ite {condition} {then} {otherwise})"),
+    }
+}
+
+fn smt_int_numeral(n: i128) -> String {
+    if n < 0 {
+        format!("(- {})", n.unsigned_abs())
+    } else {
+        n.to_string()
+    }
+}
+
+/// A term whose Python builtin type this backend decides: a `str` / `int` /
+/// `bool` literal, or a decided operation (`py_decided_operation`).
+fn py_decided(term: &Term) -> Option<PyDecided> {
+    match term {
+        Term::Const {
+            value: serde_json::Value::String(s),
+            sort: Sort::Primitive { name },
+        } if name == "String" => Some(PyDecided::literal(PyType::Str, smt_string_literal(s))),
+        // bool IS int: True is 1, False is 0 (the universe's own encoding).
+        Term::Const {
+            value: serde_json::Value::Bool(b),
+            ..
+        } => Some(PyDecided::literal(
+            PyType::Int,
+            (if *b { "1" } else { "0" }).to_string(),
+        )),
+        Term::Const { .. } => {
+            term_as_ground_int(term).map(|n| PyDecided::literal(PyType::Int, smt_int_numeral(n)))
+        }
+        Term::Ctor { name, args } => py_decided_operation(name, args),
+        _ => None,
+    }
+}
+
+/// The one SMT statement of each Python operation the kit leaves undecided,
+/// over operands whose builtin types are decided. `None` when an operand's type
+/// is not decided or the pair is not one written here: the term stays the
+/// uninterpreted application.
+fn py_decided_operation(name: &str, args: &[Term]) -> Option<PyDecided> {
+    match (name, args) {
+        // `str[int]`: IndexError unless -len <= i < len; a negative index
+        // counts from the end.
+        ("py.subscript", [receiver, index]) => {
+            let receiver = py_decided(receiver)?;
+            let index = py_decided(index)?;
+            if receiver.ty != PyType::Str || index.ty != PyType::Int {
+                return None;
+            }
+            let (r, i) = (&receiver.value, &index.value);
+            let len = format!("(str.len {r})");
+            let law = format!("(and (<= (- {len}) {i}) (< {i} {len}))");
+            let value = format!("(str.at {r} (ite (< {i} 0) (+ {i} {len}) {i}))");
+            Some(PyDecided::operation(
+                PyType::Str,
+                &[&receiver, &index],
+                law,
+                "true".to_string(),
+                value,
+            ))
+        }
+        // `ord(str)`: TypeError unless the str holds one character.
+        ("py.ord", [operand]) => {
+            let operand = py_decided(operand)?;
+            if operand.ty != PyType::Str {
+                return None;
+            }
+            let c = &operand.value;
+            let law = format!("(= (str.len {c}) 1)");
+            let value = format!("(str.to_code {c})");
+            Some(PyDecided::operation(
+                PyType::Int,
+                &[&operand],
+                law,
+                "true".to_string(),
+                value,
+            ))
+        }
+        // `chr(int)`: ValueError outside 0..=0x10FFFF. SMT-LIB strings hold
+        // code points up to #x2FFFF; above it the value is not this backend's.
+        ("py.chr", [operand]) => {
+            let operand = py_decided(operand)?;
+            if operand.ty != PyType::Int {
+                return None;
+            }
+            let i = &operand.value;
+            let law = format!("(and (<= 0 {i}) (<= {i} 1114111))");
+            let defined = format!("(<= {i} 196607)");
+            let value = format!("(str.from_code {i})");
+            Some(PyDecided::operation(
+                PyType::Str,
+                &[&operand],
+                law,
+                defined,
+                value,
+            ))
+        }
+        (
+            "python:binary_result",
+            [Term::Const {
+                value: serde_json::Value::String(operator),
+                ..
+            }, left_term, right_term, _key],
+        ) => {
+            let left = py_decided(left_term)?;
+            let right = py_decided(right_term)?;
+            let (ty, law, defined, value) =
+                py_binary(operator, &left, &right, left_term, right_term)?;
+            Some(PyDecided::operation(
+                ty,
+                &[&left, &right],
+                law,
+                defined,
+                value,
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// `(type, law, defined, value)` of `left <operator> right` over decided
+/// builtin operands, for the pairs written here.
+fn py_binary(
+    operator: &str,
+    left: &PyDecided,
+    right: &PyDecided,
+    left_term: &Term,
+    right_term: &Term,
+) -> Option<(PyType, String, String, String)> {
+    use PyType::{Int, Str};
+    let (a, b) = (&left.value, &right.value);
+    let yes = || "true".to_string();
+    match (operator, left.ty, right.ty) {
+        ("+", Str, Str) => Some((Str, yes(), yes(), format!("(str.++ {a} {b})"))),
+        ("+", Int, Int) => Some((Int, yes(), yes(), format!("(+ {a} {b})"))),
+        ("-", Int, Int) => Some((Int, yes(), yes(), format!("(- {a} {b})"))),
+        ("*", Int, Int) => Some((Int, yes(), yes(), format!("(* {a} {b})"))),
+        // A negative count is Python's ValueError. A constant count is a
+        // floor division / multiplication by its power of two (`div` by a
+        // positive divisor is the floor, as Python's `>>` is on negatives);
+        // a symbolic count leaves the value undecided.
+        (">>" | "<<", Int, Int) => {
+            let law = format!("(>= {b} 0)");
+            match term_as_ground_int(right_term) {
+                Some(k) if (0..=126).contains(&k) => {
+                    let scale = (1i128 << k).to_string();
+                    let value = if operator == ">>" {
+                        format!("(div {a} {scale})")
+                    } else {
+                        format!("(* {a} {scale})")
+                    };
+                    Some((Int, law, yes(), value))
+                }
+                _ => Some((Int, law, "false".to_string(), "0".to_string())),
+            }
+        }
+        // `int & int`, `|`, `^` always complete. A constant low-bit mask
+        // `2^k - 1` is `mod 2^k` for every int (Python's two's-complement
+        // `&` with a non-negative mask). Otherwise the value is the 64-bit
+        // bit-vector operation, exact while both operands lie in [0, 2^64).
+        ("&" | "|" | "^", Int, Int) => {
+            if operator == "&" {
+                for (mask, other) in [(right_term, a), (left_term, b)] {
+                    if let Some(m) = term_as_ground_int(mask) {
+                        if m >= 0
+                            && m.checked_add(1)
+                                .is_some_and(|p| (p as u128).is_power_of_two())
+                        {
+                            let modulus = m + 1;
+                            return Some((Int, yes(), yes(), format!("(mod {other} {modulus})")));
+                        }
+                    }
+                }
+            }
+            let op = match operator {
+                "&" => "bvand",
+                "|" => "bvor",
+                _ => "bvxor",
+            };
+            let in_range = |v: &str| format!("(and (<= 0 {v}) (< {v} {BV64_BOUND}))");
+            let defined = smt_and(&[in_range(a).as_str(), in_range(b).as_str()]);
+            let value = format!("(bv2nat ({op} ((_ int2bv 64) {a}) ((_ int2bv 64) {b})))");
+            Some((Int, yes(), defined, value))
+        }
+        _ => None,
+    }
+}
+
+/// A decided operation's Int-universe value: its SMT value where it holds,
+/// else the uninterpreted application.
+fn py_universe_value(decided: &PyDecided, uninterpreted: &str) -> String {
+    let value = match decided.ty {
+        PyType::Int => decided.value.clone(),
+        PyType::Str => {
+            note_py_value_functions();
+            format!("({PY_VALUE_OF_STR} {})", decided.value)
+        }
+    };
+    smt_ite(&decided.holds(), &value, uninterpreted)
+}
+
+/// One side of a Python equality: a decided value, or an undecided value
+/// rendered in the Int universe.
+enum PySide {
+    Decided(PyDecided),
+    Undecided(String),
+}
+
+fn py_side(term: &Term) -> Option<PySide> {
+    if let Some(decided) = py_decided(term) {
+        return Some(PySide::Decided(decided));
+    }
+    match term {
+        Term::Var { .. } | Term::Ctor { .. }
+            if known_term_sort(term).as_deref().is_none_or(|sort| sort == "Int") =>
+        {
+            Some(PySide::Undecided(emit_term_with_expected(term, Some("Int"))))
+        }
+        _ => None,
+    }
+}
+
+fn py_type_guards(undecided: &str) -> (String, String) {
+    note_py_value_functions();
+    (
+        format!("({PY_VALUE_IS_STR} {undecided})"),
+        format!("({PY_VALUE_IS_INT} {undecided})"),
+    )
+}
+
+/// `undecided == decided`, guarded by the undecided operand's builtin type;
+/// `atom` (the uninterpreted `py.eq`) when neither type is its type.
+fn py_eq_guarded(decided: &PyDecided, undecided: &str, atom: &str) -> String {
+    let (is_str, is_int) = py_type_guards(undecided);
+    match decided.ty {
+        PyType::Str => format!(
+            "(ite {is_str} (= ({PY_VALUE_STR} {undecided}) {}) (ite {is_int} false {atom}))",
+            decided.value
+        ),
+        PyType::Int => format!(
+            "(ite {is_int} (= {undecided} {}) (ite {is_str} false {atom}))",
+            decided.value
+        ),
+    }
+}
+
+/// `undecided` IS the decided value: its builtin type and its content.
+fn py_value_is(decided: &PyDecided, undecided: &str) -> String {
+    let (is_str, is_int) = py_type_guards(undecided);
+    match decided.ty {
+        PyType::Str => format!(
+            "(and {is_str} (not {is_int}) (= ({PY_VALUE_STR} {undecided}) {}))",
+            decided.value
+        ),
+        PyType::Int => format!(
+            "(and {is_int} (not {is_str}) (= {undecided} {}))",
+            decided.value
+        ),
+    }
+}
+
+/// The Python-value reading of an atom (see the section header): a decided
+/// operation's completes atom, `py.eq`, or an `=` with a decided operation on
+/// one side. `None` leaves the atom to `emit_atomic`.
+fn emit_python_value_atomic(name: &str, args: &[Term]) -> Result<Option<String>, CompileError> {
+    if let [Term::Ctor {
+        name: protocol,
+        args: protocol_args,
+    }] = args
+    {
+        if name.strip_suffix(".completes") == Some(protocol.as_str()) {
+            if let [Term::Ctor {
+                name: operation,
+                args: operands,
+            }, _key] = protocol_args.as_slice()
+            {
+                if let Some(decided) = py_decided_operation(operation, operands) {
+                    let atom = emit_atomic(name, args)?;
+                    return Ok(Some(smt_ite(&decided.ready, &decided.law, &atom)));
+                }
+            }
+        }
+        return Ok(None);
+    }
+    let [left, right] = args else {
+        return Ok(None);
+    };
+    let is_operation =
+        |term: &Term| matches!(term, Term::Ctor { .. }) && py_decided(term).is_some();
+    match name {
+        "py.eq" => {}
+        "=" if is_operation(left) || is_operation(right) => {}
+        _ => return Ok(None),
+    }
+    let (Some(left), Some(right)) = (py_side(left), py_side(right)) else {
+        return Ok(None);
+    };
+    let atom = emit_atomic(name, args)?;
+    let rendered = match (left, right) {
+        (PySide::Decided(a), PySide::Decided(b)) => {
+            let ready = smt_and(&[a.holds().as_str(), b.holds().as_str()]);
+            let same = if a.ty == b.ty {
+                format!("(= {} {})", a.value, b.value)
+            } else {
+                "false".to_string()
+            };
+            smt_ite(&ready, &same, &atom)
+        }
+        (PySide::Decided(decided), PySide::Undecided(undecided))
+        | (PySide::Undecided(undecided), PySide::Decided(decided)) => {
+            let read = if name == "py.eq" {
+                py_eq_guarded(&decided, &undecided, &atom)
+            } else {
+                py_value_is(&decided, &undecided)
+            };
+            smt_ite(&decided.holds(), &read, &atom)
+        }
+        (PySide::Undecided(_), PySide::Undecided(_)) => return Ok(None),
+    };
+    Ok(Some(rendered))
+}
+
 /// Rewrite qualifying `=(subject, IntConst)` atoms into `int32.eq-const`
 /// atoms when `subject` is a known bv32 subject. Recurses structurally.
 fn promote_bv32_siblings_formula(formula: &Formula, subjects: &[Term]) -> Formula {
@@ -3700,6 +4197,7 @@ fn collect_string_tainted_subjects(formula: &Formula, out: &mut Vec<Term>) {
 }
 
 pub fn compile_formula(formula: &Formula) -> Result<CompiledFormula, CompileError> {
+    reset_py_value_functions();
     let formula = &apply_bv32_contagion(formula);
     {
         let mut tainted = Vec::new();
@@ -3830,6 +4328,8 @@ pub fn compile_formula(formula: &Formula) -> Result<CompiledFormula, CompileErro
             signature.ret
         ));
     }
+    // The Python-value functions a decided operation's rendering used.
+    preamble.push_str(&py_value_preamble());
     preamble.push_str(&identity_distinctness_preamble(formula));
     // Declare string-literal constants and emit the cross-type distinctness
     // axiom (str/None distinct from each other and from concrete int/bool
@@ -3859,6 +4359,7 @@ pub fn compile_formula(formula: &Formula) -> Result<CompiledFormula, CompileErro
 }
 
 pub fn compile_asserted_formula(formula: &Formula) -> Result<CompiledFormula, CompileError> {
+    reset_py_value_functions();
     let formula = &apply_bv32_contagion(formula);
     {
         let mut tainted = Vec::new();
@@ -3953,6 +4454,8 @@ pub fn compile_asserted_formula(formula: &Formula) -> Result<CompiledFormula, Co
             signature.ret
         ));
     }
+    // The Python-value functions a decided operation's rendering used.
+    preamble.push_str(&py_value_preamble());
     preamble.push_str(&identity_distinctness_preamble(formula));
     // Declare string-literal constants and emit the cross-type distinctness
     // axiom (str/None distinct from each other and from concrete int/bool

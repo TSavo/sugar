@@ -941,6 +941,49 @@ class UnknownCalleeCallV1:
         )
 
 
+@lru_cache(maxsize=1)
+def _code_point_builtins():
+    """``ord`` and ``chr`` by their ``LanguageCallee`` member (the callee's
+    binding, never its spelling), each with the protocol its undecided read
+    is named by."""
+    from sugar_source_tree.nodes import LanguageCallee as L
+
+    return {L.BUILTIN_ORD: "ord", L.BUILTIN_CHR: "chr"}
+
+
+@dataclass(frozen=True)
+class UndecidedCodePointCallV1:
+    """``ord(c)`` / ``chr(i)`` over an operand whose value is not ground.
+
+    CPython's ``builtin_ord`` reads a ``str`` / ``bytes`` / ``bytearray`` of
+    length one and raises ``TypeError`` otherwise; ``builtin_chr`` reads an
+    ``int`` (through ``__index__``) and raises ``ValueError`` outside
+    ``range(0x110000)``.  Over an operand nothing here decides, the call is the
+    one undecided protocol read (``FloorValue._undecided_protocol_faces``):
+    ``py.ord(<operand>)`` / ``py.chr(<operand>)`` completes only under
+    ``python:<protocol>.completes(python:<protocol>(<term>, <key>))`` and
+    halts with an ``UndeterminedRaiseEffect`` under the complement; both arms
+    owe the read at its site.  The term names the operand, so where a joined
+    actual decides the operand's type the solver reads the code point and
+    whether Python completes the call (#7763); where it does not, the read
+    stays owed.  No exception type is named here.
+    """
+
+    protocol: str
+    operand: object
+
+    def faces(self, callsite, site):
+        del callsite
+        return self.operand._undecided_protocol_faces(
+            self.protocol,
+            (),
+            site,
+            owner=f"BuiltinCodePoint:{self.protocol}",
+            read=f"{self.protocol}({type(self.operand).__name__})",
+            node="Call",
+        )
+
+
 def _scalar(value) -> bool:
     """A decided hashable builtin scalar: int/float/str/bytes/None/bool."""
     from .floor.bytes_value import BytesValue
@@ -1342,6 +1385,9 @@ def builtin_dunder_call(language_callee, arg_values, keyword_names=()):
     builtin_name = language_callee.value.rsplit(".", 1)[1]
     if builtin_ground_call(language_callee, arg_values, keyword_names):
         return UnknownCalleeCallV1(builtin_name)
+    protocol = _code_point_builtins().get(language_callee)
+    if protocol is not None and not keyword_names and len(arg_values) == 1:
+        return UndecidedCodePointCallV1(protocol, arg_values[0])
     if language_callee in shallow:
         decided = all(_builtin_container(value) for value in arg_values)
     else:
