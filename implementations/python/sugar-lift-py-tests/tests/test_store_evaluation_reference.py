@@ -15,7 +15,10 @@ the right-hand side again where they were read:
    (``ContainerMutationStatementSugar``); the projection reads it there.
 3. A call's result kept as its object identity (``OpaqueObjectStateV1``,
    ``Assign.refine_binding_entries``) reduced its call again at every read.
-   It reads the assignment's key, as the name's reference does.
+   It reads the assignment's key, as the name's reference does: ``r =
+   p.read()`` is the one mutation door's statement (``p.read()`` may change
+   ``p``), which writes ``r`` under the assignment's projection of its key
+   for ``r`` (``container_mutation._name_write``).
 
 The residue of #7976, each a second way to obtain a value:
 
@@ -93,10 +96,10 @@ from sugar_source_tree.nodes import (
     AnnAssign,
     Assign,
     ContainerMutationStatement,
+    EvaluationRef,
     FunctionDef,
     Name,
     ObjectPlaceStateV1,
-    OpaqueObjectStateV1,
     PathAfterCall,
     PathContainerCall,
     ReceiverFieldStoreState,
@@ -420,17 +423,28 @@ def test_a_subscript_read_after_a_rebind_is_the_old_value(tmp_path: Path) -> Non
 
 
 def test_a_call_result_read_twice_reads_the_assignments_key() -> None:
+    # ``p.read()`` may change ``p``: ``r = p.read()`` is the one mutation
+    # door's statement (``name_mutation_statement``).  It evaluates the call
+    # once and writes ``r`` under the assignment's projection of its key for
+    # ``r``, as an ``Assign`` binds each target (``_name_write``).
     body = _function(CALL_READ_TWICE).substitute({}).body
-    assign = next(node for node in body if isinstance(node, Assign))
-    key = projection_key(assign.evaluation, "r")
+    mutation = next(
+        node for node in body if isinstance(node, ContainerMutationStatement)
+    )
+    assert isinstance(mutation.evaluation, str)
+    key = projection_key(mutation.evaluation, "r")
+    assert ("r", key) in mutation.written_keys()
+    # The statement's sugar binds the call's value under that key.
+    statement = mutation.sugar()
+    assert isinstance(statement, ContainerMutationStatementSugar)
+    assert key in {bound for bound, _index in statement.result_evaluations}
     ret = body[-1]
     assert isinstance(ret, Return)
     reads = ret.value.elts
     assert len(reads) == 2
     for read in reads:
-        assert isinstance(read, OpaqueObjectStateV1)
+        assert isinstance(read, EvaluationRef)
         assert read.evaluation == key
-        assert read.base.kind == "Call"
         sugar = read.sugar()
         # The key, not a second term for the call.
         assert isinstance(sugar, EvaluationRefSugar)
