@@ -291,10 +291,7 @@ def test_bound_method_delete_retains_obj_key_demand_not_self() -> None:
 
 
 def _drop_call_outcome(actuals: str) -> ExitSet:
-    """The one ``Holder().drop(<actuals>)`` call, reduced: a call's
-    reduction applies its body (``CallSiteSugar._apply_bound`` ->
-    ``CallSiteValue.producer_outcome``), so this is the call's outcome, not
-    the unapplied call."""
+    """The one ``Holder().drop(<actuals>)`` call, reduced."""
     source = METHOD_DROP + f"\nHolder().drop({actuals})\n"
     tree = _tree(source)
     calls = tuple(
@@ -308,45 +305,27 @@ def _drop_call_outcome(actuals: str) -> ExitSet:
     return calls[0].sugar().desugar(None)
 
 
-def test_bound_method_delete_callsite_prepends_self_without_shifting_args() -> None:
-    """Callsite: self first; obj/key actuals retain discharge order.
+@pytest.mark.parametrize(
+    "actuals",
+    ["{'a': 1}, 'missing'", "{'a': 1}, 'a'"],
+    ids=["missing-key", "present-key"],
+)
+def test_bound_method_delete_on_a_class_call_result_is_undecided_at_the_call(
+    actuals: str,
+) -> None:
+    """#7757 step 6 (#8738, #8751): ``Holder().drop(...)`` is a method of a
+    class call's result.  The method is not dispatched at the reduction, so
+    neither the missing key's ``KeyError`` nor the present key's completion is
+    decided at the call: both are the undecided faces (a completed face under
+    an undecided read's guard, every halt an undetermined raise naming no
+    exception).  The ``KeyError`` is stated by ``drop``'s own reduction over
+    ``obj``/``key`` (``test_bound_method_delete_retains_obj_key_demand_not_self``)
+    and reaches a caller at prove once a method of a call result is
+    dispatched there (step 8).  Before step 6 the call applied the body here
+    and named the ``KeyError``; that application is deleted."""
+    from test_method_call_application_twins import _undecided_faces
 
-    With ``self`` bound to the ``Holder`` and ``obj``/``key`` to the dict and
-    the string, ``del obj[key]`` deletes a missing key from the dict: the one
-    ``KeyError``.  Shifted by one (``obj`` the ``Holder``), it would delete
-    from an object with no ``__delitem__``, a ``TypeError``.  Twin: the key
-    present, the call completes and nothing halts."""
-    missing = _drop_call_outcome("{'a': 1}, 'missing'")
-    halts = [e for e in missing.exits if isinstance(e, Halted)]
-    assert len(halts) == 1 and len(missing.exits) == 1, f"{CODEX3}: {missing!r:.300}"
-    assert halts[0].effect.exception_type_coordinate == _identity("KeyError"), (
-        f"{CODEX3}: the delete did not run on the dict with the string key: "
-        f"{halts[0].effect!r:.300}"
-    )
-    present = _drop_call_outcome("{'a': 1}, 'a'")
-    assert present.exits, f"{CODEX3}: {present!r:.300}"
-    assert all(isinstance(e, Completed) for e in present.exits), (
-        f"{CODEX3}: a present key halted: {present!r:.300}"
-    )
-
-
-def test_bound_method_delete_producer_outcome_halts_with_named_keyerror() -> None:
-    """Bound-method call publishes KeyError with pre-effect state."""
-    outcome = _drop_call_outcome("{'a': 1}, 'missing'")
-    assert isinstance(
-        outcome, ExitSet
-    ), f"{CODEX3}: expected ExitSet halt, got {type(outcome).__name__}"
-    halted = next((e for e in outcome.exits if isinstance(e, Halted)), None)
-    assert halted is not None, f"{CODEX3}: no Halted face in {outcome.exits!r}"
-    assert halted.effect.exception_name == "KeyError" or (
-        halted.effect.exception_type_coordinate == _identity("KeyError")
-    )
-    assert (
-        halted.effect.occurrence_id is not None or halted.effect.occurrence is not None
-    )
-    assert (
-        halted.state is not None
-    ), f"{CODEX1}: bound-method delete halt dropped pre-effect state"
+    _undecided_faces(_drop_call_outcome(actuals))
 
 
 # ===========================================================================
