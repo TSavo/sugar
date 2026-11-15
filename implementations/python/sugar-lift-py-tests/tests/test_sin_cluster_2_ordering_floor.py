@@ -179,7 +179,9 @@ def _assert_undecided_ordering_faces(outcome) -> None:
     ("less_than", "less_equal", "greater_than", "greater_equal"),
 )
 def test_undecided_ordering_operand_is_two_faced_never_sole_complete(method: str) -> None:
-    _assert_undecided_ordering_faces(getattr(_symbolic(), method)(TermValue(1), SITE))
+    _assert_undecided_ordering_faces(
+        getattr(_symbolic(), method)(TermValue(1), SITE, None)
+    )
 
 
 @pytest.mark.parametrize(
@@ -187,7 +189,9 @@ def test_undecided_ordering_operand_is_two_faced_never_sole_complete(method: str
     ("less_than", "less_equal", "greater_than", "greater_equal"),
 )
 def test_undecided_ordering_callsite_is_two_faced(method: str) -> None:
-    _assert_undecided_ordering_faces(getattr(_callsite(), method)(TermValue(0), SITE))
+    _assert_undecided_ordering_faces(
+        getattr(_callsite(), method)(TermValue(0), SITE, None)
+    )
 
 
 def _relative_fragment(source: str, filename: str):
