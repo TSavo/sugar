@@ -19840,7 +19840,9 @@ def _compound_halt_state(
     carries, as what changed against ``header`` (a ``with``'s ``__exit__``
     after its body, a ``match`` guard's captures).  Every name of
     ``unknown`` is unknown at every halt."""
-    head = Try._mid_statement_state(statement, statement, entry, header, {})
+    head = Try._mid_statement_state(
+        statement, statement, entry, header, {}, at_header=True
+    )
     states = [head] if header_halts else []
     for edge_states in suites:
         states.extend(
@@ -20405,7 +20407,9 @@ class Try(Statement):
         }
     )
 
-    def _mid_statement_state(self, statement, pre, post, net, halted=None):
+    def _mid_statement_state(
+        self, statement, pre, post, net, halted=None, *, at_header=False
+    ):
         """The state a halt INSIDE ``statement`` carries.
 
         A simple statement's halt carries the state it began with -- except an
@@ -20415,6 +20419,13 @@ class Try(Statement):
         walrus): a name unbound before the statement is read at the halt
         through the statement's key, which the halt's record holds exactly
         when the name was bound before it halted (``_read_at_halt``).
+
+        ``at_header``: ``post`` is the state after a compound statement's
+        header alone (``_compound_halt_state``: an ``if`` test, a ``with``
+        head, a ``match`` subject), an expression evaluated before any suite.
+        A walrus in it (``if (a := 1) and g():``) binds before a later
+        operand of it halts, exactly as in a simple statement, so a name
+        unbound before the statement is read at the halt in the same way.
 
         A compound statement that states what its halts carry (``halted``,
         ``_HaltEdgeJoin.escaping_state``) is read at that state: a store on a
@@ -20443,7 +20454,11 @@ class Try(Statement):
             if after is _MISSING or after is before:
                 continue
             if isinstance(unwrap_binding_state(before), UnboundBinding):
-                read = None if compound else _read_at_halt(unwrap_binding_state(after))
+                read = (
+                    _read_at_halt(unwrap_binding_state(after))
+                    if at_header or not compound
+                    else None
+                )
                 if read is not None:
                     binding[name] = read
                 continue
