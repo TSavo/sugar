@@ -127,7 +127,9 @@ def test_symbolic_if_branches_keep_complementary_guards() -> None:
     then_return, else_return = returns
     assert then_return.value == TermValue(1)
     assert else_return.value == TermValue(0)
-    assert then_return.guards[0].args[0].name == "python:branch_result"
+    # Each return is guarded by the test's own condition (the completed
+    # comparison's truth), never by the branch slot no input decides (#7757).
+    assert "python:branch_result" not in repr(then_return.guards[0])
     assert else_return.guards[0].kind == "not"
     assert else_return.guards[0].operands[0] == then_return.guards[0]
 

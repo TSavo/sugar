@@ -107,7 +107,17 @@ def test_renamed_raw_source_if_uses_its_exact_condition_slot() -> None:
     slot = branch_result_slot(branch.test)
     assert sugar.branch_slot == slot
     assert outcome.completed_value() is not None
-    assert outcome.completed_value().guard == branch_result_guard(slot, sugar.site)
+    # The arms are guarded by the test's own condition, the formula the slot
+    # is authenticated as -- never by the slot (#7757).
+    guarded = outcome.completed_value()
+    (authentication,) = tuple(
+        entry
+        for entry in guarded.unconditional_entries
+        if isinstance(entry, BranchResultAuthentication)
+    )
+    assert authentication.slot == slot
+    assert guarded.guard == authentication.observed_guard
+    assert guarded.guard != branch_result_guard(slot, sugar.site)
 
 
 def test_repeated_raw_source_if_construction_does_not_mint_a_second_slot() -> None:
@@ -139,11 +149,14 @@ def test_condition_owned_slot_constructs_one_authenticated_guard() -> None:
     assert sugar.branch_slot == slot
     assert outcome.completed_value() is not None
     guarded = outcome.completed_value()
-    assert guarded.guard == branch_result_guard(slot, rewritten.fragment)
     assert len(guarded.unconditional_entries) == 1
     authentication = guarded.unconditional_entries[0]
     assert isinstance(authentication, BranchResultAuthentication)
     assert authentication.slot == slot
+    # The slot is authenticated as the test's condition, and the arms are
+    # guarded by that condition itself.
+    assert guarded.guard == authentication.observed_guard
+    assert guarded.guard != branch_result_guard(slot, rewritten.fragment)
 
 
 def test_nearby_condition_slot_is_rejected_at_the_if_occurrence() -> None:
@@ -229,7 +242,10 @@ def test_condition_halt_emits_no_occurrence_from_toxic_body_twins() -> None:
     assert halted.effect.exception_name is None
 
 
-def test_complementary_results_share_only_the_condition_owned_slot() -> None:
+def test_complementary_results_are_the_two_faces_of_the_test() -> None:
+    # Each arm is guarded by the test's own condition, the then arm by it and
+    # the else arm by its negation: the arms are exactly the two faces of the
+    # test, never of the slot no input decides (#7757).
     branch, _ = _two_ifs()
     slot = branch_result_slot(branch.test)
     rewritten = branch._rewrite_with_slot({}, slot)
@@ -238,7 +254,15 @@ def test_complementary_results_share_only_the_condition_owned_slot() -> None:
 
     assert outcome.completed_value() is not None
     guarded = outcome.completed_value()
-    expected = branch_result_guard(slot, rewritten.fragment)
+    authentications = tuple(
+        entry
+        for entry in guarded.unconditional_entries
+        if isinstance(entry, BranchResultAuthentication)
+    )
+    assert len(authentications) == 1
+    assert authentications[0].slot == slot
+    expected = authentications[0].observed_guard
+    assert expected != branch_result_guard(slot, rewritten.fragment)
     assert guarded.guard == expected
     assert len(guarded.entries) == 2
     then_formula = guarded.entries[0].formula
@@ -248,13 +272,6 @@ def test_complementary_results_share_only_the_condition_owned_slot() -> None:
     assert else_formula.kind == "implies"
     assert else_formula.operands[0].kind == "not"
     assert else_formula.operands[0].operands[0] == expected
-    authentications = tuple(
-        entry
-        for entry in guarded.unconditional_entries
-        if isinstance(entry, BranchResultAuthentication)
-    )
-    assert len(authentications) == 1
-    assert authentications[0].slot == slot
 
 
 def test_identical_condition_spellings_at_distinct_ifs_do_not_share_slots() -> None:
@@ -283,15 +300,14 @@ def test_identical_condition_spellings_at_distinct_ifs_do_not_share_slots() -> N
     outcomes = tuple(branch.sugar().desugar(None) for branch in rewritten)
 
     assert slots[0] != slots[1]
-    expected_guards = tuple(
+    slot_guards = tuple(
         branch_result_guard(slot, branch.fragment)
         for branch, slot in zip(rewritten, slots, strict=True)
     )
-    assert expected_guards[0] != expected_guards[1]
-    for outcome, slot, expected in zip(outcomes, slots, expected_guards, strict=True):
+    assert slot_guards[0] != slot_guards[1]
+    for outcome, slot in zip(outcomes, slots, strict=True):
         assert outcome.completed_value() is not None
         guarded = outcome.completed_value()
-        assert guarded.guard == expected
         authentications = tuple(
             entry
             for entry in guarded.unconditional_entries
@@ -299,6 +315,9 @@ def test_identical_condition_spellings_at_distinct_ifs_do_not_share_slots() -> N
         )
         assert len(authentications) == 1
         assert authentications[0].slot == slot
+        # Each ``if``'s arms are guarded by its own test's condition; the
+        # slots, not the guards, tell the two ``if``s apart.
+        assert guarded.guard == authentications[0].observed_guard
 
 
 def test_ground_true_if_does_not_authenticate_an_unused_slot() -> None:
