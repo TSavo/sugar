@@ -54,10 +54,15 @@ def test_class_field_of_a_constructed_class_reads_aliased_pin(tmp_path):
 
 
 def test_rebound_module_name_stays_free(tmp_path):
-    # The lying twin: a rebound name is not a pin, so the field stays loud.
-    import pytest
-    from sugar_source_tree.panic import ContextManagerResolutionConstructionGap
+    # The lying twin: a rebound name is not a pin, so the field is never read
+    # as one. Either a refusal names it, or the rows are not the pinned rows.
+    # (The ``with`` refusal this used to expect is gone: the manager is what
+    # its head reduces to, #7757.)
+    from sugar_source_tree.panic import SugarNotWritten
 
     head = 'P = "a"\nP = "b"\nclass cm:\n    r = "^" + P\n'
-    with pytest.raises(ContextManagerResolutionConstructionGap):
-        _rows(tmp_path, head)
+    try:
+        rows = _rows(tmp_path, head)
+    except SugarNotWritten:
+        return
+    assert rows != [("return", 7)]

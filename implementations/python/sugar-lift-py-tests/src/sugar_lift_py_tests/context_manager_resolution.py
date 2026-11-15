@@ -1,35 +1,18 @@
-"""Frozen, authenticated context-manager coordinates installed before construction."""
+"""Source-fragment coordinates and the tree construction context.
+
+The context names the workspace a tree is built under and holds no table
+(#7757): a ``with``'s manager is what its head reduces to, so no contract ref,
+gap row or native definition is installed before construction.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any
-
-from .canonicalizer import blake3_512_of, encode_jcs
-from .context_manager_contract import (
-    ContextManagerContractError,
-    ContextManagerSemanticsV1,
-    ImportSignatureV2,
-    decode_context_manager_semantics_v1,
-    decode_import_signature_v2,
-    _json_value,
-)
-from .ir import Sort
 
 
 class ContractRefProtocolError(ValueError):
     pass
-
-
-class NativeProtocolSlot(str, Enum):
-    """Closed source protocol slots, independent of vendor member spelling."""
-
-    CONTEXT_ENTER = "context-enter"
-    CONTEXT_EXIT = "context-exit"
-    TRUTH = "truth"
-    SET_ITEM = "set-item"
-    GET_ITEM = "get-item"
 
 
 @dataclass(frozen=True, order=True)
@@ -74,66 +57,6 @@ class SourceFragmentCoordinateV1:
         from sugar_lift_python_source.canonical import cid_of_json
 
         return cid_of_json(self.wire())
-
-
-@dataclass(frozen=True)
-class ContextManagerContractRefV1:
-    resolution_cid: str
-    demand_cid: str
-    use_site: SourceFragmentCoordinateV1
-    use_site_cid: str
-    authenticated_import_use_cid: str
-    import_binding_cid: str
-    construction_context_generation_cid: str
-    contract_cid: str
-    payload_cid: str
-    provenance_cid: str
-    distribution_artifact_cid: str
-    dependency_artifact_graph_cid: str
-    module_source_cid: str
-    resolved_definition_cid: str
-    manager_construction_cid: str
-    enter_testimony_cid: str
-    exit_testimony_cid: str
-    import_signature: ImportSignatureV2
-    semantics: ContextManagerSemanticsV1
-
-
-#: The one statement for a gap nothing here decides (#7757 item 4): which
-#: exception was caught, or which default a row carried, never chooses a label.
-#: What was observed rides in the gap's detail.
-UNDECIDED_GAP_KIND = "undecided"
-
-
-@dataclass(frozen=True)
-class ContextManagerResolutionGapV1:
-    """One unresolved context-manager demand: a structural kind beside its data.
-
-    ``kind`` is the STRUCTURAL key and nothing else -- a member of the closed
-    vocabulary in :func:`_gap_kinds`.  It never contains a symbol.  The
-    derivation layer used to fuse ``f"{kind}:{detail}"`` into this field, which
-    put most of the pinned-pandas resolution board's mass under a vendor spelling
-    (#6371) and produced, in process, a gap this module's own decoder would
-    refuse.
-
-    ``target_symbol`` and ``detail`` are DATA: they ride the row for a human
-    reading one row, and are never a bucket key.  A measurement a vendor rename
-    can move is not a measurement.
-
-    Unresolved demand after derivation: construct the contract or panic.
-    """
-
-    demand_cid: str
-    use_site: SourceFragmentCoordinateV1
-    target_symbol: str | None
-    kind: str
-    candidate_member_cids: tuple[str, ...]
-    # In-process only.  Not read from or written to the wire, so no preimage
-    # and no CID changes: the authenticated table hashes the bytes present.
-    detail: str | None = None
-
-
-ContextManagerResolutionV1 = ContextManagerContractRefV1 | ContextManagerResolutionGapV1
 
 
 @dataclass(frozen=True)
@@ -197,118 +120,3 @@ class TreeConstructionContextV1:
         can never be read as evidence the enrichment came back.
         """
         return cls.for_source_call_construction()
-
-
-def _gap_kinds() -> None:
-    """Deleted closed taxonomy. Kinds are free structural keys, not a census enum."""
-    return None
-
-
-def _cid(value: Any, field: str) -> str:
-    if not isinstance(value, str) or not value.startswith("blake3-512:"):
-        raise ContractRefProtocolError(f"{field} must be a CID")
-    return value
-
-
-def _decode_signature(raw: Any) -> ImportSignatureV2:
-    try:
-        return decode_import_signature_v2(raw)
-    except ContextManagerContractError as exc:
-        raise ContractRefProtocolError("malformed ImportSignatureV2") from exc
-
-
-def _resolution_cid_preimage(raw: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: raw[key]
-        for key in (
-            "schemaVersion",
-            "demandCid",
-            "useSite",
-            "useSiteCid",
-            "authenticatedImportUseCid",
-            "importBindingCid",
-            "constructionContextGenerationCid",
-            "contractCid",
-            "payloadCid",
-            "provenanceCid",
-            "distributionArtifactCid",
-            "dependencyArtifactGraphCid",
-            "moduleSourceCid",
-            "resolvedDefinitionCid",
-            "managerConstructionCid",
-            "enterTestimonyCid",
-            "exitTestimonyCid",
-            "importSignature",
-            "semantics",
-        )
-    }
-
-
-def _hash_json(raw: Any) -> str:
-    return blake3_512_of(encode_jcs(_json_value(raw)).encode("utf-8"))
-
-
-def _decode_ref(raw: Any) -> ContextManagerContractRefV1:
-    expected = {
-        "kind",
-        "schemaVersion",
-        "resolutionCid",
-        "demandCid",
-        "useSite",
-        "useSiteCid",
-        "authenticatedImportUseCid",
-        "importBindingCid",
-        "constructionContextGenerationCid",
-        "contractCid",
-        "payloadCid",
-        "provenanceCid",
-        "distributionArtifactCid",
-        "dependencyArtifactGraphCid",
-        "moduleSourceCid",
-        "resolvedDefinitionCid",
-        "managerConstructionCid",
-        "enterTestimonyCid",
-        "exitTestimonyCid",
-        "importSignature",
-        "semantics",
-    }
-    if not isinstance(raw, dict) or set(raw) != expected:
-        raise ContractRefProtocolError("malformed context-manager contract ref")
-    if raw["kind"] != "context-manager-contract-ref" or raw["schemaVersion"] != "1":
-        raise ContractRefProtocolError("unsupported context-manager contract ref")
-    resolution_cid = _cid(raw["resolutionCid"], "resolutionCid")
-    if _hash_json(_resolution_cid_preimage(raw)) != resolution_cid:
-        raise ContractRefProtocolError("resolution CID mismatch")
-    try:
-        signature = _decode_signature(raw["importSignature"])
-        semantics = decode_context_manager_semantics_v1(raw["semantics"], signature)
-    except ContextManagerContractError as exc:
-        raise ContractRefProtocolError("unsupported context-manager semantics") from exc
-    use_site = SourceFragmentCoordinateV1.decode(raw["useSite"])
-    if _hash_json(use_site.wire()) != _cid(raw["useSiteCid"], "useSiteCid"):
-        raise ContractRefProtocolError("use-site CID mismatch")
-    return ContextManagerContractRefV1(
-        resolution_cid,
-        _cid(raw["demandCid"], "demandCid"),
-        use_site,
-        _cid(raw["useSiteCid"], "useSiteCid"),
-        _cid(raw["authenticatedImportUseCid"], "authenticatedImportUseCid"),
-        _cid(raw["importBindingCid"], "importBindingCid"),
-        _cid(
-            raw["constructionContextGenerationCid"], "constructionContextGenerationCid"
-        ),
-        _cid(raw["contractCid"], "contractCid"),
-        _cid(raw["payloadCid"], "payloadCid"),
-        _cid(raw["provenanceCid"], "provenanceCid"),
-        _cid(raw["distributionArtifactCid"], "distributionArtifactCid"),
-        _cid(raw["dependencyArtifactGraphCid"], "dependencyArtifactGraphCid"),
-        _cid(raw["moduleSourceCid"], "moduleSourceCid"),
-        _cid(raw["resolvedDefinitionCid"], "resolvedDefinitionCid"),
-        _cid(raw["managerConstructionCid"], "managerConstructionCid"),
-        _cid(raw["enterTestimonyCid"], "enterTestimonyCid"),
-        _cid(raw["exitTestimonyCid"], "exitTestimonyCid"),
-        signature,
-        semantics,
-    )
-
-

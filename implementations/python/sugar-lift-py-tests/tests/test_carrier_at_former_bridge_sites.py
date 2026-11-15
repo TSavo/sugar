@@ -1140,85 +1140,6 @@ def test_source_resource_body_carrier_is_refused_by_name(_carrier_body):
 # --- the other with sugars (former ``sugar_outcome_to_exitset`` sites) ------
 
 
-def _with_resource(**fields):
-    from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
-
-    base = dict(
-        manager=_Answer(ExitSet.completed(TermValue(5))),
-        manager_slot_id="carrier-bridge-sites.manager-slot",
-        enter=_Answer(ExitSet.completed(TermValue(6))),
-        exit=_Answer(ExitSet.completed(TermValue(7))),
-        exit_face_id="carrier-bridge-sites.exit-face",
-        body=(),
-        disposition=None,
-        enter_slot_id=None,
-        site=None,
-    )
-    base.update(fields)
-    return _bare(WithResourceSugar, **base)
-
-
-def test_with_resource_manager_carrier_is_refused_by_name():
-    carrier, _, _ = _carrier()
-    with pytest.raises(ConstructionPanic) as excinfo:
-        _with_resource(manager=_Answer(carrier)).desugar(None)
-    _refused(excinfo, "WithResourceSugar.manager")
-
-
-def test_with_resource_enter_carrier_is_refused_by_name():
-    carrier, _, _ = _carrier()
-    with pytest.raises(ConstructionPanic) as excinfo:
-        _with_resource(enter=_Answer(carrier)).desugar(None)
-    _refused(excinfo, "WithResourceSugar.enter")
-
-
-def test_with_resource_exit_carrier_is_refused_by_name(_empty_body):
-    carrier, _, _ = _carrier()
-    with pytest.raises(ConstructionPanic) as excinfo:
-        _with_resource(exit=_Answer(carrier)).desugar(None)
-    _refused(excinfo, "WithResourceSugar.exit")
-
-
-def test_with_resource_body_carrier_is_refused_by_name(_carrier_body):
-    with pytest.raises(ConstructionPanic) as excinfo:
-        _with_resource().desugar(None)
-    _refused(excinfo, "WithResourceSugar.body")
-
-
-def test_with_effect_boundary_manager_carrier_is_refused_by_name():
-    from sugar_lift_py_tests.context_manager_contract import (
-        EffectBoundarySemanticsV1,
-        ExceptionInfoBindingV1,
-        ExpectsModeV1,
-        FormalArgumentProjectionV1,
-        NoMessagePatternV1,
-        RaiseEffectKindV1,
-    )
-    from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
-        WithEffectBoundarySugar,
-    )
-
-    carrier, _, _ = _carrier()
-    sugar = _bare(
-        WithEffectBoundarySugar,
-        manager=_Answer(carrier),
-        body=(),
-        semantics=EffectBoundarySemanticsV1(
-            ExpectsModeV1(),
-            RaiseEffectKindV1(),
-            FormalArgumentProjectionV1(0),
-            NoMessagePatternV1(),
-            ExceptionInfoBindingV1(),
-        ),
-        contract_ref=None,
-        context_manager_edge=None,
-        site=None,
-    )
-    with pytest.raises(ConstructionPanic) as excinfo:
-        sugar.desugar(None)
-    _refused(excinfo, "WithEffectBoundarySugar.manager")
-
-
 def test_generator_with_manager_carrier_is_refused_by_name():
     from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
 
@@ -1261,17 +1182,6 @@ def test_generator_object_with_manager_carrier_is_refused_by_name(monkeypatch):
 # --- manager_protocol_construction -----------------------------------------
 
 
-def test_receiver_state_after_enter_carrier_is_refused_by_name():
-    from sugar_lift_python_source.manager_protocol_construction import (
-        _receiver_state_after_enter,
-    )
-
-    carrier, _, _ = _carrier()
-    with pytest.raises(ConstructionPanic) as excinfo:
-        _receiver_state_after_enter(None, carrier, blame="carrier-bridge-sites")
-    _refused(excinfo, "ConstructedManagerProtocolV1.receiver_state_after_enter")
-
-
 def test_resource_enter_transitions_carrier_is_refused_by_name():
     from sugar_lift_python_source.manager_protocol_construction import (
         _resource_enter_transitions,
@@ -1281,47 +1191,3 @@ def test_resource_enter_transitions_carrier_is_refused_by_name():
     with pytest.raises(ConstructionPanic) as excinfo:
         _resource_enter_transitions(None, carrier, blame="carrier-bridge-sites")
     _refused(excinfo, "ConstructedManagerProtocolV1.resource_enter_transitions")
-
-
-def _partitioned_protocol(monkeypatch, answer_for):
-    """A protocol over a receiver partition whose ``name`` call answers
-    ``answer_for(name)``."""
-    from sugar_lift_python_source import manager_protocol_construction as mpc
-
-    monkeypatch.setattr(
-        mpc,
-        "_completed_receiver_exits",
-        lambda receiver_state: ExitSet.completed(TermValue(0)),
-    )
-    monkeypatch.setattr(
-        mpc,
-        "_call_protocol_method",
-        lambda receiver, name, arguments, exit_face_id, ctx: answer_for(name),
-    )
-    return _bare(
-        mpc.ConstructedManagerProtocolV1,
-        receiver_state="partitioned-receiver",
-        exit_face_id="carrier-bridge-sites.exit-face",
-    )
-
-
-def test_partitioned_enter_outcome_carrier_is_refused_by_name(monkeypatch):
-    carrier, _, _ = _carrier()
-    protocol = _partitioned_protocol(monkeypatch, lambda name: carrier)
-    with pytest.raises(ConstructionPanic) as excinfo:
-        protocol.enter_outcome()
-    _refused(excinfo, "ConstructedManagerProtocolV1.enter_outcome")
-
-
-def test_partitioned_exit_outcome_carrier_is_refused_by_name(monkeypatch):
-    carrier, _, _ = _carrier()
-
-    def answer_for(name):
-        if name == "__exit__":
-            return carrier
-        return ExitSet.completed(TermValue(1))
-
-    protocol = _partitioned_protocol(monkeypatch, answer_for)
-    with pytest.raises(ConstructionPanic) as excinfo:
-        protocol.exit_outcome()
-    _refused(excinfo, "ConstructedManagerProtocolV1.exit_outcome")

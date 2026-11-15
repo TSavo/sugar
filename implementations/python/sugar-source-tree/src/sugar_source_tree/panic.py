@@ -174,25 +174,6 @@ class OpaqueSourceCallResolutionGap(SugarNotWritten):
     _LABEL = "OPAQUE SOURCE CALL RESOLUTION GAP"
 
 
-class RuntimeSelectedContextManager(SugarNotWritten):
-    """A `with` whose manager has no authenticated exit-suppression contract.
-
-    Resource managers (`open(...)`, `tm.ensure_clean(...)`, …) are not
-    enrolled as ``NeverSuppresses`` / ``Expects`` / ``Suppresses``: the lift
-    never reads ``__enter__`` / ``__exit__``, so suppression is
-    ``RuntimeSelected`` and must stay LOUD. This residual is deliberately a
-    *named* subclass of ``SugarNotWritten`` so the frontier census can count
-    unauthenticated context managers separately from shapes that simply have
-    no ``.sugar()`` override yet.
-
-    Never a normal-path-only ``__enter__``/``__exit__(None,None,None)``
-    rewrite — that drops the exceptional edge and is a different language
-    (issue #5994 step 4).
-    """
-
-    _LABEL = "RUNTIME-SELECTED CONTEXT MANAGER"
-
-
 class ConstructedValueTestimonyNotWritten(SugarNotWritten):
     """A construction succeeded but its constructed-value testimony could not
     be content-addressed.
@@ -205,8 +186,7 @@ class ConstructedValueTestimonyNotWritten(SugarNotWritten):
     constructed value canonicalizes (present testimony) or this typed gap is
     reported through the same roll call and raised.
 
-    A *named* subclass of ``SugarNotWritten`` (like
-    ``RuntimeSelectedContextManager``) so the census counts testimony gaps
+    A *named* subclass of ``SugarNotWritten`` so the census counts testimony gaps
     separately from shapes with no ``.sugar()`` override. The fix is always to
     teach canonicalization the general value CATEGORY -- never a per-type
     allowlist, never a silent return.
@@ -216,51 +196,6 @@ class ConstructedValueTestimonyNotWritten(SugarNotWritten):
 
 
 # Taxonomy deleted. Construct or panic.
-
-
-class ContextManagerResolutionConstructionGap(SugarNotWritten):
-    """With cannot construct: no authenticated CM contract for this use-site.
-
-    One named door for the require path — not a residual-kind vocabulary.
-    When the preconstruction table carries a gap row, ``kind`` / ``target_symbol``
-    are the row's detail strings (opaque evidence), never a closed enum the
-    board invents kinds from. When the table has no row, those fields are None
-    and ``observed`` names the missing coordinate.
-
-    Construct when a ``ContextManagerContractRefV1`` (or source-derived peer)
-    is present; otherwise this panic — never SoftUnresolvedWithSugar.
-    """
-
-    _LABEL = "CONTEXT MANAGER RESOLUTION GAP"
-
-    def __init__(
-        self,
-        *,
-        use_site: object | None = None,
-        target_symbol: str | None = None,
-        resolution_kind: str | None = None,
-        demand_cid: str | None = None,
-        **kwargs,
-    ) -> None:
-        super().__init__(**kwargs)
-        self.use_site = use_site
-        self.target_symbol = target_symbol
-        self.demand_cid = demand_cid
-        # Optional detail from the resolution row (e.g. "undecided").
-        # Not a closed WithConstructionGapKind vocabulary — deleted.
-        self.kind = resolution_kind
-
-
-class UnsupportedContextManagerSemantics(SugarNotWritten):
-    """Manager semantics not constructible — write the arm or stay loud."""
-
-    _LABEL = "UNSUPPORTED CONTEXT MANAGER SEMANTICS"
-
-
-class UnsupportedWithBindingTarget(SugarNotWritten):
-    """With-as binding target not constructible — write the arm or stay loud."""
-
-    _LABEL = "UNSUPPORTED WITH BINDING TARGET"
 
 
 class AsyncContextManagerUnsupported(SugarNotWritten):

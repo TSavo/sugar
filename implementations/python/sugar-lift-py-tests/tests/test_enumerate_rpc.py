@@ -331,7 +331,7 @@ def test_roll_call_law_empty_file_has_one_canonical_module_leaf(tmp_path: Path) 
         pytest.param("BackendDefect", id="invalid-backend-shape"),
         pytest.param("SugarNotWritten", id="known-construction-missing"),
         pytest.param(
-            "RuntimeSelectedContextManager", id="runtime-selected-construction"
+            "AsyncContextManagerUnsupported", id="named-construction-subclass"
         ),
     ],
 )

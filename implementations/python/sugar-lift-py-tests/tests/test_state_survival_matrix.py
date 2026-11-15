@@ -18,28 +18,20 @@ Matrix rows:
   (a) store halt inside try/except routing — handler begins from the
       routed edge's state
   (b) resource With — ``__exit__`` path receives correct pre-halt state
-  (c) assertion boundary — observation binding refers to the real
-      occurrence's effect (same object)
   (d) nested stores — later halt does not roll back prior bindings
   (e) composition of at least two of the above
+
+Row (c), the assertion boundary's observation binding, went with the
+effect-boundary sugar that had no producer (#7757).
 
 Lying twins per row (refuse):
 
   - fabricated post-halt state at carrier enrollment
   - rolled-back binding (halt misread as Completed body)
-  - wrong-occurrence observation (binding claims a foreign effect)
 
 MUST NOT TOUCH: carrier/ExitSet, reducer, producers, routing.
 
 Seam-3 residual list (rows that pin a weaker or incomplete surface):
-
-  R1. WithEffectBoundarySugar *unmatched* residual re-seats an *equal*
-      ReducedBlock rather than retaining ``state is pre_halt`` object
-      identity (try/except ``and_exit`` and NeverSuppresses *do* retain
-      ``is``). Effect object identity is still exact. Owner: unmatched
-      residual path inside WithEffectBoundarySugar / observation attach —
-      not a missing store producer. Honorably red instrument:
-      test_unmatched_boundary_state_identity.py (grok-4 boundary lane).
 
   R2. CLOSED by #6685 (codex-1): Try composes over deferred native exits.
       Helper alone still retains one undischarged setitem carrier (deferred
@@ -52,8 +44,6 @@ Seam-3 residual list (rows that pin a weaker or incomplete surface):
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
 from frame_fresh import fresh
@@ -63,42 +53,25 @@ from sugar_lift_py_tests.caller_parameter_contract import (
 )
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
-    CallParameterV1,
     EffectBoundaryDisposition,
-    EffectBoundarySemanticsV1,
-    ExceptionInfoBindingV1,
-    ExpectsModeV1,
-    FormalArgumentProjectionV1,
-    ImportSignatureV2,
     NeverSuppresses,
-    NoDefaultV1,
-    NoMessagePatternV1,
-    PositionalOrKeywordV1,
-    RaiseEffectKindV1,
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
-from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-from sugar_lift_py_tests.effect_router import ObservedEffectBinding
 from sugar_lift_py_tests.floor import ListValue, TermValue
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_py_tests.ir import PrimitiveSort, ctor, str_const
+from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import true_guard
 from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
-    WithEffectBoundarySugar,
-)
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
 from sugar_source_tree.tree import SourceFile
-from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -170,75 +143,6 @@ def _route_try_except(exits: ExitSet, expected: str) -> ExitSet:
             matcher=AuthenticatedRaiseMatcher(expected=_Expected(expected)),
             unmet=ExpectationNotMetEffect("raise", "try-except-site"),
         ),
-    )
-
-
-class _FixedSugar(Sugar):
-    # A canned statement binds nothing before its halts: the block's prefix
-    # is their record.
-    halts_at_statement_head = True
-
-    def __init__(self, outcome):
-        self.outcome = outcome
-
-    def desugar(self, ctx=None):
-        del ctx
-        return self.outcome
-
-    @classmethod
-    def witnesses(cls):
-        return ()
-
-
-def _assertion_boundary(
-    body: ExitSet,
-    *,
-    expected: _Expected,
-    observation_slot_id: str | None = "excinfo",
-) -> WithEffectBoundarySugar:
-    parameters = [
-        CallParameterV1(
-            "expected",
-            PrimitiveSort("Value"),
-            PositionalOrKeywordV1(),
-            True,
-            NoDefaultV1(),
-        )
-    ]
-    manager_value = CallSiteValue(
-        target_name="expect",
-        arg_values=(expected,),
-        parameters=("expected",),
-        term=ctor("call:expect", []),
-        body=None,
-        keyword_names=(),
-    )
-    return WithEffectBoundarySugar(
-        manager=_FixedSugar(ExitSet.completed(manager_value)),
-        body=(_FixedSugar(body),),
-        semantics=EffectBoundarySemanticsV1(
-            ExpectsModeV1(),
-            RaiseEffectKindV1(),
-            FormalArgumentProjectionV1(0),
-            NoMessagePatternV1(),
-            ExceptionInfoBindingV1(),
-        ),
-        contract_ref=SimpleNamespace(
-            import_signature=ImportSignatureV2(tuple(parameters))
-        ),
-        context_manager_edge=None,
-        observation_slot_id=observation_slot_id,
-        site="state-survival-matrix-assertion",
-    )
-
-
-def _observed_binding(face):
-    record = face.value if isinstance(face, Completed) else face.state
-    if record is None or not hasattr(record, "entries"):
-        return None
-    return next(
-        (e for e in record.entries if isinstance(e, ObservedEffectBinding)),
-        None,
     )
 
 
@@ -334,78 +238,6 @@ def test_b_exit_does_not_fabricate_completed_from_store_halt_twin() -> None:
         assert isinstance(after.exits[0], Completed)
     with pytest.raises(AssertionError):
         assert after.exits[0].state is None
-
-
-# ===========================================================================
-# (c) assertion boundary — observation refers to real occurrence's state
-# ===========================================================================
-
-
-def test_c_assertion_observation_binds_real_occurrence_effect() -> None:
-    """Consumed store halt: ObservedEffectBinding.effect is the sole halt effect."""
-    _, halted = _unpack_store_halt()
-    routed = _assertion_boundary(
-        ExitSet((halted,)),
-        expected=_Expected("IndexError"),
-        observation_slot_id="excinfo",
-    ).desugar()
-    assert isinstance(routed, ExitSet)
-    assert len(routed.exits) == 1
-    face = routed.exits[0]
-    assert isinstance(face, Completed)
-    binding = _observed_binding(face)
-    assert binding is not None
-    assert binding.slot_id == "excinfo"
-    # Real occurrence: same effect object, not a reconstructed foreign raise.
-    assert binding.effect is halted.effect
-    assert binding.effect.occurrence == halted.effect.occurrence
-    assert binding.effect.exception_type_coordinate == _identity("IndexError")
-
-
-def test_c_wrong_occurrence_observation_refuses_twin() -> None:
-    """Bite: binding must not claim a foreign occurrence / effect object."""
-    _, halted = _unpack_store_halt()
-    foreign = RaiseEffect(
-        exception_name="IndexError",
-        blame="foreign.py:1:0",
-        occurrence=AuthenticatedRaiseLocus.of("foreign.py:1:0"),
-        exception_type_coordinate=_identity("IndexError"),
-        exception_type_mro=(_identity("IndexError"),),
-    )
-    routed = _assertion_boundary(
-        ExitSet((halted,)),
-        expected=_Expected("IndexError"),
-    ).desugar()
-    binding = _observed_binding(routed.exits[0])
-    assert binding is not None
-    with pytest.raises(AssertionError):
-        assert binding.effect is foreign
-    with pytest.raises(AssertionError):
-        assert binding.effect.occurrence == foreign.occurrence
-
-
-def test_c_unmatched_assertion_keeps_halt_effect_no_observation() -> None:
-    """Wrong expected type: halt retained; no observation binding on the face.
-
-    Effect object identity is preserved (same raise occurrence). State remains
-    present and equal to the pre-halt testimony; WithEffectBoundarySugar may
-    re-seat an equal ReducedBlock (not ``is``) on the unmet residual path —
-    that is weaker than try/except ``and_exit`` identity and is not fabricated
-    completion.
-    """
-    pending, halted = _unpack_store_halt()
-    routed = _assertion_boundary(
-        ExitSet((halted,)),
-        expected=_Expected("ValueError"),
-    ).desugar()
-    face = routed.exits[0]
-    assert isinstance(face, Halted)
-    assert face.effect is halted.effect
-    assert face.state is not None
-    assert face.state == pending.pre_effect_state.state
-    assert _observed_binding(face) is None
-    # Not completed; not rolled back into a return face.
-    assert not isinstance(face, Completed)
 
 
 # ===========================================================================
@@ -518,45 +350,6 @@ def test_e_with_then_try_except_preserves_store_halt_state() -> None:
     assert isinstance(handler, Completed)
     assert handler.value is pending.pre_effect_state.state
     assert handler.value is halted.state
-
-
-def test_e_assertion_then_wrong_type_does_not_fabricate_twin() -> None:
-    """Compose (c) residual: wrong assertion type after store halt keeps effect."""
-    pending, halted = _unpack_store_halt()
-    routed = _assertion_boundary(
-        ExitSet((halted,)),
-        expected=_Expected("TypeError"),
-    ).desugar()
-    face = routed.exits[0]
-    assert isinstance(face, Halted)
-    assert face.effect is halted.effect
-    assert face.state is not None
-    assert face.state == pending.pre_effect_state.state
-    with pytest.raises(AssertionError):
-        assert isinstance(face, Completed)
-
-
-def test_e_with_then_assertion_observation_still_real_occurrence() -> None:
-    """Compose (b)+(c): after NeverSuppresses, observation still binds real effect."""
-    _, halted = _unpack_store_halt()
-    after_with = ExitSet((halted,)).and_exit(
-        ExitSet.completed(TermValue(0)),
-        disposition=NeverSuppresses(),
-    )
-    surviving = after_with.exits[0]
-    assert isinstance(surviving, Halted)
-    assert surviving.effect is halted.effect
-
-    routed = _assertion_boundary(
-        after_with,
-        expected=_Expected("IndexError"),
-    ).desugar()
-    face = routed.exits[0]
-    assert isinstance(face, Completed)
-    binding = _observed_binding(face)
-    assert binding is not None
-    assert binding.effect is halted.effect
-    assert binding.effect.occurrence == halted.effect.occurrence
 
 
 # ===========================================================================

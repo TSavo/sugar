@@ -16,6 +16,9 @@ Two real pandas 3.0 sites, one on each side of the cut, are the reproducers:
 The second one is why explicit-category-only is the cut: ``UserWarning`` there
 is a defaulting rule living in CPython, not in the source text.
 
+The consumer (``WithEffectBoundarySugar``) had no producer of its own and is
+deleted (#7757); the twins through it went with it.
+
 Nothing below supplies the value it then asserts.  The distinctive value is the
 category SPELLED IN THE SOURCE, and each twin requires that same category out
 the far side of a lift that never saw the expected term; the lying arm writes a
@@ -26,32 +29,15 @@ No tooth here reads a wall clock.
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-from sugar_lift_py_tests.context_manager_contract import (
-    CallParameterV1,
-    EffectBoundarySemanticsV1,
-    ExpectsModeV1,
-    FormalArgumentProjectionV1,
-    ImportSignatureV2,
-    NoDefaultV1,
-    NoMessagePatternV1,
-    PositionalOrKeywordV1,
-    WarningEffectKindV1,
-    WarningObservationBindingV1,
-)
-from sugar_lift_py_tests.effect import ExpectationNotMetEffect
-from sugar_lift_py_tests.floor import CallSiteValue, TermValue
+from sugar_lift_py_tests.floor import CallSiteValue
 from sugar_lift_py_tests.floor.warning_observation_value import WarningObservationValue
-from sugar_lift_py_tests.ir import PrimitiveSort, ctor, str_const
-from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+from sugar_lift_py_tests.ir import ctor, str_const
+from sugar_lift_py_tests.outcome.exit_set import Completed
 from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_exitset
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBoundarySugar
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
@@ -237,186 +223,3 @@ def register(cls, name):
     observations = _observations(tmp_path, source)
     assert len(observations) == 1
     assert observations[0].guards != ()
-
-
-# --- the producer through the shipped consumer ------------------------------
-
-
-class _Fixed(Sugar):
-    # A canned statement binds nothing before its halts: the block's prefix
-    # is their record.
-    halts_at_statement_head = True
-
-    def __init__(self, outcome):
-        self.outcome = outcome
-
-    def desugar(self, ctx=None):
-        del ctx
-        return self.outcome
-
-    @classmethod
-    def witnesses(cls):
-        return ()
-
-
-class _ExpectedCategory(TermValue):
-    def exception_type_identity(self):
-        return self.value
-
-
-class _Record(Sugar):
-    """A completed face whose entries are the ones the PRODUCER built."""
-
-    def __init__(self, entries):
-        self.entries = entries
-
-    def desugar(self, ctx=None):
-        del ctx
-        from sugar_lift_py_tests.floor import BlockValue
-
-        return ExitSet.completed(BlockValue(self.entries))
-
-    @classmethod
-    def witnesses(cls):
-        return ()
-
-
-SEMANTICS = EffectBoundarySemanticsV1(
-    ExpectsModeV1(),
-    WarningEffectKindV1(),
-    FormalArgumentProjectionV1(0),
-    NoMessagePatternV1(),
-    WarningObservationBindingV1(),
-)
-
-
-def _boundary(expected_category: str, entries):
-    expected = _ExpectedCategory(_builtin_category_identity(expected_category))
-    manager_value = CallSiteValue(
-        target_name="scope",
-        arg_values=(expected,),
-        parameters=("expected",),
-        term=ctor("call", []),
-        body=None,
-    )
-    signature = ImportSignatureV2(
-        (
-            CallParameterV1(
-                "expected",
-                PrimitiveSort("Value"),
-                PositionalOrKeywordV1(),
-                True,
-                NoDefaultV1(),
-            ),
-        )
-    )
-    return WithEffectBoundarySugar(
-        manager=_Fixed(ExitSet.completed(manager_value)),
-        body=(_Record(entries),),
-        semantics=SEMANTICS,
-        contract_ref=SimpleNamespace(import_signature=signature),
-        context_manager_edge=None,
-        # The boundary's own site: what each refusal of it blames (a refusal
-        # names a coordinate, never None).
-        site=f"assert_produces_warning({expected_category})",
-    )
-
-
-def test_produced_testimony_satisfies_a_matching_boundary(tmp_path):
-    """The truthful twin, end to end: real source in, completed face out."""
-    entries = _observations(
-        tmp_path, PANDAS_ACCESSOR_WARN.format(category="FutureWarning")
-    )
-    routed = _boundary("FutureWarning", entries).desugar()
-    assert len(routed.exits) == 1
-    face = routed.exits[0]
-    assert isinstance(face, Completed)
-    assert not any(
-        isinstance(entry, WarningObservationValue) for entry in face.value.entries
-    )
-
-
-def test_produced_testimony_fails_a_mismatched_boundary(tmp_path):
-    """The lying twin: the source warns ``UserWarning``, the boundary expects
-    ``FutureWarning``.  It must go red, and it is the PRODUCER's coordinate
-    that decides — the boundary is spelled identically in both twins."""
-    entries = _observations(
-        tmp_path, PANDAS_ACCESSOR_WARN.format(category="UserWarning")
-    )
-    routed = _boundary("FutureWarning", entries).desugar()
-    assert len(routed.exits) == 1
-    face = routed.exits[0]
-    assert isinstance(face, Halted)
-    assert isinstance(face.effect, ExpectationNotMetEffect)
-
-
-def _refusal_members(tmp_path, source, stem):
-    """Route real lifted source into the boundary; return the named bucket."""
-    path = tmp_path / f"{stem}.py"
-    path.write_text(source, encoding="utf-8")
-    function = next(
-        SourceFile(
-            path_source(str(path)),
-            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
-        ).functions()
-    )
-    exits = reduce_block_to_exitset(function.sugar().statements, None)
-    entries = tuple(
-        entry
-        for face in exits.exits
-        if isinstance(face, Completed)
-        for entry in getattr(face.value, "entries", ())
-    )
-    with pytest.raises(SugarNotWritten) as raised:
-        _boundary("FutureWarning", entries).desugar()
-    assert raised.value.observed == "completed face has unresolved warning producers"
-    return str(path), raised.value.unresolved_warning_producers
-
-
-def _line_of(source: str, needle: str) -> int:
-    """The 1-based line of ``needle``, computed from the text, not the lift."""
-    return source[: source.index(needle)].count("\n") + 1
-
-
-# All three producer refusal shapes, each asserted PRESENT in the named bucket.
-# Presence, never absence: a producer that was never wired at all leaves the
-# produced set empty too, so an absence assertion is satisfied by the mechanism
-# not running.  The expected line is computed from the source text here and the
-# lift is handed only the text, so the coordinate is not supplied by the test.
-@pytest.mark.parametrize(
-    "stem,source",
-    [
-        # pandas ``core/algorithms.py:1033`` -- no explicit category.
-        ("no_category", PANDAS_ALGORITHMS_WARN),
-        # A category that is not a closed class coordinate.
-        (
-            "computed_category",
-            'import warnings\n\n\ndef f(pick):\n    warnings.warn("m", pick(), stacklevel=2)\n',
-        ),
-        # A shadowed head: spells ``warnings.warn`` exactly, binds nothing.
-        (
-            "shadowed_head",
-            'def f(warnings):\n    warnings.warn("m", UserWarning, stacklevel=2)\n',
-        ),
-    ],
-)
-def test_a_refused_producer_appears_in_the_unresolved_bucket(tmp_path, stem, source):
-    filename, members = _refusal_members(tmp_path, source, stem)
-    assert f"{filename}:{_line_of(source, 'warnings.warn')}" in members
-
-
-def test_a_guarded_occurrence_is_refused_not_consumed(tmp_path):
-    """A conditional occurrence is undecided at the boundary: not present, not
-    absent.  Consuming it would be a strictly stronger claim than the source."""
-    source = """import warnings
-
-
-def register(cls, name):
-    if hasattr(cls, name):
-        warnings.warn("m", FutureWarning, stacklevel=2)
-"""
-    entries = _observations(tmp_path, source)
-    with pytest.raises(SugarNotWritten) as raised:
-        _boundary("FutureWarning", entries).desugar()
-    assert raised.value.owner == "WithEffectBoundarySugar.warning_observation"
-    assert "branch guard" in raised.value.observed

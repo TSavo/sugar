@@ -28,7 +28,6 @@ _MANAGER_MODULES = (
     "sugar_lift_py_tests.generator_construction",
     "sugar_lift_py_tests.generator_manager_exit",
     "sugar_lift_py_tests.sugar.generator_with_sugar",
-    "sugar_lift_py_tests.sugar.with_resource_sugar",
     "sugar_lift_py_tests.sugar.with_source_resource_sugar",
 )
 

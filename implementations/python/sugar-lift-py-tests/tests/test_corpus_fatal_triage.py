@@ -60,11 +60,13 @@ def test_renamed_unwritten_manager_is_counted_typed_gap_not_bare_exception(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "renamed.py"
+    # A ``with`` constructs from its head (#7757), so the refusal a manager
+    # still meets by name is the async one.
     source.write_text(
         "class ArbitraryDoor:\n"
         "    pass\n"
-        "def exercise():\n"
-        "    with ArbitraryDoor():\n"
+        "async def exercise():\n"
+        "    async with ArbitraryDoor():\n"
         "        pass\n",
         encoding="utf-8",
     )
@@ -75,8 +77,8 @@ def test_renamed_unwritten_manager_is_counted_typed_gap_not_bare_exception(
     assert testimony["outcome"] == "typed-gap"
     assert testimony["typed_gap_count"] == 1
     typed = testimony["typed_gaps"][0]
-    assert typed["exception_type"] == "ContextManagerResolutionConstructionGap"
-    assert typed["gap"]["owner"] == "With._construct_sugar"
+    assert typed["exception_type"] == "AsyncContextManagerUnsupported"
+    assert typed["gap"]["owner"] == "AsyncWith._construct_sugar"
 
 
 def test_typed_gap_child_testimony_classifies_nonfatal() -> None:

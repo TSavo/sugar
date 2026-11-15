@@ -52,7 +52,6 @@ from .panic import (
     BackendDefect,
     backend_defect,
     LifterRefusal,
-    RuntimeSelectedContextManager,
     SourceTreePanic,
     SubstituteNotWritten,
     SugarNotWritten,
@@ -9782,21 +9781,6 @@ class WithItem(Node):
         """
         return Statement._evaluation_slot(self, self._effect_slot_id())
 
-    def _make_manager_ref(self) -> "Node":
-        """``ManagerRef(M)`` — single manager coordinate for enter and exit."""
-        from .backend import Leaf, materialize
-        from .shadow import ShadowNode
-
-        slots = (("slot_id", Leaf(self._manager_slot_id())),)
-        return materialize(
-            self.unit, ShadowNode("ManagerRef", self.span, slots), self.reporter
-        )
-
-    def _make_enter_call(self) -> "Node":
-        """Tree coordinate ``ManagerRef(M).__enter__()`` — not ``context_expr`` twice."""
-        enter_attr = self._make_attribute(self._make_manager_ref(), "__enter__")
-        return self._make_call(enter_attr, ())
-
     def _source_exit_face_id(self) -> str:
         """The source occurrence's exit face, once per use site, before any
         evaluation exists."""
@@ -9812,52 +9796,6 @@ class WithItem(Node):
         never a sibling copy's.  An item evaluated once keeps the source
         occurrence's face."""
         return Statement._evaluation_slot(self, self._source_exit_face_id())
-
-    def _make_exit_type_ref(self) -> "Node":
-        from .backend import Leaf, materialize
-        from .shadow import ShadowNode
-
-        slots = (("face_id", Leaf(self._exit_face_id())),)
-        return materialize(
-            self.unit, ShadowNode("ExitTypeRef", self.span, slots), self.reporter
-        )
-
-    def _make_exit_value_ref(self) -> "Node":
-        from .backend import Leaf, materialize
-        from .shadow import ShadowNode
-
-        slots = (("face_id", Leaf(self._exit_face_id())),)
-        return materialize(
-            self.unit, ShadowNode("ExitValueRef", self.span, slots), self.reporter
-        )
-
-    def _make_exit_traceback_ref(self) -> "Node":
-        from .backend import Leaf, materialize
-        from .shadow import ShadowNode
-
-        slots = (("face_id", Leaf(self._exit_face_id())),)
-        return materialize(
-            self.unit,
-            ShadowNode("ExitTracebackRef", self.span, slots),
-            self.reporter,
-        )
-
-    def _make_exit_call(self, typ: "Node", val: "Node", tb: "Node") -> "Node":
-        """Tree coordinate ``ManagerRef(M).__exit__(typ, val, tb)``."""
-        exit_attr = self._make_attribute(self._make_manager_ref(), "__exit__")
-        return self._make_call(exit_attr, (typ, val, tb))
-
-    def _make_parametric_exit_call(self) -> "Node":
-        """One exit call: ``M.__exit__(ExitTypeRef(X), ExitValueRef(X), ExitTracebackRef(X))``.
-
-        Face-specific values are ExitFaceBinding testimony under guards —
-        not alternate MethodCall sugars built at desugar time.
-        """
-        return self._make_exit_call(
-            self._make_exit_type_ref(),
-            self._make_exit_value_ref(),
-            self._make_exit_traceback_ref(),
-        )
 
 
 class ImportAlias(Node):
@@ -26021,73 +25959,6 @@ class EffectRef(Expression):
         from sugar_lift_py_tests.sugar.effect_ref_sugar import EffectRefSugar
 
         return EffectRefSugar(slot_id=self.slot_id, site=self.fragment)
-
-
-class ManagerRef(Expression):
-    """Once-evaluated manager coordinate for resource ``with``.
-
-    Context expression evaluates once; ``ManagerRef(M)`` is the stable
-    receiver for ``__enter__`` / ``__exit__`` — never a second evaluation of
-    the context expression.
-    """
-
-    slot_id: str
-
-    def substitute(self, scope: "dict[str, Node]") -> "Node":
-        del scope
-        return self
-
-    def _construct_sugar(self):
-        from sugar_lift_py_tests.sugar.resource_coord_sugar import ManagerRefSugar
-
-        return ManagerRefSugar(slot_id=self.slot_id, site=self.fragment)
-
-
-class ExitTypeRef(Expression):
-    """Parametric ``__exit__`` type argument: ``ExitTypeRef(X)``."""
-
-    face_id: str
-
-    def substitute(self, scope: "dict[str, Node]") -> "Node":
-        del scope
-        return self
-
-    def _construct_sugar(self):
-        from sugar_lift_py_tests.sugar.resource_coord_sugar import ExitTypeRefSugar
-
-        return ExitTypeRefSugar(face_id=self.face_id, site=self.fragment)
-
-
-class ExitValueRef(Expression):
-    """Parametric ``__exit__`` value argument: ``ExitValueRef(X)``."""
-
-    face_id: str
-
-    def substitute(self, scope: "dict[str, Node]") -> "Node":
-        del scope
-        return self
-
-    def _construct_sugar(self):
-        from sugar_lift_py_tests.sugar.resource_coord_sugar import ExitValueRefSugar
-
-        return ExitValueRefSugar(face_id=self.face_id, site=self.fragment)
-
-
-class ExitTracebackRef(Expression):
-    """Parametric ``__exit__`` traceback argument: ``ExitTracebackRef(X)``."""
-
-    face_id: str
-
-    def substitute(self, scope: "dict[str, Node]") -> "Node":
-        del scope
-        return self
-
-    def _construct_sugar(self):
-        from sugar_lift_py_tests.sugar.resource_coord_sugar import (
-            ExitTracebackRefSugar,
-        )
-
-        return ExitTracebackRefSugar(face_id=self.face_id, site=self.fragment)
 
 
 class ObservationRef(Expression):

@@ -1,4 +1,8 @@
-"""Cut D: construct source-visible context-manager protocol methods once."""
+"""The protocol of the manager a ``with`` head reduced to (#7757).
+
+``ReducedManagerProtocolV1`` reads ``__enter__`` / ``__exit__`` on the value
+the head reduced to; the helpers below bind and apply those methods as every
+call is bound and applied."""
 
 from __future__ import annotations
 
@@ -13,154 +17,12 @@ from sugar_lift_py_tests.floor import (
     ObjectField,
     ObjectValue,
     ReceiverFieldStoreValue,
-    ReceiverStatePartitionValue,
 )
 from sugar_lift_py_tests.floor.manager_coordinate import (
     ExitTracebackCoordinate,
-    ExitTypeCoordinate,
     ExitValueCoordinate,
 )
-from sugar_lift_py_tests.outcome import Completed
 from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
-
-from .canonical import cid_of_json
-
-
-@dataclass(frozen=True)
-class ConstructedManagerProtocolV1:
-    manager_construction_cid: str
-    protocol_construction_cid: str
-    enter_call: CallSiteValue = field(compare=False)
-    exit_call: CallSiteValue = field(compare=False)
-    enter_frame_cid: str
-    exit_frame_cid: str
-    exit_face_id: str
-    receiver_state: ObjectValue | ReceiverStatePartitionValue = field(compare=False)
-
-    @property
-    def preimage(self):
-        return {
-            "kind": "constructed-manager-protocol",
-            "schemaVersion": "1",
-            "managerConstructionCid": self.manager_construction_cid,
-            "enterFrameCid": self.enter_frame_cid,
-            "exitFrameCid": self.exit_frame_cid,
-            "exitFaceId": self.exit_face_id,
-        }
-
-    def __post_init__(self) -> None:
-        if cid_of_json(self.preimage) != self.protocol_construction_cid:
-            raise ValueError("manager protocol CID does not match its preimage")
-
-    def at_exit_face(self, exit_face_id: str) -> "ConstructedManagerProtocolV1":
-        """This protocol describing ``__exit__`` over ``exit_face_id``.
-
-        The same receiver and the same protocol method frames; only the exit
-        face the calls are bound over (and so the protocol's construction
-        CID) is the given one: one face per evaluation of a duplicated
-        ``with`` (``WithItem._exit_face_id``)."""
-        enter, exit_ = _protocol_calls_at_face(
-            _completed_object_receivers(self.receiver_state)[0], exit_face_id
-        )
-        return ConstructedManagerProtocolV1(
-            self.manager_construction_cid,
-            cid_of_json({**self.preimage, "exitFaceId": exit_face_id}),
-            enter,
-            exit_,
-            self.enter_frame_cid,
-            self.exit_frame_cid,
-            exit_face_id,
-            self.receiver_state,
-        )
-
-    def enter_outcome(self, ctx: object = None):
-        if isinstance(self.receiver_state, ObjectValue):
-            return _apply_protocol_call(self.enter_call, ctx)
-        # Beneath one of several receiver faces the enter is sequenced, which
-        # reads its arms: a deferred carrier there is refused by name.
-        return _completed_receiver_exits(self.receiver_state).sequence(
-            lambda receiver: _require_exit_set(
-                _call_protocol_method(
-                    receiver,
-                    "__enter__",
-                    (),
-                    self.exit_face_id,
-                    ctx,
-                ),
-                owner="ConstructedManagerProtocolV1.enter_outcome",
-            )
-        )
-
-    def exit_outcome(self, ctx: object = None):
-        def run_exit(receiver):
-            enter = _call_protocol_method(
-                receiver, "__enter__", (), self.exit_face_id, ctx
-            )
-            entered = _receiver_state_after_enter(
-                receiver, enter, blame=self.exit_face_id
-            )
-            return _call_protocol_method(
-                entered,
-                "__exit__",
-                (
-                    ExitTypeCoordinate(self.exit_face_id, None),
-                    ExitValueCoordinate(self.exit_face_id, None),
-                    ExitTracebackCoordinate(self.exit_face_id, None),
-                ),
-                self.exit_face_id,
-                ctx,
-            )
-
-        if isinstance(self.receiver_state, ObjectValue):
-            return run_exit(self.receiver_state)
-        # Beneath one of several receiver faces the exit is sequenced: only
-        # the one-receiver exit above hands a deferred carrier on.
-        return _completed_receiver_exits(self.receiver_state).sequence(
-            lambda receiver: _require_exit_set(
-                run_exit(receiver), owner="ConstructedManagerProtocolV1.exit_outcome"
-            )
-        )
-
-    def enter_resource_outcome_for(self, receiver, ctx: object = None):
-        """Run enter on the exact receiver value produced by the manager face."""
-        enter = _call_protocol_method(receiver, "__enter__", (), self.exit_face_id, ctx)
-        return _resource_enter_transitions(receiver, enter, blame=self.exit_face_id)
-
-    def exit_outcome_for(self, entered: EnteredManagerStateValue, ctx: object = None):
-        if not isinstance(entered, EnteredManagerStateValue):
-            # Naked TypeError(type(entered).__name__) named neither the door nor
-            # the artifact we need — instrument noise on the board.
-            from sugar_source_tree.panic import SugarNotWritten
-
-            raise SugarNotWritten(
-                blame=self.exit_face_id,
-                owner="ManagerProtocol.exit_outcome_for",
-                observed=(
-                    f"exit_outcome_for received {type(entered).__name__}, not "
-                    f"EnteredManagerStateValue"
-                ),
-                requested="EnteredManagerStateValue from the matching enter face",
-                fix=(
-                    "carry enter's EnteredManagerStateValue into exit; do not "
-                    "raise bare TypeError with only the type name"
-                ),
-            )
-        return _call_protocol_method(
-            entered.receiver_state,
-            "__exit__",
-            (
-                ExitTypeCoordinate(self.exit_face_id, None),
-                ExitValueCoordinate(self.exit_face_id, None),
-                ExitTracebackCoordinate(self.exit_face_id, None),
-            ),
-            self.exit_face_id,
-            ctx,
-        )
-
-    def exit_outcome_for_body(self, entered, body_face, ctx: object = None):
-        """Invoke the cited exit frame with this body face's actual ABI inputs
-        (``_exit_for_body``)."""
-        return _exit_for_body(self.exit_face_id, entered, body_face, ctx)
 
 
 def _exit_for_body(exit_face_id: str, entered, body_face, ctx: object = None):
@@ -452,108 +314,6 @@ class ReducedManagerProtocolV1:
         )
 
 
-def _completed_object_receivers(receiver) -> tuple[ObjectValue, ...]:
-    """Flatten nested constructor partitions to completed ObjectValue faces.
-
-    Dual-mode factories that ground ``isinstance`` / validation branches can
-    nest a receiver partition inside an outer Completed face (validation Halted
-    sibling + inner completed ObjectValue).  Protocol methods need the ObjectValue
-    leaves; nested partitions are not themselves callable receivers.
-
-    Field-store sequencing can also emit intermediate ObjectValue faces that
-    hold only a prefix of constructor stores.  Keep only faces that are not
-    field-wise strictly refined by another completed face of the same class —
-    the same refinement law manager construction uses for multi-arm factories.
-    """
-    if isinstance(receiver, ObjectValue):
-        return (receiver,)
-    if not isinstance(receiver, ReceiverStatePartitionValue):
-        return ()
-    found: list[ObjectValue] = []
-    for face in receiver.exits.exits:
-        if not isinstance(face, Completed):
-            continue
-        found.extend(_completed_object_receivers(face.value))
-    return _maximal_field_receivers(tuple(found))
-
-
-def _maximal_field_receivers(
-    receivers: tuple[ObjectValue, ...],
-) -> tuple[ObjectValue, ...]:
-    """Drop intermediate constructor stores refined by a fuller peer face."""
-    if len(receivers) <= 1:
-        return receivers
-
-    def fields_of(obj: ObjectValue) -> dict[str, object]:
-        return {field.name: field.value for field in obj.fields}
-
-    def refines(a: ObjectValue, b: ObjectValue) -> bool:
-        if a.class_name != b.class_name:
-            return False
-        fa, fb = fields_of(a), fields_of(b)
-        if not set(fb).issubset(set(fa)):
-            return False
-        for name, value in fb.items():
-            if fa[name] != value:
-                return False
-        return len(fa) > len(fb)
-
-    kept = []
-    for candidate in receivers:
-        if any(
-            other is not candidate and refines(other, candidate) for other in receivers
-        ):
-            continue
-        kept.append(candidate)
-    return tuple(kept)
-
-
-def _completed_receiver_exits(receiver_state: ReceiverStatePartitionValue):
-    """Protocol methods run only after manager construction completed.
-
-    Constructor validation halts remain authenticated in the behavior's
-    receiver partition, but they never enter ``__enter__`` or ``__exit__``.
-    Each completed face continues as its object receivers beneath itself
-    (``ExitSet.sequence``), so every receiver keeps the guard, partition
-    testimony and pending contracts of each face on its path. Nested
-    partitions (from dual-mode factory validation) are flattened to their
-    ObjectValue leaves under the same Completed-only rule: a nested leaf
-    holds under its own face's guard conjoined with the enclosing face's,
-    exactly where Python reaches it, never under the enclosing guard alone.
-    """
-    from sugar_lift_py_tests.outcome import ExitSet
-
-    leaves = _completed_object_receivers(receiver_state)
-    if not leaves:
-        return ExitSet(())
-
-    def protocol_receivers(partition, kept):
-        """``partition``'s object receivers, each beneath its face.
-
-        ``kept`` is ``None`` at the top level (every object face stands) and,
-        inside a nested partition, the maximal leaves of that nested
-        construction (``_completed_object_receivers``)."""
-
-        def receivers(value):
-            if isinstance(value, ObjectValue):
-                if kept is None or any(value is leaf for leaf in kept):
-                    return ExitSet.completed(value)
-                return ExitSet(())
-            if isinstance(value, ReceiverStatePartitionValue):
-                return protocol_receivers(
-                    value,
-                    _completed_object_receivers(value) if kept is None else kept,
-                )
-            return ExitSet(())
-
-        # A constructor halt never enters ``__enter__`` or ``__exit__``: no
-        # protocol receiver continues beneath it. It stays a face of the
-        # behavior's receiver partition, which still carries it.
-        return partition.exits.sequence(receivers, consume=lambda _halt: ExitSet(()))
-
-    return protocol_receivers(receiver_state, None)
-
-
 def _call_protocol_method(receiver, name, arguments, exit_face_id, ctx):
     """``receiver.<name>(*arguments)``: bound, then applied, as every call is.
 
@@ -624,88 +384,6 @@ def _apply_protocol_call(call: CallSiteValue, ctx):
         return ExitSet.completed(value)
 
     return outcome.sequence(body_completion)
-
-
-def _receiver_state_after_enter(
-    receiver: ObjectValue, enter_outcome, *, blame: object
-) -> ObjectValue:
-    from sugar_lift_py_tests.outcome import Completed
-    from sugar_source_tree.panic import SugarNotWritten
-
-    # The post-enter receiver is read off the enter's faces: an enter that is
-    # a deferred native-operation carrier is refused by name.
-    exits = _require_exit_set(
-        enter_outcome,
-        owner="ConstructedManagerProtocolV1.receiver_state_after_enter",
-    ).exits
-    completed = tuple(face for face in exits if isinstance(face, Completed))
-    observed_stores = tuple(
-        statement
-        for face in completed
-        if isinstance(face.value, BlockValue)
-        for statement in face.value.statements
-        if isinstance(statement, ReceiverFieldStoreValue)
-    )
-    if not observed_stores:
-        return receiver
-    # __exit__ runs only after __enter__ returned: a halted enter face leaves
-    # the With as itself and never reaches exit, so the post-enter state is
-    # projected from the completed faces alone.
-    if not completed:
-        raise SugarNotWritten(
-            blame=blame,
-            owner="ConstructedManagerProtocolV1.receiver_state_after_enter",
-            observed="no completed __enter__ face",
-            requested="a completed enter face before __exit__",
-            fix="derive exit state only from an authenticated enter face that completes",
-        )
-    projected_faces = []
-    for face in completed:
-        block = face.value
-        if not isinstance(block, BlockValue):
-            raise SugarNotWritten(
-                blame=blame,
-                owner="ConstructedManagerProtocolV1.receiver_state_after_enter",
-                observed=type(block).__name__,
-                requested="completed enter block carrying exact receiver stores",
-                fix="preserve the ordinary enter block or keep receiver state loud",
-            )
-        fields = {field.name: field.value for field in receiver.fields}
-        for statement in block.statements:
-            if not isinstance(statement, ReceiverFieldStoreValue):
-                continue
-            if statement.receiver.identity != receiver.identity:
-                raise SugarNotWritten(
-                    blame=blame,
-                    owner="ConstructedManagerProtocolV1.receiver_state_after_enter",
-                    observed="receiver coordinate mismatch",
-                    requested="stores from the exact authenticated manager receiver",
-                    fix="preserve ObjectValue.identity across protocol method binding",
-                )
-            fields[statement.attr] = statement.value
-        projected_faces.append(
-            tuple(ObjectField(name, fields[name]) for name in sorted(fields))
-        )
-    first = projected_faces[0]
-    if any(fields != first for fields in projected_faces[1:]):
-        raise SugarNotWritten(
-            blame=blame,
-            owner="ConstructedManagerProtocolV1.receiver_state_after_enter",
-            observed="guarded enter faces disagree on receiver fields",
-            requested="one exact post-enter ObjectValue.fields projection",
-            fix="carry guarded object-state testimony before reducing __exit__",
-        )
-    return ObjectValue(
-        receiver.class_name,
-        first,
-        methods=receiver.methods,
-        class_fields=receiver.class_fields,
-        identity=receiver.identity,
-        deferred_helper_fields=receiver.deferred_helper_fields,
-        # The same object: it keeps its ``allocation`` and ``arrival``.
-        allocation=receiver.allocation,
-        arrival=receiver.arrival,
-    )
 
 
 def _resource_enter_transitions(receiver: ObjectValue, enter_outcome, *, blame: object):
@@ -796,22 +474,3 @@ def _apply_receiver_store(
         allocation=receiver.allocation,
         arrival=receiver.arrival,
     )
-
-
-def _protocol_calls_at_face(representative, exit_face_id: str):
-    """``__enter__()`` and ``__exit__(ExitTypeRef(X), …)`` bound on the
-    representative receiver, with ``X`` the exit face."""
-    enter = representative.bound_method_call(
-        "__enter__", (), owner="construct_manager_protocol", blame=exit_face_id
-    )
-    exit_ = representative.bound_method_call(
-        "__exit__",
-        (
-            ExitTypeCoordinate(exit_face_id, None),
-            ExitValueCoordinate(exit_face_id, None),
-            ExitTracebackCoordinate(exit_face_id, None),
-        ),
-        owner="construct_manager_protocol",
-        blame=exit_face_id,
-    )
-    return enter, exit_
