@@ -110,6 +110,9 @@ class SubscriptDeleteEffectSugar(Sugar):
 
     Projection arms (mirrors :class:`SubscriptStoreEffectSugar`):
 
+    0. **A receiver whose type binds no ``__delitem__``**
+       (``receiver_lacks_item_method``) → its ``TypeError``, whatever the
+       key is: a formal key is not waited on.
     1. **Any formal operand** → ``NativeOperationExitCarrierV1`` demand
        ``delitem`` with operands and coordinates in *discharge* order
        ``(receiver, index)``.  Explicit projector
@@ -156,9 +159,16 @@ class SubscriptDeleteEffectSugar(Sugar):
         """Producer-owned subscript **delete** projection (one door): the
         ordinary statement and the one mutation door's ``__delitem__`` on a
         value the container law does not cite (``PathContainerCallSugar``)."""
+        from sugar_lift_py_tests.floor.floor_value import receiver_lacks_item_method
+
         coordinates = tuple(
             getattr(operand, "formal_coordinate", None) for operand in (receiver, index)
         )
+        if receiver_lacks_item_method(receiver, "__delitem__"):
+            # The receiver's type binds no ``__delitem__``: the delete raises
+            # ``TypeError`` whatever the key is, so it waits on none
+            # (``ObjectValue.delitem``).
+            return receiver.delitem(index, site, ctx)
         if any(coordinate is not None for coordinate in coordinates):
             # Undischarged demand awaiting caller actuals — not a refusal.
             return SubscriptDeleteEffectSugar.mint_delitem_carrier(

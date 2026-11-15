@@ -119,19 +119,27 @@ def discharge_subscript(
     receiver that overrides ``subscript_with`` owns the operation edge; any
     other answers through ``subscript_with_occurrence`` / ``subscript``.
     """
-    from sugar_lift_py_tests.floor.floor_value import FloorValue
+    from sugar_lift_py_tests.floor.floor_value import (
+        FloorValue,
+        receiver_lacks_item_method,
+    )
 
     receiver = receiver.project_operation_receiver(ctx, owner=f"{owner} receiver")
     index = index.project_operation_receiver(ctx, owner=f"{owner} index")
-    deferred = defer_formal_subscript(receiver, index, site)
-    if deferred is not None:
-        return deferred
     operation = SubscriptOperation(
         index=index,
         owner=owner,
         blame=site,
         use_occurrence=use_occurrence,
     )
+    if receiver_lacks_item_method(receiver, "__getitem__"):
+        # The receiver's type binds no ``__getitem__``: the read raises
+        # ``TypeError`` whatever the index is, so it waits on no formal
+        # index (``ObjectValue.subscript_with``).
+        return receiver.subscript_with(operation, ctx)
+    deferred = defer_formal_subscript(receiver, index, site)
+    if deferred is not None:
+        return deferred
     if (
         isinstance(receiver, FloorValue)
         and type(receiver).subscript_with is not FloorValue.subscript_with
