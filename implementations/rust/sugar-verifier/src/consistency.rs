@@ -6315,7 +6315,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
         post.value_calls = values.clone();
         owed.push(post);
     }
-    let recursive = recursive_contract_cids(&posts);
+    let recursive = recursive_contract_cids(&posts, &owed);
     let mut joined: Vec<AmbientPost> = posts
         .into_iter()
         .map(|post| {
@@ -6384,46 +6384,45 @@ fn owed_post(
 // the halts of the contracts its own reads join. One join: imported and
 // same-proof callees alike.
 
-/// The join's answers, by the call site they answer, and where each site is.
+/// The join's members, by the call site they stand at, and where each site
+/// is. A read picks the ones that answer it by the one key (`answers_at`):
+/// the answered members (`refusal` none) and each dispatched method call's
+/// member (step 8), answered where the read binds its receiver's class
+/// (`dispatch_answer`).
 pub(crate) struct JoinedHalts {
-    answers: BTreeMap<String, Vec<AmbientPost>>,
-    /// Each dispatched method call's member by its site (step 8): answered
-    /// where the read binds its receiver's class (`dispatch_answer`).
-    dispatch: BTreeMap<String, AmbientPost>,
+    /// Every member at a site where one is answered or dispatched, the owed
+    /// ones beside them so a read is keyed among all of them.
+    posts: BTreeMap<String, Vec<AmbientPost>>,
     /// Site CID to the call site's `(file, line)` (the `undecided` member's).
     sites: BTreeMap<String, (String, u64)>,
 }
 
 impl JoinedHalts {
     pub(crate) fn of(pool: &MementoPool) -> Self {
-        let mut answers: BTreeMap<String, Vec<AmbientPost>> = BTreeMap::new();
-        let mut dispatch: BTreeMap<String, AmbientPost> = BTreeMap::new();
+        let mut posts: BTreeMap<String, Vec<AmbientPost>> = BTreeMap::new();
         for post in collect_ambient_posts(pool) {
-            if post.refusal.is_none() {
-                answers.entry(post.site_cid.clone()).or_default().push(post);
-            } else if post.dispatch.is_some() {
-                dispatch.insert(post.site_cid.clone(), post);
-            }
+            posts.entry(post.site_cid.clone()).or_default().push(post);
         }
+        posts.retain(|_site, at_site| {
+            at_site
+                .iter()
+                .any(|post| post.refusal.is_none() || post.dispatch.is_some())
+        });
         let mut sites = BTreeMap::new();
-        if !answers.is_empty() || !dispatch.is_empty() {
+        if !posts.is_empty() {
             for (_cid, member) in pool.undecided_members() {
                 let Ok(undecided) = sugar_proof_envelope::UndecidedMember::from_stored(member)
                 else {
                     continue;
                 };
                 let site_cid = undecided_site_coordinate_cid(&undecided.site);
-                if answers.contains_key(&site_cid) || dispatch.contains_key(&site_cid) {
+                if posts.contains_key(&site_cid) {
                     let line = u64::try_from(undecided.site.start_line).unwrap_or_default();
                     sites.insert(site_cid, (undecided.site.file.clone(), line));
                 }
             }
         }
-        Self {
-            answers,
-            dispatch,
-            sites,
-        }
+        Self { posts, sites }
     }
 
     /// The halts `body` reaches through the calls it reads that the join
@@ -6432,7 +6431,7 @@ impl JoinedHalts {
     /// the call site in `body`. The callee's halt site is carried as the
     /// locus's producer (`producerFile`, `producerLine`, `producerSymbol`).
     pub(crate) fn loci_at_calls(&self, pool: &MementoPool, body: &Json) -> Vec<Json> {
-        if self.answers.is_empty() && self.dispatch.is_empty() {
+        if self.posts.is_empty() {
             return Vec::new();
         }
         self.loci_through(pool, body, &mut Vec::new(), &[])
@@ -6466,21 +6465,30 @@ impl JoinedHalts {
             let Some(args) = call.get("args").and_then(|v| v.as_array()) else {
                 continue;
             };
+            // The members this read joins, by the one key: its site and the
+            // target symbol its call names (`answers_at`).
+            let keyed: Vec<&AmbientPost> = self
+                .posts
+                .get(site_cid)
+                .map(|at_site| answers_at(at_site, site_cid, Some(call)))
+                .unwrap_or_default();
+            let answers: Vec<&AmbientPost> = keyed
+                .iter()
+                .copied()
+                .filter(|post| post.refusal.is_none())
+                .collect();
             // A dispatched call (step 8) is answered where the class its
             // receiver's input is bound to here decides the method.
-            let dispatched: Vec<AmbientPost> = match self.dispatch.get(site_cid) {
-                Some(post) if !self.answers.contains_key(site_cid) => {
-                    dispatch_answer(post, &substitute_term_bindings(call, outer))
-                        .into_iter()
-                        .collect()
-                }
-                _ => Vec::new(),
+            let dispatched: Vec<AmbientPost> = if answers.is_empty() {
+                keyed
+                    .iter()
+                    .copied()
+                    .filter(|post| post.dispatch.is_some())
+                    .filter_map(|post| dispatch_answer(post, &substitute_term_bindings(call, outer)))
+                    .collect()
+            } else {
+                Vec::new()
             };
-            let answers: Vec<&AmbientPost> = self
-                .answers
-                .get(site_cid)
-                .map(|posts| posts.iter().collect())
-                .unwrap_or_default();
             if answers.is_empty() && dispatched.is_empty() {
                 continue;
             }
@@ -6618,17 +6626,17 @@ fn is_call_result_term(term: &Json) -> bool {
 /// an edge's site) that the join answers with a contract that reaches the
 /// first one again, itself included. These are the reads the joined post
 /// instances follow (`linked_ambient_post_instances_for_inv`), so a contract
-/// not in this set is never re-entered by the join.
-fn recursive_contract_cids(posts: &[AmbientPost]) -> std::collections::BTreeSet<String> {
+/// not in this set is never re-entered by the join. A read reaches the
+/// contracts the one key picks at its site (`answers_at`), so `owed` (the
+/// members nothing answers, the owed operations among them) is read beside
+/// `posts` to pick by.
+fn recursive_contract_cids(
+    posts: &[AmbientPost],
+    owed: &[AmbientPost],
+) -> std::collections::BTreeSet<String> {
     use std::collections::BTreeSet;
     let answered: Vec<&AmbientPost> = posts.iter().filter(|p| p.refusal.is_none()).collect();
-    let mut targets_by_site: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-    for post in &answered {
-        targets_by_site
-            .entry(post.site_cid.as_str())
-            .or_default()
-            .push(post.binding.target_cid.as_str());
-    }
+    let members: Vec<&AmbientPost> = posts.iter().chain(owed.iter()).collect();
     let mut successors: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for post in &answered {
         let target = post.binding.target_cid.as_str();
@@ -6641,10 +6649,13 @@ fn recursive_contract_cids(posts: &[AmbientPost]) -> std::collections::BTreeSet<
         }
         let mut next: BTreeSet<&str> = BTreeSet::new();
         for read in &reads {
-            if let Some((_call, site)) = call_result_parts(read) {
-                if let Some(site_targets) = targets_by_site.get(site) {
-                    next.extend(site_targets.iter().copied());
-                }
+            if let Some((call, site)) = call_result_parts(read) {
+                next.extend(
+                    answers_at(members.iter().copied(), site, Some(call))
+                        .into_iter()
+                        .filter(|p| p.refusal.is_none())
+                        .map(|p| p.binding.target_cid.as_str()),
+                );
             }
         }
         successors.insert(target, next);
@@ -7019,6 +7030,82 @@ fn call_result_parts(term: &Json) -> Option<(&Json, &str)> {
     Some((call, site))
 }
 
+/// Whether the call term `call` names the target symbol `symbol`: the
+/// lifter's one call speller (`call_symbol.py`) spells the call of a target
+/// `call:<target>`, and a Python target symbol is `python:<target>` (a
+/// definition's edge, `lambda_callable.definition_edge_call`; an import-bound
+/// callee's spelled target; a dispatched member's `call:dispatch:<m>` under
+/// `python:dispatch:<m>`).
+fn call_names_symbol(call: &Json, symbol: &str) -> bool {
+    let Some(target) = call
+        .get("name")
+        .and_then(|v| v.as_str())
+        .and_then(|name| name.strip_prefix("call:"))
+    else {
+        return false;
+    };
+    symbol.strip_prefix("python:").unwrap_or(symbol) == target
+}
+
+/// The target symbol a member the join reads answers under (step 6/9): its
+/// edge's `symbol`, or `None` for an owed member with no symbol (an owed
+/// operation, `unanswered_operations`: the one kind of entry that carries
+/// `value_calls`).
+fn post_target_symbol(post: &AmbientPost) -> Option<&str> {
+    if post.value_calls.is_some() {
+        None
+    } else {
+        Some(post.binding.source_symbol.as_str())
+    }
+}
+
+/// THE KEY every joined answer is picked by (step 6/9): a read's call site
+/// and the target symbol its call names, never the site alone. Two calls at
+/// one site (a class call's source `__new__` edge and its `type(obj).__init__`
+/// face) are two members there, each under its own symbol, and each read
+/// joins its own contract:
+///
+/// - the members at the site whose target symbol the read's call names
+///   (`call_names_symbol`);
+/// - where it names none, the site's members with no symbol (the owed
+///   operations): a call that names no target is that undecided read, never
+///   another call's contract;
+/// - where the site holds neither, the site's members: a call spelled
+///   otherwise than its target symbol still reads the members its site holds.
+///
+/// `call` is `None` for a read that is no call (an owed operation's
+/// completion atom): it names no symbol.
+fn answers_at<'a>(
+    posts: impl IntoIterator<Item = &'a AmbientPost>,
+    site_cid: &str,
+    call: Option<&Json>,
+) -> Vec<&'a AmbientPost> {
+    let at_site: Vec<&'a AmbientPost> = posts
+        .into_iter()
+        .filter(|post| post.site_cid == site_cid)
+        .collect();
+    let named: Vec<&'a AmbientPost> = at_site
+        .iter()
+        .copied()
+        .filter(|post| {
+            call.zip(post_target_symbol(post))
+                .is_some_and(|(call, symbol)| call_names_symbol(call, symbol))
+        })
+        .collect();
+    if !named.is_empty() {
+        return named;
+    }
+    let unnamed: Vec<&'a AmbientPost> = at_site
+        .iter()
+        .copied()
+        .filter(|post| post_target_symbol(post).is_none())
+        .collect();
+    if !unnamed.is_empty() {
+        return unnamed;
+    }
+    at_site
+}
+
 pub(crate) fn linked_post_instance_count(pool: &MementoPool, body: &Json) -> usize {
     if !is_consistency_candidate(body) {
         return 0;
@@ -7108,11 +7195,10 @@ fn linked_ambient_post_instances_for_inv(
         // nothing does, the owed entries. The claim's own read of an owed
         // site is that member's row; a read reached through a joined
         // contract leaves the claim reading a free value, so it is dropped
-        // and the row is not decided on what remains (step 9).
-        let at_site: Vec<&AmbientPost> = ambient
-            .iter()
-            .filter(|post| post.site_cid == site_cid)
-            .collect();
+        // and the row is not decided on what remains (step 9). Picked by
+        // the one key, the site and the target symbol the call names
+        // (`answers_at`).
+        let at_site: Vec<&AmbientPost> = answers_at(ambient, site_cid, Some(call));
         let stated: Vec<&AmbientPost> =
             at_site.iter().copied().filter(|p| !is_owed(*p)).collect();
         // A dispatched method call (step 8): the class this read binds its
@@ -7342,10 +7428,15 @@ fn linked_ambient_post_instances_for_inv(
             if seen.insert(key) {
                 // The joined contract's own reads, at the call's actual: the
                 // claim reads them through this instance. The read at this
-                // site is the one just answered (`out` stands for it).
+                // site is the one just answered (`out` stands for it): the
+                // same site and the same call. Another call at that site is
+                // its own read (`answers_at`).
                 for nested in call_result_terms(&instance) {
-                    let nested_site = call_result_parts(&nested).map(|(_, site)| site);
-                    if nested_site == Some(site_cid) {
+                    let answered_here =
+                        call_result_parts(&nested).is_some_and(|(nested_call, nested_site)| {
+                            nested_site == site_cid && nested_call.get("name") == call.get("name")
+                        });
+                    if answered_here {
                         continue;
                     }
                     if read.insert(term_key(&nested)) {
@@ -7366,10 +7457,8 @@ fn linked_ambient_post_instances_for_inv(
                 let mut atoms = Vec::new();
                 collect_completes_atoms(&instance, &mut atoms);
                 for (atom_site, atom) in atoms {
-                    let owed_here: Vec<&AmbientPost> = ambient
-                        .iter()
-                        .filter(|p| p.site_cid == atom_site)
-                        .collect();
+                    // An operation's completion names no target symbol.
+                    let owed_here: Vec<&AmbientPost> = answers_at(ambient, atom_site, None);
                     if owed_here.is_empty() || !owed_here.iter().all(|p| is_owed(*p)) {
                         continue;
                     }
@@ -7579,9 +7668,9 @@ fn raised_type_facts(inv: &Json, ambient: &[AmbientPost]) -> Vec<Json> {
         let Some(args) = call.get("args").and_then(|v| v.as_array()) else {
             continue;
         };
-        for post in ambient
-            .iter()
-            .filter(|post| post.site_cid == site_cid && post.refusal.is_none())
+        for post in answers_at(ambient, site_cid, Some(call))
+            .into_iter()
+            .filter(|post| post.refusal.is_none())
         {
             let Some(bindings) =
                 bind_call_arguments(&post.binding.formals, &post.binding.stated_inputs, args)
@@ -15793,6 +15882,50 @@ mod tests {
             partition.dropped
         );
         assert!(!DroppedAmbientPostReason::RecursiveContract.is_wrong_answer());
+    }
+
+    #[test]
+    fn two_calls_at_one_site_each_join_their_own_contract() {
+        // #7757 step 6/9: a class call's source `__new__` edge and its
+        // `type(obj).__init__` face (a member with no symbol) stand at one
+        // site. The join picks by the site and the target symbol the call
+        // names (`answers_at`): the `__new__` call joins `__new__`'s
+        // contract, and the face reads its own owed member, never
+        // `__new__`'s contract bound against arguments it does not take.
+        let new_post = joined_post(
+            "python:m.Box.__new__",
+            JOIN_SITE,
+            eqf(var("out"), int(1)),
+            vec!["cls".into()],
+        );
+        let mut init_face = owed_post(
+            "m.py:3",
+            "init-face-member",
+            JOIN_SITE,
+            DroppedAmbientPostReason::Unanswered,
+        );
+        init_face.value_calls = Some(Arc::new(FunctionAnswers::default()));
+        let ambient = vec![new_post, init_face];
+
+        let new_call = json!({"kind": "ctor", "name": "call:m.Box.__new__", "args": [int(7)]});
+        let partition =
+            linked_ambient_post_instances_for_inv(&eqf(call_result(new_call, JOIN_SITE), int(1)), &ambient);
+        assert_eq!(partition.kept.len(), 1, "{partition:?}");
+        assert_eq!(partition.kept[0].binding.source_symbol, "python:m.Box.__new__");
+        assert!(partition.dropped.is_empty(), "{:?}", partition.dropped);
+
+        let face_call = json!({"kind": "ctor", "name": "call:Box", "args": []});
+        let partition =
+            linked_ambient_post_instances_for_inv(&eqf(call_result(face_call, JOIN_SITE), int(1)), &ambient);
+        assert!(partition.kept.is_empty(), "{partition:?}");
+        assert!(
+            partition
+                .dropped
+                .iter()
+                .all(|d| d.reason != DroppedAmbientPostReason::ImportSignatureMismatch),
+            "the face is never bound against __new__'s contract: {:?}",
+            partition.dropped
+        );
     }
 
     // ── A row is never green on what a joined contract leaves unanswered ──
