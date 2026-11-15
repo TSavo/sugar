@@ -66,6 +66,75 @@ def test_each_unrolled_iteration_of_an_if_decides_its_own_slot(tmp_path):
     assert slots[0] != slots[1], "two iterations of one if shared one branch slot"
 
 
+_LIVE_LOOP = "blake3-512:" + "ab" * 64
+
+
+def test_each_live_loop_item_decides_its_own_slot_of_one_if(tmp_path):
+    """A live loop's body is constructed once for every item, so its ``if``
+    carries one construct-time slot.  At reduce each item decides its own
+    qualification of it (``If.branch_slot`` with the item's key,
+    ``branch_slot_here``): two items never share one decision."""
+    from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
+    from sugar_lift_py_tests.sugar.evaluation_ref_sugar import branch_slot_here
+    from sugar_source_tree.nodes import If
+
+    source = (
+        "def f(items, c):\n"
+        "    total = 0\n"
+        "    for item in items:\n"
+        "        if c > 0:\n"
+        "            x = 1\n"
+        "        total = total + x\n"
+        "    return total\n"
+    )
+    path = tmp_path / "live_loop_if.py"
+    path.write_text(source, encoding="utf-8")
+    function = next(
+        SourceFile(
+            path_source(path),
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        ).functions()
+    )
+    (branch,) = [node for node in function.walk() if isinstance(node, If)]
+    slot = branch.branch_slot({})
+
+    assert branch_slot_here(slot) == slot
+    items = []
+    for index in (0, 1):
+        segment = loop_iteration_segment(_LIVE_LOOP, index)
+        with entered(segment):
+            here = branch_slot_here(slot)
+        assert here == branch.branch_slot({}, segment)
+        items.append(here)
+    assert items[0] != items[1], "two live items shared one branch decision"
+    assert all(here != slot for here in items)
+
+
+def test_a_reader_takes_the_slot_its_own_item_decided(tmp_path):
+    """A reader in an inner loop's item reads the decision the outer item
+    made; a decision made outside every item (a frame entry's module ``if``)
+    is read inside an item too; anything else is undecided there."""
+    from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
+    from sugar_lift_py_tests.sugar.evaluation_ref_sugar import branch_slot_here
+    from sugar_source_tree.binding_state import BranchResultSlot
+
+    slot = BranchResultSlot("branch-result:blake3-512:source@1:2#blake3-512:if")
+    outer = loop_iteration_segment(_LIVE_LOOP, 0)
+    inner = loop_iteration_segment("blake3-512:" + "cd" * 64, 3)
+    with entered(outer):
+        decided_outer = branch_slot_here(slot)
+        with entered(inner):
+            assert branch_slot_here(slot, {decided_outer.slot_id: True}) == (
+                decided_outer
+            )
+            assert branch_slot_here(slot, {slot.slot_id: True}) == slot
+            assert branch_slot_here(slot, {}) == branch_slot_here(slot)
+            assert branch_slot_here(slot) != decided_outer
+    other = BranchResultSlot("loop-wrote:blake3-512:post")
+    with entered(outer):
+        assert branch_slot_here(other) == other
+
+
 def test_effectful_condition_is_constructed_once_and_one_slot_drives_all_faces(
     monkeypatch,
 ) -> None:

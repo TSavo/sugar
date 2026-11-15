@@ -15,10 +15,13 @@ from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
 
 
 def _guarded_projection_faces(state: GuardedProjection):
-    """The two faces owned by this authenticated branch-result projection."""
+    """The two faces owned by this authenticated branch-result projection,
+    as the live loop item running now decides its slot (``branch_slot_here``):
+    two items' reads of one ``if``'s binding never share one partition."""
     from sugar_lift_py_tests.outcome.exit_set import partition
+    from sugar_lift_py_tests.sugar.evaluation_ref_sugar import branch_slot_here
 
-    return partition(("binding.projection", state.slot.slot_id))
+    return partition(("binding.projection", branch_slot_here(state.slot).slot_id))
 
 
 def _loop_exit_faces(state: LoopGuardedProjection):
@@ -111,8 +114,9 @@ def _decided_arm(state: GuardedProjection, ctx):
     if not isinstance(table, dict):
         return None
     from sugar_lift_py_tests.sugar.call_site_sugar import branch_result_read
+    from sugar_lift_py_tests.sugar.evaluation_ref_sugar import branch_slot_here
 
-    bound = branch_result_read(table, state.slot.slot_id)
+    bound = branch_result_read(table, branch_slot_here(state.slot, table).slot_id)
     if isinstance(bound, TrueBoolLiteralSugar):
         return state.when_true
     if isinstance(bound, FalseBoolLiteralSugar):
@@ -143,7 +147,9 @@ def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
         # live loop's write slot: ``BranchResultDecision``): the read is that
         # arm's, whole; the other arm is not taken here.
         return read_binding(decided, read_name=read_name, read_site=read_site, ctx=ctx)
-    guard = branch_result_guard(state.slot, read_site)
+    from sugar_lift_py_tests.sugar.evaluation_ref_sugar import branch_slot_here
+
+    guard = branch_result_guard(branch_slot_here(state.slot), read_site)
     true_face, false_face = _guarded_projection_faces(state)
     return (
         _read_arm(

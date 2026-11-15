@@ -81,6 +81,22 @@ class UnboundBinding:
 class BranchResultSlot:
     slot_id: str
 
+    def in_item(self, item: str | None) -> "BranchResultSlot":
+        """This ``if``'s slot as decided in one item of the live loops
+        around it: ``item`` is those items' key (the live iterations the
+        reduction is inside, ``evaluation_ref_sugar.branch_slot_here``).
+
+        A live loop's body is constructed once for every item, so an ``if``
+        in it carries one construct-time slot (``If.branch_slot``); its
+        condition runs once per item, so each item decides its own slot, as
+        each item binds its own evaluation keys (``evaluation_here``).
+        ``None`` (no live item) is the slot itself.  Only an ``if``'s slot
+        (``branch_result_slot``) is decided per item; any other slot is
+        itself."""
+        if not item or not self.slot_id.startswith("branch-result:"):
+            return self
+        return BranchResultSlot(f"{self.slot_id}@{item}")
+
 
 def branch_result_slot(test: Node, evaluation: str | None = None) -> BranchResultSlot:
     """The slot of one evaluation of the condition ``test``: its source
@@ -2216,7 +2232,9 @@ def join_binding_state(
     key only when the ``if`` is one of several evaluations of its source (an
     unrolled iteration, an exit-path copy: ``branch_result_slot``,
     ``If.branch_slot``). A live loop's body is constructed once for every
-    item, so its ``if`` keeps one slot. ``_faces_exclusive`` then proves two arms
+    item, so its ``if`` keeps one construct-time slot, and each item decides
+    and reads its own qualification of it at reduce
+    (``BranchResultSlot.in_item``, ``branch_slot_here``). ``_faces_exclusive`` then proves two arms
     exclusive from their carried faces alone and never reads their guards. So
     two arms from DIFFERENT executions that shared one slot would be declared
     mutually exclusive and collapsed into a single guarded value -- the second

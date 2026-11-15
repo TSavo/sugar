@@ -14,19 +14,26 @@ class BranchResultRefSugar(ConstructedTermSugar):
 
     def desugar(self, ctx=None):
         from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import branch_slot_here
 
+        # An ``if``'s slot is read as the live loop item running now decides
+        # it (``branch_slot_here``), never as one decision every item shares.
         table = getattr(ctx, "ground_branch_results", None)
         if isinstance(table, dict):
             from sugar_lift_py_tests.sugar.call_site_sugar import branch_result_read
 
-            bound = branch_result_read(table, self.slot.slot_id)
+            bound = branch_result_read(
+                table, branch_slot_here(self.slot, table).slot_id
+            )
             if bound is not None:
                 return ExitSet.completed(bound)
         from sugar_lift_py_tests.floor.branch_result_coordinate import (
             BranchResultCoordinate,
         )
 
-        return ExitSet.completed(BranchResultCoordinate(self.slot, self.site))
+        return ExitSet.completed(
+            BranchResultCoordinate(branch_slot_here(self.slot), self.site)
+        )
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor, str_const
