@@ -12807,6 +12807,10 @@ class ClassDef(Statement):
                     statements.append(defaults)
                 continue
             if isinstance(item, Pass):
+                # ``pass`` runs nothing and binds nothing: the body consumes
+                # it here, so it answers the roll with its block, inert, as
+                # the docstring below does.
+                item.discharge_by_substitution()
                 continue
             if (
                 index == 0
