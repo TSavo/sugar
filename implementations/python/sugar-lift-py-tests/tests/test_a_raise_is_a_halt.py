@@ -211,11 +211,30 @@ _NOT_REDUCED = (
 )
 
 
-@pytest.mark.parametrize("shape", sorted(_FIVE))
+# A truthful half Python decides and the reduction does not: ``h(g)`` hands
+# ``h`` a ``def`` as a value, and ``f()`` inside ``h`` calls it.  The floor
+# applies a lambda reached as a value (``LambdaCallable``), a class and a
+# bound method; a ``def`` reached as a value has no value that applies it, so
+# ``f()`` is the unanswered call in ``test_f``'s frame too: one completion
+# under the call's own guard beside its undetermined raise, which names no
+# exception.  It is not a completion alone, and it is pinned as what it is.
+_FIVE_UNDECIDED = {"function-passed-as-argument"}
+
+
+@pytest.mark.parametrize("shape", sorted(set(_FIVE) - _FIVE_UNDECIDED))
 def test_the_truthful_half_of_each_of_the_five_completes(shape: str) -> None:
     truthful, _lying = _FIVE_HALVES[shape]
 
     assert _faces(_function(_FIVE[shape].format(x=truthful))) == (1, ())
+
+
+@pytest.mark.parametrize("shape", sorted(_FIVE_UNDECIDED))
+def test_a_truthful_half_calling_a_def_passed_as_a_value_is_not_decided(
+    shape: str,
+) -> None:
+    truthful, _lying = _FIVE_HALVES[shape]
+
+    assert _faces(_function(_FIVE[shape].format(x=truthful))) == (1, (None,))
 
 
 # A lambda bound to a local name and called (``g = lambda: 1 // 0; g()``) is
@@ -339,7 +358,12 @@ def test_a_truthful_half_whose_helper_owes_a_call_is_open(
     assert result.prove_doc["owed"] >= 1, _FIVE_OPEN[shape]
 
 
-@pytest.mark.xfail(strict=True, reason=_NOT_REDUCED)
+# A lying half is never ``sat``, reduced or not.  Where the call is reduced
+# its raise is the test function's only arm and the assert no arm reached is
+# refuted.  Where it is not (``_NOT_REDUCED``), the call is the unanswered
+# call: it owes its ``undecided`` member (step 8), and a source that owes
+# anything is never ``sat``.  This was marked expected-red while a call that
+# was never reduced completed alone; it no longer does, so the mark is gone.
 @pytest.mark.parametrize("shape", sorted(_FIVE))
 def test_the_lying_half_of_each_of_the_five_is_not_sat(
     shape: str, tmp_path: Path
