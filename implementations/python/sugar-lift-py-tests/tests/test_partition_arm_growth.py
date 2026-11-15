@@ -65,6 +65,14 @@ def _guard(name: str):
     return atomic(name, [make_var("state")])
 
 
+# The one occurrence the partitioning arm's halt is raised at. Stated once: the
+# arm is built with it and the discriminator below must find exactly it.
+_HALT_OCCURRENCE = (
+    "implementations/python/sugar-lift-py-tests/tests/"
+    "test_partition_arm_growth.py:partitioning-arm-halt"
+)
+
+
 def _partitioning_arm(name: str):
     """An arm that produces a value on one face and halts on the other.
 
@@ -78,10 +86,7 @@ def _partitioning_arm(name: str):
             Completed(condition, f"{name}-value"),
             Halted(
                 not_(condition),
-                RaiseEffect.for_builtin(
-                    "ValueError",
-                    occurrence="implementations/python/sugar-lift-py-tests/tests/test_partition_arm_growth.py:163:0",
-                ),
+                RaiseEffect.for_builtin("ValueError", occurrence=_HALT_OCCURRENCE),
                 None,
             ),
         )
@@ -164,8 +169,7 @@ def test_the_halted_arm_survives_the_factoring():
 
     assert len(halted) == 1
     assert halted[0].effect == RaiseEffect.for_builtin(
-        "ValueError",
-        occurrence="implementations/python/sugar-lift-py-tests/tests/test_partition_arm_growth.py:83:0",
+        "ValueError", occurrence=_HALT_OCCURRENCE
     )
 
 
