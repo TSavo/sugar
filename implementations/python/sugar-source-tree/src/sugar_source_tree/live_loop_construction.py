@@ -224,14 +224,18 @@ def _carried_writes(statements, names) -> dict[str, tuple[str, ...]]:
     """The keys each write of a carried name in a live loop's body (or its
     ``else`` suite) binds the written value under, by name.
 
-    A write binds a key, never the name: ``x += e`` and a walrus their
-    evaluation, every assignment (``y = e``, ``y: T = e``, an unpack) each
-    target's projection of its evaluation, every assignment (an ``if``'s phi
-    among them) its carried write of the name (``carried_write_key``), and a
-    nested live loop the key it publishes the name under: its own post-binding
-    key of a name it carries under a binding coordinate
-    (``loop_post_binding_key``, ``coordinate_names``), or its post-loop key
-    of any other name it writes (``published_names``).
+    A write binds a key, never the name, and every node says which names it
+    writes under which keys (``Node.written_keys``): ``x += e`` and a walrus
+    their evaluation, every assignment (``y = e``, ``y: T = e``, an unpack)
+    each target's projection of its evaluation, every assignment (an
+    ``if``'s phi among them) its carried write of the name
+    (``carried_write_key``), a mutation statement that assigns a name
+    (``r += x``, ``x = x.m()``) its key of that name, and a nested live loop
+    the key it publishes the name under: its own post-binding key of a name
+    it carries under a binding coordinate (``loop_post_binding_key``,
+    ``coordinate_names``), or its post-loop key of any other name it writes
+    (``published_names``).  This reads that one answer; it names no kind of
+    write.
     A nested ``for`` whose target is a name this loop carries (``for x in
     xs: for x in ys``) writes it on every item: a live one carries that
     target itself (``construct_live_loop_recurrence``) and publishes its
@@ -251,30 +255,15 @@ def _carried_writes(statements, names) -> dict[str, tuple[str, ...]]:
     not run on the path (an untaken arm, a walrus after a ``continue``)
     left its key unbound there.
     """
-    from sugar_lift_py_tests.sugar.assigned_value import carried_write_key
-    from sugar_lift_py_tests.temporal.temporal_context import projection_key
-
     from .nodes import (
-        AnnAssign,
-        Assign,
         AsyncFunctionDef,
-        AugAssign,
         ClassDef,
-        ContainerMutationStatement,
         FunctionDef,
         Lambda,
         LoopRecurrenceStatement,
-        Name,
-        NamedExpr,
-        _target_bound_names,
     )
 
     writes: dict[str, list[str]] = {name: [] for name in names}
-
-    def write(name, key) -> None:
-        if name in writes and isinstance(key, str) and key not in writes[name]:
-            writes[name].append(key)
-
     stack = list(reversed(statements))
     seen: set[int] = set()
     while stack:
@@ -284,50 +273,13 @@ def _carried_writes(statements, names) -> dict[str, tuple[str, ...]]:
         seen.add(id(node))
         if isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef, Lambda)):
             continue
+        for name, key in node.written_keys():
+            if name in writes and isinstance(key, str) and key not in writes[name]:
+                writes[name].append(key)
         if isinstance(node, LoopRecurrenceStatement):
-            runtime = getattr(node.construction, "loop_runtime", None)
-            if runtime is not None:
-                # A name the nested loop carries under a binding coordinate,
-                # published under that loop's own key of it as it leaves.
-                for name, post_key in zip(
-                    runtime.coordinate_names,
-                    node.post_binding_keys,
-                    strict=True,
-                ):
-                    write(name, post_key)
-                # A name the nested loop publishes through its post-loop key,
-                # bound as it leaves, in the item of this loop it runs in.
-                for name, (post_key, _writes, _else_writes) in zip(
-                    runtime.published_names,
-                    runtime.published_evaluations,
-                    strict=True,
-                ):
-                    write(name, post_key)
+            # A nested live loop's writes are what it publishes as it
+            # leaves, in the item of this loop it runs in.
             continue
-        evaluation = getattr(node, "evaluation", None)
-        if isinstance(node, (AugAssign, NamedExpr)) and isinstance(node.target, Name):
-            write(node.target.id, evaluation)
-        elif isinstance(node, ContainerMutationStatement):
-            # ``x += e`` through the one mutation door: ``x`` is written to
-            # the in-place result under the statement's key.
-            rebinds = getattr(node, "rebinds", None)
-            if isinstance(rebinds, str):
-                write(rebinds, evaluation)
-        elif isinstance(node, Assign) or (
-            isinstance(node, AnnAssign)
-            and isinstance(node.target, Name)
-            and node.value is not None
-        ):
-            # ``y: T = e`` is the assignment ``y = e`` (``AnnAssign``
-            # constructs ``AssignSugar``): it writes the same keys.
-            targets = node.targets if isinstance(node, Assign) else (node.target,)
-            for target in targets:
-                for name in _target_bound_names(target):
-                    if name not in writes:
-                        continue
-                    write(name, carried_write_key(node.fragment, name))
-                    if isinstance(evaluation, str):
-                        write(name, projection_key(evaluation, name))
         stack.extend(reversed([child for _f, _i, child in node.children()]))
         halted_finally = getattr(node, "try_finalbody_halted", None)
         if isinstance(halted_finally, tuple):

@@ -615,20 +615,29 @@ def _read_of(value):
 
 
 def _statement(
-    statement, names, states, evaluated, tags, evaluation=None, rebinds=None, pairs=()
+    statement,
+    names,
+    states,
+    evaluated,
+    tags,
+    evaluation=None,
+    rebinds=None,
+    pairs=(),
+    pair_evaluation=None,
 ):
-    """The shadow statement; with ``evaluation`` it binds its call's pair
-    (``evaluated[0]``) under that key, which its projections read.  ``pairs``
-    are ``(key, index)``: a later operation's pair ``evaluated[index]`` the
+    """The shadow statement; ``evaluation`` is the statement's key, and it
+    binds its call's pair (``evaluated[0]``) under ``pair_evaluation`` (the
+    statement's key when None), which its projections read.  ``pairs`` are
+    ``(key, index)``: a later operation's pair ``evaluated[index]`` the
     statement binds under ``key`` (``d.setdefault(k, v).append(x)``: the
     append's, after the setdefault's).
 
-    ``rebinds`` is ``(name, index, key)`` for ``r += x``: the statement
-    writes ``name`` -- the in-place result ``evaluated[index]`` -- under
-    ``key``, the statement's own evaluation (``evaluation``; the pair is
-    then bound under ``pair_evaluation``): the write every later read of
-    ``name`` reads and a live loop carries
-    (``live_loop_construction._carried_writes``)."""
+    ``rebinds`` is ``(name, index, key)`` for every statement that assigns a
+    name (``r += x``, ``x = r.m()``, ``x = a.b.m()``, ``x = d.setdefault(k,
+    v).m()``): the statement writes ``name`` -- the result
+    ``evaluated[index]`` -- under ``key``, its evaluation of that name
+    (``_name_write``): the write every later read of ``name`` reads and a
+    live loop carries (``ContainerMutationStatement.written_keys``)."""
     from .backend import Children, Leaf
     from .shadow import _handle_of
 
@@ -642,12 +651,12 @@ def _statement(
             *fields,
             ("rebinds", Leaf(rebinds[0])),
             ("rebinds_index", Leaf(rebinds[1])),
-            ("evaluation", Leaf(rebinds[2])),
+            ("rebinds_evaluation", Leaf(rebinds[2])),
         )
-        if evaluation is not None:
-            fields = (*fields, ("pair_evaluation", Leaf(evaluation)))
-    elif evaluation is not None:
+    if evaluation is not None:
         fields = (*fields, ("evaluation", Leaf(evaluation)))
+    if pair_evaluation is not None and pair_evaluation != evaluation:
+        fields = (*fields, ("pair_evaluation", Leaf(pair_evaluation)))
     if pairs:
         fields = (*fields, ("pair_evaluations", Leaf(tuple(pairs))))
     if statement.kind == "Expr" and not pairs:
@@ -2291,14 +2300,14 @@ def name_mutation_statement(
     the object is rebound to the object after the call (``PathAfterCall``),
     every name that holds it to its value after the call
     (``ReceiverAfterCall``), which the value decides at reduce."""
-    from .nodes import _evaluation_ref
     from .shadow import occurrence_tags_of
 
     tags = occurrence_tags_of(statement)
     # The statement evaluates the call once and binds its pair under its own
     # key; the object after it and the call's value read that key.  ``r +=
     # x`` binds its in-place result under the statement's key, as Python
-    # binds ``r`` to it, and the pair under a key of its own.
+    # binds ``r`` to it, and the pair under a key of its own; ``x = r.m()``
+    # binds its value under ``x``'s projection of that key (``_name_write``).
     evaluation = statement._evaluation_key(scope)
     call = _container_call(
         site,
@@ -2372,24 +2381,64 @@ def name_mutation_statement(
     if target_name is not None:
         result = _projection(site, call, 1, tags, pair_key)
         names.append(target_name)
-        if rebinds_name and isinstance(evaluation, str):
-            # ``r += x`` writes ``r`` under the statement's key: every later
-            # read of ``r`` (a live loop's carried write, a function's read of
-            # a module global) reads that key.  ``r`` still denotes the object
-            # the call was made on (``of``): a container's in-place result is
-            # the container, and an immutable receiver's aliases keep their
-            # own value (``PathAfterCall``'s ``prior``).
-            evaluated.append(result)
-            rebinds = (target_name, len(evaluated) - 1, evaluation)
-            states.append(
-                _evaluation_ref(
-                    statement, statement.target.span, evaluation, name, of=after
-                )
-            )
-        else:
-            states.append(result)
+        # ``r += x`` denotes the object the call was made on (``of``): a
+        # container's in-place result is the container, and an immutable
+        # receiver's aliases keep their own value (``PathAfterCall``'s
+        # ``prior``).  ``x = r.m()`` denotes the call's value.
+        state, rebinds = _name_write(
+            statement,
+            target_name,
+            result,
+            evaluated,
+            evaluation,
+            in_place=rebinds_name,
+            of=after if rebinds_name else result,
+        )
+        states.append(state)
     return _statement(
-        statement, names, states, evaluated, tags, pair_key, rebinds=rebinds
+        statement,
+        names,
+        states,
+        evaluated,
+        tags,
+        evaluation,
+        rebinds=rebinds,
+        pair_evaluation=pair_key,
+    )
+
+
+def _name_write(statement, target_name, result, evaluated, evaluation, *, in_place, of):
+    """``(state, rebinds)``: a mutation statement's one write of the name it
+    assigns (``target_name``) to the call's ``result``.
+
+    Every statement that writes a name binds what it wrote under its
+    evaluation of that name, never the name: ``r += x`` under the
+    statement's key (``in_place``, as an ``AugAssign`` binds its
+    evaluation), ``x = r.m()`` under the target's projection of it (as an
+    ``Assign`` binds each target, ``Assign.target_evaluations``).  ``result``
+    is evaluated by the statement (``evaluated``) and bound under that key
+    once every value has completed (``ContainerMutationStatementSugar``);
+    every later read of the name reads the key (``_evaluation_ref``, ``of``
+    the object it denotes), and a live loop carries it
+    (``ContainerMutationStatement.written_keys``).  Where the statement has
+    no key, the name is the result itself and nothing is written under a
+    key."""
+    from .nodes import _evaluation_ref
+
+    if not isinstance(evaluation, str):
+        return result, None
+    if in_place:
+        key = evaluation
+    else:
+        from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+        key = projection_key(evaluation, target_name)
+    evaluated.append(result)
+    targets = getattr(statement, "targets", None)
+    target = targets[0] if targets else statement.target
+    return (
+        _evaluation_ref(statement, target.span, key, target_name, of=of),
+        (target_name, len(evaluated) - 1, key),
     )
 
 
@@ -2532,9 +2581,23 @@ def _mutation_through(
             names.append(name)
             states.append(havoc)
             evaluated.append(havoc)
+    rebinds = None
     if target_name is not None:
+        # ``x = a.b.m()``, ``x = d.setdefault(k, v).m()``: ``x`` is written
+        # to the call's value under its projection of the statement's key
+        # (``keys[0]``), as ``x = r.m()`` is.
+        result = _projection(site, path_call, 1, tags, evaluation)
         names.append(target_name)
-        states.append(_projection(site, path_call, 1, tags, evaluation))
+        state, rebinds = _name_write(
+            statement,
+            target_name,
+            result,
+            evaluated,
+            keys[0],
+            in_place=False,
+            of=result,
+        )
+        states.append(state)
     return _statement(
         statement,
         names,
@@ -2542,6 +2605,7 @@ def _mutation_through(
         evaluated,
         tags,
         keys[0],
+        rebinds=rebinds,
         pairs=tuple((key, index) for index, key in enumerate(keys) if index),
     )
 

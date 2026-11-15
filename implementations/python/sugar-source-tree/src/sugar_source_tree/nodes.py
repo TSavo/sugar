@@ -8922,6 +8922,16 @@ class Node(Typed):
             name for node in self.walk() for name in node.names_bound_here()
         )
 
+    def written_keys(self) -> tuple:
+        """``(name, key)`` for each write this node itself makes of a name:
+        the key its reduction binds the written value under, never the
+        name.  The one answer every statement gives to "which names does
+        this write, and where" -- a live loop carries every name any
+        statement in its body writes through it
+        (``live_loop_construction._carried_writes``).  A node under this
+        one answers for itself.  A node that writes no name has none."""
+        return ()
+
     def __repr__(self) -> str:  # pragma: no cover
         return f"<{self.kind} [{self.span.start},{self.span.end})>"
 
@@ -9154,6 +9164,25 @@ def _target_bound_names(target) -> Tuple[str, ...]:
     if isinstance(target, Starred):
         return _target_bound_names(target.value)
     return ()
+
+
+def _assignment_written_keys(statement, targets) -> tuple:
+    """``(name, key)`` for each name an assignment's ``targets`` bind
+    (``Node.written_keys``): its carried write (``carried_write_key``,
+    which the statement's sugar binds for a name a live loop carries, an
+    ``if``'s phi among them) and, once substituted, its projection of the
+    statement's evaluation (``projection_key``)."""
+    from sugar_lift_py_tests.sugar.assigned_value import carried_write_key
+    from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+    evaluation = getattr(statement, "evaluation", None)
+    keys = []
+    for target in targets:
+        for name in _target_bound_names(target):
+            keys.append((name, carried_write_key(statement.fragment, name)))
+            if isinstance(evaluation, str):
+                keys.append((name, projection_key(evaluation, name)))
+    return tuple(keys)
 
 
 class Keyword(Node):
@@ -14365,6 +14394,12 @@ class Assign(Statement):
             (name, projection_key(evaluation, name)) for name in self._keyed_names()
         )
 
+    def written_keys(self) -> tuple:
+        """Every name any target binds (``y = e``, an unpack, a chain),
+        under its carried write and its projection of this statement's
+        evaluation (``_assignment_written_keys``)."""
+        return _assignment_written_keys(self, self.targets)
+
     def _keyed_binding(self, binding):
         """``binding`` with each keyed Name target bound to a reference to its
         projection of this statement's evaluation, carrying the right-hand
@@ -15307,6 +15342,13 @@ class AugAssign(Statement):
     value: Expression
     _child_fields = ("target", "value")
 
+    def written_keys(self) -> tuple:
+        """``x += e`` writes ``x`` under this statement's evaluation."""
+        evaluation = getattr(self, "evaluation", None)
+        if isinstance(self.target, Name) and isinstance(evaluation, str):
+            return ((self.target.id, evaluation),)
+        return ()
+
     def substitute(self, scope):
         """`<target> OP= <value>` -- substitute the value and load-side targets.
 
@@ -15633,6 +15675,14 @@ class AnnAssign(Statement):
         from sugar_lift_py_tests.temporal.temporal_context import projection_key
 
         return ((self.target.id, projection_key(evaluation, self.target.id)),)
+
+    def written_keys(self) -> tuple:
+        """``y: T = e`` is the assignment ``y = e`` (it constructs
+        ``AssignSugar``): it writes the same keys.  A bare declaration writes
+        nothing."""
+        if self.value is None or not isinstance(self.target, Name):
+            return ()
+        return _assignment_written_keys(self, (self.target,))
 
     def substitution_binding(self, scope):
         # Only an annotated assignment WITH a value binds; a bare `x: int` is a
@@ -15989,8 +16039,8 @@ class For(Statement):
                 elif n.kind == "ContainerMutationStatement" and isinstance(
                     getattr(n, "rebinds", None), str
                 ):
-                    # ``x += e`` substituted: the one mutation door writes
-                    # ``x`` to the in-place result.
+                    # ``x += e`` or ``x = x.m()`` substituted: the one
+                    # mutation door writes ``x`` to the call's result.
                     names.add(n.rebinds)
                 elif n.kind in ("For", "AsyncFor"):
                     # A nested loop's target rebinds its names on every item:
@@ -20327,6 +20377,13 @@ class NamedExpr(Expression):
     _evaluation_exit_path = Statement._evaluation_exit_path
     _evaluation_key = Statement._evaluation_key
 
+    def written_keys(self) -> tuple:
+        """``(x := e)`` writes ``x`` under this walrus's evaluation."""
+        evaluation = getattr(self, "evaluation", None)
+        if isinstance(self.target, Name) and isinstance(evaluation, str):
+            return ((self.target.id, evaluation),)
+        return ()
+
     def substitute(self, scope):
         """`(<target> := <value>)` -- substitute the value; the target is a
         binding site, not substituted. The walrus's binding leaks to the
@@ -24662,18 +24719,29 @@ class SourceCallActualAfter(Expression):
 class ContainerMutationStatement(Statement):
     """A statement whose mutating call rebinds every alias of its receiver.
 
-    ``pair_evaluations`` (``d.setdefault(k, v).append(x)``) are ``(key,
-    index)``: a later call's pair ``evaluated[index]``, bound under ``key``.
-    ``rebinds`` (``r += x``) is the name the statement writes to the
-    in-place result ``evaluated[rebinds_index]``, under the statement's own
-    key ``evaluation`` (the pair under ``pair_evaluation``): the write every
-    later read of the name reads and a live loop carries
-    (``live_loop_construction._carried_writes``)."""
+    ``evaluation`` is the statement's key; the call's pair is bound under
+    ``pair_evaluation`` where the statement has one (``r += x``), else under
+    ``evaluation``.  ``pair_evaluations`` (``d.setdefault(k,
+    v).append(x)``) are ``(key, index)``: a later call's pair
+    ``evaluated[index]``, bound under ``key``.  ``rebinds`` (``r += x``,
+    ``x = r.m()``, any statement of the door that assigns a name) is the
+    name the statement writes to the result ``evaluated[rebinds_index]``,
+    under ``rebinds_evaluation`` (``container_mutation._name_write``): the
+    write every later read of the name reads and a live loop carries
+    (``written_keys``)."""
 
     names: Tuple[str, ...]
     states: Tuple[Expression, ...]
     evaluated: Tuple[Expression, ...]
     _child_fields = ("states", "evaluated")
+
+    def written_keys(self) -> tuple:
+        """The name the statement assigns, under its key of it."""
+        name = getattr(self, "rebinds", None)
+        key = getattr(self, "rebinds_evaluation", None)
+        if isinstance(name, str) and isinstance(key, str):
+            return ((name, key),)
+        return ()
 
     def substitute(self, scope):
         del scope
@@ -24707,14 +24775,20 @@ class ContainerMutationStatement(Statement):
             if stored is None:
                 return None
             evaluated = (stored, *(node.sugar() for node in self.evaluated[1:]))
-        evaluation = getattr(self, "evaluation", None)
+        evaluation = getattr(self, "pair_evaluation", None)
+        if not isinstance(evaluation, str):
+            evaluation = getattr(self, "evaluation", None)
         index = getattr(self, "rebinds_index", None)
+        key = getattr(self, "rebinds_evaluation", None)
         result_evaluation = None
-        if isinstance(getattr(self, "rebinds", None), str) and isinstance(index, int):
-            # ``r += x``: the statement's key holds the in-place result, the
-            # pair its own key.
-            result_evaluation = (evaluation, index) if isinstance(evaluation, str) else None
-            evaluation = getattr(self, "pair_evaluation", None)
+        if (
+            isinstance(getattr(self, "rebinds", None), str)
+            and isinstance(index, int)
+            and isinstance(key, str)
+        ):
+            # The name the statement assigns: its result, bound under the
+            # statement's key of the name once every value has completed.
+            result_evaluation = (key, index)
         # ``d.setdefault(k, v).append(x)``: the later operation's pair, bound
         # under its own key after the first's.
         pairs = getattr(self, "pair_evaluations", None)
@@ -25109,6 +25183,27 @@ class LoopRecurrenceStatement(Statement):
     post_binding_keys: tuple[str, ...]
     outward_faces: tuple[object, ...]
     _child_fields = ("loop",)
+
+    def written_keys(self) -> tuple:
+        """Each name the loop publishes as it leaves, under the key it
+        publishes it under: its own post-binding key of a name it carries
+        under a binding coordinate (``coordinate_names``), its post-loop key
+        of any other name it writes (``published_names``).  Its body is read
+        through this publication, never walked for writes."""
+        runtime = getattr(self.construction, "loop_runtime", None)
+        if runtime is None:
+            return ()
+        return (
+            *zip(runtime.coordinate_names, self.post_binding_keys, strict=True),
+            *(
+                (name, post_key)
+                for name, (post_key, _writes, _else_writes) in zip(
+                    runtime.published_names,
+                    runtime.published_evaluations,
+                    strict=True,
+                )
+            ),
+        )
 
     def substitute(self, scope):
         del scope
