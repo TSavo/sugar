@@ -223,8 +223,10 @@ def test_verified_pandas_303_not_reproducers_are_content_pinned() -> None:
 def test_corpus_not_over_an_import_member_is_the_two_faced_truth() -> None:
     """``not NA``: ``bool(NA)`` is not decided here, so it is the two faces.
 
-    ``NA`` is ``from pandas import NA``: an import member, whose operand is
-    the closed reference ``ref:pandas.NA`` (#7837).  Its runtime type is not
+    ``NA`` is ``from pandas._libs.missing import NA``: an import member, whose
+    operand is the closed reference the import names,
+    ``ref:pandas._libs.missing.NA`` (#7837) -- the module the source imports
+    it from, never a re-export nobody read.  Its runtime type is not
     decided, so its truth is the undecided member, exactly as for a bare
     symbolic local (``test_corpus_not_over_a_symbolic_local_is_the_two_faced
     _truth``): it completes only under ``python:truth.completes`` over that
@@ -248,7 +250,8 @@ def test_corpus_not_over_an_import_member_is_the_two_faced_truth() -> None:
         for node in tree.nodes()
         if isinstance(node, UnaryOp) and node.line_col_span().start_line == 48
     )
-    reference = ctor("ref:pandas.NA", [], symbol_kind="coordinate")
+    assert "from pandas._libs.missing import NA\n" in source
+    reference = ctor("ref:pandas._libs.missing.NA", [], symbol_kind="coordinate")
     outcome = node.sugar().desugar(None)
     halted = [face for face in outcome.exits if isinstance(face, Halted)]
     completed = [face for face in outcome.exits if isinstance(face, Completed)]
