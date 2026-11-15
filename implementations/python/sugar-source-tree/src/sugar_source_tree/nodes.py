@@ -17811,8 +17811,9 @@ class For(Statement):
                     )
                     if all(b is not None for b in bindings):
                         if self._body_has_owned_loop_control():
+                            abandoned: list = []
                             controlled = self._unroll_concrete_controlled(
-                                bindings, scope, unpacks
+                                bindings, scope, unpacks, abandoned
                             )
                             if controlled is not None:
                                 statements, final_bindings = controlled
@@ -17827,7 +17828,17 @@ class For(Statement):
                                 )
                             # A symbolic guard owns a jump.  It cannot be selected
                             # by concrete unrolling and must remain a real loop
-                            # below.
+                            # below.  What the abandoned unroll made answers
+                            # where it was made (``_answer_abandoned_unroll``).
+                            For._answer_abandoned_unroll(
+                                self,
+                                subst_iter,
+                                (
+                                    *hoisted,
+                                    *(u for u in unpacks if u is not None),
+                                    *abandoned,
+                                ),
+                            )
                             elements = None
                     if elements is not None and all(b is not None for b in bindings):
                         For._answer_unevaluated_body(self, elements)
@@ -18042,6 +18053,30 @@ class For(Statement):
                 _answered_where_minted(
                     getattr(self, field), suite, last_suites[field][0]
                 )
+
+    def _answer_abandoned_unroll(self, subst_iter, abandoned) -> None:
+        """Answer the roll for what an abandoned concrete unroll made.
+
+        A concrete loop whose body owns a ``break`` or ``continue`` under a
+        guard no ground value decides (``for x in [...]: if x in s:
+        break``) is not unrolled: ``_unroll_concrete_controlled`` gives up at
+        that guard and the loop stays a live loop, substituted afresh below.
+        What the attempt made first -- each item's keyed store of its item
+        (``<target> = <element>`` at the loop's span,
+        ``_iteration_unpacks``), the stores and evaluations moved before the
+        first item (``_evaluated_before_the_first_item``), the items and the
+        guard it substituted before it gave up -- is built by nothing.
+        Minting registered it, so it answers here, as a discarded round of a
+        live loop's substitution does (``_answer_discarded_rounds``,
+        ``container_mutation._answered_where_minted``).  A source node of
+        the loop, and the iterable the live loop keeps, answer where the
+        loop is built, built or refused (``style_render.py:2534``,
+        ``tests/indexes/test_common.py:61``, #7757)."""
+        from .container_mutation import _answered_where_minted
+
+        _answered_where_minted(
+            (self.target, subst_iter, *self.body, *self.orelse), abandoned
+        )
 
     def _header_scope(self, scope, subst_iter):
         """The state after the loop's header, ``subst_iter`` (the iterable
@@ -18413,13 +18448,14 @@ class For(Statement):
         )
         return evaluated, unpacked
 
-    def _unroll_concrete_controlled(self, bindings, scope, unpacks=None):
+    def _unroll_concrete_controlled(self, bindings, scope, unpacks=None, minted=None):
         """Exact AST-local execution of bounded jump-bearing loop structure.
 
         Only literal-decidable branch guards are selected.  A symbolic guard
         returns ``None`` so the source loop remains typed and loud/opaque.
         ``unpacks`` (``_iteration_unpacks``) opens each iteration with its
-        keyed binding of its item.
+        keyed binding of its item.  Where it gives up, what it made before
+        is put on ``minted`` (``_answer_abandoned_unroll``).
         """
         unrolled = []
         carried = dict(scope)
@@ -18430,8 +18466,10 @@ class For(Statement):
             iteration = _iteration_scope(
                 self, index, {**carried, **element_bindings}, scope
             )
-            reduced = self._substitute_controlled_suite(self.body, iteration)
+            reduced = self._substitute_controlled_suite(self.body, iteration, minted)
             if reduced is None:
+                if minted is not None:
+                    minted.extend(unrolled)
                 return None
             statements, iteration, action = reduced
             if unpacks is not None and unpacks[index] is not None:
@@ -18465,9 +18503,18 @@ class For(Statement):
             unrolled.extend(else_body)
         return tuple(unrolled), final_target_bindings
 
-    def _substitute_controlled_suite(self, statements, scope):
+    def _substitute_controlled_suite(self, statements, scope, minted=None):
         produced = []
         current = dict(scope)
+
+        def abandoned(*made):
+            # Giving up: what this suite substituted so far, and ``made``,
+            # go on ``minted`` (``_unroll_concrete_controlled``).
+            if minted is not None:
+                minted.extend(produced)
+                minted.extend(made)
+            return None
+
         for statement in statements:
             if (
                 statement.kind == "Try"
@@ -18488,10 +18535,10 @@ class For(Statement):
                 # TrySugar router below rather than being linearized here.
                 incoming_action = statement.body[0].kind.lower()
                 cleanup = For._substitute_controlled_suite(
-                    self, statement.finalbody, current
+                    self, statement.finalbody, current, minted
                 )
                 if cleanup is None:
-                    return None
+                    return abandoned()
                 cleanup_statements, current, cleanup_action = cleanup
                 produced.extend(cleanup_statements)
                 return produced, current, cleanup_action or incoming_action
@@ -18508,11 +18555,11 @@ class For(Statement):
                 test, _changed = statement._substitute_field(statement.test, current)
                 verdict = While._ground_truth(self, test)
                 if verdict is None:
-                    return None
+                    return abandoned(test)
                 branch = statement.body if verdict else statement.orelse
-                nested = For._substitute_controlled_suite(self, branch, current)
+                nested = For._substitute_controlled_suite(self, branch, current, minted)
                 if nested is None:
-                    return None
+                    return abandoned(test)
                 branch_statements, current, action = nested
                 produced.extend(branch_statements)
                 if action is not None:
