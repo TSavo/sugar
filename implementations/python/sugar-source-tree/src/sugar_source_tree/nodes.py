@@ -9029,6 +9029,14 @@ class Node(Typed):
                 # already testified through the reporter) instead of a present
                 # answer whose testimony silently failed to exist.
                 testify(self.reporter, "present_construction", self, result)
+                # A node that binds names through a target constructs nothing
+                # of the target: the binding spells it.  Each binding spelling
+                # answers the roll here, where its binder constructed, by the
+                # one discharge of a node a construction absorbs without
+                # constructing it (``discharge_by_substitution``).  Never
+                # where the binder refused: that refusal explains it.
+                for spelling in self.binding_spellings():
+                    spelling.discharge_by_substitution()
             except (SourceTreePanic, ConstructionPanic) as panic:
                 # A refusal by name is the ABSENT answer of the node whose
                 # construction raised it, and the roll hears every absent
@@ -9302,6 +9310,20 @@ class Node(Typed):
                 names.extend(_target_bound_names(target))
         return tuple(names)
 
+    def binding_spellings(self) -> Tuple["Node", ...]:
+        """The nodes this node binds names through and constructs nothing of:
+        each ``Name`` of its target fields (``_bound_target_fields``) and the
+        ``Tuple``/``List``/``Starred`` pattern around those names -- the same
+        shapes ``_target_bound_names`` reads a name out of.  An attribute or
+        subscript target binds no name: it is a store, not a spelling.  Every
+        other node binds through no target and has none."""
+        spellings: list = []
+        for field_name in type(self)._bound_target_fields:
+            value = getattr(self, field_name)
+            for target in value if isinstance(value, tuple) else (value,):
+                _collect_binding_spellings(target, spellings)
+        return tuple(spellings)
+
     def names_bound_within(self) -> frozenset:
         """Every name this node or any node under it binds, in any scope."""
         return frozenset(
@@ -9550,6 +9572,23 @@ def _target_bound_names(target) -> Tuple[str, ...]:
     if isinstance(target, Starred):
         return _target_bound_names(target.value)
     return ()
+
+
+def _collect_binding_spellings(target, spellings: list) -> None:
+    """Append to ``spellings`` the nodes of a binding target that spell the
+    names it binds (``Node.binding_spellings``): a Name, and a
+    Tuple/List/Starred with the spellings under it, in the shapes
+    ``_target_bound_names`` reads.  An attribute or subscript target, or no
+    target, spells nothing."""
+    if isinstance(target, Name):
+        spellings.append(target)
+    elif isinstance(target, (Tuple_, List)):
+        spellings.append(target)
+        for element in target.elts:
+            _collect_binding_spellings(element, spellings)
+    elif isinstance(target, Starred):
+        spellings.append(target)
+        _collect_binding_spellings(target.value, spellings)
 
 
 def _assignment_written_keys(statement, targets) -> tuple:
@@ -11869,6 +11908,11 @@ class ClassDef(Statement):
 
     def post_binding_statement(self, binding):
         return _decorated_statement_binding(self, binding)
+
+    def binding_spellings(self) -> Tuple["Node", ...]:
+        """The class statement binds its name through the parser-owned name
+        occurrence (``binding_target``) and constructs nothing of it."""
+        return (self.binding_target,)
 
     def __post_init__(self):
         # A NODE OFF THE ROLL. `Node.__post_init__` is where registration
