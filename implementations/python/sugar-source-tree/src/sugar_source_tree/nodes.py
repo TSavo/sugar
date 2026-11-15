@@ -6740,6 +6740,44 @@ def _evaluation_ref(
     )
 
 
+def _annotations_postponed(unit) -> bool:
+    """Whether the module ``unit`` postpones its annotations (``from
+    __future__ import annotations``, PEP 563): no annotation in it is
+    evaluated where it stands."""
+    return any(
+        isinstance(statement, ImportFrom)
+        and statement.module == "__future__"
+        and any(alias.name == "annotations" for alias in statement.names)
+        for statement in unit.typed_module.body
+    )
+
+
+def _postponed_annotations(definition) -> Tuple["Node", ...]:
+    """The annotations of the ``def`` ``definition`` that Python does not
+    evaluate when its statement runs (``Node.unevaluated_parts``): every
+    parameter annotation and the return annotation in a module that
+    postpones its annotations (``_annotations_postponed``), and a string
+    annotation anywhere.  An annotation Python evaluates where the statement
+    runs is none of them: the statement builds it, or it stays on the roll."""
+    annotations = tuple(
+        annotation
+        for annotation in (
+            *(param.annotation for param in definition.params),
+            definition.returns,
+        )
+        if annotation is not None
+    )
+    if not annotations:
+        return ()
+    if _annotations_postponed(definition.unit):
+        return annotations
+    return tuple(
+        annotation
+        for annotation in annotations
+        if isinstance(annotation, Constant) and isinstance(annotation.value, str)
+    )
+
+
 def _discharge_binding_references(statement, binding) -> None:
     """Answer the roll for each evaluation reference ``statement`` bound a
     name to that is no node of the statement (``Assign.target_evaluations``:
@@ -8510,11 +8548,18 @@ class Node(Typed):
         name it binds through, where this node answered present: a part
         constructs nothing of its own (``_structural_part``).  What a part
         holds that Python evaluates is an ordinary node and answers for
-        itself, built or refused; this never answers for it."""
+        itself, built or refused; this never answers for it.
+
+        Every node of each expression this node holds that Python does not
+        evaluate when it runs (``unevaluated_parts``: a postponed
+        annotation) answers with it the same way, for that reason."""
         for part in self.structural_parts():
             part.discharge_by_substitution()
             for spelling in part.binding_spellings():
                 spelling.discharge_by_substitution()
+        for part in self.unevaluated_parts():
+            for node in part.walk():
+                node.discharge_by_substitution()
 
     def _substitute_children(self, scope: BindingMap) -> "Node":
         """The structural recurse a NON-binding compound opts into: substitute
@@ -9426,6 +9471,13 @@ class Node(Typed):
                     parts.append(child)
         return tuple(parts)
 
+    def unevaluated_parts(self) -> Tuple["Node", ...]:
+        """The expressions this node holds that Python does not evaluate when
+        the node runs: a ``def``'s annotations where they are postponed
+        (``_postponed_annotations``).  Each answers the roll, every node of
+        it, where this node answers present.  Every other node has none."""
+        return ()
+
     def names_bound_within(self) -> frozenset:
         """Every name this node or any node under it binds, in any scope."""
         return frozenset(
@@ -10113,6 +10165,9 @@ class FunctionDef(Statement):
 
     def post_binding_statement(self, binding):
         return _decorated_statement_binding(self, binding)
+
+    def unevaluated_parts(self) -> Tuple["Node", ...]:
+        return _postponed_annotations(self)
 
     @property
     def args(self):
@@ -11898,6 +11953,9 @@ class AsyncFunctionDef(Statement):
 
     def post_binding_statement(self, binding):
         return _decorated_statement_binding(self, binding)
+
+    def unevaluated_parts(self) -> Tuple["Node", ...]:
+        return _postponed_annotations(self)
 
     @property
     def args(self):
@@ -16589,12 +16647,7 @@ class AnnAssign(Statement):
         unit = self.unit
         if unit.scope_holding(self.line_col_span()) is not None:
             return False
-        return not any(
-            isinstance(statement, ImportFrom)
-            and statement.module == "__future__"
-            and any(alias.name == "annotations" for alias in statement.names)
-            for statement in unit.typed_module.body
-        )
+        return not _annotations_postponed(unit)
 
     def substitution_binding(self, scope):
         # Only an annotated assignment WITH a value binds; a bare `x: int` is a
