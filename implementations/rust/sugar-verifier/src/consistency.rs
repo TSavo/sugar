@@ -3127,6 +3127,10 @@ pub enum DroppedAmbientPostReason {
 pub struct DroppedAmbientPost {
     pub source_symbol: String,
     pub target_cid: String,
+    /// The joined `undecided` member whose answer was dropped; empty when the
+    /// claim's call term does not decode to a site, so no member is known.
+    /// That member stays owed (`joined_member_cids`).
+    pub member_cid: String,
     pub reason: DroppedAmbientPostReason,
     /// Compact spelling of the specialized (or attempted) post for diagnostics.
     pub spelling: String,
@@ -3159,26 +3163,52 @@ impl DroppedAmbientPostReason {
     }
 }
 
-/// A row whose claim reads a call that a contract answered wrongly is refused
-/// by name (step 9). The vendor's answer never reaches the solve, and the row
-/// is never green on what remains.
-fn refuse_wrong_answers(result: &mut ConsistencyResult) {
+/// A row whose claim reads a call whose joined answer was dropped is never
+/// green on what remains (step 9).
+///
+/// - A contract answered the call wrongly: the row is refused by name, and
+///   the vendor's answer never reaches the solve.
+/// - The answer was dropped for any other reason (open after
+///   specialization, a call term that does not decode): the call is not
+///   answered. The remainder was solved without the post, and a conjunct
+///   left out can only turn a contradiction into a satisfiable formula, so a
+///   satisfiable (`discharged`) remainder says nothing about the claim: the
+///   row is `undecidable`, the drop named. A contradictory remainder stays
+///   refuted, since the full conjunction is contradictory too.
+fn refuse_dropped_answers(result: &mut ConsistencyResult) {
     let wrong: Vec<String> = result
         .dropped_ambient_posts
         .iter()
         .filter(|d| d.reason.is_wrong_answer())
         .map(|d| format!("{} for {}", d.reason.label(), d.source_symbol))
         .collect();
-    if wrong.is_empty() {
+    if !wrong.is_empty() {
+        result.verdict = ObligationVerdict::Refused;
+        result.reason = format!(
+            "join refused: a contract answers the call wrongly ({})",
+            wrong.join(", ")
+        );
+        result.effect = None;
+        result.verification = None;
         return;
     }
-    result.verdict = ObligationVerdict::Refused;
+    if result.dropped_ambient_posts.is_empty() || result.verdict != ObligationVerdict::Discharged {
+        return;
+    }
+    let dropped: Vec<String> = result
+        .dropped_ambient_posts
+        .iter()
+        .map(|d| format!("{} for {}", d.reason.label(), d.source_symbol))
+        .collect();
+    result.verdict = ObligationVerdict::Undecidable;
     result.reason = format!(
-        "join refused: a contract answers the call wrongly ({})",
-        wrong.join(", ")
+        "owed: a joined answer was dropped, so the call is unanswered and the row is not decided on what remains ({})",
+        dropped.join(", ")
     );
     result.effect = None;
-    result.verification = None;
+    if let Some(VerificationDetail::Solver { final_verdict, .. }) = result.verification.as_mut() {
+        *final_verdict = ObligationVerdict::Undecidable.as_str().to_string();
+    }
 }
 
 /// Partition of ambient-post specialization (#4148 type fence).
@@ -3427,12 +3457,40 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
 }
 
 /// The `undecided` members the join answers: a vendor contract states a post
-/// for the call, rightly. They are no longer owed; their call's row carries
-/// the verdict. A member answered wrongly stays owed, and its row is refused.
+/// for the call, rightly, and every claim that reads the call conjoins it.
+/// They are no longer owed; their call's row carries the verdict. A member
+/// answered wrongly stays owed, and its row is refused. A member whose post a
+/// claim dropped (open after specialization, a call term that does not
+/// decode) is not answered either: it stays owed, and that claim's row is
+/// not decided on what remains (`refuse_dropped_answers`).
 pub(crate) fn joined_member_cids(pool: &MementoPool) -> std::collections::BTreeSet<String> {
-    collect_ambient_posts(pool)
+    let ambient = collect_ambient_posts(pool);
+    if ambient.is_empty() {
+        return std::collections::BTreeSet::new();
+    }
+    let mut dropped: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for (_cid, member) in pool.contract_members() {
+        let Some(body) = pool
+            .contract_body_for_member(member)
+            .filter(|v| v.is_object())
+        else {
+            continue;
+        };
+        if !is_consistency_candidate(&body) {
+            continue;
+        }
+        let claim = canonicalize_formula_json(&axiom_context_formula(&body));
+        dropped.extend(
+            linked_ambient_post_instances_for_inv(&claim, &ambient)
+                .dropped
+                .into_iter()
+                .map(|post| post.member_cid)
+                .filter(|cid| !cid.is_empty()),
+        );
+    }
+    ambient
         .into_iter()
-        .filter(|post| post.refusal.is_none())
+        .filter(|post| post.refusal.is_none() && !dropped.contains(&post.member_cid))
         .map(|post| post.member_cid)
         .collect()
 }
@@ -3741,6 +3799,7 @@ fn linked_ambient_post_instances_for_inv(
             dropped.push(DroppedAmbientPost {
                 source_symbol: "<unknown-call>".to_string(),
                 target_cid: String::new(),
+                member_cid: String::new(),
                 reason: DroppedAmbientPostReason::CallTermDecodeFailed,
                 spelling: compact_json(result_term),
             });
@@ -3751,6 +3810,7 @@ fn linked_ambient_post_instances_for_inv(
                 dropped.push(DroppedAmbientPost {
                     source_symbol: post.binding.source_symbol.clone(),
                     target_cid: post.binding.target_cid.clone(),
+                    member_cid: post.member_cid.clone(),
                     reason: reason.clone(),
                     spelling: compact_json(result_term),
                 });
@@ -3760,6 +3820,7 @@ fn linked_ambient_post_instances_for_inv(
                 dropped.push(DroppedAmbientPost {
                     source_symbol: post.binding.source_symbol.clone(),
                     target_cid: post.binding.target_cid.clone(),
+                    member_cid: post.member_cid.clone(),
                     reason: DroppedAmbientPostReason::CallTermDecodeFailed,
                     spelling: compact_json(call),
                 });
@@ -3769,6 +3830,7 @@ fn linked_ambient_post_instances_for_inv(
                 dropped.push(DroppedAmbientPost {
                     source_symbol: post.binding.source_symbol.clone(),
                     target_cid: post.binding.target_cid.clone(),
+                    member_cid: post.member_cid.clone(),
                     reason: DroppedAmbientPostReason::ImportSignatureMismatch,
                     spelling: compact_json(call),
                 });
@@ -3812,6 +3874,7 @@ fn linked_ambient_post_instances_for_inv(
                 dropped.push(DroppedAmbientPost {
                     source_symbol: post.binding.source_symbol.clone(),
                     target_cid: post.binding.target_cid.clone(),
+                    member_cid: post.member_cid.clone(),
                     reason: DroppedAmbientPostReason::OpenAfterSpecialization,
                     spelling: compact_json(&instance),
                 });
@@ -4892,7 +4955,7 @@ fn process_consistency_group(
                 );
             }
             result.dropped_ambient_posts = dropped_ambient_posts;
-            refuse_wrong_answers(&mut result);
+            refuse_dropped_answers(&mut result);
             out.push(result);
         } else {
             for candidate in &inv_candidates {
@@ -4955,7 +5018,7 @@ fn process_consistency_group(
                     attach_conjoined_facts(&mut result, &original_inv, &vendor_facts, &sworn);
                 }
                 result.dropped_ambient_posts = dropped_ambient_posts;
-                refuse_wrong_answers(&mut result);
+                refuse_dropped_answers(&mut result);
                 if !suppress_standalone_support_vacuity(
                     property_name,
                     candidate,
@@ -9733,7 +9796,7 @@ mod tests {
             &test_compilers(),
         );
         result.dropped_ambient_posts = partition.dropped;
-        refuse_wrong_answers(&mut result);
+        refuse_dropped_answers(&mut result);
         result
     }
 
@@ -9895,6 +9958,140 @@ mod tests {
             result.reason.contains("import-signature-mismatch"),
             "{}",
             result.reason
+        );
+    }
+
+    // ── Step 9: a dropped answer leaves the call unanswered ─────────────
+    // vendor post `out = x and out = unbound`: `unbound` is neither a formal
+    // nor the out binding, so the specialized post is open and dropped. The
+    // claim `ident(3) == r and ident(3) != 5` alone is satisfiable for every
+    // `r`: solved without the post, the lying `r = 4` read discharged.
+
+    fn ident_post_left_open() -> Json {
+        IrFormula::And(vec![
+            eqf(var("out"), var("x")),
+            eqf(var("out"), var("unbound")),
+        ])
+        .to_value()
+    }
+
+    fn ident_claim_with_sibling(rhs: i64, other: i64, site_cid: &str) -> Json {
+        let call = json!({"kind": "ctor", "name": "call:ident", "args": [int(3)]});
+        IrFormula::And(vec![
+            ident_claim(rhs, site_cid),
+            IrFormula::Not(eqf(call_result(call, site_cid), int(other))).to_value(),
+        ])
+        .to_value()
+    }
+
+    #[test]
+    fn a_dropped_answer_never_discharges_the_row_on_what_remains() {
+        let mut open = ident_vendor_post();
+        open.post = ident_post_left_open();
+        // Truthful and lying alike: the call is unanswered, so neither is
+        // decided on the remainder, and the row names the drop.
+        for rhs in [3, 4] {
+            let claim = ident_claim_with_sibling(rhs, 5, JOIN_SITE);
+            let result = prove_joined(claim, &[open.clone()]);
+            assert_eq!(
+                result.verdict,
+                ObligationVerdict::Undecidable,
+                "ident(3) == {rhs} with the answer dropped is not decided: {}",
+                result.reason
+            );
+            assert!(
+                result
+                    .reason
+                    .contains("open-after-specialization for python:idn.ident"),
+                "{}",
+                result.reason
+            );
+        }
+        // A remainder that is already contradictory stays refuted: the full
+        // conjunction is contradictory too.
+        let contradictory = prove_joined(
+            IrFormula::And(vec![
+                ident_claim(4, JOIN_SITE),
+                ident_claim(5, JOIN_SITE),
+            ])
+            .to_value(),
+            &[open],
+        );
+        assert_eq!(
+            contradictory.verdict,
+            ObligationVerdict::Unsatisfied,
+            "{}",
+            contradictory.reason
+        );
+        // The same pair with the answer conjoined is decided both ways.
+        let claim = ident_claim_with_sibling(3, 5, JOIN_SITE);
+        let truthful = prove_joined(claim, &[ident_vendor_post()]);
+        assert_eq!(
+            truthful.verdict,
+            ObligationVerdict::Discharged,
+            "{}",
+            truthful.reason
+        );
+        let claim = ident_claim_with_sibling(4, 5, JOIN_SITE);
+        let lying = prove_joined(claim, &[ident_vendor_post()]);
+        assert_eq!(lying.verdict, ObligationVerdict::Unsatisfied, "{}", lying.reason);
+    }
+
+    /// A consumer whose claim reads `ident(3)` at a call member's site, and a
+    /// vendor contract answering `python:idn.ident` with `post`. Returns the
+    /// pool and the call member's CID.
+    fn ident_join_pool(post: Json) -> (MementoPool, String) {
+        let site = answered_site(4, 12);
+        let site_cid = undecided_site_coordinate_cid(&site);
+        let mut pool = MementoPool::default();
+        let member = insert_unanswered(&mut pool, Some("python:idn.ident"), site);
+        insert_contract(
+            &mut pool,
+            "blake3-512:ident-consumer",
+            "test_ident",
+            ident_claim_with_sibling(3, 5, &site_cid),
+        );
+        let contract_cid = blake3_512_of(b"ident-vendor-contract");
+        pool.insert_unanchored_for_tests(
+            test_cid(&contract_cid),
+            json!({
+                "evidence": {
+                    "kind": "contract",
+                    "body": {
+                        "contractName": "ident",
+                        "formals": ["x"],
+                        "outBinding": "out",
+                        "post": post
+                    }
+                }
+            }),
+        );
+        pool.insert_unanchored_for_tests(
+            test_cid(&blake3_512_of(b"ident-vendor-bridge")),
+            json!({
+                "evidence": {
+                    "kind": "bridge",
+                    "body": {
+                        "sourceSymbol": "python:idn.ident",
+                        "targetContractCid": contract_cid
+                    }
+                }
+            }),
+        );
+        (pool, member)
+    }
+
+    #[test]
+    fn a_member_whose_joined_answer_was_dropped_stays_owed() {
+        let (pool, member) = ident_join_pool(eqf(var("out"), var("x")));
+        assert!(
+            joined_member_cids(&pool).contains(&member),
+            "a conjoined answer answers the call"
+        );
+        let (pool, member) = ident_join_pool(ident_post_left_open());
+        assert!(
+            !joined_member_cids(&pool).contains(&member),
+            "an answer dropped as open after specialization never answers the call"
         );
     }
 
