@@ -51,6 +51,20 @@ def test_two_objects_keep_the_callers_currency():
     assert one is three and two is three
 
 
+def test_a_call_joined_at_prove_asks_the_alias_rule_s_own_test():
+    """``definition_edge_call`` joins no contract to a call that binds one
+    object to two formals: the same test as ``as_bound_formals``."""
+    from sugar_lift_py_tests.floor.object_identity import actuals_share_an_object
+
+    xs = ListValue((TermValue(1),), allocation="xs-site")
+    ys = ListValue((), allocation="ys-site")
+    assert actuals_share_an_object((xs, xs))
+    assert actuals_share_an_object((xs, TupleValue((xs,))))
+    assert not actuals_share_an_object((xs, ys))
+    assert not actuals_share_an_object((TermValue(3), TermValue(3)))
+    assert not actuals_share_an_object((xs,))
+
+
 def test_a_formal_binding_states_its_kind_by_its_type():
     from sugar_lift_py_tests.temporal.temporal_binding import (
         FormalActualBinding,

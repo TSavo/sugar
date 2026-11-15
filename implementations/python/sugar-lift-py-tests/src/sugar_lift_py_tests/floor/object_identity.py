@@ -468,16 +468,32 @@ def as_bound_formals(actuals, arrivals) -> tuple:
     actuals = tuple(actuals)
     if len(actuals) != len(arrivals):
         return actuals
+    return tuple(
+        arrived_as(actual, arrival) if shared else actual
+        for actual, arrival, shared in zip(actuals, arrivals, _shared(actuals))
+    )
+
+
+def actuals_share_an_object(actuals) -> bool:
+    """Whether another of ``actuals`` may be, or hold, one of the current
+    mutable objects some actual is or holds (``f(xs, xs)``, ``f(xs, [xs])``,
+    ``o.m(o.items)``): the alias rule's own test (``as_bound_formals``), for
+    a call joined at prove (``lambda_callable.definition_edge_call``)."""
+    return any(_shared(tuple(actuals)))
+
+
+def _shared(actuals) -> tuple:
+    """For each of ``actuals``, whether another of them may be, or hold, one
+    of the current mutable objects it is or holds (``_current_objects``)."""
     reached = tuple(_current_objects(actual) for actual in actuals)
-    bound = []
-    for index, (actual, arrival) in enumerate(zip(actuals, arrivals)):
-        shared = any(
+    return tuple(
+        any(
             not reached[index].isdisjoint(other)
             for position, other in enumerate(reached)
             if position != index
         )
-        bound.append(arrived_as(actual, arrival) if shared else actual)
-    return tuple(bound)
+        for index in range(len(reached))
+    )
 
 
 def _current_objects(value, depth=0) -> frozenset:
