@@ -5,7 +5,7 @@ from __future__ import annotations
 from frame_fresh import fresh
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor import CallSiteValue, ListValue, ReturnValue, TermValue
+from sugar_lift_py_tests.floor import CallSiteValue, ListValue, TermValue
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
@@ -45,19 +45,23 @@ def _call_outcome(call: str):
 
 
 def _returned(outcome) -> TermValue:
+    """The value the call's body returned.
+
+    The completed call presents its ``CallSiteValue`` beneath whatever writes
+    it carries to its caller (``peel_walrus_binds``: the list the body stored
+    into is the caller's), and that call digs to the floor its body returned
+    (``_dig_floor_or_none``): the returned value itself, not a block."""
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+
     assert isinstance(outcome, ExitSet)
     assert len(outcome.exits) == 1
     face = outcome.exits[0]
     assert isinstance(face, Completed)
-    value = face.value
-    if isinstance(value, CallSiteValue):
-        value = value._dig_floor_or_none(None, owner="test_try_native_store_carrier")
-    returns = tuple(
-        entry for entry in value.statements if isinstance(entry, ReturnValue)
-    )
-    assert len(returns) == 1
-    assert isinstance(returns[0].value, TermValue)
-    return returns[0].value
+    _binds, call = peel_walrus_binds(face.value)
+    assert isinstance(call, CallSiteValue), call
+    returned = call._dig_floor_or_none(None, owner="test_try_native_store_carrier")
+    assert isinstance(returned, TermValue), returned
+    return returned
 
 
 def test_try_body_retains_formal_store_as_one_deferred_carrier() -> None:
