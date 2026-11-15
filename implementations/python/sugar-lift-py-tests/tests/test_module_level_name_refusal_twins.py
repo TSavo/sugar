@@ -1,23 +1,24 @@
-"""Twins for #7785: a function that reads a module-level name is owed, by name.
+"""Twins: a function that reads a module-level name bound to a ground literal.
 
-Plan row 7, steps 5 to 8. A function names ``LIMIT``, a module-level name: in
-a claim (A, C), in its own return term (B, C's ``f``), or in the claim of one
-function of several (D). The name is outside the scope the function's contract
-declares (formals plus ``out``), so the scope law refuses that function, by
-name, and every other function in the file mints. The proof carries one
-``undecided`` member per refused function (symbol, site, reason); prove reads
-the member from the ``.proof`` alone, reports it ``undecidable`` with reason
-``owed: <owner>: <observed>``, counts ``owed``, and is never green while it
-owes anything.
+These were the #7785 twins: a function naming ``LIMIT`` was refused by the
+scope law, by name ("illegal free var(s): LIMIT"). That refusal is gone.
+Item 7 of #7757 reads a module global through its key (#7945, #7956, #7971),
+and a function reduced on its own binds its module-final keys at frame entry
+where the final write assigned a ground immutable literal (#8018, #8024). So
+``LIMIT = 10`` is read as ``10`` in ``f``, in ``test_f`` and in ``test_reads``,
+and every claim below reaches the solver. Python's answer is the solver's:
+each truthful claim holds, each lying claim does not.
 
-What a function sees of a module-level name is NOT decided here (the owner's
-choice 2 on #7661 row 7). So a source whose claims belong to a refused
-function reads ``open``, for the truthful and the lying half alike: never
-``sat``, never ``unsat``.
-
-Before this change (main, 7c129bef9) every shape failed at mint: the scope
-law's panic killed the kit in the import round's preliminary fold
-("fold claim tree failed: tree enumeration failed").
+What a proof still owes here is not the name. ``f`` reduced as its own proof
+has no caller, so its operation on its formal ``x`` (``x + 1``, ``x + LIMIT``,
+``x + 10``) is the two-faced arm for an absent actual, owing one ``undecided``
+member (reason ``unanswered``, symbol ``None``) at the operation's site
+(#8176). #8176 named that verdict change as waiting on the owner's word (the
+alternative: a function's own operation on its formal is parametric and owes
+nothing). These twins do not decide it: the only member a source may owe is
+that one, at ``f``'s operation, and the truthful file verdict is read off it
+(``open`` while it is owed, ``sat`` when nothing is). A source with anything
+owed is never ``sat``; a lying claim is ``unsat`` either way.
 
 Each twin goes through ``run_source_through_real_solver``: real ``sugar mint``
 then real ``sugar prove``.
@@ -34,26 +35,31 @@ from sugar_lift_py_tests.witness_harness import (
     run_source_through_real_solver,
 )
 
-_OWED = "illegal free var(s): LIMIT"
+_DELETED_REFUSAL = b"illegal free var"
 
+# program -> (source, the functions whose claims the solver decides, the line
+# of f's one operation on its formal)
 _PROGRAMS = {
-    # A. the name is an actual in the claim; f itself is in scope.
+    # A. the name is an actual in the claim.
     "A": (
         "LIMIT = 10\n\n\ndef f(x):\n    return x + 1\n\n\n"
         "def test_f():\n    assert f(LIMIT) == {claim}\n",
         {"test_f"},
+        5,
     ),
-    # B. the name is in the callee's return term: f emits nothing else.
+    # B. the name is in the callee's return term.
     "B": (
         "LIMIT = 10\n\n\ndef f(x):\n    return x + LIMIT\n\n\n"
         "def test_f():\n    assert f(1) == {claim}\n",
-        {"f", "test_f"},
+        {"test_f"},
+        5,
     ),
     # C. as B, and the name is in the claim too.
     "C": (
         "LIMIT = 10\n\n\ndef f(x):\n    return x + LIMIT\n\n\n"
         "def test_f():\n    assert f(1) == {limit_claim}\n",
-        {"f", "test_f"},
+        {"test_f"},
+        5,
     ),
 }
 _HALVES = {
@@ -64,35 +70,28 @@ _HALVES = {
 _CONTROL = (
     "def f(x):\n    return x + 10\n\n\ndef test_f():\n    assert f(1) == {claim}\n"
 )
+_CONTROL_OPERATION_LINE = 2
 
 _MIXED = (
     "LIMIT = 10\n\n\ndef f(x):\n    return x + 10\n\n\n"
     "def test_plain():\n    assert f(1) == {claim}\n\n\n"
     "def test_reads():\n    assert LIMIT == 10\n"
 )
+_MIXED_OPERATION_LINE = 5
 
 
-def _function(symbol: str | None) -> str:
-    """``python:<module>.<name>`` -> ``<name>``."""
-    return str(symbol).rsplit(".", 1)[-1]
+def _members(lift_doc: dict) -> list[dict]:
+    """Every ``undecided`` row, as the kit sent it to mint."""
+    return [row for row in lift_doc["ir"] if row.get("kind") == "undecided"]
 
 
-def _members(lift_doc: dict) -> dict[str, dict]:
-    """Refused function -> its ``undecided`` row, as the kit sent it to mint."""
-    return {
-        _function(row.get("symbol")): row
-        for row in lift_doc["ir"]
-        if row.get("kind") == "undecided"
-    }
-
-
-def _owed_rows(prove_doc: dict) -> dict[str, dict]:
-    """Owed function -> its prove row, read off the ``.proof`` by prove."""
-    return {
-        _function(row["property"].removeprefix("undecided:")): row
+def _owed_rows(prove_doc: dict) -> list[dict]:
+    """Every prove row read off an ``undecided`` member of the ``.proof``."""
+    return [
+        row
         for row in prove_doc.get("rows") or []
         if str(row.get("property") or "").startswith("undecided:")
-    }
+    ]
 
 
 def _claim(prove_doc: dict, function: str) -> str | None:
@@ -111,60 +110,94 @@ def _claim(prove_doc: dict, function: str) -> str | None:
     return "open"
 
 
-def _assert_owed(project: Path, result, refused: set[str]) -> None:
+def _assert_read_not_refused(
+    project: Path, result, decided: set[str], half: str, operation_line: int
+) -> list[dict]:
+    """No function is refused for the name; every claim is decided by Python.
+
+    The only member a source may owe is ``f``'s own operation on its formal
+    (#8176): one ``unanswered`` row, symbol ``None``, at that line.
+    """
     members = _members(result.lift_doc)
-    assert set(members) == refused, members
-    for name, member in members.items():
-        assert member["reason"]["refused"]["observed"].endswith(_OWED), member
+    assert len(members) <= 1, members
+    for member in members:
+        assert member["reason"] == {"unanswered": {}}, member
+        assert member["symbol"] is None, member
         assert member["site"]["file"], member
+        assert member["site"]["startLine"] == operation_line, member
     owed = _owed_rows(result.prove_doc)
-    assert set(owed) == refused, result.prove_doc.get("rows")
-    for name, row in owed.items():
+    assert len(owed) == len(members), result.prove_doc.get("rows")
+    for row in owed:
         assert row["status"] == "undecidable", row
-        assert row["reason"].startswith("owed: "), row
-        assert row["reason"].endswith(_OWED), row
-        # Never decided: no claim of a refused function reached the solver.
-        assert _claim(result.prove_doc, name) is None, row
-    assert result.prove_doc["owed"] == len(refused)
+        assert row["reason"].startswith("owed: no contract for "), row
+    assert result.prove_doc["owed"] == len(members)
+    expected = "sat" if half == "truthful" else "unsat"
+    for function in decided:
+        assert _claim(result.prove_doc, function) == expected, (
+            function,
+            result.prove_doc.get("rows"),
+        )
     (proof,) = tuple(project.glob("*.proof"))
-    assert _OWED.encode() in proof.read_bytes(), "the .proof carries the reason"
+    assert _DELETED_REFUSAL not in proof.read_bytes(), "no name is refused"
+    return members
+
+
+def _file_verdict(members: list[dict], half: str) -> str:
+    """Owed is never green; a lying claim is unsat whatever is owed."""
+    if half == "lying":
+        return "unsat"
+    return "open" if members else "sat"
 
 
 def test_control_without_a_module_level_name(tmp_path: Path) -> None:
-    truthful = run_source_through_real_solver(tmp_path / "t", _CONTROL.format(claim=11))
-    lying = run_source_through_real_solver(tmp_path / "l", _CONTROL.format(claim=12))
-    for result in (truthful, lying):
-        assert _members(result.lift_doc) == {}
-        assert _owed_rows(result.prove_doc) == {}
-        assert result.prove_doc["owed"] == 0
-    assert prove_verdict(truthful.prove_doc) == "sat"
-    assert prove_verdict(lying.prove_doc) == "unsat"
+    for half, claim in (("truthful", 11), ("lying", 12)):
+        project = tmp_path / half
+        result = run_source_through_real_solver(project, _CONTROL.format(claim=claim))
+        members = _assert_read_not_refused(
+            project, result, {"test_f"}, half, _CONTROL_OPERATION_LINE
+        )
+        assert prove_verdict(result.prove_doc) == _file_verdict(members, half)
 
 
 @pytest.mark.parametrize("program", sorted(_PROGRAMS))
-def test_a_function_reading_a_module_level_name_is_owed_by_name(
+def test_a_function_reading_a_module_level_name_reads_its_value(
     tmp_path: Path, program: str
 ) -> None:
-    source, refused = _PROGRAMS[program]
+    source, decided, operation_line = _PROGRAMS[program]
     for half, fill in _HALVES.items():
         project = tmp_path / half
         result = run_source_through_real_solver(project, source.format(**fill))
-        _assert_owed(project, result, refused)
-        assert prove_verdict(result.prove_doc) == "open", (half, result.prove_doc)
+        members = _assert_read_not_refused(
+            project, result, decided, half, operation_line
+        )
+        assert prove_verdict(result.prove_doc) == _file_verdict(members, half), (
+            half,
+            result.prove_doc,
+        )
 
 
-def test_one_refused_function_does_not_take_the_file(tmp_path: Path) -> None:
-    """D: ``test_reads`` is owed by name; ``test_plain`` is still decided.
+def test_a_function_reading_a_module_level_name_beside_another_is_decided(
+    tmp_path: Path,
+) -> None:
+    """D: ``test_reads`` reads ``LIMIT == 10`` and is decided beside ``test_plain``.
 
-    The file as a whole is never ``sat`` while it owes ``test_reads``: the
-    truthful half reads ``open``, the lying half ``unsat`` (``test_plain``'s
-    lie is still caught).
+    Truthful: both claims hold. Lying: ``test_plain``'s lie is caught.
+    ``test_reads`` asserts the same truth in both halves.
     """
     truthful = run_source_through_real_solver(tmp_path / "t", _MIXED.format(claim=11))
     lying = run_source_through_real_solver(tmp_path / "l", _MIXED.format(claim=12))
-    for project, result in ((tmp_path / "t", truthful), (tmp_path / "l", lying)):
-        _assert_owed(project, result, {"test_reads"})
-    assert _claim(truthful.prove_doc, "test_plain") == "sat"
-    assert _claim(lying.prove_doc, "test_plain") == "unsat"
-    assert prove_verdict(truthful.prove_doc) == "open"
-    assert prove_verdict(lying.prove_doc) == "unsat"
+    truthful_members = _assert_read_not_refused(
+        tmp_path / "t",
+        truthful,
+        {"test_plain", "test_reads"},
+        "truthful",
+        _MIXED_OPERATION_LINE,
+    )
+    lying_members = _assert_read_not_refused(
+        tmp_path / "l", lying, {"test_plain"}, "lying", _MIXED_OPERATION_LINE
+    )
+    assert _claim(lying.prove_doc, "test_reads") == "sat"
+    assert prove_verdict(truthful.prove_doc) == _file_verdict(
+        truthful_members, "truthful"
+    )
+    assert prove_verdict(lying.prove_doc) == _file_verdict(lying_members, "lying")
