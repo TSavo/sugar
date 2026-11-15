@@ -28,7 +28,6 @@ PACKAGE_TARGETS: dict[str, Path] = {
     "operations": SRC / "operations",
     "sugar": SRC / "sugar",
     "idd": SRC / "idd",
-    "lift": SRC / "lift",
     "kit_rpc": SRC / "kit_rpc",
 }
 
@@ -45,9 +44,18 @@ EXPECTED_PYRIGHT_ERRORS: dict[str, int] = {
     "operations": 0,
     "sugar": 0,
     "idd": 0,
-    "lift": 0,
     "kit_rpc": 0,
 }
+
+
+def test_every_ratchet_target_is_a_package_that_exists() -> None:
+    """A deleted package leaves the ratchet with it; a pin on a directory
+    that is gone measures nothing."""
+    assert set(PACKAGE_TARGETS) == set(EXPECTED_PYRIGHT_ERRORS)
+    missing = sorted(
+        package for package, target in PACKAGE_TARGETS.items() if not target.is_dir()
+    )
+    assert missing == []
 
 
 @dataclass(frozen=True)
