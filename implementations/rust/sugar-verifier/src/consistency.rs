@@ -2135,6 +2135,91 @@ fn is_literal_equality(node: &Json) -> bool {
         && left.get("sort") == right.get("sort")
 }
 
+/// `inv` with each atom Python decides over literal operands replaced by the
+/// IR's truth (`and([])`) or falsity (`or([])`), outside quantifiers.
+///
+/// Since step 5 (#7757) a root's claims are over its free inputs, and prove
+/// binds each `global:<name>` to the value the contract states
+/// (`bind_own_inputs`): `assert X == 3` arrives as
+/// `python:compare.completes(python:compare("Eq", 3, 3, <key>))` and
+/// `py.eq(3, 3)`. The lift decided that claim before step 5; here it is
+/// closed over literals, and Python's answer is forced
+/// (`decided_python_atom`), so it is stated as that answer: a closed literal
+/// formula (`is_closed_literal_formula`) every solver reads alike. An atom
+/// over anything else stays as it was.
+fn fold_decided_python_atoms(node: &Json) -> Json {
+    match node.get("kind").and_then(|k| k.as_str()) {
+        Some("and" | "or" | "not" | "implies") => {
+            let mut out = node.clone();
+            if let Some(operands) = node.get("operands").and_then(|v| v.as_array()) {
+                let folded = operands.iter().map(fold_decided_python_atoms).collect();
+                out["operands"] = Json::Array(folded);
+            }
+            out
+        }
+        Some("atomic") => match decided_python_atom(node) {
+            Some(true) => json!({"kind": "and", "operands": []}),
+            Some(false) => json!({"kind": "or", "operands": []}),
+            None => node.clone(),
+        },
+        _ => node.clone(),
+    }
+}
+
+/// Python's answer to an atom over literal operands, where the language
+/// fixes it: `=` / `py.eq` of two `int` literals or two `str` literals is
+/// their equality, and `==` / `!=` between `int` and `str` literals always
+/// completes (`python:compare.completes(python:compare("Eq" | "NotEq", a,
+/// b, <key>))`: neither type's `__eq__` raises). `None` for anything else.
+fn decided_python_atom(node: &Json) -> Option<bool> {
+    let name = node.get("name").and_then(|v| v.as_str())?;
+    let args = node.get("args").and_then(|v| v.as_array())?;
+    match (name, args.as_slice()) {
+        ("=" | "py.eq", [left, right]) => {
+            let ints = (int_const_value_i128(left), int_const_value_i128(right));
+            if let (Some(a), Some(b)) = ints {
+                return Some(a == b);
+            }
+            if let (Some(a), Some(b)) = (str_const_value(left), str_const_value(right)) {
+                return Some(a == b);
+            }
+            None
+        }
+        ("python:compare.completes", [operation]) => {
+            if operation.get("kind").and_then(|k| k.as_str()) != Some("ctor")
+                || operation.get("name").and_then(|n| n.as_str()) != Some("python:compare")
+            {
+                return None;
+            }
+            let [operator, left, right, _key] =
+                operation.get("args").and_then(|v| v.as_array())?.as_slice()
+            else {
+                return None;
+            };
+            let operator = str_const_value(operator)?;
+            let literal = |term: &Json| {
+                int_const_value_i128(term).is_some() || str_const_value(term).is_some()
+            };
+            (matches!(operator, "Eq" | "NotEq") && literal(left) && literal(right)).then_some(true)
+        }
+        _ => None,
+    }
+}
+
+/// The value of a `str` literal: a `const` of primitive sort `String`.
+fn str_const_value(node: &Json) -> Option<&str> {
+    if node.get("kind").and_then(|k| k.as_str()) != Some("const") {
+        return None;
+    }
+    let sort = node.get("sort")?;
+    if sort.get("kind").and_then(|v| v.as_str()) != Some("primitive")
+        || sort.get("name").and_then(|v| v.as_str()) != Some("String")
+    {
+        return None;
+    }
+    node.get("value")?.as_str()
+}
+
 /// A `str.in-regex(subject, R)` membership atom whose SUBJECT is a pinned ground
 /// term (closed, no uninterpreted `call:` ctor) and whose PATTERN is a String
 /// const literal (the vendor's walked regex, the emitter's required shape). This
@@ -2246,10 +2331,8 @@ fn check_inv_consistency_with_vacuity_reason(
     // Fold grounded primitive applications (`call:abs(-5)` → `5`) before
     // structural dual / SMT. Without this, vendor posts that return a grounded
     // constructor stay uninterpreted and lying arms SAT (#4398).
-    let inv = with_local_forall_instances(
-        canonicalize_formula_json(&fold_ground_applications(&inv)),
-        property_name,
-    );
+    let folded = fold_decided_python_atoms(&fold_ground_applications(&inv));
+    let inv = with_local_forall_instances(canonicalize_formula_json(&folded), property_name);
     let local_inst_us = t_local.elapsed().as_micros();
     // VACUITY GUARD. A lone constraint (count < 2) has no sibling to contradict.
     // Any uninterpreted callsite trivially satisfies it under bare SAT, giving a
