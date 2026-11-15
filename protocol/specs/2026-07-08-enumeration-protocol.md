@@ -63,9 +63,6 @@ reduction, in the `universe` scan.
   is not answered; the one seek is level 'facts' under auditFrontier ..."),
   never answered with the whole scan.
 - `options`:
-  - `contractRefs` (`{"catalogCid", "tableCid"}`): the contract-ref
-    generation the driver bound. When the kit holds a bound generation it
-    refuses a request whose generation differs.
   - `sourceWorkspaceRoot`: the locus authority, the root the minted address
     is stated against (an installed corpus records seats against its install
     root). Absent, `workspace_root` stands.

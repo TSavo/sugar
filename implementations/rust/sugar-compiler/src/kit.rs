@@ -492,51 +492,6 @@ impl Kit {
         }
     }
 
-    pub fn bind_contract_refs(
-        &self,
-        table: &Value,
-    ) -> Result<String, crate::kit_path::LiftPluginKitError> {
-        let catalog_cid = table
-            .get("catalogCid")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                crate::kit_path::LiftPluginKitError::Failed(
-                    "contract-ref table missing catalogCid".into(),
-                )
-            })?;
-        let table_cid = table
-            .get("tableCid")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                crate::kit_path::LiftPluginKitError::Failed(
-                    "contract-ref table missing tableCid".into(),
-                )
-            })?;
-        let response = self
-            .connection
-            .clone()
-            .with_method("sugar.plugin.bind_contract_refs")
-            .request(&serde_json::json!({
-                "contractRefs": table,
-            }))?;
-        let acknowledged = response
-            .get("tableCid")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                crate::kit_path::LiftPluginKitError::Failed(format!(
-                    "contract-ref bind response missing tableCid: {response}"
-                ))
-            })?;
-        if acknowledged != table_cid {
-            return Err(crate::kit_path::LiftPluginKitError::Failed(
-                "contract-ref bind acknowledged a different table CID".into(),
-            ));
-        }
-        self.connection
-            .install_contract_ref_generation(catalog_cid.to_owned(), table_cid.to_owned())?;
-        Ok(acknowledged.to_owned())
-    }
-
     /// SEAM 4 -- the source verb. Asks THIS kit to resolve a `SourceMemento`
     /// over `sugar.plugin.resolve_source_memento`, exact-or-refuse: CID
     /// drift on the kit's side of the membrane comes back as
