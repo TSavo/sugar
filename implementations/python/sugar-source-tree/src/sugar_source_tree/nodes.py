@@ -15207,6 +15207,75 @@ class Assign(Statement):
     value: Expression
     _child_fields = ("targets", "value")
 
+    def structural_parts(self) -> Tuple["Node", ...]:
+        """Every display the statement's unpack consumes element by element:
+        ``a, b = p, q`` (``_destructured_binding``, ``MultiAssignSugar``) and
+        ``x, o.a = p, q`` (``_flat_store_unpack_pairs``,
+        ``UnpackStoreAssignSugar``) evaluate each member once, left to right,
+        and bind or store it; the display is never built as a whole, so it
+        is a structural part of the unpack (``_unpacked_displays``) and
+        answers the roll with the statement.  Its members are ordinary
+        nodes and answer for themselves, built or refused."""
+        return (*super().structural_parts(), *self._unpacked_displays())
+
+    def _unpacked_displays(self) -> Tuple["Node", ...]:
+        """The right-hand side display of a one-target ``Tuple``/``List``
+        unpack, and each display member a nested target level unpacks in
+        turn, by the arity rule both display unpacks pair by
+        (``_display_unpack_pairs``, ``TargetPattern.bindings_for``): at most
+        one starred target per level, whose members are collected into a
+        fresh list (``_make_unpack_rest_list``) and never unpacked.  Nothing
+        is minted here.  Where a level does not pair with a display, or a
+        store leaf sits under a nested level (neither display unpack takes
+        it), none: the statement refuses by name and nothing answers with
+        it."""
+        if len(self.targets) != 1:
+            return ()
+        displays: list = []
+
+        def visit(target, value, depth: int) -> bool:
+            if isinstance(target, Starred):
+                target = target.value
+            if isinstance(target, Name):
+                return True
+            if isinstance(target, (Attribute, Subscript)):
+                return depth == 1
+            if not isinstance(target, (Tuple_, List)) or not isinstance(
+                value, (Tuple_, List)
+            ):
+                return False
+            starred = [
+                index
+                for index, element in enumerate(target.elts)
+                if isinstance(element, Starred)
+            ]
+            if len(starred) > 1:
+                return False
+            if not starred:
+                if len(target.elts) != len(value.elts):
+                    return False
+                pairs = list(zip(target.elts, value.elts))
+            else:
+                star = starred[0]
+                tail = len(target.elts) - star - 1
+                if len(value.elts) < len(target.elts) - 1:
+                    return False
+                pairs = list(zip(target.elts[:star], value.elts[:star]))
+                if tail:
+                    pairs.extend(zip(target.elts[-tail:], value.elts[-tail:]))
+                if not visit(target.elts[star], None, depth + 1):
+                    return False
+            displays.append(value)
+            return all(
+                visit(element, member, depth + 1) for element, member in pairs
+            )
+
+        if not isinstance(self.targets[0], (Tuple_, List)):
+            return ()
+        if not visit(self.targets[0], self.value, 0):
+            return ()
+        return tuple(displays)
+
     def substitute(self, scope):
         """Substitute the RHS, and load-side store target coordinates.
 
