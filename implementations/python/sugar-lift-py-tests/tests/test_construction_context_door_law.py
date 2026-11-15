@@ -104,16 +104,17 @@ def test_a_nested_scope_does_not_blame_its_parent() -> None:
 def test_the_real_demand_scan_and_roll_call_stay_clean() -> None:
     """Pinned on the live module, not a paraphrase of it.
 
-    The door lives in ``lift_rpc``: the opener's first stage, opened bare by
-    the With-row demand scan and under a context by the opener itself.
+    The door lives in ``lift_rpc``: the opener's first stage, opened under a
+    context by the opener itself. The bare With-row demand scan that also
+    opened it is deleted with the With demand table (#8498).
     """
     lift_rpc = (_KIT / "src" / "sugar_lift_py_tests" / "lift_rpc.py").read_text(
         encoding="utf-8"
     )
 
     assert "def _open_at_seat(" in lift_rpc, "fixture stale: the door moved"
-    assert "_open_at_seat(path, root=Path(root))" in lift_rpc, (
-        "fixture stale: the bare demand scan moved"
+    assert "_open_at_seat(path, root=Path(root))" not in lift_rpc, (
+        "the bare demand scan #8498 deleted is back"
     )
     assert _SCANNER.offenders_in_source(lift_rpc, path="lift_rpc.py") == []
 
