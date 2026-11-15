@@ -110,6 +110,29 @@ def test_a_template_never_evaluated_answers_with_the_display(
     assert (kind, 2, column) not in absent
 
 
+@pytest.mark.parametrize(
+    "comprehension",
+    [
+        "[str(x) for x in [abs(1), abs(2)]]",
+        "[0 for _ in [abs(1), abs(2)]]",
+    ],
+)
+def test_a_dissolved_comprehension_builds_each_member_before_its_elements(
+    comprehension,
+):
+    # Python evaluates every member of the iterable display before the first
+    # element: each member that calls is built once, as an evaluation the
+    # display carries (``ListComp._members_evaluated_first``), and the
+    # reference the element reads it through answers where it is minted.
+    report = _report(f"def f():\n    return {comprehension}\n")
+    column = 11 + comprehension.index("abs(2)")
+    present = {(e.kind, e.start_line, e.start_col) for e in report.present}
+    assert ("Call", 2, column) in present
+    absent = {(e.kind, e.start_line, e.start_col) for e in report.minority}
+    assert ("Call", 2, column) not in absent
+    assert not any(e.kind == "EvaluationRef" for e in report.minority)
+
+
 def test_a_display_iterable_answers_with_the_loop():
     report = _report(
         "def f(g):\n    for key in ['tz', 'freq']:\n        g(key)\n    return g\n"
