@@ -46,6 +46,15 @@ class ClassDefinitionSugar(Sugar):
     site: object = field(compare=False)
     decorator_sugars: tuple[Sugar, ...] = field(default=(), compare=False)
     decorator_occurrences: tuple[object, ...] = field(default=(), compare=False)
+    # Per base, the sugar of the type arguments of a local ``Base[T]`` the
+    # base unwraps to ``Base`` (``nodes.ClassDef._sugar_source_class_base``),
+    # else None.  Python evaluates ``T`` right after reading ``Base``; its
+    # value is not the class model's, every face of it is the statement's.
+    base_type_arguments: tuple = field(default=(), compare=False)
+    # The value of each class keyword (``metaclass=ABCMeta``), in source
+    # order: Python evaluates them after the bases and before the body,
+    # every face of each the statement's.
+    keyword_sugars: tuple[Sugar, ...] = field(default=(), compare=False)
     # The class statement itself: its constructor frame is the one ``Cls(x)``
     # applies, whether the class is called by name or as a value.
     class_definition: object = field(default=None, compare=False)
@@ -260,11 +269,39 @@ class ClassDefinitionSugar(Sugar):
 
     def _fold_bases(self, remaining, evaluated, ctx, class_body) -> ExitSet:
         if not remaining:
-            return self._construct(evaluated, class_body)
+            return self._fold_keywords(
+                self.keyword_sugars, evaluated, ctx, class_body
+            )
+        head, *rest = remaining
+        index = len(evaluated)
+        arguments = (
+            self.base_type_arguments[index]
+            if index < len(self.base_type_arguments)
+            else None
+        )
+
+        def then(value):
+            return self._fold_bases(tuple(rest), (*evaluated, value), ctx, class_body)
+
+        def read(value):
+            # ``Base[T]`` unwrapped to ``Base``: ``T`` is evaluated after the
+            # read, every face of it the statement's; the base is ``Base``.
+            if arguments is None:
+                return then(value)
+            return arguments.desugar(ctx).and_then(lambda _arguments: then(value))
+
+        return head.desugar(ctx).and_then(read)
+
+    def _fold_keywords(self, remaining, evaluated_bases, ctx, class_body) -> ExitSet:
+        # Each class keyword's value, in order, after the bases and before
+        # the body: every face of each the statement's.  The class model
+        # reads none of them (a metaclass is not modelled here).
+        if not remaining:
+            return self._construct(evaluated_bases, class_body)
         head, *rest = remaining
         return head.desugar(ctx).and_then(
-            lambda value: self._fold_bases(
-                tuple(rest), (*evaluated, value), ctx, class_body
+            lambda _value: self._fold_keywords(
+                tuple(rest), evaluated_bases, ctx, class_body
             )
         )
 

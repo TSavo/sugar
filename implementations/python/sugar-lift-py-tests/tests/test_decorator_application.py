@@ -1252,6 +1252,22 @@ def test_annotation():
     assert _raises(raising, "ZeroDivisionError") != []
 
 
+def test_the_class_statement_evaluates_its_keyword_values() -> None:
+    """Python evaluates a class keyword's value (``metaclass=...``) where
+    the class statement runs, after the bases and before the body: a value
+    that raises raises at the class statement."""
+    raising = _test_function_outcome(
+        """\
+def test_keyword():
+    class Box(metaclass=1 // 0):
+        pass
+
+    assert 1 == 1
+"""
+    )
+    assert _raises(raising, "ZeroDivisionError") != []
+
+
 def test_the_statement_and_the_frame_name_one_default_key() -> None:
     """The ``def`` statement binds each default under the key every frame
     of the definition reads."""
