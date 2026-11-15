@@ -75,7 +75,9 @@ def test_subscript_store_evaluates_rhs_receiver_and_key_once_in_python_order(tmp
 
 def test_readable_immutable_receiver_raises_on_store(tmp_path):
     receiver = TupleValue((TermValue(1),))
-    assert receiver.subscript(TermValue(0), "read.py:1").value == TermValue(1)
+    assert receiver.subscript(TermValue(0), "read.py:1") == ExitSet.completed(
+        TermValue(1)
+    )
 
     outcome = _store(
         receiver, TermValue(0), TermValue(7), [], _site(tmp_path)
