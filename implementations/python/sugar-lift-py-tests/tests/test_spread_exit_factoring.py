@@ -205,7 +205,10 @@ _KINDS = tuple(_SUGARS)
 # operand positions, so the occurrence law can say "one position per operand"
 # without restating the production spelling.
 _TERM_SHAPE = {
-    "collection": ("python:list", 0),
+    # ``_collection_sugar`` holds every element unwrapped (no ``*``), so its
+    # members are held here and ``finish`` builds the list its non-spread
+    # sibling builds (#8724): a ``ListValue``, whose term is ``array``.
+    "collection": ("array", 0),
     "dict": ("python:dict", 0),
     "call": ("python:call", 1),  # callee coordinate first, then one per operand
 }
