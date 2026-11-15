@@ -21,7 +21,6 @@ from sugar_source_tree.nodes import (
     TargetPatternConstructionGapV1,
 )
 from sugar_source_tree.tree import SourceFile
-from sugar_lift_py_tests.effect import RaiseEffect
 
 
 def _function(source: str) -> FunctionDef:
@@ -112,7 +111,7 @@ def test_filtered_out_member_never_reaches_element_binding() -> None:
     assert all(value is not first for value in outcome.completed_value().finite_elements)
 
 
-def test_halted_constructor_arm_is_absent_from_finite_items() -> None:
+def test_a_subscript_of_an_arrived_items_field_keeps_its_halt_undecided() -> None:
     first, second = _objects()
     first = replace(
         first, fields=(ObjectField("values", fresh(ListValue, (TermValue(7),))),)
@@ -127,8 +126,22 @@ def test_halted_constructor_arm_is_absent_from_finite_items() -> None:
         _context_with_items(source, fresh(ListValue, (first, second)))
     )
 
-    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
-    assert isinstance(outcome.halts()[0].effect, RaiseEffect)
+    # ``items`` is the formal's actual: it reaches ``build`` by binding, so
+    # neither it nor anything in it is current (the one currency rule,
+    # ``object_identity.arrived``, #8131/#8151).  Nothing binds a formal with
+    # the caller's currency any more: a same-file call is its coordinate and
+    # edge (#8705, #8751, #7757 step 6), never a followed frame.  So
+    # ``item.values[4]`` is the undecided subscript, not the decided
+    # ``IndexError`` this test read off the caller's contents before: the
+    # halt is kept and no completion is decided here.  Whether the caller's
+    # list holds a long enough ``values`` is decided at prove (step 9).
+    assert outcome.halts()
+    from sugar_lift_py_tests.outcome.exit_set import Completed
+
+    completed = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    assert all(
+        "python:subscript.completes" in repr(arm.guard) for arm in completed
+    ), completed
 
 
 def test_tuple_target_coordinate_swap_is_refused_by_source_owner() -> None:
