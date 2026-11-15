@@ -21601,11 +21601,24 @@ class Lambda(Expression):
         so every one of them is a cell the lambda may be called inside or
         outlive.  A running value of a walrus name
         (``recurrence``) and a cell already read at the call are left as they
-        are."""
+        are.
+
+        The cell is the member's object, whatever a call between the member's
+        binding and the lambda may have done to it: ``[[lambda: x for _ in
+        ys] for x in xs]`` threads the iteration of ``ys`` after ``x`` is
+        bound, which leaves ``x`` its value after that call
+        (``ReceiverAfterCall`` with a ``prior``), and the lambda still reads
+        the outer cell at its call -- the object the binding began from
+        (``container_mutation._object``), never its state after a call the
+        lambda's body is not evaluated at."""
+        from .container_mutation import _object
+
         names = {node.id for node in self.body.walk() if isinstance(node, Name)}
         cells = {}
         for name in sorted(names - set(bound)):
             reference = unwrap_binding_state(scope.get(name))
+            if not isinstance(reference, EvaluationRef):
+                reference = _object(reference)
             if (
                 isinstance(reference, EvaluationRef)
                 and getattr(reference, "member", False) is True
