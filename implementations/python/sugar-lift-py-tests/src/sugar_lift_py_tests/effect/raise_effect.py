@@ -148,6 +148,12 @@ class UndeterminedRaiseEffect:
     # The source fragment the raise halted at (see ``RaiseEffect.site``).
     # Required, keyword-only, no default: no producer can omit it.
     site: object = field(compare=False, repr=False, kw_only=True)
+    # ``python:raised(<call term>, <occurrence>)`` when the halt is a call's
+    # whose edge names its callee (``UnknownCalleeCallV1.faces``, #7757 step
+    # 7): the exception that evaluation of that call raised, which the
+    # callee's contract types at prove (each halt it states, its raised type
+    # under its guard).  None for any other undetermined halt.
+    raised_by_call: object | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         if self.site is None:
@@ -201,7 +207,9 @@ class UndeterminedRaiseEffect:
         occurrence = self.occurrence_id
         if not isinstance(occurrence, str) or not occurrence:
             return None
-        return UndeterminedExceptionValue(occurrence, self.producer_node_owner)
+        return UndeterminedExceptionValue(
+            occurrence, self.producer_node_owner, raised_by_call=self.raised_by_call
+        )
 
     @property
     def reason(self) -> str:

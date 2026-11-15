@@ -34,11 +34,20 @@ class UndeterminedExceptionValue(FloorValue):
 
     occurrence: str
     producer: str | None = None
+    # ``python:raised(<call term>, <occurrence>)``: the exception one
+    # evaluation of a call whose edge names its callee raised
+    # (``UndeterminedRaiseEffect.raised_by_call``, #7757 step 7).  Its type
+    # is what the callee's contract states for the halt it took, decided at
+    # prove against the handler that tests it; nothing about it is decided
+    # here.
+    raised_by_call: object | None = None
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor, str_const
 
         del owner
+        if self.raised_by_call is not None:
+            return self.raised_by_call
         return ctor(
             "python:undetermined_exception",
             (str_const(self.occurrence), str_const(self.producer or "")),

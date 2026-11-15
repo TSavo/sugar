@@ -932,7 +932,12 @@ class UnknownCalleeCallV1:
 
     callee_name: str
 
-    def faces(self, callsite, site):
+    def faces(self, callsite, site, *, names_its_raise: bool = False):
+        """``names_its_raise``: the call is a same-file definition's edge
+        (``lambda_callable.definition_edge_call``), so the exception it
+        raises is named by the call (``python:raised``) and typed at prove
+        by the callee's contract (#7757 step 7).  An imported call keeps
+        ``python:undetermined_exception`` here."""
         from .effect.raise_effect import UndeterminedRaiseEffect
         from .ir import atomic, ctor, str_const
         from .occurrence import occurrence_key, occurrence_term
@@ -946,6 +951,16 @@ class UnknownCalleeCallV1:
             (str_const(self.callee_name), occurrence_term(site)),
         )
         completes = atomic("python:unknown_callee_call.completes", [call])
+        symbol = getattr(callsite, "authenticated_target_symbol", None)
+        # A call whose edge names its callee raises what the callee's
+        # contract states for the halt it took (#7757 step 7): the exception
+        # is named by the call it came from, ``python:raised(<call term>,
+        # <occurrence>)``, so prove types it under each stated halt's guard.
+        raised_by_call = None
+        if names_its_raise and symbol is not None and hasattr(callsite, "term"):
+            raised_by_call = ctor(
+                "python:raised", (callsite.term, occurrence_term(site))
+            )
         # Nothing here answers this call: the one constructor makes both arms
         # owe it (#7825, H4), and the full scan writes it once as the proof's
         # `undecided` member (step 8), with the one import table's target
@@ -957,6 +972,7 @@ class UnknownCalleeCallV1:
                 occurrence=key,
                 producer_node_owner=f"UnknownCallee:{self.callee_name}",
                 site=site,
+                raised_by_call=raised_by_call,
             ),
             guard=completes,
             site=site,
