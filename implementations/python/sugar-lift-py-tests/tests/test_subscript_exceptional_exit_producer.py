@@ -264,13 +264,16 @@ def test_authenticated_subscript_family_owns_no_construction_panics() -> None:
 
     assert row.enrolled == FAMILY_DENOMINATORS[ProducerFamily.SUBSCRIPT]
     assert {probe.body_id for probe in probes} >= required_non_vendor_sites
+    # A body that left by none of the four arms (``AttributionInvariantError``:
+    # it completed with no raise face, so a halt may have been dropped) is a
+    # discrepancy, never an arm: name it before the total that misses it.
+    assert report.discrepancies == (), report.discrepancies
     assert row.outcome_total == 392
     assert len(undischarged) == row.undischarged
     assert {
         discrepancy.body_id
         for discrepancy in report.exceptional_exit_identity_discrepancies
     } == undischarged
-    assert report.discrepancies == ()
     assert report.conservation_shortfall == 0
     assert not reattributed_gaps, reattributed_gaps
     assert row.construction_panics == 0
