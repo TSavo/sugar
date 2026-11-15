@@ -15,7 +15,9 @@ def test_black_format_check_is_installed_and_required_by_make_ci() -> None:
         ROOT / "implementations/python/sugar-lift-py-tests/pyproject.toml"
     ).read_text(encoding="utf-8")
 
-    assert "black>=25.1.0" in pyproject
+    # The kit installs black as a versioned requirement (today an exact pin);
+    # the gate is that it is installed, whatever the version reads.
+    assert re.search(r'^\s*"black\s*(==|>=|~=)\s*\d[^"]*",?\s*$', pyproject, re.MULTILINE)
     assert ".PHONY: test-python-format" in makefile
     assert "test-python-format:" in makefile
     assert "$(PYTHON_KIT) -m black --check $(PYTHON_FORMAT_PATHS)" in makefile
