@@ -826,28 +826,44 @@ def receiver_after_dispatch(receiver, result):
     parameter with the key ``"0"`` the caller names it by
     (``consistency::argument_key_aliases``).
 
+    The same read for ``super().m(...)``: the call form passes the frame's
+    receiver itself as the call's first positional actual (a plain function
+    read off an instance, ``object_value.method_edge_call``), keyed ``"0"``
+    as a dispatched call's receiver is, so the caller reads it after the call
+    by that key and prove pairs it with the method's receiver parameter the
+    same way.
+
     ``receiver`` is a formal's or a cell's plain value (``SymbolicValue``),
-    or a same-file class call's result the call was dispatched on
-    (``CallSiteValue``, ``dispatch_on_receiver``): the object as the call
-    left it is that term whatever it was before.  None where ``result`` is
-    no completed dispatched call (an attribute read through dispatch
-    included) made on ``receiver``, or ``receiver`` is any other value: the
-    receiver is then what the one exposure rule leaves."""
+    a same-file class call's result the call was dispatched on
+    (``CallSiteValue``, ``dispatch_on_receiver``), or an instance the frame
+    holds (``ObjectValue``: ``super()``'s receiver, or one a dispatched call
+    was made on): the object as the call left it is that term whatever it
+    was before.  None where ``result`` is no completed call of either kind
+    made on ``receiver`` (an attribute read through dispatch included), or
+    ``receiver`` is any other value: the receiver is then what the one
+    exposure rule leaves."""
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+    from sugar_lift_py_tests.floor.object_value import ObjectValue
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
     from sugar_lift_py_tests.source_call_resolution import object_after_call
 
-    if type(receiver) is not SymbolicValue and not isinstance(receiver, CallSiteValue):
+    if type(receiver) is not SymbolicValue and not isinstance(
+        receiver, (CallSiteValue, ObjectValue)
+    ):
         return None
     _binds, call = peel_walrus_binds(result)
     if not isinstance(call, CallSiteValue):
         return None
     prefix = "python:" + DISPATCH_TARGET_PREFIX
     symbol = getattr(call, "authenticated_target_symbol", None) or ""
-    member = symbol[len(prefix) :] if symbol.startswith(prefix) else ""
-    if not member or member.startswith(DISPATCH_READ_MARK):
+    if not symbol:
         return None
-    if call.runtime_dispatch_receiver != receiver:
+    if symbol.startswith(prefix):
+        member = symbol[len(prefix) :]
+        if not member or member.startswith(DISPATCH_READ_MARK):
+            return None
+    held = call.runtime_dispatch_receiver
+    if held is None or held != receiver:
         return None
     return SymbolicValue(object_after_call(call.term, DISPATCH_RECEIVER_LABEL))

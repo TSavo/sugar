@@ -1685,6 +1685,23 @@ def method_edge_call(
         refuse=refuse,
     )
     definition = frame.owner
+    from sugar_lift_py_tests.floor.class_definition_value import (
+        ClassDefinitionValue,
+    )
+
+    # A plain function read off an instance (``super().m(...)``): the call
+    # form passes the receiver itself as the call's first positional actual,
+    # keyed ``"0"`` (``receiver_dispatch.class_arguments``).  The caller reads
+    # the receiver after the call by that key, as after a dispatched call
+    # (``receiver_dispatch.receiver_after_dispatch``), and prove's one binder
+    # pairs it with the method's receiver parameter (#7757 step 7).
+    testimony = {}
+    if (
+        implicit
+        and implicit[0] is receiver
+        and not isinstance(receiver, ClassDefinitionValue)
+    ):
+        testimony["runtime_dispatch_receiver"] = receiver
     return definition_edge_call(
         symbol_definition=definition,
         signature=definition,
@@ -1699,6 +1716,7 @@ def method_edge_call(
         caller_ctx=ctx,
         fallback_target=bound.target_name,
         implicit=len(implicit),
+        **testimony,
     )
 
 
