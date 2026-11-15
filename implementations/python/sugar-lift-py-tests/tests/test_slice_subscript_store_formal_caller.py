@@ -67,11 +67,25 @@ def _call_outcome(signature: str, body: str, actuals: str):
 
 
 def _stored_list(outcome) -> ListValue:
+    """The caller's list after the call.
+
+    A completed call carries what its callee's frame left of each object it
+    shares with the caller, as a write labelled by the object
+    (``caller_visible_values``): ``actual:0`` is the first actual, the list
+    every caller here passes as ``obj``.  That write's value is the list
+    after the store."""
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+
     assert isinstance(outcome, ExitSet), type(outcome)
     assert len(outcome.exits) == 1
     face = outcome.exits[0]
     assert isinstance(face, Completed), type(face)
-    value = face.value
+    binds, value = peel_walrus_binds(face.value)
+    left = [bind.assigned_value for bind in binds if bind.name == "actual:0"]
+    if left:
+        (after,) = left
+        assert isinstance(after, ListValue), after
+        return after
     force = getattr(value, "force_floor", None)
     if callable(force):
         forced = force(None, owner="slice_store_test")
@@ -162,10 +176,10 @@ def test_slice_lower_halt_skips_upper_and_step_desugar() -> None:
             del ctx
             log.append(self.label)
             return ExitSet.halted(
-                RaiseEffect(
-                    exception_name="ValueError",
+                RaiseEffect.for_builtin(
+                    "ValueError",
+                    occurrence=self.site,
                     blame=str(self.site),
-                    occurrence=str(self.site),
                     producer_node_owner=f"halt:{self.label}",
                 )
             )
@@ -705,9 +719,19 @@ def test_slice_assign_iterable_door_not_getattr_probe() -> None:
         fresh(ListValue, (TermValue(1), TermValue(2))), None
     )
     assert exact.completed_value() == (TermValue(1), TermValue(2))
-    # Undecided stays a halt (not construction panic, not getattr).
+    # Undecided is the one two-faced outcome (not construction panic, not
+    # getattr): whether ``xs`` is iterable is not decided at lift, so the
+    # store completes only under its own guard and halts with something
+    # undetermined under the complement.  Never an unconditional completion.
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
+
     undecided = SliceAssignIterableOperation(owner="test", blame=site).submit(
         SymbolicValue(make_var("xs")), None
     )
-    assert undecided.exits and undecided.halts() == undecided.exits
+    assert undecided.completed_value() is None
+    (completed,) = [face for face in undecided.exits if isinstance(face, Completed)]
+    (halted,) = undecided.halts()
+    assert isinstance(halted.effect, UndeterminedRaiseEffect)
+    assert halted.guard.kind == "not"
+    assert halted.guard.operands == (completed.guard,)
     assert "getattr(" not in inspect.getsource(FloorValue.slice_assign_iterable_with)
