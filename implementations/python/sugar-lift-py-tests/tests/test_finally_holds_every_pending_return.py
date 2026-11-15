@@ -210,17 +210,26 @@ def test_a_deferred_try_star_finally_resolves_with_the_callers_actual() -> None:
         assert [entry.value for entry in returns] == [TermValue(expected)], returns
 
 
-def _assert_one_return_per_record(exits: ExitSet, *expected: int) -> None:
-    """Each completed record holds exactly one ``return``, and the records'
-    returns are ``expected`` (in any order). A record that holds two (a dead
-    guarded ``return`` beside a live one) fails here."""
+def _assert_one_return_per_record(exits: ExitSet, guarded: int, handler: int) -> None:
+    """Each completed record holds exactly one ``return``. A record that holds
+    two (a dead guarded ``return`` beside a live one) fails here.
+
+    The guarded ``return`` leaves on exactly one record (under ``a < b``).
+    Every other record is the handler's path and returns ``handler``; there
+    may be more than one: ``bool(a < b)`` over the undecided compare result
+    is the one truth rule's two faces (#8255), and its halt at the ``if``'s
+    head is a raise the ``except ValueError`` retains
+    (``adt.is_python_type``), so the handler is reached on that path too --
+    as Python's is, when ``a < b`` answers an object whose ``__bool__``
+    raises ``ValueError``."""
     records = _returns(exits)
     for record in records:
         assert len(record) == 1, record
     values = [record[0].value for record in records]
-    assert len(values) == len(expected), values
-    for value in expected:
-        assert TermValue(value) in values, values
+    assert values.count(TermValue(guarded)) == 1, values
+    others = [value for value in values if value != TermValue(guarded)]
+    assert others, values
+    assert all(value == TermValue(handler) for value in others), values
 
 
 def test_an_except_handlers_return_stands_alone_on_its_record() -> None:
