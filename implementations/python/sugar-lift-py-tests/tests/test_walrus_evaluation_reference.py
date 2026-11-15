@@ -743,6 +743,22 @@ def test_a_bare_walrus_statement_through_the_producer_is_read_after_resume() -> 
 # ---------------------------------------------------------------------------
 
 
+def _ifexp_fragment():
+    """The real fragment of ``1 if c else (x := 5)``: the site the lifter
+    hands the conditional expression.  ``c`` is a free name, so its truth is
+    the undecided member's two faces, keyed on this site
+    (``bool_op_sugar._unanswered_truth``, ``occurrence.occurrence_key``),
+    which refuses a site naming no source coordinate."""
+    from sugar_source_tree.nodes import IfExp
+
+    source = "y = 1 if c else (x := 5)\n"
+    tree = SourceFile(
+        (source, "walrus_evaluation.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
+    return next(node.fragment for node in tree.nodes() if isinstance(node, IfExp))
+
+
 def test_a_conditional_arm_walrus_binds_only_its_own_arm() -> None:
     # `1 if c else (x := 5)` with `x` 3 before it: one arm per branch.  Where
     # the walrus ran, `x` reads 5; on the other arm the walrus's key holds 3.
@@ -750,7 +766,7 @@ def test_a_conditional_arm_walrus_binds_only_its_own_arm() -> None:
         test=NameSugar(name="c", site=SITE),
         body=IntLiteralSugar(1, site=SITE),
         orelse=_walrus_sugar("x", 5),
-        site=SITE,
+        site=_ifexp_fragment(),
         walrus_priors=((KEY, "x", IntLiteralSugar(3, site=SITE)),),
     ).desugar(_root("walrus-ifexp"))
     arms = [exit_.value for exit_ in outcome.exits if isinstance(exit_, Completed)]
@@ -772,7 +788,7 @@ def test_an_arm_walrus_with_no_prior_is_refused_on_the_other_arm() -> None:
         test=NameSugar(name="c", site=SITE),
         body=IntLiteralSugar(1, site=SITE),
         orelse=_walrus_sugar("x", 5),
-        site=SITE,
+        site=_ifexp_fragment(),
     ).desugar(_root("walrus-ifexp-unbound"))
     arms = [exit_.value for exit_ in outcome.exits if isinstance(exit_, Completed)]
     assert len(arms) == 2
