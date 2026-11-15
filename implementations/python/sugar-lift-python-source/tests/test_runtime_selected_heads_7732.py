@@ -14,49 +14,9 @@ for it before construction.
 
 from __future__ import annotations
 
-from sugar_source_tree.formal_manager_head import runtime_selected_manager_head
 from sugar_source_tree.nodes import With
 
-from test_cited_unreadable_manager import _unit
 from test_contextlib_suppress_source_exit_faces import _corpus, _open
-
-
-def test_only_a_formal_enter_result_binding_qualifies():
-    def head(source, line=3, col=13):
-        return runtime_selected_manager_head(_unit(source), line, col)
-
-    picked = (
-        "def f(c):\n"
-        "    with c.m() as (a, b):\n"
-        "        with a:\n"
-        "            pass\n"
-    )
-    assert head(picked) == "a"
-    # Rebound inside the body: the head no longer holds the enter result.
-    rebound = (
-        "def f(c):\n"
-        "    with c.m() as a:\n"
-        "        with a:\n"
-        "            pass\n"
-        "        a = 1\n"
-    )
-    assert head(rebound) is None
-    # The outer head is not formal-rooted (a module name is read from source).
-    module_rooted = (
-        "def f():\n"
-        "    with g() as a:\n"
-        "        with a:\n"
-        "            pass\n"
-    )
-    assert head(module_rooted) is None
-    # A nested target is not a flat name list.
-    nested = (
-        "def f(c):\n"
-        "    with c.m() as (a, (b, d)):\n"
-        "        with a:\n"
-        "            pass\n"
-    )
-    assert head(nested) is None
 
 
 _GENERATOR_OPENS = (

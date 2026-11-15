@@ -290,35 +290,6 @@ def test_a_with_in_an_unrolled_loop_has_two_exit_faces_and_two_slots() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The protocol that describes __exit__ is keyed over the same face.
-# ---------------------------------------------------------------------------
-
-
-class _FaceProtocol:
-    def __init__(self, exit_face_id: str) -> None:
-        self.exit_face_id = exit_face_id
-
-    def at_exit_face(self, exit_face_id: str) -> "_FaceProtocol":
-        return _FaceProtocol(exit_face_id)
-
-
-def test_a_with_evaluated_once_keeps_its_derived_protocol() -> None:
-    item = _with(_node(_function(WITH_ONCE), With).substitute({})).items[0]
-    protocol = _FaceProtocol(item._source_exit_face_id())
-    assert With._protocol_at_exit_face(protocol, item) is protocol
-
-
-def test_each_evaluation_describes_exit_over_its_own_face() -> None:
-    source = _node(_function(WITH_ONCE), With)
-    protocol = _FaceProtocol(source.items[0]._source_exit_face_id())
-    for node in _copies(source):
-        item = node.items[0]
-        keyed = With._protocol_at_exit_face(protocol, item)
-        assert keyed.exit_face_id == item._exit_face_id()
-    assert protocol.exit_face_id == source.items[0]._exit_face_id()
-
-
-# ---------------------------------------------------------------------------
 # with ... as (a, b): after the with, each target is its store's projection.
 # ---------------------------------------------------------------------------
 

@@ -1,14 +1,12 @@
 """Two present_construction lies that were not lies (2026-09-05 board, 17 rows).
 
-- ``source_call_frame_table`` is a lookup aid keyed by coordinates; walking it
-  as testimony refused every CallSiteSugar whose table was non-empty
-  ("mappings require string keys", 8 rows). A field declared
-  ``metadata={"testimony": "lookup"}`` is excluded from ConstructedValueV2.
-- ``frame-is-none`` faulted every in-population CLASS constructor call
-  (``BooleanArray(...)``, ``OptionError(...)``: 9 rows): the definition is
-  resolved, no constructor frame exists anywhere, and the checker called
-  that absence a mismatch. Absence is a lie only when the table seats a
-  frame at this coordinate and the sugar dropped it.
+- A lookup aid keyed by coordinates, walked as testimony, refused every
+  value whose table was non-empty ("mappings require string keys", 8 rows).
+  A field declared ``metadata={"testimony": "lookup"}`` is excluded from
+  ConstructedValueV2.
+- An in-population CLASS constructor call (``BooleanArray(...)``,
+  ``OptionError(...)``: 9 rows) has a resolved definition and no constructor
+  frame anywhere; that absence is honest testimony, never a mismatch.
 """
 
 from __future__ import annotations
@@ -29,7 +27,6 @@ from sugar_source_tree.binding_state import (
     constructed_value_cid_v2,
 )
 from sugar_source_tree.nodes import Call, ClassDef
-from sugar_source_tree.panic import ConstructedValueTestimonyNotWritten
 from sugar_source_tree.reporter import CollectingReporter
 from sugar_source_tree.backend import materialize
 
@@ -103,26 +100,5 @@ def test_in_population_class_constructor_call_testifies(tmp_path) -> None:
     sugar = call.sugar()
     assert isinstance(sugar.expected_definition_ref, ClassDef)
     assert sugar.source_call_frame is None
-    reporter.present_construction(call, sugar)  # was: frame-is-none
+    reporter.present_construction(call, sugar)
     assert constructed_value_cid_v2(sugar).startswith("blake3-512:")
-
-
-def test_dropped_seated_frame_still_faults(tmp_path) -> None:
-    """Lying twin: the table seats a frame at this coordinate, the sugar carries none."""
-    from dataclasses import replace
-
-    call, reporter = _class_constructor_call(tmp_path)
-    sugar = call.sugar()
-    span = call.line_col_span()
-    coordinate = SourceFragmentCoordinateV1(
-        call.unit.source_cid, span.start_line, span.start_col, span.end_line, span.end_col
-    )
-    lying = replace(
-        sugar,
-        source_call_frame=None,
-        source_call_frame_table={coordinate: object()},
-        source_call_frame_coordinate=coordinate,
-        expected_source_call_frame_owner=sugar.expected_definition_ref,
-    )
-    with pytest.raises(ConstructedValueTestimonyNotWritten, match="frame-is-none"):
-        reporter.present_construction(call, lying)

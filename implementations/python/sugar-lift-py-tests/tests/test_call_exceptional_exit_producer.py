@@ -5,14 +5,13 @@ from __future__ import annotations
 import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import (
-    SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import CallSiteValue
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.nodes import Call, FunctionDef
+from sugar_source_tree.nodes import Call
 from sugar_source_tree.tree import SourceFile
 
 
@@ -23,26 +22,13 @@ def _source_file(source: str, context: TreeConstructionContextV1) -> SourceFile:
     )
 
 
-def _coordinate(node: Call) -> SourceFragmentCoordinateV1:
-    span = node.line_col_span()
-    return SourceFragmentCoordinateV1(
-        node.unit.source_cid,
-        span.start_line,
-        span.start_col,
-        span.end_line,
-        span.end_col,
-    )
-
-
 def _call_outcome(function_body: str):
     context = TreeConstructionContextV1.for_source_call_construction()
     source = _source_file(
         f"def producer():\n{function_body}\n\nproducer()\n",
         context,
     )
-    function = next(node for node in source.nodes() if isinstance(node, FunctionDef))
     call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
-    context.source_call_frames[_coordinate(call)] = function.source_visible_call_frame()
     return call.sugar().desugar(None)
 
 
@@ -52,9 +38,7 @@ def _parameterized_call_outcome(function_body: str):
         f"def producer(flag):\n{function_body}\n\nproducer(flag)\n",
         context,
     )
-    function = next(node for node in source.nodes() if isinstance(node, FunctionDef))
     call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
-    context.source_call_frames[_coordinate(call)] = function.source_visible_call_frame()
     return call.sugar().desugar(None)
 
 

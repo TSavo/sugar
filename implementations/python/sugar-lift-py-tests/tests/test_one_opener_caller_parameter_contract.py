@@ -29,8 +29,6 @@ _PRODUCER = (
     '        return carrier.mint(operator="floor_method")\n'
 )
 
-_CONTEXT_TABLES = ("source_call_frames",)
-
 
 def test_the_contract_reads_the_unit_the_board_door_reads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -67,10 +65,6 @@ def test_the_contract_reads_the_unit_the_board_door_reads(
         contract_context.contract_refs.table_cid
         == board_context.contract_refs.table_cid
     )
-    for table in _CONTEXT_TABLES:
-        assert set(getattr(contract_context, table)) == set(
-            getattr(board_context, table)
-        ), table
 
 
 def test_the_contract_opens_each_file_once_per_session(

@@ -18,7 +18,6 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.context_manager_resolution import (
     TreeConstructionContextV1,
 )
-from sugar_source_tree.formal_manager_head import _with_item_expr
 from sugar_source_tree.locals_snapshot import locals_snapshot_shape
 from sugar_source_tree.nodes import Call, GeneratorExp, SourceUnit
 from sugar_source_tree.panic import SourceTreePanic
@@ -112,10 +111,6 @@ def _unit_without_typed_tree() -> SourceUnit:
             lambda unit: GeneratorExp._consumed_whole_in_place(
                 SimpleNamespace(unit=unit, fragment="(y for y in x)")
             ),
-        ),
-        (
-            "formal_manager_head._with_item_expr",
-            lambda unit: _with_item_expr(unit, 2, 11),
         ),
         (
             "locals_snapshot.locals_snapshot_shape",

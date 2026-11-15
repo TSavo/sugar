@@ -9551,11 +9551,8 @@ class WithItem(Node):
         Keyed off the item's evaluation the way ``_manager_slot_id`` is: a
         ``with`` evaluated more than once (a loop iteration's copy, a
         duplicated ``finally``'s exit-path copy) exits over its own face,
-        never a sibling copy's.  The protocol that describes ``__exit__`` is
-        re-keyed onto this face where the sugar is built
-        (``With._protocol_at_exit_face``), so the sugar's face facts and the
-        protocol's exit coordinates name the same face.  An item evaluated
-        once keeps the source occurrence's face."""
+        never a sibling copy's.  An item evaluated once keeps the source
+        occurrence's face."""
         return Statement._evaluation_slot(self, self._source_exit_face_id())
 
     def _make_exit_type_ref(self) -> "Node":
@@ -17554,22 +17551,13 @@ class With(Statement):
         if call is None:
             return None
         from sugar_lift_py_tests.context_manager_resolution import (
-            SourceFragmentCoordinateV1,
             TreeConstructionContextV1,
         )
 
         if not isinstance(context, TreeConstructionContextV1):
             return None
-        span = call.line_col_span()
-        coordinate = SourceFragmentCoordinateV1(
-            self.unit.source_cid,
-            span.start_line,
-            span.start_col,
-            span.end_line,
-            span.end_col,
-        )
-        frame = context.source_call_frames.get(coordinate)
-        if frame is None and isinstance(
+        frame = None
+        if isinstance(
             call.unit.lexical_call_enrollment(call), LexicalCallEnrolledV1
         ):
             # The frame the call itself applies, as its own construction reads
@@ -17637,91 +17625,18 @@ class With(Statement):
             NeverSuppressesDispositionV1,
             ReturnTruthinessDispositionV1,
             ProtocolResourceSemanticsV1,
-            SourceEnterFacesCompletionV1,
-            SourceExitFacesCompletionV1,
-            FormalManagerCallFacesCompletionV1,
             TotalCompletionV1,
         )
         from sugar_lift_py_tests.context_manager_resolution import (
             ContextManagerContractRefV1,
             ContextManagerResolutionGapV1,
-            FactoredSourceDerivedContextManagerRefV1,
-            FormalManagerRefV1,
-            SourceDerivedContextManagerRefV1,
-        )
-        from sugar_lift_py_tests.floor.formal_selected_manager import (
-            FormalSelectedManagerProtocol,
         )
         from sugar_lift_py_tests.ir import PrimitiveSort
-        from sugar_lift_py_tests.outcome import Completed
         from .panic import UnsupportedContextManagerSemantics
-
-        from sugar_lift_py_tests.context_manager_resolution import (
-            OpaqueCitedContextManagerRefV1,
-        )
-
-        from sugar_lift_py_tests.context_manager_resolution import (
-            PartitionedOpaqueCitedContextManagerRefV1,
-        )
 
         if isinstance(resolution, ContextManagerResolutionGapV1):
             self._raise_resolution_gap(resolution)
-        if isinstance(
-            resolution,
-            (OpaqueCitedContextManagerRefV1, PartitionedOpaqueCitedContextManagerRefV1),
-        ):
-            # A POSITIVE seated citation, not a rescued refusal. This arm never
-            # catches a panic and never infers opacity from a missing contract:
-            # the producer authenticated the callee and authenticated that its
-            # enter/exit semantics are uncited. Semantics are deliberately
-            # unreachable on this ref -- reading `.semantics` raises -- so the
-            # admitted-semantics checks below cannot silently pass it through.
-            return resolution
-        if isinstance(resolution, FactoredSourceDerivedContextManagerRefV1):
-            faces = getattr(resolution.boundary_faces, "exits", ())
-            completed = tuple(face for face in faces if isinstance(face, Completed))
-            if not completed or any(
-                not (
-                    isinstance(face.value, EffectBoundarySemanticsV1)
-                    and face.value.schema_version == "1"
-                    and isinstance(face.value.mode, (ExpectsModeV1, SuppressesModeV1))
-                    and isinstance(
-                        face.value.effect_kind,
-                        (RaiseEffectKindV1, WarningEffectKindV1),
-                    )
-                )
-                for face in completed
-            ):
-                panic = UnsupportedContextManagerSemantics(
-                    blame=self.fragment,
-                    demand_cid=resolution.protocol_construction_cid,
-                    member_cid=resolution.protocol_construction_cid,
-                    owner="With._construct_sugar",
-                    observed=(
-                        "factored source-derived CM carries unsupported message-pattern "
-                        f"faces at {resolution.protocol_construction_cid}"
-                    ),
-                    requested=(
-                        "ExitSet of typed Expects/Suppresses Raise/Warning "
-                        "EffectBoundarySemanticsV1 faces"
-                    ),
-                    fix="leave unsupported factored faces loud; never recombine or drop them",
-                )
-                testify(self.reporter, "report_gap", self, panic)
-                raise panic
-            # Expected-type and binding authorize every face. Disagreeing faces
-            # must refuse here — never let face zero speak for the rest.
-            _ = resolution.shared_expected_type_operand
-            _ = resolution.shared_binding
-            return resolution
-        if not isinstance(
-            resolution,
-            (
-                ContextManagerContractRefV1,
-                SourceDerivedContextManagerRefV1,
-                FormalManagerRefV1,
-            ),
-        ):
+        if not isinstance(resolution, ContextManagerContractRefV1):
             backend_defect(
                 blame=self.fragment,
                 owner="With._construct_sugar",
@@ -17733,39 +17648,11 @@ class With(Statement):
         admitted_resource = (
             isinstance(semantics, ProtocolResourceSemanticsV1)
             and semantics.schema_version == "1"
-            and (
-                isinstance(semantics.enter.completion, TotalCompletionV1)
-                or (
-                    isinstance(semantics.enter.completion, SourceEnterFacesCompletionV1)
-                    and isinstance(resolution, SourceDerivedContextManagerRefV1)
-                )
-                or (
-                    isinstance(
-                        semantics.enter.completion,
-                        FormalManagerCallFacesCompletionV1,
-                    )
-                    and isinstance(resolution, FormalManagerRefV1)
-                    and isinstance(resolution.protocol, FormalSelectedManagerProtocol)
-                )
-            )
+            and isinstance(semantics.enter.completion, TotalCompletionV1)
             and semantics.enter.projection == "enter-result"
             and isinstance(semantics.enter.sort, PrimitiveSort)
             and semantics.enter.sort.name == "Value"
-            and (
-                isinstance(semantics.exit.completion, TotalCompletionV1)
-                or (
-                    isinstance(semantics.exit.completion, SourceExitFacesCompletionV1)
-                    and isinstance(resolution, SourceDerivedContextManagerRefV1)
-                )
-                or (
-                    isinstance(
-                        semantics.exit.completion,
-                        FormalManagerCallFacesCompletionV1,
-                    )
-                    and isinstance(resolution, FormalManagerRefV1)
-                    and isinstance(resolution.protocol, FormalSelectedManagerProtocol)
-                )
-            )
+            and isinstance(semantics.exit.completion, TotalCompletionV1)
             and isinstance(
                 semantics.exit.disposition,
                 (NeverSuppressesDispositionV1, ReturnTruthinessDispositionV1),
@@ -17799,36 +17686,6 @@ class With(Statement):
             testify(self.reporter, "report_gap", self, panic)
             raise panic
         return resolution
-
-    @staticmethod
-    def _formal_head_with_operands(head_sugar, expr):
-        """A formal-selected head that also evaluates its call's operands.
-
-        Only the outermost call of the head may carry non-constant operands
-        (``formal_manager_head``); constants evaluate without effect, so a
-        head whose operands are all constants keeps its single opaque face.
-
-        A head a name holds (``cm = f.open(p); with cm:``,
-        ``OpaqueObjectStateV1``) is a call that ran at its assignment: its
-        operands were evaluated there, once, and their halts left there.  The
-        ``with`` reads the value the call completed with through the
-        assignment's key (``bound``), never its operands evaluated again.
-        """
-        from dataclasses import replace
-
-        if expr.kind == "OpaqueObjectStateV1":
-            return replace(head_sugar, bound=expr.sugar())
-        if expr.kind != "Call":
-            return head_sugar
-        operands = (
-            *expr.args,
-            *(keyword.value for keyword in expr.keywords),
-        )
-        if all(operand.kind == "Constant" for operand in operands):
-            return head_sugar
-        return replace(
-            head_sugar, operands=tuple(operand.sugar() for operand in operands)
-        )
 
     def _selected_manager_sugar(self, expr):
         """``with ctx:`` where the arms of an ``if`` each bound ``ctx = cm()``.
@@ -17923,8 +17780,6 @@ class With(Statement):
         )
         from sugar_lift_py_tests.context_manager_resolution import (
             ContextManagerContractRefV1,
-            FormalManagerRefV1,
-            SourceDerivedContextManagerRefV1,
         )
         from .shadow import rewrite
 
@@ -17933,7 +17788,7 @@ class With(Statement):
             return self
         # A generator-based manager binds its enter result (the first yield)
         # exactly as a class-based one does (``GeneratorWithSugar`` /
-        # ``WithSourceResourceSugar`` both bind the enter slot), so its store
+        # ``WithReducedManagerSugar`` both bind the enter slot), so its store
         # target is lowered the same way: ``a``/``b`` read their projections
         # of that store, never their prior state by spelling.  Its contract
         # is the generator frame, read before any resolution is required.
@@ -17947,14 +17802,7 @@ class With(Statement):
                 resolution is not _UNSEATED_MANAGER_ROW
                 and not self._manager_answered_by_reduction(item)
                 and (
-                    not isinstance(
-                        resolution,
-                        (
-                            ContextManagerContractRefV1,
-                            SourceDerivedContextManagerRefV1,
-                            FormalManagerRefV1,
-                        ),
-                    )
+                    not isinstance(resolution, ContextManagerContractRefV1)
                     or not isinstance(
                         resolution.semantics, ProtocolResourceSemanticsV1
                     )
@@ -18059,209 +17907,6 @@ class With(Statement):
             from sugar_lift_py_tests.kit_rpc import ContextManagerEdgeDtoV1
             from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
 
-            from sugar_lift_py_tests.context_manager_resolution import (
-                FactoredSourceDerivedContextManagerRefV1,
-                FormalManagerRefV1,
-                SourceDerivedContextManagerRefV1,
-            )
-
-            from sugar_lift_py_tests.context_manager_resolution import (
-                OpaqueCitedContextManagerRefV1,
-                PartitionedOpaqueCitedContextManagerRefV1,
-            )
-
-            if isinstance(
-                resolved_ref,
-                (
-                    OpaqueCitedContextManagerRefV1,
-                    PartitionedOpaqueCitedContextManagerRefV1,
-                ),
-            ):
-                from sugar_lift_py_tests.sugar.with_opaque_cited_manager_sugar import (
-                    WithOpaqueCitedManagerSugar,
-                )
-
-                # An `as` target on a cited manager binds the OPEN enter-result
-                # coordinate. A simple Name was already discharged by
-                # substitution; any other target is a real store, and
-                # `_bind_store_target` declines to rewrite this contract (it
-                # admits only ProtocolResource semantics), so the binding would
-                # otherwise be silently dropped. A dropped binding is the one
-                # outcome no contract admits -- stay loud.
-                if binds_enter_result and as_name is None:
-                    from .panic import UnsupportedWithBindingTarget
-
-                    panic = UnsupportedWithBindingTarget(
-                        blame=item.optional_vars.fragment,
-                        owner="With._construct_sugar",
-                        observed=(
-                            "cited-opaque manager as-binding to a "
-                            f"{item.optional_vars.kind} store target"
-                        ),
-                        requested=(
-                            "a cited-opaque manager bound to a simple Name, or "
-                            "no target"
-                        ),
-                        fix=(
-                            "authenticate a store projection for the open "
-                            "enter-result coordinate, or keep the store target "
-                            "loud -- never drop the binding"
-                        ),
-                    )
-                    testify(self.reporter, "report_gap", self, panic)
-                    raise panic
-                enter_slot = (
-                    f"{item._manager_slot_id()}#enter_result"
-                    if binds_enter_result
-                    else None
-                )
-                return WithOpaqueCitedManagerSugar(
-                    manager=item.context_expr.sugar(),
-                    body=tuple(stmt.sugar() for stmt in self.body),
-                    contract_ref=resolved_ref,
-                    enter_slot_id=enter_slot,
-                    site=self.fragment,
-                )
-
-            if isinstance(resolved_ref, FormalManagerRefV1) and isinstance(
-                resolved_ref.semantics, ProtocolResourceSemanticsV1
-            ):
-                from sugar_lift_py_tests.sugar.with_formal_manager_sugar import (
-                    WithFormalManagerSugar,
-                )
-
-                from dataclasses import replace
-
-                from sugar_lift_py_tests.floor.formal_selected_manager import (
-                    FormalSelectedManagerProtocol,
-                )
-
-                manager_slot = item._manager_slot_id()
-                enter_slot = (
-                    f"{manager_slot}#enter_result" if binds_enter_result else None
-                )
-                protocol = resolved_ref.protocol
-                if isinstance(protocol, FormalSelectedManagerProtocol):
-                    # Every step of the selected manager (select, construct,
-                    # ``__enter__``, ``__exit__``) halts at this item: its
-                    # halts state the item's fragment (#7766).
-                    protocol = replace(protocol, fragment=item.fragment)
-                head_sugar = getattr(protocol, "head_sugar", None)
-                manager_head = (
-                    head_sugar() if callable(head_sugar) else item.context_expr.sugar()
-                )
-                if isinstance(protocol, FormalSelectedManagerProtocol):
-                    manager_head = self._formal_head_with_operands(
-                        manager_head, item.context_expr
-                    )
-                return WithFormalManagerSugar(
-                    manager=manager_head,
-                    protocol=protocol,
-                    summary=resolved_ref,
-                    body=tuple(stmt.sugar() for stmt in self.body),
-                    manager_slot_id=manager_slot,
-                    enter_slot_id=enter_slot,
-                    exit_face_id=item._exit_face_id(),
-                    site=self.fragment,
-                )
-
-            if isinstance(
-                resolved_ref, SourceDerivedContextManagerRefV1
-            ) and isinstance(resolved_ref.semantics, ProtocolResourceSemanticsV1):
-                from dataclasses import replace
-
-                from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
-                    WithSourceResourceSugar,
-                )
-
-                manager_slot = item._manager_slot_id()
-                enter_slot = (
-                    f"{manager_slot}#enter_result" if binds_enter_result else None
-                )
-                enter_definition, exit_definition = (
-                    self._require_native_resource_definitions(resolved_ref)
-                )
-                enter_sugar = replace(
-                    item._make_enter_call().sugar(),
-                    native_definition_coordinate=enter_definition,
-                )
-                exit_sugar = replace(
-                    item._make_parametric_exit_call().sugar(),
-                    native_definition_coordinate=exit_definition,
-                )
-                manager_sugar = item.context_expr.sugar()
-                if resolved_ref.call_actual_sugars is not None:
-                    from sugar_lift_py_tests.context_manager_resolution import (
-                        SourceFragmentCoordinateV1,
-                    )
-
-                    manager_sugar = resolved_ref.call_actual_sugars.bind(
-                        manager_sugar,
-                        use_site=SourceFragmentCoordinateV1(
-                            self.unit.source_cid, *item._manager_use_site_span()
-                        ),
-                    )
-                return WithSourceResourceSugar(
-                    manager=manager_sugar,
-                    enter=enter_sugar,
-                    exit=exit_sugar,
-                    protocol=self._protocol_at_exit_face(resolved_ref.protocol, item),
-                    summary=resolved_ref,
-                    body=tuple(stmt.sugar() for stmt in self.body),
-                    manager_slot_id=manager_slot,
-                    enter_slot_id=enter_slot,
-                    exit_face_id=item._exit_face_id(),
-                    enter_definition=enter_definition,
-                    exit_definition=exit_definition,
-                    site=self.fragment,
-                )
-
-            if isinstance(resolved_ref, FactoredSourceDerivedContextManagerRefV1):
-                from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
-                    WithEffectBoundarySugar,
-                )
-
-                if binds_enter_result and as_name is None:
-                    from .panic import UnsupportedWithBindingTarget
-
-                    panic = UnsupportedWithBindingTarget(
-                        blame=item.optional_vars.fragment,
-                        owner="With._construct_sugar",
-                        observed=(
-                            "factored EffectBoundary as-binding to a "
-                            f"{item.optional_vars.kind} store target"
-                        ),
-                        requested=(
-                            "a factored EffectBoundary manager bound to a simple "
-                            "Name, or no target"
-                        ),
-                        fix=(
-                            "authenticate a store projection for this contract, or "
-                            "keep the store target loud -- never drop the binding"
-                        ),
-                    )
-                    testify(self.reporter, "report_gap", self, panic)
-                    raise panic
-                observation_slot = None
-                if as_name is not None:
-                    observation_slot = self._effect_boundary_observation_slot(
-                        item, resolved_ref
-                    )
-                manager_sugar = item.context_expr.sugar()
-                manager_sugar = self._authenticate_expected_exception_type(
-                    item.context_expr, manager_sugar, resolved_ref
-                )
-                return WithEffectBoundarySugar(
-                    manager=manager_sugar,
-                    body=tuple(stmt.sugar() for stmt in self.body),
-                    semantics=None,
-                    contract_ref=resolved_ref,
-                    context_manager_edge=None,
-                    boundary_faces=resolved_ref.boundary_faces,
-                    observation_slot_id=observation_slot,
-                    site=self.fragment,
-                )
-
             if isinstance(resolved_ref.semantics, EffectBoundarySemanticsV1):
                 from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
                     WithEffectBoundarySugar,
@@ -18311,12 +17956,8 @@ class With(Statement):
                     body=tuple(stmt.sugar() for stmt in self.body),
                     semantics=resolved_ref.semantics,
                     contract_ref=resolved_ref,
-                    context_manager_edge=(
-                        None
-                        if isinstance(resolved_ref, SourceDerivedContextManagerRefV1)
-                        else ContextManagerEdgeDtoV1.from_resolved(
-                            resolved_ref, resolved_ref.use_site
-                        )
+                    context_manager_edge=ContextManagerEdgeDtoV1.from_resolved(
+                        resolved_ref, resolved_ref.use_site
                     ),
                     observation_slot_id=observation_slot,
                     site=self.fragment,
@@ -18373,22 +18014,6 @@ class With(Statement):
         testify(self.reporter, "report_gap", self, panic)
         raise panic
 
-    @staticmethod
-    def _protocol_at_exit_face(protocol, item):
-        """The derived protocol describing ``__exit__`` over this evaluation's
-        face.
-
-        The summary derivation states the protocol over the source
-        occurrence's face, once per use site.  A ``with`` evaluated more than
-        once exits over its own face per evaluation (``_exit_face_id``), so
-        the protocol is re-keyed onto that face here and the sugar's face
-        facts and the protocol's exit coordinates stay together.  An item
-        evaluated once keeps the derived protocol as published."""
-        face = item._exit_face_id()
-        if face == item._source_exit_face_id():
-            return protocol
-        return protocol.at_exit_face(face)
-
     def _require_native_resource_definitions(self, resolved_ref):
         """Require both protocol methods through the one authenticated door."""
         from sugar_lift_py_tests.context_manager_resolution import (
@@ -18440,11 +18065,7 @@ class With(Statement):
         from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
         from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
 
-        semantics = getattr(reference, "semantics", None)
-        if semantics is not None:
-            selector = semantics.expected_type_operand
-        else:
-            selector = getattr(reference, "shared_expected_type_operand", None)
+        selector = reference.semantics.expected_type_operand
         if not isinstance(selector, FormalArgumentProjectionV1):
             return manager_sugar
         if not isinstance(manager, Call) or not isinstance(
@@ -18662,11 +18283,7 @@ class With(Statement):
             WarningObservationBindingV1,
         )
 
-        semantics = getattr(resolved_ref, "semantics", None)
-        if semantics is not None:
-            binding = semantics.binding
-        else:
-            binding = getattr(resolved_ref, "shared_binding", None)
+        binding = resolved_ref.semantics.binding
         if isinstance(binding, ExceptionInfoBindingV1):
             projection = EXCEPTION_INFO
         elif isinstance(binding, WarningObservationBindingV1):
@@ -18749,29 +18366,6 @@ class With(Statement):
             from sugar_lift_py_tests.context_manager_contract import (
                 EffectBoundarySemanticsV1,
             )
-            from sugar_lift_py_tests.context_manager_resolution import (
-                OpaqueCitedContextManagerRefV1,
-            )
-
-            if isinstance(resolved_ref, OpaqueCitedContextManagerRefV1):
-                # A citation declares no contract, so it declares no
-                # observation slot. `as` binds the OPEN enter-result
-                # coordinate -- the same slot `_construct_sugar` binds.
-                #
-                # This arm is REQUIRED, not defensive tidiness. The
-                # EffectBoundary test below reads `.semantics` through
-                # `getattr(..., None)`, whose default only absorbs
-                # AttributeError; the citation's typed refusal is not one, so
-                # it would escape this frame-projection path as an INSTRUMENT
-                # FAILURE rather than a countable row. Asking a citation for
-                # semantics stays loud -- the answer is that this consumer
-                # must not ask.
-                enter_slot = f"{item._manager_slot_id()}#enter_result"
-                return self._with_assignment_binding(
-                    item,
-                    item._make_observation_ref(enter_slot, ENTER_RESULT),
-                    scope,
-                )
 
             if resolved_ref is not None and isinstance(
                 getattr(resolved_ref, "semantics", None), EffectBoundarySemanticsV1
@@ -23400,10 +22994,7 @@ class Call(Expression):
         built, so a callee with no sugar (a Lambda called inline) still stays
         loud through the ordinary recursion. Named keywords and ``**`` spreads
         ride explicitly on every coordinate; none is dropped or interpreted."""
-        context = self._require_construction_context(owner="Call._construct_sugar")
-        from sugar_lift_py_tests.context_manager_resolution import (
-            TreeConstructionContextV1,
-        )
+        self._require_construction_context(owner="Call._construct_sugar")
 
         # Unconditional: this is WHERE the call is, not WHETHER a context was
         # seated. See ``Node.source_occurrence``.
@@ -23513,9 +23104,6 @@ class Call(Expression):
         source_call_frame = None
         recursion_seat = None
 
-        if isinstance(context, TreeConstructionContextV1):
-            assert coordinate is not None
-            source_call_frame = context.source_call_frames.get(coordinate)
         # Applicability first, relation second.  A non-lexical call is lawfully
         # not enrolled; a stranded enrolled row refuses instead of quietly
         # losing the source frame (#7348 caller 4).
@@ -23553,17 +23141,16 @@ class Call(Expression):
                     requested="this source unit's exact call, definition, and lexical scope",
                     fix="repair lexical call enrollment before constructing the source frame",
                 )
-            if source_call_frame is None:
-                try:
-                    source_call_frame = function_definition.source_visible_call_frame()
-                except SourceCallFrameCycle as cycle:
-                    # The callee's frame is under construction up the stack: this
-                    # call is the recursion seat. Definition known, body not unfolded.
-                    source_call_frame = None
-                    recursion_seat = (
-                        f"call-graph-cycle:{cycle.definition.name}"
-                        f"@{cycle.definition.line_col_span().start_line}"
-                    )
+            try:
+                source_call_frame = function_definition.source_visible_call_frame()
+            except SourceCallFrameCycle as cycle:
+                # The callee's frame is under construction up the stack: this
+                # call is the recursion seat. Definition known, body not unfolded.
+                source_call_frame = None
+                recursion_seat = (
+                    f"call-graph-cycle:{cycle.definition.name}"
+                    f"@{cycle.definition.line_col_span().start_line}"
+                )
         if source_call_frame is not None and _class_method_lookup_call(
             self, source_call_frame
         ):
@@ -23573,12 +23160,10 @@ class Call(Expression):
             # below), never this seated frame with the class spliced in.
             source_call_frame = None
         if source_call_frame is not None:
+            # A frame is applied only through the call's own lexical row
+            # (above), so the row is present here.
             from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
-            from sugar_lift_py_tests.sugar.call_site_sugar import (
-                CallSiteSugar,
-                DefinitionOccurrenceAbsentV1,
-                DefinitionOccurrenceAbsenceReasonV1,
-            )
+            from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 
             if any(keyword.arg is None for keyword in self.keywords):
                 raise SourceCallBindingGap(
@@ -23612,31 +23197,10 @@ class Call(Expression):
                 call_occurrence=coordinate,
                 keywords=keyword_sugars,
                 source_call_frame=bound_frame,
-                # The frame TABLE lives on the construction context, so it is
-                # carried only when the context HAS one. That is asked directly
-                # now. It used to be asked as ``coordinate is not None``, on the
-                # reasoning that the coordinate was minted solely under
-                # ``isinstance(context, TreeConstructionContextV1)`` -- true at
-                # the time, and exactly the double duty that made the call's
-                # occurrence answer a question about the context instead of a
-                # question about the call. A missing table is now spelled as a
-                # missing table.
-                source_call_frame_table=getattr(
-                    context, "source_call_frames", None
-                )
-                if lexical_row is not None
-                else None,
-                source_call_frame_coordinate=(
-                    coordinate if lexical_row is not None else None
-                ),
                 expected_source_call_frame_owner=(
                     self._project_call_definition_occurrence(
                         lexical_row.definition_occurrence,
                         coordinate="CallSiteSugar.expected_source_call_frame_owner",
-                    )
-                    if lexical_row is not None
-                    else DefinitionOccurrenceAbsentV1(
-                        DefinitionOccurrenceAbsenceReasonV1.NO_LEXICAL_SOURCE_CALL_ROW
                     )
                 ),
                 expected_definition_ref=projected_definition,
@@ -24009,9 +23573,9 @@ class Call(Expression):
     def _spread_source_call_frame(self):
         """Authenticated source frame for a ``*``/``**`` call, when enrolled.
 
-        Looks up the same ``source_call_frames`` table the non-spread Call path
-        uses, then binds non-spread positionals and named keywords onto the
-        frame. Double-star keywords are *not* node-bound here — their FloorValue
+        Reads the callee's own frame (a source class's constructor frame, or
+        the lexical row's definition), then binds non-spread positionals and
+        named keywords onto the frame. Double-star keywords are *not* node-bound here — their FloorValue
         is projected at desugar via ``bind_actuals`` once the mapping is a
         constructed DictValue. Star operands leave the frame unbound so
         SpreadCallSugar stays bodyless (no typed vararg projection yet).
@@ -24019,23 +23583,7 @@ class Call(Expression):
         by name.
         """
         starred = any(isinstance(arg, Starred) for arg in self.args)
-        context = self._require_construction_context(
-            owner="Call._spread_source_call_frame"
-        )
-        from sugar_lift_py_tests.context_manager_resolution import (
-            TreeConstructionContextV1,
-        )
-
         source_call_frame = None
-        if (
-            isinstance(context, TreeConstructionContextV1)
-            and context.source_call_frames
-        ):
-            # Same pure function as every other occurrence mint; the lookup is
-            # what the context gates, not the coordinate.
-            source_call_frame = context.source_call_frames.get(
-                self.source_occurrence()
-            )
         # A source class the name reaches seats no frame here: ``C(*a)`` is
         # the call of the class statement's value, read through its key
         # (``Call._construct_sugar``, ``decorated_definition_for_call``).
@@ -25320,7 +24868,7 @@ def call_applies_own_frame(definition) -> bool:
     decorator is ``contextlib.contextmanager`` (read through the one builtin
     door, ``SourceUnit.language_callee_of``): calling it builds
     ``_GeneratorContextManager(f, args, kwds)``, whose ``gen`` is the
-    generator the frame allocates (``WithSourceResourceSugar``).  Every other
+    generator the frame allocates (``GeneratorWithSugar``).  Every other
     decorated definition binds its name to the decorators' result
     (``DecoratedDefinitionRef``), and a call of it calls that value.
 

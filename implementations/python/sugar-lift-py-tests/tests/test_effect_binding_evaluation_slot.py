@@ -132,7 +132,7 @@ def test_a_duplicated_statement_is_keyed() -> None:
 
 def test_each_evaluation_of_a_with_observes_its_own_slot() -> None:
     with_node = _node(_function(WITH), With)
-    ref = SimpleNamespace(shared_binding=ExceptionInfoBindingV1())
+    ref = SimpleNamespace(semantics=SimpleNamespace(binding=ExceptionInfoBindingV1()))
     source_slot, _ = with_node._effect_boundary_binding(with_node.items[0], ref)
     slots = []
     for key in ("evaluation:one", "evaluation:two"):

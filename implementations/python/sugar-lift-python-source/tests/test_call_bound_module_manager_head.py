@@ -28,7 +28,6 @@ from sugar_lift_py_tests.source_call_resolution import (
 from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
     WithReducedManagerSugar,
 )
-from sugar_source_tree.formal_manager_head import call_bound_local_manager_head
 from sugar_source_tree.nodes import With
 
 from test_contextlib_suppress_source_exit_faces import _corpus, _open
@@ -108,30 +107,3 @@ def test_a_present_module_is_its_module_coordinate():
     assert module_value_name(imported_module_value("zstandard")) == "zstandard"
     # Nothing else is read as a module.
     assert module_value_name(NoneValue()) is None
-
-
-def _unit(source: str):
-    """The typed unit of ``source``: the head reader walks its tree."""
-    from sugar_lift_py_tests.context_manager_resolution import (
-        TreeConstructionContextV1,
-    )
-    from sugar_lift_python_source.canonical import blake3_512_of
-    from sugar_source_tree.tree import SourceFile
-
-    return SourceFile(
-        (source, "call_bound_head.py", blake3_512_of(source.encode("utf-8"))),
-        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
-    ).unit
-
-
-def test_only_a_local_bound_once_by_a_call_qualifies():
-    def head(source, line):
-        return call_bound_local_manager_head(_unit(source), line, 9)
-
-    once = "def f():\n    z = g('m')\n    with z.A().b(1):\n        pass\n"
-    assert head(once, 3) == ((2, 8), "A")
-    # Bound twice, bound by a non-call, a parameter, or no attribute on it.
-    assert head("def f():\n    z = g('m')\n    z = g('n')\n    with z.A():\n        pass\n", 4) is None
-    assert head("def f(m):\n    z = m\n    with z.A():\n        pass\n", 3) is None
-    assert head("def f(z):\n    with z.A():\n        pass\n", 2) is None
-    assert head("def f():\n    z = g('m')\n    with z():\n        pass\n", 3) is None

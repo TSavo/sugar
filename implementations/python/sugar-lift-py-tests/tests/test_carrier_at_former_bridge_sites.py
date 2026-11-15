@@ -1030,7 +1030,7 @@ def test_prior_returns_join_a_composed_carrier_once_it_discharges():
     assert TermValue(9) in values
 
 
-# --- with_source_resource_sugar / with_formal_manager_sugar -----------------
+# --- with_source_resource_sugar (the reduced-manager router) -----------------
 
 
 class _Receiver:
@@ -1092,7 +1092,7 @@ def test_source_resource_manager_carrier_is_refused_by_name():
     carrier, _, _ = _carrier()
     with pytest.raises(ConstructionPanic) as excinfo:
         _route_manager_faces(SimpleNamespace(manager=_Answer(carrier)), None)
-    _refused(excinfo, "WithSourceResourceSugar.manager")
+    _refused(excinfo, "WithReducedManagerSugar.manager")
 
 
 def test_source_resource_receiver_projection_carrier_is_refused_by_name():
@@ -1103,7 +1103,7 @@ def test_source_resource_receiver_projection_carrier_is_refused_by_name():
     carrier, _, _ = _carrier()
     with pytest.raises(ConstructionPanic) as excinfo:
         _project_manager_receiver(_Receiver(carrier), None)
-    _refused(excinfo, "WithSourceResourceSugar.manager")
+    _refused(excinfo, "WithReducedManagerSugar.manager")
 
 
 def test_source_resource_enter_carrier_is_refused_by_name():
@@ -1114,7 +1114,7 @@ def test_source_resource_enter_carrier_is_refused_by_name():
     carrier, _, _ = _carrier()
     with pytest.raises(ConstructionPanic) as excinfo:
         _route_manager_faces(_source_resource(_protocol(enter=carrier)), None)
-    _refused(excinfo, "WithSourceResourceSugar.enter")
+    _refused(excinfo, "WithReducedManagerSugar.enter")
 
 
 def test_source_resource_abstract_exit_carrier_is_refused_by_name(_empty_body):
@@ -1125,7 +1125,7 @@ def test_source_resource_abstract_exit_carrier_is_refused_by_name(_empty_body):
     carrier, _, _ = _carrier()
     with pytest.raises(ConstructionPanic) as excinfo:
         _route_manager_faces(_source_resource(_protocol(exit_=carrier)), None)
-    _refused(excinfo, "WithSourceResourceSugar.exit")
+    _refused(excinfo, "WithReducedManagerSugar.exit")
 
 
 def test_source_resource_concrete_exit_carrier_is_refused_by_name(_empty_body):
@@ -1136,63 +1136,7 @@ def test_source_resource_concrete_exit_carrier_is_refused_by_name(_empty_body):
     carrier, _, _ = _carrier()
     with pytest.raises(ConstructionPanic) as excinfo:
         _route_manager_faces(_source_resource(_protocol(concrete_exit=carrier)), None)
-    _refused(excinfo, "WithSourceResourceSugar.exit")
-
-
-def _formal_manager(manager, protocol):
-    from sugar_lift_py_tests.sugar.with_formal_manager_sugar import (
-        WithFormalManagerSugar,
-    )
-
-    return _bare(
-        WithFormalManagerSugar,
-        manager=manager,
-        protocol=protocol,
-        summary=None,
-        body=(),
-        manager_slot_id="carrier-bridge-sites.manager-slot",
-        enter_slot_id=None,
-        exit_face_id="carrier-bridge-sites.exit-face",
-        site=None,
-    )
-
-
-def test_formal_manager_manager_carrier_is_refused_by_name():
-    carrier, _, _ = _carrier()
-    sugar = _formal_manager(_Answer(carrier), _protocol())
-    with pytest.raises(ConstructionPanic) as excinfo:
-        sugar.desugar(None)
-    _refused(excinfo, "WithFormalManagerSugar.manager")
-
-
-def test_formal_manager_enter_carrier_is_refused_by_name():
-    carrier, _, _ = _carrier()
-    sugar = _formal_manager(
-        _Answer(ExitSet.completed(_Receiver())), _protocol(enter=carrier)
-    )
-    with pytest.raises(ConstructionPanic) as excinfo:
-        sugar.desugar(None)
-    _refused(excinfo, "WithFormalManagerSugar.enter")
-
-
-def test_formal_manager_construct_carrier_is_refused_by_name():
-    carrier, _, _ = _carrier()
-    protocol = _protocol()
-    protocol.construct_manager = lambda value, ctx: carrier
-    sugar = _formal_manager(_Answer(ExitSet.completed(_Receiver())), protocol)
-    with pytest.raises(ConstructionPanic) as excinfo:
-        sugar.desugar(None)
-    _refused(excinfo, "WithFormalManagerSugar.construct")
-
-
-def test_formal_manager_exit_carrier_is_refused_by_name(_empty_body):
-    carrier, _, _ = _carrier()
-    sugar = _formal_manager(
-        _Answer(ExitSet.completed(_Receiver())), _protocol(exit_=carrier)
-    )
-    with pytest.raises(ConstructionPanic) as excinfo:
-        sugar.desugar(None)
-    _refused(excinfo, "WithFormalManagerSugar.exit")
+    _refused(excinfo, "WithReducedManagerSugar.exit")
 
 
 @pytest.fixture
@@ -1215,14 +1159,7 @@ def test_source_resource_body_carrier_is_refused_by_name(_carrier_body):
 
     with pytest.raises(ConstructionPanic) as excinfo:
         _route_manager_faces(_source_resource(_protocol()), None)
-    _refused(excinfo, "WithSourceResourceSugar.body")
-
-
-def test_formal_manager_body_carrier_is_refused_by_name(_carrier_body):
-    sugar = _formal_manager(_Answer(ExitSet.completed(_Receiver())), _protocol())
-    with pytest.raises(ConstructionPanic) as excinfo:
-        sugar.desugar(None)
-    _refused(excinfo, "WithFormalManagerSugar.body")
+    _refused(excinfo, "WithReducedManagerSugar.body")
 
 
 # --- the other with sugars (former ``sugar_outcome_to_exitset`` sites) ------
@@ -1271,25 +1208,6 @@ def test_with_resource_body_carrier_is_refused_by_name(_carrier_body):
     with pytest.raises(ConstructionPanic) as excinfo:
         _with_resource().desugar(None)
     _refused(excinfo, "WithResourceSugar.body")
-
-
-def test_with_opaque_cited_manager_carrier_is_refused_by_name():
-    from sugar_lift_py_tests.sugar.with_opaque_cited_manager_sugar import (
-        WithOpaqueCitedManagerSugar,
-    )
-
-    carrier, _, _ = _carrier()
-    sugar = _bare(
-        WithOpaqueCitedManagerSugar,
-        manager=_Answer(carrier),
-        body=(),
-        contract_ref=None,
-        enter_slot_id=None,
-        site=None,
-    )
-    with pytest.raises(ConstructionPanic) as excinfo:
-        sugar.desugar(None)
-    _refused(excinfo, "WithOpaqueCitedManagerSugar.manager")
 
 
 def test_with_effect_boundary_manager_carrier_is_refused_by_name(monkeypatch):

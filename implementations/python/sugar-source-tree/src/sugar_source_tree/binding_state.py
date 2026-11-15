@@ -633,7 +633,6 @@ class ConstructionTestimonyReporterV1:
         "resolved-definition-kind-mismatch",
         "resolved-seal-mismatch",
         "call-occurrence-mismatch",
-        "frame-is-none",
         "frame-owner-ref-mismatch",
         "frame-definition-site-foreign",
     )
@@ -738,20 +737,11 @@ class ConstructionTestimonyReporterV1:
         if value.call_occurrence != call_occurrence:
             return "call-occurrence-mismatch"
         if frame is None:
-            # Absence is a lie only when a frame WAS seated for this exact
-            # coordinate and the sugar dropped it. A resolved definition with
-            # no frame anywhere (an in-population class constructor whose
-            # frame is not derived) is honest testimony of the frame's
-            # absence, not a mismatch -- 9 rows on the 2026-09-05 board were
-            # BooleanArray(...) / OptionError(...) / SingleBlockManager(...).
-            table = getattr(value, "source_call_frame_table", None)
-            coordinate = getattr(value, "source_call_frame_coordinate", None)
-            if (
-                table is not None
-                and coordinate is not None
-                and table.get(coordinate) is not None
-            ):
-                return "frame-is-none"
+            # A resolved definition with no frame (an in-population class
+            # constructor whose frame is not derived) is honest testimony of
+            # the frame's absence, not a mismatch -- 9 rows on the 2026-09-05
+            # board were BooleanArray(...) / OptionError(...) /
+            # SingleBlockManager(...).
             return None
         # Reachable only with a frame in hand.
         if frame.owner.ref is not definition.ref:
@@ -786,23 +776,6 @@ class ConstructionTestimonyReporterV1:
                 "constructed value",
                 ValueError(
                     "source-backed call falsely claims no definition occurrence"
-                ),
-            )
-        if (
-            isinstance(node, Call)
-            and isinstance(value, CallSiteSugar)
-            and isinstance(
-                value.expected_source_call_frame_owner,
-                DefinitionOccurrenceAbsentV1,
-            )
-            and value.source_call_frame_table is not None
-        ):
-            self._testimony_gap(
-                node,
-                value,
-                "constructed value",
-                ValueError(
-                    "seated source-frame table falsely claims no lexical owner"
                 ),
             )
         if (

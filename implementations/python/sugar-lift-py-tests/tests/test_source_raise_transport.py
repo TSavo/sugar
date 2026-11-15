@@ -11,8 +11,8 @@ An authenticated helper that RAISES (instead of returning) feeds callers:
 
 Authentication door (tests only — no production/carrier/ExitSet edits):
 
-  FunctionDef.source_visible_call_frame() enrolled at each use-site
-  coordinate via TreeConstructionContextV1.source_call_frames.
+  each use-site applies its callee's own
+  FunctionDef.source_visible_call_frame() through its lexical row.
 
 Reds route by owner:
 
@@ -32,7 +32,6 @@ from sugar_lift_py_tests.context_manager_contract import (
     NeverSuppresses,
 )
 from sugar_lift_py_tests.context_manager_resolution import (
-    SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.effect.expectation_not_met_effect import (
@@ -65,17 +64,6 @@ CODEX1 = (
 # ---------------------------------------------------------------------------
 
 
-def _coordinate(node) -> SourceFragmentCoordinateV1:
-    span = node.line_col_span()
-    return SourceFragmentCoordinateV1(
-        node.unit.source_cid,
-        span.start_line,
-        span.start_col,
-        span.end_line,
-        span.end_col,
-    )
-
-
 def _identity(name: str):
     return ctor(
         "python:exception_type_identity",
@@ -91,7 +79,7 @@ class _Expected:
         return self.identity
 
 
-def _tree(source: str, *, bind: frozenset[str], name: str = "raise_transport.py"):
+def _tree(source: str, *, name: str = "raise_transport.py"):
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = SourceFile(
         (source, name, blake3_512_of(source.encode())),
@@ -100,15 +88,6 @@ def _tree(source: str, *, bind: frozenset[str], name: str = "raise_transport.py"
     functions = {
         node.name: node for node in tree.nodes() if isinstance(node, FunctionDef)
     }
-    for call in tree.nodes():
-        if not isinstance(call, Call):
-            continue
-        callee = getattr(call.func, "id", None)
-        if callee is None or callee not in functions or callee not in bind:
-            continue
-        context.source_call_frames[_coordinate(call)] = functions[
-            callee
-        ].source_visible_call_frame()
     return tree, context, functions
 
 
@@ -150,12 +129,9 @@ def _route_try(exits: ExitSet, expected: str) -> ExitSet:
 
 def test_authenticated_raise_helper_publishes_named_halt_at_call() -> None:
     """``def r(): raise ValueError`` + enrolled ``r()`` → sole Halted ValueError."""
-    tree, context, _ = _tree(
+    tree, _, _ = _tree(
         "def raiser():\n    raise ValueError\n\nraiser()\n",
-        bind=frozenset({"raiser"}),
     )
-    call = _calls_named(tree, "raiser")[0]
-    assert _coordinate(call) in context.source_call_frames
     halted = _call_halt(tree, "raiser")
     assert halted.effect.exception_name == "ValueError"
     assert halted.effect.exception_type_coordinate == _identity("ValueError")
@@ -171,7 +147,6 @@ def test_store_indexerror_raise_helper_carries_named_type_and_occurrence() -> No
     """Body store halt (IndexError) published at call with its body occurrence."""
     tree, _, _ = _tree(
         "def raiser():\n" "    a = [0]\n" "    a[5] = 1\n" "\n" "raiser()\n",
-        bind=frozenset({"raiser"}),
     )
     halted = _call_halt(tree, "raiser")
     assert halted.effect.exception_name == "IndexError"
@@ -196,7 +171,6 @@ def test_distinct_helpers_preserve_distinct_raise_occurrences() -> None:
         "\n"
         "alpha()\n"
         "beta()\n",
-        bind=frozenset({"alpha", "beta"}),
     )
     ha = _call_halt(tree, "alpha")
     hb = _call_halt(tree, "beta")
@@ -225,7 +199,6 @@ def test_a_callee_local_store_stays_behind_at_the_call() -> None:
         "    raise ValueError\n"
         "\n"
         "raiser()\n",
-        bind=frozenset({"raiser"}),
     )
     halted = _call_halt(tree, "raiser")
     assert halted.state is not None, f"{CODEX1}: halt dropped pre-effect state"
@@ -245,7 +218,6 @@ def test_caller_try_matching_consumes_halt_with_pre_effect_state() -> None:
     """Matching except: handler Completed.value is the exact pre-halt state."""
     tree, _, _ = _tree(
         "def raiser():\n    raise ValueError\n\nraiser()\n",
-        bind=frozenset({"raiser"}),
     )
     halted = _call_halt(tree, "raiser")
     assert halted.state is not None
@@ -260,7 +232,6 @@ def test_caller_try_wrong_exception_retains_identical_halt() -> None:
     """Unmatched except: effect and state object identity survive."""
     tree, _, _ = _tree(
         "def raiser():\n    raise ValueError\n\nraiser()\n",
-        bind=frozenset({"raiser"}),
     )
     halted = _call_halt(tree, "raiser")
     routed = _route_try(ExitSet((halted,)), "TypeError")
@@ -273,7 +244,6 @@ def test_caller_try_wrong_exception_retains_identical_halt() -> None:
 def test_caller_try_does_not_fabricate_completed_on_wrong_type_twin() -> None:
     tree, _, _ = _tree(
         "def raiser():\n    raise IndexError\n\nraiser()\n",
-        bind=frozenset({"raiser"}),
     )
     halted = _call_halt(tree, "raiser")
     routed = _route_try(ExitSet((halted,)), "ValueError")
@@ -306,7 +276,6 @@ def test_an_actual_nothing_binds_raises_before_the_helper_is_entered() -> None:
         "    return 0\n"
         "\n"
         "maybe(x)\n",
-        bind=frozenset({"maybe"}),
     )
     call = _calls_named(tree, "maybe")[0]
     outcome = call.sugar().desugar(None)
@@ -330,7 +299,6 @@ def test_helper_raise_under_true_guard_collapses_to_sole_halt() -> None:
         "    return 0\n"
         "\n"
         "maybe(True)\n",
-        bind=frozenset({"maybe"}),
     )
     halted = _call_halt(tree, "maybe")
     assert halted.effect.exception_name == "ValueError"
@@ -351,7 +319,6 @@ def test_helper_raise_through_with_never_suppresses_preserves_state() -> None:
         "    raise ValueError\n"
         "\n"
         "raiser()\n",
-        bind=frozenset({"raiser"}),
     )
     halted = _call_halt(tree, "raiser")
     assert halted.state is not None
@@ -373,7 +340,6 @@ def test_helper_raise_through_with_never_suppresses_preserves_state() -> None:
 def test_helper_raise_through_with_does_not_fabricate_completed_twin() -> None:
     tree, _, _ = _tree(
         "def raiser():\n    raise ValueError\n\nraiser()\n",
-        bind=frozenset({"raiser"}),
     )
     halted = _call_halt(tree, "raiser")
     after = ExitSet((halted,)).and_exit(
@@ -390,7 +356,6 @@ def test_with_then_try_composition_on_helper_raise() -> None:
     """Compose with cleanup then matching try — handler value is pre-halt state."""
     tree, _, _ = _tree(
         "def raiser():\n    raise IndexError\n\nraiser()\n",
-        bind=frozenset({"raiser"}),
     )
     halted = _call_halt(tree, "raiser")
     after_with = ExitSet((halted,)).and_exit(
@@ -415,7 +380,6 @@ def test_wrong_exception_observation_is_not_the_helper_effect() -> None:
     """Bite: foreign RaiseEffect is not the transported helper edge."""
     tree, _, _ = _tree(
         "def raiser():\n    raise ValueError\n\nraiser()\n",
-        bind=frozenset({"raiser"}),
     )
     halted = _call_halt(tree, "raiser")
     foreign = RaiseEffect(
@@ -435,7 +399,6 @@ def test_handler_value_is_not_fabricated_fresh_block_twin() -> None:
     """Matching try handler must be the halt state object, not a fresh empty."""
     tree, _, _ = _tree(
         "def raiser():\n    raise ValueError\n\nraiser()\n",
-        bind=frozenset({"raiser"}),
     )
     halted = _call_halt(tree, "raiser")
     handler = _route_try(ExitSet((halted,)), "ValueError").exits[0]
@@ -454,7 +417,6 @@ def test_handler_value_is_not_fabricated_fresh_block_twin() -> None:
 def test_authenticated_raise_helper_is_sole_exceptional_edge() -> None:
     tree, _, _ = _tree(
         "def raiser():\n    raise ValueError\n\nraiser()\n",
-        bind=frozenset({"raiser"}),
     )
     call = _calls_named(tree, "raiser")[0]
     outcome = call.sugar().desugar(None)

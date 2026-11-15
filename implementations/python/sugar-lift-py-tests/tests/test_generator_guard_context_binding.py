@@ -19,7 +19,6 @@ import pytest
 from sugar_lift_py_tests.claim.sugar_catalog import SugarCatalog
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import (
-    SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
@@ -99,17 +98,6 @@ def _machine(*, entry, floor, guard=None, then_steps=None, else_steps=(), ctx=No
     )
 
 
-def _call_coordinate(call: Call) -> SourceFragmentCoordinateV1:
-    span = call.line_col_span()
-    return SourceFragmentCoordinateV1(
-        call.unit.source_cid,
-        span.start_line,
-        span.start_col,
-        span.end_line,
-        span.end_col,
-    )
-
-
 def _production_generator_call(source: str):
     """Parse generator + call; return (tree, function, call, bound_frame)."""
     construction = TreeConstructionContextV1.for_source_call_construction()
@@ -123,7 +111,6 @@ def _production_generator_call(source: str):
         call.args,
         tuple((kw.arg, kw.value) for kw in call.keywords if kw.arg is not None),
     )
-    construction.source_call_frames[_call_coordinate(call)] = frame
     return tree, function, call, frame, construction
 
 

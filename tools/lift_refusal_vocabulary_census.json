@@ -2,7 +2,7 @@
   "identity": "path + normalized text digest + duplicate ordinal; line is display only",
   "issue": "#3632",
   "law": "REFUSE is the verifier verb; lift outputs are reduced meaning or typed effects.",
-  "lift_output_backlog": 2173,
+  "lift_output_backlog": 2159,
   "occurrences": [
     {
       "key": "implementations/python/sugar-build-witness/src/sugar_build_witness/discharge_cli.py:523c0ad6c899be9b:1",
@@ -912,16 +912,6 @@
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
       "text": "refuse.",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/context_manager_resolution.py:bad1765747939ec7:1",
-      "line": 478,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/context_manager_resolution.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "\"\"\"Authority shared by every face, or refuse when faces disagree.",
       "wire_marker": "internal-only"
     },
     {
@@ -3715,126 +3705,6 @@
       "wire_marker": "internal-only"
     },
     {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py:06d5ed5f5ae036dd:1",
-      "line": 885,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "and refuses any halt that is not a proven absent-effect halt.",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py:0d9315daa5f1315b:1",
-      "line": 1483,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "# frames refuse. No ObjectValue fabrication.",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py:1946ce2a22d311ed:1",
-      "line": 2943,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "helpers that construct two classes refuse sole-class projection. This is",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py:51190fab5a030c33:1",
-      "line": 2913,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "multiple classes refuse \u2014 never first-candidate selection.",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py:7f3c1bc287bc4c25:1",
-      "line": 919,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "# does not classify. Refuse rather than let the disjunction speak",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py:a21b4f4c0d48b565:1",
-      "line": 1295,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "\"supplied; refusing to infer an enrolled population from a path segment\"",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py:b261411d613f2318:1",
-      "line": 677,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "theorem construction may still refuse on undecided call-coordinate floors",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py:b376f4cbc6f0ada9:1",
-      "line": 1595,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "raise UnattributableRefusal(",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py:b4610bd089aa39f4:1",
-      "line": 1578,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "from sugar_source_tree.panic import UnattributableRefusal",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py:b79029f3d2e85364:1",
-      "line": 1203,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "\"refusing to infer it from a relative path segment\"",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py:d44ce190644017d9:1",
-      "line": 879,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "for an outcome it does not cover, so the whole derivation refuses;",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py:ec1d83a741cc15a3:1",
-      "line": 678,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "(``not``, equality, subscript, f-string parts). That refusal is not",
-      "wire_marker": "internal-only"
-    },
-    {
       "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/resolution_session.py:37ee712d35b21fda:1",
       "line": 342,
       "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/resolution_session.py",
@@ -4082,16 +3952,6 @@
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
       "text": "Sugar refuses with SugarNotWritten, never a raw TypeError.",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-source-tree/src/sugar_source_tree/nodes.py:ca5b1d622d4c3c1a:1",
-      "line": 7297,
-      "path": "implementations/python/sugar-source-tree/src/sugar_source_tree/nodes.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "# must refuse here \u2014 never let face zero speak for the rest.",
       "wire_marker": "internal-only"
     },
     {
@@ -22709,10 +22569,10 @@
   "speaker_counts": {
     "emitter-provenance-guard": 3,
     "instrument-prose": 8,
-    "lift-output-backlog": 2173,
+    "lift-output-backlog": 2159,
     "provenance-oracle-guard": 57,
     "vendor-language-identifier": 2,
     "verifier-verdict-quote": 32
   },
-  "total_occurrences": 2275
+  "total_occurrences": 2261
 }
