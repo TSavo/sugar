@@ -105,8 +105,18 @@ def test_a_manager_from_a_factory_with_two_guarded_returns(tmp_path: Path):
     no source has, and the factory refused as ``non-manager-result``.  Read
     through its import receipt (579f8b74c) ``abc.ABC`` is the authenticated
     member and completes; the class statement still carries every base face.
-    Truthful: the body ran (``sat``).  Lying: the same test claiming it did
-    not (``unsat``).
+
+    Through real mint the project's own files are the only source the kit
+    reads (``lift_rpc``: the walk session enrolls the project file roster),
+    and no proof for ``contextlib`` is staged in ``.sugar/imports/``.  So
+    ``nullcontext()`` is an edge nothing answers: the proof owes it as an
+    ``undecided`` member (step 8), the manager is cited, and the claim after
+    the ``with`` stands on its completing face.  Truthful: the body ran, which
+    nothing refutes and nothing proves while the call is owed (``open``; this
+    twin states "not bridged" and reads ``sat`` when a proof answering
+    ``contextlib.nullcontext`` is staged).  Lying: the same test claiming the
+    body did not run, false on every face that reaches the assert
+    (``unsat``).
     """
     from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
@@ -116,7 +126,8 @@ def test_a_manager_from_a_factory_with_two_guarded_returns(tmp_path: Path):
     lying = run_source_through_real_solver(
         tmp_path / "lying", _FACTORY_TWIN.format(expected=0)
     )
-    assert truthful.verdict == "sat"
+    assert truthful.verdict == "open"
+    assert truthful.prove_doc["owed"] >= 1
     assert lying.verdict == "unsat"
 
 
