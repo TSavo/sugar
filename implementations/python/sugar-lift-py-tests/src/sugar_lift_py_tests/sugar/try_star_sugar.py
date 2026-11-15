@@ -15,6 +15,9 @@ Laws (owned here; ExitSet/carrier untouched):
   residual continues and ultimately halts unless later consumed.
 - Exceptional raise effects regroup **only within equal guards** (never AND
   mutually exclusive alternative faces into one impossible guard).
+- What is a raised exception is read in one place (``is_exception_effect``,
+  as ordinary ``except`` reads it), for the body's halt and a handler's alike:
+  a handler's undetermined raise regroups with the residual like any other.
 - Finally restore preserves residual; finally terminate overrides.
 - Leaf occurrence identities and nested topology survive partition/regroup.
 - A plain raise (decided or undetermined) is matched as the one-member group
@@ -119,10 +122,9 @@ class TryStarSugar(Sugar):
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
-        from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
-        from sugar_lift_py_tests.effect.raise_effect import (
-            RaiseEffect,
-            UndeterminedRaiseEffect,
+        from sugar_lift_py_tests.effect.grouped_raise_effect import (
+            GroupedRaiseEffect,
+            is_exception_effect,
         )
         from sugar_lift_py_tests.effect_router import (
             regroup_except_star,
@@ -162,19 +164,17 @@ class TryStarSugar(Sugar):
             with no faces and owing nothing, and ``sequence`` conjoins the
             body halt's guard, faces and ``owed`` onto every arm answered here.
 
-            A plain raise (a ``RaiseEffect``, or the ``UndeterminedRaiseEffect``
-            of a construction nothing here answered) is matched as the
-            one-member group CPython wraps it in (``_wrapped``); ``naked`` keeps
-            it, since what leaves is then the one exception CPython raises
-            (below), never a group of the residual.
+            What the handlers route is a raised exception, read the one way
+            ordinary ``except`` reads it (``is_exception_effect``).  A plain
+            raise (a ``RaiseEffect``, or the ``UndeterminedRaiseEffect`` of an
+            operation nothing here answered: an unanswered construction, the
+            truth of an undecided ``if`` test) is matched as the one-member
+            group CPython wraps it in (``_wrapped``), each handler's match
+            asked of the one matcher; ``naked`` keeps it, since what leaves is
+            then the one exception CPython raises (below), never a group of
+            the residual.
             """
-            naked = None
-            if isinstance(exit_.effect, GroupedRaiseEffect):
-                original = exit_.effect
-            elif isinstance(exit_.effect, (RaiseEffect, UndeterminedRaiseEffect)):
-                naked = exit_.effect
-                original = _wrapped(naked)
-            else:
+            if not is_exception_effect(exit_.effect):
                 raise SugarNotWritten(
                     blame=self.site,
                     owner="TryStarSugar.desugar",
@@ -182,6 +182,12 @@ class TryStarSugar(Sugar):
                     requested="a raise (plain or grouped) for except* routing",
                     fix="route this halt kind through except* or let it pass",
                 )
+            naked = None
+            if isinstance(exit_.effect, GroupedRaiseEffect):
+                original = exit_.effect
+            else:
+                naked = exit_.effect
+                original = _wrapped(naked)
             # Frontier: one face per body halt, then each handler branches it.
             # The face begins from the state the halt carries (``resumed``),
             # without the ``return`` entries its record holds: none is live
@@ -367,7 +373,12 @@ class TryStarSugar(Sugar):
             for arm in composed.exits:
                 if isinstance(arm, Halted):
                     exceptional = face.exceptional
-                    if _is_exceptional_raise(arm.effect):
+                    # A handler's raise is an exception by the one reading the
+                    # body's halt is routed by (``is_exception_effect``): an
+                    # undetermined raise (a may-raise operation in the handler)
+                    # joins the residual like any other, never left beside a
+                    # completion of the path it halted.
+                    if is_exception_effect(arm.effect):
                         exceptional = (*exceptional, arm.effect)
                     else:
                         # Non-raise halt leaves the residual walk as an exit.
@@ -446,10 +457,3 @@ class TryStarSugar(Sugar):
                 )
             )
         return route(_require_exit_set(body, owner="TryStarSugar.body"))
-
-
-def _is_exceptional_raise(effect) -> bool:
-    from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
-    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-
-    return isinstance(effect, (RaiseEffect, GroupedRaiseEffect))

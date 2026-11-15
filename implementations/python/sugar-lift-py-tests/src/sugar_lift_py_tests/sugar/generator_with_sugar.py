@@ -138,10 +138,9 @@ class GeneratorWithSugar(Sugar):
         from sugar_lift_py_tests.context_manager_contract import (
             NeverSuppressesDispositionV1,
         )
-        from sugar_lift_py_tests.generator_manager_exit import (
-            generator_manager_exit,
-            is_exception_effect,
-        )
+        from sugar_lift_py_tests.effect.grouped_raise_effect import is_exception_effect
+        from sugar_lift_py_tests.generator_manager_exit import generator_manager_exit
+
         # The generator-backed manager's __exit__ per body exit: an
         # exception is thrown in at the yield, anything else resumes it.
         body_es = reduce_block_to_exitset(self.body, ctx)

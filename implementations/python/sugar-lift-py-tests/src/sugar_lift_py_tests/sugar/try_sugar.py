@@ -511,11 +511,7 @@ def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
     reads the type whenever a raise reaches the arm, matched or not, so the
     router carries it beneath every face that passed the arm.
     """
-    from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
-    from sugar_lift_py_tests.effect.raise_effect import (
-        RaiseEffect,
-        UndeterminedRaiseEffect,
-    )
+    from sugar_lift_py_tests.effect.grouped_raise_effect import is_exception_effect
     from sugar_lift_py_tests.authenticated_exception_matching import (
         MatchDecided,
         matches_raise_effect,
@@ -527,10 +523,10 @@ def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
     # other leaf raise: the one matcher states the type test over the raised
     # exception value it carries (``exception_value``), so no class is
     # invented and no arm is decided by its absence.  A group is read by its
-    # own class, likewise through the one matcher.
-    if not isinstance(
-        effect, (RaiseEffect, UndeterminedRaiseEffect, GroupedRaiseEffect)
-    ):
+    # own class, likewise through the one matcher.  What counts as a raised
+    # exception is read in one place (``is_exception_effect``), which
+    # ``except*`` asks too (``TryStarSugar``).
+    if not is_exception_effect(effect):
         blame = getattr(effect, "occurrence_id", None) or site
         raise SugarNotWritten(
             blame=blame,
