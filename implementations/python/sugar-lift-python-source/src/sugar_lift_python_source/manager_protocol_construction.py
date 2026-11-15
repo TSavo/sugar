@@ -21,9 +21,13 @@ from sugar_lift_py_tests.floor.manager_coordinate import (
 from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 
 
-def _exit_for_body(exit_face_id: str, entered, body_face, ctx: object = None):
+def _exit_for_body(
+    exit_face_id: str, entered, body_face, ctx: object = None, *, unit=None
+):
     """``__exit__`` on the entered receiver with this body face's actual ABI
-    inputs.
+    inputs.  ``unit``: the module the ``with`` stands in, where the receiver
+    is a class call's result dispatched over its class
+    (``_call_protocol_method``).
 
     Python language reference 8.5, the with statement:
     https://docs.python.org/3/reference/compound_stmts.html#the-with-statement
@@ -151,6 +155,7 @@ def _exit_for_body(exit_face_id: str, entered, body_face, ctx: object = None):
         args,
         exit_face_id,
         ctx,
+        unit=unit,
     )
 
 
@@ -261,8 +266,49 @@ class ReducedManagerProtocolV1:
             site=self.coordinate,
         )
 
+    def _dispatched_manager(self, receiver) -> bool:
+        """Whether ``receiver`` is a same-file class call's result whose
+        class is decided (``receiver_dispatch.class_value``:
+        ``python:constructed(<class>)``) in a module that gives no object
+        another class unseen: its ``__enter__`` and ``__exit__`` are the
+        implicit special-method calls ``type(m).__enter__(m)`` and
+        ``type(m).__exit__(m, ...)``, each the one dispatched edge over that
+        class (``receiver_dispatch.dispatch_on_receiver``), resolved at prove
+        on the class's namespace row and bound by the one binder (#7757 step
+        8).  Whether the class has them is decided there too: a lookup that
+        finds none leaves the call owed, never a guessed method."""
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.receiver_dispatch import (
+            class_value,
+            module_attribute_names,
+        )
+
+        unit = getattr(self.fragment, "unit", None)
+        return (
+            isinstance(receiver, CallSiteValue)
+            and unit is not None
+            and class_value(receiver) is not None
+            and not module_attribute_names(unit)[1]
+        )
+
     def enter_resource_outcome_for(self, receiver, ctx: object = None):
         """Enter the exact receiver the head's reduction produced."""
+        if self._dispatched_manager(receiver):
+            from sugar_lift_py_tests.context_manager_contract import (
+                protocol_step_site,
+            )
+
+            enter = _call_protocol_method(
+                receiver,
+                "__enter__",
+                (),
+                protocol_step_site(self.exit_face_id, "__enter__"),
+                ctx,
+                unit=self.fragment.unit,
+            )
+            return _resource_enter_transitions(
+                receiver, enter, blame=self.exit_face_id
+            )
         decided, has_enter, has_exit = self._protocol_of(receiver)
         if not decided:
             return self._undecided_step(
@@ -315,6 +361,10 @@ class ReducedManagerProtocolV1:
         """``__exit__`` over this body face: the entered receiver's own
         method, or the undecided manager's two-faced exit."""
         receiver = getattr(entered, "receiver_state", None)
+        if self._dispatched_manager(receiver):
+            return _exit_for_body(
+                self.exit_face_id, entered, body_face, ctx, unit=self.fragment.unit
+            )
         decided, has_enter, has_exit = self._protocol_of(receiver)
         if decided and has_enter and has_exit:
             return _exit_for_body(self.exit_face_id, entered, body_face, ctx)
@@ -324,7 +374,7 @@ class ReducedManagerProtocolV1:
         )
 
 
-def _call_protocol_method(receiver, name, arguments, site, ctx):
+def _call_protocol_method(receiver, name, arguments, site, ctx, *, unit=None):
     """``receiver.<name>(*arguments)``: the implicit special-method call
     ``type(receiver).<name>(receiver, *arguments)`` the ``with`` statement
     makes, through the one door every implicit dunder call takes
@@ -336,9 +386,24 @@ def _call_protocol_method(receiver, name, arguments, site, ctx):
     does to the receiver are what its contract states.  ``site`` is the
     call's site: the item's exit face for ``__exit__``, its ``__enter__``
     step's site for ``__enter__`` (``protocol_step_site``).
+
+    A same-file class call's result whose class is decided
+    (``ReducedManagerProtocolV1._dispatched_manager``, ``unit`` the module
+    the ``with`` stands in) is the dispatched edge over that class
+    (``receiver_dispatch.dispatch_on_receiver``, #7757 step 8): its
+    actuals as Python passes them (``__exit__(m, type, value, tb)``), bound
+    at prove by the one binder (a ``*exc`` formal takes the three).
     """
     from sugar_source_tree.panic import SugarNotWritten
 
+    if unit is not None:
+        from sugar_lift_py_tests.receiver_dispatch import dispatch_on_receiver
+
+        dispatched = dispatch_on_receiver(
+            name, receiver, tuple(arguments), (), site, unit=unit
+        )
+        if dispatched is not None:
+            return dispatched
     call_method_value = getattr(receiver, "call_method_value", None)
     if not callable(call_method_value):
         raise SugarNotWritten(

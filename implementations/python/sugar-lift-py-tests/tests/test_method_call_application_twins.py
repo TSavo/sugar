@@ -72,14 +72,13 @@ def _pair(
     # #7757 step 6: the receiver is a class call's result (its coordinate and
     # edge, no instance built at the reduction), so the method's dispatch is
     # not decided at the reduction.  #7757 step 8: it is decided at prove
-    # where the class call's result is a bare instance of the class (its
-    # construction runs no source code, ``CallSiteValue.instance_of``) and
-    # the claim reads what the method's contract states: ``expected``.  A
-    # class whose construction runs a source ``__init__`` leaves its
-    # instance's fields to its contract, which the dispatch does not read,
-    # and a method reading ``self.<field>`` reads a field of an instance that
-    # arrived by binding: those stay ``open`` on both halves, never ``sat``
-    # for the lie, listed on #7661.
+    # where the class call's result is an instance of the class
+    # (``type.__call__`` with a builtin ``__new__``,
+    # ``CallSiteValue.instance_of``), over the class and fields its contract
+    # states, and the claim reads what the method's contract states:
+    # ``expected``.  A method reading ``self.<field>`` reads a field of an
+    # instance that arrived by binding: such a truthful half stays ``open``,
+    # never ``sat`` for the lie, listed on #7661.
     truthful_verdict, lying_verdict = expected
     assert claim_verdict(t.prove_doc, claims_from_line=test_line) == truthful_verdict
     assert lie.verdict == lying_verdict
@@ -102,13 +101,23 @@ def test_gauge():
 
 
 def test_receiver_method_call_carries_the_method_raise(tmp_path: Path) -> None:
-    """``obj.m()``: ``m`` completes vs ``m`` always raises."""
+    """``obj.m()``: ``m`` completes vs ``m`` always raises.
+
+    ``Gauge(4)`` runs a source ``__init__``, and its result is still an
+    instance of ``Gauge`` (``type.__call__`` with ``object.__new__``):
+    ``gauge.read()`` is dispatched at prove over the class and fields
+    ``Gauge``'s contract states (``python:constructed``, #7757 step 8).  The
+    lying ``read`` always raises, so the claim after it is refuted:
+    ``unsat``.  The truthful ``read`` returns ``self.n``, a field of an
+    instance that arrived by binding in ``read``'s own proof: owed, so the
+    truthful half stays ``open`` (not bridged, listed on #7661)."""
 
     _pair(
         tmp_path,
         "obj-call",
         _OBJ_CALL.format(body="        return self.n"),
         _OBJ_CALL.format(body="        raise KeyError('no reading')"),
+        expected=("open", "unsat"),
     )
 
 

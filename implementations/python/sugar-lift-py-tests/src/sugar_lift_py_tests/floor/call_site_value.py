@@ -255,12 +255,16 @@ class CallSiteValue(FloorValue):
     constructed_by_edge: bool = dataclass_field(
         default=False, compare=False, repr=False
     )
-    # On such a result (``constructed_by_edge``) of a class whose
-    # construction runs no source code (``object.__new__`` and
-    # ``object.__init__``, ``ClassDefinitionValue.callable_application_with``):
-    # the class's join symbol.  The instance is of that class with nothing in
-    # its ``__dict__``, so a method call on it is dispatched on that class at
-    # prove (``receiver_dispatch.class_value``, #7757 step 8).
+    # On such a result (``constructed_by_edge``) of a class whose call
+    # ``type.__call__`` makes with a builtin ``__new__`` (no source
+    # ``__new__``, no metaclass, ``ClassDefinitionValue.
+    # callable_application_with``): the class's join symbol.  The instance is
+    # of that class; the class's contract states it, with what its
+    # ``__dict__`` may hold, on every completed face
+    # (``ConstructedInstanceValue.post_formula``).  A method call on it, and
+    # a ``with``'s implicit ``__enter__``/``__exit__``, are dispatched over
+    # that statement at prove (``receiver_dispatch.class_value``:
+    # ``python:constructed(<class>)``, #7757 step 8).
     instance_of: str | None = dataclass_field(default=None, compare=False, repr=False)
     # ``((slot, formal), ...)`` on a same-file definition's edge
     # (``lambda_callable.definition_edge_call``): for each operand of the

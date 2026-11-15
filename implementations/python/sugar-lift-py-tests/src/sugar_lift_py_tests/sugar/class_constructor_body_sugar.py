@@ -831,9 +831,16 @@ class ConstructedInstanceValue(FloorValue):
           python:attribute(python:after(out, "out"), <name>, k))``, ``k``
           the read's site key, so the caller's read is answered at prove.
 
-        Truth where none is stated.  A field the construction did not
-        decide, or one whose value names an object of this reduction, is not
-        stated: a read of it stays owed."""
+        A field the construction did not decide, or one whose value names an
+        object of this reduction, is not stated: a read of it stays owed.
+
+        On every completed face, the class of the instance
+        (``receiver_dispatch.constructed_class_facts``, #7757 step 8):
+        ``python:type_is(python:after(out, "out"), <class>)`` and
+        ``python:may_hold(python:after(out, "out"), <name>)`` for each name
+        its ``__dict__`` holds, where the face decides them;
+        ``python:class_undecided(python:after(out, "out"))`` where it does
+        not.  Prove binds a caller's dispatch over the result to them."""
         from sugar_lift_py_tests.floor.object_identity import contents_current
         from sugar_lift_py_tests.floor.object_value import ObjectValue
         from sugar_lift_py_tests.ir import (
@@ -846,20 +853,21 @@ class ConstructedInstanceValue(FloorValue):
             make_var,
             str_const,
         )
+        from sugar_lift_py_tests.receiver_dispatch import constructed_class_facts
         from sugar_lift_py_tests.source_call_resolution import (
             CALL_RESULT_LABEL,
             object_after_call,
         )
 
         instance = self.instance
-        if not isinstance(instance, ObjectValue):
-            return and_([])
-        current = contents_current(instance)
         constructed = object_after_call(out, CALL_RESULT_LABEL)
+        facts = constructed_class_facts(instance, constructed)
+        if not isinstance(instance, ObjectValue):
+            return and_(facts)
+        current = contents_current(instance)
         latest = {}
         for item in instance.fields:
             latest[item.name] = item.value
-        facts = []
         for name, value in latest.items():
             if not current and name not in instance.stored_fields:
                 continue

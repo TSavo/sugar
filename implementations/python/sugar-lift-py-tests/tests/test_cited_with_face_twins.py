@@ -60,28 +60,15 @@ def test_cited_with_keeps_its_suppressed_face_through_the_solver(
     assert truthful.prove_doc["owed"] >= 1
     # Lying: ``open(p)`` is a call of a same-file class, its coordinate and
     # edge (#7757 step 6, #8738), and the manager the ``with`` enters is that
-    # call's result.  The class's contract states the fields its
-    # construction set (``attr:p(python:after(out, "out")) == p``, #8746),
-    # never the instance's class.  ``__enter__``/``__exit__`` on the result
-    # are the unanswered call, so whether ``__exit__`` suppresses the body's
-    # raise is undecided and the claim is not refuted: ``open`` on main
-    # (scorecard 43738710481), listed on #7661.  Never ``sat`` for the lie.
-    #
-    # Step 8 (#8750, #8778, #8799) does not reach it, for two named reasons,
-    # neither of them step 7 part 1 (what a callee leaves in what it was
-    # handed):
-    # 1. Dispatch on a class call's result is supplied only for a class whose
-    #    construction runs no source code (``_bare_instance_symbol``:
-    #    ``object.__new__`` and ``object.__init__``), because the receiver
-    #    class value ``python:instance(<class>, <field>...)`` names every
-    #    field the instance's ``__dict__`` may hold and prove's
-    #    ``dispatched_symbol`` reads those fields before the class.  ``open``
-    #    runs a source ``__init__``: its fields are its contract's, which
-    #    neither ``receiver_dispatch.class_value`` nor dispatch reads.  (An
-    #    implicit special-method call reads ``type(m).__exit__``, where no
-    #    field can shadow, but dispatch states no such lookup.)
-    # 2. ``__exit__(self, *exc)``: prove's one binder
-    #    (``consistency::call_argument_formals``) binds no ``*args``
-    #    parameter, so ``__exit__(m, type, value, tb)`` would not fit the
-    #    contract even when dispatched, and stays owed.
-    assert lying.verdict == "open"
+    # call's result: an instance of ``open`` (``type.__call__`` with
+    # ``object.__new__``), whatever its ``__init__`` sets.  ``open``'s
+    # contract states that class and what its ``__dict__`` holds on every
+    # completed face (``python:type_is``, ``python:may_hold``), and the
+    # ``with``'s implicit ``__enter__``/``__exit__`` on the result are each
+    # the dispatched edge over ``python:constructed(<open>)``, resolved at
+    # prove on ``open``'s namespace row (#7757 step 8).  ``__exit__(m, type,
+    # value, tb)`` fits ``def __exit__(self, *exc)``: the one binder binds
+    # ``exc`` to the tuple of the three (#8838).  Its contract returns
+    # ``False``, so the body's ``ZeroDivisionError`` propagates, ``g`` never
+    # returns, and the claim is refuted: ``unsat``.
+    assert lying.verdict == "unsat"

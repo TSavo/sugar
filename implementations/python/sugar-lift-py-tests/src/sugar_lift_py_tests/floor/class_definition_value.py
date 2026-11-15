@@ -222,9 +222,14 @@ class ClassDefinitionValue(GuardStableValue):
             # through the class's contract (``CallSiteValue.attribute``,
             # #7757 step 7).
             constructed_by_edge=True,
-            # Its class, where its construction runs no source code: what a
-            # method call on it is dispatched on at prove (#7757 step 8).
-            instance_of=_bare_instance_symbol(definition),
+            # Its class, wherever ``type.__call__`` makes it with a builtin
+            # ``__new__`` (no source ``__new__``, no metaclass): an instance
+            # of exactly this class, whatever its ``__init__`` does.  The
+            # class's contract states that class on every completed face
+            # (``ConstructedInstanceValue.post_formula``), and a method call
+            # and a ``with``'s implicit ``__enter__``/``__exit__`` on the
+            # result are dispatched over it at prove (#7757 step 8).
+            instance_of=_instance_class_symbol(definition),
         )
 
     def _unanswered_call(self, target, positional, keywords, site):
@@ -696,17 +701,23 @@ class ClassDefinitionValue(GuardStableValue):
         return False
 
 
-def _bare_instance_symbol(definition) -> str | None:
+def _instance_class_symbol(definition) -> str | None:
     """The join symbol of the class ``definition`` states, when a call of it
-    is decided to return an instance of it whose ``__dict__`` holds nothing:
-    the call is ``type.__call__`` (no metaclass, no keyword, an order read,
-    ``ClassDef.call_yields_an_instance``), its ``__new__`` is ``object``'s
-    and its ``__init__`` is ``object``'s (``ClassDef.initializer_entry``), so
-    no source code runs at the construction.  None otherwise: what a source
-    ``__init__`` or ``__new__`` leaves is its contract's, never read here
-    (#7757 step 8)."""
-    if definition.initializer_entry() != "object":
-        return None
+    is decided to make an instance of exactly that class: the call is
+    ``type.__call__`` (no metaclass, no keyword, an order read) and the
+    ``__new__`` it runs is a builtin's (``ClassDef.call_yields_an_instance``),
+    which makes an instance of the class called.  Its ``__init__``, source
+    or not, runs on that instance and cannot give it another class but by a
+    store to ``__class__``, which the class's contract reads
+    (``ConstructedInstanceValue.post_formula``: a ``__class__`` field, or an
+    instance handed to code, states no class).
+
+    None where a source ``__new__`` or a metaclass ``__call__`` makes the
+    result (or the order is not read): its class is undecided, by name.
+
+    What the instance's ``__dict__`` holds is not read here: the class's
+    contract states it with the class, and prove binds a dispatch over the
+    result to that statement (#7757 step 8)."""
     if not definition.call_yields_an_instance(definition.unit.class_namespace_stores):
         return None
     return definition.bridge_source_symbol()

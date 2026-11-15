@@ -4949,11 +4949,48 @@ struct DispatchTable {
     /// global, and the value the module's run left is not the one standing
     /// where the call may run).
     answers: BTreeMap<String, Option<BridgeAnswer>>,
+    /// Each class a namespace row states, with the instance its constructor
+    /// contract states it makes (`constructed_instance`): what a caller's
+    /// `python:constructed(<class>)` is bound to. `None` where the contract
+    /// does not decide it on every completed face, or no single bridge
+    /// answers the class's symbol.
+    constructed: BTreeMap<String, Option<Json>>,
+}
+
+/// The single bridge answer for `symbol` over `pool`: `None` when no bridge
+/// states it, bridges state it with more than one target, or the answer is
+/// wrong or states no post.
+fn single_bridge_answer(pool: &MementoPool, symbol: &str) -> Option<BridgeAnswer> {
+    let bridges: Vec<&sugar_proof_envelope::StoredMember> = pool
+        .bridge_members()
+        .filter(|(_, bridge)| bridge.field("sourceSymbol").and_then(|v| v.as_str()) == Some(symbol))
+        .map(|(_, bridge)| bridge)
+        .collect();
+    let targets: std::collections::BTreeSet<&str> = bridges
+        .iter()
+        .filter_map(|bridge| bridge.field("targetContractCid").and_then(|v| v.as_str()))
+        .collect();
+    match bridges.first() {
+        Some(first) if targets.len() == 1 => bridge_answer(pool, symbol, first).ok().flatten(),
+        _ => None,
+    }
 }
 
 /// The dispatch table over `pool` (step 8).
 fn dispatch_table(pool: &MementoPool) -> DispatchTable {
     let namespaces = collect_class_namespaces(pool);
+    // The instance each class's constructor contract states it makes: the
+    // class row is the contract a call of the class joins (its bridge
+    // answers the class's own symbol).
+    let constructed: BTreeMap<String, Option<Json>> = namespaces
+        .keys()
+        .map(|class| {
+            let instance = single_bridge_answer(pool, class).and_then(|(binding, post, ..)| {
+                constructed_instance(&post, &binding.out_binding, class)
+            });
+            (class.clone(), instance)
+        })
+        .collect();
     let mut answers: BTreeMap<String, Option<BridgeAnswer>> = BTreeMap::new();
     for namespace in namespaces.values() {
         for (kind, symbol) in namespace.binds.values() {
@@ -4968,36 +5005,123 @@ fn dispatch_table(pool: &MementoPool) -> DispatchTable {
             if !dispatched || symbol.is_empty() || answers.contains_key(symbol) {
                 continue;
             }
-            let bridges: Vec<&sugar_proof_envelope::StoredMember> = pool
-                .bridge_members()
-                .filter(|(_, bridge)| {
-                    bridge.field("sourceSymbol").and_then(|v| v.as_str()) == Some(symbol.as_str())
-                })
-                .map(|(_, bridge)| bridge)
-                .collect();
-            let targets: std::collections::BTreeSet<&str> = bridges
-                .iter()
-                .filter_map(|bridge| bridge.field("targetContractCid").and_then(|v| v.as_str()))
-                .collect();
-            let answer = match bridges.first() {
-                Some(first) if targets.len() == 1 => bridge_answer(pool, symbol, first)
-                    .ok()
-                    .flatten()
-                    .filter(|(binding, _, _, _, _)| {
-                        !binding
-                            .formals
-                            .iter()
-                            .any(|formal| formal.starts_with(GLOBAL_INPUT_PREFIX))
-                    }),
-                _ => None,
-            };
+            let answer = single_bridge_answer(pool, symbol).filter(|(binding, _, _, _, _)| {
+                !binding
+                    .formals
+                    .iter()
+                    .any(|formal| formal.starts_with(GLOBAL_INPUT_PREFIX))
+            });
             answers.insert(symbol.clone(), answer);
         }
     }
     DispatchTable {
         namespaces,
         answers,
+        constructed,
     }
+}
+
+/// `python:constructed(<class symbol>)` (the kit's
+/// `receiver_dispatch.CONSTRUCTED`): the class of a same-file class call's
+/// result as its construction left it. Bound to the instance the class's
+/// constructor contract states (`constructed_instance`) before a method on
+/// it is dispatched (`dispatch_answer`).
+const PYTHON_CONSTRUCTED: &str = "python:constructed";
+/// `python:type_is(<object>, <class symbol>)`: `type(<object>)` is that
+/// class. A class's constructor contract states it of the instance it makes
+/// (`python:after(out, "out")`) on every completed face it decides.
+const PYTHON_TYPE_IS: &str = "python:type_is";
+/// `python:may_hold(<object>, <name>)`: the object's `__dict__` may hold
+/// `<name>`, one fact per name, stated beside `python:type_is`.
+const PYTHON_MAY_HOLD: &str = "python:may_hold";
+/// `python:class_undecided(<object>)`: a completed face of a constructor
+/// contract that does not decide the class of the instance it makes, or
+/// what its `__dict__` holds.
+const PYTHON_CLASS_UNDECIDED: &str = "python:class_undecided";
+/// `python:after(<object>, <label>)`: an object as a call left it; a
+/// constructor contract names the instance it makes `python:after(out, "out")`.
+const PYTHON_AFTER: &str = "python:after";
+
+/// The class symbol a `python:constructed(<class symbol>)` names; `None` for
+/// any other term.
+fn constructed_class_symbol(class: &Json) -> Option<&str> {
+    match ctor_parts(class)? {
+        (PYTHON_CONSTRUCTED, args) => match args.as_slice() {
+            [symbol] => const_str(symbol),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Whether `term` is `python:after(<out>, "out")`: the instance a
+/// constructor contract makes, `out` its out-binding.
+fn names_the_constructed_instance(term: &Json, out: &str) -> bool {
+    let Some((PYTHON_AFTER, args)) = ctor_parts(term) else {
+        return false;
+    };
+    match args.as_slice() {
+        [object, label] => {
+            object.get("kind").and_then(|v| v.as_str()) == Some("var")
+                && object.get("name").and_then(|v| v.as_str()) == Some(out)
+                && const_str(label) == Some("out")
+        }
+        _ => false,
+    }
+}
+
+/// The instance a class's constructor contract states it makes (#7757 step
+/// 8): `python:instance(<class>, <field>...)`, read off its `post`, where
+/// every completed face states `python:type_is(python:after(out, "out"),
+/// <class>)` and one `python:may_hold(python:after(out, "out"), <name>)` per
+/// name its `__dict__` holds (the kit's `receiver_dispatch.
+/// constructed_class_facts`). The fields are every name any completed face
+/// states (what the `__dict__` may hold). `None` -- the dispatch over the
+/// result stays owed -- where a face states `python:class_undecided`, a face
+/// names another class, a name is not a string constant, or nothing states
+/// the class.
+fn constructed_instance(post: &Json, out: &str, class: &str) -> Option<Json> {
+    let mut stated = false;
+    let mut fields: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut pending: Vec<&Json> = vec![post];
+    while let Some(node) = pending.pop() {
+        match node {
+            Json::Array(items) => pending.extend(items.iter()),
+            Json::Object(map) => {
+                let atom = node.get("kind").and_then(|v| v.as_str()) == Some("atomic");
+                let name = node.get("name").and_then(|v| v.as_str());
+                let args = node.get("args").and_then(|v| v.as_array());
+                let about = args
+                    .and_then(|args| args.first())
+                    .is_some_and(|subject| names_the_constructed_instance(subject, out));
+                if atom && about {
+                    let operand = args.and_then(|args| args.get(1));
+                    match name {
+                        Some(PYTHON_CLASS_UNDECIDED) => return None,
+                        Some(PYTHON_TYPE_IS) => {
+                            if const_str(operand?)? != class {
+                                return None;
+                            }
+                            stated = true;
+                        }
+                        Some(PYTHON_MAY_HOLD) => {
+                            fields.insert(const_str(operand?)?.to_string());
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+                pending.extend(map.values());
+            }
+            _ => {}
+        }
+    }
+    if !stated {
+        return None;
+    }
+    let mut args = vec![string_const_term(class)];
+    args.extend(fields.iter().map(|field| string_const_term(field)));
+    Some(json!({"kind": "ctor", "name": PYTHON_INSTANCE, "args": args}))
 }
 
 /// A dispatched member (step 8): the name it looks up, whether it is a read
@@ -5027,6 +5151,13 @@ fn dispatch_answer(post: &AmbientPost, call: &Json) -> Option<AmbientPost> {
         Some(Ok((ClassKey::Position(0), class))) => Some(class),
         _ => None,
     })?;
+    // A class call's result: the instance its class's constructor contract
+    // states it makes (#7757 step 8), never a class nothing states.
+    let constructed = constructed_class_symbol(&class).map(str::to_string);
+    let class = match constructed {
+        Some(symbol) => dispatch.table.constructed.get(&symbol)?.clone()?,
+        None => class,
+    };
     let target = dispatched_target(
         &dispatch.table.namespaces,
         &dispatch.method,
@@ -12757,6 +12888,65 @@ mod tests {
         let mut args = vec![string_const(class)];
         args.extend(fields.iter().map(|field| string_const(field)));
         json!({"kind": "ctor", "name": PYTHON_INSTANCE, "args": args})
+    }
+
+    /// `python:after(out, "out")`: the instance a constructor contract makes.
+    fn made() -> Json {
+        json!({"kind": "ctor", "name": PYTHON_AFTER, "args": [var("out"), string_const("out")]})
+    }
+
+    fn class_atom(name: &str, operand: Option<&str>) -> Json {
+        let mut args = vec![made()];
+        args.extend(operand.map(string_const));
+        json!({"kind": "atomic", "name": name, "args": args})
+    }
+
+    #[test]
+    fn a_constructor_contract_states_the_instance_it_makes() {
+        // Two completed faces of `Box`'s constructor contract: one leaves
+        // `n`, the other `n` and `k`. The `__dict__` may hold either.
+        let post = json!({"kind": "and", "operands": [
+            {"kind": "implies", "operands": [
+                {"kind": "atomic", "name": "g", "args": []},
+                {"kind": "and", "operands": [
+                    class_atom(PYTHON_TYPE_IS, Some("python:m.Box")),
+                    class_atom(PYTHON_MAY_HOLD, Some("n")),
+                ]},
+            ]},
+            {"kind": "implies", "operands": [
+                {"kind": "not", "operand": {"kind": "atomic", "name": "g", "args": []}},
+                {"kind": "and", "operands": [
+                    class_atom(PYTHON_TYPE_IS, Some("python:m.Box")),
+                    class_atom(PYTHON_MAY_HOLD, Some("k")),
+                    class_atom(PYTHON_MAY_HOLD, Some("n")),
+                ]},
+            ]},
+        ]});
+        assert_eq!(
+            constructed_instance(&post, "out", "python:m.Box"),
+            Some(instance("python:m.Box", &["k", "n"]))
+        );
+        // A face that does not decide it: nothing is bound.
+        let undecided = json!({"kind": "and", "operands": [
+            class_atom(PYTHON_TYPE_IS, Some("python:m.Box")),
+            class_atom(PYTHON_CLASS_UNDECIDED, None),
+        ]});
+        assert_eq!(constructed_instance(&undecided, "out", "python:m.Box"), None);
+        // Another class, or no class stated: nothing is bound.
+        assert_eq!(constructed_instance(&post, "out", "python:m.Other"), None);
+        assert_eq!(
+            constructed_instance(&class_atom(PYTHON_MAY_HOLD, Some("n")), "out", "python:m.Box"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_constructed_class_names_its_symbol() {
+        let constructed = json!({"kind": "ctor", "name": PYTHON_CONSTRUCTED, "args": [
+            string_const("python:m.Box")
+        ]});
+        assert_eq!(constructed_class_symbol(&constructed), Some("python:m.Box"));
+        assert_eq!(constructed_class_symbol(&instance("python:m.Box", &[])), None);
     }
 
     #[test]
