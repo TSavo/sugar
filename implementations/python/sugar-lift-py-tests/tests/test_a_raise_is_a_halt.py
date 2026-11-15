@@ -18,8 +18,10 @@ with their truthful halves:
 - ``match 1 // 0:`` refused on main (``RaiseValue.to_term`` panicked: the
   raise was matched as the subject's value).  It is now the halt.
 - ``def g(x=1 // 0)`` then ``g()`` completed on main: the raise was bound as
-  the default's value and dropped.  The call now refuses by name ("default did
-  not construct completely"), one of the refusal families listed on #7821.
+  the default's value and dropped.  The call now refuses by name ("default not
+  bound where the call runs": no evaluation of the ``def`` reached it), one of
+  the refusal families listed on #7821; through the solver the refused
+  function is owed and the file reads ``open``.
 
 The five shapes #7820's probe surfaced (#7821) are pinned as expected red.
 None of them reaches the producer as a value: the call they make is a
@@ -162,9 +164,12 @@ def test_the_lying_half_halts_with_the_raise(shape: str) -> None:
 
 
 def test_a_raising_default_is_refused_by_name_not_bound_as_a_value() -> None:
+    # Python halts the module at ``def g(x=1 // 0)``: no evaluation of the
+    # ``def`` ever reaches ``g()``.  The call states exactly that and refuses
+    # by name; the raise is never bound as the default's value.
     from sugar_source_tree.panic import SugarNotWritten
 
-    with pytest.raises(SugarNotWritten, match="default did not construct completely"):
+    with pytest.raises(SugarNotWritten, match="default not bound where the call runs"):
         _function(_DEFAULT.format(x="1 // 0"))
 
 
@@ -264,10 +269,14 @@ def test_the_lying_half_has_no_assertion_row(shape: str, tmp_path: Path) -> None
 
 
 def test_a_raising_default_is_not_sat(tmp_path: Path) -> None:
-    with pytest.raises(WitnessPipelineError):
-        run_source_through_real_solver(
-            tmp_path / "l", _solver_source(_DEFAULT.format(x="1 // 0"))
-        ).verdict
+    # The refused ``test_f`` is its refused member (step 8): its claim is
+    # owed, so the file reads ``open``, never ``sat`` and never a pipeline
+    # error (``witness_harness._is_assertion_row``).
+    result = run_source_through_real_solver(
+        tmp_path / "l", _solver_source(_DEFAULT.format(x="1 // 0"))
+    )
+    assert result.verdict == "open"
+    assert result.prove_doc["owed"] >= 1
 
 
 @pytest.mark.parametrize("shape", sorted(_FIVE))
