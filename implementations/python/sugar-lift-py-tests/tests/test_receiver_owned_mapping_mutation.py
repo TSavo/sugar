@@ -65,8 +65,9 @@ def test_receiver_transition_updates_every_exact_identity_alias_only():
             owner="test",
             blame="site",
         )
-        .value
+        .completed_value()
     )
+    assert isinstance(result, ReceiverOwnedMutationResult)
     ctx = ReduceContext.root(owner="test")
     ctx = ctx.with_temporal(ctx.temporal.bind_value("left", receiver))
     ctx = ctx.with_temporal(
