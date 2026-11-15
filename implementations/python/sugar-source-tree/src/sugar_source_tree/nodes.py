@@ -1271,22 +1271,39 @@ def _returns_only_last(body) -> bool:
 _SUITE_FIELDS = ("body", "orelse", "handlers", "finalbody", "cases")
 
 
-def _rebound_at_the_top_only(body, name: str) -> bool:
-    """Whether every binding of ``name`` in ``body`` is made by a simple
-    statement of its top level itself (an assignment, an augmented
-    assignment, the ``nonlocal`` declaration): none inside a compound
-    statement, an expression (a walrus), a comprehension or a nested scope's
-    declaration.  The read of ``name`` where the body ends is then the one
-    such statement's key, bound on every arm that completes."""
-    for statement in body:
-        children = tuple(child for _name, _index, child in statement._child_edges())
-        if _binds_name(children, name):
-            return False
-        if name in statement.names_bound_here() and any(
-            getattr(statement, field, None) for field in _SUITE_FIELDS
+def _rebound_in_branches_and_loops(body, name: str) -> bool:
+    """Whether every binding of ``name`` in ``body`` is a statement that
+    binds it by itself -- an assignment, an augmented or annotated
+    assignment, a ``for`` target, a ``del``, the ``nonlocal`` declaration --
+    standing at the body's top level or inside ``if`` and loop suites only
+    (``If``, ``For``, ``While``, at any depth): none in an expression (a
+    walrus), a ``try``, a ``with`` or a ``match``, and none by a ``def``,
+    ``class`` or ``import`` statement, whose value is an object made by the
+    call.  The read of ``name`` where the body ends is then the read any
+    statement after the body's last would make, and each completed arm
+    reads it in the context it left (``FunctionUniverseSugar._after``): a
+    branch's binding through its join, a loop's through the loop's own
+    publication, whose value is stated only where it is one the inputs
+    determine (``universe_value.stated_by_its_inputs``, #7757 step 7)."""
+    seen: set[int] = set()
+
+    def fits(node, enclosing: bool) -> bool:
+        if not isinstance(node, Node) or id(node) in seen:
+            return True
+        seen.add(id(node))
+        bound = node.names_bound_here()
+        if (name in bound or "*" in bound) and not (
+            enclosing
+            and isinstance(node, (Assign, AugAssign, AnnAssign, For, Delete, Nonlocal))
         ):
             return False
-    return True
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
+            return True
+        compound = any(getattr(node, field, None) for field in _SUITE_FIELDS)
+        inner = enclosing and (not compound or isinstance(node, (If, For, While)))
+        return all(fits(child, inner) for _name, _index, child in node._child_edges())
+
+    return all(fits(statement, True) for statement in body)
 
 
 def _initializer_returns(body) -> tuple:
@@ -10648,17 +10665,21 @@ class FunctionDef(Statement):
         the universe states over ``python:after(out, "cell:<name>")`` on each
         completed arm (``UniverseValue.after``, #7757 step 7).
 
-        Read only where that scope is the scope every completed arm leaves
-        with and the read is bound on every one: a plain ``def`` (a generator
-        or an ``async def`` runs nothing at its call) whose ``return``, if
-        any, is its last statement, and whose every binding of the cell is a
-        simple statement of the body's own top level
-        (``_rebound_at_the_top_only``).  Anywhere else nothing is read, and a
-        caller's cell after the call stays undecided."""
+        Read only for a plain ``def`` (a generator or an ``async def`` runs
+        nothing at its call) whose every binding of the cell is a statement
+        of its own, at the top or under ``if`` and loop suites
+        (``_rebound_in_branches_and_loops``): the read is then the one a
+        statement after the body's last would make.  It is the scope an arm
+        leaves with where the arm ran to the end: every completed arm when
+        the body's ``return``, if any, is its last statement
+        (``_returns_only_last``), else only an arm that fell off the end
+        (``FunctionUniverseSugar.cells_after_every_arm``,
+        ``FunctionUniverseSugar._after``).  Anywhere else nothing is read,
+        and a caller's cell after the call stays undecided."""
         if type(self) is not FunctionDef or FunctionDef._owns_yield(self.body):
             return ()
         names, _coordinates = self._captured_bindings()
-        if not names or not _returns_only_last(self.body):
+        if not names:
             return ()
         table = self.unit.function_symtable(self.name, self.line_col_span().start_line)
         rebound = {
@@ -10668,7 +10689,9 @@ class FunctionDef(Statement):
 
         found = []
         for name in names:
-            if name not in rebound or not _rebound_at_the_top_only(self.body, name):
+            if name not in rebound or not _rebound_in_branches_and_loops(
+                self.body, name
+            ):
                 continue
             read = _name_read(self, name, final)
             if read is None:
@@ -11142,6 +11165,7 @@ class FunctionDef(Statement):
                         cells_after=FunctionDef._cells_where_the_body_ends(
                             self, final
                         ),
+                        cells_after_every_arm=_returns_only_last(self.body),
                     )
         finally:
             _FRAMES_UNDER_CONSTRUCTION.discard(definition_cid)

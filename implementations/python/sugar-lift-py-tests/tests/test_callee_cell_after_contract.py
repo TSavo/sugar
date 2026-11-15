@@ -100,8 +100,89 @@ def test_count(c):
 """
 
 
-def test_a_rebinding_under_a_branch_is_not_stated() -> None:
-    # The read where the body ends is stated only where every binding of
-    # the cell is a simple top-level statement of the body.
-    for post in _posts(_BRANCH, "bump"):
+def test_a_rebinding_under_a_branch_states_no_branch_slot() -> None:
+    # A rebinding under a branch is read where the body ends, each arm in
+    # the context it left (``FunctionUniverseSugar._after``).  An arm whose
+    # read the branch's join leaves two-faced states nothing; whatever an
+    # arm states is its own value over the cell's input, never the
+    # branch's slot (``python:branch_result``), which no input determines.
+    posts = _posts(_BRANCH, "bump")
+    assert posts, posts
+    for post in posts:
+        assert "python:branch_result" not in post, post
+        if "python:after" in post:
+            assert "cell:n" in post, post
+
+
+_EARLY_RETURN = """\
+def test_count():
+    n = 0
+
+    def bump():
+        nonlocal n
+        if n > 5:
+            return
+        n += 1
+
+    bump()
+    assert n == 1
+"""
+
+
+def test_an_early_return_states_on_the_arm_that_ran_on() -> None:
+    # The arm the ``return`` ended left the frame before ``n += 1``: it
+    # states nothing.  The arm that ran to the end states the in-place
+    # result over the cell's input (#7757 step 7).
+    posts = _posts(_EARLY_RETURN, "bump")
+    stated = [post for post in posts if "python:after" in post]
+    assert stated, posts
+    assert len(stated) < len(posts), posts
+    for post in stated:
+        assert "cell:n" in post, post
+        assert "+=" in post, post
+
+
+_LIVE_LOOP = """\
+def test_count(xs):
+    n = 0
+
+    def bump():
+        nonlocal n
+        for x in xs:
+            n += x
+
+    bump()
+    assert n >= 0
+"""
+
+
+def test_a_rebinding_in_a_live_loop_is_not_stated() -> None:
+    # A live loop's result is its own publication, keyed on the loop
+    # (``python:loop.*``): no input determines it, so nothing is stated.
+    for post in _posts(_LIVE_LOOP, "bump"):
         assert "python:after" not in post, post
+
+
+_UNROLLED_LOOP = """\
+def test_count():
+    n = 0
+
+    def bump():
+        nonlocal n
+        for x in (1, 2):
+            n += x
+
+    bump()
+    assert n == 3
+"""
+
+
+def test_a_rebinding_in_a_decided_loop_is_stated() -> None:
+    # A loop over a display is unrolled: its result is decided, and the
+    # cell is stated as each item's in-place result left it.
+    posts = _posts(_UNROLLED_LOOP, "bump")
+    assert posts, posts
+    for post in posts:
+        assert "python:after" in post, post
+        assert "cell:n" in post, post
+        assert "+=" in post, post
