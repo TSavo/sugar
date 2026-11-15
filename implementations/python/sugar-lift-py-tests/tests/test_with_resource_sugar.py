@@ -693,9 +693,9 @@ def test_resource_exit_runs_on_the_completed_and_the_halted_face(monkeypatch):
     original = ExitSet.and_exit
     incoming_kinds = []
 
-    def observe(incoming, exit_es, *, disposition):
+    def observe(incoming, exit_es, *, disposition, resume=None):
         incoming_kinds.append(type(incoming.exits[0]))
-        return original(incoming, exit_es, disposition=disposition)
+        return original(incoming, exit_es, disposition=disposition, resume=resume)
 
     monkeypatch.setattr(ExitSet, "and_exit", observe)
 
@@ -716,10 +716,12 @@ def test_lying_resource_exit_cannot_skip_the_halted_face(monkeypatch):
 
     original = ExitSet.and_exit
 
-    def completion_only(incoming, exit_es, *, disposition):
+    def completion_only(incoming, exit_es, *, disposition, resume=None):
         if isinstance(incoming.exits[0], Halted):
-            return ExitSet.completed("exit-skipped")
-        return original(incoming, exit_es, disposition=disposition)
+            # The lie: the halted face leaves as a completed record (the one
+            # shape a completed face of a ``with`` has), its halt dropped.
+            return ExitSet.completed(BlockValue((), can_fall_through=True))
+        return original(incoming, exit_es, disposition=disposition, resume=resume)
 
     monkeypatch.setattr(ExitSet, "and_exit", completion_only)
     out = _resource(body=(_Raise("ValueError"),)).desugar()
