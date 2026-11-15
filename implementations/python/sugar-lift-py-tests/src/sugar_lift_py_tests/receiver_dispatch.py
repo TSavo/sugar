@@ -820,17 +820,25 @@ def receiver_after_dispatch(receiver, result):
     prove by the contract that answers the dispatched member at the class
     its input is bound to -- a builtin ``list`` or ``dict`` method's law
     (``consistency::builtin_dispatch_answer``) -- and undecided where
-    nothing answers it (#7757 step 7).  None where ``result`` is no
-    completed dispatched call (an attribute read through dispatch included)
-    made on ``receiver``, a formal's or a cell's plain value
-    (``SymbolicValue``): the receiver is then what the one exposure rule
-    leaves."""
+    nothing answers it (#7757 step 7).  A source method's contract states
+    what it leaves in its receiver over its own receiver parameter
+    (``python:after(out, "self")``); prove's one binder pairs that
+    parameter with the key ``"0"`` the caller names it by
+    (``consistency::argument_key_aliases``).
+
+    ``receiver`` is a formal's or a cell's plain value (``SymbolicValue``),
+    or a same-file class call's result the call was dispatched on
+    (``CallSiteValue``, ``dispatch_on_receiver``): the object as the call
+    left it is that term whatever it was before.  None where ``result`` is
+    no completed dispatched call (an attribute read through dispatch
+    included) made on ``receiver``, or ``receiver`` is any other value: the
+    receiver is then what the one exposure rule leaves."""
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
     from sugar_lift_py_tests.source_call_resolution import object_after_call
 
-    if type(receiver) is not SymbolicValue:
+    if type(receiver) is not SymbolicValue and not isinstance(receiver, CallSiteValue):
         return None
     _binds, call = peel_walrus_binds(result)
     if not isinstance(call, CallSiteValue):

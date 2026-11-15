@@ -252,6 +252,45 @@ def test_fields_a_callee_stores_from_its_parameters_are_joined_at_prove(
     assert lie.verdict == "unsat"
 
 
+_DISPATCHED_STORE = """\
+class Box:
+    def set(self, v):
+        self.n = v
+
+
+def test_box():
+    obj = Box()
+    obj.set(5)
+    assert obj.n == {expected}
+"""
+
+
+def test_a_field_a_dispatched_method_stores_on_its_receiver_is_joined_at_prove(
+    tmp_path: Path,
+) -> None:
+    """``obj.set(5)`` on a bare ``Box()``: the call is the dispatched edge
+    (``py.class("0", python:constructed(<Box>))``), and the caller reads
+    ``obj`` after it by the receiver's argument key, ``python:after(<call>,
+    "0")`` (``receiver_dispatch.receiver_after_dispatch``).  ``Box.set``'s
+    contract states ``python:plain_store(class:self, "n") -> attr:n(
+    python:after(out, "self")) == v``; prove's one binder pairs the key
+    ``"0"`` with ``self``, the parameter that argument binds
+    (``consistency::argument_key_aliases``), and decides the guard on
+    ``Box``'s namespace row (#7757 step 7).  Truthful ``sat``, lying
+    ``unsat``."""
+    t = run_source_through_real_solver(
+        tmp_path / "dispatched-store-truthful", _DISPATCHED_STORE.format(expected=5)
+    )
+    lie = run_source_through_real_solver(
+        tmp_path / "dispatched-store-lying", _DISPATCHED_STORE.format(expected=6)
+    )
+    print(json.dumps({"truthful": t.verdict, "lying": lie.verdict}, sort_keys=True))
+    test_line = _DISPATCHED_STORE.splitlines().index("def test_box():") + 1
+    assert t.verdict != "unsat"
+    assert claim_verdict(t.prove_doc, claims_from_line=test_line) == "sat"
+    assert lie.verdict == "unsat"
+
+
 _PROPERTY_STORE = """\
 class Box:
     @property
