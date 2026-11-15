@@ -324,6 +324,37 @@ def test_deleting_the_class_is_the_type_error_halt() -> None:
     assert len(outcome.exits) == 1
 
 
+def test_a_receiver_with_no_class_statement_stores_and_deletes_its_class_by_the_owed_call() -> (
+    None
+):
+    """A receiver built with no class statement has no lookup of its
+    type's MRO: ``object.__class__`` (or a class between that overrides it)
+    answers ``o.__class__ = C`` and ``del o.__class__``, never the instance
+    field.  The store is the owed ``type(o).__setattr__`` call
+    (``field_store_route`` undecided: it runs code, so the object after it
+    has arrived and no method call on it is dispatched); the delete is the
+    owed ``type(o).__delattr__`` call, two faces, never the certain
+    ``TypeError`` that only a decided lookup gives (#7757, surfaced in
+    #8817)."""
+    receiver = ObjectValue(
+        "Box",
+        (ObjectField("x", TermValue(1)),),
+        identity="receiver",
+        allocation=FRAME_FRESH,
+    )
+
+    assert receiver.field_store_route("__class__") == ("undecided", None)
+    assert receiver.field_store_runs_code("__class__")
+    # Any other name stays the instance-field store.
+    assert receiver.field_store_route("x") == ("plain", None)
+
+    outcome = receiver.delattr("__class__", "del-site", None)
+    halted = [face for face in outcome.exits if isinstance(face, Halted)]
+    completed = [face for face in outcome.exits if not isinstance(face, Halted)]
+    assert len(halted) == 1 and len(completed) == 1
+    assert getattr(halted[0].effect, "exception_name", None) != "TypeError"
+
+
 def test_delattr_keeps_a_mapping_receiver_a_mapping() -> None:
     box = _bare_class_value(_classes("class Box(dict):\n    pass\n")["Box"])
     receiver = MappingObjectValue(
