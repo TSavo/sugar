@@ -81,8 +81,10 @@ fn push_call_offenders(
     }
 }
 
-/// Production faces that must enter through the one typed door.
-const PROVE_VERIFY_FACES: &[&str] = &["sugar-cli/src/cmd_prove.rs", "sugar-cli/src/cmd_verify.rs"];
+/// Production faces that must enter through the one typed door. Proving a
+/// project is `sugar prove` alone: `sugar verify --project`, its second door,
+/// was deleted (item 39, #7861), so `cmd_verify` is not a solve face.
+const PROVE_VERIFY_FACES: &[&str] = &["sugar-cli/src/cmd_prove.rs"];
 
 /// Production face trees scanned for Runner / fixture-door bypass.
 const FACE_TREES: &[&str] = &["sugar-cli/src", "sugar-lsp/src"];
@@ -152,16 +154,6 @@ fn scan_face_missing_one_door(root: &Path) -> Vec<Offender> {
                 replacement:
                     "route prove/verify through sugar_compiler::orchestrate::solve_project \
                      (THE production solve door, sugar#3859)",
-            });
-        }
-        // cmd_verify must use solve_project (disk face); so must cmd_prove (it reads `.proof` files only).
-        if *rel == "sugar-cli/src/cmd_verify.rs" && !has_solve_project {
-            offenders.push(Offender {
-                axis: "face_missing_one_door",
-                path: rel.to_string(),
-                line: 1,
-                text: "cmd_verify missing solve_project(".to_string(),
-                replacement: "cmd_verify must call sugar_compiler::orchestrate::solve_project",
             });
         }
     }
@@ -290,8 +282,8 @@ fn one_production_solve_door_instrument() {
         "cmd_prove must route through the one door: the `.proof` files, never a kit fold"
     );
     assert!(
-        verify.contains("solve_project("),
-        "cmd_verify must route through solve_project"
+        !verify.contains("solve_project("),
+        "cmd_verify must not prove a project: `sugar prove` is the one door (item 39, #7861)"
     );
 
     if r_total != 0 {
