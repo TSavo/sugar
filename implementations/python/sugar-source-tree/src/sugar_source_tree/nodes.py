@@ -25319,6 +25319,13 @@ class Subscript(Expression):
 class Starred(Expression):
     value: Expression
     _child_fields = ("value",)
+    # ``*e`` is a structural part of what holds it: a list, tuple or set
+    # display unpacks it (``("python:starred", e.value.sugar())``), a call
+    # spreads it (``SpreadCallSugar``), and an unpack target binds through it
+    # (``binding_spellings``); none constructs the ``Starred`` itself.  It
+    # answers the roll with its parent (``Node.structural_parts``); ``e`` is
+    # an ordinary node and answers for itself, built or refused.
+    _structural_part = True
 
     def substitute(self, scope):
         """Binds nothing: recurse into children and reassemble."""
