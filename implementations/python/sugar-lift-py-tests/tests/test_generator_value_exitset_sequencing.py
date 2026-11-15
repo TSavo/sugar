@@ -36,7 +36,10 @@ from sugar_lift_py_tests.generator_construction import (
 from sugar_lift_py_tests.ir import and_, atomic, ctor, make_var, not_
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import partition
-from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+from sugar_lift_py_tests.sugar.function_universe_sugar import (
+    _ReducedBlock,
+    halt_record,
+)
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_source_tree.nodes import Call
 from sugar_source_tree.panic import SugarNotWritten
@@ -331,7 +334,13 @@ def test_incomplete_value_becomes_one_halted_face_without_advancing(
     assert len(outcome.exits) == 1
     assert isinstance(outcome.exits[0], Halted)
     assert outcome.exits[0].effect is effect
-    assert outcome.exits[0].state is None
+    # The halt carries the record the generator frame left, still on the
+    # step whose value raised: nothing ran before it and nothing was bound
+    # (``_halted_here``, ``halt_record(None, frame=...)``).
+    state = outcome.exits[0].state
+    assert state == halt_record(None)
+    assert state.frame.cursor == 0
+    assert not state.frame.binding_state
     assert machine.cursor == 0
 
 
