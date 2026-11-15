@@ -60,7 +60,6 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import PrimitiveSort, make_var, str_const
 from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.outcome.exit_set import Halted
@@ -630,9 +629,21 @@ def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
         assert direct_halt.effect.producer_node_owner == owner
 
     # A getter spelling is neither store authority nor permission to invent a
-    # readable value: its deliberately unconstructed body remains loud.
-    with pytest.raises(ConstructionPanic, match="CallSiteValue.force_floor"):
-        getter_only.attribute("name", store.site, None)
+    # readable value.  Expected value changed (#7757 steps 6 and 8, #8751,
+    # #8813): the read used to apply the getter's body and panic on it
+    # (``CallSiteValue.force_floor``); the lifter never follows a callee body
+    # now, so the read is the one call of the getter -- dispatched where the
+    # instance's class names a join symbol, else the one unanswered call --
+    # two-faced and owed, decided at prove.  Never the ``None`` the body
+    # returns, and its raise is kept.
+    read = getter_only.attribute("name", store.site, None)
+    assert isinstance(read, ExitSet), read
+    assert read.halts(), read
+    assert all(
+        exit_.value != NoneValue()
+        for exit_ in read.exits
+        if isinstance(exit_, Completed)
+    ), read
     assert isinstance(getter_halt, Halted)
     assert not isinstance(getter_halt, Completed)
 
