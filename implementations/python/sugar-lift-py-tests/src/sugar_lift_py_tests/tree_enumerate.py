@@ -995,7 +995,83 @@ def class_universe_outcome(cls):
         )
         return as_its_own_proof_states(universe.desugar(entered), entered)
 
-    return cls.statement_value_ref().sugar().desugar(entry).and_then(on_its_class)
+    return _class_statement_read(cls, entry).and_then(on_its_class)
+
+
+def _enclosing_class(cls):
+    """The class statement whose body holds ``cls``, or None for a class of
+    the module body: the nesting ``classes_with_contracts`` walks (a class a
+    class body holds, in turn)."""
+    from sugar_source_tree.nodes import ClassDef
+    from sugar_source_tree.occurrence import SourceOccurrenceIdentityV1
+
+    identity = SourceOccurrenceIdentityV1.of(cls)
+    pending = [
+        statement
+        for statement in cls.unit.typed_module.body
+        if isinstance(statement, ClassDef)
+    ]
+    while pending:
+        outer = pending.pop()
+        for statement in outer.body:
+            if not isinstance(statement, ClassDef):
+                continue
+            if SourceOccurrenceIdentityV1.of(statement) == identity:
+                return outer
+            pending.append(statement)
+    return None
+
+
+def _class_statement_read(cls, entry):
+    """The class the statement ``cls`` bound, as a reader after import meets
+    it.  A class of the module body is read through its statement's key in
+    the state the module's one run left (``ClassDef.statement_value_ref``).
+    A class a class body holds is bound in that body's namespace, never in
+    the module's state: it is read as ``Outer.Inner`` is, the one
+    class-namespace lookup (``ClassDefinitionValue.namespace_member``) on the
+    class its enclosing statement bound, read the same way in turn.  A lookup
+    that does not give the class ``cls`` built is refused by name."""
+    from sugar_lift_py_tests.floor.class_definition_value import (
+        ClassDefinitionValue,
+    )
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_source_tree.occurrence import SourceOccurrenceIdentityV1
+    from sugar_source_tree.panic import SugarNotWritten
+
+    outer = _enclosing_class(cls)
+    if outer is None:
+        return cls.statement_value_ref().sugar().desugar(entry)
+
+    def member_of(read):
+        holder = peel_walrus_binds(read)[1]
+        found = (
+            holder.namespace_member(cls.name)
+            if isinstance(holder, ClassDefinitionValue)
+            else (False, None, None, None, None)
+        )
+        decided, _found, _holder, method, value = found
+        if (
+            decided
+            and method is None
+            and isinstance(value, ClassDefinitionValue)
+            and value.class_definition is not None
+            and SourceOccurrenceIdentityV1.of(value.class_definition)
+            == SourceOccurrenceIdentityV1.of(cls)
+        ):
+            return ExitSet.completed(value)
+        raise SugarNotWritten(
+            owner="class_universe_outcome",
+            blame=cls.fragment,
+            observed=(
+                f"{outer.name}.{cls.name} is not the class the nested "
+                f"statement {cls.name} built"
+            ),
+            requested="the class the enclosing class's namespace holds under its name",
+            fix="state the nested class's contract on the class its statement bound",
+        )
+
+    return _class_statement_read(outer, entry).and_then(member_of)
 
 
 def _class_contract_formal_coordinates(cls, frame) -> tuple:
