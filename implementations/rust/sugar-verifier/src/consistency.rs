@@ -3641,11 +3641,12 @@ struct AmbientPost {
     /// (step 8), and a called function value's, which binds the actuals and
     /// the value's own inputs (step 9).
     receiver: DispatchReceiver,
-    /// The class namespaces the proofs state, where the answering contract
-    /// states a `python:plain_store` guard (step 7): what decides it once the
-    /// call binds the class input it reads (`decide_plain_stores`). `None`
-    /// leaves every such guard undecided.
-    namespaces: Option<Arc<BTreeMap<String, ClassNamespace>>>,
+    /// What the proofs state about classes (the dispatch table: the
+    /// namespace rows and the class a class call makes), where the answering
+    /// contract states a `python:plain_store` guard (step 7): what decides it
+    /// once the call binds the class input it reads (`decide_plain_stores`).
+    /// `None` leaves every such guard undecided.
+    plain_stores: Option<Arc<DispatchTable>>,
     /// `Some` for the owed entry of a member with no symbol (step 9): owed as
     /// it stands, answered at a read whose call is a call of a function value
     /// stated as its join symbol (`function_value_answer`).
@@ -5211,10 +5212,10 @@ const PYTHON_VALUE_CALL: &str = "py.call";
 #[derive(Debug, Default)]
 struct FunctionAnswers {
     answers: BTreeMap<String, Option<BridgeAnswer>>,
-    /// The class namespaces the proofs state, where an answer states a
-    /// `python:plain_store` guard (step 7), as a joined edge carries them
-    /// (`AmbientPost::namespaces`).
-    namespaces: Option<Arc<BTreeMap<String, ClassNamespace>>>,
+    /// What the proofs state about classes, where an answer states a
+    /// `python:plain_store` guard (step 7), as a joined edge carries it
+    /// (`AmbientPost::plain_stores`).
+    plain_stores: Option<Arc<DispatchTable>>,
 }
 
 /// Every symbol a `python:function` term names under `node`.
@@ -5267,6 +5268,7 @@ fn function_answers(pool: &MementoPool) -> FunctionAnswers {
                 (symbol, answer)
             })
             .collect(),
+        plain_stores: None,
     }
 }
 
@@ -5360,7 +5362,7 @@ fn function_value_answer(post: &AmbientPost, function: &Json, call: &Json) -> Op
         refusal: None,
         dispatch: None,
         receiver,
-        namespaces: table.namespaces.clone(),
+        plain_stores: table.plain_stores.clone(),
         value_calls: None,
     })
 }
@@ -5420,7 +5422,7 @@ fn dispatch_answer(post: &AmbientPost, call: &Json) -> Option<AmbientPost> {
         refusal: None,
         dispatch: None,
         receiver: target.receiver,
-        namespaces: Some(Arc::clone(&dispatch.table.namespaces)),
+        plain_stores: Some(Arc::clone(&dispatch.table)),
         value_calls: None,
     })
 }
@@ -5456,7 +5458,10 @@ const PLAIN_STORE_HOOKS: [&str; 4] = ["__setattr__", "__getattribute__", "__slot
 /// Whether a store of `field` on an instance whose class input is bound to
 /// `class` is the plain `__dict__` store, read back as that entry: `class`
 /// is `python:instance(<C>, <field>...)` (the instance's fields do not
-/// matter), `field` is no dunder name (`object`'s own data descriptors,
+/// matter), or `python:constructed(<C>)` (a class call's result) where `C`'s
+/// constructor contract states on every completed face that it makes an
+/// instance of `C` (`DispatchTable::constructed`, the binding a dispatch on
+/// it reads), `field` is no dunder name (`object`'s own data descriptors,
 /// `__class__` and `__dict__`, are stated by no row), and every class of the
 /// order the class's own proof states:
 ///
@@ -5469,14 +5474,20 @@ const PLAIN_STORE_HOOKS: [&str; 4] = ["__setattr__", "__getattribute__", "__slot
 ///   `PLAIN_STORE_HOOKS`.
 ///
 /// False whenever that is not decided by what the proofs state.
-fn plain_store_holds(
-    namespaces: &BTreeMap<String, ClassNamespace>,
-    class: &Json,
-    field: &str,
-) -> bool {
+fn plain_store_holds(table: &DispatchTable, class: &Json, field: &str) -> bool {
     if field.is_empty() || (field.starts_with("__") && field.ends_with("__")) {
         return false;
     }
+    // A class call's result: the instance its class's constructor contract
+    // states it makes, never a class nothing states (as `dispatch_answer`).
+    let constructed = match constructed_class_symbol(class) {
+        Some(symbol) => match table.constructed.get(symbol) {
+            Some(Some(instance)) => Some(instance.clone()),
+            _ => return false,
+        },
+        None => None,
+    };
+    let class = constructed.as_ref().unwrap_or(class);
     let Some((name, args)) = ctor_parts(class) else {
         return false;
     };
@@ -5486,6 +5497,7 @@ fn plain_store_holds(
     let Some(subject) = args.first().and_then(const_str) else {
         return false;
     };
+    let namespaces = &table.namespaces;
     let Some(order) = namespaces.get(subject).map(|namespace| &namespace.mro) else {
         return false;
     };
@@ -5563,24 +5575,16 @@ fn formula_constant(formula: &Json) -> Option<bool> {
 /// reached keeps its shape. So an operation a decided guard settles (the
 /// store's own completion, `or(plain_store, <completes>)`) no longer reads
 /// its owed atom once the guard is `true`.
-fn decide_plain_stores(
-    formula: &Json,
-    namespaces: Option<&BTreeMap<String, ClassNamespace>>,
-) -> Json {
-    match namespaces {
-        Some(namespaces) if mentions_plain_store(formula) => {
-            decided_plain_stores(formula, namespaces).0
-        }
+fn decide_plain_stores(formula: &Json, table: Option<&DispatchTable>) -> Json {
+    match table {
+        Some(table) if mentions_plain_store(formula) => decided_plain_stores(formula, table).0,
         _ => formula.clone(),
     }
 }
 
 /// `decide_plain_stores` on one node: the node, and whether a replacement
 /// reached it.
-fn decided_plain_stores(
-    node: &Json,
-    namespaces: &BTreeMap<String, ClassNamespace>,
-) -> (Json, bool) {
+fn decided_plain_stores(node: &Json, table: &DispatchTable) -> (Json, bool) {
     let Some(kind) = node.get("kind").and_then(|v| v.as_str()) else {
         return (node.clone(), false);
     };
@@ -5595,7 +5599,7 @@ fn decided_plain_stores(
                 .map(Vec::as_slice)
             {
                 Some([class, field]) => const_str(field)
-                    .is_some_and(|field| plain_store_holds(namespaces, class, field)),
+                    .is_some_and(|field| plain_store_holds(table, class, field)),
                 _ => false,
             };
             if decided {
@@ -5608,7 +5612,7 @@ fn decided_plain_stores(
             let Some(body) = node.get("body") else {
                 return (node.clone(), false);
             };
-            let (body, changed) = decided_plain_stores(body, namespaces);
+            let (body, changed) = decided_plain_stores(body, table);
             if !changed {
                 return (node.clone(), false);
             }
@@ -5626,7 +5630,7 @@ fn decided_plain_stores(
             let operands: Vec<Json> = operands
                 .iter()
                 .map(|operand| {
-                    let (operand, reached) = decided_plain_stores(operand, namespaces);
+                    let (operand, reached) = decided_plain_stores(operand, table);
                     changed |= reached;
                     operand
                 })
@@ -5765,12 +5769,11 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
         match answer {
             Ok(Some((binding, post, halt_guards, every_halt_guarded, typed_halts))) => {
                 // A contract that guards a field it stores (step 7) is
-                // decided on the namespaces the proofs state.
+                // decided on what the proofs state about classes.
                 let guarded = mentions_plain_store(&post)
                     || halt_guards.iter().any(mentions_plain_store);
-                let namespaces = guarded.then(|| {
-                    let table = table.get_or_insert_with(|| Arc::new(dispatch_table(pool)));
-                    Arc::clone(&table.namespaces)
+                let plain_stores = guarded.then(|| {
+                    Arc::clone(table.get_or_insert_with(|| Arc::new(dispatch_table(pool))))
                 });
                 posts.push(AmbientPost {
                     binding,
@@ -5783,7 +5786,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                     refusal: None,
                     dispatch: None,
                     receiver: DispatchReceiver::AsCalled,
-                    namespaces,
+                    plain_stores,
                     value_calls: None,
                 })
             }
@@ -5811,7 +5814,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                 refusal: Some(reason),
                 dispatch: None,
                 receiver: DispatchReceiver::AsCalled,
-                namespaces: None,
+                plain_stores: None,
                 value_calls: None,
             }),
         }
@@ -5824,14 +5827,15 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
         None
     } else {
         let mut answers = function_answers(pool);
-        // An answer that guards a field it stores (step 7) is decided on the
-        // namespaces the proofs state, as a joined edge's is.
+        // An answer that guards a field it stores (step 7) is decided on
+        // what the proofs state about classes, as a joined edge's is.
         let guarded = answers.answers.values().flatten().any(|(_, post, halt_guards, _, _)| {
             mentions_plain_store(post) || halt_guards.iter().any(mentions_plain_store)
         });
         if guarded {
-            let table = table.get_or_insert_with(|| Arc::new(dispatch_table(pool)));
-            answers.namespaces = Some(Arc::clone(&table.namespaces));
+            answers.plain_stores = Some(Arc::clone(
+                table.get_or_insert_with(|| Arc::new(dispatch_table(pool))),
+            ));
         }
         Some(Arc::new(answers))
     };
@@ -5898,7 +5902,7 @@ fn owed_post(
         refusal: Some(reason),
         dispatch: None,
         receiver: DispatchReceiver::AsCalled,
-        namespaces: None,
+        plain_stores: None,
         value_calls: None,
     }
 }
@@ -6051,7 +6055,7 @@ impl JoinedHalts {
                     let decided = at_call
                         .get("guard")
                         .filter(|guard| guard.is_object())
-                        .map(|guard| decide_plain_stores(guard, post.namespaces.as_deref()));
+                        .map(|guard| decide_plain_stores(guard, post.plain_stores.as_deref()));
                     if let (Some(guard), Some(map)) = (decided, at_call.as_object_mut()) {
                         map.insert("guard".to_string(), guard);
                     }
@@ -6836,7 +6840,7 @@ fn linked_ambient_post_instances_for_inv(
             // A field the callee stores is stated under a plain-store guard
             // over the class input the call bound (step 7): decided on the
             // namespaces the proofs state, else left standing.
-            instance = decide_plain_stores(&instance, post.namespaces.as_deref());
+            instance = decide_plain_stores(&instance, post.plain_stores.as_deref());
             // Fold grounded primitives after specialization so linked posts
             // and structural dual faces see concrete values (#4398).
             instance = fold_ground_applications(&instance);
@@ -7110,7 +7114,7 @@ fn raised_type_facts(inv: &Json, ambient: &[AmbientPost]) -> Vec<Json> {
             for (class, guard) in &post.typed_halts {
                 let guard = fold_ground_applications(&decide_plain_stores(
                     &substitute_call_bindings(guard, &bindings),
-                    post.namespaces.as_deref(),
+                    post.plain_stores.as_deref(),
                 ));
                 let fact = if class == handler {
                     implies_formula(guard, (*test).clone())
@@ -12588,7 +12592,7 @@ mod tests {
             refusal: None,
             dispatch: None,
             receiver: DispatchReceiver::AsCalled,
-            namespaces: None,
+            plain_stores: None,
             value_calls: None,
         }
     }
@@ -13990,6 +13994,22 @@ mod tests {
         assert_eq!(dispatched_symbol(&namespaces, "get", &c), None);
     }
 
+    /// A dispatch table holding only `namespaces` and the instance each class
+    /// `constructed` names is stated to make: what decides a plain store.
+    fn class_table(
+        namespaces: &BTreeMap<String, ClassNamespace>,
+        constructed: &[(&str, Option<Json>)],
+    ) -> DispatchTable {
+        DispatchTable {
+            namespaces: Arc::new(namespaces.clone()),
+            answers: BTreeMap::new(),
+            constructed: constructed
+                .iter()
+                .map(|(class, instance)| (class.to_string(), instance.clone()))
+                .collect(),
+        }
+    }
+
     fn plain_store(class: Json, field: &str) -> Json {
         json!({
             "kind": "atomic",
@@ -14019,16 +14039,29 @@ mod tests {
             ),
         );
         let boxed = instance("python:m.Box", &["n"]);
-        assert!(plain_store_holds(&namespaces, &boxed, "n"));
-        assert!(plain_store_holds(&namespaces, &instance("python:m.Box", &[]), "m"));
+        let table = class_table(&namespaces, &[]);
+        assert!(plain_store_holds(&table, &boxed, "n"));
+        assert!(plain_store_holds(&table, &instance("python:m.Box", &[]), "m"));
         // A class input nothing bound, and a field named like a dunder
         // (`object`'s own descriptors), decide nothing.
-        assert!(!plain_store_holds(&namespaces, &var("class:self"), "n"));
-        assert!(!plain_store_holds(&namespaces, &boxed, "__class__"));
+        assert!(!plain_store_holds(&table, &var("class:self"), "n"));
+        assert!(!plain_store_holds(&table, &boxed, "__class__"));
+        // A class call's result: the class its constructor contract states
+        // it makes; nothing where the contract does not decide it.
+        let made = json!({
+            "kind": "ctor",
+            "name": PYTHON_CONSTRUCTED,
+            "args": [string_const("python:m.Box")],
+        });
+        let stated = class_table(&namespaces, &[("python:m.Box", Some(boxed.clone()))]);
+        assert!(plain_store_holds(&stated, &made, "n"));
+        let undecided = class_table(&namespaces, &[("python:m.Box", None)]);
+        assert!(!plain_store_holds(&undecided, &made, "n"));
+        assert!(!plain_store_holds(&table, &made, "n"));
         // A binding of the field itself (a data descriptor would win), a
         // store or read hook anywhere in the order, a class no row states,
         // or a builtin base other than `object`: not decided.
-        assert!(!plain_store_holds(&namespaces, &boxed, "run"));
+        assert!(!plain_store_holds(&table, &boxed, "run"));
         for hook in PLAIN_STORE_HOOKS {
             let mut hooked = namespaces.clone();
             hooked
@@ -14036,21 +14069,21 @@ mod tests {
                 .unwrap()
                 .binds
                 .insert(hook.to_string(), ("other".to_string(), String::new()));
-            assert!(!plain_store_holds(&hooked, &boxed, "n"), "{hook}");
+            assert!(!plain_store_holds(&class_table(&hooked, &[]), &boxed, "n"), "{hook}");
         }
         let mut unstated = namespaces.clone();
         unstated.remove("python:m.Base");
-        assert!(!plain_store_holds(&unstated, &boxed, "n"));
+        assert!(!plain_store_holds(&class_table(&unstated, &[]), &boxed, "n"));
         let mut conflicting = namespaces.clone();
         conflicting.get_mut("python:m.Base").unwrap().mro.clear();
-        assert!(!plain_store_holds(&conflicting, &boxed, "n"));
+        assert!(!plain_store_holds(&class_table(&conflicting, &[]), &boxed, "n"));
         let mut builtin = namespaces.clone();
         builtin.get_mut("python:m.Box").unwrap().mro = vec![
             "python:m.Box".to_string(),
             "builtins.dict".to_string(),
             "builtins.object".to_string(),
         ];
-        assert!(!plain_store_holds(&builtin, &boxed, "n"));
+        assert!(!plain_store_holds(&class_table(&builtin, &[]), &boxed, "n"));
     }
 
     #[test]
@@ -14060,6 +14093,7 @@ mod tests {
             "python:m.Box".to_string(),
             namespace(&["python:m.Box", "builtins.object"], &[]),
         );
+        let table = class_table(&namespaces, &[]);
         let decided = plain_store(instance("python:m.Box", &[]), "n");
         let open = plain_store(var("class:b"), "n");
         let completes = json!({
@@ -14084,17 +14118,17 @@ mod tests {
             ],
         });
         assert_eq!(
-            decide_plain_stores(&formula, Some(&namespaces)),
+            decide_plain_stores(&formula, Some(&table)),
             json!({"kind": "and", "operands": [field.clone(), completes.clone()]})
         );
         assert_eq!(
-            decide_plain_stores(&completion, Some(&namespaces)),
+            decide_plain_stores(&completion, Some(&table)),
             json!({"kind": "and", "operands": []})
         );
         assert_eq!(
             decide_plain_stores(
                 &json!({"kind": "not", "operands": [completion.clone()]}),
-                Some(&namespaces)
+                Some(&table)
             ),
             json!({"kind": "or", "operands": []})
         );
@@ -14102,10 +14136,10 @@ mod tests {
         // guard stands as it was: nothing is concluded from it.
         assert_eq!(decide_plain_stores(&formula, None), formula);
         let unbound = json!({"kind": "implies", "operands": [open.clone(), field.clone()]});
-        assert_eq!(decide_plain_stores(&unbound, Some(&namespaces)), unbound);
+        assert_eq!(decide_plain_stores(&unbound, Some(&table)), unbound);
         // A formula with no such guard is returned untouched.
         let other = json!({"kind": "and", "operands": [{"kind": "and", "operands": []}, field]});
-        assert_eq!(decide_plain_stores(&other, Some(&namespaces)), other);
+        assert_eq!(decide_plain_stores(&other, Some(&table)), other);
     }
 
     #[test]
