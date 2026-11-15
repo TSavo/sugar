@@ -7,8 +7,8 @@ No recursion-by-name, no borrowed expected exception identity, no local
 CallSiteValue adaptation.
 
 Authentication: each use-site applies its callee's own
-source_visible_call_frame through its lexical row (not name lookup at dig
-time).
+source_visible_call_frame through the function value its definition built
+(not name lookup at dig time).
 
 Producer reds → **codex-3** (same general source-return dig projection as
 test_source_return_operation_generalization). Nested dig must recurse
@@ -30,6 +30,7 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.outcome import Completed, ExitSet
+from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import BinOp, Call, FunctionDef
 from sugar_source_tree.panic import SugarNotWritten
@@ -64,18 +65,19 @@ def _calls_named(tree, name: str) -> list[Call]:
 
 
 def _carried_frame(call: Call, declared):
-    """The frame ``call`` carries, checked against its callee's ``declared``
-    frame.
+    """The frame ``call`` applies: its callee's ``declared`` frame.
 
-    ``Call._construct_sugar`` reads a lexical call's frame once, at
-    construction -- its definition's own frame, its actuals bound
-    (``bind_node_actuals``) -- and carries it as ``source_call_frame``.  A
-    bound frame is its own frame, with its own CID, whose declaration is the
-    definition's frame (``declaration_frame_cid``)."""
-    frame = call.sugar().source_call_frame
-    assert frame is not None, call
-    assert frame.declaration_frame_cid == declared.frame_cid
-    return frame
+    A call of a plain ``def`` seats no frame by its name (#8647): it is the
+    call of the function its statement built (``Call._function_value_call``,
+    ``ComputedCallSugar``), and that value applies its definition's own frame
+    (``LambdaCallable.source_call_frame``), whose declaration is itself.  The
+    call value the application binds carries that frame's CID
+    (``source_call_frame_cid``), which each test reads."""
+    sugar = call.sugar()
+    assert isinstance(sugar, ComputedCallSugar), (call, sugar)
+    assert sugar.source_call_frame is None, call
+    assert declared.declaration_frame_cid == declared.frame_cid
+    return declared
 
 
 NESTED = "def inner():\n" "    return 3\n" "def outer():\n" "    return inner()\n"
