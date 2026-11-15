@@ -152,9 +152,10 @@ def test_a_partitioned_operand_compares_on_each_receiver_and_keeps_its_halt():
     text = "Box(value) < limit\n"
     tree = SourceFile((text, "partitioned.py", blake3_512_of(text.encode())))
     site = next(node for node in tree.nodes() if isinstance(node, Name)).fragment
-    raised = ground_exceptional_exit(
+    # The ground raise is a halt: its one exit carries the effect.
+    (raised,) = ground_exceptional_exit(
         exception_name="ValueError", site=site, owner="test"
-    ).value
+    ).halts()
     halts = (Halted(true_guard(), raised.effect, None, frozenset()),)
     partition = ReceiverStatePartitionValue(
         exits=ExitSet((*halts, Completed(true_guard(), TermValue(1))))

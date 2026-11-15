@@ -108,10 +108,12 @@ def test_guarded_length_distributes_over_both_authenticated_arms() -> None:
 
     outcome = guarded.length("renamed-length-site")
 
-    assert isinstance(outcome.value, GuardedValue)
-    assert outcome.value.guard == GUARD
-    assert outcome.value.when_true == TermValue(2)
-    assert outcome.value.when_false == TermValue(1)
+    # Both arms' lengths complete, so the one exit is their rejoined value.
+    length = outcome.completed_value()
+    assert isinstance(length, GuardedValue)
+    assert length.guard == GUARD
+    assert length.when_true == TermValue(2)
+    assert length.when_false == TermValue(1)
 
 
 def test_guarded_length_keeps_one_missing_arm_typed_loud() -> None:
