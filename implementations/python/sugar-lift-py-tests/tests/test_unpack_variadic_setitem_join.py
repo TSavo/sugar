@@ -167,13 +167,32 @@ def _the_call(actuals: str):
     ``arg_values`` are the actuals as written; the one binder's packing of
     ``*values`` is on its term, every formal by name (``py.kwarg``)."""
     from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.outcome.exit_set import complement_guard
 
     outcome = _call(actuals)
-    assert [face for face in outcome.exits if isinstance(face, Halted)], outcome
+    halted = [face for face in outcome.exits if isinstance(face, Halted)]
     completed = [face for face in outcome.exits if isinstance(face, Completed)]
-    assert len(completed) == 1, outcome
+    assert len(halted) == 1 and len(completed) == 1, outcome
+    # The caller's halt is the edge's halted face: under the complement of
+    # the call's ``completes`` atom, naming no exception here -- prove types
+    # it by the helper's contract, whose row states the IndexError locus.
+    assert completed[0].guard.name == "python:unknown_callee_call.completes"
+    assert halted[0].guard == complement_guard(completed[0].guard)
+    assert halted[0].effect.exception_type_coordinate is None
     assert isinstance(completed[0].value, CallSiteValue), completed[0].value
     return completed[0].value
+
+
+def _coordinate(call):
+    """The call's coordinate ``call:<target>(<arguments>)``: the completed
+    face of the one unanswered call returns ``python:call_result(<call
+    term>, <occurrence>)`` (#7757 steps 5 and 6, #8705), so the formals the
+    one binder packs are the call term's arguments, never the result's."""
+    result = call.term
+    assert result.name == "python:call_result", result
+    coordinate = result.args[0]
+    assert coordinate.name.startswith("call:"), coordinate
+    return coordinate
 
 
 def _formal(call, name: str, value):
@@ -191,7 +210,7 @@ def test_source_caller_packs_remaining_positionals_into_values() -> None:
         TermValue(1),
         TermValue(2),
     )
-    assert list(call.term.args[1:]) == [
+    assert list(_coordinate(call).args[1:]) == [
         _formal(call, "i", TermValue(0)),
         _formal(call, "p", TermValue(7)),
         _formal(call, "values", TupleValue((TermValue(1), TermValue(2)))),
@@ -264,7 +283,7 @@ def test_source_caller_variadic_store_halt_no_fabricated_completion() -> None:
     # joined at the call by prove (#8690, #8749).
     call = _the_call("[0], 5, 7, 1, 2")
     assert not isinstance(call, UniverseValue)
-    assert list(call.term.args[1:]) == [
+    assert list(_coordinate(call).args[1:]) == [
         _formal(call, "i", TermValue(5)),
         _formal(call, "p", TermValue(7)),
         _formal(call, "values", TupleValue((TermValue(1), TermValue(2)))),

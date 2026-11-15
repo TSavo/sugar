@@ -122,6 +122,19 @@ def _caller_edge(signature: str, actuals: str):
     return outcome, edge
 
 
+def _coordinate(edge):
+    """The call's coordinate ``call:<target>(<arguments>)`` the edge's value
+    names: the completed face of the one unanswered call returns
+    ``python:call_result(<call term>, <occurrence>)`` (#7757 steps 5 and 6,
+    #8705), so the arguments prove's binder binds are the call term's,
+    never the result's."""
+    result = edge.term
+    assert result.name == "python:call_result", result
+    call = result.args[0]
+    assert call.name.startswith("call:"), call
+    return call
+
+
 def _int(edge, value: int):
     return TermValue(value).to_term(owner=str(edge.site))
 
@@ -408,12 +421,23 @@ def test_positional_caller_halts_with_named_identity_from_setattr() -> None:
     # store halt on a non-object receiver is
     # ``test_tuple_receiver_store_halts_from_setattr_not_boundary``.
     _outcome, edge = _caller_edge("obj, value", "1, 2")
-    assert list(edge.term.args) == [_int(edge, 1), _int(edge, 2)]
+    assert _coordinate(edge).args == (_int(edge, 1), _int(edge, 2))
+    # The halt prove joins at this call: the helper's own row discharged
+    # with what the caller supplies, ``1.field = 2``, is the named
+    # AttributeError at the store's site -- the helper's panic locus.
+    function, pending = _helper_definition()
+    obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
+    exits = pending.discharge(None, {obj_cid: TermValue(1), value_cid: TermValue(2)})
+    halted = exits.exits[0]
+    assert isinstance(halted, Halted)
+    assert halted.effect.exception_type_coordinate == _identity("AttributeError")
+    site = function.body[0].fragment
+    assert halted.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
 
 def test_keyword_caller_reaches_same_demand() -> None:
     _outcome, edge = _caller_edge("obj, value", "obj=1, value=2")
-    assert list(edge.term.args) == [
+    assert list(_coordinate(edge).args) == [
         _named(edge, "py.kwarg", "obj", 1),
         _named(edge, "py.kwarg", "value", 2),
     ]
@@ -427,7 +451,7 @@ def test_default_value_caller_reaches_same_demand() -> None:
     # run, and its default read is refused by name (``DefaultValueSugar``):
     # never the default expression evaluated again at the call.
     _outcome, edge = _caller_edge("obj, value=2", "1")
-    assert list(edge.term.args) == [
+    assert list(_coordinate(edge).args) == [
         _int(edge, 1),
         _named(edge, "py.default", "value", 2),
     ]

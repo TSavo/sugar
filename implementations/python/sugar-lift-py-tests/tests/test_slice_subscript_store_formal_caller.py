@@ -112,6 +112,19 @@ def _the_call(signature: str, body: str, actuals: str):
     return edge
 
 
+def _coordinate(edge):
+    """The call's coordinate ``call:<target>(<arguments>)`` the edge's value
+    names: the completed face of the one unanswered call returns
+    ``python:call_result(<call term>, <occurrence>)`` (#7757 steps 5 and 6,
+    #8705), so the arguments prove's binder binds are the call term's,
+    never the result's."""
+    result = edge.term
+    assert result.name == "python:call_result", result
+    call = result.args[0]
+    assert call.name.startswith("call:"), call
+    return call
+
+
 def _ints(*values: int) -> ListValue:
     return fresh(ListValue, tuple(TermValue(value) for value in values))
 
@@ -579,8 +592,9 @@ def test_keyword_caller_completes_slice_store() -> None:
     from sugar_lift_py_tests.ir import str_const
 
     edge = _the_call("obj, value", "obj[1:3] = value", "obj=[0, 1, 2, 3], value=[8]")
-    assert [arg.name for arg in edge.term.args] == ["py.kwarg", "py.kwarg"]
-    assert [arg.args[0] for arg in edge.term.args] == [
+    arguments = _coordinate(edge).args
+    assert [arg.name for arg in arguments] == ["py.kwarg", "py.kwarg"]
+    assert [arg.args[0] for arg in arguments] == [
         str_const("obj"),
         str_const("value"),
     ]
@@ -602,7 +616,7 @@ def test_default_caller_completes_slice_store() -> None:
 
     edge = _the_call("obj, value=[7, 7]", "obj[1:3] = value", "[0, 1, 2, 3]")
     assert edge.arg_values == (_ints(0, 1, 2, 3),)
-    (default,) = edge.term.args[1:]
+    (default,) = _coordinate(edge).args[1:]
     assert default.name == "py.default"
     assert default.args[0] == str_const("value")
     outcome = _call_outcome(

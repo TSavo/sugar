@@ -99,20 +99,37 @@ def test_helper_alone_is_named_undischarged_without_caller_actuals() -> None:
     assert exits.completed_value() is None
 
 
-
 def _the_call(outcome: ExitSet):
     """The call value on the one completed face of a caller's call: a
     same-file call is its coordinate and edge, joined at prove (#7757 steps
     5 and 6, #8705), completing under its ``completes`` atom and owing its
-    halt under the complement."""
+    halt under the complement -- the face prove types by the helper's
+    contract, whose row states the IndexError locus."""
     from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.outcome.exit_set import complement_guard
 
-    assert [face for face in outcome.exits if isinstance(face, Halted)], outcome
+    halted = [face for face in outcome.exits if isinstance(face, Halted)]
     completed = [face for face in outcome.exits if isinstance(face, Completed)]
     assert len(completed) == 1, outcome
+    assert completed[0].guard.name == "python:unknown_callee_call.completes"
+    assert any(
+        face.guard == complement_guard(completed[0].guard) for face in halted
+    ), outcome
     call = completed[0].value
     assert isinstance(call, CallSiteValue), type(call)
     return call
+
+
+def _coordinate(call):
+    """The call's coordinate ``call:<target>(<arguments>)``: the completed
+    face's value is ``python:call_result(<call term>, <occurrence>)``
+    (#7757 steps 5 and 6, #8705), so the binding prove's one binder reads is
+    the call term's arguments, never the result's."""
+    result = call.term
+    assert result.name == "python:call_result", result
+    coordinate = result.args[0]
+    assert coordinate.name.startswith("call:"), coordinate
+    return coordinate
 
 
 def _int(call, value: int):
@@ -146,12 +163,12 @@ def test_positional_keyword_and_default_callers_reach_the_same_demand() -> None:
     completed, positional, keyword, default = (
         _the_call(outcome) for outcome in _caller_outcomes()
     )
-    assert list(completed.term.args[1:]) == [_int(completed, 0)]
-    assert list(positional.term.args[1:]) == [_int(positional, 1)]
-    assert list(keyword.term.args[1:]) == [
+    assert list(_coordinate(completed).args[1:]) == [_int(completed, 0)]
+    assert list(_coordinate(positional).args[1:]) == [_int(positional, 1)]
+    assert list(_coordinate(keyword).args[1:]) == [
         ctor("py.kwarg", [str_const("key"), _int(keyword, 1)])
     ]
-    assert list(default.term.args[1:]) == [
+    assert list(_coordinate(default).args[1:]) == [
         ctor("py.default", [str_const("key"), _int(default, 1)])
     ]
 
