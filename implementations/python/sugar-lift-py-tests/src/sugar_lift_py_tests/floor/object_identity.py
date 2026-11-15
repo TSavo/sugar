@@ -20,10 +20,18 @@ members, an instance's fields -- are the object's contents now
 (``contents_current``): this frame threads every change to an object it
 made through the one mutation door (a container's) or the field store (an
 instance's), whose post-state keeps the object's ``allocation``.  A value
-that reaches a frame by binding (a parameter's actual, a global, an
-attribute, a callee's return, a yielded value) carries none (``arrived``):
-code this frame does not see may have changed it since its contents were
-read.
+that reaches a frame by binding (a global, an attribute, a callee's return,
+a yielded value) carries none (``arrived``): code this frame does not see
+may have changed it since its contents were read.
+
+Currency belongs to the object, never to how it was reached.  A formal at a
+followed call is the caller's actual, with the caller's currency: nothing
+ran between the caller's read and the body's entry, and the body's stores
+and calls update it by the same rules as anywhere.  A formal is arrived
+only where its state is unknown at the body's entry: in its function's own
+proof it has no actual at all (a symbolic formal), and a generator's body,
+which runs after its call returned, holds its formals arrived
+(``GeneratorConstructionV1._guard_evaluation_context``).
 """
 
 from __future__ import annotations

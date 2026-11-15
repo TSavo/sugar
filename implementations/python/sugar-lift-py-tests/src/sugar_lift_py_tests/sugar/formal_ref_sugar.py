@@ -41,10 +41,14 @@ class FormalRefSugar(ConstructedTermSugar):
         if temporal is not None:
             bound = temporal.value_if_bound(self.coordinate.coordinate_cid)
             if bound is not None:
-                from sugar_lift_py_tests.floor.object_identity import arrived
-
-                # The caller's actual reached this frame by binding.
-                return ExitSet.completed(arrived(bound, self.site))
+                # A followed call bound the caller's actual: the formal is that
+                # actual, with the caller's currency.  Currency belongs to the
+                # object, never to how it was reached
+                # (``object_identity.contents_current``): ``box = Box();
+                # box.run()`` reads one object at one moment, in the caller and
+                # in ``run`` alike.  Only a formal with no actual (its
+                # function's own proof, below) has a state unknown at entry.
+                return ExitSet.completed(bound)
         return ExitSet.completed(
             SymbolicValue(
                 make_var(self.coordinate.declared_name),

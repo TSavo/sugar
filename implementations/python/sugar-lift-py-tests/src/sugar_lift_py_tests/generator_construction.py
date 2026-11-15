@@ -3246,8 +3246,22 @@ class GeneratorConstructionV1:
         else:
             temporal = base.temporal
 
+        from sugar_lift_py_tests.floor.object_identity import arrived_as
+
+        # A generator's body runs at ``next``, after its call returned and the
+        # caller ran code this frame does not see: each formal's actual is
+        # held by binding, its state unknown at the body's entry
+        # (``object_identity.arrived_as``), named by this instance and the
+        # formal's coordinate.  A formal read applies no arrival of its own
+        # (``BindingCoordinateRefSugar``): the frame that runs later says so.
         for binding in self.formal_floor_bindings:
-            temporal = temporal.bind_value(binding.coordinate_cid, binding.floor_value)
+            temporal = temporal.bind_value(
+                binding.coordinate_cid,
+                arrived_as(
+                    binding.floor_value,
+                    f"{self.instance_coordinate}/{binding.coordinate_cid}",
+                ),
+            )
 
         if base is None:
             ctx = ReduceContext.root(
