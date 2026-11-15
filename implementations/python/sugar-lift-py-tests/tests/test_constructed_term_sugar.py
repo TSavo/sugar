@@ -208,9 +208,20 @@ def test_generator_payload_admission_refuses_arbitrary_sugar():
 )
 def test_constructed_term_nested_children_are_closed_at_construction(build):
     site = _call_sites()[0]
+    from sugar_source_tree.panic import SugarNotWritten
+
     assert isinstance(build(_Operand("good"), site), ConstructedTermSugar)
-    with pytest.raises(TypeError, match="requires ConstructedTermSugar"):
+    # Every nested child is closed at construction: a sugar with no term is
+    # refused before the parent exists.  ``IfExpSugar`` refuses by name, as
+    # its construction door (``IfExp._construct_sugar``) does -- its arm, what
+    # it was, what it needs; the others raise the shared TypeError.
+    with pytest.raises((TypeError, SugarNotWritten)) as refused:
         build(_ArbitrarySugar(), site)
+    if isinstance(refused.value, SugarNotWritten):
+        assert refused.value.owner == "IfExpSugar.test"
+        assert "_ArbitrarySugar, not ConstructedTermSugar" in refused.value.observed
+    else:
+        assert "requires ConstructedTermSugar" in str(refused.value)
 
 
 def test_equivalent_call_reconstruction_has_the_same_term():
