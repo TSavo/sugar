@@ -320,13 +320,23 @@ def _returned_value(outcome):
     from sugar_lift_py_tests.floor.return_value import ReturnValue
     from sugar_lift_py_tests.floor.universe_value import UniverseValue
 
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+
     universe = outcome.completed_value()
     assert isinstance(universe, UniverseValue), outcome
-    (returned,) = [
-        entry
-        for entry in universe.record.statements
-        if isinstance(entry, ReturnValue)
-    ]
+    # The one return the completed arm took, at any depth: a statement whose
+    # suite the reduction decided (``if (a := 1) and 2:``) records its
+    # suite's block, and what follows it, nested (``_holds`` reads the same
+    # nesting).  Exactly one: a second return on the arm is a wrong record.
+    returns = []
+    pending = list(universe.record.statements)
+    while pending:
+        entry = pending.pop()
+        if isinstance(entry, ReturnValue):
+            returns.append(entry)
+        elif isinstance(entry, BlockValue):
+            pending.extend(entry.statements)
+    (returned,) = returns
     return returned.value
 
 
