@@ -1531,6 +1531,7 @@ def method_edge_call(
         call_occurrence=call_occurrence,
         caller_ctx=ctx,
         fallback_target=bound.target_name,
+        implicit=len(implicit),
     )
 
 

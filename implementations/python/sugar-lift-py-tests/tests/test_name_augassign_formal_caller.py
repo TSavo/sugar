@@ -539,10 +539,11 @@ def test_a_caller_name_reads_the_list_its_helper_extended_in_place() -> None:
     the helper's ``x += [2]`` changes.
 
     Expected value changed (#7757 steps 5 and 6, #8705): it was ``[1, 2]``,
-    read off the followed body.  Today the list the call may change reads
-    as unknown after the call (``python:receiver_after_call``), never the
-    ``[1]`` before it; prove decides ``[1, 2]`` once the callee's post-call
-    object state is joined (#7757 step 7)."""
+    read off the followed body.  On the call's completed face the list reads
+    as the formal ``g``'s binder bound it to, after the call
+    (``python:after(<call result>, "x")``, keyed on the call, #7757 step 7),
+    never the ``[1]`` before it; prove decides it once the callee's contract
+    states what ``x += [2]`` left in ``x``."""
     from sugar_lift_py_tests.floor import SymbolicValue
 
     returned = _caller_returned(
@@ -554,7 +555,9 @@ def test_a_caller_name_reads_the_list_its_helper_extended_in_place() -> None:
         "    x += [2]\n"
     )
     assert isinstance(returned, SymbolicValue), returned
-    assert returned.term.name == "python:receiver_after_call"
+    assert returned.term.name == "python:after", returned
+    assert returned.term.args[0].name == "python:call_result", returned
+    assert returned.term.args[1].value == "x", returned
     assert returned != fresh(ListValue, (TermValue(1),))
 
 

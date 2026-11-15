@@ -23388,25 +23388,30 @@ class Compare(Expression):
         return ChainedCompareSugar(values=pairs, site=self.fragment)
 
 
+# The mark of a call's completed record under its evaluation key
+# (``Call.after_call_key``): the key stays an evaluation key, qualified by the
+# live loop items the call runs in (``evaluation_here``).
+_AFTER_CALL_SUFFIX = "#after-call"
+
+
 def _carrying_its_evaluation(scope, call):
     """``call`` recording its key (the ``carried_evaluation`` leaf) where
     ``scope`` substitutes a copy of it -- a loop iteration's, a
     ``finally``'s on one exit path -- whose key its source occurrence alone
     does not name: each copy is its own node, as each copy of a statement
     is.  A call by name, or through a local ``def``'s function value
-    (``_function_value_definition``), with positional actuals only;
-    ``call`` itself otherwise.  No reader reads the key since the callee's
-    effects on the caller's objects stopped being carried out of its frame
-    (#7757 steps 5 and 6); kept only because the copy it makes is a node of
-    its own."""
+    (``_function_value_definition``), whatever its actuals; ``call`` itself
+    otherwise.  The key names the call's evaluation: its completed face
+    binds what the callee's contract names of what it was handed under it
+    (``Call.after_call_key``), and the exposure rule reads each object the
+    call may have changed there (``container_mutation._havoc``'s
+    ``after``, #7757 step 7)."""
     if not (
         isinstance(call, Call)
         and (
             isinstance(call.func, Name)
             or _function_value_definition(call.func) is not None
         )
-        and not call.keywords
-        and not any(isinstance(arg, Starred) for arg in call.args)
         and (scope.get(_EVALUATION_OCCURRENCE) or scope.get(_EVALUATION_EXIT_PATH))
     ):
         return call
@@ -23424,6 +23429,21 @@ class Call(Expression):
     # walrus's) is.
     _evaluation_exit_path = Statement._evaluation_exit_path
     _evaluation_key = Statement._evaluation_key
+
+    def after_call_key(self) -> str:
+        """The key this call's evaluation binds its completed record under
+        (``call_site_value.bind_after_call``): its evaluation key -- the one a
+        copy of it carries (``_carrying_its_evaluation``: a loop iteration's,
+        a ``finally``'s on one exit path), else its source occurrence's --
+        marked as the call's record, never the value a statement binds.  The
+        exposure rule reads, after the call, each object it may have changed
+        under this key (``container_mutation._havoc``'s ``after``), so the
+        name reads what the callee's contract states it left on the call's
+        completed face only (#7757 step 7)."""
+        key = getattr(self, "carried_evaluation", None)
+        if not isinstance(key, str):
+            key = self._evaluation_key({})
+        return key + _AFTER_CALL_SUFFIX
 
     def substitute(self, scope: "dict[str, Node]") -> "Node":
         """The call's children substituted in Python's order; a
@@ -25167,7 +25187,11 @@ class ReceiverAfterCall(Expression):
     decides at reduce (``ReceiverAfterCallSugar``): ``prior`` (the name's
     read before the call) is kept unless the value of some rule's object --
     ``subjects[i]``, or ``prior`` itself for index -1 -- is one the call may
-    have changed (``container_mutation._havoc``)."""
+    have changed (``container_mutation._havoc``).  With ``after`` -- ``(key,
+    slot)``, the one call of a source function that may have changed it --
+    a value the call changed is what that call's contract names it, where
+    the call's completed face bound its record under ``key`` (#7757 step
+    7)."""
 
     label: str
     occurrence: str
@@ -25187,12 +25211,14 @@ class ReceiverAfterCall(Expression):
         prior = getattr(self, "prior", None)
         subjects = getattr(self, "subjects", None) or ()
         rules = getattr(self, "rules", None) or ()
+        after = getattr(self, "after", None)
         return ReceiverAfterCallSugar(
             label=self.label,
             site=self.fragment,
             prior=None if prior is None or not rules else prior.sugar(),
             subjects=tuple(subject.sugar() for subject in subjects),
             rules=tuple(rules),
+            after=None if after is None else (after[0], tuple(after[1])),
         )
 
 

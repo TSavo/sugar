@@ -683,7 +683,13 @@ class CallSiteSugar(ConstructedTermSugar):
                     value,
                 )
             )
-        return self._applied(positional, kw_values, ctx)
+        from sugar_lift_py_tests.floor.call_site_value import bind_after_call
+
+        # A same-file definition's edge carries, on its completed face, what
+        # it names of what it was handed, under this call's key: the
+        # exposure rule reads each object it may have changed there (#7757
+        # step 7).
+        return bind_after_call(self._applied(positional, kw_values, ctx), self.site)
 
     def _applied(self, positional: tuple, kw_values: tuple, ctx: object) -> ExitSet:
         """The call over its actuals as evaluated (``_collect``), each
