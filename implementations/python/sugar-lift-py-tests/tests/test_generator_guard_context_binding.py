@@ -39,6 +39,7 @@ from sugar_lift_py_tests.sugar.binding_coordinate_ref_sugar import (
     BindingCoordinateRefSugar,
 )
 from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+from sugar_lift_py_tests.sugar.default_value_sugar import bind_carried_defaults
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 from sugar_lift_py_tests.sugar.name_sugar import NameSugar
@@ -229,10 +230,20 @@ def test_production_keyword_and_default_bind_actuals_floor_by_identity() -> None
     _tree, function, call, frame, _construction = _production_generator_call(source)
     assert frame.parameters == ("enabled", "flag")
     enabled_floor = TrueBoolLiteralSugar(site="kw:enabled")
-    # Keyword for enabled; flag takes default via bind_actuals.
-    bound = frame.bind_actuals((), (("enabled", enabled_floor),))
+    # ``flag=True`` is evaluated once, by the ``def`` statement, and bound under
+    # the default's key; the call reads that key (``DefaultValueSugar``). The
+    # caller's context is where the statement's value is bound.
+    default = frame.default_sugars[1]
+    flag_floor = TrueBoolLiteralSugar(site=default.site)
+    caller = bind_carried_defaults(
+        ReduceContext.root(owner="production-keyword-guard"),
+        ((default.evaluation, flag_floor),),
+    )
+    # Keyword for enabled; flag takes the def statement's value via bind_actuals.
+    bound = frame.bind_actuals((), (("enabled", enabled_floor),), caller)
     assert bound.actuals[0] is enabled_floor
     assert isinstance(bound.actuals[1], FloorValue)  # default True
+    assert bound.actuals[1] is flag_floor
 
     sugar = CallSiteSugar(
         target_name="option_context",
@@ -241,7 +252,7 @@ def test_production_keyword_and_default_bind_actuals_floor_by_identity() -> None
         site=call.fragment,
         source_call_frame=frame,
     )
-    outcome = sugar.desugar(ReduceContext.root(owner="production-keyword-guard"))
+    outcome = sugar.desugar(caller)
     machine = outcome.completed_value()
     assert machine is not None
     assert isinstance(machine, GeneratorConstructionV1)

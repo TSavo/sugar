@@ -37,7 +37,7 @@ from sugar_lift_py_tests.outcome.exit_set import (
     true_guard,
 )
 from sugar_lift_py_tests.outcome.resource_bindings import ExitFaceBinding
-from sugar_lift_py_tests.sugar.function_universe_sugar import halt_record
+from sugar_lift_py_tests.sugar.function_universe_sugar import face_record, halt_record
 from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
 from sugar_lift_py_tests.sugar.resource_coord_sugar import (
     ExitTracebackRefSugar,
@@ -85,9 +85,15 @@ def _completions(out) -> list:
 
 
 def _completed_entries(out) -> list:
-    """Every entry the ``with``'s completed arms record."""
+    """Every entry the ``with``'s completed arms record: each completed arm's
+    value is the block's record (``face_record``), whose entries are what the
+    ``with`` contributed."""
     return [
-        entry for exit_ in _completions(out) for entry in exit_.value.contribution()
+        entry
+        for exit_ in _completions(out)
+        for entry in face_record(
+            exit_, owner="test_with_resource_sugar", blame=None
+        ).entries
     ]
 
 
@@ -394,7 +400,9 @@ def test_completed_body_runs_exit_with_three_explicit_none_coordinates():
     for completion in completions:
         invs = [
             entry
-            for entry in completion.value.contribution()
+            for entry in face_record(
+                completion, owner="test_with_resource_sugar", blame=None
+            ).entries
             if isinstance(entry, InvValue)
         ]
         exit_facts = [

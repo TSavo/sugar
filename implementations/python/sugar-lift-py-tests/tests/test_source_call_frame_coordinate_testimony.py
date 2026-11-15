@@ -79,12 +79,23 @@ def test_vararg_binder_refuses_cross_wired_child_projection(variant: str) -> Non
 
 
 def test_binder_returns_ordered_typed_coordinate_testimony() -> None:
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.sugar.default_value_sugar import bind_carried_defaults
+
     frame = _frame()
     left = TermValue(1)
-    bound = frame.bind_actuals((left,), ())
+    # ``right=2`` is evaluated once, by the ``def`` statement, and bound under
+    # the default's key; the call reads that key (``DefaultValueSugar``).
+    right = TermValue(2)
+    ctx = bind_carried_defaults(
+        ReduceContext.root(owner="binder-coordinate-testimony"),
+        ((frame.default_sugars[1].evaluation, right),),
+    )
+    bound = frame.bind_actuals((left,), (), ctx)
 
     assert isinstance(bound, BoundSourceCallActualsV1)
     assert bound.actuals[0] is left
+    assert bound.actuals[1] is right
     assert bound.formal_coordinates == frame.formal_coordinates
     assert bound.native_formal_coordinates == frame.native_operation_formal_coordinates
     assert tuple(pair.actual for pair in bound.pairs) == bound.actuals

@@ -135,7 +135,21 @@ def test_unrelated_projection_arms_still_refuse_without_shared_testimony():
         type(left)((left_arm, right_arm)).factor_completed()
 
 
-def test_delete_stamps_the_same_authenticated_guarded_projection_faces():
+def _delete_site(tmp_path):
+    """A real ``del value`` occurrence: the unbound face's ``NameErrorEffect``
+    decides its builtin by the read's scope, read off the site's typed unit."""
+    from sugar_lift_python_source.source_oracle import workspace_path_source
+    from sugar_source_tree.tree import SourceFile
+
+    path = tmp_path / "guarded_binding_partition.py"
+    path.write_text("def f(value):\n    del value\n")
+    body = next(
+        SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()
+    ).body
+    return body[0].fragment
+
+
+def test_delete_stamps_the_same_authenticated_guarded_projection_faces(tmp_path):
     """The other verb over the closed projection union preserves the split."""
     state = GuardedProjection(
         _slot("delete"),
@@ -146,7 +160,7 @@ def test_delete_stamps_the_same_authenticated_guarded_projection_faces():
     exits = delete_binding(
         state,
         name="value",
-        site=_Site(),
+        site=_delete_site(tmp_path),
         ctx=None,
     )
 
