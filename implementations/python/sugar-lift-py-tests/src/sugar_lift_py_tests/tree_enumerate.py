@@ -643,9 +643,19 @@ def function_universe_outcome(fn):
     selects the class, and its one constructor
     (``ClassDef.source_visible_constructor_frame().body``, the
     ``ClassConstructorBodySugar`` every class call applies) makes that
-    receiver and runs this universe on it (``enter_initializer``).  So the
-    class statement's halts (#7794) are this universe's halts, an unrun
-    source ``__new__`` refuses it by name, and no receiver is made here.
+    receiver and runs this universe on it (``enter_initializer``).  So an
+    unrun source ``__new__`` refuses it by name, and no receiver is made
+    here.
+
+    The class that constructor is entered on is the one its statement
+    bound: the one read of the statement's evaluation key
+    (``ClassDef.statement_value_ref``), in the state the module's one run
+    left (``DecoratorApplicationSugar``, ``module_end_contexts``), as a
+    class call's callee is.  The class statement is never reduced for this
+    universe (#7757 item 21): where the module's run bound no class under
+    the key (the statement runs in no module body, the run completed on no
+    arm), the read is refused by name and this function is undecided by it
+    (``refused_function_row``).
 
     A function reduced on its own is called from outside its module's run:
     its body reads each module global through the module's final binding,
@@ -689,14 +699,37 @@ def function_universe_outcome(fn):
             requested="the receiver the class call makes for this initializer",
             fix="construct the initializer through its lexical class owner",
         )
-    return constructor.enter_initializer(
-        with_module_final_globals(
-            ReduceContext.root(owner="function_universe_outcome"), (fn,), site=site
-        ),
-        lambda _definition, initializer_ctx: as_its_own_proof_states(
-            sugar.desugar(initializer_ctx), initializer_ctx
-        ),
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.floor.class_definition_value import (
+        ClassDefinitionValue,
     )
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+
+    entry = with_module_final_globals(
+        ReduceContext.root(owner="function_universe_outcome"), (fn,), site=site
+    )
+
+    def on_its_class(read):
+        value = peel_walrus_binds(read)[1]
+        if not isinstance(value, ClassDefinitionValue):
+            raise SugarNotWritten(
+                owner="function_universe_outcome",
+                blame=fn.fragment,
+                observed=(
+                    f"the class statement's key holds a {type(value).__name__}"
+                ),
+                requested="the class the statement built, whose call makes the receiver",
+                fix="enter the initializer on the class its statement bound",
+            )
+        return replace(constructor, class_value=value).enter_initializer(
+            entry,
+            lambda _definition, initializer_ctx: as_its_own_proof_states(
+                sugar.desugar(initializer_ctx), initializer_ctx
+            ),
+        )
+
+    return owner.statement_value_ref().sugar().desugar(entry).and_then(on_its_class)
 
 
 def reduction_rows(outcome, *, owner, blame, def_memento, definition):

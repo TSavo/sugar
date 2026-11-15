@@ -125,17 +125,23 @@ def test_a_class_statement_is_reduced_once_however_often_it_is_called(
 # A class statement that is not one completion.  No object place state is
 # built for it (``Assign._object_place_state`` returned ``None`` through the
 # deleted ``_constructed_floor_value`` before the address was read), and the statement
-# is still reduced once however often the class is called.
+# is still reduced once however often the class is called: by the module's
+# one run, which is where Python runs it.
 #
-# Each class call still carries the statement's halts as faces of the function
-# that calls the class.  That is wrong by Python (the class body raises at the
-# class statement, never at the call) and is plan row 7, the temporal row; it
-# is pinned here as what happens.
+# The class body raises at the class statement, never at a call (#7757 item
+# 21).  A function called after import reads ``Box`` as the class the
+# module's run bound under the statement's key, on the run's completed arms
+# (``DecoratorApplicationSugar._bound_by_statement``, ``ModuleFinalValue``):
 #
-# ``int("x")`` is a builtin over a ground operand, decided by the builtin's
-# own semantics (``cpython_cited_fold``): Python raises ``ValueError``,
-# always.  The statement has no completion, so the first class call is that
-# one halt and nothing after it runs, however many calls follow.
+# - ``int(os.environ["LIMIT"])`` may raise.  The run completes on one arm,
+#   which bound the class; its halts are the run's, so no class call carries
+#   them and the function completes alone.  (Before, #7794 put the
+#   statement's three halts on every class call.)
+# - ``int("x")`` is a builtin over a ground operand, decided by the
+#   builtin's own semantics (``cpython_cited_fold``): Python raises
+#   ``ValueError``, always.  The run completes on no arm and binds no class,
+#   so the read of ``Box`` is refused by name: the function is undecided,
+#   never handed the statement's halt by a second reduction of it.
 # ---------------------------------------------------------------------------
 
 _NOT_ONE_COMPLETION = {
@@ -146,12 +152,8 @@ _USES = {
     "one-call": ("    a = Box(1)\n    assert a.n == 1\n", 1),
     "two-calls": ("    a = Box(1)\n    b = Box(2)\n    assert a.n == 1\n", 2),
 }
-# Halted faces one class call carries from a class body that may complete:
-# the dotted read ``os.environ`` (the member may be absent), the subscript,
-# and ``int`` of what it read.
-_BODY_HALTS = {"field-may-raise": 3}
-# Class bodies that never complete: the exception their one halt raises.
-_BODY_ALWAYS_RAISES = {"field-int-of-text": "ValueError"}
+# Class bodies that never complete: the module run binds no class.
+_BODY_ALWAYS_RAISES = {"field-int-of-text"}
 
 
 @pytest.mark.parametrize("body", sorted(_NOT_ONE_COMPLETION))
@@ -163,7 +165,8 @@ def test_a_class_statement_that_is_not_one_completion_builds_no_place_state(
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
     )
-    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
     from sugar_source_tree import nodes
     from sugar_source_tree.tree import SourceFile
@@ -196,15 +199,15 @@ def test_a_class_statement_that_is_not_one_completion_builds_no_place_state(
         for node in tree.nodes()
         if isinstance(node, nodes.FunctionDef) and node.name.startswith("test_")
     )
+    if body in _BODY_ALWAYS_RAISES:
+        with pytest.raises(ConstructionPanic, match="read of `Box`.*unbound"):
+            function_universe_outcome(function)
+        assert place_states == [None] * class_calls
+        assert reductions["Box"] == 1
+        return
     outcome = function_universe_outcome(function)
 
     assert place_states == [None] * class_calls
     assert reductions["Box"] == 1
     assert isinstance(outcome, ExitSet), outcome
-    if body in _BODY_ALWAYS_RAISES:
-        assert [type(face) for face in outcome.exits] == [Halted]
-        assert outcome.exits[0].effect.exception_name == _BODY_ALWAYS_RAISES[body]
-        return
-    assert [type(face) for face in outcome.exits] == [Completed] + [Halted] * (
-        _BODY_HALTS[body] * class_calls
-    )
+    assert [type(face) for face in outcome.exits] == [Completed]

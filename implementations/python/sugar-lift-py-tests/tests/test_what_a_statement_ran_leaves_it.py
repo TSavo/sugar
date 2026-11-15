@@ -437,10 +437,10 @@ def test_a_read_of_the_class_value_carries_no_body_store() -> None:
     assert ran == read
 
 
-def _decorated(statement, *, runs_statement):
+def _decorated(statement, *, runs_statement, evaluation=None):
     """``@d class C: ...`` over ``statement``, ``d`` returning its argument:
     the statement's own application (``runs_statement``), or a read of the
-    name."""
+    name through the statement's key ``evaluation``."""
     from sugar_lift_py_tests.sugar.decorator_application_sugar import (
         DecoratorApplicationSugar,
         DecoratorStepV1,
@@ -453,6 +453,7 @@ def _decorated(statement, *, runs_statement):
         definition_class=statement,
         refusal=None,
         site=statement.site,
+        evaluation=evaluation,
         runs_statement=runs_statement,
     )
 
@@ -498,18 +499,28 @@ def test_a_decorated_class_statement_binding_its_key_lays_its_body_store_once():
     assert record.entries.count(store) == 1
 
 
-def test_a_read_of_a_decorated_class_carries_no_body_store() -> None:
-    """A read of the decorated name that applies the decorators (none bound
-    its key) receives the class value: it runs no body store."""
-    from sugar_lift_py_tests.floor.class_definition_value import (
-        ClassDefinitionValue,
-    )
-    from sugar_lift_py_tests.context import ReduceContext
+def test_a_read_of_a_decorated_class_never_runs_the_class_statement() -> None:
+    """A read of the decorated name is the value the statement bound under
+    its key: it runs no class body and applies no decorator.  Where nothing
+    bound the key the read is refused by name; the class statement is never
+    reduced in its place (#7757 item 21)."""
+    import pytest
 
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
+
+    key = EVALUATION_PREFIX + "blake3-512:class-statement/C"
     store = _Tally()
-    read = _decorated(_class_statement(store), runs_statement=False)
+    read = _decorated(_class_statement(store), runs_statement=False, evaluation=key)
     ctx = ReduceContext.root(owner="statement-leaves")
-    assert isinstance(read.desugar(ctx).completed_value(), ClassDefinitionValue)
+    value = TermValue(7)
+    bound = ScopeRebind(key, value).extend_scope(ctx)
+    assert read.desugar(bound).completed_value() is value
+    with pytest.raises(ConstructionPanic, match="unbound"):
+        read.desugar(ctx)
 
 
 def _class_in_a_loop_site():

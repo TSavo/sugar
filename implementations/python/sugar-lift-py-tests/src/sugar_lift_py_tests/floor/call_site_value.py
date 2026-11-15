@@ -2322,9 +2322,9 @@ def at_the_call(ctx, carried=()):
     entries.
 
     Every halt a call publishes takes it, once, where it crosses the call
-    boundary: the body's (``CallSiteValue.project_producer_outcome``) and,
-    for a class call, the class statement's it reads first
-    (``ClassConstructorBodySugar.enter``)."""
+    boundary: the body's (``CallSiteValue.project_producer_outcome``).  A
+    class call publishes no halt of its class statement: the statement ran
+    where it stands, and the call reads the class it bound."""
     from sugar_lift_py_tests.floor.named_expression_value import (
         bind_walrus_binds,
         caller_stores_of,
@@ -2339,9 +2339,7 @@ def at_the_call(ctx, carried=()):
 def call_owned(effect, frame=None):
     """A halt of a call as the Call's own face: a raise is owned by the Call
     node (``producer_node_owner``).  Every halt a call publishes takes it:
-    the body's (``CallSiteValue.project_producer_outcome``) and, for a class
-    call, the class statement's it reads first
-    (``ClassConstructorBodySugar.bind_class_call``).
+    the body's (``CallSiteValue.project_producer_outcome``).
 
     ``frame`` is the path the callee reduced under
     (``occurrence.call_frame_path``: the call's path and the call).  A raise

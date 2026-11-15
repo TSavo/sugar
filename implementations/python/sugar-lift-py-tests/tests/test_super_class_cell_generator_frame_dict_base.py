@@ -136,8 +136,15 @@ _INHERITED_INIT = (
 def test_a_class_call_seats_the_cell_of_the_class_that_wrote_init(
     called: str,
 ) -> None:
+    from dataclasses import replace
+
     context, classes = _classes(_INHERITED_INIT, "inherited_init.py")
-    body = classes[called].class_definition.source_visible_constructor_frame().body
+    # The constructor is entered on the class the call read (``class_value``):
+    # it never reduces the class statement itself (#7757 item 21).
+    body = replace(
+        classes[called].class_definition.source_visible_constructor_frame().body,
+        class_value=classes[called],
+    )
     assert body.cell_class_definition.name == "A"
     seen = []
 

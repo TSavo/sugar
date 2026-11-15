@@ -166,14 +166,24 @@ def refuse_unrun_source_new(definition, *, new_method, runs_new, site, owner):
 
 @dataclass(frozen=True)
 class ClassConstructorBodySugar(Sugar):
+    # The class statement this is the constructor of: its sugar, the body's
+    # identity.  Never reduced here (#7757 item 21): the class is the value
+    # the statement bound under its evaluation key (``class_value``).
     definition: Sugar
     initializer_body: Sugar | None
     receiver_coordinate_cid: str | None
     site: object = field(compare=False)
     constructed_new_method: object | None = field(default=None, compare=False)
-    # The class value this call read the class statement's one outcome as
-    # (``enter``): set on the body a class call binds, so the initializer is
-    # entered on that value and the statement is read once per call.
+    # The class this constructor is entered on (``enter``): the value the
+    # class statement bound under its evaluation key, which a read of the
+    # class's name answered.  Set where the constructor is entered: by the
+    # class call, on its callee
+    # (``ClassDefinitionValue.callable_application_with``), and by an
+    # ``__init__``'s own universe, on the read of the statement's key in the
+    # state the module's one run left
+    # (``tree_enumerate.function_universe_outcome``).  None on the frame's
+    # own body (``ClassDef.source_visible_constructor_frame``), which is
+    # entered on no class and refuses by name.
     class_value: object | None = field(default=None, compare=False)
     # The inherited-exception frame's ``*args`` formal coordinate
     # (``ClassDef.source_visible_constructor_frame``): a class whose
@@ -205,8 +215,9 @@ class ClassConstructorBodySugar(Sugar):
     # None when no initializer binds the receiver by name (a source
     # ``__new__`` returns its own).
     receiver_at_end: Sugar | None = field(default=None, compare=False)
-    # The class call's own site, set where the call binds this body
-    # (``enter`` at the call): the construction that makes the instance in
+    # The class call's own site, set where the call enters this body on its
+    # class value (``ClassDefinitionValue.callable_application_with``): the
+    # construction that makes the instance in
     # the calling frame (``object_identity.made_at``), its ``allocation``.
     # None when no class call of the reading frame entered it (an
     # initializer's own universe): that receiver reached ``__init__`` by
@@ -566,74 +577,41 @@ class ClassConstructorBodySugar(Sugar):
             return {"allocation": allocation, "arrival": None}
         return {"allocation": None, "arrival": self.receiver_coordinate_cid}
 
-    def enter(self, ctx, step, *, at_call=False, call_site=None) -> ExitSet:
-        """The class statement's one outcome, read once per class call
-        (#7794): its halted faces and what its arms owe are the call's, never
-        dropped.  On each completed face, ``step(value, body)``: ``value`` the
-        class value, ``body`` this constructor entered on it, whose
-        ``enter_initializer`` reads that value and not the statement again.
-        A body already entered answers ``step`` on its class value.
+    def enter(self, step) -> ExitSet:
+        """``step(value, body)`` on the class this constructor is entered on
+        (``class_value``) and this body.
 
-        ``at_call``: read by the class call's own door (``bind_class_call``)
-        at ``call_site``, as the body's application read it before
-        (``CallSiteValue.producer_outcome``): in the call's frame
-        (``occurrence.call_frame_path``), its halts the Call's own faces
-        (``call_site_value.call_owned``)."""
-        if self.class_value is not None:
-            return step(self.class_value, self)
-        from dataclasses import replace
+        The class is the value its statement bound under its evaluation key,
+        read by whoever entered the constructor: a class call's callee
+        (``ClassDefinitionValue.callable_application_with``), or the read of
+        that key an ``__init__``'s own universe makes in the state the
+        module's one run left (``tree_enumerate.function_universe_outcome``).
+        The class statement is never reduced here (#7757 item 21): Python
+        ran it once, where it stands, and a halt of it is a face of the run
+        that ran it, never of a call of the class.  A body entered on no
+        class value (the constructor frame's own body) is refused by name."""
+        if self.class_value is None:
+            from sugar_source_tree.panic import SugarNotWritten
 
-        frame = None
-        if at_call and call_site is not None:
-            from sugar_lift_py_tests.occurrence import (
-                call_frame_path,
-                current_path,
-                occurrence_path,
+            raise SugarNotWritten(
+                blame=self.site,
+                owner="ClassConstructorBodySugar.enter",
+                observed="a class constructor entered on no class value",
+                requested=(
+                    "the class its statement bound under its evaluation key, "
+                    "read where the constructor is entered"
+                ),
+                fix=(
+                    "enter the constructor on the value a read of the class's "
+                    "name answered; never reduce the class statement here"
+                ),
             )
+        return step(self.class_value, self)
 
-            frame = call_frame_path(call_site, current_path())
-            with occurrence_path(frame):
-                statement = self.definition.desugar(ctx)
-        else:
-            # A module-level statement is reduced once, and this reads it.
-            statement = self.definition.desugar(ctx)
-        if at_call:
-            from sugar_lift_py_tests.floor.call_site_value import (
-                at_the_call,
-                call_owned,
-            )
-            from sugar_lift_py_tests.outcome import Halted
-
-            # The class statement's halt leaves it at the call, in the
-            # caller's record there (``at_the_call``), stamped with the
-            # frame it was raised in (``call_owned``).
-            statement = ExitSet(
-                tuple(
-                    Halted(
-                        exit_.guard,
-                        call_owned(exit_.effect, frame),
-                        at_the_call(ctx),
-                        exit_.faces,
-                        exit_.owed,
-                    )
-                    if isinstance(exit_, Halted)
-                    else exit_
-                    for exit_ in statement.exits
-                )
-            )
-        # The body the call entered names the call's site: the instance it
-        # makes is made there (``call_site``).
-        entered_at = call_site if at_call else self.call_site
-        return statement.and_then(
-            lambda value: step(
-                value, replace(self, class_value=value, call_site=entered_at)
-            )
-        )
-
-    def bind_class_call(self, ctx, bind, *, site) -> ExitSet:
-        """THE class call ``Cls(...)`` at ``site``: the class statement's one
-        outcome is read (``enter``), and on each completed face the call is
-        bound and applied by ``bind(defaults, body)``.
+    def bind_class_call(self, bind) -> ExitSet:
+        """THE class call ``Cls(...)``: the call is bound and applied by
+        ``bind(defaults, body)`` on the class this constructor was entered on
+        (``enter``).
 
         ``defaults`` are the ``(key, value)`` pairs the class value carries
         for its constructor (``ClassDefinitionValue.constructor_defaults``):
@@ -643,20 +621,14 @@ class ClassConstructorBodySugar(Sugar):
         (``DefaultValueSugar``), never its default expression evaluated at
         the call.  ``body`` is this constructor entered on the class value,
         the body the bound call applies."""
-        return self.enter(
-            ctx,
-            lambda value, body: bind(constructor_defaults(value), body),
-            at_call=True,
-            call_site=site,
-        )
+        return self.enter(lambda value, body: bind(constructor_defaults(value), body))
 
     def enter_initializer(self, ctx, initialize) -> ExitSet:
         """THE class call up to its ``__init__``: the one place a receiver is
         made for an initializer to run on.
 
-        The class statement's one outcome is read (#7794, ``enter``): by the
-        class call that bound this body (``bind_class_call``), else here.  On
-        each completed face, an unrun source ``__new__`` is refused by name, the
+        On the class this constructor was entered on (``enter``), an unrun
+        source ``__new__`` is refused by name, the
         fresh receiver is seated at the receiver coordinate with the PEP 3135
         ``__class__`` cell and the initializer's declared receiver formal
         (``receiver_formal``), and ``initialize(value, ctx)`` runs
@@ -666,7 +638,7 @@ class ClassConstructorBodySugar(Sugar):
         ``desugar`` passes the class call's initializer body; an ``__init__``
         universe (``tree_enumerate.function_universe_outcome``) passes the
         initializer's own universe, so it runs on the receiver the class call
-        makes and carries every halt the class call has before ``__init__``.
+        makes.
         """
 
         def construct(value):
@@ -734,7 +706,7 @@ class ClassConstructorBodySugar(Sugar):
                 )
             return initialize(value, ctx.with_temporal(temporal))
 
-        return self.enter(ctx, lambda value, _body: construct(value))
+        return self.enter(lambda value, _body: construct(value))
 
     def _returned_by_new(self, value, ctx) -> ExitSet:
         """``Cls(*args)`` over a class whose own ``def __new__`` runs and
