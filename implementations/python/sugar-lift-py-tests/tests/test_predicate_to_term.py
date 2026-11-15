@@ -17,7 +17,6 @@ from sugar_lift_py_tests.ir import (
     py_eq,
     py_truthy,
 )
-from sugar_lift_py_tests.outcome import complete_value
 
 
 def test_atomic_predicates_reify_as_term_coordinates() -> None:
@@ -50,12 +49,33 @@ def test_different_predicates_project_to_different_terms() -> None:
 
 
 def test_predicate_can_ride_as_an_operation_operand() -> None:
+    """A predicate is a ``bool`` operand: ``left + (value == 1)`` is an
+    operation over it, with the predicate's own term as the right operand.
+    ``left``'s type is undecided, so Python selects ``__add__`` /
+    ``__radd__`` from a type this frame did not look at: the operation is
+    the undecided member's two faces (``undecided_binary_faces``), never a
+    sole completion that claims it cannot raise."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.ir import str_const
+    from sugar_lift_py_tests.occurrence import occurrence_key
+    from sugar_lift_py_tests.outcome import Completed, Halted
+
+    site = "t.py:1:0"
     predicate = PredicateValue(py_eq(make_var("value"), num(1)))
-    outcome = SymbolicValue(make_var("left")).add(predicate, site="t.py:1:0", ctx=None)
-    result = complete_value(outcome, owner="test")
-    assert result.to_term(owner="test") == ctor(
-        "+", [make_var("left"), ctor("py.eq", [make_var("value"), num(1)])]
+    outcome = SymbolicValue(make_var("left")).add(predicate, site=site, ctx=None)
+    (completed,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    (halted,) = [arm for arm in outcome.exits if isinstance(arm, Halted)]
+    assert completed.value.to_term(owner="test") == ctor(
+        "python:binary_result",
+        (
+            str_const("+"),
+            make_var("left"),
+            ctor("py.eq", [make_var("value"), num(1)]),
+            str_const(occurrence_key(site)),
+        ),
     )
+    assert isinstance(halted.effect, UndeterminedRaiseEffect)
+    assert halted.effect.producer_node_owner == "UndecidedBinary:+"
 
 
 def test_quantified_predicate_projection_stays_loud() -> None:
