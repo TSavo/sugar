@@ -206,7 +206,9 @@ except LifterRefusal as refusal:
     # (pure re-raise) and is never recorded as a function's refusal. The
     # module body's one run follows the same rule (#7757): a refusal by name
     # of the run is the module's refused member, written once, and the run's
-    # debts are then none it can state.
+    # debts are then none it can state. A class's constructor contract (#7757
+    # step 6, #8726) follows the function's rule: its refusal by name is the
+    # class's refused member.
     ("lift_rpc.py", "_handle_enumerate"): frozenset(
         {
             _canonical_handler("""
@@ -215,6 +217,16 @@ except LifterRefusal as refusal:
         (
             _tree.function_def_memento(fn, file_rel).to_rpc(),
             _tree.refused_function_row(fn, file_rel, refusal),
+        )
+    )
+    continue
+"""),
+            _canonical_handler("""
+except LifterRefusal as refusal:
+    scan_rows.append(
+        (
+            _tree.class_memento(cls, file_rel).to_rpc(),
+            _tree.refused_class_row(cls, file_rel, refusal),
         )
     )
     continue
