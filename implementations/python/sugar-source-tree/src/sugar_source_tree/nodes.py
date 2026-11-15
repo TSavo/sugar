@@ -14250,7 +14250,9 @@ class ClassDef(Statement):
                 stores, constructor_scope
             )
             initializer_body = SourceVisibleFunctionBodySugar(
-                tuple(statement.sugar() for statement in substituted_body),
+                tuple(
+                    _body_statement_sugar(statement) for statement in substituted_body
+                ),
                 self.fragment,
             )
             # ``_init_fn``'s receiver name is no field's, and nothing in it
@@ -14314,7 +14316,10 @@ class ClassDef(Statement):
                     field_body, constructor_scope
                 )
                 initializer_body = SourceVisibleFunctionBodySugar(
-                    tuple(statement.sugar() for statement in substituted_body),
+                    tuple(
+                        _body_statement_sugar(statement)
+                        for statement in substituted_body
+                    ),
                     constructor.fragment,
                 )
                 # This class's own ``__new__``.
@@ -18304,10 +18309,14 @@ class If(Statement):
             test = self.test.sugar()
         # Both suites are built here, every statement of them, ``with``
         # included: construction is step 5 and never waits on a reduction.
+        # Each through the one statement rule every body uses
+        # (``_body_statement_sugar``): a ``class`` in a suite binds its key
+        # for the reads after it, a ``def`` builds its function and never
+        # runs its body (#7757).
         with reduction_span(sugar="If.then", role="construction", site=where):
-            then_body = tuple(s.sugar() for s in self.body)
+            then_body = tuple(_body_statement_sugar(s) for s in self.body)
         with reduction_span(sugar="If.else", role="construction", site=where):
-            else_body = tuple(s.sugar() for s in self.orelse)
+            else_body = tuple(_body_statement_sugar(s) for s in self.orelse)
         return IfSugar(
             test=test,
             branch_slot=slot,
@@ -18380,7 +18389,7 @@ class With(Statement):
                 ),
                 item.fragment,
             ),
-            body=tuple(stmt.sugar() for stmt in self.body),
+            body=tuple(_body_statement_sugar(stmt) for stmt in self.body),
             manager_slot_id=manager_slot,
             enter_slot_id=(
                 f"{manager_slot}#enter_result" if binds_enter_result else None
@@ -18642,7 +18651,7 @@ class With(Statement):
             )
             return GeneratorWithSugar(
                 manager=generator_manager,
-                body=tuple(stmt.sugar() for stmt in self.body),
+                body=tuple(_body_statement_sugar(stmt) for stmt in self.body),
                 enter_slot_id=enter_slot,
                 site=self.fragment,
             )
@@ -19972,10 +19981,10 @@ class Try(Statement):
             if not self.finalbody:
                 return super()._construct_sugar()
             return TrySugar(
-                body=tuple(stmt.sugar() for stmt in self.body),
+                body=tuple(_body_statement_sugar(stmt) for stmt in self.body),
                 handlers=(),
-                orelse=tuple(stmt.sugar() for stmt in self.orelse),
-                finalbody=tuple(stmt.sugar() for stmt in self.finalbody),
+                orelse=tuple(_body_statement_sugar(stmt) for stmt in self.orelse),
+                finalbody=tuple(_body_statement_sugar(stmt) for stmt in self.finalbody),
                 site=self.fragment,
                 route_site=getattr(self, "try_route_site_id", None),
                 edge_keys=getattr(self, "try_edge_keys", ()) or (),
@@ -19986,10 +19995,10 @@ class Try(Statement):
         if handler_specs is None:
             return super()._construct_sugar()
         return TrySugar(
-            body=tuple(stmt.sugar() for stmt in self.body),
+            body=tuple(_body_statement_sugar(stmt) for stmt in self.body),
             handlers=tuple(handler_specs),
-            orelse=tuple(stmt.sugar() for stmt in self.orelse),
-            finalbody=tuple(stmt.sugar() for stmt in self.finalbody),
+            orelse=tuple(_body_statement_sugar(stmt) for stmt in self.orelse),
+            finalbody=tuple(_body_statement_sugar(stmt) for stmt in self.finalbody),
             site=self.fragment,
             route_site=getattr(self, "try_route_site_id", None),
             edge_keys=getattr(self, "try_edge_keys", ()) or (),
@@ -20001,7 +20010,7 @@ class Try(Statement):
         halted = getattr(self, "try_finalbody_halted", None)
         if halted is None:
             return None
-        return tuple(stmt.sugar() for stmt in halted)
+        return tuple(_body_statement_sugar(stmt) for stmt in halted)
 
     def _authenticated_handler_specs(self):
         """``(type Sugar|None, body sugars, slot id)`` per arm, or None.
@@ -20017,7 +20026,7 @@ class Try(Statement):
             # Every handler owns an effect slot. ``as e`` projects it; a bare
             # re-raise cites the same slot even without a lexical target.
             slot_id = handler._effect_slot_id()
-            body_sugars = tuple(stmt.sugar() for stmt in handler.body)
+            body_sugars = tuple(_body_statement_sugar(stmt) for stmt in handler.body)
             if handler.type_ is None:
                 handler_specs.append((None, body_sugars, slot_id))
                 continue
@@ -20330,15 +20339,15 @@ class TryStar(Statement):
             handlers.append(
                 (
                     tuple(matchers),
-                    tuple(stmt.sugar() for stmt in handler.body),
+                    tuple(_body_statement_sugar(stmt) for stmt in handler.body),
                     handler._effect_slot_id(),
                 )
             )
         return TryStarSugar(
-            body=tuple(stmt.sugar() for stmt in self.body),
+            body=tuple(_body_statement_sugar(stmt) for stmt in self.body),
             handlers=tuple(handlers),
-            orelse=tuple(stmt.sugar() for stmt in self.orelse),
-            finalbody=tuple(stmt.sugar() for stmt in self.finalbody),
+            orelse=tuple(_body_statement_sugar(stmt) for stmt in self.orelse),
+            finalbody=tuple(_body_statement_sugar(stmt) for stmt in self.finalbody),
             site=self.fragment,
             finalbody_halted=self._finalbody_halted_sugar(),
         )
@@ -21055,7 +21064,7 @@ class Match(Statement):
         specs = []
         for arm, case in enumerate(self.cases):
             guard = None if case.guard is None else case.guard.sugar()
-            body = tuple(s.sugar() for s in case.body)
+            body = tuple(_body_statement_sugar(s) for s in case.body)
             alternatives = self._pattern_alternatives(case.pattern)
             if alternatives is not None:
                 specs.append(
