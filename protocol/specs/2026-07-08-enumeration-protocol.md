@@ -98,9 +98,8 @@ reduction, in the `universe` scan.
   unreadable file, an `at` with no `file`, a file outside the workspace root,
   a missing file, a stale `source_cid`. A gap never appears silently as an
   empty `nodes` list when the kit had something to say about why.
-- The workspace row levels (`parameter-contract-link-units`,
-  `contract-demands`, `contract-declarations`) answer `{"rows": [...]}`
-  instead of `nodes`/`gaps`.
+- The workspace row level (`parameter-contract-link-units`) answers
+  `{"rows": [...]}` instead of `nodes`/`gaps`.
 - Fragments (`body_text`, `ast_template`) never cross the wire. `memento` is
   the durable, CID-pinned locator.
 - A refusal leaves as a JSON-RPC `error` member by name: a seek off the board
@@ -121,11 +120,9 @@ reduction, in the `universe` scan.
 | `context-manager-resolutions` | a file | board door | one node per `with` item coordinate: its resolution's event type, outcome, kind and target symbol |
 | `relation-membership` | a file | board door | one node per occurrence the file's one structural walk saw, per relation and role (`expected` / `observed`) |
 | `facts` | a file's own memento, `seek: true`, `options.auditFrontier: true` | board door (D3) | one node whose `audit` is the file's construction roll call: every node whose own sugar is unwritten reports itself; status `failed` when any did, `clean` otherwise |
-| `contract-demands` | none | -- | `rows`: the workspace's preconstruction demand rows |
-| `contract-declarations` | none | -- | `rows`: always empty |
 
-`call_sites`, `assertions`, `implications` and `exports` are not served by
-the Python kit (`exports` is a native-export kit's level, `Kit::export`); a
+`call_sites`, `assertions`, `implications`, `exports`, `contract-demands`
+and `contract-declarations` are not served by the Python kit (`exports` is a native-export kit's level, `Kit::export`); a
 request for them is answered "unknown level" by name.
 
 ## Section 4. Demand

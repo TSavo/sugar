@@ -373,9 +373,7 @@ def _file_memento(ws: str, rel_path: str) -> dict:
 _EMPTY_CENSUS_LEVELS = frozenset(
     {
         "exports",
-        "contract-declarations",
         "provider-contract-members",
-        "contract-demands",
         "parameter-contract-resume",
     }
 )
