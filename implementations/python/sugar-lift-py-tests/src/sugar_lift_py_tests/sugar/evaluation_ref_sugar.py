@@ -145,6 +145,37 @@ def evaluation_here(evaluation: str) -> str:
     return f"{evaluation}@{'/'.join(segments)}"
 
 
+def branch_slot_here(slot, table=None):
+    """The branch-result slot ``slot`` (an ``if``'s, ``If.branch_slot``) in
+    the reduction running now: the one the live loop items around it decide
+    (``BranchResultSlot.in_item``), keyed as ``evaluation_here`` keys a
+    statement's evaluation.  A live loop's body is constructed once for
+    every item, so its ``if`` carries one slot, and each item decides its own
+    qualification of it: two items never share one decision, one guard or one
+    ``binding.projection`` partition.
+
+    The ``if``'s reducer decides the slot fully qualified (no ``table``).  A
+    reader of the decision (``table``: ``ground_branch_results``) takes the
+    innermost qualification of its own live items the table decides, as
+    ``evaluation_read_here`` reads a key: the item of the ``if`` it reaches
+    (a read in an inner loop's item of an ``if`` decided in the outer item),
+    else the slot decided outside every item (a module ``if`` a frame entry
+    decided), else the full qualification, which is undecided there."""
+    from sugar_lift_py_tests.occurrence import live_iterations
+
+    segments = live_iterations()
+    if not segments:
+        return slot
+    if isinstance(table, dict):
+        for depth in range(len(segments), 0, -1):
+            qualified = slot.in_item("/".join(segments[:depth]))
+            if qualified.slot_id in table:
+                return qualified
+        if slot.slot_id in table:
+            return slot
+    return slot.in_item("/".join(segments))
+
+
 def evaluation_read_here(temporal, evaluation: str) -> str:
     """The key a read of ``evaluation`` reads in the reduction running now.
 

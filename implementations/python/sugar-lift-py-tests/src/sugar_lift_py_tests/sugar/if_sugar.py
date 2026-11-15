@@ -296,11 +296,12 @@ class IfSugar(Sugar):
         each select under their own guard."""
         return self._desugar_condition(value, ctx)
 
-    def _ground_branch_result(self, ctx, observed_formula) -> None:
-        """A ground condition decides this if's branch-result slot."""
+    def _ground_branch_result(self, ctx, observed_formula, slot) -> None:
+        """A ground condition decides this if's branch-result slot, as the
+        live loop item running now decides it (``slot``, ``branch_slot_here``)."""
         from sugar_lift_py_tests.outcome.exit_set import true_guard
 
-        if ctx is None or self.branch_slot is None:
+        if ctx is None or slot is None:
             return
         table = getattr(ctx, "ground_branch_results", None)
         if not isinstance(table, dict):
@@ -312,7 +313,7 @@ class IfSugar(Sugar):
             TrueBoolLiteralSugar,
         )
 
-        table[self.branch_slot.slot_id] = (
+        table[slot.slot_id] = (
             TrueBoolLiteralSugar(site=self.site)
             if observed_formula == true_guard()
             else FalseBoolLiteralSugar(site=self.site)
@@ -379,15 +380,19 @@ class IfSugar(Sugar):
             reduce_block_to_exitset,
         )
         from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import branch_slot_here
 
+        # The slot this run of the ``if`` decides: in a live loop's item, that
+        # item's own (``branch_slot_here``), never one shared by every item.
+        slot = (
+            None if self.branch_slot is None else branch_slot_here(self.branch_slot)
+        )
         formula = (
             observed_formula
             if observed_formula in (false_guard(), true_guard())
-            else branch_result_guard(self.branch_slot, self.site)
+            else branch_result_guard(slot, self.site)
         )
-        authentication = BranchResultAuthentication(
-            self.branch_slot, observed_formula, self.site
-        )
+        authentication = BranchResultAuthentication(slot, observed_formula, self.site)
 
         # Carry the call-frame temporal into each branch. Formals are
         # BindingCoordinateRefSugar keyed by coordinate cid; without ctx the
@@ -411,7 +416,7 @@ class IfSugar(Sugar):
                 self.then_body if observed_formula == true_guard() else self.else_body,
                 branch_ctx,
             )
-            self._ground_branch_result(ctx, observed_formula)
+            self._ground_branch_result(ctx, observed_formula, slot)
             if isinstance(selected, ExitSet) and not _is_linear(selected):
                 # A ground condition selects ONE suite: the if is that suite.
                 # Its faces are handed back as they are -- each with its own

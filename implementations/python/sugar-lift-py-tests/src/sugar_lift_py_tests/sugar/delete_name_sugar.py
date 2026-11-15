@@ -73,7 +73,9 @@ def delete_binding(state, *, name: str, site, ctx) -> ExitSet:
         return exits.normalize()
     if not isinstance(state, GuardedProjection):
         _unhandled_projection(state, verb="delete", name=name, site=site)
-    guard = branch_result_guard(state.slot, site)
+    from sugar_lift_py_tests.sugar.evaluation_ref_sugar import branch_slot_here
+
+    guard = branch_result_guard(branch_slot_here(state.slot), site)
     true_face, false_face = _guarded_projection_faces(state)
     return (
         delete_binding(state.when_true, name=name, site=site, ctx=ctx)

@@ -18791,7 +18791,7 @@ class If(Statement):
             return node
         return _Splice((node, *phis), availability, halted)
 
-    def branch_slot(self, scope) -> BranchResultSlot:
+    def branch_slot(self, scope, item: Optional[str] = None) -> BranchResultSlot:
         """This ``if``'s branch-result slot where it is evaluated in
         ``scope``: the one its first substitution minted and carries
         (``branch_result_slot_id``), else the one that substitution mints --
@@ -18804,11 +18804,21 @@ class If(Statement):
         its own object (``constructionEvaluation``).  Two iterations of one
         source ``if`` never share one decision.  The ``if``'s join, its
         ``BranchResultRef`` and every guard a loop records for it read this
-        one slot, never a slot recomputed from a rewritten test."""
+        one slot, never a slot recomputed from a rewritten test.
+
+        A live loop's body is constructed once for every item, so the item
+        is known only at reduce: ``item`` is that reduce-time key (the live
+        iterations the reduction is inside), and the slot is the one that
+        item decides (``BranchResultSlot.in_item``).  The ``if``'s reducer
+        decides it and every reader of the slot in that item reads it
+        through the same qualification (``evaluation_ref_sugar.
+        branch_slot_here``), so two items never share one decision."""
         stored = getattr(self, "branch_result_slot_id", None)
         if stored is not None:
-            return BranchResultSlot(stored)
-        return branch_result_slot(self.test, self._duplicated_evaluation_key(scope))
+            return BranchResultSlot(stored).in_item(item)
+        return branch_result_slot(
+            self.test, self._duplicated_evaluation_key(scope)
+        ).in_item(item)
 
     def _rewrite_with_slot(self, changed, slot, *, authenticated_slot=None):
         from .backend import Leaf, materialize
