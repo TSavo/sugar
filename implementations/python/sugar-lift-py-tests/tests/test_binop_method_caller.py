@@ -420,7 +420,13 @@ def test_incompatible_operands_method_call_halts_with_named_typeerror() -> None:
         halted = outcome.exits[0]
         assert isinstance(halted, Halted), halted
         assert halted.effect.exception_type_coordinate == _identity("TypeError")
-        assert halted.effect.occurrence_id == str(site)
+        # The raise is located where it is written -- the ``left + right``
+        # of ``combine`` (line 3, column 15) -- in the frame of this call.
+        # A locus is a file:line:col, never the repr of the value that
+        # called it.
+        locus, separator, frame = halted.effect.occurrence_id.partition("@call:")
+        assert locus == "binop_method_caller.py:3:15"
+        assert separator == "@call:" and frame.startswith("blake3-512:")
         assert halted.state is not None, (
             "bound-method producer_outcome TypeError halt lacks pre-effect "
             "state — sole Halted still drops its state (#6659)"
