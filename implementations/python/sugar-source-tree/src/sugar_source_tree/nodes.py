@@ -9471,7 +9471,8 @@ class Node(Typed):
         """This node's children that are structural parts of it (their class
         declares ``_structural_part``): the grammar pieces its construction
         consumes without constructing them as values -- a call's or class's
-        keyword, a dict display's item, a comprehension's clause.  Each answers
+        keyword, a dict display's item, a comprehension's clause, a
+        definition's parameter.  Each answers
         the roll when this node constructs (``Node.sugar``).  Every other node
         has none."""
         parts: list = []
@@ -9664,6 +9665,11 @@ class Param(Node):
     param_kind: str
     _child_fields = ("annotation", "default")
     _bound_name_fields = ("name",)
+    # A grammar piece of its ``def`` / ``lambda``: it answers when that
+    # definition answers (``Node.structural_parts``); its default answers for
+    # itself, built or refused, and its annotation as the definition says
+    # (``unevaluated_parts``).
+    _structural_part = True
 
     @property
     def arg(self) -> str:
