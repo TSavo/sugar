@@ -20,7 +20,6 @@ from sugar_lift_py_tests.ir import atomic, ctor, str_const
 from sugar_lift_py_tests.outcome.exit_disposition import exit_disposition_effect
 from sugar_lift_py_tests.outcome.exit_set import Halted
 from sugar_lift_py_tests.sugar.function_universe_sugar import halt_record
-from sugar_source_tree.panic import SugarNotWritten
 
 
 def _guard():
@@ -67,13 +66,18 @@ def test_lying_twin_same_spelling_foreign_coordinate_restores() -> None:
 
 
 def test_missing_effect_coordinate_throws() -> None:
-    effect = RaiseEffect.for_builtin("ValueError", occurrence="exit_suppression.py:2:0")
-    with pytest.raises(SugarNotWritten) as caught:
-        exit_disposition_effect(
-            ExitSuppressionContract.suppresses(("ValueError",)),
-            Halted(_guard(), effect, halt_record(None)),
+    # A halt with no type coordinate never reaches the contract: the one
+    # door refuses it at construction (``RaiseEffect.__post_init__``), and
+    # ``for_builtin`` always mints the coordinate the contract matches on.
+    with pytest.raises(TypeError, match="exception_type_coordinate=None"):
+        RaiseEffect(
+            exception_type_coordinate=None,
+            occurrence=AuthenticatedRaiseLocus.of("exit_suppression.py:2:0"),
+            exception_name="ValueError",
         )
-    assert "exception_type_coordinate" in caught.value.observed
+    minted = RaiseEffect.for_builtin("ValueError", occurrence="exit_suppression.py:2:0")
+    identity, _mro = _builtin_exception_identity("ValueError")
+    assert minted.exception_type_coordinate == identity
 
 
 def test_never_suppresses_restores_even_with_coordinate() -> None:
