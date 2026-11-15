@@ -397,12 +397,16 @@ def _holds_no_reference(node) -> bool:
     return False
 
 
-def _walk_values(node, *, kept_only=True):
+def _walk_values(node, *, kept_only=True, closed=None):
     """Every node that may be (or hold) an object of this value: not inside
     code that does not run, nor inside an operand the value does not keep.
 
     ``kept_only=False`` asks what a call operand hands onward instead: an
-    element read (``g(r[0])``) hands the element object itself."""
+    element read (``g(r[0])``) hands the element object itself.
+
+    ``closed`` is a set the reader fills with ``id(current)`` for a node it
+    was just handed and already has the answer for (``_holds``): nothing
+    under that node is walked for it."""
     from .nodes import ClassDef, FunctionDef, AsyncFunctionDef, Lambda, Node
 
     stack = [node]
@@ -413,6 +417,8 @@ def _walk_values(node, *, kept_only=True):
             continue
         seen.add(id(current))
         yield current
+        if closed is not None and id(current) in closed:
+            continue
         if isinstance(current, (Lambda, FunctionDef, AsyncFunctionDef, ClassDef)):
             continue
         if _holds_no_reference(current) and (
@@ -462,17 +468,8 @@ def _contains(state, target, depth=0) -> bool:
         return False
     if depth > _CONTAINS_DEPTH:
         return True
-    member = None if isinstance(target, Name) else _member_object(target)
-    for node in _walk_values(state):
-        if isinstance(target, Name):
-            if isinstance(node, Name) and node.id == target.id:
-                return True
-        elif same_object(node, target) or (
-            member is not None and same_object(node, member)
-        ):
-            return True
-        if _read_may_hold(node, target, depth):
-            return True
+    if _holds(state, target, depth):
+        return True
     if isinstance(target, Name):
         return False
     root, _steps = path_steps(_identity(target))
@@ -484,6 +481,87 @@ def _contains(state, target, depth=0) -> bool:
 # How many reads out of reads ``_contains`` follows before it answers that a
 # value may hold the object (an undecided answer is never "it does not").
 _CONTAINS_DEPTH = 16
+
+
+def _holds(state, target, depth) -> bool:
+    """Whether some node the value ``state`` reaches (``_walk_values``) is
+    ``target``'s object, the member the source says ``target`` reads, or an
+    item read that may hold it (``_read_may_hold``): ``_contains``'s walk.
+
+    The answer is a fact of the two nodes: the tree is immutable after
+    materialize, and nothing here reads a scope.  It is kept on ``state``'s
+    construction row under what was asked of it (``_asked``) and decided
+    once.  A node the walk reaches that already has its answer to the same
+    question is not walked again: what it reaches is what its own walk
+    reached (``_walk_values`` descends by the node alone).  A value after a
+    call holds the value before it (``ReceiverAfterCall.prior``), so the
+    answer for the new state of a name is one step from the answer its
+    last state already has -- not a walk of every state the object has had,
+    asked again for every name in the scope after every statement."""
+    from .nodes import Name
+
+    question, pinned = _asked(target)
+    asked = (question, depth)
+    known = state._coordinate()[2].get(_HOLDS)
+    if known is not None and asked in known:
+        return known[asked][0]
+    named = isinstance(target, Name)
+    member = None if named else _member_object(target)
+    closed = set()
+    found = False
+    for node in _walk_values(state, closed=closed):
+        if node is not state:
+            earlier = node._coordinate()[2].get(_HOLDS)
+            if earlier is not None and asked in earlier:
+                if earlier[asked][0]:
+                    found = True
+                    break
+                closed.add(id(node))
+                continue
+        if named:
+            if isinstance(node, Name) and node.id == target.id:
+                found = True
+                break
+        elif same_object(node, target) or (
+            member is not None and same_object(node, member)
+        ):
+            found = True
+            break
+        if _read_may_hold(node, target, depth):
+            found = True
+            break
+    state._coordinate()[2].setdefault(_HOLDS, {})[asked] = (found, pinned)
+    return found
+
+
+# The construction-row key ``_holds`` keeps a node's answers under:
+# ``{(question, depth): (answer, pinned)}``.
+_HOLDS = "__holds__"
+
+
+def _asked(target):
+    """``(question, pinned)``: what ``_contains`` reads of ``target``, as a
+    key, and the object whose address the key holds (kept alive beside the
+    answer so the address is never another object's), or None.
+
+    A ``Name`` is asked by its spelling.  A read through a path (an
+    attribute or item read) is asked by the node it denotes: its root, its
+    steps and the member the source says it reads are that node's.  Any
+    other target is asked only which object it is (``_ref``): it has no
+    path, so every comparison ``_contains`` makes with it is
+    ``same_object``."""
+    from .nodes import Attribute, Name, Subscript
+
+    if isinstance(target, Name):
+        return ("name", target.id), None
+    denoted = _identity(target)
+    if isinstance(denoted, (Attribute, Subscript)):
+        row = denoted._coordinate()[2]
+        return ("path", id(row)), row
+    ref = _ref(target)
+    if isinstance(ref, tuple):
+        return ("object", ref), None
+    return ("object", id(ref)), ref
 
 
 def _member_object(node):
