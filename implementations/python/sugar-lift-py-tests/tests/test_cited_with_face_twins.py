@@ -3,14 +3,20 @@
 Truthful: ``open`` comes from ``tarfile``, which the lifter does not have, so
 the manager is cited and whether its ``__exit__`` suppresses the body's
 ``ZeroDivisionError`` is undecided.  ``g`` may therefore return 7, and the
-claim ``g("x") == 7`` is satisfiable: ``sat``.
+claim ``g("x") == 7`` is not refuted.  It is not proven either: no proof for
+``tarfile.open`` is staged in ``.sugar/imports/``, so the call is an edge
+nothing answers, the proof owes it as an ``undecided`` member (step 8), and a
+source that owes anything is never ``sat``.  The truthful half reads ``open``:
+this twin states "not bridged", and it reads ``sat`` on the day a proof that
+answers ``tarfile.open`` is staged.
 
 Lying: the one thing changed is that ``open`` is bound to source the lifter
 HAS, a manager whose ``__exit__`` returns False.  The body's raise always
 propagates, ``g`` never returns, and the claim is refuted: ``unsat``.
 
-Before this change the cited ``with`` lost its suppressed face when the body
-always raised, so the truthful twin could not be ``sat``.
+Before the cited ``with`` kept its suppressed face, the body's raise was the
+truthful half's only face and it read ``unsat`` like the lying one.  ``open``
+against ``unsat`` is what the kept face shows.
 """
 
 from __future__ import annotations
@@ -48,5 +54,8 @@ def test_cited_with_keeps_its_suppressed_face_through_the_solver(
         "    def __exit__(self, *exc):\n"
         "        return False\n" + _TAIL,
     )
-    assert truthful.verdict == "sat"
+    # Not bridged: ``tarfile.open`` is owed, so the claim is neither proven
+    # nor refuted.
+    assert truthful.verdict == "open"
+    assert truthful.prove_doc["owed"] >= 1
     assert lying.verdict == "unsat"
