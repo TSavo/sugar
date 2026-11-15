@@ -165,8 +165,8 @@ def _open_at_seat(
     ``process_resident_file._source_file_from_identity``, and every other
     construction of a ``SourceFile`` comes through here (``SourceFile(identity)``
     forwards here with ``seated=identity``; the source oracle, the memento
-    resolvers, the typed parse and the contract-expression reader pass the
-    identity they read as ``seated``). So no caller can pick a resident unit up
+    resolvers and the typed parse pass the identity they read as
+    ``seated``). So no caller can pick a resident unit up
     some other way.
 
     One parse per file: opened with no context, the unit is parsed once with no
