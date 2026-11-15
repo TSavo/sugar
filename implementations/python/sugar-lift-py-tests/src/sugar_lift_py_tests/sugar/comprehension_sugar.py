@@ -422,30 +422,27 @@ class ComprehensionSugar(ConstructedTermSugar):
         to move: the fold stands as it is.  A pull still waiting on its
         caller's actuals is not an outcome yet, and stays where it is.
 
-        The generator's term is its fold where every completed face of the
-        pull holds the one fold, else its own coordinate at this
-        occurrence."""
+        The generator's term is its own coordinate at this occurrence
+        (``python:generator(<occurrence>)``): a generator object is the
+        object this expression made, and its fold
+        (``py.generatorexp(<iterable>, <member lambda>, ...)``) is a
+        constructor prove does not interpret, whose member binder the term
+        table cannot carry (``lift_rpc._closed_enumerate_result`` knows
+        ``var``, ``const`` and ``ctor``): a consumer that names the
+        generator in a row (``list(g)``'s unanswered call, a loop's
+        recurrence step) failed the whole mint on it.
+        """
         from sugar_lift_py_tests.floor.generator_value import GeneratorValue
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Completed
 
         if not isinstance(pulled, ExitSet):
             return pulled
         if not pulled.halts() and not pulled.owed_items():
             return pulled
-        folds = []
-        for arm in pulled.exits:
-            if isinstance(arm, Completed) and all(arm.value != seen for seen in folds):
-                folds.append(arm.value)
-        owner = str(self.site)
-        term = (
-            folds[0].to_term(owner=owner)
-            if len(folds) == 1
-            else ctor(
-                "python:generator",
-                [self.occurrence_term(owner=owner)],
-                symbol_kind="coordinate",
-            )
+        term = ctor(
+            "python:generator",
+            [self.occurrence_term(owner=str(self.site))],
+            symbol_kind="coordinate",
         )
         return ExitSet.completed(
             GeneratorValue(term=term, pulled=pulled, site=self.site)

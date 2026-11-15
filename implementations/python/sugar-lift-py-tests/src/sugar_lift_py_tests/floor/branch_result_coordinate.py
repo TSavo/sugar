@@ -118,9 +118,21 @@ def owing_undecided_slot(exits, site):
 
 @dataclass(frozen=True)
 class BranchResultAuthentication(FloorValue):
+    """An ``if``'s testimony that its branch-result slot stands for its test
+    (slot iff test).  It mints no row: no contract claim is made of it, and
+    the arms and the path after the ``if`` read the test's own condition
+    (#8894, #8897).
+
+    ``guards``: the conditions of the enclosing arms it was reduced under (an
+    ``if`` nested in another's suite).  Guarded, it is still this testimony,
+    holding under them (``inv_contribution``); it never becomes an asserted
+    fact (``InvValue``), which would state the equivalence as a claim of the
+    function, over a slot no input decides (#7757)."""
+
     slot: BranchResultSlot
     observed_guard: object
     site: object = field(default=None, compare=False)
+    guards: tuple = ()
 
     def inv_contribution(self):
         from sugar_lift_py_tests.ir import and_, implies
@@ -132,6 +144,8 @@ class BranchResultAuthentication(FloorValue):
                 implies(self.observed_guard, slot_guard),
             ]
         )
+        for guard in reversed(self.guards):
+            equivalence = implies(guard, equivalence)
         return (equivalence,)
 
     def to_term(self, *, owner: str):
@@ -144,28 +158,26 @@ class BranchResultAuthentication(FloorValue):
         del owner
         from sugar_lift_py_tests.ir import ctor, formula_term
 
+        # Guarded, the guards it holds under are part of what it testifies.
         return ctor(
             "python:branch_result_authentication",
             [
                 formula_term(branch_result_guard(self.slot, self.site)),
                 formula_term(self.observed_guard),
+                *(formula_term(guard) for guard in self.guards),
             ],
         )
 
     def guarded(self, formula):
-        from sugar_lift_py_tests.floor.inv_value import InvValue
-        from sugar_lift_py_tests.ir import and_, implies
+        from dataclasses import replace
+
         from sugar_lift_py_tests.outcome.exit_set import true_guard
 
         if formula == true_guard():
-            # ``true -> A`` is ``A``: an unguarded entry keeps its own
-            # authentication form, so consumers that resolve branch-result
-            # slots (a native exit's returns) still recognize it.
+            # ``true -> A`` is ``A``: nothing to hold under.
             return self
 
-        return InvValue(
-            implies(formula, and_(list(self.inv_contribution()))), self.site
-        )
+        return replace(self, guards=(formula, *self.guards))
 
 
 @dataclass(frozen=True)

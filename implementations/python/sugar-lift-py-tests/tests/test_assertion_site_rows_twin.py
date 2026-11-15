@@ -421,3 +421,25 @@ def test_a_solver_that_could_not_start_is_an_error_not_open() -> None:
         prove_verdict({"rows": [_refused_row("unavailable")]})
     assert "solver seat unavailable" in str(failure.value)
     assert "cvc5, z3" in str(failure.value)
+
+
+def test_an_owed_member_beside_a_row_another_seat_decided_is_open() -> None:
+    """Another seat decided the claim's own row; what stays undecided is a
+    member owed for want of a contract, on which no solver ran.  The seat
+    that could not start reached nothing undecided: the verdict is ``open``,
+    never a machine failure (the handler twin on scorecard run 43762077803:
+    ``vampire`` unavailable on a row ``cvc5`` discharged)."""
+    from sugar_lift_py_tests.witness_harness import prove_verdict
+
+    decided = {
+        "property": "consistency:test_double",
+        "status": "discharged",
+        "verification": {
+            "solverInvocations": [
+                {"solver": "cvc5", "seatState": "discharged"},
+                {"solver": "vampire", "seatState": "unavailable"},
+            ]
+        },
+    }
+    owed = {"property": "undecided:test_witness.py:2", "status": "undecidable"}
+    assert prove_verdict({"rows": [decided, owed]}) == "open"

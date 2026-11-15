@@ -2548,6 +2548,50 @@ mod tests {
     }
 
     #[test]
+    fn python_truth_of_a_decided_builtin_is_its_value_and_always_completes() {
+        // `bool(x)` of a decided `int` (a `bool`), `str`: its value's truth.
+        let truthy = |operand: serde_json::Value| atomic("py.truthy", vec![operand]);
+        assert_twin(
+            truthy(bool_const(true)),
+            not_formula(truthy(bool_const(true))),
+            "bool(True)",
+        );
+        assert_twin(
+            not_formula(truthy(int_const(0))),
+            truthy(int_const(0)),
+            "bool(0)",
+        );
+        assert_twin(
+            truthy(string_const("a")),
+            not_formula(truthy(string_const("a"))),
+            "bool(\"a\")",
+        );
+        assert_twin(
+            not_formula(truthy(string_const(""))),
+            truthy(string_const("")),
+            "bool(\"\")",
+        );
+        // The kit's one undecided truth over a decided builtin operand (a
+        // caller's actual joined on a formal) always completes.
+        let completes = |operand: serde_json::Value| {
+            atomic(
+                "python:truth.completes",
+                vec![ctor("python:truth", vec![operand, string_const("k")])],
+            )
+        };
+        assert_twin(
+            completes(bool_const(false)),
+            not_formula(completes(bool_const(false))),
+            "bool(False) never raises",
+        );
+        assert_twin(
+            completes(string_const("abc")),
+            not_formula(completes(string_const("abc"))),
+            "bool(\"abc\") never raises",
+        );
+    }
+
+    #[test]
     fn python_str_subscript_is_smt_string_index() {
         let at = |i: i64| ctor("py.subscript", vec![string_const("xyz"), int_const(i)]);
         assert_twin(

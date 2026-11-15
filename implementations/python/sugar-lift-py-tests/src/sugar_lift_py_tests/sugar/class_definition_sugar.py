@@ -481,8 +481,12 @@ class ClassDefinitionSugar(Sugar):
         )
         from sugar_source_tree.panic import SugarNotWritten
 
+        # An authentication held under an enclosing arm's guard (a nested
+        # ``if``) is read as its enclosing ``if``'s, as before it kept its
+        # guards (``BranchResultAuthentication.guards``).
         if any(
             isinstance(entry, BranchResultAuthentication)
+            and not entry.guards
             and entry.slot.slot_id in self.branch_slots
             for entry in record.entries
         ):

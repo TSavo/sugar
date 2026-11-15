@@ -24,6 +24,7 @@ from sugar_lift_py_tests.ir import (
     py_gt,
     py_le,
     py_lt,
+    py_truthy,
     str_const,
     term_to_value,
 )
@@ -1032,6 +1033,7 @@ class NativeOperationExitCarrierV1:
         from sugar_lift_py_tests.occurrence import occurrence_key, occurrence_term
         from sugar_lift_py_tests.outcome import ExitSet
 
+        truth = None
         site = self.demand.source_node
         # An in-place operator (``x += y``) takes the same one form, spelled
         # ``+=`` (``_INPLACE_OPERATOR_COORDINATE``): its result names its
@@ -1088,6 +1090,21 @@ class NativeOperationExitCarrierV1:
                     )
                 ],
             )
+        elif self.demand.operator == "truth" and len(self.demand.operand_terms) == 1:
+            # ``bool(<formal>)`` takes the one form every undecided truth
+            # takes (``bool_op_sugar._unanswered_truth``): ``py.truthy`` of the
+            # operand completing under ``python:truth.completes(python:truth(
+            # <operand>, <key>))``, over the demand's own operand term.  The
+            # generic form named no operand, so a caller's actual joined on
+            # the formal decided nothing (``f(True)`` against ``if c:``, #7757
+            # step 9).
+            (operand,) = self.demand.operand_terms
+            value = None
+            truth = py_truthy(operand)
+            guard = atomic(
+                "python:truth.completes",
+                [ctor("python:truth", (operand, str_const(occurrence_key(site))))],
+            )
         else:
             operation = ctor(
                 "python:unanswered_native_operation",
@@ -1096,7 +1113,11 @@ class NativeOperationExitCarrierV1:
             value = ctor("python:native_operation_result", (operation,))
             guard = atomic("python:unanswered_native_operation.completes", [operation])
             guard = self._completes_where_the_store_is_plain(guard)
-        if value is None:
+        if truth is not None:
+            from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+
+            completed = PredicateValue(truth, self.site)
+        elif value is None:
             from sugar_lift_py_tests.floor.predicate_value import PredicateValue
 
             _op_kind, predicate = _COMPARISON_BY_OPERATOR[self.demand.operator]

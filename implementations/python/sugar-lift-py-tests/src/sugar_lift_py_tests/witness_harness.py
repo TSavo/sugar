@@ -565,11 +565,16 @@ def prove_verdict(prove_doc: dict) -> Verdict:
         # because a solver seat could not be started says nothing about the
         # claim: that is the machine failing, and it must not read as ``open``
         # (seen once: z3, cvc5 and vampire all ``unavailable`` under load, and
-        # the first-verdict twin came back ``open`` / ``open``).
+        # the first-verdict twin came back ``open`` / ``open``).  Only a row
+        # left undecided can have been left so by a seat: a row another seat
+        # decided says nothing of one that could not start, and a member owed
+        # for want of a contract (no solver ran on it) is the claim's own
+        # ``open``.
         unavailable = sorted(
             {
                 str(invocation.get("solver"))
                 for row in rows
+                if row.get("status") in {"refused", "undecidable"}
                 for invocation in (
                     (row.get("verification") or {}).get("solverInvocations") or []
                 )
