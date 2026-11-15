@@ -320,30 +320,55 @@ def test_super_get_reads_the_dict_base_with_its_default() -> None:
     )
 
 
+def _undecided_deletion_arms(outcome):
+    """``del`` on the dict base: whether the key is held is read off storage
+    that is not current (``MappingObjectValue._builtin_dict``), so the
+    deletion is the undecided item mutation
+    (``list_value.stale_item_mutation``): it completes under its own
+    site-keyed atom, leaving the receiver after it unknown, and halts with an
+    undetermined raise under the complement.  Neither ``KeyError`` nor the
+    key's removal is decided from contents the object may no longer hold, and
+    neither face is dropped."""
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    (halt,) = [arm for arm in outcome.exits if isinstance(arm, Halted)]
+    assert len(outcome.exits) == 2
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
+    return done
+
+
 def test_super_delitem_is_the_receivers_transition() -> None:
+    from sugar_lift_py_tests.floor import SymbolicValue
+
     _context, definition, receiver = _override()
 
-    deleted = (
-        BuiltinSuperValue(definition, receiver)
-        .call_method_value(
+    done = _undecided_deletion_arms(
+        BuiltinSuperValue(definition, receiver).call_method_value(
             "__delitem__", (StringValue("k"),), owner="test", blame="super-del"
         )
-        .completed_value()
     )
 
+    deleted = done.value
     assert isinstance(deleted, ReceiverOwnedMutationResult)
     assert deleted.receiver_before is receiver
-    assert deleted.receiver_after.identity == receiver.identity
-    assert deleted.receiver_after.entries == ()
+    # The receiver after it is the deletion's unknown post-state: never a
+    # mapping read as holding no entries (nor as still holding ``k``).
+    assert isinstance(deleted.receiver_after, SymbolicValue)
+    assert not isinstance(deleted.receiver_after, MappingObjectValue)
 
 
-def test_del_through_the_source_override_leaves_the_dict_base_without_the_key() -> (
-    None
-):
+def test_del_through_the_source_override_leaves_the_dict_base_undecided() -> None:
+    from sugar_lift_py_tests.floor import SymbolicValue
+
     context, _definition, receiver = _override()
 
-    after = receiver.delitem(StringValue("k"), "caller", context).completed_value()
+    done = _undecided_deletion_arms(
+        receiver.delitem(StringValue("k"), "caller", context)
+    )
 
-    assert isinstance(after, MappingObjectValue)
-    assert after.identity == receiver.identity
-    assert after.entries == ()
+    # The override's ``super().__delitem__(key)`` leaves the receiver its one
+    # mutation states: unknown, never ``entries == ()``.
+    assert isinstance(done.value, SymbolicValue)
+    assert not isinstance(done.value, MappingObjectValue)

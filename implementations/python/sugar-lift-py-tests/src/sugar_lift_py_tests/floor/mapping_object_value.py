@@ -247,6 +247,37 @@ class MappingObjectValue(ObjectValue):
             )
         )
 
+    def _base_after(self, updated):
+        """The receiver ``del self[k]`` on the dict base leaves, read off the
+        deletion's completed face ``updated``.
+
+        Where the deletion decided the storage after it (a ``DictValue``),
+        this instance holding those entries.  Where it did not -- the base
+        storage is never current (``_builtin_dict``), so a deletion, which
+        must read whether the key is held, takes the undecided item mutation
+        (``list_value.stale_item_mutation``), whose completed face states the
+        receiver after the call as unknown
+        (``python:receiver_after_call``) -- that unknown post-state is the
+        receiver, as it is: no entries are read off a value that holds none,
+        and none are invented.  Any other completed value is refused by
+        name."""
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        from .dict_value import DictValue
+        from .symbolic_value import SymbolicValue
+
+        if isinstance(updated, DictValue):
+            return self.mapping_with_entries(updated.entries)
+        if isinstance(updated, SymbolicValue):
+            return updated
+        construction_panic_gap(
+            owner="MappingObjectValue.mapping_builtin_delitem",
+            blame=self.identity,
+            observed=type(updated).__name__,
+            requested="the dict base's storage after the deletion, or its unknown post-state",
+            fix="state the deletion's post-state as a DictValue or the undecided receiver",
+        )
+
     def _project_setitem_receiver(self, value):
         from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.floor.receiver_owned_mutation_result import (
@@ -285,11 +316,7 @@ class MappingObjectValue(ObjectValue):
         return (
             self._builtin_dict()
             .delitem(index, site, ctx)
-            .and_then(
-                lambda updated: ExitSet.completed(
-                    self.mapping_with_entries(updated.entries)
-                )
-            )
+            .and_then(lambda updated: ExitSet.completed(self._base_after(updated)))
         )
 
     def attribute(self, name, site, ctx):
