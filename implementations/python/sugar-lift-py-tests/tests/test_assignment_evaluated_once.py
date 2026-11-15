@@ -34,9 +34,13 @@ These tests are the guard for the next attempt.
 - The count tests bound how many times a callee's body is reduced: never
   more than the count measured when they were written (#7812), never fewer
   than the calls Python makes.
-- A field read on a receiver that arrived by binding (``self.n`` in a method)
-  is undecided (#8151): those programs decide neither claim at the
-  reduction, and are held as that (``_ARRIVED_RECEIVER``).
+- ``a = Box(1); a.get(3)``: ``self`` in ``get`` is the caller's ``a`` with
+  the caller's currency (#8249), so ``self.n`` reads the stored field and the
+  box programs are value programs like the rest.
+- Through the solver, a helper's own proof (no caller, so no actual) owes
+  what it reads off a formal, and a source that owes anything is never
+  ``sat`` as a whole (step 8): the truthful claim is read on the test
+  function's own rows (``witness_harness.claim_verdict``).
 """
 
 from __future__ import annotations
@@ -46,7 +50,10 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
+from sugar_lift_py_tests.witness_harness import (
+    claim_verdict,
+    run_source_through_real_solver,
+)
 
 _HELPERS = (
     "def inc(a):\n"
@@ -88,6 +95,16 @@ _HELPERS = (
 # The lie of each loop program is what the loop computes when every iteration
 # reads the last iteration's value.
 _PROGRAMS = {
+    "box-get": (
+        "    a = Box(1)\n    r = a.get(3)\n    assert r == {claim}\n",
+        "4",
+        "5",
+    ),
+    "box-get-read-twice": (
+        "    a = Box(1)\n    r = a.get(3)\n    assert r + r == {claim}\n",
+        "8",
+        "9",
+    ),
     "unrolled-loop-sum": (
         "    total = 0\n"
         "    for i in (1, 2, 3):\n"
@@ -223,24 +240,18 @@ _PROGRAMS = {
         "4",
         "5",
     ),
-}
-
-# ``get`` reads ``self.n``, and ``self`` is a formal: the instance reaches
-# ``get``'s frame by binding (``object_identity.arrived``), so its fields are
-# not current there and ``self.n`` is the undecided read -- a completion under
-# ``python:attribute.completes`` and an undetermined raise (#8151).  Python
-# computes 4 and 8; the lifter decides neither claim at the reduction, so the
-# truthful and the lying claim reduce alike, and the halts are undetermined.
-_ARRIVED_RECEIVER = {
-    "box-get": (
-        "    a = Box(1)\n    r = a.get(3)\n    assert r == {claim}\n",
-        "4",
-        "5",
-    ),
-    "box-get-read-twice": (
-        "    a = Box(1)\n    r = a.get(3)\n    assert r + r == {claim}\n",
-        "8",
-        "9",
+    # The rebind sits under ``if i == 2`` inside the loop: ``i`` is the
+    # item's own value, so the branch is decided on every item.
+    "rebind-in-a-branch-in-a-loop": (
+        "    acc = 0\n"
+        "    for i in (1, 2, 3):\n"
+        "        x = i\n"
+        "        if i == 2:\n"
+        "            x = x * 10\n"
+        "        acc = acc * 100 + x\n"
+        "    assert acc == {claim}\n",
+        "12003",
+        "12030",
     ),
 }
 
@@ -288,7 +299,7 @@ _READ_INSIDE_THE_LOOP = {
 # real solver: the reduction-level door used above cannot build them (a
 # ``BackendDefect``, "producer reporter owns no registration table").
 _SOLVER_PROGRAMS = {
-    "box-get": _ARRIVED_RECEIVER["box-get"],
+    "box-get": _PROGRAMS["box-get"],
     "unrolled-loop-callee": (
         "    total = 0\n"
         "    for i in (1, 2, 3):\n"
@@ -333,19 +344,6 @@ _SOLVER_PROGRAMS = {
 # Programs whose value the lifter does not decide today.  Pinned as that, so a
 # change that starts deciding them (or deciding them wrongly) shows here.
 _UNDECIDED = {
-    # The rebind sits under ``if i == 2`` inside the loop.
-    "rebind-in-a-branch-in-a-loop": (
-        "    acc = 0\n"
-        "    for i in (1, 2, 3):\n"
-        "        x = i\n"
-        "        if i == 2:\n"
-        "            x = x * 10\n"
-        "        acc = acc * 100 + x\n"
-        "    assert acc == {claim}\n",
-        "12003",
-        "12030",
-        (1, 0),
-    ),
     # Two levels of one function, an assignment at each.
     "recursion-two-levels": (
         "    r = down(1)\n    assert r == {claim}\n",
@@ -435,32 +433,6 @@ def test_a_claim_inside_the_loop_reads_each_iteration_s_own_values(name: str) ->
     assert halted >= 1
 
 
-@pytest.mark.parametrize("name", sorted(_ARRIVED_RECEIVER))
-def test_a_field_read_on_an_arrived_receiver_decides_neither_claim(name: str) -> None:
-    """Not a twin at the reduction: ``self.n`` is undecided in ``get``, so the
-    truthful and the lying claim reduce to the same faces -- a completion,
-    and beside it the undecided read's undetermined raise -- and no claim is
-    refuted from the fields the instance arrived with."""
-    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-    from sugar_lift_py_tests.outcome import Halted
-    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
-
-    body, truthful, lying = _ARRIVED_RECEIVER[name]
-    faces = []
-    for claim in (truthful, lying):
-        _source, function = _function(body.format(claim=claim))
-        outcome = function_universe_outcome(function)
-        completed, halted = _faces(outcome)
-        assert completed >= 1 and halted >= 1, outcome
-        assert any(
-            isinstance(face, Halted)
-            and isinstance(face.effect, UndeterminedRaiseEffect)
-            for face in outcome.exits
-        ), outcome
-        faces.append((completed, halted))
-    assert faces[0] == faces[1]
-
-
 @pytest.mark.parametrize("name", sorted(_UNDECIDED))
 def test_a_value_the_lifter_does_not_decide_today_has_the_same_faces_for_both_claims(
     name: str,
@@ -493,7 +465,10 @@ def test_the_solver_holds_the_value_python_computes(name: str, tmp_path: Path) -
         tmp_path / "l", head + body.format(claim=lying)
     )
 
-    assert truthful_run.verdict == "sat"
+    # ``head`` ends with the test function's ``def`` line; every helper is
+    # above it.
+    test_line = head.count("\n")
+    assert claim_verdict(truthful_run.prove_doc, claims_from_line=test_line) == "sat"
     assert lying_run.verdict == "unsat"
 
 
@@ -567,7 +542,7 @@ def test_applications_of_a_callee_body_measured_today(name: str, monkeypatch) ->
     makes (each call's body is applied at least once).
     """
     program, needle, calls, measured = _APPLICATIONS[name]
-    body, truthful, _lying = {**_PROGRAMS, **_ARRIVED_RECEIVER}[program]
+    body, truthful, _lying = _PROGRAMS[program]
 
     applications = _reductions_of(body.format(claim=truthful), needle, monkeypatch)
 

@@ -6,11 +6,11 @@ the index species:
   - SliceSugar builds Floor ``SliceValue`` (not a SymbolicValue term shell)
   - ListValue.setitem handles ground SliceValue (Python list slice assignment)
   - Helper alone stays undischarged setitem when formals own receiver/value
-  - Production callers (positional / keyword / default) bind through the real
-    call binder; the list reaches ``helper`` by binding, so its contents are
-    not current there (``object_identity.contents_current``) and the store is
-    the cited undecided ``list.__setitem__`` -- never a post-state read off
-    the contents the list arrived with
+  - Production callers (positional / keyword / default) complete through the
+    real call binder — never hand-built discharge dicts for the positive path.
+    The list is the caller's own, made at the call: ``obj`` is that actual
+    with the caller's currency (#8249), so the store is decided and its
+    post-state is what Python computes
   - Wrong-coordinate / missing actual refuse fabricated completion
   - Extended-slice length mismatch is named ValueError; non-sequence RHS TypeError
 
@@ -66,32 +66,29 @@ def _call_outcome(signature: str, body: str, actuals: str):
     return call.sugar().desugar(None)
 
 
-def _undecided_store(outcome, method: str = "__setitem__") -> None:
-    """A caller's store through ``helper``'s formal ``obj``.
-
-    The list reaches ``helper`` by binding (``object_identity.arrived``), so
-    its contents are not current there and the container law does not read
-    them (``builtin_container_method.apply``).  The store is the cited
-    undecided ``list.<method>`` (``builtin_container_call_sugar._opaque_pair``):
-    it completes under ``python:builtin_method.completes`` and halts with an
-    ``UndeterminedRaiseEffect`` under the complement -- never one completion
-    whose post-state is read off the contents the list arrived with."""
-    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-    from sugar_lift_py_tests.outcome import Halted
-
+def _stored_list(outcome) -> ListValue:
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert outcome.completed_value() is None, outcome
-    completed = [face for face in outcome.exits if isinstance(face, Completed)]
-    halted = [face for face in outcome.exits if isinstance(face, Halted)]
-    assert len(completed) == 1 and len(halted) == 1, outcome
-    assert len(outcome.exits) == 2, outcome
-    guard = completed[0].guard
-    assert getattr(guard, "name", None) == "python:builtin_method.completes", guard
-    assert f"list.{method}" in repr(guard), guard
-    effect = halted[0].effect
-    assert isinstance(effect, UndeterminedRaiseEffect), effect
-    assert effect.exception_name is None, effect
-    assert effect.producer_node_owner == f"BuiltinMethodCall:list.{method}", effect
+    assert len(outcome.exits) == 1
+    face = outcome.exits[0]
+    assert isinstance(face, Completed), type(face)
+    value = face.value
+    force = getattr(value, "force_floor", None)
+    if callable(force):
+        forced = force(None, owner="slice_store_test")
+        from sugar_lift_py_tests.floor.block_value import BlockValue
+
+        if isinstance(forced, BlockValue):
+            lists = [s for s in forced.statements if isinstance(s, ListValue)]
+            assert lists, forced.statements
+            return lists[-1]
+        if isinstance(forced, ListValue):
+            return forced
+    record = getattr(value, "record", None)
+    if record is not None:
+        lists = [s for s in record.statements if isinstance(s, ListValue)]
+        assert lists, record.statements
+        return lists[-1]
+    raise AssertionError(f"no ListValue post-state: {type(value).__name__}")
 
 
 @dataclass(frozen=True)
@@ -508,53 +505,60 @@ def test_discrimination_helper_alone_is_not_completed() -> None:
         assert isinstance(pending, ExitSet) and pending.completed_value() is not None
 
 
-def test_positional_caller_slice_store_is_the_undecided_store() -> None:
+def test_positional_caller_completes_slice_store() -> None:
     outcome = _call_outcome(
         "obj, value",
         "obj[1:3] = value",
         "[0, 1, 2, 3], [9, 9]",
     )
-    _undecided_store(outcome)
+    stored = _stored_list(outcome)
+    assert stored == fresh(
+        ListValue, (TermValue(0), TermValue(9), TermValue(9), TermValue(3))
+    )
 
 
-def test_keyword_caller_slice_store_is_the_undecided_store() -> None:
+def test_keyword_caller_completes_slice_store() -> None:
     outcome = _call_outcome(
         "obj, value",
         "obj[1:3] = value",
         "obj=[0, 1, 2, 3], value=[8]",
     )
-    _undecided_store(outcome)
+    stored = _stored_list(outcome)
+    assert stored == fresh(ListValue, (TermValue(0), TermValue(8), TermValue(3)))
 
 
-def test_default_caller_slice_store_is_the_undecided_store() -> None:
+def test_default_caller_completes_slice_store() -> None:
     outcome = _call_outcome(
         "obj, value=[7, 7]",
         "obj[1:3] = value",
         "[0, 1, 2, 3]",
     )
-    _undecided_store(outcome)
+    stored = _stored_list(outcome)
+    assert stored == fresh(
+        ListValue, (TermValue(0), TermValue(7), TermValue(7), TermValue(3))
+    )
 
 
-def test_full_slice_caller_store_is_the_undecided_store() -> None:
+def test_full_slice_caller_replaces_entire_list() -> None:
     outcome = _call_outcome(
         "obj, value",
         "obj[:] = value",
         "[0, 1], [5, 6, 7]",
     )
-    _undecided_store(outcome)
+    stored = _stored_list(outcome)
+    assert stored == fresh(ListValue, (TermValue(5), TermValue(6), TermValue(7)))
 
 
-def test_discrimination_caller_store_never_reads_the_arrived_contents() -> None:
-    """Neither the pre-store contents nor the post-state Python computes from
-    them is presented: the arrived list's contents are not read."""
+def test_discrimination_production_slice_store_is_not_identity() -> None:
     outcome = _call_outcome(
         "obj, value",
         "obj[1:3] = value",
         "[0, 1, 2, 3], [9, 9]",
     )
-    _undecided_store(outcome)
-    computed = (TermValue(0), TermValue(9), TermValue(9), TermValue(3))
-    assert f"elements={computed!r}" not in repr(outcome)
+    stored = _stored_list(outcome)
+    assert stored != fresh(
+        ListValue, (TermValue(0), TermValue(1), TermValue(2), TermValue(3))
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -586,15 +590,15 @@ def test_missing_actual_does_not_fabricate_completed_slice_store() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_production_delete_slice_caller_is_the_undecided_delete() -> None:
-    """``del obj[1:3]`` through production call binder, on a list that
-    arrived by binding."""
+def test_production_delete_slice_caller() -> None:
+    """``del obj[1:3]`` through production call binder."""
     outcome = _call_outcome(
         "obj",
         "del obj[1:3]",
         "[0, 1, 2, 3]",
     )
-    _undecided_store(outcome, "__delitem__")
+    stored = _stored_list(outcome)
+    assert stored == fresh(ListValue, (TermValue(0), TermValue(3)))
 
 
 def test_step_zero_setitem_is_named_valueerror_with_occurrence() -> None:
@@ -675,15 +679,14 @@ def test_a_formal_slice_bound_defers_the_slice_to_the_caller() -> None:
     _unanswered(pending, {})
 
 
-def test_a_caller_store_through_a_formal_slice_bound_is_the_undecided_store() -> None:
-    """The bound ``lo`` arrives as the immutable ``1`` and builds the slice;
-    the store is then on a list that arrived by binding."""
+def test_a_caller_completes_a_store_through_a_formal_slice_bound() -> None:
     outcome = _call_outcome(
         "obj, lo, value",
         "obj[lo:3] = value",
         "[0, 1, 2, 3], 1, [9]",
     )
-    _undecided_store(outcome)
+    stored = _stored_list(outcome)
+    assert stored == fresh(ListValue, (TermValue(0), TermValue(9), TermValue(3)))
 
 
 def test_slice_assign_iterable_door_not_getattr_probe() -> None:

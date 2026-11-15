@@ -25,11 +25,9 @@ Acceptance (each with a discrimination twin where noted):
   6. Identity and equality remain separate laws (carrier-free / equals).
   7. Off-by-one self-binding and swapped container/item twins fail.
 
-A caller's list reaches ``has`` by binding, so its contents are not current
-in ``has``'s frame (``object_identity.contents_current``): a call's
-membership is the undecided ``in`` -- completes under
-``python:compare.completes``, halts with an undetermined raise -- never a
-bool read off the contents the list arrived with.
+The caller's list is made at the call, and ``container`` is that actual with
+the caller's currency (#8249): membership is decided in ``has``'s frame and
+answers the bool Python computes.
 
 Does not touch: reducer, carrier/ExitSet, Compare/contains producers, assertion
 routing, parameter-name maps, chained-comparison lane.
@@ -202,35 +200,51 @@ def _through_assertion_boundary(outcome: ExitSet, expected: str) -> ExitSet:
     )
 
 
-def _undecided_membership(outcome) -> CallSiteValue:
-    """``item in container`` where the list reached ``has`` by binding.
+def _unwrap_return(value):
+    """Pull a returned membership bool floor out of callsite / universe wrappers."""
+    from sugar_lift_py_tests.floor import ReturnValue
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 
-    ``container`` is a formal: the caller's list arrives in ``has``'s frame
-    (``object_identity.arrived``), so its contents are not current there and
-    membership does not read them (``undecided_contains``, inside the one
-    ``membership`` law).  The call completes under
-    ``python:compare.completes`` and halts with an ``UndeterminedRaiseEffect``
-    under the complement -- never a ``True``/``False`` read off the contents
-    the list arrived with, and never a named ``TypeError`` (a list is a
-    container).  Returns the completed face's call."""
-    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    seen = set()
+    while id(value) not in seen:
+        seen.add(id(value))
+        if isinstance(value, (TrueBoolLiteralSugar, FalseBoolLiteralSugar)):
+            return isinstance(value, TrueBoolLiteralSugar)
+        if type(value).__name__ == "TrueBoolLiteralSugar":
+            return True
+        if type(value).__name__ == "FalseBoolLiteralSugar":
+            return False
+        if getattr(value, "value", None) is True:
+            return True
+        if getattr(value, "value", None) is False:
+            return False
+        if isinstance(value, ReturnValue):
+            value = value.value
+            continue
+        if isinstance(value, CallSiteValue):
+            dug = value._dig_floor_or_none(None, owner="contains-method-caller")
+            if dug is not None:
+                value = dug
+                continue
+        record = getattr(value, "record", None)
+        if record is not None and record.statements:
+            value = record.statements[-1]
+            continue
+        statements = getattr(value, "statements", None)
+        if statements:
+            value = statements[-1]
+            continue
+        break
+    raise AssertionError(
+        f"unprojected membership value: {type(value).__name__} {value!r}"
+    )
 
-    assert isinstance(outcome, ExitSet), type(outcome)
-    assert outcome.completed_value() is None, outcome
-    completed = [face for face in outcome.exits if isinstance(face, Completed)]
-    halted = [face for face in outcome.exits if isinstance(face, Halted)]
-    assert len(completed) == 1 and len(halted) == 1, outcome
-    assert len(outcome.exits) == 2, outcome
-    (face,) = completed
-    assert getattr(face.guard, "name", None) == "python:compare.completes", face.guard
-    assert "'In'" in repr(face.guard), face.guard
-    (halt,) = halted
-    assert isinstance(halt.effect, UndeterminedRaiseEffect), halt.effect
-    assert halt.effect.exception_name is None, halt.effect
-    assert halt.effect.exception_type_coordinate is None, halt.effect
-    assert halt.effect.producer_node_owner == "UndecidedCompare:In", halt.effect
-    assert isinstance(face.value, CallSiteValue), face.value
-    return face.value
+
+def _membership_bool(outcome) -> bool:
+    """Project a completed membership result to a Python bool."""
+    completed = _only_completed(outcome)
+    return _unwrap_return(completed.value)
 
 
 # ---------------------------------------------------------------------------
@@ -268,7 +282,7 @@ def test_bound_self_does_not_shift_container_item_coordinates() -> None:
     assert site.arg_values[1] == fresh(ListValue, (TermValue(1), TermValue(2)))
     assert site.arg_values[2] == TermValue(1)
     outcome = site.producer_outcome(None)
-    _undecided_membership(outcome)
+    assert _membership_bool(outcome) is True
 
 
 def test_discrimination_self_is_not_a_contains_operand() -> None:
@@ -293,17 +307,14 @@ def test_positional_keyword_and_default_calls_discharge() -> None:
         _assert_bound_self_first(site)
         assert site.arg_values[1] == fresh(ListValue, (TermValue(1), TermValue(2)))
         assert site.arg_values[2] == TermValue(1)
-        _undecided_membership(site.producer_outcome(None))
+        assert _membership_bool(site.producer_outcome(None)) is True
 
 
-def test_discrimination_neither_member_is_decided_from_arrived_contents() -> None:
-    """``1 in [1, 2]`` and ``9 in [1, 2]`` differ in Python, but the list
-    arrived by binding: neither answer is read off its contents."""
+def test_discrimination_absent_member_is_not_present() -> None:
     present = _method_call_outcome(METHOD_BODY + "\nChecker().has([1, 2], 1)\n")
     absent = _method_call_outcome(METHOD_BODY + "\nChecker().has([1, 2], 9)\n")
-    for outcome in (present, absent):
-        call = _undecided_membership(outcome)
-        assert call.target_name == "Checker.has"
+    assert _membership_bool(present) is True
+    assert _membership_bool(absent) is False
 
 
 # ---------------------------------------------------------------------------
@@ -392,15 +403,8 @@ def test_non_container_method_call_binds_and_floor_refuses_contains() -> None:
 
 
 def test_discrimination_list_container_is_not_typeerror() -> None:
-    """A list is a container: its undecided membership halts with an
-    undetermined raise, never the named ``TypeError`` of a non-container."""
     outcome = _method_call_outcome(METHOD_BODY + "\nChecker().has([1], 1)\n")
-    _undecided_membership(outcome)
-    assert not any(
-        isinstance(face, Halted)
-        and face.effect.exception_type_coordinate == _identity("TypeError")
-        for face in outcome.exits
-    )
+    assert _membership_bool(outcome) is True
 
 
 # ---------------------------------------------------------------------------

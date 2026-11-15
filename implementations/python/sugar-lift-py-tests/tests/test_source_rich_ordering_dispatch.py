@@ -9,9 +9,10 @@ still refuses by name.  A constructed operand whose construction may raise is
 compared on each receiver face it can be; the construction halt leaves as
 itself.
 
-Inside the method, ``self`` and ``other`` arrived by binding, so the fields the
-body reads are the undecided attribute read (#8151 / #8153): the body's
-result is not decided there, and no default ordering stands in for it.
+``Box(1) < Box(2)``: both instances are made in ``f``'s frame, and inside the
+method ``self`` and ``other`` are those actuals with ``f``'s currency (#8249),
+so ``self.n`` / ``other.n`` read the stored fields and the body's result is the
+bool Python computes.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ from sugar_source_tree.nodes import FunctionDef
 from sugar_source_tree.tree import SourceFile
 
 
-def _outcome(source: str):
+def _returned(source: str):
     tree = SourceFile(
         (source, "rich_ordering.py", blake3_512_of(source.encode())),
         construction_context=TreeConstructionContextV1.for_test_without_workspace(),
@@ -47,45 +48,11 @@ def _outcome(source: str):
         for node in tree.nodes()
         if isinstance(node, FunctionDef) and node.name == "f"
     )
-    return function_universe_outcome(function)
-
-
-def _returned(source: str):
-    value = _outcome(source).completed_value()
+    outcome = function_universe_outcome(function)
+    value = outcome.completed_value()
     assert value is not None
     (statement,) = value.record.statements
     return statement.value
-
-
-def _undecided_through_the_arrived_receiver(source: str) -> None:
-    """``Box(a) < Box(b)`` runs the source ``__lt__`` with ``self`` and
-    ``other`` bound to the two instances ``f`` built: in the method's frame
-    they arrived by binding, so their fields are not current there and
-    ``self.n`` / ``other.n`` are the undecided attribute read (the one
-    currency rule, ``object_identity.contents_current``, #8151 / #8153; the
-    same read #8215 records for ``Gauge(4).read()``).  So the comparison is
-    not decided: no single completion, no ``True`` / ``False`` read off the
-    fields the instances arrived with, and every halt is the undetermined
-    raise -- never a named exception, since Python raises none here."""
-    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-
-    outcome = _outcome(source)
-    assert isinstance(outcome, ExitSet), type(outcome)
-    assert outcome.completed_value() is None, outcome
-    completed = [face for face in outcome.exits if isinstance(face, Completed)]
-    assert completed, outcome
-    halts = outcome.halts()
-    assert halts, outcome
-    for halt in halts:
-        assert isinstance(halt.effect, UndeterminedRaiseEffect), halt.effect
-        assert halt.effect.exception_name is None, halt.effect
-    for face in completed:
-        record = getattr(face.value, "record", None)
-        for statement in record.statements if record is not None else ():
-            assert not isinstance(
-                getattr(statement, "value", None),
-                (TrueBoolLiteralSugar, FalseBoolLiteralSugar),
-            ), face
 
 
 _BOX = (
@@ -109,18 +76,17 @@ def test_less_than_dispatches_to_the_source_lt_and_yields_its_result():
     exec(source, native)
     assert native["f"]() is True
 
-    _undecided_through_the_arrived_receiver(source)
+    assert isinstance(_returned(source), TrueBoolLiteralSugar)
 
 
 def test_less_than_yields_the_source_body_not_a_default_ordering():
-    # The method decides, even against the fields' natural order: no default
-    # ordering answers False (or True) in its place.
+    # The method decides, even against the fields' natural order.
     source = _box("__lt__", "self.n > other.n", "Box(1) < Box(2)")
     native: dict = {}
     exec(source, native)
     assert native["f"]() is False
 
-    _undecided_through_the_arrived_receiver(source)
+    assert isinstance(_returned(source), FalseBoolLiteralSugar)
 
 
 def test_greater_equal_dispatches_to_the_source_ge():
@@ -129,7 +95,7 @@ def test_greater_equal_dispatches_to_the_source_ge():
     exec(source, native)
     assert native["f"]() is True
 
-    _undecided_through_the_arrived_receiver(source)
+    assert isinstance(_returned(source), TrueBoolLiteralSugar)
 
 
 def test_a_class_without_the_method_still_refuses_by_name():

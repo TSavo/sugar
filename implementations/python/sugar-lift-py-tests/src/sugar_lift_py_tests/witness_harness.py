@@ -594,3 +594,33 @@ def prove_verdict(prove_doc: dict) -> Verdict:
     if "solver-timeout" in statuses:
         return "solver-timeout"
     raise ProofObligationPanic(prove_doc)
+
+
+def claim_verdict(prove_doc: dict, *, claims_from_line: int) -> Verdict:
+    """The verdict on the claims one test function states, read by
+    ``prove_verdict``.
+
+    ``prove_verdict`` reads every member a source owes (step 8), so a helper
+    whose own proof owes one -- a formal's ``a + 1`` or a method's
+    ``self.n``, read with no caller and so no actual -- leaves the whole
+    source ``open`` however the test function's claim is decided.  The test
+    function starts at ``claims_from_line`` (the line of its ``def``, which
+    follows every helper); an owed member located above it belongs to another
+    function's own proof and is set aside here.  Everything else -- every
+    claim, and every member the test function itself owes -- is read by the
+    one reader, unchanged."""
+    rows = prove_doc.get("rows") or []
+
+    def owed_above(row: object) -> bool:
+        if not isinstance(row, dict):
+            return False
+        line = row.get("line")
+        return (
+            isinstance(line, int)
+            and line < claims_from_line
+            and str(row.get("property") or "").startswith("undecided:")
+        )
+
+    return prove_verdict(
+        {**prove_doc, "rows": [row for row in rows if not owed_above(row)]}
+    )

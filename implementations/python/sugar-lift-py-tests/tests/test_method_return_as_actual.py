@@ -200,32 +200,14 @@ def _completed_compare_is_true(outcome) -> bool:
 def _store_value_actual(outcome) -> object:
     """Pull the value actual from the completed ``store(obj, key, value)`` call.
 
-    ``obj`` is a formal: the list reaches ``store`` by binding
-    (``object_identity.arrived``), so its contents are not current there and
-    the container law does not read the index's bound
-    (``builtin_container_method.apply``).  ``obj[key] = value`` is the cited
-    undecided ``list.__setitem__``: the call completes under
-    ``python:builtin_method.completes`` and halts with an
-    ``UndeterminedRaiseEffect`` under the complement.  The actuals the call
-    bound ride its one completed face."""
-    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-
-    if isinstance(outcome, ExitSet):
-        completed = [face for face in outcome.exits if isinstance(face, Completed)]
-        halted = [face for face in outcome.exits if isinstance(face, Halted)]
-        if (
-            len(completed) == 1
-            and len(completed) + len(halted) == len(outcome.exits)
-            and len(halted) <= 1
-            and all(
-                isinstance(halt.effect, UndeterminedRaiseEffect)
-                and halt.effect.producer_node_owner
-                == "BuiltinMethodCall:list.__setitem__"
-                for halt in halted
-            )
-            and isinstance(completed[0].value, CallSiteValue)
-        ):
-            args = completed[0].value.arg_values
+    The list is made at the call, and ``obj`` is that actual with the
+    caller's currency (#8249): ``obj[0] = value`` on ``[0]`` is decided, so
+    the call completes alone, as Python's does, and the actuals it bound ride
+    that one face."""
+    if isinstance(outcome, ExitSet) and len(outcome.exits) == 1:
+        face = outcome.exits[0]
+        if isinstance(face, Completed) and isinstance(face.value, CallSiteValue):
+            args = face.value.arg_values
             assert len(args) == 3, args
             return args[2]
     raise AssertionError(
@@ -395,8 +377,20 @@ def test_discrimination_returned_term_is_not_the_receiver_object() -> None:
 
 
 def test_method_returning_raise_propagates_named_exceptional_edge() -> None:
-    """``Factory().make()`` body ``raise ValueError()`` → Halted ValueError."""
-    site = _attr_callsite(RAISING_FACTORY + "\nFactory().make()\n", "make")
+    """``Factory().make()`` body ``raise ValueError()`` → Halted ValueError.
+
+    The raise is located at its own statement (``file:line:col``, the one
+    locus door) and, crossing the call, stamped with the frame the body ran
+    in -- the call's path and the call (``call_site_value.call_owned``) -- so
+    the caller reads which call raised it."""
+    from sugar_lift_py_tests.effect.authenticated_raise_locus import (
+        AuthenticatedRaiseLocus,
+    )
+    from sugar_lift_py_tests.occurrence import call_frame_path
+    from sugar_source_tree.nodes import Raise
+
+    source = RAISING_FACTORY + "\nFactory().make()\n"
+    site = _attr_callsite(source, "make")
     assert isinstance(site.arg_values[0], ObjectValue)
     assert site.arg_values[0].class_name == "Factory"
 
@@ -407,7 +401,10 @@ def test_method_returning_raise_propagates_named_exceptional_edge() -> None:
     assert isinstance(halted, Halted), halted
     assert halted.effect.exception_name == "ValueError"
     assert halted.effect.exception_type_coordinate == _identity("ValueError")
-    assert halted.effect.occurrence_id == str(site)
+    (raise_node,) = tuple(n for n in _tree(source).nodes() if isinstance(n, Raise))
+    locus = AuthenticatedRaiseLocus.of(raise_node.fragment).value
+    frame = "/".join(call_frame_path(site.site, site.occurrence_path))
+    assert halted.effect.occurrence_id == f"{locus}@{frame}"
 
 
 def test_discrimination_completed_return_is_not_valueerror_halt() -> None:
