@@ -18,9 +18,10 @@ retired _measure_file law — not duplicated here.
 
 from __future__ import annotations
 
-import hashlib
 import sys
 from pathlib import Path
+
+from sugar_lift_python_source.canonical import blake3_512_of
 
 from sugar_lift_py_tests.sugar.complex_literal_sugar import ComplexLiteralSugar
 from sugar_lift_py_tests.sugar.ellipsis_literal_sugar import EllipsisLiteralSugar
@@ -40,13 +41,9 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 
-def _cid(source: str) -> str:
-    return hashlib.sha256(source.encode("utf-8")).hexdigest()
-
-
 def _sf(source: str, name: str = "t.py") -> SourceFile:
     return SourceFile(
-        (source, name, _cid(source)),
+        (source, name, blake3_512_of(source.encode("utf-8"))),
         construction_context=TreeConstructionContextV1.for_test_without_workspace(),
     )
 

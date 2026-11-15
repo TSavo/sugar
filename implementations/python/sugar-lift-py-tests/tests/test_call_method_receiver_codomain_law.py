@@ -13,7 +13,7 @@ ONE law at the type: do not patch CallSiteSugar.args alone.
 
 from __future__ import annotations
 
-import hashlib
+from sugar_lift_python_source.canonical import blake3_512_of
 
 from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
@@ -57,13 +57,9 @@ class _Site:
         )()
 
 
-def _cid(source: str) -> str:
-    return hashlib.sha256(source.encode("utf-8")).hexdigest()
-
-
 def _sf(source: str, name: str = "t.py") -> SourceFile:
     return SourceFile(
-        (source, name, _cid(source)),
+        (source, name, blake3_512_of(source.encode("utf-8"))),
         construction_context=TreeConstructionContextV1.for_test_without_workspace(),
     )
 
