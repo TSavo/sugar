@@ -25,6 +25,9 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import ListValue, ObjectValue, TermValue
 from sugar_lift_py_tests.floor.floor_value import FloorValue
+from sugar_lift_py_tests.floor.receiver_field_store_value import (
+    ReceiverFieldStoreValue,
+)
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.assign_sugar import (
     DynamicUnpackStoreAssignSugar,
@@ -227,8 +230,14 @@ def test_ground_star_store_rest_and_field() -> None:
     assert state.context.temporal.value_if_bound("rest") == fresh(
         ListValue, (TermValue(2), TermValue(3))
     )
-    objs = [s for s in state.entries if isinstance(s, ObjectValue)]
-    assert {f.name: f.value for f in objs[-1].fields}["x"] == TermValue(1)
+    # The leaf's one field store is the record's: ``obj.x = 1`` on the
+    # receiver (``ReceiverFieldStoreSugar`` records ``ReceiverFieldStoreValue``
+    # for a plain store on an object whose store runs no code).
+    stores = [s for s in state.entries if isinstance(s, ReceiverFieldStoreValue)]
+    assert stores, state.entries
+    assert stores[-1].receiver.identity == receiver.identity
+    assert stores[-1].attr == "x"
+    assert stores[-1].value == TermValue(1)
 
 
 def test_interleaved_name_store_name_order() -> None:
