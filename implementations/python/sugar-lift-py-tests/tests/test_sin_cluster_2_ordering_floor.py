@@ -10,7 +10,7 @@ two faces (python:compare.completes | undetermined halt), like ``==``. Decided g
 pairs construct Sugar (TrueBool/FalseBool) or a ground halt on owned arms only.
 
 Also covers:
-- undecided binary: nameless halt is forbidden
+- undecided binary: the #7585 two faces (python:binary_op.completes | undetermined halt)
 - undecided contains: the #7585 two faces (python:compare.completes | undetermined halt)
 - undecided attribute: the #7585 two faces (python:attribute.completes | undetermined halt)
 
@@ -34,7 +34,6 @@ from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_py_tests.ir import ctor, make_var
 from sugar_lift_py_tests.outcome import ExitSet
-from sugar_source_tree.panic import SugarNotWritten
 
 
 from sugar_lift_py_tests.repo_root import resolve_repo_root, sugar_lift_py_tests_package_root
@@ -315,29 +314,47 @@ def test_lying_residual_ordering_predicate_mint_panics_at_publisher() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Undecided binary: throw named — never nameless dual-edge halt
+# Undecided binary: the #7585 two faces, like ordering (#7622)
 # ---------------------------------------------------------------------------
 
 
+def _assert_undecided_binary_faces(outcome, operator: str) -> None:
+    """Undecided binary dispatch is the #7585 two faces (``_undecided_binary_law``).
+
+    Never a sole completed result and never a guessed TypeError: the
+    ``python:binary_result`` completes only under ``python:binary_op.completes``
+    and an UndeterminedRaiseEffect, naming no exception type, halts under the
+    complement.
+    """
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, Halted
+
+    assert isinstance(outcome, ExitSet)
+    (completed,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    (halted,) = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert completed.guard.name == "python:binary_op.completes"
+    assert isinstance(completed.value, SymbolicValue)
+    assert type(halted.effect) is UndeterminedRaiseEffect
+    assert halted.effect.exception_name is None  # no invented exception identity
+    assert halted.effect.producer_node_owner == f"UndecidedBinary:{operator}"
+
+
 @pytest.mark.parametrize(
-    "method",
+    ("method", "operator"),
     (
-        "add",
-        "subtract",
-        "multiply",
-        "divide",
-        "bitwise_and",
+        ("add", "+"),
+        ("subtract", "-"),
+        ("multiply", "*"),
+        ("divide", "/"),
+        ("bitwise_and", "&"),
     ),
 )
-def test_undecided_binary_throws_named_never_nameless_halt(method: str) -> None:
-    """Nameless Halted faces route outside TypeError boundaries — refuse instead."""
-    with pytest.raises(SugarNotWritten) as raised:
-        getattr(_symbolic(), method)(TermValue(2), SITE, None)
-    owner = raised.value.owner or ""
-    observed = raised.value.observed or ""
-    assert "binary" in owner.lower() or "undecided" in observed.lower()
-    # Must not look like a completed dual-edge partition.
-    assert "TypeError" not in observed  # do not invent exception identity
+def test_undecided_binary_is_two_faced_never_named_type_error(
+    method: str, operator: str
+) -> None:
+    _assert_undecided_binary_faces(
+        getattr(_symbolic(), method)(TermValue(2), SITE, None), operator
+    )
 
 
 def test_source_decided_int_float_bitand_emits_type_error() -> None:
@@ -352,24 +369,12 @@ def test_source_decided_int_float_bitand_emits_type_error() -> None:
     assert halt.effect.exception_name == "TypeError"
 
 
-def test_lying_dual_edge_is_not_undecided_binary_answer() -> None:
-    """Lying twin: dual-edge ExitSet with nameless RaiseEffect must not appear."""
-    from sugar_lift_py_tests.outcome import ExitSet
-    from sugar_lift_py_tests.outcome.exit_set import Halted
-
-    with pytest.raises(SugarNotWritten):
-        outcome = _symbolic().subtract(TermValue(1), SITE, None)
-        if isinstance(outcome, ExitSet):
-            for face in outcome.exits:
-                if (
-                    isinstance(face, Halted)
-                    and getattr(face.effect, "exception_name", "missing") is None
-                ):
-                    raise AssertionError(
-                        "nameless binary halt is the SIN: TypeError boundary "
-                        "can never match it"
-                    )
-        raise AssertionError("undecided binary must throw named, not return")
+def test_lying_sole_complete_is_not_undecided_binary_answer() -> None:
+    """Lying twin: a sole completed result is never the undecided binary answer;
+    it would claim an operation over an undecided type cannot raise."""
+    outcome = _symbolic().subtract(TermValue(1), SITE, None)
+    assert outcome.completed_value() is None
+    _assert_undecided_binary_faces(outcome, "-")
 
 
 # ---------------------------------------------------------------------------

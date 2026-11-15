@@ -141,21 +141,35 @@ def _store_entries(state):
 # Free undecided receiver ``o`` (not a formal) retains dual-face
 # AttributeStoreRuntimeEffect. Formal receivers now mint setattr_named carriers
 # (vertical completion); dual-face composition laws stay on this free shape.
-SEQUENTIAL = """def target(p, q):
+# ``o`` is free only because a star import the lifter cannot read may bind it:
+# a name nothing in the module binds is a NameError halt (#7757 item 30), and
+# its store never runs.
+_FREE_O = "from m import *\n"
+
+SEQUENTIAL = (
+    _FREE_O
+    + """def target(p, q):
     o.x = p
     o.y = q
     return q
 """
+)
 
-ONE_STORE = """def target(p):
+ONE_STORE = (
+    _FREE_O
+    + """def target(p):
     o.x = p
     return p
 """
+)
 
-OTHER_STORE = """def target(q):
+OTHER_STORE = (
+    _FREE_O
+    + """def target(q):
     o.y = q
     return q
 """
+)
 
 
 # --------------------------------------------------------------------------

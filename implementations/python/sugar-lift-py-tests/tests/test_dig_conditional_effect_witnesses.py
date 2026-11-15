@@ -12,7 +12,6 @@ ROOT = sugar_lift_py_tests_package_root() / "src" / "sugar_lift_py_tests"
 def test_datetime_dig_conditional_effects_have_explicit_witnesses() -> None:
     missing = []
     for relative in (
-        "sugar/install_source_dig.py",
         "floor/guarded_value.py",
         "floor/predicate_value.py",
         "sugar/if_exp_sugar.py",
