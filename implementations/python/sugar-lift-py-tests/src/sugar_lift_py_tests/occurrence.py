@@ -53,11 +53,15 @@ def evaluation_path(sugar) -> tuple[str, ...]:
     segments after it -- unless the path already ends in them (the copy's
     statement entered them).  The one path ``Sugar.desugar`` reduces a sugar
     under."""
-    path = _PATH.get()
     tags = getattr(sugar, "__dict__", {}).get("_occurrence_tags")
-    if not tags or path[len(path) - len(tags) :] == tags:
+    return extended_path(_PATH.get(), tuple(tags or ()))
+
+
+def extended_path(path: tuple[str, ...], segments: tuple[str, ...]) -> tuple[str, ...]:
+    """``path`` with ``segments`` after it, unless it already ends in them."""
+    if not segments or path[len(path) - len(segments) :] == segments:
         return path
-    return (*path, *tags)
+    return (*path, *segments)
 
 
 @contextmanager
@@ -75,6 +79,31 @@ def entered(segment: str):
     """Reduce one level deeper: an iteration of an enclosing unrolled loop."""
     with occurrence_path((*_PATH.get(), segment)):
         yield
+
+
+@contextmanager
+def within(segments: tuple[str, ...]):
+    """Reduce under the path running now with ``segments`` after it
+    (``extended_path``): an evaluation minted inside those segments and
+    reduced later, outside their extent, is still that evaluation.  No
+    segments reduce under the path running now, untouched."""
+    if not segments:
+        yield
+        return
+    with occurrence_path(extended_path(_PATH.get(), tuple(segments))):
+        yield
+
+
+# A generator instance's segment: every evaluation inside that instance's
+# body is one occurrence of it (``GeneratorConstructionV1``).  No ``/`` or
+# ``@``, and neither ``call:`` nor ``loop:``, so it is read as neither a
+# callee frame nor a live iteration.
+_GENERATOR_INSTANCE = "generator:"
+
+
+def generator_instance_segment(instance_coordinate: str) -> str:
+    """The occurrence segment of one generator instance's body."""
+    return f"{_GENERATOR_INSTANCE}{instance_coordinate}"
 
 
 # A live loop iteration's segment (``LoopRecurrenceSugar`` enters one per

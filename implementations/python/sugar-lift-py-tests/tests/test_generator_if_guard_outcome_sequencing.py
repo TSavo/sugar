@@ -473,3 +473,72 @@ def test_an_undecided_guard_halts_at_the_guard_fragment_in_its_instance(
         )
         halts.append(halted[0].effect)
     assert halts[0].occurrence != halts[1].occurrence
+
+
+def test_two_instances_over_one_actual_discharge_two_guard_occurrences(
+    tmp_path,
+) -> None:
+    """A guard over a formal defers its truth to the caller.  The caller's
+    later truth of the actual is still an evaluation inside each instance's
+    body, so two instances of one generator over the same actual discharge
+    two occurrences of the guard's truth, never one."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
+    from sugar_lift_py_tests.ir import PrimitiveSort, make_var
+    from sugar_lift_py_tests.occurrence import (
+        generator_instance_segment,
+        occurrence_key,
+    )
+
+    path = tmp_path / "formal_guard.py"
+    path.write_text("def f(left, right):\n    return left == right\n", encoding="utf-8")
+    site = next(_open_at_seat(path, root=tmp_path).functions()).body[0].fragment
+    span = site.line_col_span
+    locus = SourceFragmentCoordinateV1(
+        site.source_cid,
+        span.start_line,
+        span.start_col,
+        span.end_line,
+        span.end_col,
+    )
+    formal = FormalParameterCoordinateV1.mint(
+        owner_source_identity_cid=site.source_cid,
+        owner_definition_locus=locus,
+        declaration_locus=locus,
+        ordinal=0,
+        parameter_kind="positional-or-keyword",
+        declared_name="left",
+        sort=PrimitiveSort("Value"),
+    )
+    step = _step(
+        _OutcomeGuard(ExitSet.completed(SymbolicValue(make_var("left"), formal))),
+        guard_site=site,
+    )
+    instances = (
+        _machine(step),
+        GeneratorConstructionV1.allocate(
+            allocation_coordinate="call:if-guard-outcomes:other",
+            frame_coordinate="frame:if-guard-outcomes",
+            binding_state=(),
+            steps=(step,),
+        ),
+    )
+    # One actual, the same for both instances: its truth is not decided here.
+    actual = SymbolicValue(TermValue(105).to_term(owner="guard actual"))
+
+    occurrences = []
+    for instance in instances:
+        deferred = instance._guard_truth(step.guard, step.guard_site)
+        assert isinstance(deferred, NativeOperationExitCarrierV1)
+        segment = generator_instance_segment(instance.instance_coordinate)
+        assert deferred.occurrence_segments == (segment,)
+        outcome = deferred.discharge(None, {formal.coordinate_cid: actual})
+        assert isinstance(outcome, ExitSet)
+        halted = [arm for arm in outcome.exits if isinstance(arm, Halted)]
+        assert len(halted) == 1
+        assert halted[0].effect.occurrence == occurrence_key(site, (segment,))
+        occurrences.append(halted[0].effect.occurrence)
+    assert occurrences[0] != occurrences[1]

@@ -814,6 +814,14 @@ class NativeOperationExitCarrierV1:
     pre_effect_state: ReducerPreEffectStateV1 | None = dataclass_field(
         default=None, compare=False, repr=False
     )
+    # The occurrence segments the operation was evaluated inside (a generator
+    # instance's body: ``occurrence.generator_instance_segment``).  The caller
+    # discharges it later, outside their extent; the operation's own exits
+    # are keyed under them there (``occurrence.within``), so two instances
+    # over one actual are two evaluations, never one.
+    occurrence_segments: tuple = dataclass_field(
+        default=(), compare=False, repr=False
+    )
 
     def __post_init__(self):
         operand_count = len(self.operands)
@@ -898,6 +906,14 @@ class NativeOperationExitCarrierV1:
         return replace(
             enrolled,
             continuations=(*enrolled.continuations, step),
+        )
+
+    def evaluated_within(self, segment: str) -> "NativeOperationExitCarrierV1":
+        """This operation as the evaluation it was inside ``segment``: its
+        discharge keys its own exits under that segment
+        (:attr:`occurrence_segments`)."""
+        return replace(
+            self, occurrence_segments=(*self.occurrence_segments, segment)
         )
 
     def guarded(self, guard, face=None):
@@ -1167,11 +1183,16 @@ class NativeOperationExitCarrierV1:
                 absent = coordinate_cid
                 break
             actual_operands.append(actuals_by_formal_coordinate[coordinate_cid])
-        exits = (
-            self._projected_exits(actual_operands, ctx)
-            if absent is None
-            else self._unanswered_exits(absent)
-        )
+        from sugar_lift_py_tests.occurrence import within
+
+        # The operation's own exits are keyed under the occurrence it was
+        # evaluated in (a generator instance's body), not only the caller's.
+        with within(self.occurrence_segments):
+            exits = (
+                self._projected_exits(actual_operands, ctx)
+                if absent is None
+                else self._unanswered_exits(absent)
+            )
 
         # A short circuit recorded before later work (``return a if c else
         # -x``: the return, the block projection, an enclosing ``if``'s join)
