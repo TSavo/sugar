@@ -51,6 +51,25 @@ class OpaqueOpCallsite(FloorValue):
         # as CallSiteValue: a value of undecided identity, never a callable.
         return True
 
+    def denotes_value(self) -> bool:
+        """The operator's result denotes a Python runtime value, as a call
+        result does (``CallSiteValue.denotes_value``): an operation with it
+        as an operand is an operation over a value, never a missing floor."""
+        return True
+
+    def runtime_type_is_decided(self) -> bool:
+        """Undecided, as for a call result (``CallSiteValue``): the
+        coordinate is never substituted by ``computed`` (see the class
+        docstring), and a reader that type-switches on its operand's exact
+        floor (``2 * s`` is repetition only for a ``StringValue``) would read
+        a decided coordinate as a decided non-sequence and invent
+        ``TypeError``.  So an operation whose other operand reaches this
+        value as itself -- ``x * <opaque>``, ``bool(<opaque>)`` -- is the
+        undecided member's two faces (``FloorValue._undecided_binary_law``,
+        ``bool_op_sugar.truth_of``); one this value answers itself goes
+        through ``_downstream``."""
+        return False
+
     def to_term(self, *, owner: str) -> Term:
         from sugar_lift_py_tests.ir import ctor
 
