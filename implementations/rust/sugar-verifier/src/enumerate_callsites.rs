@@ -878,9 +878,21 @@ fn bridge_formal_actuals_match_arg_terms(
     let Some(formals) = pool.contract_formals_by_cid(&target_cid) else {
         return false;
     };
-    if formals.len() != arg_terms.len() {
+    let Some(formals) = formals
+        .iter()
+        .map(|formal| formal.as_str().map(str::to_string))
+        .collect::<Option<Vec<_>>>()
+    else {
         return false;
-    }
+    };
+    // The call's arguments bound to the contract's formals by the one binder
+    // the join binds with (`consistency::bind_call_arguments`): positional,
+    // `py.kwarg` and each contract input's named argument alike, never a
+    // positional zip behind a count check. A call that does not fit the
+    // contract matches no bridge.
+    let Some(bindings) = crate::consistency::bind_call_arguments(&formals, arg_terms) else {
+        return false;
+    };
     let Some(formal_actuals) = bridge_body
         .get("callsite")
         .and_then(|v| v.get("formalActuals"))
@@ -888,9 +900,9 @@ fn bridge_formal_actuals_match_arg_terms(
     else {
         return false;
     };
-    formals.iter().zip(arg_terms).all(|(formal, actual)| {
-        formal.as_str().and_then(|name| formal_actuals.get(name)) == Some(actual)
-    })
+    bindings
+        .iter()
+        .all(|(formal, actual)| formal_actuals.get(formal) == Some(actual))
 }
 
 fn attribute_safety_locus_for<'a>(term: &Json, panic_loci: &'a [Json]) -> Option<&'a Json> {
