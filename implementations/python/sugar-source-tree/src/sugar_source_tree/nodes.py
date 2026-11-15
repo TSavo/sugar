@@ -11991,8 +11991,15 @@ class FunctionDef(Statement):
 
     def _body_scope(self, scope):
         """The scope the body is substituted in: ``scope`` with the formals
-        and type params held out and bound to their entries, and every local
-        unbound until the body binds it."""
+        and type params held out and bound to their entries, each captured
+        name read through its captured coordinate (``_captured_scope``), as
+        the function's call frame reads it, and every local unbound until the
+        body binds it.
+
+        The function's own universe binds each captured coordinate to its
+        contract input ``cell:<name>`` (``contract_inputs``): Python reads the
+        cell when the function is called, so the caller supplies it, as it
+        supplies a parameter (#7757 step 4)."""
         table = self.unit.function_symtable(self.name, self.line_col_span().start_line)
         parameters = frozenset(table.get_parameters())
         locals_ = frozenset(table.get_locals()) - parameters
@@ -12011,6 +12018,7 @@ class FunctionDef(Statement):
         }
         return {
             **body_scope,
+            **self._captured_scope(),
             **formal_refs,
             **{
                 name: UnboundBinding(name=name, cause=self.fragment) for name in locals_
@@ -12128,6 +12136,11 @@ class FunctionDef(Statement):
         """This definition's own contract: its universe (``_construct_sugar``),
         the one a ``lambda`` states too (``Lambda.contract_universe``)."""
         return self.sugar()
+
+    def contract_inputs(self) -> tuple:
+        """What this function's contract takes beside its parameters
+        (``_contract_inputs``): each captured cell, then each default."""
+        return _contract_inputs(self)
 
     def _make_parameter_entry(self, parameter: Param, ordinal: int, scope):
         owner = self._active_initializer_owner()
@@ -12398,6 +12411,7 @@ class FunctionDef(Statement):
                         bridge_source_symbol=self.bridge_source_symbol(),
                         substitution_trace=substitution_trace,
                         formal_coordinates=self.formal_coordinates(),
+                        inputs=self.contract_inputs(),
                     )
         finally:
             _FRAMES_UNDER_CONSTRUCTION.discard(definition_cid)
@@ -12469,6 +12483,10 @@ class AsyncFunctionDef(Statement):
     def contract_universe(self):
         """Same contract universe door as FunctionDef."""
         return FunctionDef.contract_universe(self)
+
+    def contract_inputs(self) -> tuple:
+        """Same contract inputs as FunctionDef."""
+        return FunctionDef.contract_inputs(self)
 
     def _make_parameter_entry(self, parameter: Param, ordinal: int, scope):
         return FunctionDef._make_parameter_entry(self, parameter, ordinal, scope)
@@ -23130,9 +23148,10 @@ class Lambda(Expression):
         module global it reads bound where it is called, and each formal
         standing free as a ``def``'s does (``FormalRef``), since its own proof
         has no caller and so no actual. An enclosing local it captures is
-        read through its captured coordinate, which no caller binds here, so
-        that read is refused by name and the lambda is undecided by it
-        (``refused_function_row``), as a local ``def`` reading one is."""
+        read through its captured coordinate, which the universe binds to the
+        contract input ``cell:<name>`` (``contract_inputs``), a formal of the
+        contract after the parameters: the caller supplies the cell at the
+        call, as it supplies an actual (#7757 step 4)."""
         from .shadow import ShadowNode
 
         if not isinstance(self.ref, ShadowNode):
@@ -23157,7 +23176,15 @@ class Lambda(Expression):
             site=self.fragment,
             bridge_source_symbol=self.bridge_source_symbol(),
             formal_coordinates=self.formal_coordinates(),
+            inputs=self.contract_inputs(),
         )
+
+    def contract_inputs(self) -> tuple:
+        """What this lambda's contract takes beside its parameters, as a
+        ``def``'s (``FunctionDef.contract_inputs``): each captured cell (the
+        ``captured_bindings`` leaf its substitution set), then each
+        default."""
+        return _contract_inputs(self)
 
     def _construct_sugar(self):
         """Construct an expression lambda carrying its ordinary source frame."""
@@ -27315,6 +27342,50 @@ def _default_evaluation_key(definition, index: int) -> str:
             "formal": index,
         }
     )
+
+
+def _contract_inputs(definition) -> tuple:
+    """What the contract of ``definition`` (a ``def``, ``async def`` or
+    lambda) takes beside its parameters, each a ``ContractInputV1`` stated as
+    a formal after them (#7757 step 4):
+
+    - ``cell:<name>`` for each captured cell (``_captured_bindings``), read
+      through the captured coordinate the call frame reads it through, so the
+      function's own universe binds that coordinate to the input;
+    - ``default:<param>`` for each parameter with a default: the value its
+      ``def`` statement or lambda expression bound under the default's key
+      (``_default_evaluation_key``).  The body reads the parameter; prove's
+      binder binds a parameter the call omits to this input.
+
+    The caller supplies each at the call (``py.closure``, ``py.default``),
+    as it supplies an actual for a parameter."""
+    from sugar_lift_py_tests.contract_input import (
+        CELL_INPUT,
+        DEFAULT_INPUT,
+        ContractInputV1,
+    )
+
+    owner_cid = definition.fragment.seal().cid
+    names, coordinates = definition._captured_bindings()
+    cells = tuple(
+        ContractInputV1.mint(
+            owner_definition_cid=owner_cid,
+            input_kind=CELL_INPUT,
+            name=name,
+            read_cid=coordinate.cid,
+        )
+        for name, coordinate in zip(names, coordinates, strict=True)
+    )
+    defaults = tuple(
+        ContractInputV1.mint(
+            owner_definition_cid=owner_cid,
+            input_kind=DEFAULT_INPUT,
+            name=parameter.name,
+        )
+        for parameter in definition.params
+        if parameter.default is not None
+    )
+    return cells + defaults
 
 
 def _default_value_sugar(definition, index: int):
