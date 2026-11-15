@@ -244,7 +244,8 @@ def test_later_read_is_not_completed_with_stale_value_twin() -> None:
 def test_conditional_del_builds_guarded_projection_on_later_read() -> None:
     """After ``if flag: del x``, the return read is GuardedProjection.
 
-    when_true → UnboundProjection; when_false → prior bound value.
+    when_true → UnboundProjection; when_false → prior bound value.  ``flag``
+    is a global the module never binds: the read of it raises.
     """
     function, outcome = _function_outcome(
         "def f():\n" "    x = 1\n" "    if flag:\n" "        del x\n" "    return x\n"
@@ -264,15 +265,21 @@ def test_conditional_del_builds_guarded_projection_on_later_read() -> None:
     assert isinstance(read.state.when_false, EvaluationRefSugar)
     assert read.state.when_false.evaluation.startswith("evaluation:")
 
-    # Runtime faces: halt under truthy; complete under not(truthy) with value 1.
-    halted = [e for e in outcome.exits if isinstance(e, Halted)]
-    completed = [e for e in outcome.exits if isinstance(e, Completed)]
-    assert len(halted) == 1
-    assert len(completed) == 1
-    assert isinstance(halted[0].effect, NameErrorEffect)
-    assert "py.truthy" in str(halted[0].guard) or "truthy" in str(halted[0].guard)
-    assert "not" in str(completed[0].guard).lower()
-    assert _returned(completed[0]).value == TermValue(1)
+    # Runtime: no statement of the module binds ``flag`` and no builtin is
+    # named so, so Python raises ``NameError`` reading it, before the ``if``
+    # decides anything; ``f`` never completes.  The del's two faces are the
+    # constant twins' (``if True`` / ``if False``) below.
+    native: dict = {}
+    exec(
+        "def f():\n" "    x = 1\n" "    if flag:\n" "        del x\n" "    return x\n",
+        native,
+    )
+    with pytest.raises(NameError, match="flag"):
+        native["f"]()
+    assert outcome.halts() == outcome.exits
+    halted = _sole_halt(outcome)
+    assert isinstance(halted.effect, NameErrorEffect)
+    assert halted.effect.name == "flag"
 
 
 def test_true_branch_del_always_unbinds_the_later_read() -> None:
