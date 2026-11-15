@@ -19,14 +19,35 @@ from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 from sugar_lift_py_tests.sugar.none_literal_sugar import NoneLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+from sugar_lift_python_source.canonical import blake3_512_of
+
+
+@dataclass(frozen=True)
+class _Span:
+    start_line: int
+    start_col: int
+    end_line: int
+    end_col: int
 
 
 @dataclass(frozen=True)
 class _Site:
+    """A source fragment's coordinate: an undecided comparison's dispatch
+    faces key their atom on its occurrence (``occurrence.occurrence_key``),
+    which a site with no source coordinate is refused by name (#7808)."""
+
     filename: str = "test_bool_op_ground_operand.py"
     line: int = 1
     col: int = 0
     source: str = "None and True"
+
+    @property
+    def source_cid(self) -> str:
+        return blake3_512_of(self.source.encode("utf-8"))
+
+    @property
+    def line_col_span(self) -> _Span:
+        return _Span(self.line, self.col, self.line, self.col + len(self.source))
 
     def compare_left(self):
         # EqualityOpSugar refinement path; ground/symbolic fold tests do not
