@@ -17,6 +17,8 @@ from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.outcome.exit_set import Completed
+from sugar_lift_python_source.source_oracle import workspace_path_source
+from sugar_source_tree.tree import SourceFile
 
 
 class _Op:
@@ -124,9 +126,24 @@ def test_any_pattern_the_interpreter_compiles_is_decided() -> None:
     assert isinstance(miss, NoneValue)
 
 
-def test_a_ground_subject_that_is_not_a_string_is_the_one_halt() -> None:
-    outcome = _apply("python.re.search", "a", TermValue(5))
-    assert len(outcome.halts()) == 1
+def test_a_ground_subject_that_is_not_a_string_is_the_one_halt(tmp_path) -> None:
+    # A ground halt cites source it can re-read (``ground_raise_effect``), so
+    # the call stands at a real fragment of a workspace file: a prose locus
+    # states no file to address and is refused by name.
+    path = tmp_path / "re_subject.py"
+    path.write_text("def f(pattern, subject):\n    return search(pattern, subject)\n")
+    body = next(
+        SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()
+    ).body
+    site = body[0].fragment
+
+    outcome = BuiltinSemanticCallable(
+        operation="python.re.search"
+    ).callable_application_with(_Op([StringValue("a"), TermValue(5)], site=site), None)
+
+    (halt,) = outcome.halts()
+    assert halt.effect.exception_name == "TypeError"
+    assert halt.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
     assert _completed(outcome) == []
     assert outcome.owed_items() == ()
 
