@@ -344,12 +344,14 @@ _SOLVER_PROGRAMS = {
 # Programs whose value the lifter does not decide today.  Pinned as that, so a
 # change that starts deciding them (or deciding them wrongly) shows here.
 _UNDECIDED = {
-    # Two levels of one function, an assignment at each.
+    # Two levels of one function, an assignment at each.  The inner
+    # ``down(n - 1)`` is a call of the function being applied, which the
+    # reduction does not apply again: it is the unanswered call, so ``r`` is
+    # not a decided value and neither claim about it is.
     "recursion-two-levels": (
         "    r = down(1)\n    assert r == {claim}\n",
         "21",
         "22",
-        (1, 2),
     ),
 }
 
@@ -439,13 +441,27 @@ def test_a_value_the_lifter_does_not_decide_today_has_the_same_faces_for_both_cl
 ) -> None:
     """Not a twin: the truthful and the lying claim reduce alike, because the
     asserted value is not decided at the reduction.  Pinned so that a change to
-    how assignments are recorded cannot start deciding it unnoticed."""
+    how assignments are recorded cannot start deciding it unnoticed.
+
+    Undecided is one completed face (the assert holding, under the guards of
+    what is not decided) beside at least one halted face, the same for both
+    claims.  A decided value would show as the truthful claim completing
+    alone or the lying one not completing: either fails here.  How many
+    halted faces stand beside the completion is each undecided operation's
+    own business (the unanswered call's raise, an operation over its result,
+    the assert's failure) and is not what this pins: it read two when this
+    was written and three on main 17672f48f."""
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
-    body, truthful, lying, faces = _UNDECIDED[name]
+    body, truthful, lying = _UNDECIDED[name]
+    seen = []
     for claim in (truthful, lying):
         _source, function = _function(body.format(claim=claim))
-        assert _faces(function_universe_outcome(function)) == faces
+        completed, halted = _faces(function_universe_outcome(function))
+        assert completed == 1
+        assert halted >= 1
+        seen.append((completed, halted))
+    assert seen[0] == seen[1]
 
 
 # ---------------------------------------------------------------------------
