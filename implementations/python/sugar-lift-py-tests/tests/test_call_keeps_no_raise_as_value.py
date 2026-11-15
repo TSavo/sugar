@@ -331,14 +331,16 @@ def test_a_return_lays_the_callees_field_store_before_it() -> None:
     """``return g(box)`` where ``g`` stored ``box.x``: the return answers the
     call's value and lays the store before it in the record, so the caller
     of the frame reads it (``caller_visible_stores``); the return drops no
-    store the call carried."""
+    store the call carried.  The returned value is the statement's header
+    (#8631): the record is the one the header rule leaves
+    (``header_applied``), a block's record that does not fall through."""
     from sugar_lift_py_tests.floor import TermValue
-    from sugar_lift_py_tests.floor.block_value import BlockValue
     from sugar_lift_py_tests.floor.call_site_value import caller_visible_stores
     from sugar_lift_py_tests.floor.named_expression_value import (
         carry_caller_stores,
     )
     from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
     from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
 
     ctx, store, _stored = _caller_holding_a_receiver()
@@ -346,9 +348,10 @@ def test_a_return_lays_the_callees_field_store_before_it() -> None:
         value=_Completes(carry_caller_stores((store,), TermValue(2))), site=None
     )
 
-    value = returned.desugar(ctx).completed_value()
+    record = returned.desugar(ctx).completed_value()
 
-    assert isinstance(value, BlockValue)
-    assert value.statements[0] == store
-    assert isinstance(value.statements[-1], ReturnValue)
-    assert caller_visible_stores(value.statements) == (store,)
+    assert isinstance(record, _ReducedBlock), record
+    assert not record.can_fall_through
+    assert record.entries[0] == store
+    assert isinstance(record.entries[-1], ReturnValue)
+    assert caller_visible_stores(record.entries) == (store,)
