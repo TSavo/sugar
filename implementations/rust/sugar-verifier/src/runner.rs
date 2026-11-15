@@ -2130,17 +2130,58 @@ mod consistency_owned_callsite_tests {
         json!({"kind":"atomic","name":"=","args":[a,b]})
     }
 
+    /// `assert v.enc("def") == "ghi"` read the one way (step 9): the claim
+    /// constrains the call's result at its site, the unanswered member at that
+    /// site names `python:v.enc`, and the bridge whose `sourceSymbol` is that
+    /// string binds the vendor contract.
     fn linked_pool_and_callsite() -> (MementoPool, CallSite, MementoCid) {
-        let source_symbol = "call:enc";
+        let source_symbol = "python:v.enc";
+        let property_name = "python:test_consumer.test_enc";
         let vendor_cid = cid_string("vendor-enc");
         let assertion_cid = cid_string("consumer-assertion");
         let bridge_cid = generated_cid("linked-post-bridge");
-        let call = json!({"kind":"ctor","name":source_symbol,"args":[string_const("def")]});
+        let site = sugar_proof_envelope::UndecidedSite {
+            file: "test_consumer.py".into(),
+            source_cid: sugar_proof_envelope::AtomCid::try_parse(format!(
+                "blake3-512:{}",
+                "c".repeat(128)
+            ))
+            .unwrap(),
+            start_line: 9,
+            start_col: 4,
+            end_line: 9,
+            end_col: 12,
+        };
+        // The site as a `SourceFragmentCoordinateV1`: the first argument of
+        // the call's `python:occurrence`.
+        let site_cid = sugar_canonicalizer::jcs_cid_of_json(&json!({
+            "sourceCid": site.source_cid.as_str(),
+            "startLine": site.start_line,
+            "startCol": site.start_col,
+            "endLine": site.end_line,
+            "endCol": site.end_col,
+        }));
+        let member = sugar_proof_envelope::UndecidedMember {
+            symbol: Some(source_symbol.to_string()),
+            site,
+            reason: sugar_proof_envelope::UndecidedReason::Unanswered,
+        };
+        let member_cid = member.header_cid();
+        let mut member_header = member.header_preimage();
+        member_header["cid"] = Json::String(member_cid.clone());
+        let call = json!({
+            "kind": "ctor",
+            "name": "python:call_result",
+            "args": [
+                {"kind":"ctor","name":"call:v.enc","args":[string_const("def")]},
+                {"kind":"ctor","name":"python:occurrence","args":[string_const(&site_cid)]}
+            ]
+        });
         let assertion = json!({
             "evidence": {
                 "kind": "contract",
                 "body": {
-                    "contractName": "src/lib.rs::tests::fresh_vendor_fol_good::enc#euf#c:callresult_enc_a1(s:\"def\")::assertion",
+                    "contractName": property_name,
                     "inv": eqf(call, string_const("ghi"))
                 }
             }
@@ -2172,12 +2213,16 @@ mod consistency_owned_callsite_tests {
             }
         });
         let mut pool = MementoPool::default();
+        pool.insert_unanchored_for_tests(
+            memento_cid(&member_cid),
+            json!({ "header": member_header }),
+        );
         pool.insert_unanchored_for_tests(memento_cid(&assertion_cid), assertion);
         pool.insert_unanchored_for_tests(memento_cid(&vendor_cid), vendor);
         pool.insert_bridge_by_symbol(source_symbol, bridge_cid.clone(), bridge);
         let cs = CallSite {
             bridge_ir_name: source_symbol.to_string(),
-            property_name: "src/lib.rs::tests::fresh_vendor_fol_good::enc#euf#c:callresult_enc_a1(s:\"def\")::assertion".to_string(),
+            property_name: property_name.to_string(),
             property_cid: Some(memento_cid(&assertion_cid)),
             ..CallSite::default()
         };
