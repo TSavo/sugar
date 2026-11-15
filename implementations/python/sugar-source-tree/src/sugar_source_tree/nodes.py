@@ -17885,14 +17885,39 @@ class For(Statement):
         (``Assign._unpacked_displays``); its members answer for themselves.
 
         A read of a name bound to a ground display is read by every item
-        (``_item_of``) and needs nothing here."""
+        (``_item_of``) and needs nothing here.
+
+        What is evaluated is the one unroll step a ``for`` and a
+        comprehension share (``_iterable_evaluations``); a ``for`` places
+        each evaluation as a statement before its first item."""
+        from .shadow import recast
+
+        return tuple(
+            recast(self, "Expr", value=evaluation)
+            for evaluation in For._iterable_evaluations(self, iterable)
+        )
+
+    def _iterable_evaluations(self, iterable) -> tuple:
+        """What of an unrolled iterable (``iterable``, substituted) Python
+        evaluates once, before the first item -- the one step a ``for``
+        (``_iterable_evaluated``) and a comprehension the unroll dissolves
+        into a display (``ListComp._dissolved_iterable``) take before
+        their items.
+
+        A ``range(...)`` call of ground ints is evaluated whole: its value
+        is consumed by the unroll (each item is the int it yields), and
+        every face of it -- a halt, a callee's stores -- is the
+        evaluation's.  A list or tuple display is consumed member by member
+        and never built whole (its discharge is the consumption); what a
+        display that a dissolved comprehension made carries to evaluate
+        first (``iterable_evaluations``) is evaluated here in its place.  A
+        read of a name bound to a ground display is read by every item
+        (``_item_of``): nothing."""
         if iterable.kind in ("List", "Tuple"):
             iterable.discharge_by_substitution()
-            return ()
+            return tuple(getattr(iterable, "iterable_evaluations", None) or ())
         if iterable.kind == "Call":
-            from .shadow import recast
-
-            return (recast(self, "Expr", value=iterable),)
+            return (iterable,)
         return ()
 
     def _item_evaluated_apart(self, unpack, element):
@@ -22821,10 +22846,14 @@ class Dict(Expression):
                 ),
                 site=self.fragment,
             )
+        # A dissolved comprehension evaluates its iterable before its first
+        # entry (``ListComp._dissolved_iterable``).
+        evaluated_first = ListComp._evaluated_first_sugars(self)
         return DictSugar(
             keys=tuple(item.key.sugar() for item in self.items),
             values=tuple(item.value.sugar() for item in self.items),
             site=self.fragment,
+            evaluated_first=evaluated_first,
         )
 
 
@@ -22855,8 +22884,13 @@ class Set(Expression):
                 ),
                 site=self.fragment,
             )
+        # A dissolved comprehension evaluates its iterable before its first
+        # member (``ListComp._dissolved_iterable``).
+        evaluated_first = ListComp._evaluated_first_sugars(self)
         return SetSugar(
-            elements=tuple(e.sugar() for e in self.elts), site=self.fragment
+            elements=tuple(e.sugar() for e in self.elts),
+            site=self.fragment,
+            evaluated_first=evaluated_first,
         )
 
 
@@ -22951,7 +22985,22 @@ class ListComp(Expression):
             # Each member is its own evaluation of the element expression.
             (member,) = _iteration_copies(self, index, (new_elt if _d else self.elt,))
             results.append(member)
-        return ListComp._make_list(self, tuple(results))
+        evaluations = ListComp._dissolved_iterable(self, it)
+        return ListComp._make_list(self, tuple(results), evaluations)
+
+    def _dissolved_iterable(self, iterable):
+        """What the display this comprehension dissolved into over
+        ``iterable`` (substituted) evaluates before its first member
+        (``iterable_evaluations``).
+
+        The unroll takes the same step a ``for`` does before its items
+        (``For._iterable_evaluations``): ``range(n)`` is evaluated once,
+        before the first member, and the display carries that evaluation,
+        whose faces its sugar carries before it holds the members
+        (``collection_sugar._reduce_into``) -- never a dropped evaluation.
+        A display iterable is consumed member by member and answers with
+        it."""
+        return For._iterable_evaluations(self, iterable)
 
     def _ground_filters_pass(self, filters, scope) -> "Optional[bool]":
         """The conjunction of constructed ground filters, or no testimony.
@@ -23281,15 +23330,43 @@ class ListComp(Expression):
             return ("none", None)
         return None
 
-    def _make_list(self, elements: tuple) -> "Node":
+    def _make_list(self, elements: tuple, evaluations: tuple = ()) -> "Node":
         """Synthesize a List display of these element nodes, borrowing this
-        comprehension's span -- the dissolved `map`, a display like any other."""
+        comprehension's span -- the dissolved `map`, a display like any other
+        -- evaluating ``evaluations`` (``_dissolved_iterable``) first."""
         from .backend import Children, materialize
         from .shadow import ShadowNode, _handle_of
 
-        slots = (("elts", Children(tuple(_handle_of(e) for e in elements))),)
+        slots = (
+            ("elts", Children(tuple(_handle_of(e) for e in elements))),
+            *ListComp._evaluations_slot(evaluations),
+        )
         return materialize(
             self.unit, ShadowNode("List", self.span, slots), self.reporter
+        )
+
+    @staticmethod
+    def _evaluations_slot(evaluations: tuple) -> tuple:
+        """The ``iterable_evaluations`` slot of a dissolved display, or none
+        where its iterable evaluates nothing before the first member."""
+        from .backend import Children
+        from .shadow import _handle_of
+
+        if not evaluations:
+            return ()
+        return (
+            (
+                "iterable_evaluations",
+                Children(tuple(_handle_of(e) for e in evaluations)),
+            ),
+        )
+
+    def _evaluated_first_sugars(self) -> tuple:
+        """The sugar of each evaluation a dissolved display makes before its
+        first member (``_dissolved_iterable``); empty for any other display."""
+        return tuple(
+            evaluation.sugar()
+            for evaluation in getattr(self, "iterable_evaluations", None) or ()
         )
 
     def _construct_sugar(self):
@@ -23542,13 +23619,17 @@ class SetComp(Expression):
             if key not in seen:
                 seen.add(key)
                 results.append(result)
-        return SetComp._make_set(self, tuple(results))
+        evaluations = ListComp._dissolved_iterable(self, iterable)
+        return SetComp._make_set(self, tuple(results), evaluations)
 
-    def _make_set(self, elements: tuple) -> "Node":
+    def _make_set(self, elements: tuple, evaluations: tuple = ()) -> "Node":
         from .backend import Children, materialize
         from .shadow import ShadowNode, _handle_of
 
-        slots = (("elts", Children(tuple(_handle_of(e) for e in elements))),)
+        slots = (
+            ("elts", Children(tuple(_handle_of(e) for e in elements))),
+            *ListComp._evaluations_slot(evaluations),
+        )
         return materialize(
             self.unit, ShadowNode("Set", self.span, slots), self.reporter
         )
@@ -23662,9 +23743,10 @@ class DictComp(Expression):
                 pairs.append(pair)
             else:
                 pairs[prior] = pair
-        return DictComp._make_dict(self, tuple(pairs))
+        evaluations = ListComp._dissolved_iterable(self, iterable)
+        return DictComp._make_dict(self, tuple(pairs), evaluations)
 
-    def _make_dict(self, pairs: tuple) -> "Node":
+    def _make_dict(self, pairs: tuple, evaluations: tuple = ()) -> "Node":
         from .backend import Child, Children, materialize
         from .shadow import ShadowNode, _handle_of
 
@@ -23680,7 +23762,14 @@ class DictComp(Expression):
             items.append(_handle_of(item))
         return materialize(
             self.unit,
-            ShadowNode("Dict", self.span, (("items", Children(tuple(items))),)),
+            ShadowNode(
+                "Dict",
+                self.span,
+                (
+                    ("items", Children(tuple(items))),
+                    *ListComp._evaluations_slot(evaluations),
+                ),
+            ),
             self.reporter,
         )
 
@@ -27589,8 +27678,13 @@ class List(Expression):
                 ),
                 site=self.fragment,
             )
+        # A dissolved comprehension evaluates its iterable before its first
+        # member (``ListComp._dissolved_iterable``).
+        evaluated_first = ListComp._evaluated_first_sugars(self)
         return ListSugar(
-            elements=tuple(e.sugar() for e in self.elts), site=self.fragment
+            elements=tuple(e.sugar() for e in self.elts),
+            site=self.fragment,
+            evaluated_first=evaluated_first,
         )
 
 

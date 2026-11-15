@@ -21,8 +21,15 @@ from sugar_lift_py_tests.sugar.sugar_base import (
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
 
-def _reduce_into(element_sugars, ctx, build):
+def _reduce_into(element_sugars, ctx, build, evaluated_first=()):
     """Reduce elements in source order, then hand the tuple of values to ``build``.
+
+    ``evaluated_first``: what Python evaluates before the first element of a
+    comprehension the unroll dissolved into this display -- its iterable
+    (``For._iterable_evaluations``).  Each is reduced as the first operands
+    are, so its faces (a halt, a callee's stores, a walrus bind) are the
+    display's, and its value is consumed and never held: each member is the
+    item the unroll took.
 
     LAW: an element's outcome is not one unconditional value. ``and_then`` is the
     one door: an ``ExitSet`` threads every completed arm (a constructed raise
@@ -51,32 +58,44 @@ def _reduce_into(element_sugars, ctx, build):
     # holds like any other floor value) and leaves its halted arms at the exit
     # level. The accumulator itself cannot be factored -- its completed value is
     # the growing tuple this fold is building.
-    outcome = reduce_operands(element_sugars, ctx, factored=True)
+    outcome = reduce_operands((*evaluated_first, *element_sugars), ctx, factored=True)
     # The elements are operands of the display: a walrus in one (``[(x :=
     # 5)]``) binds once, through the one operand door, and the display holds
     # the values the elements present.
+    skip = len(evaluated_first)
 
     if getattr(build, "returns_outcome", False):
         built = outcome.and_then(
-            lambda values: consume_operands(lambda *held: build(held), *values)
+            lambda values: consume_operands(lambda *held: build(held[skip:]), *values)
         )
     else:
         built = outcome.and_then(
             lambda values: consume_operands(
-                lambda *held: ExitSet.completed(build(held)), *values
+                lambda *held: ExitSet.completed(build(held[skip:])), *values
             )
         )
     return built
+
+
+def _require_evaluated_first(sugars, *, owner: str) -> None:
+    for sugar in sugars:
+        require_constructed_term_sugar(sugar, owner=owner)
 
 
 @dataclass(frozen=True)
 class ListSugar(ConstructedTermSugar):
     elements: tuple[ConstructedTermSugar, ...]
     site: object = dataclass_field(compare=False)
+    # A dissolved comprehension's iterable, evaluated before the first
+    # element (``_reduce_into``).
+    evaluated_first: tuple[ConstructedTermSugar, ...] = ()
 
     def __post_init__(self) -> None:
         for element in self.elements:
             require_constructed_term_sugar(element, owner="ListSugar.elements")
+        _require_evaluated_first(
+            self.evaluated_first, owner="ListSugar.evaluated_first"
+        )
 
     @classmethod
     def witnesses(cls):
@@ -98,7 +117,7 @@ class ListSugar(ConstructedTermSugar):
         def ListValue(held):  # noqa: N802 -- the owner name the fold reports
             return list_value.ListValue(held, allocation=allocation)
 
-        return _reduce_into(self.elements, ctx, ListValue)
+        return _reduce_into(self.elements, ctx, ListValue, self.evaluated_first)
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor
@@ -188,10 +207,13 @@ def _built_at_runtime(element_sugars) -> bool:
 class SetSugar(ConstructedTermSugar):
     elements: tuple[ConstructedTermSugar, ...]
     site: object = dataclass_field(compare=False)
+    # A dissolved comprehension's iterable (``ListSugar.evaluated_first``).
+    evaluated_first: tuple[ConstructedTermSugar, ...] = ()
 
     def __post_init__(self) -> None:
         for element in self.elements:
             require_constructed_term_sugar(element, owner="SetSugar.elements")
+        _require_evaluated_first(self.evaluated_first, owner="SetSugar.evaluated_first")
 
     @classmethod
     def witnesses(cls):
@@ -210,7 +232,7 @@ class SetSugar(ConstructedTermSugar):
             return _built_set(values, site)
 
         SetValue.returns_outcome = True
-        return _reduce_into(self.elements, ctx, SetValue)
+        return _reduce_into(self.elements, ctx, SetValue, self.evaluated_first)
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor
@@ -233,6 +255,8 @@ class DictSugar(ConstructedTermSugar):
     keys: tuple[ConstructedTermSugar, ...]
     values: tuple[ConstructedTermSugar, ...]
     site: object = dataclass_field(compare=False)
+    # A dissolved comprehension's iterable (``ListSugar.evaluated_first``).
+    evaluated_first: tuple[ConstructedTermSugar, ...] = ()
 
     def __post_init__(self) -> None:
         if len(self.keys) != len(self.values):
@@ -241,6 +265,9 @@ class DictSugar(ConstructedTermSugar):
             require_constructed_term_sugar(key, owner="DictSugar.keys")
         for value in self.values:
             require_constructed_term_sugar(value, owner="DictSugar.values")
+        _require_evaluated_first(
+            self.evaluated_first, owner="DictSugar.evaluated_first"
+        )
 
     @classmethod
     def witnesses(cls):
@@ -266,7 +293,7 @@ class DictSugar(ConstructedTermSugar):
             return _built_dict(tuple(zip(flat[0::2], flat[1::2])), site)
 
         DictValue.returns_outcome = True
-        return _reduce_into(interleaved, ctx, DictValue)
+        return _reduce_into(interleaved, ctx, DictValue, self.evaluated_first)
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor
