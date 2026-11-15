@@ -21947,11 +21947,16 @@ class Lambda(Expression):
 
         frame = self.source_visible_call_frame()
         # The body reads a module global as its frame does: where it is
-        # called (``_module_global_references``), never by name.
+        # called (``_module_global_references``), never by name.  Substituted
+        # through the one field door, so a body the substitution replaced
+        # answers the roll (``discharge_by_substitution``): a body that is the
+        # bare read of a global (``lambda x: lorem_ipsum``,
+        # ``tests/io/formats/test_to_html.py:782``) was replaced by its
+        # reference and left registered with no answer (#7757).
         body = self.body
         references = self._module_global_references()
         if references:
-            body = body.substitute(references)
+            body, _changed = self._substitute_field(body, references)
         return LambdaSugar(
             formals=tuple(param.name for param in self.params),
             body=body.sugar(),
