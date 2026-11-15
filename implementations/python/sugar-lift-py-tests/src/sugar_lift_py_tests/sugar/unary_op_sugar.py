@@ -46,61 +46,6 @@ UNARYOP_METHODS: dict[str, Callable[[Any, Any], ExitSet]] = {
 }
 
 
-def refuse_undecided_unary_truth(value, site) -> None:
-    """Keep undecided ``bool(operand)`` dispatch loud at the UnaryOp ``not`` producer.
-
-    Python evaluates ``not x`` by first taking ``bool(x)``.  When the operand
-    denotes a value but its runtime type is undecided, native ``__bool__`` /
-    ``__len__`` may complete or raise (``Series`` / ``NA`` raise ``TypeError`` /
-    ``ValueError``).  Emitting ``py.truthy`` invents a total completion; inventing
-    an exception identity invents the failure.  Both stay refused until
-    source-visible type testimony decides.
-
-    Formals are not refused here: their type arrives at caller discharge on the
-    existing ``NativeOperationExitCarrierV1`` (``unary_truth``).
-
-    ``CallSiteValue`` is the established exception: its ``truth`` floor already
-    emits ``PredicateValue(py.truthy(term))`` over the authenticated call term
-    (#4993 / #5147).  That is coordinate testimony, not an invented native
-    ``bool`` completion.  Refusing it here collapses installed-source manager
-    derivation (``pytest.raises`` ``__exit__`` uses ``not self.…`` over call
-    coordinates) and zeroes every producer → ExitSet → assertion-boundary route.
-    """
-    if getattr(value, "formal_coordinate", None) is not None:
-        return
-
-    denotes = getattr(value, "denotes_value", None)
-    decided = getattr(value, "runtime_type_is_decided", None)
-    if not callable(denotes) or not callable(decided):
-        return
-    if not denotes() or decided():
-        return
-
-    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-
-    # Authenticated call coordinates own a lawful truth floor; do not refuse them.
-    if isinstance(value, CallSiteValue):
-        return
-
-    from sugar_source_tree.panic import SugarNotWritten
-
-    raise SugarNotWritten(
-        blame=site,
-        owner="unary_operation_exception_floor",
-        observed=f"{type(value).__name__} not",
-        requested=(
-            "source-visible native truth testimony selecting completion "
-            "or an authenticated exceptional exit"
-        ),
-        fix=(
-            "preserve the undecided third value at the UnaryOp producer; "
-            "resolve native operand types and their __bool__/__len__ bodies "
-            "from source, or retain this named refusal without inventing an "
-            "exception identity"
-        ),
-    )
-
-
 @dataclass(frozen=True)
 class UnaryOpSugar(ConstructedTermSugar):
     op_kind: str
@@ -196,8 +141,19 @@ class UnaryOpSugar(ConstructedTermSugar):
                         coordinates=(formal_coordinate, None),
                     )
 
-                refuse_undecided_unary_truth(value, self.site)
-                return value.truth(self.site)
+                # ``bool(value)`` through the one truth rule ``a and b`` and
+                # ``a != b`` take it by: an undecided value is its two faces
+                # (the truth completes under its guard or halts
+                # undetermined), never a separate refusal here.
+                from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
+
+                return truth_of(
+                    value,
+                    self.site,
+                    operator="not",
+                    owner="UnaryOpSugar.not",
+                    floor="unary_operation_exception_floor",
+                )
 
             # Negate only completed truth faces.  A raise (a Halted exit)
             # bypasses this step (no bool to flip).  The operand goes through

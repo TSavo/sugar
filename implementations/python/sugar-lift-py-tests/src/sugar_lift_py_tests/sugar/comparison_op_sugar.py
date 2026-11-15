@@ -463,6 +463,26 @@ class ComparisonOpSugar(ConstructedTermSugar):
             ORDERING_FLOOR_OPERATIONS[method](left, right, self.site, ctx),
         )
 
+    def _negated_truth(self, result):
+        """``not result`` for the equality result ``a != b`` negates.
+
+        The result is whatever ``a == b`` completed with: a decided boolean,
+        or -- for an equality its caller left unanswered, or one whose
+        operands' types are undecided -- a value whose ``bool`` may run
+        code.  Its truth is taken through the one truth rule
+        (``bool_op_sugar.truth_of``) and only the completed truth is negated;
+        the value is never asked to negate itself.
+        """
+        from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
+
+        return truth_of(
+            result,
+            self.site,
+            operator="!=",
+            owner="ComparisonOpSugar.NotEq",
+            floor="comparison_operation_exception_floor",
+        ).and_then(lambda truth: truth.negate())
+
     def _apply(self, left, right, ctx):
         if self.op_kind == "NotEq":
             from sugar_lift_py_tests.floor.object_value import ObjectValue
@@ -480,19 +500,20 @@ class ComparisonOpSugar(ConstructedTermSugar):
                     requested="authenticated native __ne__ dispatch",
                     fix="construct __ne__ method order and invoke its source frame",
                 )
-            # Equality law: a != b is not (a == b); dual-edge then negate.
+            # Equality law: a != b is not (a == b); dual-edge, then negate
+            # the equality result's truth.
             deferred = defer_formal_native_operation(
                 left, right, self.site, operator="equals"
             )
             if deferred is not None:
-                return deferred.and_then(lambda predicate: predicate.negate())
+                return deferred.and_then(self._negated_truth)
             return publish_undecided_equality_edges(
                 left,
                 right,
                 self.site,
                 self.op_kind,
                 left.equals(right, self.site, ctx),
-            ).and_then(lambda predicate: predicate.negate())
+            ).and_then(self._negated_truth)
         if self.op_kind == "Is":
             return construct_identity_comparison(left, right, self.site, negated=False)
         if self.op_kind == "IsNot":

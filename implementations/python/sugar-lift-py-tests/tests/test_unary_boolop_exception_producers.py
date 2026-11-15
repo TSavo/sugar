@@ -184,19 +184,46 @@ def test_unary_plus_concrete_integer_truthful_twin_folds() -> None:
     assert outcome == ExitSet.completed(TermValue(5))
 
 
-def test_undecided_not_operand_refuses_invented_truth() -> None:
-    """``not obj`` cannot invent ``py.truthy`` when ``bool(obj)`` is undecided."""
+def _assert_two_faced_not(outcome, operand_term) -> None:
+    """``not obj``: undecided ``bool(obj)`` is the one truth rule's two faces.
+
+    The truth completes only under ``python:truth.completes`` over the
+    operand's term, and only that completed truth is negated; the complement
+    halts with an UndeterminedRaiseEffect naming no exception type.
+    """
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.ir import py_truthy
+    from sugar_lift_py_tests.outcome.exit_set import Completed
+
+    assert isinstance(outcome, ExitSet)
+    halted = [edge for edge in outcome.exits if isinstance(edge, Halted)]
+    assert len(halted) == 1
+    assert type(halted[0].effect) is UndeterminedRaiseEffect
+    assert halted[0].effect.producer_node_owner == "UnaryOpSugar.not"
+    assert "python:truth.completes" in repr(halted[0].guard)
+    assert repr(operand_term) in repr(halted[0].guard)
+    assert "TypeError" not in repr(halted[0])
+    assert "ValueError" not in repr(halted[0])
+    completed = [edge for edge in outcome.exits if isinstance(edge, Completed)]
+    assert len(completed) == 1
+    assert "python:truth.completes" in repr(completed[0].guard)
+    assert isinstance(completed[0].value, PredicateValue)
+    assert completed[0].value.formula == not_(py_truthy(operand_term))
+
+
+def test_undecided_not_operand_is_the_two_faced_truth() -> None:
+    """``not obj`` takes ``bool(obj)`` by the one truth rule, never a refusal.
+
+    No ``py.truthy`` completion is claimed unguarded and no exception
+    identity is invented.
+    """
     from sugar_lift_py_tests.sugar.unary_op_sugar import UnaryOpSugar
 
-    with pytest.raises(SugarNotWritten) as caught:
-        UnaryOpSugar("Not", NameSugar("obj1", _Site()), _Site()).desugar(None)
-
-    refusal = caught.value
-    assert refusal.owner == "unary_operation_exception_floor"
-    assert refusal.observed == "SymbolicValue not"
-    assert "authenticated exceptional exit" in refusal.requested
-    assert "TypeError" not in str(refusal)
-    assert "ValueError" not in str(refusal)
+    outcome = UnaryOpSugar(
+        "Not", NameSugar("obj1", _Site()), _FragmentSite()
+    ).desugar(None)
+    _assert_two_faced_not(outcome, make_var("obj1"))
 
 
 class _EffectSugar:
@@ -403,7 +430,9 @@ def test_pandas_unary_sites_stay_source_undecided() -> None:
     - ``tests/generic/test_generic.py`` ``not obj1`` (ValueError)
     - ``tests/scalar/test_na_scalar.py`` ``not NA`` (TypeError)
     Source does not state the operand runtime type at the UnaryOp, so the
-    producer cannot mint the exception identity — only the named refusal.
+    producer cannot mint the exception identity.  The arithmetic operators
+    stay the named refusal; ``not obj1`` is the one truth rule's two faces,
+    its raise standing only as the UndeterminedRaiseEffect face.
     """
     from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
     from sugar_lift_py_tests.context_manager_resolution import (
@@ -426,6 +455,7 @@ def test_pandas_unary_sites_stay_source_undecided() -> None:
         ("tests/generic/test_generic.py", 156, "not"),
         ("tests/scalar/test_na_scalar.py", 48, "not"),
     )
+    two_faced = {("tests/generic/test_generic.py", 156): make_var("obj1")}
     for rel, line, operator in cases:
         path = corpus.root / rel
         source = path.read_text(encoding="utf-8")
@@ -440,6 +470,11 @@ def test_pandas_unary_sites_stay_source_undecided() -> None:
             if isinstance(node, UnaryOp) and node.line_col_span().start_line == line
         )
         assert len(matches) == 1, (rel, line, matches)
+        if (rel, line) in two_faced:
+            _assert_two_faced_not(
+                matches[0].sugar().desugar(None), two_faced[(rel, line)]
+            )
+            continue
         with pytest.raises(SugarNotWritten) as raised:
             matches[0].sugar().desugar(None)
         refusal = raised.value
