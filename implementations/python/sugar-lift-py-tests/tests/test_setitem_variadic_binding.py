@@ -16,12 +16,16 @@ Binding (SourceCallFrame.bind_actuals only — no second binder):
     variadic-keyword formal; setitem stores that mapping as the value
   - empty * / ** are honest empty TupleValue / DictValue (never fabricated
     None or omitted)
-  - invalid index: named IndexError; exact pre_effect_state identity
+  - invalid index: named IndexError; the helper's own halt keeps the state
+    the store began from
   - dropped/reordered variadic twins fail (lying mint ≠ truthful store)
 
-Helper alone remains Undischarged setitem on exact formals
-``(obj, key, values)``. Does not touch carrier/ExitSet, store
-producer/projector/Floor.
+Helper alone is the dispatched ``__setitem__`` edge since #8857 (``obj``'s
+class is an input of its contract), over ``(obj, key, values)``; a caller
+supplies each formal by name and the class of each decided value
+(``py.class``).  The discharge tests read the ``setitem`` carrier a store on
+a formal whose class is no input mints, over the same formal coordinates.
+Does not touch carrier/ExitSet, store producer/projector/Floor.
 """
 
 from __future__ import annotations
@@ -61,9 +65,99 @@ def _tree(source: str, name: str = "setitem_variadic.py") -> SourceFile:
 
 
 def _helper(program: str):
+    """``helper`` alone and its own proof's reduction.
+
+    ``obj`` is stored into and used no other way, so its class is an input
+    of ``helper``'s contract (``nodes._receiver_class_parameters``; the
+    variadic ``values`` never is one) and ``obj[key] = values`` is
+    ``type(obj).__setitem__(obj, key, values)``: the dispatched edge
+    (``receiver_dispatch.dispatch_edge_call``, #8857), owed as it stands,
+    resolved at prove at the class each caller binds (``list.__setitem__``'s
+    law, #8864).  It is no ``setitem`` carrier."""
     tree = _tree(program, "helper_alone.py")
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     return function, function.sugar().desugar(None)
+
+
+def _dispatched_halt(outcome, method: str = "__setitem__"):
+    """The one halt the dispatched item operation's edge owes in a helper's
+    own proof, under the owner every unanswered call's halt names, its
+    member ``python:dispatch:<method>`` owed."""
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == f"UnknownCallee:dispatch:{method}"
+    ]
+    assert len(halts) == 1, outcome
+    assert f"python:dispatch:{method}" in {
+        call.symbol for call in owed_calls(outcome)
+    }
+    return halts[0]
+
+
+def _dispatched_call(outcome, method: str = "__setitem__"):
+    """The dispatched item operation's coordinate ``call:dispatch:<method>(
+    <receiver>, <operands>..., py.class("0", class:<receiver>))``, read off
+    the halt its edge owes (``python:raised(<call term>, <occurrence>)``)."""
+    from sugar_lift_py_tests.call_symbol import call_symbol
+
+    raised = _dispatched_halt(outcome, method).effect.raised_by_call
+    assert raised.name == "python:raised", raised
+    call = raised.args[0]
+    assert call.name == call_symbol(f"dispatch:{method}"), call
+    return call
+
+
+def _class_input(rides, receiver: str) -> None:
+    """``py.class("0", class:<receiver>)``: the dispatched call's receiver
+    class, the class input of the receiver's parameter."""
+    from sugar_lift_py_tests.ir import str_const
+
+    assert rides.name == "py.class", rides
+    assert rides.args[0] == str_const("0")
+    assert rides.args[1].name == f"class:{receiver}", rides
+
+
+def _carrier(program: str):
+    """The ``setitem`` carrier ``SubscriptStoreEffectSugar.project_setitem``
+    mints for a store on a formal whose class is no input of its contract
+    (an ``obj`` its body also reads bare, hands to code, or a nested
+    function reads): one operation waiting for the caller's actuals, over
+    ``helper``'s own formal coordinates (the variadic one included), in
+    discharge order.  Its discharge is the Floor ``setitem`` projector; the
+    dispatched helper above never takes it."""
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.sugar.store_effect_sugar import (
+        SubscriptStoreEffectSugar,
+    )
+
+    function, _outcome = _helper(program)
+    obj_c, key_c, values_c = function.formal_coordinates()
+    carrier = SubscriptStoreEffectSugar.mint_setitem_carrier(
+        site=function.body[0].fragment,
+        receiver=SymbolicValue(make_var("obj"), obj_c),
+        index=SymbolicValue(make_var("key"), key_c),
+        value=SymbolicValue(make_var("values"), values_c),
+    )
+    return function, carrier
+
+
+def _class(key: str, name: str):
+    """``py.class(<key>, python:builtin("<name>"))``: the class of an actual
+    the caller decides, after the actuals (#8857).  For a signature that
+    packs, every formal is keyed by its name (``definition_edge_call``)."""
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.receiver_dispatch import (
+        CLASS_ARGUMENT,
+        builtin_class_term,
+    )
+
+    return ctor(CLASS_ARGUMENT, [str_const(key), builtin_class_term(name)])
 
 
 def _call(program: str, actuals: str):
@@ -126,7 +220,11 @@ def _identity(name: str):
 
 
 def _stored_list(completed_face) -> ListValue:
+    """The store's post-state list: the projector's own post (a carrier with
+    no continuation), or a function universe's."""
     assert isinstance(completed_face, Completed)
+    if isinstance(completed_face.value, ListValue):
+        return completed_face.value
     record = getattr(completed_face.value, "record", None)
     assert record is not None
     lists = [s for s in record.statements if isinstance(s, ListValue)]
@@ -140,7 +238,25 @@ def _stored_list(completed_face) -> ListValue:
 
 
 def test_helper_star_alone_is_undischarged_setitem_with_variadic_positional() -> None:
-    function, pending = _helper(HELPER_STAR)
+    # Expected shape changed (#8857): ``obj``'s class is an input, so the
+    # store is the dispatched ``__setitem__`` edge over ``obj, key, values``
+    # in Python's order, owed, its halt kept with the state the store began
+    # from; the carrier stands only where the class is no input
+    # (``_carrier``).
+    function, outcome = _helper(HELPER_STAR)
+    call = _dispatched_call(outcome)
+    assert [arg.name for arg in call.args[:3]] == ["obj", "key", "values"]
+    _class_input(call.args[3], "obj")
+    assert _dispatched_halt(outcome).state is not None
+    assert [face for face in outcome.exits if isinstance(face, Completed)]
+    kinds = tuple(c.parameter_kind for c in function.sugar().formal_coordinates)
+    assert kinds == (
+        "positional-or-keyword",
+        "positional-or-keyword",
+        "variadic-positional",
+    )
+
+    _, pending = _carrier(HELPER_STAR)
     assert isinstance(pending, NativeOperationExitCarrierV1)
     assert pending.demand.operator == "setitem"
     assert tuple(value.term.name for value in pending.operands) == (
@@ -148,16 +264,9 @@ def test_helper_star_alone_is_undischarged_setitem_with_variadic_positional() ->
         "key",
         "values",
     )
-    kinds = tuple(c.parameter_kind for c in function.sugar().formal_coordinates)
-    assert kinds == (
-        "positional-or-keyword",
-        "positional-or-keyword",
-        "variadic-positional",
-    )
     assert pending.demand.operand_coordinate_cids == tuple(
         c.coordinate_cid for c in function.sugar().formal_coordinates
     )
-    assert pending.pre_effect_state is not None
     parameters = tuple(
         inspect.signature(_NATIVE_OPERATION_PROJECTORS["setitem"]).parameters
     )
@@ -165,7 +274,12 @@ def test_helper_star_alone_is_undischarged_setitem_with_variadic_positional() ->
 
 
 def test_helper_kw_alone_is_undischarged_setitem_with_variadic_keyword() -> None:
-    function, pending = _helper(HELPER_KW)
+    # Expected shape changed (#8857): the dispatched edge, as above.
+    function, outcome = _helper(HELPER_KW)
+    call = _dispatched_call(outcome)
+    assert [arg.name for arg in call.args[:3]] == ["obj", "key", "values"]
+    _class_input(call.args[3], "obj")
+    _, pending = _carrier(HELPER_KW)
     assert isinstance(pending, NativeOperationExitCarrierV1)
     assert pending.demand.operator == "setitem"
     kinds = tuple(c.parameter_kind for c in function.sugar().formal_coordinates)
@@ -202,16 +316,24 @@ def test_remaining_positionals_become_authenticated_tuple_store_value() -> None:
         TermValue(2),
         TermValue(3),
     )
+    # After the formals ride the classes the caller decides, each keyed by
+    # its formal's name where the signature packs (#8857,
+    # ``definition_edge_call``): the ``[0]`` it built a ``list`` (what
+    # ``class:obj`` binds at prove), the key an ``int``, the pack a
+    # ``tuple``.
     assert list(_coordinate(edge).args[1:]) == [
         _formal(edge, "key", TermValue(0)),
         _formal(
             edge, "values", TupleValue((TermValue(1), TermValue(2), TermValue(3)))
         ),
+        _class("obj", "list"),
+        _class("key", "int"),
+        _class("values", "tuple"),
     ]
 
 
 def test_star_values_discharge_stores_tuple_at_index() -> None:
-    _, pending = _helper(HELPER_STAR)
+    _, pending = _carrier(HELPER_STAR)
     obj_cid, key_cid, values_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
         None,
@@ -256,11 +378,14 @@ def test_extra_keywords_become_authenticated_mapping_store_value() -> None:
                 ),
             ),
         ),
+        _class("obj", "list"),
+        _class("key", "int"),
+        _class("values", "dict"),
     ]
 
 
 def test_kw_values_discharge_stores_dict_at_index() -> None:
-    _, pending = _helper(HELPER_KW)
+    _, pending = _carrier(HELPER_KW)
     obj_cid, key_cid, values_cid = pending.demand.operand_coordinate_cids
     mapping = fresh(DictValue, ((StringValue("a"), TermValue(1)),))
     exits = pending.discharge(
@@ -293,7 +418,7 @@ def test_empty_kw_is_honest_empty_dict() -> None:
 
 
 def test_empty_star_discharge_stores_empty_tuple() -> None:
-    _, pending = _helper(HELPER_STAR)
+    _, pending = _carrier(HELPER_STAR)
     obj_cid, key_cid, values_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
         None,
@@ -313,8 +438,14 @@ def test_empty_star_discharge_stores_empty_tuple() -> None:
 
 
 def test_invalid_index_named_indexerror_with_exact_pre_effect_state() -> None:
-    _, pending = _helper(HELPER_STAR)
-    assert pending.pre_effect_state is not None
+    # Expected shape changed (#8857): the helper's own store is the
+    # dispatched edge, whose halt leaves with the state the store began
+    # from (the block reducer's one record, ``_halt_state``); the named
+    # IndexError is the carrier's projector, discharged below, and with the
+    # dispatched edge it is ``list.__setitem__``'s law at prove (#8864).
+    _, outcome = _helper(HELPER_STAR)
+    assert _dispatched_halt(outcome).state is not None
+    _, pending = _carrier(HELPER_STAR)
     obj_cid, key_cid, values_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
         None,
@@ -335,8 +466,6 @@ def test_invalid_index_named_indexerror_with_exact_pre_effect_state() -> None:
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
-    assert halted.state is not None
-    assert pending.pre_effect_state.state is halted.state
     assert not isinstance(getattr(halted, "value", None), UniverseValue)
 
 
@@ -352,11 +481,14 @@ def test_source_caller_invalid_index_preserves_state() -> None:
     assert list(_coordinate(edge).args[1:]) == [
         _formal(edge, "key", TermValue(1)),
         _formal(edge, "values", TupleValue((TermValue(9),))),
+        _class("obj", "list"),
+        _class("key", "int"),
+        _class("values", "tuple"),
     ]
 
 
 def test_invalid_index_discrimination_not_completed() -> None:
-    _, pending = _helper(HELPER_STAR)
+    _, pending = _carrier(HELPER_STAR)
     obj_cid, key_cid, values_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
         None,
@@ -368,8 +500,11 @@ def test_invalid_index_discrimination_not_completed() -> None:
     )
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Completed)
+    # The helper's own halt is never stateless: it leaves with the state the
+    # store began from.
+    _, outcome = _helper(HELPER_STAR)
     with pytest.raises(AssertionError):
-        assert exits.exits[0].state is None
+        assert _dispatched_halt(outcome).state is None
 
 
 # ---------------------------------------------------------------------------
@@ -380,7 +515,7 @@ def test_invalid_index_discrimination_not_completed() -> None:
 def test_dropped_variadic_value_coordinate_is_undischarged() -> None:
     """Omitting the *values formal from discharge stays loud — no green store:
     the store is the cited unanswered face (#7825)."""
-    _, pending = _helper(HELPER_STAR)
+    _, pending = _carrier(HELPER_STAR)
     obj_cid, key_cid, _values_cid = pending.demand.operand_coordinate_cids
     from sugar_lift_py_tests.unanswered_calls import owed_calls
 
@@ -405,7 +540,7 @@ def test_reordered_variadic_twin_fails() -> None:
     """
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
-    function, truthful = _helper(HELPER_STAR)
+    function, truthful = _carrier(HELPER_STAR)
     site = function.body[0].fragment
     obj_c, key_c, values_c = truthful.coordinates
     lying = NativeOperationExitCarrierV1.mint(

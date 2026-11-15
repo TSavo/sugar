@@ -206,6 +206,31 @@ def _formal(call, name: str, value):
     return ctor(form, [str_const(name), value.to_term(owner=str(call.site))])
 
 
+def _classes() -> list:
+    """After the formals ride the classes the caller decides, each keyed by
+    its formal's name where the signature packs (#8857,
+    ``definition_edge_call``): the ``[0]`` it built a ``list``, ``i`` and
+    ``p`` each an ``int``, the pack a ``tuple``.  (``a`` is stored into
+    through an unpack target, which is no whole item target, so ``f``'s
+    contract takes no ``class:a`` and its store stays the carrier; the
+    caller supplies the classes all the same.)"""
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.receiver_dispatch import (
+        CLASS_ARGUMENT,
+        builtin_class_term,
+    )
+
+    return [
+        ctor(CLASS_ARGUMENT, [str_const(key), builtin_class_term(name)])
+        for key, name in (
+            ("a", "list"),
+            ("i", "int"),
+            ("p", "int"),
+            ("values", "tuple"),
+        )
+    ]
+
+
 def test_source_caller_packs_remaining_positionals_into_values() -> None:
     call = _the_call("[0], 0, 7, 1, 2")
     assert call.arg_values == (
@@ -219,6 +244,7 @@ def test_source_caller_packs_remaining_positionals_into_values() -> None:
         _formal(call, "i", TermValue(0)),
         _formal(call, "p", TermValue(7)),
         _formal(call, "values", TupleValue((TermValue(1), TermValue(2)))),
+        *_classes(),
     ]
 
 
@@ -292,6 +318,7 @@ def test_source_caller_variadic_store_halt_no_fabricated_completion() -> None:
         _formal(call, "i", TermValue(5)),
         _formal(call, "p", TermValue(7)),
         _formal(call, "values", TupleValue((TermValue(1), TermValue(2)))),
+        *_classes(),
     ]
 
 
