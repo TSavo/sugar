@@ -408,6 +408,7 @@ def test_a_store_through_one_name_reaches_the_name_given_the_same_object() -> No
     ret = body[-1]
     assert isinstance(ret, Return)
     # ``a`` was given ``r``'s list; ``r.append(1)`` rebinds both to the list
-    # after the append, so ``a`` is never read as the list before it.
+    # after the append (the one mutation door's post-state, ``PathAfterCall``),
+    # so ``a`` is never read as the list before it.
     assert not isinstance(ret.value, EvaluationRef)
-    assert ret.value.kind == "BuiltinContainerProjection"
+    assert ret.value.kind == "PathAfterCall"
