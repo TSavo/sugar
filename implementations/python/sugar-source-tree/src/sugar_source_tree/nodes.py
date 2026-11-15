@@ -27575,8 +27575,10 @@ def _receiver_uses(definition):
     (its body runs after its call returned):
 
     - ``received``: each name the body calls a method of (``n.m(...)``),
-      stores or deletes an item of as a whole target (``n[k] = v``,
-      ``del n[k]``), or stores a field on (``n.f = v``; its target is also
+      stores an item of (``n[k] = v``, and the same store as an unpack's or
+      a ``for`` target's leaf: ``x, n[k] = v``, ``for n[k] in xs``),
+      deletes an item of as a whole target (``del n[k]``), or stores a
+      field on (``n.f = v``; its target is also
       an attribute use, ``read``, so the name is never settled);
     - ``blocked``: each name read any other way -- bare, as an item read,
       through a field's method (``n.x.f()``), or by a nested function,
@@ -27605,11 +27607,25 @@ def _receiver_uses(definition):
         if isinstance(node, Call) and isinstance(node.func, Attribute)
     }
     # ``n[k] = v`` and ``del n[k]``: an item store or delete of a name's
-    # object, each a whole target of its statement.
+    # object.  A store is one whatever its spelling: a whole target, or a
+    # store leaf of an unpack (``x, n[k] = v``) or of a ``for`` target
+    # (``for n[k] in xs``), each its own single-target store statement
+    # (``_store_leaves``, ``Assign._store_target_statement``) through the
+    # one container-mutation door, so the same dispatched ``__setitem__``
+    # (``PathContainerCallSugar._dispatched_item_operation``).  A delete is
+    # a whole target of its statement.
     item_targets = {
+        id(leaf.value)
+        for node in nodes
+        if isinstance(node, (Assign, For))
+        for leaf in _store_leaves(
+            node.targets if isinstance(node, Assign) else (node.target,)
+        )
+        if isinstance(leaf, Subscript) and isinstance(leaf.value, Name)
+    } | {
         id(target.value)
         for node in nodes
-        if isinstance(node, (Assign, Delete))
+        if isinstance(node, Delete)
         for target in node.targets
         if isinstance(target, Subscript) and isinstance(target.value, Name)
     }
