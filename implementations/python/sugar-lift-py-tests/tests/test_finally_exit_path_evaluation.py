@@ -20,6 +20,7 @@ from sugar_lift_py_tests.sugar.if_sugar import _arm_evaluations
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import (
     AugAssign,
+    ContainerMutationStatement,
     EvaluationRef,
     FunctionDef,
     Return,
@@ -80,8 +81,13 @@ def _keys(source: str) -> tuple[str, str]:
 def test_each_exit_path_of_finally_is_its_own_evaluation() -> None:
     _rewritten, completion, halted = _try_copies(RETURN_IN_FINALLY)
     on_completion, on_halt = completion[0], halted[0]
-    assert isinstance(on_completion, AugAssign)
-    assert isinstance(on_halt, AugAssign)
+    # ``x += 10`` is the one in-place operation statement on both copies
+    # (``ContainerMutationStatement``, the receiver's value decides it at
+    # reduce); no copy is left as the raw ``AugAssign``.
+    assert isinstance(on_completion, ContainerMutationStatement)
+    assert isinstance(on_halt, ContainerMutationStatement)
+    assert not isinstance(on_completion, AugAssign)
+    assert not isinstance(on_halt, AugAssign)
     assert isinstance(on_completion.evaluation, str)
     assert isinstance(on_halt.evaluation, str)
     assert on_completion.evaluation != on_halt.evaluation
