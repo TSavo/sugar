@@ -25301,6 +25301,7 @@ class DecoratedDefinitionRef(Expression):
             getattr(self, "decorator_bindings", ()) or (),
             self.fragment,
             evaluation=getattr(self, "evaluation", None),
+            reference=self,
         )
 
 
@@ -25613,6 +25614,9 @@ def _decorated_statement_sugar(statement):
     own = copy.copy(application)
     object.__setattr__(own, "evaluation", None)
     object.__setattr__(own, "runs_statement", True)
+    # It is the statement, never a read of the name asked for again where it
+    # reduces (``DecoratorApplicationSugar.reference``).
+    object.__setattr__(own, "reference", None)
     evaluation = getattr(value, "evaluation", None)
     if not isinstance(evaluation, str):
         return own
@@ -25627,11 +25631,14 @@ def _decorated_statement_sugar(statement):
     )
 
 
-def _decorator_application_sugar(definition, bindings, site, *, evaluation=None):
+def _decorator_application_sugar(
+    definition, bindings, site, *, evaluation=None, reference=None
+):
     """The one decorator application: ``definition``'s value with each of its
     decorators applied, innermost first (``DecoratorApplicationSugar``),
     read through the statement's evaluation key ``evaluation`` wherever the
-    statement bound it.
+    statement bound it.  ``reference`` is the ``DecoratedDefinitionRef`` this
+    is the sugar of.
 
     Each decorator is decided from its binding where the statement runs:
 
@@ -25672,6 +25679,22 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
     citation (``DecoratorApplicationSugar.uncarried``).  Only a genuine
     construction failure (the application reading its own result, a
     definition with no frame) refuses.
+
+    A read constructed while this statement's application is under
+    construction up the stack holds no application.  It reads the
+    statement's key where a reduction bound it.  Where none did:
+
+    - a ``class``'s name is the application, asked for again where the read
+      reduces (``DecoratorApplicationSugar._application_read_again``, through
+      ``reference``).  The class sugar constructs its methods, so a method
+      that reads the class's name (``Box()`` inside ``Box.run``) is
+      constructed under the class statement's application; but the class
+      statement's value never runs a method's body, and the method reads the
+      name when it is called, after the statement ran.  The cycle is the
+      construction's, not the program's;
+    - a ``def``'s own name read by its body is the recursion seat: calling
+      the decorators' result runs that body again.  It is refused by name
+      where it reduces, never unfolded (``source_visible_call_frame``).
     """
     from sugar_lift_py_tests.sugar.decorator_application_sugar import (
         DecoratorApplicationSugar,
@@ -25683,10 +25706,11 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
         # A decorator (or the definition's own body, constructed for its
         # value: a method of a class that reads the class's name) that reads
         # the name this statement binds: the application is under
-        # construction up the stack, never unfolded again.  The read is the
-        # key's where the statement bound it (a method called after the
-        # class statement ran reads the class it built), and is refused by
-        # name where nothing bound it (``DecoratorApplicationSugar.desugar``).
+        # construction up the stack, never unfolded again here.  The read is
+        # the key's where the statement bound it (a method called after the
+        # class statement ran reads the class it built); where nothing bound
+        # it, a class's name is the application read again at the reduce and
+        # a ``def``'s is refused by name (``DecoratorApplicationSugar.desugar``).
         return DecoratorApplicationSugar(
             definition_name=definition.name,
             decorators=(),
@@ -25698,6 +25722,7 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
             ),
             site=site,
             evaluation=evaluation,
+            reference=reference if isinstance(definition, ClassDef) else None,
         )
     module_site = (
         unit.module_execution_site(definition) if unit.module_threaded_names() else None

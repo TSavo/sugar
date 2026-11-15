@@ -47,15 +47,35 @@ function its statement built, its own frame, with no default evaluated at the
 read.  Its statement bound each default under its per-parameter key
 (``DefinitionDefaultsSugar``) and every call of the function reads those
 keys, as a call by name does.
+
+A method of a class that reads the class's name (``Box()`` inside
+``Box.run``) is constructed while the class statement's own application is
+under construction: the class sugar constructs its methods.  That read holds
+no application of its own, only the reference it is the sugar of
+(``reference``).  It reduces when the method is called, after the statement's
+construction closed: it reads the statement's key where a reduction bound it,
+and where none did it is the application, as every other read of the name is,
+asked for again through the one memo door (``_application_read_again``).
 """
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
+
+# The statements whose application a read constructed under that statement's
+# own construction is evaluating now (``_application_read_again``), by the
+# statement's name and evaluation key.  A read of the name reached while its
+# own application is being evaluated (a class body or a decorator reading the
+# name the statement has not bound yet) is the application reading its own
+# result: refused by name, never evaluated again inside itself.
+_READ_AGAIN: ContextVar[frozenset] = ContextVar(
+    "decorator_application_read_again", default=frozenset()
+)
 
 
 @dataclass(frozen=True)
@@ -159,6 +179,18 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
     # stored, for the statement to lay in its record.  False on every read of
     # the name, which runs no class body's stores.
     runs_statement: bool = field(default=False, compare=False)
+    # A read of a ``class``'s name constructed while that class statement's
+    # own application was under construction up the stack (a method of the
+    # class reading the class's name, ``nodes._decorator_application_sugar``):
+    # the reference this read is the sugar of
+    # (``nodes.DecoratedDefinitionRef``), the handle the application is asked
+    # for again by where the read reduces (``_application_read_again``).  A
+    # lookup aid, never testimony: the read is testified by its name, site
+    # and key.  None on every other application, and on the statement's own
+    # (``nodes._decorated_statement_sugar``).
+    reference: object = field(
+        default=None, compare=False, repr=False, metadata={"testimony": "lookup"}
+    )
 
     @classmethod
     def witnesses(cls):
@@ -188,17 +220,52 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
-        # The read of the name is the key's wherever the statement bound it:
-        # an application constructed while its own statement was under
-        # construction (a method of a class reading the class's name) reads
-        # the class the statement built, and refuses only where nothing
-        # bound the key.
+        # The read of the name is the key's wherever the statement bound it,
+        # and the application itself where no reduction bound it (a module
+        # function's read after import).  A read of a class's name
+        # constructed while that class statement was under construction (a
+        # method of the class reading the class's name) is the same read: the
+        # key's, else the application, asked for where the read reduces
+        # (``_application_read_again``).  Only an application that reads its
+        # own result refuses.
         bound = self._bound_by_statement(ctx)
         if bound is not None:
             return ExitSet.completed(bound)
+        if self.reference is not None:
+            return self._application_read_again(ctx)
         if self.refusal is not None:
             _refuse(self.site, self.refusal)
         return self._evaluate(self.decorators, (), ctx)
+
+    def _application_read_again(self, ctx) -> ExitSet:
+        """The application this read stands for, read where the read reduces.
+
+        The read was constructed while its class statement's application was
+        under construction up the stack, so it holds none.  That was true of
+        the construction, not of the program: a class statement's value never
+        runs its methods' bodies, and a method reads the class's name only
+        when it is called, after the statement ran.  So the reference's sugar
+        is asked for again through the one memo door (``Node.sugar``, which
+        serves a row only where the frames it asked about are open or closed
+        as they were): with the statement's construction closed it is the
+        application, and it reduces as every read of the name does.
+
+        Refused by name, as before, where the application reads its own
+        result: its construction is still open where this reduces, or it is
+        being evaluated now (``_READ_AGAIN``: a class body or a decorator
+        that reads the name before the statement bound it)."""
+        reading = _READ_AGAIN.get()
+        statement = (self.definition_name, self.evaluation)
+        if statement in reading:
+            _refuse(self.site, self.refusal)
+        application = self.reference.sugar()
+        if application.reference is not None:
+            _refuse(self.site, self.refusal)
+        token = _READ_AGAIN.set(reading | {statement})
+        try:
+            return application.desugar(ctx)
+        finally:
+            _READ_AGAIN.reset(token)
 
     def as_statement(self):
         """The statement's own application where a block runs it with no key
