@@ -32,7 +32,7 @@ use sugar_canonicalizer::{blake3_512_of, encode_jcs, jcs_cid_of_json, json_to_va
 use sugar_proof_envelope::{ed25519_verify_string, Signature};
 use tracing::debug;
 
-use crate::types::{MementoCid, StoredMember};
+use crate::types::{MementoCid, MementoPool};
 use sugar_proof_envelope::ProofGraph;
 
 /// Outcome of a handshake attempt.
@@ -99,18 +99,18 @@ fn serde_to_canonical(v: &Json) -> std::sync::Arc<Value> {
 /// `pool.bridges_by_symbol`, and that bridge CID resolves to a
 /// bridge whose targetContractCid
 /// names a contract memento with a `post` slot.
-pub fn locate_producer_post(
-    arg_term: &Option<Json>,
-    pool_mementos: &std::collections::BTreeMap<MementoCid, StoredMember>,
-    bridges_by_symbol: &std::collections::BTreeMap<String, MementoCid>,
-) -> Option<(Json, String)> {
+///
+/// Reads the pool through its accessors only: the bridge by
+/// [`MementoPool::bridge_member_for_symbol`] and the target's body by
+/// [`MementoPool::contract_body_by_cid`], the one resolution of a contract's
+/// body pointer.
+pub fn locate_producer_post(arg_term: &Option<Json>, pool: &MementoPool) -> Option<(Json, String)> {
     let arg = producer_lookup_term(arg_term.as_ref()?);
     if arg.get("kind").and_then(|v| v.as_str()) != Some("ctor") {
         return None;
     }
     let inner_name = arg.get("name").and_then(|v| v.as_str())?;
-    let producer_bridge_cid = bridges_by_symbol.get(inner_name)?;
-    let producer_bridge = pool_mementos.get(producer_bridge_cid)?;
+    let producer_bridge = pool.bridge_member_for_symbol(inner_name)?;
     // Shape-agnostic: production mint emits v1.2-layered mementos (fields on
     // `header`); only v1.1-flat carries them on `evidence.body`. Reading the
     // flat path alone meant the producer post never resolved for harvested
@@ -120,8 +120,7 @@ pub fn locate_producer_post(
         .field("targetContractCid")
         .and_then(|v| v.as_str())
         .and_then(|raw| MementoCid::try_parse(raw.to_string()).ok())?;
-    let producer_contract = pool_mementos.get(&target_cid)?;
-    let producer_body = producer_contract.body()?;
+    let producer_body = pool.contract_body_by_cid(&target_cid)?;
     let post = producer_body
         .get("post")
         .filter(|v| v.is_object())
@@ -131,7 +130,7 @@ pub fn locate_producer_post(
     // so `build_implication_obligation` can unify it with the consumer's
     // formal: `forall _h0. producer_post[result:=_h0] -> consumer_pre[formal:=_h0]`.
     // Already-quantified posts pass through untouched.
-    let post = wrap_post_forall(post, producer_body);
+    let post = wrap_post_forall(post, &producer_body);
     let post_hash = formula_hash(&post);
     Some((post, post_hash))
 }
@@ -291,7 +290,6 @@ fn strip_cid_and_sig(env: &Json) -> Json {
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::collections::BTreeMap;
     use std::fs;
     use std::path::PathBuf;
 
@@ -383,43 +381,20 @@ mod tests {
         })
     }
 
-    fn insert_bridge(
-        pool_mementos: &mut BTreeMap<MementoCid, StoredMember>,
-        bridges_by_symbol: &mut BTreeMap<String, MementoCid>,
-        source_symbol: &str,
-        target_cid: &str,
-    ) {
+    /// A pool holding the producer contract and a bridge from `source_symbol`
+    /// to it, built through the pool's own insert doors.
+    fn pool_with_producer(producer_cid: &str, source_symbol: &str) -> MementoPool {
+        let mut pool = MementoPool::default();
+        pool.insert_unanchored_for_tests(memento_cid(producer_cid), contract_with_post(6));
         let bridge_cid = generated_cid(&format!("{source_symbol}-bridge"));
-        insert_unanchored_member(pool_mementos, bridge_cid.clone(), bridge_to(target_cid));
-        bridges_by_symbol.insert(source_symbol.to_string(), bridge_cid);
-    }
-
-    fn insert_unanchored_member(
-        pool_mementos: &mut BTreeMap<MementoCid, StoredMember>,
-        cid: MementoCid,
-        envelope: Json,
-    ) {
-        let member =
-            StoredMember::from_envelope(cid.clone(), &envelope).expect("test member must parse");
-        pool_mementos.insert(cid, member);
+        pool.insert_bridge_by_symbol(source_symbol, bridge_cid, bridge_to(producer_cid));
+        pool
     }
 
     #[test]
     fn locate_producer_post_resolves_through_single_await_seam() {
         let producer_cid = "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let mut pool_mementos = BTreeMap::new();
-        insert_unanchored_member(
-            &mut pool_mementos,
-            memento_cid(producer_cid),
-            contract_with_post(6),
-        );
-        let mut bridges_by_symbol = BTreeMap::new();
-        insert_bridge(
-            &mut pool_mementos,
-            &mut bridges_by_symbol,
-            "producer",
-            producer_cid,
-        );
+        let pool = pool_with_producer(producer_cid, "producer");
 
         let arg_term = Some(json!({
             "kind": "ctor",
@@ -429,7 +404,7 @@ mod tests {
             ]
         }));
 
-        let (post, _) = locate_producer_post(&arg_term, &pool_mementos, &bridges_by_symbol)
+        let (post, _) = locate_producer_post(&arg_term, &pool)
             .expect("await seam should resolve to producer post");
         assert_eq!(post["kind"], "forall");
         assert_eq!(post["name"], "result");
@@ -438,19 +413,7 @@ mod tests {
     #[test]
     fn locate_producer_post_refuses_non_producer_await_base() {
         let producer_cid = "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-        let mut pool_mementos = BTreeMap::new();
-        insert_unanchored_member(
-            &mut pool_mementos,
-            memento_cid(producer_cid),
-            contract_with_post(6),
-        );
-        let mut bridges_by_symbol = BTreeMap::new();
-        insert_bridge(
-            &mut pool_mementos,
-            &mut bridges_by_symbol,
-            "producer",
-            producer_cid,
-        );
+        let pool = pool_with_producer(producer_cid, "producer");
 
         let arg_term = Some(json!({
             "kind": "ctor",
@@ -461,7 +424,7 @@ mod tests {
         }));
 
         assert!(
-            locate_producer_post(&arg_term, &pool_mementos, &bridges_by_symbol).is_none(),
+            locate_producer_post(&arg_term, &pool).is_none(),
             "await over a non-call term must not invent a producer post"
         );
     }
@@ -495,19 +458,7 @@ mod tests {
     #[test]
     fn locate_producer_post_resolves_channel_recv_through_await_unwrap_or_expect_seam() {
         let producer_cid = "blake3-512:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
-        let mut pool_mementos = BTreeMap::new();
-        insert_unanchored_member(
-            &mut pool_mementos,
-            memento_cid(producer_cid),
-            contract_with_post(6),
-        );
-        let mut bridges_by_symbol = BTreeMap::new();
-        insert_bridge(
-            &mut pool_mementos,
-            &mut bridges_by_symbol,
-            "channel:recv:rx",
-            producer_cid,
-        );
+        let pool = pool_with_producer(producer_cid, "channel:recv:rx");
 
         for wrapper in ["method:unwrap", "method:expect"] {
             let arg_term = Some(json!({
@@ -526,7 +477,7 @@ mod tests {
                 ]
             }));
 
-            let (post, _) = locate_producer_post(&arg_term, &pool_mementos, &bridges_by_symbol)
+            let (post, _) = locate_producer_post(&arg_term, &pool)
                 .unwrap_or_else(|| panic!("{wrapper} channel recv seam should resolve"));
             assert_eq!(post["kind"], "forall");
             assert_eq!(post["name"], "result");
@@ -536,19 +487,7 @@ mod tests {
     #[test]
     fn locate_producer_post_does_not_treat_plain_unwrap_as_channel_edge() {
         let producer_cid = "blake3-512:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
-        let mut pool_mementos = BTreeMap::new();
-        insert_unanchored_member(
-            &mut pool_mementos,
-            memento_cid(producer_cid),
-            contract_with_post(6),
-        );
-        let mut bridges_by_symbol = BTreeMap::new();
-        insert_bridge(
-            &mut pool_mementos,
-            &mut bridges_by_symbol,
-            "producer",
-            producer_cid,
-        );
+        let pool = pool_with_producer(producer_cid, "producer");
 
         let arg_term = Some(json!({
             "kind": "ctor",
@@ -559,7 +498,7 @@ mod tests {
         }));
 
         assert!(
-            locate_producer_post(&arg_term, &pool_mementos, &bridges_by_symbol).is_none(),
+            locate_producer_post(&arg_term, &pool).is_none(),
             "plain unwrap must remain outside the channel implication seam"
         );
     }
