@@ -39,9 +39,46 @@ def _test_function_outcome(source: str):
     return function_universe_outcome(function)
 
 
-def _routed(monkeypatch, source: str):
+def _seated_test_function_outcome(directory, source: str):
+    """The test function's outcome from a file opened as the lifter opens it:
+    written under ``directory`` and constructed with its ``with`` rows seated.
+    A ``with`` constructs only through a seated row; a tree with an empty
+    table refuses it by name."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.lift_rpc import (
+        _context_manager_rows_for_paths,
+        provisional_contract_refs_from_demand_rows,
+    )
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+    from sugar_lift_python_source.source_oracle import workspace_path_source
+    from sugar_source_tree.nodes import FunctionDef
+    from sugar_source_tree.tree import SourceFile
+
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "test_witness.py"
+    path.write_text(source, encoding="utf-8")
+    tree = SourceFile(
+        workspace_path_source(str(path), root=str(directory)),
+        construction_context=TreeConstructionContextV1(
+            contract_refs=provisional_contract_refs_from_demand_rows(
+                _context_manager_rows_for_paths([path], root=directory)
+            ),
+        ),
+    )
+    (function,) = tuple(
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name.startswith("test_")
+    )
+    return function_universe_outcome(function)
+
+
+def _routed(monkeypatch, source: str, *, seated_under=None):
     """The test function's outcome, with every call the one binder bound and
-    every call the one application applied."""
+    every call the one application applied.  ``seated_under`` is the directory
+    a source holding a ``with`` is written to and opened from."""
     from sugar_lift_py_tests.floor import object_value
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 
@@ -61,6 +98,8 @@ def _routed(monkeypatch, source: str):
 
     monkeypatch.setattr(object_value, "bind_call", bind_spy)
     monkeypatch.setattr(CallSiteValue, "producer_outcome", apply_spy)
+    if seated_under is not None:
+        return _seated_test_function_outcome(seated_under, source), bound, applied
     return _test_function_outcome(source), bound, applied
 
 
@@ -292,17 +331,23 @@ def test_with():
 """
 
 
-def test_a_with_enters_and_exits_through_the_one_routine(monkeypatch) -> None:
+def test_a_with_enters_and_exits_through_the_one_routine(
+    monkeypatch, tmp_path
+) -> None:
     completes = _WITH_MANAGER.format(enter="        return 1")
     raises = _WITH_MANAGER.format(enter="        raise ValueError('bad')")
 
-    outcome, bound, applied = _routed(monkeypatch, completes)
+    outcome, bound, applied = _routed(
+        monkeypatch, completes, seated_under=tmp_path / "completes"
+    )
     assert outcome.completed_value() is not None
     assert _bound_and_applied(bound, applied, "Resource.__enter__")
     assert _bound_and_applied(bound, applied, "Resource.__exit__")
     assert _every_applied_body_was_bound_by_the_one_binder(bound, applied)
 
-    outcome, bound, applied = _routed(monkeypatch, raises)
+    outcome, bound, applied = _routed(
+        monkeypatch, raises, seated_under=tmp_path / "raises"
+    )
     _only_raise(outcome, "ValueError")
     assert _bound_and_applied(bound, applied, "Resource.__enter__")
     assert _every_applied_body_was_bound_by_the_one_binder(bound, applied)

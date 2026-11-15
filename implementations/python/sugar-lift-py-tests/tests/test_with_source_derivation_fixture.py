@@ -177,13 +177,40 @@ def test_lying_suppression_claim_cannot_override_source(fixture_modules):
     assert managers.events[-1][0] == "lying-exit"
 
 
-def test_opaque_native_manager_remains_typed_loud():
-    from sugar_lift_python_source.source_oracle import path_source
-    from sugar_source_tree.panic import SugarNotWritten
+def test_opaque_native_manager_is_the_heads_reduced_value():
+    """``with n.some_manager():`` over an imported module's call.
+
+    Nothing here answers the imported call, so the manager is what the head
+    reduces to: the undecided manager, each step two-faced and owing the one
+    undecided member (#7757).  The file is opened as the lifter opens it, with
+    its ``with`` rows seated; a tree opened through the bare door refuses by
+    name instead (``test_construction_context_door_law``), and never paints
+    the ``with`` as a runtime-selected manager.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.lift_rpc import (
+        _context_manager_rows_for_paths,
+        provisional_contract_refs_from_demand_rows,
+    )
+    from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+        WithReducedManagerSugar,
+    )
+    from sugar_lift_python_source.source_oracle import workspace_path_source
+    from sugar_source_tree.nodes import With
     from sugar_source_tree.tree import SourceFile
 
-    source = SourceFile(path_source(str(FIXTURES / "consumer_cases.py")))
+    path = FIXTURES / "consumer_cases.py"
+    context = TreeConstructionContextV1(
+        contract_refs=provisional_contract_refs_from_demand_rows(
+            _context_manager_rows_for_paths([path], root=FIXTURES)
+        ),
+    )
+    source = SourceFile(
+        workspace_path_source(str(path), root=str(FIXTURES)),
+        construction_context=context,
+    )
     function = next(item for item in source.functions() if item.name == "opaque_native")
-    with pytest.raises(SugarNotWritten) as caught:
-        function.sugar()
-    assert type(caught.value).__name__ == "RuntimeSelectedContextManager"
+    (with_node,) = (node for node in function.body if isinstance(node, With))
+    assert type(with_node.sugar()) is WithReducedManagerSugar
