@@ -1,18 +1,19 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
-// Python chain seam regression:
+// Python chain, read the one way (steps 5-9; #7757):
 //
 //   def h(x): return x + 1
 //   def g(x): return h(x)
 //   assert g(5) == 6
 //
-// The lift emits the seam, not an inline lie:
-//   call:g(5) == call:h(5)
-//   call:h(5) == 6
-//
-// Body-discharge may reduce `g` to the `call:h` seam, but consistency owns the
-// sibling ground `call:` facts. The product proof must compose those engines so
-// the GOOD twin discharges and the BAD twin refutes, with no Python-side proof.
+// The lift follows no body (#8705). `g(5)` in the test stands as its
+// coordinate and an edge to `python:test_chain.g`; `h(x)` in g's contract
+// stands the same way for `python:test_chain.h`. Prove joins each edge's
+// target symbol to the contract with that `bridgeSourceSymbol`, conjoins, and
+// the solver decides the test's claim row: the GOOD twin discharges and the
+// BAD twin refutes, each through both joined contracts. A claim the lift
+// folded to `true` / `false` would join nothing, so both twins require the
+// joined posts on the row.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -334,6 +335,27 @@ fn row<'a>(doc: &'a Json, needle: &str) -> &'a Json {
         .unwrap_or_else(|| panic!("missing row containing `{needle}` in {doc:#}"))
 }
 
+/// The test's claim row: the consistency row under its join symbol.
+const CLAIM_ROW: &str = "consistency:python:test_chain.test_chain";
+
+/// The claim row read through both contracts of the chain: the join bound
+/// `g`'s contract to the test's call and `h`'s to the call in `g`'s post.
+fn assert_joined_through_the_chain(doc: &Json) {
+    let claim = row(doc, CLAIM_ROW);
+    let linked: Vec<&str> = claim["verification"]["linkedPosts"]
+        .as_array()
+        .unwrap_or_else(|| panic!("claim row carries its joined posts: {claim:#}"))
+        .iter()
+        .filter_map(|post| post["sourceSymbol"].as_str())
+        .collect();
+    for symbol in ["python:test_chain.g", "python:test_chain.h"] {
+        assert!(
+            linked.contains(&symbol),
+            "the claim reads `{symbol}`'s contract through the join; joined: {linked:?}; prove: {doc:#}"
+        );
+    }
+}
+
 fn assert_tooling_available() -> bool {
     if !python_available() || !z3_available() || !python_deps_available() {
         eprintln!(
@@ -345,7 +367,7 @@ fn assert_tooling_available() -> bool {
 }
 
 #[test]
-fn python_chain_good_twin_composes_body_discharge_with_consistency() {
+fn python_chain_good_twin_discharges_through_the_joined_chain() {
     if !assert_tooling_available() {
         return;
     }
@@ -353,19 +375,19 @@ fn python_chain_good_twin_composes_body_discharge_with_consistency() {
     let project = stage_chain_project("good", 6);
     run_mint(&project);
 
-    let (prove, prove_code, _, _) = run_sugar(&project, &["prove", ".", "--json"]);
+    let (prove, _, _, _) = run_sugar(&project, &["prove", ".", "--json"]);
     assert_eq!(
-        prove_code, 0,
-        "GOOD chain must prove through call:g(5)==call:h(5) and call:h(5)==6; prove: {prove:#}"
+        row(&prove, CLAIM_ROW)["status"],
+        "discharged",
+        "g(5) == 6 under g's `out = h(x)` and h's `out = x + 1`; prove: {prove:#}"
     );
-    assert_eq!(row(&prove, "#euf#")["status"], "discharged");
-    assert_eq!(row(&prove, "h#euf#")["status"], "discharged");
+    assert_joined_through_the_chain(&prove);
 
     let _ = fs::remove_dir_all(&project);
 }
 
 #[test]
-fn python_chain_bad_twin_refutes_through_the_same_call_seam() {
+fn python_chain_bad_twin_refutes_through_the_joined_chain() {
     if !assert_tooling_available() {
         return;
     }
@@ -375,7 +397,12 @@ fn python_chain_bad_twin_refutes_through_the_same_call_seam() {
 
     let (prove, prove_code, _, _) = run_sugar(&project, &["prove", ".", "--json"]);
     assert_ne!(prove_code, 0, "BAD chain must not prove; prove: {prove:#}");
-    assert_eq!(row(&prove, "#euf#")["status"], "unsatisfied");
+    assert_eq!(
+        row(&prove, CLAIM_ROW)["status"],
+        "unsatisfied",
+        "g(5) == 99 is refuted through the same joins; prove: {prove:#}"
+    );
+    assert_joined_through_the_chain(&prove);
 
     let _ = fs::remove_dir_all(&project);
 }
