@@ -57,9 +57,54 @@ def _helper():
 
 
 def _call(actuals: str):
+    """A module-body call reduced alone: where the binder refuses the call
+    (a missing or ill-kinded actual) it refuses here, by name."""
     tree = _tree(HELPER + f"\nhelper({actuals})\n")
     call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
     return call.sugar().desugar(None)
+
+
+def _edge(actuals: str):
+    """``helper({actuals})`` in a caller's body, read off the caller's
+    contract row (``function_universe_outcome``): a function called after
+    import, so an omitted ``key`` binds what the ``def`` statement's module
+    run evaluated.
+
+    A same-file call is its coordinate and edge, joined at prove (#7757
+    steps 5 and 6, #8705): the one binder binds the actuals by kind only to
+    read what the call supplies, and the helper's ``setitem`` carrier is
+    never discharged at the call.  The call completes under its
+    ``completes`` atom and halts under the complement; returns the call
+    value the row's one completed face returns."""
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    tree = _tree(HELPER + f"\n\ndef caller():\n    return helper({actuals})\n")
+    caller = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name == "caller"
+    )
+    outcome = function_universe_outcome(caller)
+    assert [face for face in outcome.exits if isinstance(face, Halted)], outcome
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert len(completed) == 1, outcome
+    returns = [
+        s for s in completed[0].value.record.statements if isinstance(s, ReturnValue)
+    ]
+    assert returns, completed[0].value
+    edge = returns[-1].value
+    assert isinstance(edge, CallSiteValue), type(edge)
+    return edge
+
+
+def _named(edge, kind: str, name: str, value: int):
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    return ctor(
+        kind, [str_const(name), TermValue(value).to_term(owner=str(edge.site))]
+    )
 
 
 def _identity(name: str):
@@ -119,39 +164,42 @@ def test_helper_alone_is_not_completed_discrimination() -> None:
 
 
 def test_positional_only_receiver_and_keyword_only_value_complete() -> None:
-    """``helper([0], 0, value=9)`` — pos-only obj, pos key, kw-only value."""
-    face = _call("[0], 0, value=9").exits[0]
-    assert isinstance(face, Completed)
-    assert face.value.arg_values == (
+    """``helper([0], 0, value=9)`` — pos-only obj, pos key, kw-only value.
+    The edge carries the actuals as written; prove's one binder binds them
+    to the helper's formals by kind (the call value no longer names the
+    frame's parameters, #8705)."""
+    edge = _edge("[0], 0, value=9")
+    assert edge.arg_values == (
         fresh(ListValue, (TermValue(0),)),
         TermValue(0),
         TermValue(9),
     )
-    assert face.value.parameters == ("obj", "key", "value")
+    assert edge.term.args[-1] == _named(edge, "py.kwarg", "value", 9)
 
 
 def test_default_key_and_keyword_only_value_complete() -> None:
-    """``helper([0], value=9)`` — key default 0 supplies the index formal."""
-    face = _call("[0], value=9").exits[0]
-    assert isinstance(face, Completed)
-    assert face.value.arg_values == (
-        fresh(ListValue, (TermValue(0),)),
-        TermValue(0),
-        TermValue(9),
-    )
+    """``helper([0], value=9)`` — key default 0 supplies the index formal,
+    carried on the edge as ``py.default``."""
+    edge = _edge("[0], value=9")
+    assert edge.arg_values == (fresh(ListValue, (TermValue(0),)), TermValue(9))
+    assert list(edge.term.args[1:]) == [
+        _named(edge, "py.kwarg", "value", 9),
+        _named(edge, "py.default", "key", 0),
+    ]
 
 
 def test_explicit_keyword_key_binds_same_key_formal() -> None:
-    """``helper([0, 0], key=1, value=9)`` — key formal receives 1, store at 1."""
-    face = _call("[0, 0], key=1, value=9").exits[0]
-    assert isinstance(face, Completed)
-    assert face.value.arg_values[1] == TermValue(1)
-    assert face.value.arg_values[2] == TermValue(9)
-    # Same formal coordinate order as helper alone's setitem demand.
-    _, pending = _helper()
-    # Call frame formal cids present on CallSiteValue.
-    assert len(face.value.formal_coordinate_cids) == 3
-    assert all(cid is not None for cid in face.value.formal_coordinate_cids)
+    """``helper([0, 0], key=1, value=9)`` — key formal receives 1, store at 1.
+    The edge names the formal ``key`` (``py.kwarg``); the frame's formal
+    coordinate cids the followed call carried are gone with the follow
+    (#8705, #8751): prove binds by name."""
+    edge = _edge("[0, 0], key=1, value=9")
+    assert edge.arg_values[1] == TermValue(1)
+    assert edge.arg_values[2] == TermValue(9)
+    assert list(edge.term.args[1:]) == [
+        _named(edge, "py.kwarg", "key", 1),
+        _named(edge, "py.kwarg", "value", 9),
+    ]
 
 
 def test_callers_bind_to_exact_native_operation_coordinates() -> None:
@@ -227,12 +275,17 @@ def test_invalid_index_named_indexerror_with_exact_pre_effect_state() -> None:
 
 
 def test_source_caller_invalid_index_preserves_state() -> None:
-    outcome = _call("[0], key=1, value=9")
-    assert isinstance(outcome, ExitSet)
-    halted = outcome.exits[0]
-    assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate == _identity("IndexError")
-    assert halted.state is not None
+    # Expected verdict changed (#7757 steps 5 and 6, #8705): the source call
+    # is its edge and owes its halt; the named IndexError with its state is
+    # the helper's contract row discharged with these actuals
+    # (``test_invalid_index_named_indexerror_with_exact_pre_effect_state``),
+    # joined at the call by prove (#8690, #8749).
+    edge = _edge("[0], key=1, value=9")
+    assert edge.arg_values == (
+        fresh(ListValue, (TermValue(0),)),
+        TermValue(1),
+        TermValue(9),
+    )
 
 
 def test_invalid_index_discrimination_not_completed() -> None:
@@ -268,8 +321,8 @@ def test_missing_keyword_only_value_is_honestly_undischarged() -> None:
 
 
 def test_missing_keyword_only_discrimination_not_completed() -> None:
-    """Bite: missing value is not a Completed store; supplying value is."""
-    assert isinstance(_call("[0], value=9").exits[0], Completed)
+    """Bite: missing value is refused by name; supplying value is the call."""
+    _edge("[0], value=9")
     with pytest.raises(SugarNotWritten, match="missing required formal"):
         _call("[0], 0")
 
@@ -292,8 +345,8 @@ def test_keyword_only_cannot_bind_as_positional() -> None:
 
 
 def test_swapped_kind_twins_discrimination() -> None:
-    """Bite: illegal kinds must not complete; legal kinds do."""
-    assert isinstance(_call("[0], value=9").exits[0], Completed)
+    """Bite: illegal kinds are refused; legal kinds are the call."""
+    _edge("[0], value=9")
     with pytest.raises(SugarNotWritten):
         _call("obj=[0], value=9")
     with pytest.raises(SugarNotWritten):

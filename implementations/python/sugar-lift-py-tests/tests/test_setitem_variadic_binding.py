@@ -72,6 +72,32 @@ def _call(program: str, actuals: str):
     return call.sugar().desugar(None)
 
 
+def _edge(program: str, actuals: str):
+    """The call's value on its completed face: a same-file call is its
+    coordinate and edge, joined at prove (#7757 steps 5 and 6, #8705).  Its
+    ``arg_values`` are the actuals as written; what the one binder packs
+    into ``*values`` / ``**values`` is on its term, every formal by name
+    (``py.kwarg``), as prove's binder binds the helper's contract."""
+    from sugar_lift_py_tests.floor import CallSiteValue
+
+    completed = [
+        face
+        for face in _call(program, actuals).exits
+        if isinstance(face, Completed)
+    ]
+    assert len(completed) == 1, completed
+    edge = completed[0].value
+    assert isinstance(edge, CallSiteValue), type(edge)
+    return edge
+
+
+def _formal(edge, name: str, value):
+    """``py.kwarg(name, value)``: the formal ``name`` bound to ``value``."""
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    return ctor("py.kwarg", [str_const(name), value.to_term(owner=str(edge.site))])
+
+
 def _identity(name: str):
     from sugar_lift_py_tests.ir import ctor, str_const
 
@@ -147,15 +173,23 @@ def test_helper_alone_is_not_completed_discrimination() -> None:
 
 
 def test_remaining_positionals_become_authenticated_tuple_store_value() -> None:
-    """``helper([0], 0, 1, 2, 3)`` — *values packs (1,2,3) as stored value."""
-    face = _call(HELPER_STAR, "[0], 0, 1, 2, 3").exits[0]
-    assert isinstance(face, Completed)
-    assert face.value.arg_values == (
+    """``helper([0], 0, 1, 2, 3)`` — *values packs (1,2,3) as stored value.
+    The edge carries the pack on the formal ``values`` (#8705); the call
+    value no longer names the frame's parameters."""
+    edge = _edge(HELPER_STAR, "[0], 0, 1, 2, 3")
+    assert edge.arg_values == (
         fresh(ListValue, (TermValue(0),)),
         TermValue(0),
-        TupleValue((TermValue(1), TermValue(2), TermValue(3))),
+        TermValue(1),
+        TermValue(2),
+        TermValue(3),
     )
-    assert face.value.parameters == ("obj", "key", "values")
+    assert list(edge.term.args[1:]) == [
+        _formal(edge, "key", TermValue(0)),
+        _formal(
+            edge, "values", TupleValue((TermValue(1), TermValue(2), TermValue(3)))
+        ),
+    ]
 
 
 def test_star_values_discharge_stores_tuple_at_index() -> None:
@@ -182,21 +216,29 @@ def test_star_values_discharge_stores_tuple_at_index() -> None:
 
 
 def test_extra_keywords_become_authenticated_mapping_store_value() -> None:
-    """``helper([0], 0, a=1, b=2)`` — **values packs mapping as stored value."""
-    face = _call(HELPER_KW, "[0], 0, a=1, b=2").exits[0]
-    assert isinstance(face, Completed)
-    assert face.value.arg_values == (
+    """``helper([0], 0, a=1, b=2)`` — **values packs mapping as stored value,
+    carried on the edge on the formal ``values`` (#8705)."""
+    edge = _edge(HELPER_KW, "[0], 0, a=1, b=2")
+    assert edge.arg_values == (
         fresh(ListValue, (TermValue(0),)),
         TermValue(0),
-        fresh(
-            DictValue,
-            (
-                (StringValue("a"), TermValue(1)),
-                (StringValue("b"), TermValue(2)),
+        TermValue(1),
+        TermValue(2),
+    )
+    assert list(edge.term.args[1:]) == [
+        _formal(edge, "key", TermValue(0)),
+        _formal(
+            edge,
+            "values",
+            fresh(
+                DictValue,
+                (
+                    (StringValue("a"), TermValue(1)),
+                    (StringValue("b"), TermValue(2)),
+                ),
             ),
         ),
-    )
-    assert face.value.parameters == ("obj", "key", "values")
+    ]
 
 
 def test_kw_values_discharge_stores_dict_at_index() -> None:
@@ -222,18 +264,14 @@ def test_kw_values_discharge_stores_dict_at_index() -> None:
 
 def test_empty_star_is_honest_empty_tuple() -> None:
     """``helper([0], 0)`` with *values — empty pack, not None / omitted."""
-    face = _call(HELPER_STAR, "[0], 0").exits[0]
-    assert isinstance(face, Completed)
-    assert face.value.arg_values[2] == TupleValue(())
-    assert face.value.arg_values[2] is not None
+    edge = _edge(HELPER_STAR, "[0], 0")
+    assert edge.term.args[2] == _formal(edge, "values", TupleValue(()))
 
 
 def test_empty_kw_is_honest_empty_dict() -> None:
     """``helper([0], 0)`` with **values — empty mapping, not None / omitted."""
-    face = _call(HELPER_KW, "[0], 0").exits[0]
-    assert isinstance(face, Completed)
-    assert face.value.arg_values[2] == fresh(DictValue, ())
-    assert face.value.arg_values[2] is not None
+    edge = _edge(HELPER_KW, "[0], 0")
+    assert edge.term.args[2] == _formal(edge, "values", fresh(DictValue, ()))
 
 
 def test_empty_star_discharge_stores_empty_tuple() -> None:
@@ -285,12 +323,18 @@ def test_invalid_index_named_indexerror_with_exact_pre_effect_state() -> None:
 
 
 def test_source_caller_invalid_index_preserves_state() -> None:
+    # Expected verdict changed (#7757 steps 5 and 6, #8705): the source call
+    # is its edge and owes its halt; the named IndexError with its state is
+    # the helper's row discharged with these actuals
+    # (``test_invalid_index_named_indexerror_with_exact_pre_effect_state``),
+    # joined at the call by prove (#8690, #8749).
     outcome = _call(HELPER_STAR, "[0], 1, 9")
-    assert isinstance(outcome, ExitSet)
-    halted = outcome.exits[0]
-    assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate == _identity("IndexError")
-    assert halted.state is not None
+    assert [face for face in outcome.exits if isinstance(face, Halted)], outcome
+    edge = _edge(HELPER_STAR, "[0], 1, 9")
+    assert list(edge.term.args[1:]) == [
+        _formal(edge, "key", TermValue(1)),
+        _formal(edge, "values", TupleValue((TermValue(9),))),
+    ]
 
 
 def test_invalid_index_discrimination_not_completed() -> None:
@@ -382,9 +426,11 @@ def test_reordered_variadic_twin_fails() -> None:
 
 def test_star_vs_kw_kinds_are_not_interchangeable_discrimination() -> None:
     """Bite: *values pack is TupleValue; **values pack is DictValue."""
-    star_face = _call(HELPER_STAR, "[0], 0, 1").exits[0]
-    kw_face = _call(HELPER_KW, "[0], 0, a=1").exits[0]
-    assert isinstance(star_face.value.arg_values[2], TupleValue)
-    assert isinstance(kw_face.value.arg_values[2], DictValue)
+    star = _edge(HELPER_STAR, "[0], 0, 1")
+    kw = _edge(HELPER_KW, "[0], 0, a=1")
+    assert star.term.args[2] == _formal(star, "values", TupleValue((TermValue(1),)))
+    assert kw.term.args[2] == _formal(
+        kw, "values", fresh(DictValue, ((StringValue("a"), TermValue(1)),))
+    )
     with pytest.raises(AssertionError):
-        assert star_face.value.arg_values[2] == kw_face.value.arg_values[2]
+        assert star.term.args[2] == kw.term.args[2]
