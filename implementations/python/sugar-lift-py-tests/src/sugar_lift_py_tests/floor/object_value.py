@@ -1085,9 +1085,16 @@ class ObjectValue(FloorValue):
         ctx: Any | None = None,
         keywords: tuple[tuple[str, FloorValue], ...] = (),
         required_frame: object | None = None,
+        halted_at: object | None = None,
     ) -> ExitSet:
         """The class's ``name`` called with this receiver: select on the
         class, bind, apply.
+
+        ``halted_at``: the source fragment a halt of the call leaves at where
+        ``blame`` is a synthetic call's content-addressed slot id, which
+        states none (a ``with``'s ``__enter__``/``__exit__``,
+        ``manager_protocol_construction._call_protocol_method``); the call's
+        occurrence stays ``blame`` (``UnknownCalleeCallV1.faces``).
 
         This is the class side only: CPython's implicit special-method call
         (``iter(o)``, ``o == p``, ``o[k]``, ``format``: ``type(o).<name>``,
@@ -1110,7 +1117,9 @@ class ObjectValue(FloorValue):
         """
         decided, method, value = self.class_member(name)
         if not decided:
-            return self.unanswered_method_call(name, arguments, keywords, blame)
+            return self.unanswered_method_call(
+                name, arguments, keywords, blame, halted_at=halted_at
+            )
         return self.call_member(
             name,
             method if method is not None else value,
@@ -1120,6 +1129,7 @@ class ObjectValue(FloorValue):
             ctx=ctx,
             keywords=keywords,
             required_frame=required_frame,
+            halted_at=halted_at,
         )
 
     def call_member(
@@ -1133,6 +1143,7 @@ class ObjectValue(FloorValue):
         ctx: Any | None = None,
         keywords: tuple[tuple[str, FloorValue], ...] = (),
         required_frame: object | None = None,
+        halted_at: object | None = None,
     ) -> ExitSet:
         """``self.<name>(*arguments, **keywords)`` where ``member`` is what
         the one class-namespace lookup selected for ``name``
@@ -1177,7 +1188,9 @@ class ObjectValue(FloorValue):
             # input of the contract the call never reaches this door: it is
             # the dispatched edge over that input
             # (``receiver_dispatch.dispatch_on_receiver``, #7757 step 8).
-            return self.unanswered_method_call(name, arguments, keywords, blame)
+            return self.unanswered_method_call(
+                name, arguments, keywords, blame, halted_at=halted_at
+            )
         if isinstance(member, ObjectMethodValue):
             if (
                 required_frame is not None
@@ -1191,10 +1204,16 @@ class ObjectValue(FloorValue):
                     fix=f"construct a diggable body for `{self.class_name}.{name}`",
                 )
             if member.descriptor_kind == "property":
-                return self.unanswered_method_call(name, arguments, keywords, blame)
-            return self._dispatched_or_owed(name, arguments, keywords, blame)
+                return self.unanswered_method_call(
+                    name, arguments, keywords, blame, halted_at=halted_at
+                )
+            return self._dispatched_or_owed(
+                name, arguments, keywords, blame, halted_at=halted_at
+            )
         if isinstance(member, LambdaCallable) and required_frame is None:
-            return self._dispatched_or_owed(name, arguments, keywords, blame)
+            return self._dispatched_or_owed(
+                name, arguments, keywords, blame, halted_at=halted_at
+            )
         return self._floor_gap(
             owner=owner,
             blame=blame,
@@ -1203,14 +1222,19 @@ class ObjectValue(FloorValue):
             fix=f"construct a diggable body for `{self.class_name}.{name}`",
         )
 
-    def _dispatched_or_owed(self, name, arguments, keywords, site):
+    def _dispatched_or_owed(self, name, arguments, keywords, site, *, halted_at=None):
         """``self.<name>(...)``: the dispatched call (``_dispatched_call``),
         or, where it names no class, the one unanswered call, owed -- never
-        a function chosen here."""
-        dispatched = self._dispatched_call(name, arguments, keywords, site)
+        a function chosen here.  ``halted_at``: where a halt of the call
+        leaves when ``site`` states no fragment (``call_method_value``)."""
+        dispatched = self._dispatched_call(
+            name, arguments, keywords, site, halted_at=halted_at
+        )
         if dispatched is not None:
             return dispatched
-        return self.unanswered_method_call(name, arguments, keywords, site)
+        return self.unanswered_method_call(
+            name, arguments, keywords, site, halted_at=halted_at
+        )
 
     def _property_read(self, name, site):
         """``self.<name>`` where the one class-namespace lookup selected a
@@ -1225,7 +1249,9 @@ class ObjectValue(FloorValue):
                 return dispatched
         return self.unanswered_method_call(name, (), (), site)
 
-    def _dispatched_call(self, name, arguments, keywords, site, *, read=False):
+    def _dispatched_call(
+        self, name, arguments, keywords, site, *, read=False, halted_at=None
+    ):
         """``self.<name>(...)`` -- ``read``: ``self.<name>`` -- on this
         instance, whose class is decided here, as the one dispatched method
         call (#7757 step 8): its coordinate plus the edge whose receiver
@@ -1261,6 +1287,7 @@ class ObjectValue(FloorValue):
             tuple(keywords),
             site,
             read=read,
+            halted_at=halted_at,
         )
 
     def has_method(self, name: str) -> "bool | None":
@@ -1328,12 +1355,13 @@ class ObjectValue(FloorValue):
             return False, None, None
         return True, method, value
 
-    def unanswered_method_call(self, name, arguments, keywords, site):
+    def unanswered_method_call(self, name, arguments, keywords, site, *, halted_at=None):
         """``self.<name>(...)`` whose member the one class-namespace lookup
         does not decide (``class_member``): the one unanswered call
         (``UnknownCalleeCallV1``), two-faced and owed, its completion the
         call's own result coordinate.  No method of the roster is assumed to
-        answer."""
+        answer.  ``halted_at``: where its halt leaves when ``site`` is a
+        synthetic call's slot id (``call_method_value``)."""
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import ctor, str_const
         from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
@@ -1360,7 +1388,7 @@ class ObjectValue(FloorValue):
             keyword_names=tuple(keyword for keyword, _value in keywords),
             site=site,
         )
-        return UnknownCalleeCallV1(target).faces(callsite, site)
+        return UnknownCalleeCallV1(target).faces(callsite, site, halted_at=halted_at)
 
     def _class_data_descriptor(self, name: str) -> bool:
         """Whether the class's binding of ``name`` is a data descriptor,

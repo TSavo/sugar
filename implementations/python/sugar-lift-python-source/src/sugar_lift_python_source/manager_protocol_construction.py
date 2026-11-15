@@ -363,6 +363,7 @@ class ReducedManagerProtocolV1:
             (),
             protocol_step_site(self.exit_face_id, "__enter__"),
             ctx,
+            halted_at=self.fragment,
         )
         return _resource_enter_transitions(receiver, enter, blame=self.exit_face_id)
 
@@ -381,7 +382,9 @@ class ReducedManagerProtocolV1:
             )
         decided, has_enter, has_exit = self._protocol_of(receiver)
         if decided and has_enter and has_exit:
-            return _exit_for_body(self.exit_face_id, entered, body_face, ctx)
+            return _exit_for_body(
+                self.exit_face_id, entered, body_face, ctx, fragment=self.fragment
+            )
         return self._undecided_step(
             "__exit__",
             UndecidedManagerSlotResultValue("__exit__", self.exit_face_id),
@@ -408,10 +411,16 @@ def _call_protocol_method(
     the ``with`` stands in) is the dispatched edge over that class
     (``receiver_dispatch.dispatch_on_receiver``, #7757 step 8): its
     actuals as Python passes them (``__exit__(m, type, value, tb)``), bound
-    at prove by the one binder (a ``*exc`` formal takes the three).  Its
-    ``site`` is the step's slot id, which states no source fragment: a halt
-    of the call leaves at ``halted_at``, the ``with`` item
-    (``UnknownCalleeCallV1.faces``).
+    at prove by the one binder (a ``*exc`` formal takes the three).
+
+    On either path ``site`` is the step's slot id, which states no source
+    fragment: a halt of the call leaves at ``halted_at``, the ``with`` item
+    (``UnknownCalleeCallV1.faces``).  An instance built in the frame whose
+    protocol the lookup decides is no dispatched manager
+    (``_dispatched_manager``): its ``__enter__``/``__exit__`` take the
+    receiver's own door (``ObjectValue.call_method_value``), which carries
+    ``halted_at`` to the dispatched or unanswered call it makes, never the
+    slot id as the halt's site.
     """
     from sugar_source_tree.panic import SugarNotWritten
 
@@ -438,12 +447,16 @@ def _call_protocol_method(
             requested=f"authenticated {name} call over projected receiver state",
             fix="preserve the exact receiver method frame or keep protocol loud",
         )
+    # Only the instance's own door carries where a halt leaves; a receiver
+    # of any other kind reaches here with no decided protocol.
+    leaves = {"halted_at": halted_at} if isinstance(receiver, ObjectValue) else {}
     return call_method_value(
         name,
         tuple(arguments),
         owner="ConstructedManagerProtocolV1.protocol_method",
         blame=site,
         ctx=ctx,
+        **leaves,
     )
 
 

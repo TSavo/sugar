@@ -330,6 +330,7 @@ class MappingObjectValue(ObjectValue):
         ctx=None,
         keywords=(),
         required_frame=None,
+        halted_at=None,
     ):
         """Answer a name the MRO resolves to the authenticated dict base from
         its storage (``_protocol_owner``, then ``dict_base_call``); every
@@ -351,6 +352,7 @@ class MappingObjectValue(ObjectValue):
             ctx=ctx,
             keywords=keywords,
             required_frame=required_frame,
+            halted_at=halted_at,
         )
 
     def dict_base_call(self, name, arguments, blame, ctx):
