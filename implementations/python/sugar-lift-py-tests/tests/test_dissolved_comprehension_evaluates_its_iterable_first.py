@@ -15,37 +15,31 @@ unrolled ``for`` over the dissolved display evaluates them the same way
 Each program has a truthful claim (what Python computes), which must
 complete, and a lying claim (what the interleaved order computed), which must
 not.
+
+The member that raises is ``int("x")``, a builtin the reduction decides over
+its ground operand (``ValueError``, always), and the element is ``1 // x``,
+decided over the first member ``0`` (``ZeroDivisionError``).  The programs
+used same-file helpers (``boom()``, ``inv(zero())``) until #7757 steps 5 and
+6 (#8705): a same-file call is now its coordinate and edge, whose raise is
+decided at prove, never at the reduction, so the order the reduction keeps
+could no longer be read off which exception the ``try`` caught.  A builtin
+call is a member that runs code all the same (``_evaluates_code``).
 """
 
 from __future__ import annotations
 
 import pytest
 
-_HELPERS = (
-    "def zero():\n"
-    "    return 0\n"
-    "\n"
-    "\n"
-    "def boom():\n"
-    "    raise ValueError\n"
-    "\n"
-    "\n"
-    "def inv(x):\n"
-    "    return 1 // x\n"
-    "\n"
-    "\n"
-)
-
 # name -> (body of ``def test_it():`` with ``{claim}``, Python's value, the lie)
 #
-# Python raises ``boom()``'s ``ValueError`` while it evaluates the iterable,
-# before any element runs: ``ok`` is 1.  The interleaved order ran
-# ``inv(zero())`` first and raised ``ZeroDivisionError``: ``ok`` was 2.
+# Python raises ``int("x")``'s ``ValueError`` while it evaluates the
+# iterable, before any element runs: ``ok`` is 1.  The interleaved order ran
+# ``1 // 0`` first and raised ``ZeroDivisionError``: ``ok`` was 2.
 _PROGRAMS = {
     "list-comprehension": (
         "    ok = 0\n"
         "    try:\n"
-        "        r = [inv(x) for x in [zero(), boom()]]\n"
+        '        r = [1 // x for x in [0, int("x")]]\n'
         "    except ValueError:\n"
         "        ok = 1\n"
         "    except ZeroDivisionError:\n"
@@ -57,7 +51,7 @@ _PROGRAMS = {
     "loop-over-a-dissolved-comprehension": (
         "    ok = 0\n"
         "    try:\n"
-        "        for y in [inv(x) for x in [zero(), boom()]]:\n"
+        '        for y in [1 // x for x in [0, int("x")]]:\n'
         "            pass\n"
         "    except ValueError:\n"
         "        ok = 1\n"
@@ -73,7 +67,7 @@ _PROGRAMS = {
     "unpack-of-a-dissolved-comprehension": (
         "    ok = 0\n"
         "    try:\n"
-        "        a, b = [inv(x) for x in [zero(), boom()]]\n"
+        '        a, b = [1 // x for x in [0, int("x")]]\n'
         "    except ValueError:\n"
         "        ok = 1\n"
         "    except ZeroDivisionError:\n"
@@ -89,7 +83,7 @@ _PROGRAMS = {
     "dict-comprehension-repeated-key": (
         "    ok = 0\n"
         "    try:\n"
-        "        d = {{0: boom() if x == 0 else x for x in range(2)}}\n"
+        '        d = {{0: int("x") if x == 0 else x for x in range(2)}}\n'
         "    except ValueError:\n"
         "        ok = 1\n"
         "    assert ok == {claim}\n",
@@ -108,7 +102,7 @@ def _function(body: str):
     from sugar_source_tree.reporter import CollectingReporter
     from sugar_source_tree.tree import SourceFile
 
-    source = _HELPERS + "def test_it():\n" + body
+    source = "def test_it():\n" + body
     tree = SourceFile(
         (source, "test_witness.py", blake3_512_of(source.encode())),
         reporter=CollectingReporter(),
@@ -136,7 +130,7 @@ def _faces(outcome) -> tuple[int, int]:
 @pytest.mark.parametrize("name", sorted(_PROGRAMS))
 def test_the_truthful_claim_completes(name: str) -> None:
     # TRUTHFUL: the iterable's members are evaluated first, in order, so
-    # ``boom()``'s ``ValueError`` is raised before ``inv`` ever runs.
+    # ``int("x")``'s ``ValueError`` is raised before the element ever runs.
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
     body, truthful, _lying = _PROGRAMS[name]
@@ -147,7 +141,7 @@ def test_the_truthful_claim_completes(name: str) -> None:
 
 @pytest.mark.parametrize("name", sorted(_PROGRAMS))
 def test_the_lying_claim_does_not_complete(name: str) -> None:
-    # LYING: ``inv(zero())`` evaluated before ``boom()`` -- the element
+    # LYING: ``1 // 0`` evaluated before ``int("x")`` -- the element
     # interleaved with the iterable -- raises ``ZeroDivisionError``.
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
