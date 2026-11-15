@@ -16,7 +16,7 @@ from sugar_source_tree.panic import SourceTreePanic
 from sugar_source_tree.binding_provenance import BindingProvenanceGap
 from sugar_source_tree.binding_state import SubstitutionTraceBuilderV1
 from sugar_source_tree.nodes import _SUBSTITUTION_TRACE_BUILDER
-from sugar_source_tree.backend import Child, Children, Leaf, materialize
+from sugar_source_tree.backend import Child, Leaf, materialize
 from sugar_source_tree.shadow import ShadowNode, _handle_of
 
 FIXTURES = Path(__file__).parent / "fixtures" / "object_field_flow"
@@ -214,12 +214,13 @@ def _object_states(path: Path, function_name: str):
     return [node for node in substituted.walk() if node.kind == "ObjectPlaceStateV1"]
 
 
-def test_object_and_field_versions_reresolve_and_distinct_objects_do_not_collide():
+def test_object_identities_reresolve_and_distinct_objects_do_not_collide():
+    # An object place keeps no field versions of its own: a field store on it
+    # is the one receiver field store, read through the receiver's post-state.
     first = _object_states(FIXTURES / "version_flow.py", "truthful")
     second = _object_states(FIXTURES / "version_flow.py", "truthful")
     assert first and second
     assert first[-1].object_identity_cid == second[-1].object_identity_cid
-    assert first[-1].version_cids == second[-1].version_cids
     first[-1].validate_identity()
     second[-1].validate_identity()
 
@@ -237,20 +238,6 @@ def test_a_type_name_does_not_admit_a_lying_object_identity():
         BindingProvenanceGap, match="object place identity CID mismatch"
     ):
         forged.validate_identity()
-
-
-def test_unmatched_field_version_is_loud_before_projection():
-    state = next(
-        state
-        for state in _object_states(FIXTURES / "store_then_read.py", "truthful")
-        if state.selectors
-    )
-    forged = _forge_state(
-        state,
-        version_cids=("blake3-512:stale", *state.version_cids[1:]),
-    )
-    with pytest.raises(BindingProvenanceGap, match="field version CID mismatch"):
-        forged.field(state.selectors[0])
 
 
 def test_branch_join_projects_both_authenticated_field_faces(tmp_path):
@@ -275,14 +262,23 @@ def test_branch_join_projects_both_authenticated_field_faces(tmp_path):
         }
     )
     returned = next(node for node in substituted.walk() if node.kind == "Return")
-    assert returned.value.kind == "IfExp"
-    # Each face reads its arm's store through that store's key; the stored
-    # constant is only the object the place holds.
-    for face in (returned.value.body, returned.value.orelse):
-        assert face.kind == "EvaluationRef"
-        assert face.place is True
-        assert face.of.kind == "Constant"
-    assert returned.value.body.evaluation != returned.value.orelse.evaluation
+    # The read is of the object as each arm's store left it: the one receiver
+    # field store's post-state (``ReceiverFieldStoreState``), never a field
+    # kept on the object place.  Each face holds its arm's store, read through
+    # that store's key; the stored constant is only the object it denotes.
+    assert returned.value.kind == "Attribute"
+    faces = [
+        node
+        for node in returned.value.walk()
+        if node.kind == "ReceiverFieldStoreState"
+    ]
+    assert len(faces) == 2
+    for face in faces:
+        assert face.attr == "payload"
+        assert face.value.kind == "EvaluationRef"
+        assert face.value.place is True
+        assert face.value.of.kind == "Constant"
+    assert faces[0].value.evaluation != faces[1].value.evaluation
 
 
 def test_branch_join_with_one_unproved_field_face_stays_loud(tmp_path):
@@ -336,14 +332,20 @@ def test_opaque_call_invalidates_only_the_exposed_object(
         }
     )
     returned = next(node for node in substituted.walk() if node.kind == "Return")
-    assert returned.value.kind == "EvaluationRef"
-    assert returned.value.place is True
+    # The other object's read is the object as its store left it: the one
+    # receiver field store's post-state, holding the store's key.
+    assert returned.value.kind == "Attribute"
+    stored = returned.value.value
+    assert stored.kind == "ReceiverFieldStoreState"
+    assert stored.value.kind == "EvaluationRef"
+    assert stored.value.place is True
     states = [node for node in substituted.walk() if node.kind == "ObjectPlaceStateV1"]
     assert len({state.object_identity_cid for state in states}) == 2
     # The exposed object's name is rebound by the one exposure rule
     # (``container_mutation.havoc_after``): its later read is its value after
     # the call, which the value decides at reduce; the other object's read
-    # is still its store's key (above).  No place has its own invalidation.
+    # is still its store's post-state (above).  No place has its own
+    # invalidation.
     from sugar_source_tree.container_mutation import _identity
 
     observed = next(
@@ -353,7 +355,6 @@ def test_opaque_call_invalidates_only_the_exposed_object(
     )
     assert observed.value.kind == "Attribute"
     assert _identity(observed.value.value).kind == "ReceiverAfterCall"
-    assert not any(state.invalidated_by_opaque_call for state in states)
 
 
 def test_opaque_result_mints_occurrence_identity_without_fields():
@@ -371,15 +372,6 @@ def test_opaque_result_mints_occurrence_identity_without_fields():
     wire = states[-1].object_coordinate.wire()
     assert wire["kind"] == "opaque-object-coordinate"
     assert not ({"fields", "behavior", "class", "type"} & set(wire))
-
-
-def test_unknown_place_selector_kind_is_typed_loud():
-    from sugar_lift_py_tests.floor.place_assign_value import PlaceAssignValue
-    from sugar_lift_py_tests.floor import TermValue
-
-    malformed = PlaceAssignValue(TermValue(1), "future-selector", 0, TermValue(2))
-    with pytest.raises(ValueError, match="unknown place selector kind"):
-        malformed.to_term(owner="lying-selector")
 
 
 @pytest.mark.parametrize(
@@ -597,14 +589,6 @@ def _forge_state(state, **overrides):
         "construction_testimony": state.construction_testimony,
         "object_identity_cid": state.object_identity_cid,
         "base": state.base,
-        "selectors": state.selectors,
-        "values": state.values,
-        "value_testimonies": state.value_testimonies,
-        "version_cids": state.version_cids,
-        "version_records": state.version_records,
-        "prior_version_cids": state.prior_version_cids,
-        "store_occurrence_cids": state.store_occurrence_cids,
-        "invalidated_by_opaque_call": state.invalidated_by_opaque_call,
     }
     values.update(overrides)
     return materialize(
@@ -618,23 +602,8 @@ def _forge_state(state, **overrides):
                 ("construction_testimony", Leaf(values["construction_testimony"])),
                 ("object_identity_cid", Leaf(values["object_identity_cid"])),
                 ("base", Child(_handle_of(values["base"]))),
-                ("selectors", Leaf(values["selectors"])),
-                (
-                    "values",
-                    Children(tuple(_handle_of(item) for item in values["values"])),
-                ),
-                ("value_testimonies", Leaf(values["value_testimonies"])),
-                ("version_cids", Leaf(values["version_cids"])),
-                ("version_records", Leaf(values["version_records"])),
-                ("prior_version_cids", Leaf(values["prior_version_cids"])),
-                ("store_occurrence_cids", Leaf(values["store_occurrence_cids"])),
-                (
-                    "invalidated_by_opaque_call",
-                    Leaf(values["invalidated_by_opaque_call"]),
-                ),
                 ("evaluation", Leaf(state.evaluation)),
                 ("name", Leaf(state.name)),
-                ("store_evaluations", Leaf(state._store_evaluations())),
             ),
         ),
         state.reporter,

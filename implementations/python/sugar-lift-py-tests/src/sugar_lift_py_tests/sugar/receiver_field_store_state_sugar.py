@@ -14,9 +14,10 @@ class ReceiverFieldStoreStateSugar(ConstructedTermSugar):
     ``value``.  ``value`` is the store's key read (``place``): the value the
     store statement completed with, never the stored expression evaluated
     again.  A read of a whole object after its field stores is these folded
-    over the object's own read (``ReceiverFieldStoreState``, a coordinate
-    receiver after ``o.x = v``; ``ObjectPlaceStateV1``, an object a
-    constructor call built, read through its assignment's key)."""
+    over the object's own read (``ReceiverFieldStoreState``, the one
+    receiver field store's post-state, whatever the receiver was given: an
+    object a constructor call built, ``ObjectPlaceStateV1``, is read through
+    its assignment's key underneath)."""
 
     receiver: ConstructedTermSugar
     value: ConstructedTermSugar
