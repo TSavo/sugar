@@ -245,7 +245,11 @@ def test_drained_sin_cluster_4_sites_are_absent_on_live_tree() -> None:
     marker = "def_memento, rows = _tree.function_contract_rows("
     assert lift.count(marker) == 1
     idx = lift.index(marker)
-    window = lift[idx - 120 : lift.index("_tree.unanswered_call_rows(", idx)]
+    # The window ends where the function's owed calls are recorded, after the
+    # refusal arm (``record_calls``, which writes the unanswered-call rows,
+    # now stands above the scan).
+    end = lift.index("record_calls(def_memento.to_rpc(), calls)", idx)
+    window = lift[idx - 120 : end]
     assert "except Exception" not in window
     assert "except BackendDefect:" in window
     assert "except LifterRefusal as refusal:" in window
