@@ -691,7 +691,8 @@ def test_except_star_of_a_star_imported_class_is_retained_and_owes(tmp_path):
         "    try:\n"
         "        raise ValueError('v')\n"
         "    except* ArrowInvalid:\n"
-        "        return 1\n",
+        "        pass\n"
+        "    return 1\n",
     )
     outcome = function.sugar().desugar()
     completed = [face for face in outcome.exits if isinstance(face, Completed)]
@@ -724,7 +725,8 @@ def test_except_star_over_a_star_imported_class_call_routes_and_owes(tmp_path):
         "    try:\n"
         "        raise ArrowInvalid('x')\n"
         "    except* ValueError:\n"
-        "        return 1\n",
+        "        pass\n"
+        "    return 1\n",
     )
     outcome = function.sugar().desugar()
     completed = [face for face in outcome.exits if isinstance(face, Completed)]

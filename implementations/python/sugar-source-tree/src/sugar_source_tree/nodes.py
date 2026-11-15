@@ -20104,12 +20104,75 @@ class TryStar(Statement):
                 binding.update(_deleted_name_binding(handler.name, handler.fragment))
         return binding or None
 
+    def _block_exit(self, handler):
+        """A ``return``, ``break`` or ``continue`` that would leave
+        ``handler``'s block, or None.
+
+        A ``return`` anywhere in the block leaves it, one in a nested
+        definition apart (it leaves that definition's frame).  A ``break`` or
+        ``continue`` leaves it unless its loop stands inside the block: its
+        nearest loop target is then none of the loops around the handler
+        (``ControlConstructionContextV1.loop_targets``).  One with no loop
+        around it at all is refused where it is constructed."""
+        around = handler.control_context.loop_targets
+        stack = list(reversed(handler.body))
+        seen: set[int] = set()
+        while stack:
+            node = stack.pop()
+            if id(node) in seen:
+                continue
+            seen.add(id(node))
+            if isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef)):
+                continue
+            if isinstance(node, Return):
+                return node
+            if isinstance(node, (Break, Continue)):
+                targets = node.control_context.loop_targets
+                if targets and targets[-1] in around:
+                    return node
+                continue
+            # A statement stands in a block, never in an expression (a
+            # lambda's body is an expression).
+            for _name, _index, child in node._child_edges():
+                if isinstance(child, Node) and not isinstance(child, Expression):
+                    stack.append(child)
+        return None
+
     def _construct_sugar(self):
-        """Construct the distinct except* router with authenticated type operands."""
+        """Construct the distinct except* router with authenticated type operands.
+
+        A ``return``, ``break`` or ``continue`` that would leave an
+        ``except*`` block is not Python: CPython refuses to compile it
+        (``SyntaxError: 'break', 'continue' and 'return' cannot appear in an
+        except* block``).  Such a source is refused here by name, never
+        constructed and completed with the exit dropped."""
         from sugar_lift_py_tests.sugar.authenticated_exception_type_sugar import (
             AuthenticatedExceptionTypeSugar,
         )
         from sugar_lift_py_tests.sugar.try_star_sugar import TryStarSugar
+
+        for handler in self.handlers:
+            leaving = self._block_exit(handler)
+            if leaving is None:
+                continue
+            keyword = "continue"
+            if isinstance(leaving, Return):
+                keyword = "return"
+            elif isinstance(leaving, Break):
+                keyword = "break"
+            raise SugarNotWritten(
+                blame=leaving.fragment,
+                owner="TryStar._construct_sugar",
+                observed=f"`{keyword}` inside an except* block",
+                requested=(
+                    "a Python program: CPython compiles no return, break or "
+                    "continue that leaves an except* block (SyntaxError)"
+                ),
+                fix=(
+                    "refuse the source by name; never complete it with the "
+                    "exit dropped"
+                ),
+            )
 
         handlers = []
         for handler in self.handlers:
