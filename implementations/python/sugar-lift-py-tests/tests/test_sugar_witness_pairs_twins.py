@@ -116,7 +116,9 @@ def test_witness_pair_truthful_sat_lying_unsat(
     for role, half in (("truthful", pair.truthful), ("lying", pair.lying)):
         result = run_source_through_real_solver(tmp_path / role, half.source)
         verdicts[role] = claim_verdict(
-            result.prove_doc, claims_from_line=_test_function_line(half.source)
+            result.prove_doc,
+            claims_from_line=_test_function_line(half.source),
+            lift_doc=result.lift_doc,
         )
     print(_pair_id(pair), verdicts)
     assert verdicts == {"truthful": "sat", "lying": "unsat"}

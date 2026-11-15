@@ -615,7 +615,9 @@ def prove_verdict(prove_doc: dict) -> Verdict:
     raise ProofObligationPanic(prove_doc)
 
 
-def claim_verdict(prove_doc: dict, *, claims_from_line: int) -> Verdict:
+def claim_verdict(
+    prove_doc: dict, *, claims_from_line: int, lift_doc: dict | None = None
+) -> Verdict:
     """The verdict on the claims one test function states, read by
     ``prove_verdict``.
 
@@ -625,21 +627,54 @@ def claim_verdict(prove_doc: dict, *, claims_from_line: int) -> Verdict:
     source ``open`` however the test function's claim is decided.  The test
     function starts at ``claims_from_line`` (the line of its ``def``, which
     follows every helper); an owed member located above it belongs to another
-    function's own proof and is set aside here.  Everything else -- every
-    claim, and every member the test function itself owes -- is read by the
-    one reader, unchanged."""
+    function's own proof and is set aside here.  So is one located inside a
+    definition nested in the test function (a ``lambda`` or a local ``def``,
+    which states its own contract, #8687): given the lift document, its
+    contract's span names it (``_nested_definition_spans``).  Everything else
+    -- every claim, and every member the test function itself owes -- is read
+    by the one reader, unchanged."""
     rows = prove_doc.get("rows") or []
+    nested = _nested_definition_spans(lift_doc, claims_from_line)
 
-    def owed_above(row: object) -> bool:
+    def owed_elsewhere(row: object) -> bool:
         if not isinstance(row, dict):
             return False
+        if not str(row.get("property") or "").startswith("undecided:"):
+            return False
         line = row.get("line")
-        return (
-            isinstance(line, int)
-            and line < claims_from_line
-            and str(row.get("property") or "").startswith("undecided:")
-        )
+        if not isinstance(line, int):
+            return False
+        if line < claims_from_line:
+            return True
+        column = row.get("column")
+        if not isinstance(column, int):
+            return False
+        return any(start <= (line, column) <= end for start, end in nested)
 
     return prove_verdict(
-        {**prove_doc, "rows": [row for row in rows if not owed_above(row)]}
+        {**prove_doc, "rows": [row for row in rows if not owed_elsewhere(row)]}
     )
+
+
+def _nested_definition_spans(
+    lift_doc: dict | None, claims_from_line: int
+) -> tuple[tuple[tuple[int, int], tuple[int, int]], ...]:
+    """The source span of every function contract the lift states inside the
+    test function (it starts below the test function's ``def`` line): a
+    ``lambda`` or local ``def`` whose own proof owes what its body does with
+    its formals."""
+    spans = []
+    for row in (lift_doc or {}).get("ir") or ():
+        if not isinstance(row, dict) or row.get("kind") != "function-contract":
+            continue
+        for warrant in row.get("sourceWarrants") or ():
+            span = warrant.get("span") if isinstance(warrant, dict) else None
+            if not isinstance(span, dict):
+                continue
+            start = (span.get("start_line"), span.get("start_col"))
+            end = (span.get("end_line"), span.get("end_col"))
+            if not all(isinstance(part, int) for part in (*start, *end)):
+                continue
+            if start[0] > claims_from_line:
+                spans.append((start, end))
+    return tuple(spans)
