@@ -334,9 +334,15 @@ def test_an_escaped_tuple_is_unrolled() -> None:
     assert len(_stores(body, "x")) == 2
 
 
-def test_an_escaped_list_with_a_pure_body_is_unrolled() -> None:
+def test_a_list_stored_on_a_formal_is_not_unrolled_even_with_a_pure_body() -> None:
+    # ``box.items = xs`` is ``type(box).__setattr__(box, 'items', xs)``; the
+    # formal's class is not decided, so the store may run code handed ``xs``
+    # (``class B: def __setattr__(s, k, v): v.append(3)`` makes the loop run
+    # three times).  The list's contents after the store are not decided, so
+    # the loop over it is never unrolled to the two items the display held,
+    # however pure the body is.
     body = _body(_escaped("    box.items = xs\n", "r = x + 1"))
-    assert len(_stores(body, "x")) == 2
+    assert _stores(body, "x") == []
 
 
 def test_a_local_list_whose_body_calls_is_unrolled() -> None:
@@ -380,9 +386,12 @@ def test_an_escaped_list_whose_body_adds_to_a_source_object_is_not_unrolled() ->
     assert _stores(body, "x") == []
 
 
-def test_an_escaped_list_whose_body_adds_constants_is_unrolled() -> None:
+def test_an_escaped_list_whose_body_adds_constants_is_still_not_unrolled() -> None:
+    # The body runs no code, but the escape itself may have: ``box`` is a
+    # formal, so ``box.items = xs`` may run a ``__setattr__`` handed ``xs``
+    # (see ``test_a_list_stored_on_a_formal_is_not_unrolled_even_with_a_pure_body``).
     body = _body(_hidden("y = 1 + 2"))
-    assert len(_stores(body, "x")) == 2
+    assert _stores(body, "x") == []
 
 
 def test_an_escaped_list_whose_body_reads_a_property_is_not_unrolled() -> None:
