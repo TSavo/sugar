@@ -73,6 +73,14 @@ class Box:
         ("        del other[0]\n        return self.check()", ("self", "other")),
         # An item read hands the object to code the frame does not see.
         ("        other.append(other[0])\n        return self.check()", ("self",)),
+        # A field store on the parameter (#7757 step 7): the store is stated
+        # under a guard over the class input.
+        ("        self.n = 1\n        return other.get()", ("self", "other")),
+        ("        self.n += 1\n        return None", ("self",)),
+        # The stored value read bare is handed to the store, not the receiver.
+        ("        self.n = other\n        return None", ("self",)),
+        # Stored on, but also handed to code: no input.
+        ("        self.n = 1\n        helper(self)", ()),
     ],
 )
 def test_a_parameter_s_class_is_an_input_where_nothing_unseen_may_change_it(
@@ -375,3 +383,57 @@ def test_a_namespace_row_states_each_binding_s_kind(tmp_path) -> None:
     assert kinds["counted"] == ("other", "")
     assert class_object is not None
     assert class_object.name == "python:class-definition"
+
+
+_STORED = """\
+class Box:
+    pass
+
+
+def fill(b, v):
+    b.n = v
+    b.m = 2
+"""
+
+
+def _atom_names(formula) -> set:
+    """The names of the atoms ``formula`` states under its connectives."""
+    names = set()
+    pending = [formula]
+    while pending:
+        node = pending.pop()
+        operands = getattr(node, "operands", None)
+        if operands is not None:
+            pending.extend(operands)
+        elif hasattr(node, "args"):
+            names.add(node.name)
+    return names
+
+
+def test_a_field_stored_on_a_parameter_is_stated_under_its_guard() -> None:
+    """``fill(b, v)``: the class of ``b`` is the contract's ``class:b``
+    input, and each completed arm states the fields the body's quiet tail
+    stores on ``b`` over ``python:after(out, "b")`` under
+    ``python:plain_store(class:b, "<f>")`` for every store of the tail.  Each
+    store's own completion is guarded by its atom too, so its halt is the
+    store that is not plain (#7757 step 7)."""
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    fill = _function(_tree(_STORED), "fill")
+    assert _receiver_class_parameters(fill) == ("b",)
+    outcome = function_universe_outcome(fill)
+    completed = [face.value for face in outcome.exits if isinstance(face, Completed)]
+    assert completed, outcome
+    for universe in completed:
+        assert universe.plain_stores == (("b", "n"), ("b", "m"))
+        assert [(param, attr) for param, attr, _value in universe.fields] == [
+            ("b", "n"),
+            ("b", "m"),
+        ]
+        stated = universe.field_facts()
+        assert stated is not None and stated.kind == "implies"
+        assert _atom_names(stated.operands[0]) == {"python:plain_store"}
+    halts = outcome.halts()
+    assert halts
+    assert all("python:plain_store" in _atom_names(face.guard) for face in halts)

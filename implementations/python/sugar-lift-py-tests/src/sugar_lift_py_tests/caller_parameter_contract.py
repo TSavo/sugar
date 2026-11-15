@@ -840,6 +840,13 @@ class NativeOperationExitCarrierV1:
     pre_effect_state: ReducerPreEffectStateV1 | None = dataclass_field(
         default=None, compare=False, repr=False
     )
+    # ``class:<param>`` for a ``setattr_named`` store on a parameter whose
+    # class is an input of the contract (``receiver_dispatch.
+    # stored_class_input``): where the store is the plain ``__dict__`` store
+    # (``python:plain_store``, decided at prove on the class the caller
+    # binds), it completes (#7757 step 7, ``_unanswered_exits``).
+    plain_store_input: str | None = None
+
     def __post_init__(self):
         operand_count = len(self.operands)
         coordinate_count = len(self.coordinates)
@@ -1053,6 +1060,7 @@ class NativeOperationExitCarrierV1:
             )
             value = ctor("python:native_operation_result", (operation,))
             guard = atomic("python:unanswered_native_operation.completes", [operation])
+            guard = self._completes_where_the_store_is_plain(guard)
         if value is None:
             from sugar_lift_py_tests.floor.predicate_value import PredicateValue
             from sugar_lift_py_tests.ir import py_eq
@@ -1076,6 +1084,28 @@ class NativeOperationExitCarrierV1:
                 None if self.pre_effect_state is None else self.pre_effect_state.state
             ),
         )
+
+    def _completes_where_the_store_is_plain(self, guard):
+        """``guard`` for a field store on a parameter whose class is a
+        contract input (``plain_store_input``): ``or(python:plain_store(
+        class:<param>, "<attr>"), guard)``.  Where the store is the plain
+        ``__dict__`` store -- ``object``'s ``__setattr__``, no data
+        descriptor of the name, an instance with a ``__dict__`` -- it
+        completes, whatever the value; prove decides that on the class the
+        caller binds, and nowhere else is it decided.  Its complement, the
+        halt, is the store that is not plain and raises.  Any other
+        operation's guard is returned as it is (#7757 step 7)."""
+        from sugar_lift_py_tests.floor.string_value import StringValue
+        from sugar_lift_py_tests.ir import make_var, or_
+        from sugar_lift_py_tests.receiver_dispatch import plain_store_atom
+
+        if self.plain_store_input is None or self.demand.operator != "setattr_named":
+            return guard
+        name = self.operands[1] if len(self.operands) == 3 else None
+        if not isinstance(name, StringValue):
+            return guard
+        plain = plain_store_atom(make_var(self.plain_store_input), name.value)
+        return or_([plain, guard])
 
     def short_circuit(
         self,

@@ -71,6 +71,55 @@ CLASS_UNDECIDED = "python:class_undecided"
 #: PYTHON_CLASS``).
 CLASS_ARGUMENT = "py.class"
 
+#: ``python:plain_store(<class>, <field>)``: a store of ``<field>`` on an
+#: instance of ``<class>`` is the plain ``__dict__`` store, and a read of the
+#: field afterwards is that entry (#7757 step 7).  Stated over a class input
+#: (``class:<param>``) as the guard of what a callee stores on a parameter;
+#: prove decides it on the class's namespace row once a caller binds the
+#: input (``consistency::plain_store_holds``), and nothing else ever does.
+PLAIN_STORE = "python:plain_store"
+
+
+def plain_store_atom(class_term, name: str):
+    """``python:plain_store(<class_term>, "<name>")`` (``PLAIN_STORE``)."""
+    from sugar_lift_py_tests.ir import atomic, str_const
+
+    return atomic(PLAIN_STORE, [class_term, str_const(name)])
+
+
+def is_dunder(name: str) -> bool:
+    """Whether ``name`` is spelled ``__<x>__``: ``object``'s own data
+    descriptors (``__class__``, ``__dict__``) are such names, and no
+    namespace row states them, so no plain store of one is ever stated."""
+    return len(name) > 4 and name.startswith("__") and name.endswith("__")
+
+
+def stored_class_input(receiver, name: str, unit):
+    """The class input a store ``receiver.<name> = v`` is guarded by
+    (``plain_store_atom``), or None: ``receiver`` is the plain value of a
+    positional or keyword parameter of the function whose own proof this is,
+    whose class is an input of its contract (``class_input_formals``), in a
+    module that gives no object another class and stores no computed name
+    (``module_attribute_names``), and ``name`` is no dunder name.  Its value
+    is the formal ``class:<param>``."""
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
+
+    if unit is None or is_dunder(name):
+        return None
+    coordinate = getattr(receiver, "formal_coordinate", None)
+    if (
+        type(receiver) is not SymbolicValue
+        or not isinstance(coordinate, FormalParameterCoordinateV1)
+        or coordinate.parameter_kind not in _PARAMETER_KINDS
+        or coordinate.coordinate_cid not in class_input_formals(unit)
+        or module_attribute_names(unit)[1]
+    ):
+        return None
+    from sugar_lift_py_tests.contract_input import CLASS_INPUT, input_formal
+
+    return input_formal(CLASS_INPUT, coordinate.declared_name)
+
 # A read of any of these names, or of these attributes, may store any name
 # on any object: ``setattr(o, name, v)``, ``vars(o)[name] = v``,
 # ``o.__dict__[name] = v``, ``object.__setattr__(o, name, v)`` -- and so
