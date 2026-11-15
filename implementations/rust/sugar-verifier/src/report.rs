@@ -735,43 +735,60 @@ pub(crate) fn verification_with_fol(verification: Option<&Json>) -> Json {
 /// OWN quantification metadata: `∀ <formals>. <call(formals)> substituted for
 /// the out-binding in the post body`. Every ingredient comes from the linked
 /// post (`call` gives the callee ctor and the argument sorts, `formals` the
-/// lifted parameter names, `outBinding` the result variable the post body
-/// speaks about); nothing is invented. None (fail-open -> plain body
-/// rendering) when any piece is missing or the arity disagrees.
+/// lifted formal names, `outBinding` the result variable the post body
+/// speaks about); nothing is invented. Each argument of the call is read
+/// against the formals by the one binder (`consistency::
+/// call_argument_formals`, the reading `bind_call_arguments` binds through):
+/// a positional argument, a `py.kwarg` and a contract input's named argument
+/// (`py.closure`, `py.global`, `py.default`) each name the formal they
+/// supply. None (fail-open -> plain body rendering) when any piece is
+/// missing, the call does not fit the contract, or a formal is not supplied
+/// by the call (the reading would leave it free under no quantifier).
 fn quantified_vendor_post(post: &Json, vendor_post: &Json) -> Option<Json> {
-    let formals: Vec<&str> = post
+    let formals: Vec<String> = post
         .get("formals")?
         .as_array()?
         .iter()
-        .map(|f| f.as_str())
+        .map(|f| f.as_str().map(str::to_string))
         .collect::<Option<Vec<_>>>()?;
     if formals.is_empty() {
         return None;
     }
     let out_binding = post.get("outBinding")?.as_str()?;
     let call = post.get("call")?;
-    let call_args = call.get("args")?.as_array()?;
-    if call.get("kind").and_then(|k| k.as_str()) != Some("ctor") || call_args.len() != formals.len()
-    {
+    if call.get("kind").and_then(|k| k.as_str()) != Some("ctor") {
         return None;
     }
-    // The callee applied to the FORMALS (not the consumer's concrete args);
-    // each formal var carries the sort of the corresponding call argument.
+    let call_args = call.get("args")?.as_array()?;
+    let supplied = crate::consistency::call_argument_formals(&formals, call_args)?;
+    if supplied.len() != formals.len() {
+        return None;
+    }
+    // The callee applied to the FORMALS (not the consumer's concrete args):
+    // each argument's value becomes the var of the formal it supplies,
+    // carrying that value's sort. A positional argument is its own value; a
+    // named argument keeps its name and is given the formal's var as its
+    // value.
     let mut formal_call = call.clone();
-    let mut sorts = Vec::with_capacity(formals.len());
+    let mut quantified = Vec::with_capacity(supplied.len());
     {
         let args = formal_call.get_mut("args")?.as_array_mut()?;
-        for (arg, formal) in args.iter_mut().zip(&formals) {
-            let sort = arg.get("sort")?.clone();
-            sorts.push(sort.clone());
-            *arg = json!({ "kind": "var", "name": formal, "sort": sort });
+        for (arg, (formal, value)) in args.iter_mut().zip(&supplied) {
+            let sort = value.get("sort")?.clone();
+            let var = json!({ "kind": "var", "name": formal, "sort": sort });
+            if *arg == *value {
+                *arg = var;
+            } else {
+                *arg.get_mut("args")?.as_array_mut()?.get_mut(1)? = var;
+            }
+            quantified.push((formal.clone(), sort));
         }
     }
     // The post body with the out-binding var replaced by the call term.
     let mut body = vendor_post.clone();
     substitute_var(&mut body, out_binding, &formal_call);
-    // Quantify over each formal (innermost = last formal).
-    for (formal, sort) in formals.iter().zip(sorts.iter()).rev() {
+    // Quantify over each formal (innermost = last argument).
+    for (formal, sort) in quantified.into_iter().rev() {
         body = json!({ "kind": "forall", "name": formal, "sort": sort, "body": body });
     }
     Some(body)
@@ -1216,6 +1233,50 @@ mod tests {
         );
         assert!(client.contains("block_width(3) = 128"), "client: {client}");
         assert!(vendor.contains("block_width(3) = 64"), "vendor: {vendor}");
+    }
+
+    #[test]
+    fn universe_post_quantifies_each_formal_the_call_names_by_the_one_binder() {
+        // `def f(x)` reading the module global `G` states the formals
+        // `[x, global:G]`; its call supplies `G` by `py.global(G, 2)`. The
+        // reading pairs each argument with the formal it supplies, so the
+        // input is quantified as the parameter is (before, a positional count
+        // check against the formals dropped the reading).
+        let int_sort = json!({ "kind": "primitive", "name": "Int" });
+        let post = json!({
+            "formals": ["x", "global:G"],
+            "outBinding": "out",
+            "call": { "kind": "ctor", "name": "call:f", "args": [
+                { "kind": "const", "value": 3, "sort": int_sort },
+                { "kind": "ctor", "name": "py.global", "args": [
+                    { "kind": "const", "value": "G",
+                      "sort": { "kind": "primitive", "name": "String" } },
+                    { "kind": "const", "value": 2, "sort": int_sort }
+                ]}
+            ]},
+        });
+        let vendor_post = json!({
+            "kind": "atomic", "name": "=",
+            "args": [{ "kind": "var", "name": "out" }, { "kind": "var", "name": "x" }]
+        });
+        let quantified =
+            quantified_vendor_post(&post, &vendor_post).expect("the call fits its contract");
+        assert_eq!(quantified["kind"], json!("forall"));
+        assert_eq!(quantified["name"], json!("x"));
+        assert_eq!(quantified["body"]["kind"], json!("forall"));
+        assert_eq!(quantified["body"]["name"], json!("global:G"));
+        let call = &quantified["body"]["body"]["args"][0];
+        assert_eq!(call["args"][0], json!({ "kind": "var", "name": "x", "sort": int_sort }));
+        assert_eq!(call["args"][1]["name"], json!("py.global"));
+        assert_eq!(
+            call["args"][1]["args"][1],
+            json!({ "kind": "var", "name": "global:G", "sort": int_sort })
+        );
+
+        // A call that leaves a formal unsupplied has no universal reading.
+        let mut partial = post.clone();
+        partial["call"]["args"].as_array_mut().unwrap().pop();
+        assert!(quantified_vendor_post(&partial, &vendor_post).is_none());
     }
 
     #[test]

@@ -3705,32 +3705,38 @@ fn named_argument(arg: &Json) -> Option<Result<(&str, String, Json), ()>> {
     Some(named.ok_or(()))
 }
 
-/// Each formal of the answering contract bound to what the call supplies
-/// for it (step 4): positional arguments bind the parameters in order,
-/// `py.kwarg` binds a parameter by name, and each contract input is bound by
-/// its named argument. A parameter the call does not pass is bound to the
-/// contract's `default:<param>` input. `None` when the call does not fit the
-/// contract (more positional arguments than parameters, a name the contract
-/// does not take, a formal bound twice, a parameter neither passed nor
-/// defaulted): the join refuses it as `import-signature-mismatch`.
+/// Each argument of a call, in the call's order, with the formal of the
+/// answering contract it supplies (step 4): a positional argument supplies
+/// the next parameter, `py.kwarg` a parameter by name, and each contract
+/// input's named argument (`py.closure`, `py.global`, `py.default`) that
+/// input. The value is what the argument supplies: the positional argument
+/// itself, or a named argument's value. `None` when an argument fits no
+/// formal (more positional arguments than parameters, a name the contract
+/// does not take, a formal supplied twice, a malformed named argument).
 ///
-/// An input the call does not supply is left unbound: the instance is open
-/// and the call stays owed (`OpenAfterSpecialization`), never answered on a
-/// value the caller did not give.
-fn bind_call_arguments(formals: &[String], args: &[Json]) -> Option<Vec<(String, Json)>> {
+/// The one reading of a call's arguments against a contract's formals:
+/// `bind_call_arguments` binds through it, and every reader that pairs a
+/// call's arguments with a contract's formals (the callsite-scoped bridge
+/// match, the vendor post's universal reading) reads it, never a positional
+/// zip behind a count check.
+pub(crate) fn call_argument_formals(
+    formals: &[String],
+    args: &[Json],
+) -> Option<Vec<(String, Json)>> {
     let parameters: Vec<&str> = formals
         .iter()
         .map(String::as_str)
         .filter(|formal| !is_contract_input(formal))
         .collect();
-    let mut bound: std::collections::BTreeMap<String, Json> = std::collections::BTreeMap::new();
+    let mut supplied: Vec<(String, Json)> = Vec::with_capacity(args.len());
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut positional = 0usize;
     for arg in args {
-        match named_argument(arg) {
+        let (formal, value) = match named_argument(arg) {
             None => {
                 let parameter = parameters.get(positional)?;
                 positional += 1;
-                bound.insert((*parameter).to_string(), arg.clone());
+                ((*parameter).to_string(), arg.clone())
             }
             Some(Err(())) => return None,
             Some(Ok((ctor, name, value))) => {
@@ -3740,16 +3746,44 @@ fn bind_call_arguments(formals: &[String], args: &[Json]) -> Option<Vec<(String,
                     let (_, prefix) = CONTRACT_INPUTS.iter().find(|(named, _)| *named == ctor)?;
                     format!("{prefix}{name}")
                 };
-                if !formals.contains(&formal) || bound.contains_key(&formal) {
+                if !formals.contains(&formal) {
                     return None;
                 }
                 if ctor == PYTHON_KWARG && is_contract_input(&formal) {
                     return None;
                 }
-                bound.insert(formal, value);
+                (formal, value)
             }
+        };
+        if !seen.insert(formal.clone()) {
+            return None;
         }
+        supplied.push((formal, value));
     }
+    Some(supplied)
+}
+
+/// Each formal of the answering contract bound to what the call supplies
+/// for it (step 4): the call's arguments read against the formals by
+/// `call_argument_formals`, and a parameter the call does not pass bound to
+/// the contract's `default:<param>` input. `None` when the call does not fit
+/// the contract (an argument that fits no formal, a parameter neither passed
+/// nor defaulted): the join refuses it as `import-signature-mismatch`.
+///
+/// An input the call does not supply is left unbound: the instance is open
+/// and the call stays owed (`OpenAfterSpecialization`), never answered on a
+/// value the caller did not give.
+pub(crate) fn bind_call_arguments(
+    formals: &[String],
+    args: &[Json],
+) -> Option<Vec<(String, Json)>> {
+    let parameters: Vec<&str> = formals
+        .iter()
+        .map(String::as_str)
+        .filter(|formal| !is_contract_input(formal))
+        .collect();
+    let mut bound: std::collections::BTreeMap<String, Json> =
+        call_argument_formals(formals, args)?.into_iter().collect();
     let mut bindings = Vec::with_capacity(formals.len());
     for parameter in &parameters {
         if let Some(actual) = bound.remove(*parameter) {
@@ -10829,6 +10863,43 @@ mod tests {
             &[int(1), named_arg("py.kwarg", "cell:k", int(2))]
         )
         .is_none());
+    }
+
+    #[test]
+    fn each_argument_names_the_formal_it_supplies_in_call_order() {
+        // The binder's one reading of a call's arguments, in the call's own
+        // order: what the callsite-scoped bridge match and the vendor post's
+        // universal reading pair with formals (never a positional zip).
+        let contract = formals(&["x", "y", "global:G"]);
+        let supplied = call_argument_formals(
+            &contract,
+            &[
+                named_arg("py.global", "G", int(4)),
+                int(1),
+                named_arg("py.kwarg", "y", int(2)),
+            ],
+        )
+        .expect("every argument fits a formal");
+        assert_eq!(
+            supplied,
+            vec![
+                ("global:G".to_string(), int(4)),
+                ("x".to_string(), int(1)),
+                ("y".to_string(), int(2)),
+            ]
+        );
+        // A formal supplied twice, or an argument past the parameters, fits
+        // nothing.
+        assert!(call_argument_formals(&contract, &[int(1), named_arg("py.kwarg", "x", int(2))])
+            .is_none());
+        assert!(call_argument_formals(&contract, &[int(1), int(2), int(3)]).is_none());
+        // Reading the arguments never asks that every parameter is passed:
+        // that is the binding's question (`bind_call_arguments`).
+        assert_eq!(
+            call_argument_formals(&contract, &[int(1)]),
+            Some(vec![("x".to_string(), int(1))])
+        );
+        assert!(bind_call_arguments(&contract, &[int(1)]).is_none());
     }
 
     #[test]
