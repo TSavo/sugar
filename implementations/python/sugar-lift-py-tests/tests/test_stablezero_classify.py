@@ -3,8 +3,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-import sugar_lift_python_source.source_oracle as source_oracle
-import sugar_source_tree.tree as source_tree
+import sugar_lift_py_tests.lift_rpc as lift_rpc
 
 from sugar_lift_py_tests.gap.info import ConstructionGap
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
@@ -49,22 +48,31 @@ class _Function:
 
 
 class _SourceFile:
-    functions_in_file = ()
-
-    def __init__(self, _identity):
-        pass
+    def __init__(self, functions: tuple):
+        self._functions = functions
 
     def functions(self):
-        return iter(self.functions_in_file)
+        return iter(self._functions)
 
 
 def _classify(monkeypatch, tmp_path: Path, functions: tuple) -> dict:
     source = tmp_path / "fixture.py"
     source.write_text("def fixture():\n    pass\n", encoding="utf-8")
-    _SourceFile.functions_in_file = functions
-    monkeypatch.setattr(source_oracle, "path_source", lambda _path: object())
-    monkeypatch.setattr(source_tree, "SourceFile", _SourceFile)
-    return _MOD.classify(source, deadline=1.0)
+    opened = []
+
+    def open_source_file_for_construction(path, *, root):
+        # The rig opens the isolated copy through the one opener, rooted at
+        # the copy's own directory; the file it opens hands back the canned
+        # functions whose reductions the rig classifies.
+        opened.append((path, root))
+        return _SourceFile(functions)
+
+    monkeypatch.setattr(
+        lift_rpc, "open_source_file_for_construction", open_source_file_for_construction
+    )
+    payload = _MOD.classify(source, deadline=1.0)
+    assert opened == [(source, source.parent)]
+    return payload
 
 
 def test_clean_function_is_the_truthful_stable_zero_face(

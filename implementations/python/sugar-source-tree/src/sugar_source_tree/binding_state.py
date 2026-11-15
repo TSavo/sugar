@@ -1662,6 +1662,27 @@ def _cv2_leaf(value: object) -> Any:
                     "method": "BinaryOperator.project_inplace",
                 }
             }
+    from sugar_source_tree.operators import Operator
+
+    if (
+        isinstance(value, Operator)
+        and type(value).kind
+        and value is type(value).instance()
+    ):
+        # A source operator (``r += x``'s ``Add``) is its concrete class's
+        # singleton: no children, no span, nothing but the class
+        # (``operators``). Its class, wire word and surface ARE its complete
+        # content; a non-singleton instance is not this category.
+        operator_type = type(value)
+        return {
+            "sourceOperator": {
+                "operatorType": (
+                    f"{operator_type.__module__}.{operator_type.__qualname__}"
+                ),
+                "kind": value.kind,
+                "symbol": value.symbol,
+            }
+        }
     from sugar_source_tree.backend import _validated_construction_event_receipt_cid
     from sugar_source_tree.nodes import Node, TargetPatternV1
 

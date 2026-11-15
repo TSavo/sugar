@@ -267,18 +267,12 @@ def test_the_carrier_is_the_loop_projection_read(tmp_path):
         }
 
 
-def test_delete_uses_the_same_authenticated_loop_exit_family():
+def test_delete_uses_the_same_authenticated_loop_exit_family(tmp_path):
     """The delete verb stamps the same producer-owned faces as the read verb."""
-    from dataclasses import dataclass
-
     from sugar_lift_py_tests.ir import atomic
     from sugar_lift_py_tests.sugar.sugar_base import Sugar
-
-    @dataclass(frozen=True)
-    class _Site:
-        filename: str = "loop-delete-twin.py"
-        line: int = 1
-        col: int = 0
+    from sugar_lift_python_source.source_oracle import workspace_path_source
+    from sugar_source_tree.tree import SourceFile
 
     class _BoundState(Sugar):
         @classmethod
@@ -288,7 +282,13 @@ def test_delete_uses_the_same_authenticated_loop_exit_family():
         def desugar(self, ctx=None):
             raise AssertionError("delete_binding must not reduce a bound face")
 
-    site = _Site()
+    # A real ``del value`` occurrence: the unbound face's ``NameErrorEffect``
+    # decides its builtin by the read's scope, read off the site's typed unit.
+    path = tmp_path / "loop_delete_twin.py"
+    path.write_text("def f(value):\n    del value\n")
+    site = next(
+        SourceFile(workspace_path_source(str(path), root=str(tmp_path))).functions()
+    ).body[0].fragment
     projection = _projection(
         [
             LoopGuardedCompletedFace("BreakExit", atomic("b", []), _BoundState(), 2),
