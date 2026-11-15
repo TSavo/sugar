@@ -1037,7 +1037,8 @@ class _InitializerReceiverV1:
     ``try``'s ``finally`` clause, an enclosing ``with``'s exit
     (``_receiver_past_exits``).  ``frame``: the source extent of the
     initializer's ``def`` (none for a dataclass's generated stores), whose
-    own ``super().m(...)`` is a call on the receiver (``_super_door``)."""
+    own ``super().m(...)`` is a call on the receiver, evaluated in place
+    (``_call_on_self_in_place``)."""
 
     name: str
     receiver: object
@@ -1406,44 +1407,54 @@ def _super_method(node) -> "Optional[str]":
     return None
 
 
-def _super_door(statement, scope, source, call=None, *, target_name=None):
-    """``super().m(...)`` (``source``, ``_super_method``) as the whole of
-    ``statement``'s operation: a call whose receiver is the object the
-    frame's receiver formal holds -- the first positional formal of the
-    ``def`` running it, which the zero-argument ``super()`` binds
-    (``builtin_semantic_callable.zero_argument_super_receiver``) -- for
-    every method ``m``, ``__init__`` or any other.  It takes the one door
-    on that formal (``container_mutation.name_mutation_statement``): the
-    base method the receiver's MRO selects (``BuiltinSuperValue``) runs on
-    the object as this statement reads it, and the formal and every name
-    bound to the object read it after the call -- what the call states it
-    did to it (``call_site_value.receiver_after_its_call``, the one
-    projection of a callee's caller-visible effects: a followed source
-    method's carried stores, a builtin's transition), else unknown (the one
-    exposure rule).
+def _call_on_self_in_place(source, scope, call):
+    """``super().m(...)`` (``source``, ``_super_method``) of a class call's
+    initializer, at its own position in the expression that holds it: the
+    one call form, evaluated in place in Python's order like every other
+    call.  Its callee is the member the receiver's MRO selects after
+    ``__class__`` (``BuiltinSuperValue``), for every method ``m``,
+    ``__init__`` or any other, and it is called on the object the frame's
+    receiver formal holds -- the first positional formal of the ``def``
+    running it, which the zero-argument ``super()`` binds
+    (``builtin_semantic_callable.zero_argument_super_receiver``) -- as the
+    expression reads that formal here (``_name_read``, in the scope the
+    operands before it leave, ``_scope_after``).
 
-    ``call`` is ``source`` substituted against ``scope`` (substituted here
-    when not given).  ``target_name``: the name the statement binds the
-    call's value to (``x = super().m(...)``; a call nested in a larger
-    expression binds its temporary, ``_super_calls_hoisted``).  None for any
-    other operation.
+    The call is one ``PathContainerCall`` on that receiver
+    (``frame_receiver``), whose value this node presents
+    (``BuiltinContainerProjection``, index 1) and whose ``(receiver after,
+    value)`` pair its evaluation binds under its own key (``binds``), as a
+    walrus binds its value: the receiver after the call is a read of that
+    pair (``PathAfterCall``), what the call states it did to it
+    (``call_site_value.receiver_after_its_call``, the one projection of a
+    callee's caller-visible effects, ``caller_visible_stores``), else
+    unknown.  Every name bound to the object reads it there after the call,
+    in the operands after it (``_scope_after``) and after the statement
+    (``container_mutation.havoc_after``), wherever the call sits; where the
+    position does not decide that the call ran once (a conditional operand,
+    a loop's header, a comprehension), those names read the one undecided
+    member (``container_mutation.calls_on_self_left``).
 
-    Only in a class call's initializer (``_INITIALIZER_RECEIVER``), whose
-    stores on the receiver are states of it in the tree
-    (``ReceiverFieldStoreState``) the base method would not see: in any
-    other frame the receiver formal is the frame's coordinate, which every
-    store the base method carries back advances where the call stands, and
-    a later store of the frame's own is one more such store
-    (``_first_formal_stated_by_stores``)."""
+    In a comprehension the call runs once per member: no one key holds its
+    pair, and the receiver each member reads after the first is not this
+    read, so the receiver is the undecided member too (``_havoc``).
+
+    ``call`` is ``source`` substituted against ``scope``.  None for any
+    other call, and outside a class call's initializer
+    (``_INITIALIZER_RECEIVER``), whose stores on the receiver are states of
+    it in the tree (``ReceiverFieldStoreState``) the base method would not
+    see: in any other frame the receiver formal is the frame's coordinate,
+    which every store the base method carries back advances where the call
+    stands (``_first_formal_stated_by_stores``)."""
     held = scope.get(_INITIALIZER_RECEIVER)
     if not isinstance(held, _InitializerReceiverV1):
         return None
     method = _super_method(source)
-    if method is None:
+    if method is None or not isinstance(call, Call):
         return None
     # The frame the zero-argument ``super()`` reads, as its own reduction
     # reads it (``_super_frame_first_positional``).
-    frame = statement.unit.frame_holding(statement.line_col_span())
+    frame = source.unit.frame_holding(source.line_col_span())
     if not isinstance(frame, (FunctionDef, AsyncFunctionDef)) or not frame.params:
         return None
     formal = frame.params[0]
@@ -1453,231 +1464,51 @@ def _super_door(statement, scope, source, call=None, *, target_name=None):
         or formal.param_kind not in ("positional_only", "positional_or_keyword")
     ):
         return None
-    from .container_mutation import name_mutation_statement, reaches
+    from .container_mutation import _container_call, _havoc, _projection, reaches
+    from .shadow import occurrence_tags_of
 
-    receiver = _name_read(statement, formal.name, scope)
+    receiver = _name_read(source, formal.name, scope)
     if receiver is None or not reaches(receiver, scope):
         return None
-    if call is None:
-        call = source.substitute(scope)
-    if not (hasattr(call, "args") and hasattr(call, "keywords")):
-        return None
+    tags = occurrence_tags_of(source)
+    per_member = _in_a_comprehension(frame, source)
+    if per_member:
+        receiver = _havoc(source, formal.name, tags)
     # Every operand the call hands on (a ``*`` or ``**`` one's value
-    # included) is exposed to it as an argument of the door.
+    # included) is exposed to it as an argument of the call.
     operands = (
         *(arg.value if isinstance(arg, Starred) else arg for arg in call.args),
         *(keyword.value for keyword in call.keywords),
     )
-    return name_mutation_statement(
-        statement,
-        scope,
-        site=call,
-        name=formal.name,
-        receiver=receiver,
-        method=method,
-        args=operands,
-        fallback=call,
-        target_name=target_name,
+    pair = _container_call(
+        call,
+        receiver,
+        method,
+        operands,
+        call,
+        tags,
+        label=formal.name,
         frame_receiver=formal.name,
     )
-
-
-def _super_calls_hoisted(statement, scope):
-    """``(doors, statement, scope)``: every ``super().m(...)`` of a class
-    call's initializer that ``statement`` evaluates inside a larger
-    expression (``x = 1 + super().m()``, ``f(super().m())``, ``self.y =
-    super().m()``, ``return super().m()``, ``if super().m():``) taken
-    through the one call-on-self path, as one alone in a statement is: the
-    one door on the frame's receiver formal (``_super_door``), binding the
-    call's value to a temporary, threaded first; then ``statement`` with the
-    call replaced by a read of that temporary, substituted in the scope the
-    door left -- so the base method runs on ``self`` as the statement reads
-    it, and everything after the call reads ``self`` as the call left it.
-
-    The call is hoisted only where nothing ``statement`` evaluates before it
-    runs code (``_first_super_call``): moving it first changes no order
-    Python keeps.  Each call so hoisted, in evaluation order, is one door;
-    ``doors`` are their statements, already substituted, which the block
-    threads before the statement (``_substitute_body_tracked``), and
-    ``scope`` the scope after them.  Outside an initializer, or where no
-    call is so hoisted, ``((), statement, scope)``."""
-    held = scope.get(_INITIALIZER_RECEIVER)
-    if not isinstance(held, _InitializerReceiverV1) or not _calls_super(statement):
-        return (), statement, scope
-    from sugar_lift_py_tests.temporal.temporal_context import projection_key
-
-    from .backend import Child, Children, Leaf, materialize
-    from .container_mutation import havoc_after
-    from .shadow import (
-        OccurrenceShadowNode,
-        ShadowNode,
-        _handle_of,
-        occurrence_tags_of,
+    return _projection(
+        call,
+        pair,
+        1,
+        tags,
+        binds=None if per_member else source._evaluation_key(scope),
     )
 
-    doors = []
-    while True:
-        path = _first_super_call(statement)
-        if path is None:
-            break
-        parent, name, index = path[-1]
-        call = getattr(parent, name) if index is None else getattr(parent, name)[index]
-        temporary = f"<super {call.span.start}:{call.span.end}>"
-        # The door is its own statement over the call: ``<temporary> =
-        # super().m(...)``, keyed as a projection of the statement's own
-        # evaluation, so the statement keeps its key and the door has one of
-        # its own; an iteration's copy keeps its occurrence.
-        slots = (
-            ("targets", Children((_handle_of(For._make_name(call, temporary)),))),
-            ("value", Child(_handle_of(call))),
-            (
-                "evaluation",
-                Leaf(projection_key(statement._evaluation_key(scope), temporary)),
-            ),
-            ("evaluation_exit_path", Leaf(statement._evaluation_exit_path(scope))),
-        )
-        tags = occurrence_tags_of(statement)
-        ref = (
-            OccurrenceShadowNode("Assign", call.span, slots, tags)
-            if tags
-            else ShadowNode("Assign", call.span, slots)
-        )
-        assignment = materialize(statement.unit, ref, statement.reporter)
-        door = _super_door(assignment, scope, call, target_name=temporary)
-        if door is None:
-            break
-        after = {**scope, **_store_statement_binding(door, scope)}
-        scope = havoc_after(door, scope, after)
-        doors.append(door)
-        statement = _with_child_replaced(path, For._make_name(call, temporary))
-    return tuple(doors), statement, scope
 
-
-def _first_super_call(statement):
-    """The path ``[(node, field, index)]`` from ``statement`` down to the
-    first ``super().m(...)`` (``_super_method``) it evaluates, when
-    everything it evaluates before that call runs no code
-    (``container_mutation._cannot_halt``: a read, a constant, a display of
-    such), the call is reached on every path through the statement
-    (``_evaluated_edge``) and its operands hold no other ``super()`` call
-    and no walrus; else None.
-    A call that is the whole of an ``Expr`` or of ``x = ...`` is the door
-    in place (``Expr._super_mutation``, ``Assign.substitute``): None."""
-    from .container_mutation import _cannot_halt, _evaluation_order
-
-    def walk(node, path):
-        # ``("found", path)``, ``("clear", None)`` (nothing in ``node`` runs
-        # code), or ``("blocked", None)``.
-        if _super_method(node) is not None:
-            operands = (*node.args, *(keyword.value for keyword in node.keywords))
-            if any(_calls_super(operand) for operand in operands) or any(
-                inner.kind == "NamedExpr"
-                for operand in operands
-                for inner in operand.walk()
-            ):
-                # Another ``super()`` call runs first; a walrus binds for
-                # the rest of the block, which the door does not publish.
-                return "blocked", None
-            return "found", path
-        for name, index, child in _evaluation_order(node):
-            if not isinstance(child, Node):
-                continue
-            if _evaluated_edge(node, name, index):
-                outcome, found = walk(child, (*path, (node, name, index)))
-                if outcome != "clear":
-                    return outcome, found
-            elif not _cannot_halt(child):
-                return "blocked", None
-        # A keyword argument is its value: handing it on runs nothing.
-        if node.kind == "Keyword" or _cannot_halt(node):
-            return "clear", None
-        return "blocked", None
-
-    outcome, path = walk(statement, ())
-    if outcome != "found" or not path:
-        return None
-    if len(path) == 1:
-        if isinstance(statement, Expr) or (
-            isinstance(statement, Assign)
-            and len(statement.targets) == 1
-            and isinstance(statement.targets[0], Name)
-        ):
-            return None
-    return list(path)
-
-
-def _evaluated_edge(node, name, index) -> bool:
-    """Whether Python evaluates ``node``'s child at ``(name, index)`` on
-    every path through ``node`` that completes, as one of its operands --
-    never in a branch of ``and``/``or``/``x if t else y`` or a later
-    comparison of a chain, never in a comprehension or a nested scope, never
-    an assignment's target, and never in a statement's own suite (each
-    suite's statements are its block's, threaded there).  A ``while`` test
-    runs again before every item: it is no edge."""
-    kind = node.kind
-    if kind in _OPERAND_EDGE_KINDS:
-        return True
-    if kind in ("Assign", "AnnAssign", "AugAssign", "NamedExpr", "FormattedValue"):
-        return name == "value"
-    if kind in ("If", "Assert", "IfExp"):
-        return name == "test"
-    if kind in ("For", "AsyncFor"):
-        return name == "iter"
-    if kind == "Match":
-        return name == "subject"
-    if kind in ("With", "AsyncWith"):
-        return name == "items" and index == 0
-    if kind == "WithItem":
-        return name == "context_expr"
-    if kind == "BoolOp":
-        return index == 0
-    if kind == "Compare":
-        return name == "left" or index == 0
-    return False
-
-
-# Nodes every operand of which Python evaluates, in order, before the node
-# itself completes.
-_OPERAND_EDGE_KINDS = frozenset(
-    {
-        "Expr",
-        "Return",
-        "Raise",
-        "Call",
-        "Keyword",
-        "Starred",
-        "Attribute",
-        "Subscript",
-        "Slice",
-        "BinOp",
-        "UnaryOp",
-        "Tuple",
-        "List",
-        "Set",
-        "JoinedStr",
-    }
-)
-
-
-def _with_child_replaced(path, replacement):
-    """The node at ``path[0]`` with the node ``path`` leads to replaced by
-    ``replacement``: each node on the way rewritten around its new child
-    (its span kept), a call's lexical row carried, and each node the rewrite
-    replaced answered as discharged by substitution."""
-    from .shadow import _retain_call_row, rewrite
-
-    (parent, name, index), rest = path[0], path[1:]
-    child = getattr(parent, name) if index is None else getattr(parent, name)[index]
-    new_child = replacement if not rest else _with_child_replaced(rest, replacement)
-    child.discharge_by_substitution()
-    if index is None:
-        rewritten = rewrite(parent, **{name: new_child})
-    else:
-        items = list(getattr(parent, name))
-        items[index] = new_child
-        rewritten = rewrite(parent, **{name: tuple(items)})
-    _retain_call_row(parent, rewritten)
-    return rewritten
+def _in_a_comprehension(frame, node) -> bool:
+    """Whether ``node`` stands in a comprehension of ``frame``'s own code
+    (a list, set or dict comprehension, inlined into the frame, PEP 709):
+    it runs once per member."""
+    span = node.span
+    return any(
+        inner.kind in ("ListComp", "SetComp", "DictComp", "GeneratorExp")
+        and _encloses(inner.span, span)
+        for inner in frame.walk()
+    )
 
 
 def _calls_super(node) -> bool:
@@ -6181,7 +6012,14 @@ def _scope_after(scope, evaluated, substituted):
     expression binds its ``deferred`` reference.  Only a walrus written in
     ``evaluated``'s own source counts: a term substitution put in its place
     (a name's binding) carries the walrus of an earlier statement, already
-    bound or since rebound.  ``scope`` itself when ``evaluated`` holds none."""
+    bound or since rebound.  ``scope`` itself when ``evaluated`` holds none.
+
+    The same rule carries a call on ``self`` in place
+    (``_call_on_self_in_place``) to what is evaluated after it: every name
+    bound to the object reads it as the call left it
+    (``container_mutation.calls_on_self_left``) -- a later operand, the
+    target an assignment stores into, a branch after a test -- never as it
+    stood before the call."""
     if evaluated is None:
         return scope
     if not isinstance(evaluated, Node):
@@ -6191,6 +6029,22 @@ def _scope_after(scope, evaluated, substituted):
         return scope
     if not isinstance(substituted, Node):
         return scope
+    scope = _walrus_writes_after(scope, evaluated, substituted)
+    if not isinstance(scope.get(_INITIALIZER_RECEIVER), _InitializerReceiverV1):
+        return scope
+    span = evaluated.span
+    # A call on ``self`` is spelled ``super``: without it in the source
+    # nothing below was called in place, and the walk is never asked.
+    if evaluated.unit.source.find("super", span.start, span.end) < 0:
+        return scope
+    from .container_mutation import calls_on_self_left
+
+    return calls_on_self_left(substituted, scope, scope, scope)
+
+
+def _walrus_writes_after(scope, evaluated, substituted):
+    """``scope`` with each keyed walrus ``evaluated`` runs bound, in the
+    order its writes happen (``_scope_after``)."""
     span = evaluated.span
     # A walrus is spelled ``:=``: without it in the source nothing below
     # writes, and the walk is never asked.
@@ -8469,15 +8323,7 @@ class Node(Typed):
                 role="temporal",
                 site=f"{stmt.unit.filename}:{lc.start_line} {stmt.kind}",
             ):
-                # A ``super().m(...)`` of an initializer nested in the
-                # statement is the one door on ``self``, threaded first
-                # (``_super_calls_hoisted``); the statement then reads its
-                # value through a temporary.
-                doors, source, scope = _super_calls_hoisted(stmt, scope)
-                if doors:
-                    new_items.extend(doors)
-                    changed = True
-                new_stmt = source.substitute(scope)
+                new_stmt = stmt.substitute(scope)
                 live_loop_bindings = None
                 published = {}
                 if isinstance(new_stmt, (For, While)):
@@ -13195,11 +13041,11 @@ class Return(Statement):
         -- ``InitializerReturn``, which the class call returns on the face
         that leaves by it (``ClassConstructorBodySugar``).
 
-        ``return super().m(...)`` (anywhere in the returned value) reaches
-        here as the return of the call's value: the block threads the call
-        first through the one door on the frame's receiver formal
-        (``_super_calls_hoisted``), so the receiver it leaves with is the one
-        the call states it left."""
+        A ``super().m(...)`` anywhere in the returned value is the one call
+        on ``self``, evaluated in place (``_call_on_self_in_place``): the
+        exposure rule reads the receiver after it as the call states it left
+        it (``container_mutation.calls_on_self_left``), and the ``return``
+        leaves with that."""
         held = scope.get(_INITIALIZER_RECEIVER)
         if not isinstance(held, _InitializerReceiverV1) or not held.reads_at(self):
             return self._substitute_children(scope)
@@ -13938,15 +13784,6 @@ class Assign(Statement):
         mutation = self._name_call_mutation(scope)
         if mutation is not None:
             return mutation
-        if len(self.targets) == 1 and isinstance(self.targets[0], Name):
-            # ``x = super().m(...)``: the call is the one door on the frame's
-            # receiver formal, as it is alone in a statement, and ``x`` its
-            # value (``_super_door``).
-            mutation = _super_door(
-                self, scope, self.value, target_name=self.targets[0].id
-            )
-            if mutation is not None:
-                return mutation
 
         new_value, changed = self._substitute_field(self.value, scope)
         field_state = self._receiver_field_store_state(scope, new_value)
@@ -14375,13 +14212,19 @@ class Assign(Statement):
         )
 
     def _receiver_field_store_state(self, scope, new_value):
-        """Thread ``name.attr = value`` into later reads of that exact name."""
+        """Thread ``name.attr = value`` into later reads of that exact name.
+
+        Python evaluates ``value`` before the target, so the receiver is the
+        name read as the value left it (``_scope_after``): a call on it in
+        the value (``self.y = 1 + super().m()``) has run, and the store
+        lands on the object as that call left it."""
         if len(self.targets) != 1 or not isinstance(self.targets[0], Attribute):
             return None
         target = self.targets[0]
         if not isinstance(target.value, Name) or target.value.id not in scope:
             return None
-        receiver = target.value.substitute(scope)
+        after_value = _scope_after(scope, self.value, new_value)
+        receiver = target.value.substitute(after_value)
         if not isinstance(receiver, Node):
             return None
         # An ordinary formal is not a constructed receiver.  Active class
@@ -19767,9 +19610,6 @@ class Expr(Statement):
         mutation = self._name_mutation(scope, rewritten.value)
         if mutation is not None:
             return mutation
-        mutation = self._super_mutation(scope, rewritten.value)
-        if mutation is not None:
-            return mutation
         from .container_mutation import path_mutation_statement
 
         mutation = path_mutation_statement(self, scope, call=rewritten.value)
@@ -19805,13 +19645,6 @@ class Expr(Statement):
             args=call.args,
             fallback=call,
         )
-
-    def _super_mutation(self, scope, call):
-        """``super().m(...)`` alone in a statement: the one door on the
-        frame's receiver formal (``_super_door``).  ``call`` is the
-        statement's call, already substituted against ``scope``.  None for
-        any other statement."""
-        return _super_door(self, scope, self.value, call)
 
     def _setdefault_mutation(self, scope, call):
         """``d.setdefault(k, v).<mutator>(*args)`` on a name ``d`` or through
@@ -22439,7 +22272,16 @@ class Compare(Expression):
 
 
 class Call(Expression):
+    # A call on ``self`` evaluated in place (``_call_on_self_in_place``)
+    # binds its pair under a key minted exactly as a statement's (and a
+    # walrus's) is.
+    _evaluation_exit_path = Statement._evaluation_exit_path
+    _evaluation_key = Statement._evaluation_key
+
     def substitute(self, scope: "dict[str, Node]") -> "Node":
+        """The call's children substituted in Python's order; a
+        ``super().m(...)`` of a class call's initializer is then the one call
+        on ``self``, evaluated here, in place (``_call_on_self_in_place``)."""
         snapshot = self._locals_snapshot(scope)
         if snapshot is not None:
             return snapshot
@@ -22458,7 +22300,8 @@ class Call(Expression):
             )
         ):
             self.unit.retain_lexical_call_row(self, rewritten)
-        return rewritten
+        on_self = _call_on_self_in_place(self, scope, rewritten)
+        return rewritten if on_self is None else on_self
 
     func: Expression
     args: Tuple[Expression, ...]
@@ -24551,7 +24394,12 @@ class BuiltinContainerProjection(Expression):
     ``name_mutation_statement``, ``path_mutation_statement``): the
     projection reads the pair there, never the call (and its operands)
     evaluated again.  A projection with no key (a statement never
-    substituted) reads its call."""
+    substituted) reads its call.
+
+    A call on ``self`` evaluated in place (``_call_on_self_in_place``)
+    evaluates its call here and binds the pair under its own key
+    (``binds``), as a walrus binds its value: the receiver after it reads
+    the pair there (``PathAfterCall``)."""
 
     call: Expression
     index: int
@@ -24572,8 +24420,12 @@ class BuiltinContainerProjection(Expression):
             if isinstance(evaluation, str)
             else self.call.sugar()
         )
+        binds = getattr(self, "binds", None)
         return BuiltinContainerProjectionSugar(
-            call=pair, index=self.index, site=self.fragment
+            call=pair,
+            index=self.index,
+            site=self.fragment,
+            binds=binds if isinstance(binds, str) else None,
         )
 
 

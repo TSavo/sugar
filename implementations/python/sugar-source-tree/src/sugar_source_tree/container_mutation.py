@@ -535,20 +535,25 @@ def _materialize(statement, kind, fields, tags=()):
     return materialize(statement.unit, ref, statement.reporter)
 
 
-def _projection(site_node, call, index, tags, evaluation=None):
+def _projection(site_node, call, index, tags, evaluation=None, *, binds=None):
     """Element ``index`` of ``call``'s ``(post-state, result)`` pair.
 
     With ``evaluation`` (the statement's key, ``name_mutation_statement``,
     ``path_mutation_statement``) the projection reads the pair the statement
     bound under that key (``ContainerMutationStatementSugar``): ``d[k] = v;
     ...; d[k]`` reads the dict the store left, never the call (and ``v``)
-    evaluated again."""
+    evaluated again.  With ``binds`` (a call on ``self`` evaluated in place,
+    ``nodes._call_on_self_in_place``) the projection evaluates the call
+    where it stands and binds the pair under that key, as a walrus binds
+    its value (``BuiltinContainerProjectionSugar``)."""
     from .backend import Child, Leaf
     from .shadow import _handle_of
 
     fields = (("call", Child(_handle_of(call))), ("index", Leaf(index)))
     if evaluation is not None:
         fields = (*fields, ("evaluation", Leaf(evaluation)))
+    if binds is not None:
+        fields = (*fields, ("binds", Leaf(binds)))
     return _materialize(site_node, "BuiltinContainerProjection", fields, tags)
 
 
@@ -895,7 +900,12 @@ def havoc_after(statement, pre_scope, scope, *, loop=None, operated=False):
                 for inner in _calls(arg, bound_refs, include_container_calls=False):
                     targets.extend(_call_targets(inner, pre_scope, bound_refs))
                     targets.extend(ambient(inner))
-        return _rebind(statement, pre_scope, scope, targets)
+        # A call on ``self`` in place among its operands
+        # (``lst.append(super().m())``) is one call more (``calls_on_self``).
+        on_self = calls_on_self(statement)
+        targets.extend(_calls_on_self_reach(on_self, bound_refs, ambient))
+        havocked = _rebind(statement, pre_scope, scope, targets)
+        return calls_on_self_left(statement, pre_scope, scope, havocked, calls=on_self)
     # A loop that may run its body any number of times leaves every object a
     # mutation in that body changed unknown (when its value is one a
     # mutation changes); a branch's mutations are threaded by the branch and
@@ -962,10 +972,325 @@ def havoc_after(statement, pre_scope, scope, *, loop=None, operated=False):
         # its operands: the module objects and the closure cells its code
         # can reach (``_ambient_targets``).
         targets.extend(ambient(call))
+    # A call on ``self`` evaluated in place (``nodes._call_on_self_in_place``)
+    # is a call like any other: what it is handed and what its code may
+    # reach beyond them take the exposure rule, and every name bound to
+    # ``self`` reads it as the call states it left it (``calls_on_self_left``).
+    on_self = calls_on_self(statement, threaded=header)
+    targets.extend(_calls_on_self_reach(on_self, bound_refs, ambient))
     havocked = _rebind(statement, pre_scope, scope, targets)
-    if not applied:
-        return havocked
-    return _apply_actual_states(statement, pre_scope, scope, havocked, applied)
+    if applied:
+        havocked = _apply_actual_states(
+            statement, pre_scope, scope, havocked, applied
+        )
+    return calls_on_self_left(
+        statement, pre_scope, scope, havocked, loop=loop, calls=on_self
+    )
+
+
+def _is_call_on_self(node) -> bool:
+    """Whether ``node`` is a call on ``self`` evaluated in place
+    (``nodes._call_on_self_in_place``): the projection of the value of a
+    ``PathContainerCall`` made on the frame's receiver formal."""
+    if getattr(node, "kind", None) != "BuiltinContainerProjection":
+        return False
+    call = getattr(node, "call", None)
+    return getattr(call, "kind", None) == "PathContainerCall" and isinstance(
+        getattr(call, "frame_receiver", None), str
+    )
+
+
+def calls_on_self(evaluated, threaded=()) -> list:
+    """The calls on ``self`` evaluated in place (``_is_call_on_self``) that
+    ``evaluated`` runs itself: not one in a statement of a suite it holds
+    (each is its block's, threaded there), in a header its statement
+    threaded first (``threaded``, ``thread_header``), in a function, lambda
+    or class nested in it, or inside a read of a value an earlier evaluation
+    made (``_READ_KINDS``).  Each once, by its handle."""
+    from .nodes import AsyncFunctionDef, ClassDef, FunctionDef, Lambda, Node, Statement
+
+    span = getattr(evaluated, "span", None)
+    unit = getattr(evaluated, "unit", None)
+    if (
+        span is not None
+        and unit is not None
+        and unit.source.find("super", span.start, span.end) < 0
+    ):
+        # A call on ``self`` is spelled ``super``: none here.
+        return []
+    headers = tuple(_handle(node) for node in threaded if node is not None)
+    nested = (Statement, Lambda, FunctionDef, AsyncFunctionDef, ClassDef)
+    found = []
+    seen = set()
+    stack = [evaluated]
+    while stack:
+        current = stack.pop()
+        if not isinstance(current, Node) or id(current) in seen:
+            continue
+        seen.add(id(current))
+        if headers and any(_handle(current) is header for header in headers):
+            continue
+        if current is not evaluated and isinstance(current, nested):
+            continue
+        if _is_call_on_self(current):
+            if not any(_handle(current) is _handle(known) for known in found):
+                found.append(current)
+            # Its operands are evaluated before it, in place.
+            stack.extend(current.call.args)
+            continue
+        if current is not evaluated and getattr(current, "kind", None) in _READ_KINDS:
+            continue
+        stack.extend(child for _name, _index, child in current._child_edges())
+    return found
+
+
+def _calls_on_self_reach(found, bound_refs, ambient):
+    """``_rebind``'s targets for the calls on ``self`` in place ``found``:
+    every bound object an operand hands the call (``_OPERAND_RULES``), and
+    what the code it runs may reach beyond them (``ambient``,
+    ``_ambient_targets``) -- the one exposure rule, as for every call."""
+    targets = []
+    for projection in found:
+        call = projection.call
+        targets.extend(ambient(call))
+        for arg in call.args:
+            targets.extend(
+                (node, _OPERAND_RULES, None) for node in _exposed(arg, bound_refs)
+            )
+    return targets
+
+
+def calls_on_self_left(evaluated, pre_scope, scope, result, *, loop=False, calls=None):
+    """``result`` with every name bound to ``self`` reading it as the calls
+    on ``self`` that ``evaluated`` runs in place (``calls_on_self``) left
+    it: the one call form of ``super().m(...)``
+    (``nodes._call_on_self_in_place``), wherever it sits.
+
+    ``pre_scope`` is the scope ``evaluated`` was substituted against,
+    ``scope`` the one after the names it binds itself, ``result`` that one
+    after the exposure rule (``havoc_after``); in an expression's own
+    threading (``nodes._scope_after``) all three are one scope.
+
+    - Where the position decides it (``_last_call_on_self``: the call ran
+      once on every path through ``evaluated``, and every other such call ran
+      before it, on the object it read), each name bound to the object reads
+      the receiver after that call: a read of the pair the call bound under
+      its key (``PathAfterCall``), what the call states it did to it
+      (``call_site_value.receiver_after_its_call``).
+    - Where it does not -- a conditional operand (``a and super().m()``, a
+      conditional expression's arm, a later comparison of a chain), a loop
+      or a ``while`` test, a comprehension, two calls neither of which read
+      the object the other left -- each reads the one undecided member: the
+      object's value after a call that may have changed it
+      (``ReceiverAfterCall``), never its state before the call.
+    - A name ``evaluated`` bound itself keeps that binding where it was made
+      after the call (a field store on the object the call left,
+      ``self.y = 1 + super().m()``), or rebinds the name away from the
+      object; one made on the object as it stood before the call
+      (``self.items.append(super().m())``) is the undecided member.  A name
+      the exposure rule rebound (another call may have changed it too) keeps
+      that unknown.
+    - Every name whose value holds the object reads its value after the call
+      (``holder_states``, the one holder rule)."""
+    from .nodes import Node
+    from .shadow import occurrence_tags_of
+
+    found = calls_on_self(evaluated) if calls is None else calls
+    if not found:
+        return result
+    tags = occurrence_tags_of(evaluated)
+    last = None if loop else _last_call_on_self(evaluated, found)
+    binding = {}
+
+    def untouched(name) -> bool:
+        before = pre_scope.get(name, _ABSENT)
+        return (
+            scope.get(name, _ABSENT) is before
+            and result.get(name, _ABSENT) is before
+        )
+
+    def site_of(projection):
+        # The call itself, as the one door's statement names its site.
+        fallback = getattr(projection.call, "fallback", None)
+        return projection if fallback is None else fallback
+
+    for projection in found:
+        call = projection.call
+        site = site_of(projection)
+        root = _identity(call.receiver)
+        exact, containing = aliases(pre_scope, root)
+        if call.frame_receiver not in exact:
+            exact.append(call.frame_receiver)
+        for name in exact:
+            if name in binding:
+                continue
+            before = pre_scope.get(name, _ABSENT)
+            now = scope.get(name, _ABSENT)
+            if now is not before:
+                # ``evaluated`` bound it itself.
+                state = _state(now) if now is not _ABSENT else None
+                prior = _state(before) if before is not _ABSENT else None
+                if (
+                    isinstance(state, Node)
+                    and isinstance(prior, Node)
+                    and not _built_after(state, found)
+                    and same_object(state, prior)
+                ):
+                    binding[name] = _havoc(evaluated, name, tags)
+                continue
+            if result.get(name, _ABSENT) is not now:
+                continue
+            prior = _read_of(before) if before is not _ABSENT else None
+            if last is not None:
+                after = last.call
+                binding[name] = _path_after(
+                    site_of(last),
+                    after,
+                    after.receiver,
+                    (),
+                    "root",
+                    name,
+                    tags,
+                    True,
+                    evaluation=last.binds,
+                    prior=prior if prior is not None else after.receiver,
+                )
+            else:
+                binding[name] = _havoc(
+                    evaluated,
+                    name,
+                    tags,
+                    prior=prior,
+                    conditions=[(None, (call.method, False, False))],
+                )
+        for alias, holder in holder_states(
+            site,
+            pre_scope,
+            receiver=call.receiver,
+            root=root,
+            containing=containing,
+            method=call.method,
+            tags=tags,
+            skip=exact,
+        ):
+            if alias not in binding and untouched(alias):
+                binding[alias] = holder
+    if not binding:
+        return result
+    binding = evaluated._binding_entries(binding, result)
+    return {**result, **binding}
+
+
+def _last_call_on_self(evaluated, found):
+    """The call of ``found`` whose receiver after it is the object as
+    ``evaluated`` leaves it, or None where the position does not decide one:
+    a call that binds its pair under a key (``binds``), runs once on every
+    path through ``evaluated`` (``_once_on_every_path``), and read the object
+    as every other call of ``found`` left it (``_built_after``: they ran
+    before it, in place, ``nodes._scope_after``)."""
+    for candidate in found:
+        if not isinstance(getattr(candidate, "binds", None), str):
+            continue
+        if not _once_on_every_path(evaluated, candidate):
+            continue
+        if all(
+            _handle(other) is _handle(candidate)
+            or _built_after(candidate.call.receiver, (other,))
+            for other in found
+        ):
+            return candidate
+    return None
+
+
+def _built_after(state, calls) -> bool:
+    """Whether ``state``, an object's state, was made on the object as one of
+    ``calls`` (calls on ``self`` in place) left it -- its read after the
+    call, a field store on that, a mutation's post-state of that -- or on a
+    state some call may have changed (``ReceiverAfterCall``: unknown at
+    reduce, so never a state from before the call)."""
+    handles = tuple(_handle(projection.call) for projection in calls)
+    node = _identity(state)
+    for _ in range(64):
+        kind = getattr(node, "kind", None)
+        if kind == "ReceiverAfterCall":
+            return True
+        if kind == "PathAfterCall" and getattr(node, "mode", None) == "root":
+            if any(_handle(node.call) is handle for handle in handles):
+                return True
+            node = _identity(node.root)
+        elif kind == "ReceiverFieldStoreState":
+            node = _identity(node.receiver)
+        elif kind == "SourceCallActualAfter":
+            node = _identity(node.state)
+        else:
+            return False
+    return False
+
+
+def _once_on_every_path(evaluated, node) -> bool:
+    """Whether ``evaluated`` evaluates ``node`` once on every path through
+    it that completes: each node on the way down evaluates the next as one
+    of its operands (``_evaluated_edge``)."""
+    path = _path_to(evaluated, node)
+    if path is None:
+        return False
+    for parent, position in path:
+        name, index, _child = _evaluation_order(parent)[position]
+        if not _evaluated_edge(parent, name, index):
+            return False
+    return True
+
+
+def _evaluated_edge(node, name, index) -> bool:
+    """Whether Python evaluates ``node``'s child at ``(name, index)`` once on
+    every path through ``node`` that completes, as one of its operands --
+    never in a branch of ``and``/``or``/``x if t else y`` or a later
+    comparison of a chain, never in a comprehension or a nested scope, never
+    an assignment's target, never after an augmented store's target was read
+    (``self.n += super().m()``), and never in a statement's own suite."""
+    kind = node.kind
+    if kind in _OPERAND_EDGE_KINDS:
+        return True
+    if kind in _VALUE_EDGE_KINDS:
+        return name == "value"
+    if kind == "AnnAssign":
+        return name == "value" and getattr(node.target, "kind", None) == "Name"
+    if kind in ("Assert", "IfExp"):
+        return name == "test"
+    if kind == "BoolOp":
+        return index == 0
+    if kind == "Compare":
+        return name == "left" or index == 0
+    return False
+
+
+# Nodes every operand of which Python evaluates, in order, before the node
+# itself completes.
+_OPERAND_EDGE_KINDS = frozenset(
+    {
+        "Expr",
+        "Return",
+        "Raise",
+        "Call",
+        "Keyword",
+        "Starred",
+        "Attribute",
+        "Subscript",
+        "Slice",
+        "BinOp",
+        "UnaryOp",
+        "Tuple",
+        "List",
+        "Set",
+        "JoinedStr",
+    }
+)
+# Nodes whose ``value`` Python evaluates once, first, on every path through
+# them: an assignment's (a field store's) right-hand side, a walrus's, an
+# f-string field's.
+_VALUE_EDGE_KINDS = frozenset(
+    {"Assign", "ReceiverFieldStoreStatement", "NamedExpr", "FormattedValue"}
+)
 
 
 # An operand handed to a call the floor does not cite: a builtin container in
@@ -1578,7 +1903,8 @@ def _container_call(
     have none (their ordinary operation is the floor's own).  ``label``
     names the unknown its receiver is after an ordinary call.
     ``frame_receiver``: the call is ``super().m(...)`` on the frame's
-    receiver formal of that name (``nodes._super_door``).
+    receiver formal of that name, evaluated in place
+    (``nodes._call_on_self_in_place``).
 
     ``evaluation`` is the key the operation's pair is bound under.  The
     operation evaluates its receiver once; the ordinary call (``fallback``
@@ -1943,7 +2269,6 @@ def name_mutation_statement(
     operator_kind=None,
     operator_site=None,
     inplace=False,
-    frame_receiver=None,
 ):
     """The one door for a mutating operation on the object a name denotes.
 
@@ -1963,10 +2288,7 @@ def name_mutation_statement(
     mutation, any other value the ordinary operation.  Every name bound to
     the object is rebound to the object after the call (``PathAfterCall``),
     every name that holds it to its value after the call
-    (``ReceiverAfterCall``), which the value decides at reduce.
-
-    ``frame_receiver``: ``super().m(...)``, a call on the frame's receiver
-    formal ``name`` (``nodes._super_door``)."""
+    (``ReceiverAfterCall``), which the value decides at reduce."""
     from .nodes import _evaluation_ref
     from .shadow import occurrence_tags_of
 
@@ -1987,7 +2309,6 @@ def name_mutation_statement(
         value_first=value_first,
         operator_kind=operator_kind,
         operator_site=operator_site,
-        frame_receiver=frame_receiver,
         evaluation=evaluation,
     )
     rebinds_name = inplace and target_name == name
@@ -3526,13 +3847,16 @@ def _path_to(statement, call):
 def _cannot_halt(node) -> bool:
     """``node``'s evaluation cannot raise: a read of a binding
     (``_READ_KINDS``), a constant, or a tuple or list display of such
-    (``Try._HALT_FREE_NODES``)."""
+    (``Try._HALT_FREE_NODES``).  A call on ``self`` evaluated in place
+    (``_is_call_on_self``) is a call, never a read."""
     from .nodes import Node
 
     stack = [node]
     while stack:
         current = stack.pop()
         kind = getattr(current, "kind", None)
+        if _is_call_on_self(current):
+            return False
         if kind in _READ_KINDS or kind == "Constant":
             continue
         if kind not in ("Tuple", "List"):
