@@ -22,9 +22,12 @@ own proof owes above the test function, and those are set aside, as the
 method-call twins read theirs.
 
 A pair whose claim honestly cannot be decided yet is listed in
-``_OPEN_TODAY`` with the reason, and marked ``xfail(strict=True)``: it is
-never weakened to accept a lying ``sat``, and the day it decides, the strict
-mark fails and the entry is deleted.
+``_OPEN_TODAY`` with the reason and the step that will decide it.  It is
+not green: it is checked for today's honest verdict -- the lie never reads
+``sat`` and the truth never ``unsat`` -- and the day it decides (``sat`` /
+``unsat``), it fails and the entry is deleted.  (Before, the entry was an
+``xfail(strict=True)`` mark, which would have accepted a lying ``sat`` as
+an expected failure.)
 """
 
 from __future__ import annotations
@@ -79,17 +82,29 @@ def _pair_id(pair: SugarWitnessPair) -> str:
     return f"{pair.owner_sugar}.{pair.name}"
 
 
-# ``<owner_sugar>.<name>`` -> why the claim reads ``open`` today.
-_OPEN_TODAY: dict[str, str] = {}
+# ``<owner_sugar>.<name>`` -> why the claim reads ``open`` today, and the
+# step that will decide it.
+_OPEN_TODAY: dict[str, str] = {
+    "WithReducedManagerSugar.with_reduced_manager_closes_completed_and_halted": (
+        "``with resource:`` over ``make()``'s result: the manager is a "
+        "same-file function's returned value, whose class only ``make``'s "
+        "contract states (``python:type_is`` of the ``Resource()`` it "
+        "returns); no lift-side class is read for it "
+        "(``ReducedManagerProtocolV1._dispatched_manager``: "
+        "``receiver_dispatch.class_value`` is None), so ``__enter__`` and "
+        "``__exit__`` are the undecided manager's two-faced steps, owed at "
+        "the item, and ``resource.closed`` after ``__exit__`` is not stated. "
+        "Decided at step 8/9 when a dispatch over a returned value's class "
+        "is bound at prove from the callee's contract (#7757)."
+    ),
+}
 
 _PAIRS = _witness_pairs()
 
 
 def _cases():
     for pair in _PAIRS:
-        reason = _OPEN_TODAY.get(_pair_id(pair))
-        marks = () if reason is None else (pytest.mark.xfail(strict=True, reason=reason),)
-        yield pytest.param(pair, id=_pair_id(pair), marks=marks)
+        yield pytest.param(pair, id=_pair_id(pair))
 
 
 def _test_function_line(source: str) -> int:
@@ -121,4 +136,13 @@ def test_witness_pair_truthful_sat_lying_unsat(
             lift_doc=result.lift_doc,
         )
     print(_pair_id(pair), verdicts)
-    assert verdicts == {"truthful": "sat", "lying": "unsat"}
+    decided = {"truthful": "sat", "lying": "unsat"}
+    reason = _OPEN_TODAY.get(_pair_id(pair))
+    if reason is None:
+        assert verdicts == decided
+        return
+    # Open today, by name: never a lying ``sat`` nor a truthful ``unsat``;
+    # the day it decides, the entry is stale and is deleted.
+    assert verdicts["lying"] != "sat", (reason, verdicts)
+    assert verdicts["truthful"] != "unsat", (reason, verdicts)
+    assert verdicts != decided, f"decided now: delete the _OPEN_TODAY entry ({reason})"
