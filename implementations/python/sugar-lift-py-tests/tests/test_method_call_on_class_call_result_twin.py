@@ -1,16 +1,18 @@
 """Plan row 1 (step 6): a method called on a class call's result is one call,
-and its dispatch waits for prove.
+and its dispatch is decided at prove.
 
 ``Box(3).get()`` and ``b = Box(3); b.get()`` are the same call.  Since #7757
 step 6 the class call is its coordinate and an edge to ``python:<m>.Box``,
 joined at prove to the class's constructor contract: the reduction builds no
 instance, so ``get`` is a method of a call's result, whose dispatch is not
-decided at the reduction (``CallSiteValue.attribute``: the one undecided
-read) and not at prove until the owner rules on dispatch at prove (#7757
-survey step 8).  Before step 6 both halves were decided at the reduction by
-following ``Box``'s constructor and ``get``'s body (truthful ``sat``, lying
-``unsat``); both are now ``open``, never ``sat`` for the lie, and listed on
-#7661.
+decided at the reduction.  It is the dispatched edge (step 8), resolved at
+prove on the class the constructor contract binds
+(``consistency::dispatch_answer``).  Before step 6 both halves were decided
+at the reduction by following ``Box``'s constructor and ``get``'s body; they
+were ``open`` until dispatch at prove, and are decided by it again
+(scorecard at d95c22a49: the test row discharged, the lie refuted).
+``get``'s own row still owes ``self.n + k`` with no caller, so the truthful
+half reads the test function's claims (``claim_verdict``).
 
 There used to be a second entry for the inline shape when the class came from an
 authenticated import: preconstruction chose the method frame from the class
@@ -60,5 +62,6 @@ def test_a_method_on_a_class_call_result_reaches_the_solver(
         for number, line in enumerate(source.splitlines(), start=1)
         if line.startswith("def test_")
     )
-    assert claim_verdict(truthful.prove_doc, claims_from_line=test_line) == "open"
-    assert lying.verdict == "open"
+    assert truthful.verdict != "unsat"
+    assert claim_verdict(truthful.prove_doc, claims_from_line=test_line) == "sat"
+    assert lying.verdict == "unsat"

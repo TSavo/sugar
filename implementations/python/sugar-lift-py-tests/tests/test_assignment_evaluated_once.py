@@ -36,9 +36,10 @@ These tests are the guard for the next attempt.
   same-file function (step 5), class or method (step 6) applies a body.
 - ``a = Box(1); a.get(3)``: the class call is its coordinate and edge
   (#7757 step 6), so ``a.get`` is a method of a call's result, whose
-  dispatch is not decided at the reduction (dispatch at prove waits on the
-  owner's ruling): the box programs are values the reduction does not
-  decide (``_JOINED_AT_PROVE``), and open at prove (``_OPEN_UNTIL_DISPATCH``).
+  dispatch is not decided at the reduction: the box programs are values the
+  reduction does not decide (``_JOINED_AT_PROVE``).  ``a.get`` is the
+  dispatched edge, resolved at prove (step 8), which decides ``box-get``
+  through the solver (``_SOLVER_PROGRAMS``).
 - Through the solver, a helper's own proof (no caller, so no actual) owes
   what it reads off a formal, and a source that owes anything is never
   ``sat`` as a whole (step 8): the truthful claim is read on the test
@@ -366,6 +367,13 @@ _SOLVER_PROGRAMS = {
         "211321",
         "321321",
     ),
+    # ``a = Box(1); a.get(3)``: the class call is joined to ``Box``'s
+    # constructor contract and ``a.get`` is the dispatched edge, resolved at
+    # prove on the class the read binds (#7757 step 8,
+    # ``consistency::dispatch_answer``).  Open on both halves until dispatch
+    # at prove; decided by it on the scorecard at d95c22a49 (the test row
+    # discharged, the lie refuted).
+    "box-get": _JOINED_AT_PROVE["box-get"],
 }
 
 # Programs whose value the lifter does not decide today.  Pinned as that, so a
@@ -536,33 +544,3 @@ def test_the_solver_holds_the_value_python_computes(name: str, tmp_path: Path) -
     test_line = head.count("\n")
     assert claim_verdict(truthful_run.prove_doc, claims_from_line=test_line) == "sat"
     assert lying_run.verdict == "unsat"
-
-
-# Decided through the solver before #7757 step 6, by following ``Box``'s
-# constructor and ``get``'s body at the reduction.  The class call is now its
-# coordinate and edge, joined to ``python:test_witness.Box`` at prove; ``a.get``
-# is a method of the call's result, whose dispatch is not decided at the
-# reduction or at prove until the owner rules on dispatch at prove.  Open on
-# both halves, never ``sat`` for the lie; listed on #7661.
-_OPEN_UNTIL_DISPATCH = {
-    "box-get": _JOINED_AT_PROVE["box-get"],
-}
-
-
-@pytest.mark.parametrize("name", sorted(_OPEN_UNTIL_DISPATCH))
-def test_a_method_of_a_class_call_result_is_open_until_dispatch_at_prove(
-    name: str, tmp_path: Path
-) -> None:
-    body, truthful, lying = _OPEN_UNTIL_DISPATCH[name]
-    head = _HELPERS + "def test_it():\n"
-
-    truthful_run = run_source_through_real_solver(
-        tmp_path / "t", head + body.format(claim=truthful)
-    )
-    lying_run = run_source_through_real_solver(
-        tmp_path / "l", head + body.format(claim=lying)
-    )
-
-    test_line = head.count("\n")
-    assert claim_verdict(truthful_run.prove_doc, claims_from_line=test_line) != "sat"
-    assert lying_run.verdict != "sat"
