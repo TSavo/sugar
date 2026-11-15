@@ -8,7 +8,10 @@ from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
     EffectBoundaryDisposition,
 )
-from sugar_lift_py_tests.effect import ExpectationNotMetEffect
+from sugar_lift_py_tests.effect import (
+    ExpectationNotMetEffect,
+    UndeterminedRaiseEffect,
+)
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
     GuardedReturn,
@@ -186,8 +189,16 @@ def test_symbolic_if_branches_keep_complementary_guards() -> None:
         },
     )
     assert isinstance(exits, ExitSet)
-    assert len(exits.exits) == 1
-    record = exits.exits[0].value.record
+    # ``<`` over two values not decided here is two-faced: it completes under
+    # its own ``python:compare.completes`` guard, or the comparison itself
+    # raises something undetermined.  Both faces are kept.
+    assert len(exits.exits) == 2
+    (completed,) = (face for face in exits.exits if isinstance(face, Completed))
+    (halted,) = (face for face in exits.exits if isinstance(face, Halted))
+    assert isinstance(halted.effect, UndeterminedRaiseEffect)
+    assert halted.effect.producer_node_owner.endswith(":Lt")
+    assert completed.guard.name == "python:compare.completes"
+    record = completed.value.record
     returns = tuple(
         value for value in record.statements if isinstance(value, GuardedReturn)
     )
