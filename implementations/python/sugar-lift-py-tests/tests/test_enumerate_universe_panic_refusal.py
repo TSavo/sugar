@@ -38,7 +38,6 @@ def _serve_universe(tmp_path, monkeypatch, refusal) -> dict:
     }
     requests = iter([request])
     sent = []
-    monkeypatch.setattr(lift_rpc, "_BOUND_CONTRACT_REFS", None)
     monkeypatch.setattr(tree_enumerate, "function_contract_rows", refuse_contract_rows)
     monkeypatch.setattr(lift_rpc, "_recv", lambda: next(requests, None))
     monkeypatch.setattr(lift_rpc, "_send", sent.append)

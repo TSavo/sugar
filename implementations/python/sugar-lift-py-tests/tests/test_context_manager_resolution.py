@@ -69,40 +69,6 @@ def test_table_is_frozen_and_missing_enrolled_coordinate_is_backend_defect():
         table.require(missing)
 
 
-def test_bind_rpc_freezes_one_generation_and_acknowledges_exact_table_cid(monkeypatch):
-    sent = []
-    monkeypatch.setattr(lift_rpc, "_BOUND_CONTRACT_REFS", None)
-    monkeypatch.setattr(lift_rpc, "_send", sent.append)
-    wire = unresolved_table()
-    assert lift_rpc._dispatch_request(
-        {
-            "jsonrpc": "2.0",
-            "id": 7,
-            "method": lift_rpc.BIND_CONTRACT_REFS_RPC_METHOD,
-            "params": {"contractRefs": wire},
-        }
-    )
-    assert sent[0]["result"]["tableCid"] == wire["tableCid"]
-    assert set(sent[0]["result"]) == {"tableCid"}
-    assert isinstance(lift_rpc._BOUND_CONTRACT_REFS.by_use_site, MappingProxyType)
-
-    other = unresolved_table()
-    other["catalogCid"] = "blake3-512:" + "4" * 128
-    identity = {
-        key: other[key] for key in ("kind", "schemaVersion", "catalogCid", "byUseSite")
-    }
-    other["tableCid"] = _hash_json(identity)
-    with pytest.raises(ValueError, match="already frozen"):
-        lift_rpc._dispatch_request(
-            {
-                "jsonrpc": "2.0",
-                "id": 8,
-                "method": lift_rpc.BIND_CONTRACT_REFS_RPC_METHOD,
-                "params": {"contractRefs": other},
-            }
-        )
-
-
 def test_malformed_table_cid_and_unsorted_ambiguity_are_loud():
     stale = unresolved_table()
     stale["tableCid"] = "blake3-512:" + "f" * 128

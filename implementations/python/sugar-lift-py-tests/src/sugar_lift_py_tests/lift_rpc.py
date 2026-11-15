@@ -52,7 +52,6 @@ KIT_DECLARATION_RPC_METHOD = "sugar.plugin.kit_declaration"
 COMPONENT_PLAN_RPC_METHOD = "sugar.component.plan"
 RESOLVE_SOURCE_MEMENTO_RPC_METHOD = "sugar.plugin.resolve_source_memento"
 ENUMERATE_RPC_METHOD = "sugar.enumerate"
-BIND_CONTRACT_REFS_RPC_METHOD = "sugar.plugin.bind_contract_refs"
 COMPONENT_PROTOCOL_VERSION = "sugar-component/1"
 LIFT_PROTOCOL_VERSION = "pep/1.7.0"
 PYTHON_SURFACE = "python"
@@ -64,7 +63,6 @@ _TRANSPORT_LOG = logging.getLogger("sugar.kit.transport")
 _ENUMERATION_PHASES: Dict[str, tuple[int, float, float]] = {}
 _ENUMERATION_REQUEST_COUNT = 0
 _ENUMERATION_ACTIVE = False
-_BOUND_CONTRACT_REFS = None
 # Phase-1->3 cross-request continuation: the link units enrolled in phase 1,
 # keyed by linkUnitCid, so resume checks a resolution set against the unit it
 # was folded for.
@@ -275,8 +273,7 @@ def provisional_contract_refs_from_demands(root: Path):
 
     The one door onto the With demand rows (#7757 item 46): the enumerate
     levels, the board door, the supervised worker and every instrument come
-    here, and nothing installs a table in its place. A bound table
-    (``bind_contract_refs``) is read instead when one was installed.
+    here, and nothing installs a table in its place.
 
     Each demand lands as ``ContextManagerResolutionGapV1`` of the one kind
     ``undecided`` (#7757 item 4): its manager is what the head reduces to
@@ -428,13 +425,9 @@ def _open_at_seat(
 
 
 def _enumerate_contract_refs(root: Path):
-    """The table every ``sugar.enumerate`` level constructs against.
-
-    The Rust prebind's bound refs when installed, otherwise the provisional
-    demand table for ``root`` (process-memoized per root).
+    """The table every ``sugar.enumerate`` level constructs against: the
+    provisional demand table for ``root`` (process-memoized per root).
     """
-    if _BOUND_CONTRACT_REFS is not None:
-        return _BOUND_CONTRACT_REFS
     return provisional_contract_refs_from_demands(root)
 
 
@@ -1242,7 +1235,6 @@ def _kit_declaration_result() -> Dict[str, Any]:
                 {"name": COMPONENT_PLAN_RPC_METHOD, "required": False},
                 {"name": RESOLVE_SOURCE_MEMENTO_RPC_METHOD, "required": False},
                 {"name": ENUMERATE_RPC_METHOD, "required": False},
-                {"name": BIND_CONTRACT_REFS_RPC_METHOD, "required": False},
                 # lift is not a kit method: full-tree construction is sugar.enumerate only
                 # {"name": "lift", "required": True},
                 {"name": "sugar.plugin.lift_implications", "required": False},
@@ -2142,15 +2134,6 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
     at = params.get("at") if isinstance(params.get("at"), dict) else None
     seek = bool(params.get("seek", False))
     options = params.get("options") if isinstance(params.get("options"), dict) else {}
-    if _BOUND_CONTRACT_REFS is not None:
-        generation = options.get("contractRefs")
-        if generation != {
-            "catalogCid": _BOUND_CONTRACT_REFS.catalog_cid,
-            "tableCid": _BOUND_CONTRACT_REFS.table_cid,
-        }:
-            raise ValueError(
-                "semantic construction request has a stale contract-ref generation"
-            )
     # auditFrontier selects the board door's per-file construction roll call at
     # level `facts` (see the audit_walk branch below). allowedBrokenComponents
     # was the factory's panic-recovery gate; with no factory audit walk it is
@@ -2738,30 +2721,6 @@ def _dispatch_request(msg: Dict[str, Any]) -> bool:
                 "result": _resolve_source_memento_result(
                     params if isinstance(params, dict) else {}
                 ),
-            }
-        )
-    elif method == BIND_CONTRACT_REFS_RPC_METHOD:
-        from sugar_lift_py_tests.context_manager_resolution import (
-            decode_resolved_contract_refs,
-        )
-
-        global _BOUND_CONTRACT_REFS
-        if not isinstance(params, dict) or set(params) != {"contractRefs"}:
-            raise ValueError("malformed preconstruction contract-ref bind")
-        installed = decode_resolved_contract_refs(params["contractRefs"])
-        if (
-            _BOUND_CONTRACT_REFS is not None
-            and _BOUND_CONTRACT_REFS.table_cid != installed.table_cid
-        ):
-            raise ValueError("contract-ref generation is already frozen")
-        _BOUND_CONTRACT_REFS = installed
-        _send(
-            {
-                "jsonrpc": "2.0",
-                "id": msg_id,
-                "result": {
-                    "tableCid": installed.table_cid,
-                },
             }
         )
     elif method == ENUMERATE_RPC_METHOD:
