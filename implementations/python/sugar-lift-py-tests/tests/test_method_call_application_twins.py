@@ -281,10 +281,14 @@ def _test_function_outcome(source: str):
 #   itself ``self.check(...)`` / ``self.open(...)`` on the arrived receiver,
 #   so neither half selects the method: both are the undecided call, and no
 #   named raise is decided for either.
-# - ``super-call``: the method is selected through ``super()``, not read off
-#   the receiver; the truthful half completes alone and the lying half
-#   carries the base method's ``ValueError``.
-_SELECTED_ON_THE_CALLER = ("obj-call",)
+# - ``super-call``: the base method is selected through ``super()``, which
+#   walks ``type(self).__mro__`` and reads no field, so the lying body's
+#   ``ValueError`` reaches the caller.  The truthful body's ``return self.n``
+#   reads the same arrived ``self`` as ``obj-call``'s: ``Base.check`` stores
+#   nothing on it, so nothing after the call makes ``self.n`` known, and the
+#   receiver after the call is the arrived one
+#   (``call_site_value.receiver_after_its_call``): the undecided read.
+_SELECTED_ON_THE_CALLER = ("obj-call", "super-call")
 _SELECTED_THROUGH_AN_ARRIVED_SELF = ("one-branch", "self-call", "spread-call")
 
 
@@ -314,10 +318,8 @@ def test_method_raise_reaches_the_caller_in_process(form: str) -> None:
         _undecided_faces(_test_function_outcome(truthful))
         _undecided_faces(_test_function_outcome(lying))
         return
-    if form in _SELECTED_ON_THE_CALLER:
-        _undecided_faces(_test_function_outcome(truthful))
-    else:
-        assert _test_function_outcome(truthful).completed_value() is not None
+    assert form in _SELECTED_ON_THE_CALLER, form
+    _undecided_faces(_test_function_outcome(truthful))
     outcome = _test_function_outcome(lying)
     assert isinstance(outcome, ExitSet), outcome
     assert [type(face) for face in outcome.exits] == [Halted]
