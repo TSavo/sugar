@@ -318,6 +318,30 @@ def test_a_field_with_several_completed_values_still_refuses() -> None:
         _class_statement("    limit = FLAG or int(FLAG)\n", with_context=True)
 
 
+def test_a_body_that_did_not_run_to_its_end_builds_no_class() -> None:
+    """A completed class body has one form, its record.  The assignment
+    routine hands a value whose rest does not run back as it is; the class
+    statement used to take any such value as the class's fields and complete
+    (the path ``limit = 1 // 0`` took while a raise was a completed value,
+    #7799).  It is no class body: no class is built from it, by name."""
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_source_tree import nodes
+    from sugar_source_tree.panic import SugarNotWritten
+
+    tree = _tree(_PRELUDE + "class Box:\n    limit = 3\n" + _INIT)
+    (box,) = tuple(
+        node
+        for node in tree.nodes()
+        if isinstance(node, nodes.ClassDef) and node.name == "Box"
+    )
+    stopped = ExitSet.completed(BlockValue((), can_fall_through=False))
+    assert not stopped.completed_value().follow_rest().continues
+
+    with pytest.raises(SugarNotWritten, match="not the body's record"):
+        box.sugar()._construct((), lambda: stopped)
+
+
 # ---------------------------------------------------------------------------
 # #7799's other half: a class body that reads an undefined name.  Python
 # raises ``NameError`` at the class statement and the class is never bound.

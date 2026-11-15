@@ -333,12 +333,23 @@ class ClassDefinitionSugar(Sugar):
             # authority or behavior here; its faces were already carried by
             # the fold.
         def construct_class(body):
-            body_value, method_defaults, body_stores = body, (), ()
-            if isinstance(body, _ClassBodyV1):
-                body_value, method_defaults, body_stores = (
-                    body.fields,
-                    body.method_defaults,
-                    body.entries,
+            if not isinstance(body, _ClassBodyV1):
+                # A completed body has one form, its record (``_class_body``).
+                # Any other completed value is one the assignment routine
+                # handed back because its rest does not run
+                # (``evaluate_assignment_values``): the body did not run to
+                # its end, so no class is built from it (#7799).
+                from sugar_source_tree.panic import SugarNotWritten
+
+                raise SugarNotWritten(
+                    blame=self.site,
+                    owner="ClassDefinitionSugar.desugar",
+                    observed=(
+                        f"class body completed with a {type(body).__name__}, "
+                        "which is not the body's record"
+                    ),
+                    requested="the class body's record of its fields",
+                    fix="keep a class body that did not run to its end loud",
                 )
             value = ClassDefinitionValue(
                 self.class_name,
@@ -346,13 +357,13 @@ class ClassDefinitionSugar(Sugar):
                 self.methods,
                 None,
                 self.binding_target_occurrence,
-                body_value,
+                body.fields,
                 self.docstring_cid,
                 self.annotation_cids,
                 self.decorator_cids,
                 tuple(base_values),
                 class_definition=self.class_definition,
-                method_defaults=method_defaults,
+                method_defaults=body.method_defaults,
             )
             # The ``__init__`` a call of the class runs is the one the one
             # class-namespace lookup selects (``initializer_class``: this
@@ -371,7 +382,7 @@ class ClassDefinitionSugar(Sugar):
                 carry_caller_stores,
             )
 
-            return ExitSet.completed(carry_caller_stores(body_stores, value))
+            return ExitSet.completed(carry_caller_stores(body.entries, value))
 
         # The class exists only on a face the whole body completed under;
         # every halt of the body is the statement's halt, unchanged.
