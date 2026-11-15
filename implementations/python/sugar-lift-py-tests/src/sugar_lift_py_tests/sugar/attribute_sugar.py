@@ -31,14 +31,18 @@ class AttributeSugar(ConstructedTermSugar):
 
     @classmethod
     def witnesses(cls):
-        # `z.numerator` on an int is z itself; the pair rides the coordinate's
-        # identity vs a contradicting asserted value.
+        # `C.x` reads a class attribute of a same-file class literal: the
+        # class statement's body binds `x`, and the read of `C` is that
+        # class (a definition, never a `global:` input), so the attribute is
+        # decided.  The subject was `(5).numerator`, a builtin `int` member
+        # the lifter does not state, which left both halves open.
         return _assertion_pair(
             name="attribute_return",
             owner_sugar="AttributeSugar",
-            statements="z = 5",
-            truthful="z.numerator == 5",
-            lying="z.numerator == 6",
+            prefix="class C:\n    x = 5\n\n\n",
+            statements="",
+            truthful="C.x == 5",
+            lying="C.x == 6",
         )
 
     def to_term(self, *, owner: str):

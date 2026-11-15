@@ -49,14 +49,19 @@ class MethodCallSugar(ConstructedTermSugar):
 
     @classmethod
     def witnesses(cls):
-        # int.bit_length is a real method with a decidable shape: the pair rides
-        # the coordinate's identity against a contradicting asserted value.
+        # `C.m()` calls a same-file method on a receiver whose class is
+        # decided (the class value itself, `receiver_class_decided`): its
+        # coordinate and an edge to `m`'s join symbol, decided at prove by
+        # `m`'s contract (#8726, #8738).  The subject was `(5).bit_length()`,
+        # a builtin `int` method the lifter does not state, which left both
+        # halves open.
         return _assertion_pair(
             name="method_call_return",
             owner_sugar="MethodCallSugar",
-            statements="z = 5",
-            truthful="z.bit_length() == 3",
-            lying="z.bit_length() == 4",
+            prefix="class C:\n    def m():\n        return 3\n\n\n",
+            statements="",
+            truthful="C.m() == 3",
+            lying="C.m() == 4",
         )
 
     def to_term(self, *, owner: str):
