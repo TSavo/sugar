@@ -35,6 +35,23 @@ def _constructed(source: str):
     return context, values
 
 
+def _call_fragment(source: str, text: str):
+    """The source fragment of the call spelled ``text`` in ``source``: the
+    site the lifter hands a ``super().<name>(...)`` call (a ground exit
+    cites the source it can re-read, never prose)."""
+    from sugar_source_tree.nodes import Call
+
+    tree = SourceFile(
+        (source, "super_dispatch.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
+    return next(
+        node.fragment
+        for node in tree.nodes()
+        if isinstance(node, Call) and node.fragment.text == text
+    )
+
+
 def _completed_call(outcome):
     """``(stores, call)``: the call ``outcome`` completes with, beneath the
     stores the body made on objects its caller sees (``CallerStoreValue``,
@@ -119,7 +136,7 @@ def test_super_naming_an_absent_method_is_the_attribute_error() -> None:
         "greet",
         (StringValue("v"),),
         owner="test",
-        blame="super-greet",
+        blame=_call_fragment(_LIAR, "super().greet(x)"),
         ctx=context,
     )
 
