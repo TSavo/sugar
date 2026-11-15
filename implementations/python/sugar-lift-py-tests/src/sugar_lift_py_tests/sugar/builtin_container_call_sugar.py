@@ -283,13 +283,26 @@ class ReceiverAfterCallSugar(ConstructedTermSugar):
     (the name's read before the call) is kept when it is immutable, or when
     no rule's object has a value the call may have changed
     (``_may_change``); otherwise it is unknown, never the pre-call
-    contents."""
+    contents.
+
+    ``after`` -- ``(key, slot)`` -- names the one call of a source function
+    that may have changed it and the operand it reached the call through
+    (``container_mutation._havoc``).  Where that call completed, its
+    completed face bound its record under ``key``
+    (``call_site_value.bind_after_call``), and a value the call may have
+    changed is what the callee's contract names the formal its binder bound
+    that operand to: ``python:after(<call result>, <formal>)``
+    (``source_call_resolution.object_after_call``), decided at prove by the
+    join.  Where it did not -- the call's halted face, a call no contract
+    names -- the record is not bound and the value stays the unknown, never
+    a value the callee did not state (#7757 step 7)."""
 
     label: str
     site: object = dataclass_field(compare=False)
     prior: object = None
     subjects: tuple = ()
     rules: tuple = ()
+    after: tuple | None = None
 
     @classmethod
     def witnesses(cls):
@@ -315,7 +328,7 @@ class ReceiverAfterCallSugar(ConstructedTermSugar):
         )
         from sugar_source_tree.container_mutation import field_store_rule
 
-        unknown = ExitSet.completed(_unknown_after(self.site, self.label))
+        unknown = ExitSet.completed(self._changed(ctx))
         if self.prior is None or not self.rules:
             return unknown
         held = self.prior.desugar(ctx)
@@ -344,6 +357,20 @@ class ReceiverAfterCallSugar(ConstructedTermSugar):
             ):
                 return unknown
         return held
+
+    def _changed(self, ctx):
+        """The value after the call where the call may have changed it:
+        what the one call's contract names it (``python:after(<call
+        result>, <formal>)``) where that call's completed face bound its
+        record (``after``), else the unknown minted at the statement."""
+        from sugar_lift_py_tests.floor.call_site_value import stated_after_call
+
+        if self.after is not None:
+            key, slot = self.after
+            stated = stated_after_call(ctx, key, slot)
+            if stated is not None:
+                return stated
+        return _unknown_after(self.site, self.label)
 
 
 @dataclass(frozen=True)

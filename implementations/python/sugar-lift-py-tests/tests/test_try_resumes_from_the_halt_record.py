@@ -25,9 +25,12 @@ has a completed face for each: the body's and the handler's.  The halt
 reaches the handler in the caller's record at the call: a name the callee
 binds never shadows the caller's.  What the callee did to an object it can
 reach (an actual, a cell, a module global) is the one exposure rule's read
-after the call (``python:receiver_after_call``, or the ``global:`` input);
-its value is the post-call object state, joined at prove from the callee's
-contract (step 7, not merged), so these tests expect that read today.
+after the call: on the call's completed face the formal the binder bound it
+to, ``python:after(<call result>, <formal>)``, keyed on the call (#7757 step
+7); on its halted face, and where the call alone does not decide it, the
+unknown (``python:receiver_after_call``), or the ``global:`` input.  Its
+value is the post-call object state, joined at prove from the callee's
+contract, so these tests expect that read.
 """
 
 from __future__ import annotations
@@ -120,8 +123,11 @@ def _term_name(value):
 
 def _after_call(value) -> bool:
     """The one exposure rule's read of an object after a call that may
-    change it: its value is the post-call object state (step 7)."""
-    return _term_name(value) == "python:receiver_after_call"
+    change it: the formal the call's binder bound it to on the call's
+    completed face (``python:after``, keyed on the call), else the unknown
+    (``python:receiver_after_call``); its value is the post-call object
+    state, joined at prove (#7757 step 7)."""
+    return _term_name(value) in ("python:after", "python:receiver_after_call")
 
 
 def _global_input(value, name: str) -> bool:

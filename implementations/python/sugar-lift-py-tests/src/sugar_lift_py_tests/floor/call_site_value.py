@@ -262,6 +262,15 @@ class CallSiteValue(FloorValue):
     # its ``__dict__``, so a method call on it is dispatched on that class at
     # prove (``receiver_dispatch.class_value``, #7757 step 8).
     instance_of: str | None = dataclass_field(default=None, compare=False, repr=False)
+    # ``((slot, formal), ...)`` on a same-file definition's edge
+    # (``lambda_callable.definition_edge_call``): for each operand of the
+    # call (``("arg", i)``, ``("kw", name)``, ``("cell", name)``,
+    # ``container_mutation._call_slot``) whose object the call may change,
+    # the formal of the callee's contract the one binder binds it to.  The
+    # call's completed face binds them under the call's key
+    # (``bind_after_call``), and the caller reads each object after the call
+    # as ``python:after(<call result>, <formal>)`` (#7757 step 7).
+    after_labels: tuple = dataclass_field(default=(), compare=False, repr=False)
 
     def denotes_value(self) -> bool:
         """A call result denotes a Python runtime value."""
@@ -1716,3 +1725,95 @@ def list_append_coordinate_value(prior, value, site) -> CallSiteValue:
         body=None,
         site=site,
     )
+
+
+@dataclass(frozen=True)
+class AfterCallRecordValue(FloorValue):
+    """What one completed evaluation of a same-file definition's call names
+    of the operands it was handed (#7757 step 7): the call's result term
+    (``python:call_result(<call term>, <occurrence>)``) and, for each
+    operand slot, the formal of the callee's contract the one binder binds
+    it to (``CallSiteValue.after_labels``).
+
+    Bound under the call's key on the call's completed face only
+    (``bind_after_call``), so a halted face never reads it.  No source name
+    holds it: the exposure rule reads it for each object the call may have
+    changed (``stated_after_call``)."""
+
+    result: Term
+    labels: tuple
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor
+
+        del owner
+        return ctor(
+            "python:after-call-record", (self.result,), symbol_kind="coordinate"
+        )
+
+    def formal_of(self, slot):
+        """The formal the binder bound the operand ``slot`` to, or None."""
+        for known, formal in self.labels:
+            if tuple(known) == tuple(slot):
+                return formal
+        return None
+
+
+def bind_after_call(outcome, site):
+    """``outcome`` (the exits of the call whose fragment is ``site``) with
+    each completed face that is a same-file definition's edge naming what it
+    was handed (``CallSiteValue.after_labels``) carrying its record
+    (``AfterCallRecordValue``) as a walrus carries its write: bound under the
+    call's key (``Call.after_call_key``) where the statement applies its
+    writes (``bind_walrus_binds``).  A halted face carries nothing: what the
+    call left in what it was handed is stated only where it completed
+    (#7757 step 7).  Every other outcome comes back as it is."""
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    from .named_expression_value import (
+        NamedExpressionValue,
+        carry_walrus_binds,
+        peel_walrus_binds,
+    )
+
+    after_call_key = getattr(getattr(site, "node", None), "after_call_key", None)
+    if not isinstance(outcome, ExitSet) or after_call_key is None:
+        return outcome
+
+    def carrying(value):
+        binds, presented = peel_walrus_binds(value)
+        if not isinstance(presented, CallSiteValue) or not presented.after_labels:
+            return ExitSet.completed(value)
+        key = after_call_key()
+        record = NamedExpressionValue(
+            key,
+            AfterCallRecordValue(presented.term, presented.after_labels),
+            evaluation=key,
+        )
+        return ExitSet.completed(carry_walrus_binds((*binds, record), presented))
+
+    return outcome.and_then(carrying)
+
+
+def stated_after_call(ctx, key, slot):
+    """The object a call reached through ``slot`` as the call left it, read
+    where the reduction runs: ``python:after(<call result>, <formal>)``
+    (``source_call_resolution.object_after_call``), where the call's
+    completed face bound its record under ``key`` (``bind_after_call``) and
+    the binder bound ``slot`` to a formal; None elsewhere -- the call's
+    halted face, a call no contract names -- and the value stays undecided
+    (#7757 step 7)."""
+    temporal = getattr(ctx, "temporal", None)
+    if temporal is None:
+        return None
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.source_call_resolution import object_after_call
+    from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_read_here
+
+    record = temporal.value_if_bound(evaluation_read_here(temporal, key))
+    if not isinstance(record, AfterCallRecordValue):
+        return None
+    formal = record.formal_of(slot)
+    if formal is None:
+        return None
+    return SymbolicValue(object_after_call(record.result, formal))

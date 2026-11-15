@@ -65,7 +65,13 @@ receiver an active ``__init__`` constructs):
   be rebound.
   A call of a same-file source function is no exception (#7757 step 5): its
   body is never followed here; it is joined at prove, as an imported call
-  is.
+  is.  What such a call left in what it was handed is keyed on the call
+  (#7757 step 7): where a simple statement runs it once and it alone may
+  have changed a name's object (an actual's, or the closure cell of that
+  name), the name reads, after it, the formal the call's binder bound the
+  object to, ``python:after(<call result>, <formal>)``, on the call's
+  completed face only (``_havoc``'s ``after``, ``_call_slot``); its halted
+  face, and every other case, keeps the unknown.
 - **A field store** (``o.f = v``, ``nodes.ReceiverFieldStoreStatement``) is
   ``type(o).__setattr__``: one operation more (``_FieldStore``).  The
   receiver's value decides at reduce what it runs
@@ -677,7 +683,7 @@ def _projection(site_node, call, index, tags, evaluation=None, *, binds=None):
     return _materialize(site_node, "BuiltinContainerProjection", fields, tags)
 
 
-def _havoc(site_node, label, tags, *, prior=None, conditions=None):
+def _havoc(site_node, label, tags, *, prior=None, conditions=None, after=None):
     """The value a call may have changed, read after it.
 
     With no ``conditions`` it is an unknown minted at the call.  With
@@ -685,7 +691,16 @@ def _havoc(site_node, label, tags, *, prior=None, conditions=None):
     decides at reduce (``ReceiverAfterCallSugar``): ``prior`` is the name's
     read before the call; it is kept unless some condition's object (its
     ``subject`` read, or ``prior`` itself when None) has a value the call may
-    have changed (``_may_change``), and an immutable ``prior`` is kept."""
+    have changed (``_may_change``), and an immutable ``prior`` is kept.
+
+    ``after`` -- ``(key, slot)`` -- names the one call that may have changed
+    it (``_call_slot``): the key the call's completed face binds its record
+    under (``Call.after_call_key``) and the operand the object reached the
+    call through.  Where that call's completed face bound its record, the
+    value after it is what the callee's contract names it
+    (``python:after(<call result>, <formal>)``); elsewhere -- the call's
+    halted face, a call no contract names -- it stays the unknown above
+    (#7757 step 7)."""
     from .backend import Children, Leaf, MaybeChild
     from .shadow import _handle_of
 
@@ -708,22 +723,20 @@ def _havoc(site_node, label, tags, *, prior=None, conditions=None):
             rules.append(rule)
     from .nodes import _minted_binding_reference
 
+    fields = (
+        ("label", Leaf(label)),
+        ("occurrence", Leaf(_evaluation(site_node, tags))),
+        ("prior", MaybeChild(None if prior is None else _handle_of(prior))),
+        ("subjects", Children(tuple(_handle_of(node) for node in subjects))),
+        ("rules", Leaf(tuple(rules))),
+    )
+    if after is not None:
+        fields = (*fields, ("after", Leaf(after)))
     # A value of the scope after the call, which no read may reach: it
     # answers where it is minted, and a read that reaches it constructs it
     # and answers again (``nodes._minted_binding_reference``).
     return _minted_binding_reference(
-        _materialize(
-            site_node,
-            "ReceiverAfterCall",
-            (
-                ("label", Leaf(label)),
-                ("occurrence", Leaf(_evaluation(site_node, tags))),
-                ("prior", MaybeChild(None if prior is None else _handle_of(prior))),
-                ("subjects", Children(tuple(_handle_of(node) for node in subjects))),
-                ("rules", Leaf(tuple(rules))),
-            ),
-            tags,
-        )
+        _materialize(site_node, "ReceiverAfterCall", fields, tags)
     )
 
 
@@ -1084,6 +1097,9 @@ def havoc_after(statement, pre_scope, scope, *, loop=None, operated=False):
         # (``lst.append(super().m())``) is one call more (``calls_on_self``).
         on_self = calls_on_self(statement)
         targets.extend(_calls_on_self_reach(on_self, bound_refs, ambient))
+        # A call among the mutation's operands is followed by the mutation
+        # itself: what the call left is not what the statement leaves.
+        targets = [target[:3] for target in targets]
         havocked = _rebind(statement, pre_scope, scope, targets)
         return calls_on_self_left(statement, pre_scope, scope, havocked, calls=on_self)
     # A loop that may run its body any number of times leaves every object a
@@ -1101,6 +1117,13 @@ def havoc_after(statement, pre_scope, scope, *, loop=None, operated=False):
     )
     if operated:
         sites = (*sites, _Operated(statement))
+    # What a call left is what the statement leaves only where the statement
+    # runs the call once and nothing after it: a simple statement, never a
+    # loop or a compound statement (whose body may run more after it, or the
+    # call again), and a call no comprehension or lambda of it holds
+    # (``_evaluated_once``).  Anywhere else the name stays the unknown
+    # (#7757 step 7).
+    once = not loop and not header and _simple_statement(statement)
     for call in sites:
         # A call of a source function is a call like any other (#7757 step
         # 5): its callee's body is never read here to decide which of the
@@ -1126,7 +1149,7 @@ def havoc_after(statement, pre_scope, scope, *, loop=None, operated=False):
                 (state, None, None) for state in _sharing_states(pre_scope, root)
             )
             continue
-        targets.extend(_call_targets(call, pre_scope, bound_refs))
+        reached = list(_call_targets(call, pre_scope, bound_refs))
         # An operation this statement does not follow -- a call of a source
         # function, a method, a callable value, an import, a builtin; an
         # operator, a truth test, an item or attribute access, an
@@ -1134,7 +1157,12 @@ def havoc_after(statement, pre_scope, scope, *, loop=None, operated=False):
         # the frame resumes) -- may change what the caller holds beyond
         # its operands: the module objects and the closure cells its code
         # can reach (``_ambient_targets``).
-        targets.extend(ambient(call))
+        reached.extend(ambient(call))
+        if any(len(target) > 3 for target in reached) and not (
+            once and _evaluated_once(statement, call)
+        ):
+            reached = [target[:3] for target in reached]
+        targets.extend(reached)
     # A call on ``self`` evaluated in place (``nodes._call_on_self_in_place``)
     # is a call like any other: what it is handed and what its code may
     # reach beyond them take the exposure rule, and every name bound to
@@ -1145,6 +1173,40 @@ def havoc_after(statement, pre_scope, scope, *, loop=None, operated=False):
     return calls_on_self_left(
         statement, pre_scope, scope, havocked, loop=loop, calls=on_self
     )
+
+
+# The suites a compound statement holds: code that may run after a call of
+# its own, or run the call again.
+_SUITE_FIELDS = ("body", "orelse", "handlers", "finalbody", "cases")
+
+
+def _simple_statement(statement) -> bool:
+    """Whether ``statement`` holds no suite (``_SUITE_FIELDS``): what its one
+    call left is what it leaves, nothing of its own running after."""
+    return not any(getattr(statement, field, None) for field in _SUITE_FIELDS)
+
+
+# Nodes whose code runs per member, or when called, never once where the
+# statement holding them runs.
+_REPEATING_KINDS = frozenset(
+    {"ListComp", "SetComp", "DictComp", "GeneratorExp", "Lambda"}
+)
+
+
+def _evaluated_once(statement, call) -> bool:
+    """Whether ``call`` runs at most once each time ``statement`` runs: no
+    comprehension, generator expression or lambda of the statement holds it
+    (each runs it per member, or when called)."""
+    span = getattr(call, "span", None)
+    if span is None:
+        return False
+    for node in statement.walk():
+        if getattr(node, "kind", None) not in _REPEATING_KINDS:
+            continue
+        held = node.span
+        if held.start <= span.start and span.end <= held.end:
+            return False
+    return True
 
 
 def _is_call_on_self(node) -> bool:
@@ -1521,8 +1583,20 @@ def _call_targets(call, scope, bound_refs):
     # A cited pure builtin whose operands the source does not type: an
     # operand whose value is builtin all the way down is unchanged.
     pure = (("", _builtin_callee(call) in _cited().pure, False),)
-    for root in (*call.args, *(keyword.value for keyword in call.keywords)):
-        targets.extend((node, pure, None) for node in _exposed(root, bound_refs))
+    # A call of a source function names, for the object an actual is, the
+    # formal its binder binds it to (``_call_slot``): what the callee's
+    # contract states that object is after the call (#7757 step 7).  An
+    # object the actual merely holds is no formal's.
+    after_key = []
+    for root, slot in _operand_slots(call):
+        for node in _exposed(root, bound_refs):
+            if slot is not None and same_object(node, root):
+                if not after_key:
+                    after_key.append(_after_call_key(call, scope))
+                if after_key[0] is not None:
+                    targets.append((node, pure, None, (after_key[0], slot)))
+                    continue
+            targets.append((node, pure, None))
     if isinstance(func, Attribute):
         receiver = func.value
         method = ((func.attr, False, False),)
@@ -1730,7 +1804,15 @@ def _rebind(statement, pre_scope, scope, targets):
     unknown whatever its value; ``subject`` the read whose value decides
     (None: a name bound to the object decides by its own value, a name that
     holds it by the object's).  Each name is rebound to its value after the
-    call (``_havoc``), which the value decides at reduce."""
+    call (``_havoc``), which the value decides at reduce.
+
+    A target may carry a fourth member, ``(key, slot)`` (``_call_slot``): the
+    one call it reached and the operand it reached it through.  A name the
+    statement changed through that one call alone -- a name bound to the
+    object itself, or for a closure cell the cell's own name -- reads, after
+    it, what the callee's contract names it (``_havoc``'s ``after``); a
+    name any other operation, or a second call, may also have changed reads
+    the unknown (#7757 step 7)."""
     from .nodes import Name
     from .shadow import occurrence_tags_of
 
@@ -1739,10 +1821,13 @@ def _rebind(statement, pre_scope, scope, targets):
     found = {}
     asked = set()
     named = {}
-    for target, rules, explicit in targets:
+    # ``name -> {(key, slot) or None}``: the calls that may have changed it.
+    reached = {}
+    for target, rules, explicit, *slotted in targets:
+        via = slotted[0] if slotted else None
         # A read and the node it was given are one object: ask once.
         key = _object_key(target)
-        question = (key, rules, id(explicit))
+        question = (key, rules, id(explicit), via)
         if question in asked:
             continue
         asked.add(question)
@@ -1777,24 +1862,93 @@ def _rebind(statement, pre_scope, scope, targets):
                 found[name] = None
             else:
                 found[name] = [*found[name], *conditions]
+            reached.setdefault(name, set()).add(
+                via if _names_its_slot(via, name, exact) else None
+            )
     if not found:
         return scope
     tags = occurrence_tags_of(statement)
     binding = {}
     for name, conditions in found.items():
         prior = _read_of(scope[name]) if name in scope else _global_read(targets, name)
+        vias = reached.get(name, {None})
         binding[name] = _havoc(
-            statement, name, tags, prior=prior, conditions=conditions
+            statement,
+            name,
+            tags,
+            prior=prior,
+            conditions=conditions,
+            after=next(iter(vias)) if len(vias) == 1 else None,
         )
     binding = statement._binding_entries(binding, scope)
     return {**scope, **binding}
+
+
+def _call_slot(kind: str, name) -> tuple:
+    """The operand through which a call of a source function reached an
+    object (``_rebind``'s fourth target member, ``(key, slot)``):
+    ``("arg", i)`` its ``i``-th positional actual, ``("kw", name)`` a
+    keyword actual, ``("cell", name)`` the closure cell the callee reads or
+    declares ``nonlocal``.  The callee's one binder binds each to a formal of
+    its contract (the parameter, or ``cell:<name>``), which
+    ``definition_edge_call`` records on the call's completed value
+    (``CallSiteValue.after_labels``) under the same slot."""
+    return (kind, name)
+
+
+def _names_its_slot(via, name, exact) -> bool:
+    """Whether ``name`` is what ``via``'s slot names after the call: a name
+    bound to the object an actual handed the callee (``exact``), whose state
+    after the call is the formal's; for a closure cell, the cell itself
+    (``name`` is the cell's), which the callee may rebind -- an alias of the
+    object it held keeps that object."""
+    if via is None or name not in exact:
+        return False
+    _key, slot = via
+    if slot[0] == "cell":
+        return slot[1] == name
+    return True
+
+
+def _after_call_key(call, scope):
+    """The key a call of a source function (``_source_callee``) binds its
+    completed record under (``Call.after_call_key``), or None for any other
+    operation: only such a call's contract names what it left in what it
+    was handed (#7757 step 7)."""
+    from .nodes import Call
+
+    if not isinstance(call, Call) or _source_callee(call, scope) is None:
+        return None
+    return call.after_call_key()
+
+
+def _operand_slots(call):
+    """``[(operand, slot)]`` for each actual of ``call``: ``("arg", i)``
+    for the ``i``-th positional one, ``("kw", name)`` for a keyword one;
+    None where the binder's formal is not the source's position (a ``*``
+    actual anywhere, a ``**`` actual)."""
+    from .nodes import Starred
+
+    spread = any(isinstance(arg, Starred) for arg in call.args)
+    slots = [
+        (arg, None if spread else _call_slot("arg", index))
+        for index, arg in enumerate(call.args)
+    ]
+    slots.extend(
+        (
+            keyword.value,
+            None if keyword.arg is None else _call_slot("kw", keyword.arg),
+        )
+        for keyword in call.keywords
+    )
+    return slots
 
 
 def _global_read(targets, name):
     """A target that is a read of the unbound ``name`` (a global), or None."""
     from .nodes import Name
 
-    for target, _rules, _subject in targets:
+    for target, _rules, _subject, *_slotted in targets:
         if isinstance(target, Name) and target.id == name:
             return target
     return None
@@ -3374,8 +3528,39 @@ def _ambient_targets(statement, call, scope, ambient=None):
             (node, rules, subject) for node in objects for subject, rules in subjects
         ]
     targets.extend((node, None, None) for node in rebound)
+    cells = _cell_slots(call, reach, scope)
+    if cells:
+        # The callee's own cells: its contract names each as it left it
+        # (``cell:<name>``, #7757 step 7).
+        targets = [
+            (*target, cells[_object_key(target[0])])
+            if _object_key(target[0]) in cells
+            else target
+            for target in targets
+        ]
     targets.extend(frame)
     return targets
+
+
+def _cell_slots(call, reach, scope) -> dict:
+    """``{object key: (key, ("cell", name))}`` for each closure cell the
+    source function ``call`` runs reads or declares ``nonlocal`` itself
+    (``_Cell.direct``): the formal ``cell:<name>`` of its contract
+    (``_call_slot``), under the key its completed record is bound under
+    (``_after_call_key``).  Empty for any other operation, and for a cell
+    only a function it calls by name reaches: that function's contract,
+    not this callee's, says what it did to it."""
+    if reach is None:
+        return {}
+    direct = [cell for cell in reach.cells if cell.direct]
+    if not direct:
+        return {}
+    key = _after_call_key(call, scope)
+    if key is None:
+        return {}
+    return {
+        _object_key(cell.node): (key, _call_slot("cell", cell.name)) for cell in direct
+    }
 
 
 def _frame_targets(statement, call, scope):

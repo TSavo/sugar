@@ -296,6 +296,7 @@ def definition_edge_call(
     call_occurrence,
     caller_ctx,
     fallback_target: str,
+    implicit: int = 0,
     **testimony,
 ):
     """THE call of a same-file definition as its coordinate and edge (#7757
@@ -334,7 +335,17 @@ def definition_edge_call(
     (#8690).  A callee with no join symbol (no workspace root) is the same
     call under ``fallback_target`` with no symbol: owed, joined to nothing.
     ``testimony`` is what the call form authenticated about the result
-    (a class call's exception type), carried on the value unchanged."""
+    (a class call's exception type), carried on the value unchanged.
+
+    The completed value names, for each operand whose object the call may
+    change, the formal of the callee's contract the binder binds it to
+    (``CallSiteValue.after_labels``, ``_after_labels``): the call's
+    completed face binds them under the call's key
+    (``call_site_value.bind_after_call``), and the caller reads each such
+    object after the call as ``python:after(<call result>, <formal>)``
+    (#7757 step 7).  ``implicit`` is how many leading ``positional``
+    actuals the call form supplied itself (a method's receiver), which no
+    source operand is."""
     from sugar_lift_py_tests.call_symbol import call_symbol
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.ir import ctor, str_const
@@ -424,9 +435,87 @@ def definition_edge_call(
         site=site,
         call_occurrence=call_occurrence,
         authenticated_target_symbol=symbol,
+        after_labels=(
+            ()
+            if symbol is None
+            else _after_labels(
+                symbol_definition,
+                signature,
+                parameters,
+                packed,
+                positional,
+                keywords,
+                captured,
+                implicit,
+            )
+        ),
         **testimony,
     )
     return UnknownCalleeCallV1(target).faces(callsite, site)
+
+
+def _after_labels(
+    symbol_definition,
+    signature,
+    parameters,
+    packed,
+    positional,
+    keywords,
+    captured,
+    implicit,
+):
+    """``((slot, formal), ...)``: for each operand of a same-file
+    definition's call whose object the call may change, the formal of the
+    callee's contract the one binder binds it to (``CallSiteValue.
+    after_labels``, #7757 step 7).  The slots are the exposure rule's
+    (``container_mutation._call_slot``):
+
+    - ``("arg", i)``: the ``i``-th source positional actual, bound to the
+      parameter at its position (after the ``implicit`` actuals the call
+      form supplied), and ``("kw", name)``: a keyword actual, bound to the
+      parameter of its name -- only where the contract's formals are the
+      signature's own (a function or a method, never a class whose
+      constructor states them), the signature packs nothing (a ``*args`` or
+      ``**kwargs`` formal binds what it packs), and the value is one a call
+      may change (an immutable value is the same value after it);
+    - ``("cell", name)``: each closure cell the call carries, bound to the
+      contract input ``cell:<name>``, where the callee declares it
+      ``nonlocal`` (it may rebind it) or it holds a value a call may
+      change."""
+    from sugar_lift_py_tests.contract_input import CELL_INPUT, input_formal
+    from sugar_lift_py_tests.sugar.builtin_container_call_sugar import _immutable
+
+    labels = []
+    if signature is symbol_definition and not packed:
+        parameters = tuple(parameters)
+        for index, value in enumerate(tuple(positional)[implicit:]):
+            position = implicit + index
+            if position < len(parameters) and not _immutable(value):
+                labels.append((("arg", index), parameters[position]))
+        for name, value in keywords:
+            if name in parameters and not _immutable(value):
+                labels.append((("kw", name), name))
+    rebound = _declared_nonlocal(symbol_definition) if captured else frozenset()
+    for name, _cid, value in captured:
+        if name in rebound or not _immutable(value):
+            labels.append((("cell", name), input_formal(CELL_INPUT, name)))
+    return tuple(labels)
+
+
+def _declared_nonlocal(definition) -> frozenset:
+    """The names ``definition`` (a ``def``) declares ``nonlocal``, read off
+    CPython's symtable; none for any other definition (a lambda declares
+    none)."""
+    from sugar_source_tree.nodes import AsyncFunctionDef, FunctionDef
+
+    if not isinstance(definition, (FunctionDef, AsyncFunctionDef)):
+        return frozenset()
+    table = definition.unit.function_symtable(
+        definition.name, definition.line_col_span().start_line
+    )
+    return frozenset(
+        symbol.get_name() for symbol in table.get_symbols() if symbol.is_nonlocal()
+    )
 
 
 # The namespace a join symbol is spelled under (``SourceUnit.definition_symbol``).
