@@ -1085,7 +1085,20 @@ class NativeOperationExitCarrierV1:
                 source_node=self.demand.source_node
             )
         # Otherwise the projected arms stand as they are: a completion is
-        # already its one completed arm, and its ``owed`` rides on it.
+        # already its one completed arm, and its ``owed`` rides on it. A
+        # projector is an expression: its halt offers no record of its own
+        # (an undecided operand's two faces, ``ExitSet.two_faced``). The
+        # block that enrolled this carrier holds the state the operation
+        # began from, so that halt leaves from it -- the record the
+        # unanswered operation's halt and the exceptional resolution leave
+        # from -- and a suite resuming after it (a ``finally``, a handler)
+        # resumes from what ran before the operation, never from nothing.
+        if self.pre_effect_state is not None:
+            from sugar_lift_py_tests.sugar.function_universe_sugar import (
+                halts_recorded,
+            )
+
+            exits = halts_recorded(exits, self.pre_effect_state.state)
         return exits
 
     def discharge(self, ctx, actuals_by_formal_coordinate):
