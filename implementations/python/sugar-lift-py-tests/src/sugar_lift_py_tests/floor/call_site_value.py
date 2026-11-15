@@ -2388,9 +2388,11 @@ def _reduce_callsite_body_in_frame(
     if isinstance(body, SugarBody):
         return body.reduce(ctx)
     if isinstance(body, FunctionBodyUniverse):
-        from sugar_lift_py_tests.sugar.block_sugar import BlockSugar
+        # The one body reduction, the same law the source-visible body's
+        # ``desugar`` above runs (``BlockSugar`` was deleted; #6400).
+        from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_body
 
-        return BlockSugar(statements=body.statements, blame=blame).desugar(ctx)
+        return reduce_body(body.statements, ctx)
     _force_floor_gap(
         owner="CallSiteValue.force_floor",
         target_name=blame,
