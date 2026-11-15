@@ -9084,7 +9084,15 @@ class Node(Typed):
         )
 
     def _make_observation_ref(self, slot_id: str, projection: str) -> "Node":
-        """Synthesize ObservationRef(slot, projection) for with-as bindings."""
+        """Synthesize ObservationRef(slot, projection) for with-as bindings.
+
+        It is the value the ``as`` name is bound to, in the body and after
+        the ``with``: a read of the name is re-spanned to its own site
+        (``Name.substitute``), and one no read reaches (``with M() as _:``,
+        ``tests/io/excel/test_odswriter.py:51``) is built by nothing.  It
+        answers where it is minted (``_minted_binding_reference``); the
+        store a destructuring ``as`` is lowered to builds it and answers
+        again."""
         from .backend import Leaf, materialize
         from .shadow import ShadowNode
 
@@ -9092,10 +9100,12 @@ class Node(Typed):
             ("slot_id", Leaf(slot_id)),
             ("projection", Leaf(projection)),
         )
-        return materialize(
-            self.unit,
-            ShadowNode("ObservationRef", self.span, slots),
-            self.reporter,
+        return _minted_binding_reference(
+            materialize(
+                self.unit,
+                ShadowNode("ObservationRef", self.span, slots),
+                self.reporter,
+            )
         )
 
     def _substitute_body(self, statements: tuple, scope: BindingMap):
@@ -14686,20 +14696,28 @@ class ClassDef(Statement):
         )
 
     def _make_constructed_receiver_ref(self, receiver_coordinate_cid):
+        """The receiver a class call constructs, as the value its
+        initializer's first formal (or a dataclass's receiver) is bound to:
+        a read of it is re-spanned to its own site (``Name.substitute``), so
+        this one, at the whole class statement, is built by nothing
+        (``errors/__init__.py:718``).  It answers where it is minted, as a
+        formal's ``FormalRef`` does (``FunctionDef._make_parameter_ref``)."""
         from .backend import Leaf, materialize
         from .shadow import ShadowNode
 
-        return materialize(
-            self.unit,
-            ShadowNode(
-                "ConstructedReceiverRef",
-                self.span,
-                (
-                    ("class_name", Leaf(self.name)),
-                    ("binding_coordinate_cid", Leaf(receiver_coordinate_cid)),
+        return _minted_binding_reference(
+            materialize(
+                self.unit,
+                ShadowNode(
+                    "ConstructedReceiverRef",
+                    self.span,
+                    (
+                        ("class_name", Leaf(self.name)),
+                        ("binding_coordinate_cid", Leaf(receiver_coordinate_cid)),
+                    ),
                 ),
-            ),
-            self.reporter,
+                self.reporter,
+            )
         )
 
 

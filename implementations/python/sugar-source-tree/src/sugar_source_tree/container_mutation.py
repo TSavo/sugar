@@ -4455,8 +4455,15 @@ def _caller_visible_read(
     site_node, evaluation, label, occurrence, prior, tags, *, at_halt=False
 ):
     """The one ``SourceCallActualAfter`` node: a read of the value a call
-    carried under ``evaluation``."""
+    carried under ``evaluation``.
+
+    A value of the scope after the call, which no read may reach (an
+    actual a source call statement changed and nothing reads after it,
+    ``tests/io/parser/dtypes/test_dtypes_basic.py:220``): it answers where
+    it is minted, and a read that reaches it constructs it and answers
+    again, as ``_havoc``'s does (``nodes._minted_binding_reference``)."""
     from .backend import Child, Leaf
+    from .nodes import _minted_binding_reference
     from .shadow import _handle_of
 
     fields = (
@@ -4467,7 +4474,9 @@ def _caller_visible_read(
     )
     if at_halt:
         fields = (*fields, ("at_halt", Leaf(True)))
-    return _materialize(site_node, "SourceCallActualAfter", fields, tags)
+    return _minted_binding_reference(
+        _materialize(site_node, "SourceCallActualAfter", fields, tags)
+    )
 
 
 def _apply_actual_states(statement, pre_scope, scope, havocked, applied):
