@@ -1152,6 +1152,11 @@ class FunctionUniverseSugar(Sugar):
     bridge_source_symbol: str | None = None
     substitution_trace: object | None = dataclass_field(compare=False, default=None)
     formal_coordinates: tuple = ()
+    #: What the body reads that the caller supplies at the call beside its
+    #: parameters (``contract_input.ContractInputV1``: a captured cell, a
+    #: default), each a formal of the contract after the parameters (#7757
+    #: step 4).
+    inputs: tuple = ()
 
     @classmethod
     def witnesses(cls):
@@ -1174,14 +1179,28 @@ class FunctionUniverseSugar(Sugar):
         # that exact receiver in ``ctx``.  Threading the producer-owned context
         # here lets the existing block reducer resolve it; callers without such
         # authority continue to pass ``None`` and retain the ordinary behavior.
+        #
+        # Each input the body reads (a captured cell) is read as its own free
+        # formal, as a parameter is: the function's own proof has no caller
+        # to supply it (``contract_input.bind_contract_inputs``). The contract
+        # states every input as a formal after the parameters.
+        from sugar_lift_py_tests.contract_input import bind_contract_inputs
+
+        ctx = bind_contract_inputs(
+            ctx, self.inputs, owner="FunctionUniverseSugar.inputs"
+        )
+        formals = self.formals + tuple(item.formal for item in self.inputs)
+        formal_coordinates = self.formal_coordinates + tuple(
+            item.coordinate for item in self.inputs
+        )
         return reduce_body(self.statements, ctx).and_then(
             lambda record: ExitSet.completed(
                 UniverseValue(
                     name=self.name,
-                    formals=self.formals,
+                    formals=formals,
                     record=record,
                     bridge_source_symbol=self.bridge_source_symbol,
-                    formal_coordinates=self.formal_coordinates,
+                    formal_coordinates=formal_coordinates,
                 )
             )
         )
