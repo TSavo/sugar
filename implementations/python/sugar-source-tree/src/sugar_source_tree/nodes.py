@@ -11841,22 +11841,30 @@ class ClassDef(Statement):
         each name it binds read under the key its sugar binds it under
         (``Node.written_keys``, ``_class_body_block``, which refuses by name
         a bound name with no key); a ``def`` and a ``class`` (in the body
-        itself); ``pass``; the docstring; an ``if`` over the same; and a
-        ``def`` under an ``if``.  An arm's ``def`` is the one ``def``
-        statement (``_def_statement_sugar``), built where ``IfSugar`` builds
-        its arm; it is in no method roster, so the class statement's
-        reduction refuses it by name (``ClassDefinitionSugar._namespace``,
-        ``unrostered_definitions``), never drops it.  A compound statement
-        (a loop, ``with``, ``try``, ``match``: its writes are not read
-        here), a walrus (its write is its own node's, not its statement's),
-        and a ``class`` under an ``if`` (an arm's class statement binds no
-        key), are refused here, never dropped."""
+        itself); ``pass``; the docstring; an ``if`` or a ``with`` over the
+        same; and a ``def`` under an ``if`` or a ``with``.  A ``with`` is the
+        one ``with`` statement (``With._construct_sugar``), its body's
+        statements read as the body's own rows: they run on every face the
+        ``with`` completes on, and a face where its manager suppressed a raise
+        leaves a later row unbound, which the namespace refuses by name.  A
+        ``def`` under either is the one ``def`` statement
+        (``_def_statement_sugar``), built where its compound statement builds
+        it; it is in no method roster, so the class statement's reduction
+        refuses it by name (``ClassDefinitionSugar._namespace``,
+        ``unrostered_definitions``), never drops it.  Any other compound
+        statement (a loop, ``try``, ``match``: its writes are not read here),
+        a walrus (its write is its own node's, not its statement's), and a
+        ``class`` under an ``if`` or a ``with`` (its class statement binds no
+        key there), are refused here, never dropped."""
         for index, item in enumerate(statements):
             if isinstance(item, Pass):
                 continue
             if isinstance(item, If):
                 self._require_class_members(item.body, top=False)
                 self._require_class_members(item.orelse, top=False)
+                continue
+            if isinstance(item, With) and not _walrus_targets(item):
+                self._require_class_members(item.body, top=False)
                 continue
             if not top and isinstance(item, (FunctionDef, AsyncFunctionDef)):
                 continue
@@ -11931,7 +11939,7 @@ class ClassDef(Statement):
         ``branch_slots`` the slot of each ``if`` of the body;
         ``default_keys`` the key of each method default;
         ``unrostered_definitions`` the fragment CID of each ``def`` standing
-        in an arm of an ``if``: its statement is built in its arm, but no
+        in an ``if`` or a ``with``: its statement is built there, but no
         method roster carries it, so the class statement's reduction refuses
         it by name (``ClassDefinitionSugar._namespace``).  The phi an ``if``
         splices after itself (``If.substitute``) carries no key and is no
@@ -11992,6 +12000,19 @@ class ClassDef(Statement):
                         spliced = rows(child, True, spliced, in_arm, armed)
                     armed.update(in_arm - bound)
                 return True
+            if isinstance(item, With):
+                # The ``with`` statement is built by its own sugar; its body
+                # runs on every face the statement completes on, so each of
+                # its statements is a row of this block where it stands.  A
+                # name ``as`` binds is substituted by its reads, under no key
+                # the namespace reads: refused by name.
+                for with_item in item.items:
+                    for name in with_item.names_bound_here():
+                        unkeyed(item, name)
+                spliced = False
+                for child in item.body:
+                    spliced = rows(child, in_branch, spliced, bound, armed)
+                return False
             if (
                 isinstance(item, Assign)
                 and item.targets
@@ -12038,9 +12059,10 @@ class ClassDef(Statement):
                     bound.add(item.target.id)
                 return False
             if isinstance(item, (FunctionDef, AsyncFunctionDef)):
-                # A ``def`` in an arm (``_require_class_members``): its
-                # statement is the arm's, built by ``IfSugar``; the method
-                # it binds is in no roster, refused at the class's reduction.
+                # A ``def`` in an ``if`` or a ``with``
+                # (``_require_class_members``): its statement is built there,
+                # by ``IfSugar`` or the ``with``'s sugar; the method it binds
+                # is in no roster, refused at the class's reduction.
                 unrostered.append(item.fragment.seal().cid)
                 bound.add(item.name)
                 return False

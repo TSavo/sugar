@@ -71,8 +71,8 @@ class ClassDefinitionSugar(Sugar):
     # The key of each default of each method ``def`` statement
     # (``nodes._default_evaluation_key``), in source order.
     default_keys: tuple = field(default=(), compare=False)
-    # The fragment CID of each ``def`` standing in an arm of an ``if`` of the
-    # body: its statement is the arm's, but no method roster (``methods``)
+    # The fragment CID of each ``def`` standing in an ``if`` or a ``with`` of
+    # the body: its statement is built there, but no method roster (``methods``)
     # carries it, so the namespace is refused by name (``_namespace``).
     unrostered_definitions: tuple = field(default=(), compare=False)
     # True on the class statement's run (``statement_run``): each completed
@@ -510,9 +510,12 @@ class ClassDefinitionSugar(Sugar):
                 observed=(
                     f"class {self.class_name} defines "
                     f"{len(self.unrostered_definitions)} method(s) under an if "
-                    "of its body, which no method roster carries"
+                    "or a with of its body, which no method roster carries"
                 ),
-                requested="a method roster that carries a def bound in one arm",
+                requested=(
+                    "a method roster that carries a def its body binds in a "
+                    "compound statement"
+                ),
                 fix=(
                     "read an arm's def as the guarded method it is, or keep "
                     "the class loud"
