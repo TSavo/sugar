@@ -833,7 +833,9 @@ class ComprehensionSugar(ConstructedTermSugar):
             ctx = bind_temporal(
                 ctx,
                 coordinate,
-                SymbolicValue(term),
+                # Nothing outside the fold's lambda binds the member: its
+                # read owes (``holds_recurrence_value``, #7757).
+                SymbolicValue(term, recurrence_member=True),
                 owner="ComprehensionSugar._symbolic_member_ctx",
                 blame=str(self.site),
             )
