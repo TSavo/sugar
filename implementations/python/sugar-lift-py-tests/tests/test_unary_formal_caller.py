@@ -30,7 +30,7 @@ from sugar_lift_py_tests.floor import SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.sugar.unary_op_sugar import UnaryOpSugar
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef, UnaryOp
 from sugar_source_tree.panic import SugarNotWritten
@@ -87,12 +87,18 @@ def _returned_value(outcome):
 
 
 @dataclass(frozen=True)
-class _FloorSugar(Sugar):
+class _FloorSugar(ConstructedTermSugar):
+    """A constructed operand: every nested term slot admits only a
+    ``ConstructedTermSugar`` (``require_constructed_term_sugar``)."""
+
     value: object
 
     def desugar(self, ctx=None):
         del ctx
         return ExitSet.completed(self.value)
+
+    def to_term(self, *, owner):
+        return self.value.to_term(owner=owner)
 
     @classmethod
     def witnesses(cls):

@@ -7,6 +7,7 @@ fallback, never consumer-fabricated testimony.
 
 from __future__ import annotations
 
+import functools
 import tempfile
 
 import pytest
@@ -16,7 +17,7 @@ from sugar_lift_py_tests.generator_construction import (
     ReturnStepV1,
     YieldStepV1,
 )
-from sugar_lift_py_tests.ir import num
+from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.binding_provenance import ConstructedValueTestimonyV1
@@ -49,12 +50,30 @@ def _entry_pair(source_a: str, source_b: str | None = None):
     return left, right
 
 
+@functools.cache
+def _literals() -> tuple[IntLiteralSugar, IntLiteralSugar]:
+    """The ``yield 1`` and ``return 2`` values as constructed sugar at their
+    own source occurrences: a step's value is a ``ConstructedTermSugar``
+    (``_require_constructed_term``), never a bare IR term, and its term
+    testimony seals the occurrence it was constructed at."""
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as handle:
+        handle.write("def gen():\n    yield 1\n    return 2\n")
+        path = handle.name
+    function = next(SourceFile(path_source(path)).functions())
+    one, two = (node for node in function.walk() if node.kind == "Constant")
+    return (
+        IntLiteralSugar(1, site=one.fragment),
+        IntLiteralSugar(2, site=two.fragment),
+    )
+
+
 def _machine(binding):
+    yielded, returned = _literals()
     return GeneratorConstructionV1.allocate(
         allocation_coordinate="call:gen:1",
         frame_coordinate="frame:gen",
         binding_state=binding,
-        steps=(YieldStepV1(num(1)), ReturnStepV1(num(2))),
+        steps=(YieldStepV1(yielded), ReturnStepV1(returned)),
     )
 
 
@@ -125,7 +144,7 @@ def test_unsealed_entry_cannot_project_term_without_producer_seal():
         allocation_coordinate="call:gen:1",
         frame_coordinate="frame:gen",
         binding_state=(entry,),  # unsealed
-        steps=(YieldStepV1(num(1)),),
+        steps=(YieldStepV1(_literals()[0]),),
         instance_coordinate="blake3-512:" + "a" * 128,
     )
     with pytest.raises(BindingStateWireGap, match="testimony unavailable"):

@@ -31,6 +31,7 @@ from sugar_lift_py_tests.outcome import exit_disposition as exit_disposition_mod
 from sugar_lift_py_tests.outcome.exit_disposition import exit_disposition_effect
 from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted, true_guard
 from sugar_lift_py_tests.outcome.resource_bindings import ExitFaceBinding
+from sugar_lift_py_tests.sugar.function_universe_sugar import halt_record
 from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
 from sugar_lift_py_tests.sugar.resource_coord_sugar import (
     ExitTracebackRefSugar,
@@ -225,7 +226,8 @@ def test_runtime_selected_authenticates_completed_face_without_mutation():
 
 def test_runtime_selected_authenticates_halted_face_preserving_identity():
     effect = RaiseEffect.for_builtin("ValueError", occurrence="law.py:1:0")
-    state = object()
+    # A halt's state is the record it halted with (``require_halt_record``).
+    state = halt_record(None)
     incoming = Halted(true_guard(), effect, state)
 
     assert exit_disposition_effect(RuntimeSelected(), incoming) is effect
@@ -249,7 +251,7 @@ def test_none_disposition_refuses_completed_face_without_mutation():
 
 def test_none_disposition_refuses_halted_face_without_mutation():
     effect = RaiseEffect.for_builtin("ValueError", occurrence="law.py:2:0")
-    state = object()
+    state = halt_record(None)
     incoming = Halted(true_guard(), effect, state)
 
     with pytest.raises(TypeError) as raised:
@@ -413,7 +415,7 @@ def test_falsy_source_exit_preserves_the_exact_original_halt():
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
     effect = RaiseEffect.for_builtin("ValueError", occurrence="body.py:4:2")
-    state = ObjectValue("native-resource", (), allocation=FRAME_FRESH, identity="before-raise")
+    state = halt_record(None)
     incoming = Halted(true_guard(), effect, state)
     routed = ExitSet((incoming,)).and_exit_truthiness(
         ExitSet.completed(TermValue(False)), site="exit-site"
@@ -709,7 +711,7 @@ def test_never_suppresses_needs_no_second_cleanup_algebra():
                 "ValueError",
                 occurrence="implementations/python/sugar-lift-py-tests/tests/test_with_resource_sugar.py:637:0",
             ),
-            _FloorValue("pre"),
+            halt_record(None),
         ),
     )
     for disposition in (NeverSuppresses(), NeverSuppressesDispositionV1()):
@@ -742,7 +744,7 @@ def test_lying_the_equivalence_is_specific_to_never_suppresses():
             exception_type_mro=mro,
             occurrence="equiv.py:1:0",
         ),
-        _FloorValue("pre"),
+        halt_record(None),
     )
     suppressing = ExitSuppressionContract.suppresses(("ValueError",))
 

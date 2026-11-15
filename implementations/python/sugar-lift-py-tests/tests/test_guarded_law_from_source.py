@@ -108,6 +108,23 @@ def _functions(root: Path):
     return {function.name: function for function in source_file.functions()}
 
 
+def _own_proof(function):
+    """The function's outcome as its own proof states it: ``if flag:`` on a
+    formal waits on the caller's actual (the deferred ``truth`` operation),
+    and with no caller it is the unanswered truth's arms
+    (``tree_enumerate.as_its_own_proof_states``)."""
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    return function_universe_outcome(function)
+
+
+def _completed_universes(outcome) -> list:
+    """The value of every completed arm of ``outcome``."""
+    from sugar_lift_py_tests.outcome import Completed
+
+    return [exit_.value for exit_ in outcome.exits if isinstance(exit_, Completed)]
+
+
 @pytest.fixture
 def guarded_dispatch(monkeypatch):
     """Record the concrete category riding through every `guarded` arm.
@@ -146,11 +163,12 @@ def guarded_dispatch(monkeypatch):
 
 @pytest.mark.parametrize("name", sorted(GUARDED_CATEGORIES))
 def test_guarded_category_constructs_from_source(corpus: Path, name: str) -> None:
-    """TRUTHFUL: the ledger's guarded categories complete instead of panicking."""
-    outcome = _functions(corpus)[name].sugar().desugar(None)
-    assert (
-        outcome.completed_value() is not None
-    ), f"{name} did not construct: {outcome!r}"
+    """TRUTHFUL: the ledger's guarded categories complete instead of panicking.
+
+    ``bool(flag)`` on an unanswered formal may raise, so the completion is
+    an arm beside the truth's halt, never the one unconditional value."""
+    outcome = _own_proof(_functions(corpus)[name])
+    assert _completed_universes(outcome), f"{name} did not construct: {outcome!r}"
 
 
 def test_every_category_actually_rides_under_the_guard(
@@ -164,7 +182,7 @@ def test_every_category_actually_rides_under_the_guard(
     functions = _functions(corpus)
     for name, category in sorted(GUARDED_CATEGORIES.items()):
         before = len(guarded_dispatch)
-        functions[name].sugar().desugar(None)
+        _own_proof(functions[name])
         rode = guarded_dispatch[before:]
         assert category in rode, (
             f"{name} constructed without riding a {category} under its guard; "
@@ -181,11 +199,13 @@ def test_the_guard_is_not_dropped_by_the_stable_category(corpus: Path) -> None:
     """
     from sugar_lift_py_tests.ir import implies
 
-    outcome = _functions(corpus)["guarded_obligation"].sugar().desugar(None)
-    assert outcome.completed_value() is not None
+    outcome = _own_proof(_functions(corpus)["guarded_obligation"])
+    universes = _completed_universes(outcome)
+    assert universes, outcome
     obligations = [
         statement
-        for statement in outcome.completed_value().record.statements
+        for universe in universes
+        for statement in universe.record.statements
         if isinstance(statement, InvValue)
     ]
     assert (

@@ -11,14 +11,13 @@ import pytest
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.effect.runtime_effect import RuntimeEffect
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_source_tree.panic import SourceTreePanic
 from sugar_source_tree.binding_provenance import BindingProvenanceGap
 from sugar_source_tree.binding_state import SubstitutionTraceBuilderV1
 from sugar_source_tree.nodes import _SUBSTITUTION_TRACE_BUILDER
 from sugar_source_tree.backend import Child, Children, Leaf, materialize
 from sugar_source_tree.shadow import ShadowNode, _handle_of
-from sugar_source_tree.tree import SourceFile
 
 FIXTURES = Path(__file__).parent / "fixtures" / "object_field_flow"
 MATRIX = json.loads((FIXTURES / "verdict_matrix.json").read_text())
@@ -41,9 +40,14 @@ FORBIDDEN_MECHANISM_CALLS = {
 
 
 def _functions(path: Path):
+    # Construction opens through the one door: a tree opened bare has no
+    # construction context, and every Call that consults it refuses by name
+    # (``BareConstructionDoor``).
     return {
         function.name: function
-        for function in SourceFile(path_source(path)).functions()
+        for function in open_source_file_for_construction(
+            path, root=path.parent
+        ).functions()
     }
 
 
