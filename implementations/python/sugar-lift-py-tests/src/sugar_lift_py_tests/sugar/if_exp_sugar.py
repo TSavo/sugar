@@ -169,8 +169,11 @@ class IfExpSugar(ConstructedTermSugar):
                 # ``if``'s arms are guarded by, so ``x`` after ``if c: x = 1
                 # else: x = 2`` is ``1`` exactly where ``c`` holds.  The
                 # slot's coordinate, which no contract row ties to the test,
-                # is the guard only of a slot no ``if`` on this path read (a
-                # ``try``'s route, a loop's write slot) (#7757).
+                # is the guard only of a slot nothing on this path decided or
+                # read (a live loop's write slot, a module slot the run left
+                # undecided), and its read owes the undecided member
+                # (``BranchResultRefSugar``, ``undecided_slot_debt``), which
+                # rides both arms (#7757).
                 reading = branch_result_reading(self.branch_slot, ctx)
                 formula = (
                     reading

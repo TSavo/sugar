@@ -73,9 +73,9 @@ def delete_binding(state, *, name: str, site, ctx) -> ExitSet:
         return exits.normalize()
     if not isinstance(state, GuardedProjection):
         _unhandled_projection(state, verb="delete", name=name, site=site)
-    guard = _projection_guard(state, ctx, site)
+    guard, undecided = _projection_guard(state, ctx, site)
     true_face, false_face = _guarded_projection_faces(state)
-    return (
+    joined = (
         delete_binding(state.when_true, name=name, site=site, ctx=ctx)
         .guarded(guard, true_face)
         .union(
@@ -84,6 +84,13 @@ def delete_binding(state, *, name: str, site, ctx) -> ExitSet:
             )
         )
     )
+    if not undecided:
+        return joined
+    from sugar_lift_py_tests.floor.branch_result_coordinate import (
+        owing_undecided_slot,
+    )
+
+    return owing_undecided_slot(joined, site)
 
 
 @dataclass(frozen=True)

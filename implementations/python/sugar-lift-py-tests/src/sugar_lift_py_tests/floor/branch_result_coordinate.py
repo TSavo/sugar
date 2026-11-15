@@ -68,7 +68,8 @@ def branch_result_reading(slot, ctx):
     (``slots_read_as_tests``, as the live loop item running now qualifies
     it: ``branch_slot_here``), else ``None`` where no ``if`` on this path
     recorded one (a ground decision, a ``try``'s route, a loop's write
-    slot: each is read as it was before)."""
+    slot).  A slot with neither a decision nor a reading is read as its
+    coordinate and owes the undecided member (``undecided_slot_debt``)."""
     table = getattr(ctx, "ground_branch_results", None)
     if not isinstance(table, dict) or slot is None:
         return None
@@ -79,6 +80,40 @@ def branch_result_reading(slot, ctx):
     if isinstance(reading, PredicateValue):
         return reading.formula
     return None
+
+
+def undecided_slot_debt(site) -> tuple:
+    """What a read of a branch-result slot owes where nothing on its path
+    answers the slot: no decision (a ground ``if``, a concrete loop's exit,
+    a ``try``'s or ``match``'s face, a module run that decided it) and no
+    reading (a symbolic ``if``'s test, ``branch_result_reading``).
+
+    Nothing ties such a slot to any input: a live loop's write slot under its
+    recurrence (``LoopRecurrenceSugar._publication``: the recurrence states
+    no condition under which an item wrote the name), a module slot the
+    module run left undecided (``call_site_sugar._module_end_decision``), a
+    slot a live item qualifies that no item decided.  Read as its coordinate
+    alone it is a free flag: a contract would state a value the solver may
+    select by choosing the flag, so a lie could read ``sat`` (#7757, step
+    6).  So the read is the one undecided member, ``unanswered_call`` with
+    no symbol at the read's ``site``, as every operation not decided here is
+    (``ExitSet.two_faced``): both faces still stand, and the claim that reads
+    them is owed, never decided by the flag."""
+    from sugar_lift_py_tests.unanswered_calls import unanswered_call
+
+    return (unanswered_call(None, site),)
+
+
+def owing_undecided_slot(exits, site):
+    """``exits``, every arm of which owes the read of an undecided slot at
+    ``site`` (``undecided_slot_debt``), composed by the one composition: the
+    read comes first, and everything that follows it owes it
+    (``ExitSet.and_then``)."""
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    return ExitSet.completed(None, owed=undecided_slot_debt(site)).and_then(
+        lambda _read: exits
+    )
 
 
 @dataclass(frozen=True)

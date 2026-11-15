@@ -29,10 +29,16 @@ class BranchResultRefSugar(ConstructedTermSugar):
                 return ExitSet.completed(bound)
         from sugar_lift_py_tests.floor.branch_result_coordinate import (
             BranchResultCoordinate,
+            undecided_slot_debt,
         )
 
+        # No decision and no reading on this path: the slot's coordinate is
+        # a flag no input decides, so the read owes the undecided member and
+        # every arm the phi selects by it owes it too (``and_then``), never a
+        # value the solver may pick by choosing the flag (#7757).
         return ExitSet.completed(
-            BranchResultCoordinate(branch_slot_here(self.slot), self.site)
+            BranchResultCoordinate(branch_slot_here(self.slot), self.site),
+            owed=undecided_slot_debt(self.site),
         )
 
     def to_term(self, *, owner: str):

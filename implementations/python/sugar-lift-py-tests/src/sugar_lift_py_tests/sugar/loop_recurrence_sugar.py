@@ -2098,10 +2098,15 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         ``bool`` decides the slot on this exit (``BranchResultDecision``): a
         concrete loop knows whether an item wrote it.  A formula authenticates
         the slot as that guard (``BranchResultAuthentication``): the symbolic
-        recurrence does not know, so a read after the loop
-        (``nodes._live_loop_publication``) takes the post-loop key under the
-        guard and the binding before the loop (unbound when there was none)
-        under its negation.  The name is never written nor read."""
+        recurrence does not know, and states no condition under which an item
+        wrote it (``python.loop.wrote`` is the recurrence's own atom, which no
+        input decides), so nothing on the path decides or reads the slot and
+        a read after the loop (``nodes._live_loop_publication``) is the
+        undecided member (``branch_result_coordinate.undecided_slot_debt``):
+        both arms stand -- the post-loop key, and the binding before the loop
+        (unbound when there was none) -- and the read owes, never a value the
+        solver selects by choosing the flag (#7757).  The name is never
+        written nor read."""
         from sugar_lift_py_tests.floor.branch_result_coordinate import (
             BranchResultAuthentication,
             BranchResultDecision,
