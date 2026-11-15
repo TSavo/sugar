@@ -817,11 +817,13 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
     from sugar_lift_py_tests import tree_enumerate as _tree
     from sugar_lift_py_tests.caller_parameter_contract import function_link_unit
     from sugar_source_tree.reporter import CollectingReporter
+    from sugar_source_tree.tree import SourceTree
 
     global _RETAINED_LINK_UNITS
     _RETAINED_LINK_UNITS = {}
     rows: List[Dict[str, Any]] = []
-    for source_path in sorted(root.rglob("*.py")):
+    # Step 2's file list, the one `source_files` serves (#7757 item 45).
+    for source_path in SourceTree(root).paths():
         file_rel = str(source_path.relative_to(root))
         # No broad skip: a source that cannot be read is a LOUD failure, never a
         # silently omitted file. The tree opens through the one construction
@@ -1434,9 +1436,12 @@ def _first_python_claim(params: Dict[str, Any], workspace_root: str) -> Optional
         if isinstance(path, str) and path:
             return f"file:{path}"
 
+    from sugar_source_tree.tree import SourceTree
+
     root = Path(workspace_root)
     if root.is_dir():
-        for path in sorted(root.rglob("*.py")):
+        # Step 2's file list (#7757 item 45).
+        for path in SourceTree(root).paths():
             try:
                 relative = path.relative_to(root)
             except ValueError:
