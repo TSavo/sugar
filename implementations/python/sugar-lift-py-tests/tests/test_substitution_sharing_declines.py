@@ -82,6 +82,12 @@ def test_a_name_rebound_mid_block_is_not_read_through_the_memo() -> None:
     scope key. ``test_one_node_two_scopes_gives_two_answers`` is the arm with
     teeth for the scope half; it fails under exactly that mutation.
     """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.temporal.temporal_context import projection_key
+    from sugar_source_tree.nodes import Assign, EvaluationRef
+
     source = (
         "def subject():\n"
         "    x = 1\n"
@@ -90,12 +96,46 @@ def test_a_name_rebound_mid_block_is_not_read_through_the_memo() -> None:
         "    second = x\n"
         "    return (first, second)\n"
     )
-    subject = _function(source, "subject", "declines_rebind.py")
+    tree = SourceFile(
+        (source, "declines_rebind.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    subject = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name == "subject"
+    )
 
-    returned = _returned(subject.substitute({}))
-    rendered = [getattr(element, "value", None) for element in returned.value.elts]
+    # Every name an assignment binds is read through that assignment's key
+    # (#7958): each read of ``x`` is a reference to the ``x = ...`` that
+    # reaches it, never the constant inlined.  Two writes, two keys.
+    substituted = subject.substitute({})
+    body = substituted.body
+    assigns = {}
+    for statement in body:
+        if isinstance(statement, Assign):
+            assigns.setdefault(statement.targets[0].id, []).append(statement)
+    (x_one, x_two), (first,), (second,) = (
+        assigns["x"],
+        assigns["first"],
+        assigns["second"],
+    )
+    assert x_one.evaluation != x_two.evaluation
+    for read, write in ((first.value, x_one), (second.value, x_two)):
+        assert isinstance(read, EvaluationRef), read
+        assert read.evaluation == projection_key(write.evaluation, "x"), (
+            "rebind collapsed through the memo"
+        )
 
-    assert rendered == [1, 2], f"rebind collapsed through the memo: {rendered!r}"
+    returned = _returned(substituted)
+    reads = [
+        element.evaluation if isinstance(element, EvaluationRef) else element
+        for element in returned.value.elts
+    ]
+    assert reads == [
+        projection_key(first.evaluation, "first"),
+        projection_key(second.evaluation, "second"),
+    ], f"rebind collapsed through the memo: {reads!r}"
 
 
 # ── SHARES ────────────────────────────────────────────────────────────────
