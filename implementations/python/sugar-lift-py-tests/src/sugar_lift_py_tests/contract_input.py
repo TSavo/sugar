@@ -29,6 +29,14 @@ call after import, and the row's own claims (pytest's call of a test
 function), read the module-final value; a call made while the module runs
 supplies the binding standing there (``py.global``). A class or a decorated
 ``def`` is a definition, never an input (#7757, decision (c)).
+
+- ``class:<param>`` (step 8): the class of the object ``<param>`` binds,
+  whose namespace a method call on it reads (``self.m()``). The function's
+  own proof states no value for it; a caller that knows the class supplies
+  it (``py.class(<argument key>, <class>)``,
+  ``receiver_dispatch.class_arguments``), and prove's one binder binds it and
+  resolves the method on that class's order
+  (``consistency::dispatched_symbol``).
 """
 
 from __future__ import annotations
@@ -40,8 +48,9 @@ from sugar_lift_py_tests.ir import PrimitiveSort
 CELL_INPUT = "cell"
 GLOBAL_INPUT = "global"
 DEFAULT_INPUT = "default"
+CLASS_INPUT = "class"
 
-_INPUT_KINDS = (CELL_INPUT, GLOBAL_INPUT, DEFAULT_INPUT)
+_INPUT_KINDS = (CELL_INPUT, GLOBAL_INPUT, DEFAULT_INPUT, CLASS_INPUT)
 
 
 def input_formal(kind: str, name: str) -> str:

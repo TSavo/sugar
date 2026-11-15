@@ -222,6 +222,9 @@ class ClassDefinitionValue(GuardStableValue):
             # through the class's contract (``CallSiteValue.attribute``,
             # #7757 step 7).
             constructed_by_edge=True,
+            # Its class, where its construction runs no source code: what a
+            # method call on it is dispatched on at prove (#7757 step 8).
+            instance_of=_bare_instance_symbol(definition),
         )
 
     def _unanswered_call(self, target, positional, keywords, site):
@@ -635,6 +638,22 @@ class ClassDefinitionValue(GuardStableValue):
             seen.add(id(base))
             pending.extend(base.base_classes)
         return False
+
+
+def _bare_instance_symbol(definition) -> str | None:
+    """The join symbol of the class ``definition`` states, when a call of it
+    is decided to return an instance of it whose ``__dict__`` holds nothing:
+    the call is ``type.__call__`` (no metaclass, no keyword, an order read,
+    ``ClassDef.call_yields_an_instance``), its ``__new__`` is ``object``'s
+    and its ``__init__`` is ``object``'s (``ClassDef.initializer_entry``), so
+    no source code runs at the construction.  None otherwise: what a source
+    ``__init__`` or ``__new__`` leaves is its contract's, never read here
+    (#7757 step 8)."""
+    if definition.initializer_entry() != "object":
+        return None
+    if not definition.call_yields_an_instance(definition.unit.class_namespace_stores):
+        return None
+    return definition.bridge_source_symbol()
 
 
 def _instance_held_by(value):

@@ -255,6 +255,13 @@ class CallSiteValue(FloorValue):
     constructed_by_edge: bool = dataclass_field(
         default=False, compare=False, repr=False
     )
+    # On such a result (``constructed_by_edge``) of a class whose
+    # construction runs no source code (``object.__new__`` and
+    # ``object.__init__``, ``ClassDefinitionValue.callable_application_with``):
+    # the class's join symbol.  The instance is of that class with nothing in
+    # its ``__dict__``, so a method call on it is dispatched on that class at
+    # prove (``receiver_dispatch.class_value``, #7757 step 8).
+    instance_of: str | None = dataclass_field(default=None, compare=False, repr=False)
 
     def denotes_value(self) -> bool:
         """A call result denotes a Python runtime value."""

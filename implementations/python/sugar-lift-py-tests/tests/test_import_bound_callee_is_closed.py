@@ -191,7 +191,9 @@ def test_a_shadowed_import_alias_is_not_import_bound() -> None:
 
 
 def test_a_parameter_method_call_is_untouched() -> None:
-    # Not import-bound: the formal receiver defers to the caller's actual.
-    carrier = _method_call_carrier("def turn(m):\n    return m.copy()\n")
-    assert carrier.demand.operand_coordinate_cids[0] is not None
-    assert carrier.operands[1].value == "copy"
+    # Not import-bound: the formal receiver's class is ``turn``'s ``class:m``
+    # input, so the call is the dispatched edge (#7757 step 8), resolved at
+    # prove where a caller binds the class -- never an import coordinate.
+    outcome = _function_outcome("def turn(m):\n    return m.copy()\n")
+    owners = {halt.effect.producer_node_owner for halt in outcome.halts()}
+    assert "UnknownCallee:dispatch:copy" in owners

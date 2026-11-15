@@ -721,6 +721,164 @@ def exception_ancestry_rows(sf: SourceFile, file_rel: str) -> list:
     return rows
 
 
+CLASS_NAMESPACE_SUFFIX = "::namespace"
+"""The contract-name suffix of a class's namespace row: ``<symbol>`` + this.
+The verifier reads the class symbol off the row name by this suffix, and the
+row is a statement of fact, never a claim to check (``consistency.rs``,
+``CLASS_NAMESPACE_SUFFIX``)."""
+
+#: A namespace value the dispatch joins: a plain function the class body
+#: wrote, which a read off an instance binds to it (``consistency::
+#: DISPATCH_FUNCTION_KIND``).
+_FUNCTION_KIND = "function"
+
+
+def class_namespace_rows(sf: SourceFile, file_rel: str) -> list:
+    """One row per class this file states a constructor contract for
+    (``classes_with_contracts``) whose namespace is closed: what a method call
+    on an instance of it is dispatched on at prove (#7757 step 8,
+    ``consistency::dispatched_symbol``).
+
+    The row is a ``contract`` named ``<class symbol>::namespace`` whose
+    ``inv`` states, read off the class statement alone (nothing is reduced):
+
+    - ``python:class_mro(<C>, <C>, <entry>...)``: its order, the one base walk
+      (``ClassDef.method_resolution_order``), a source class by its join
+      symbol, a builtin class as ``builtins.<name>``;
+    - ``python:class_binds(<C>, <name>, <kind>, <symbol>)`` for each name its
+      own namespace may hold (``ClassDef.namespace_binds`` not False): kind
+      ``function`` with the function's join symbol for a plain ``def`` the
+      body wrote and holds (``namespace_value_is_body``: undecorated, not a
+      generator, not ``async``), ``undecided`` where the lookup does not
+      decide whether it holds it, ``other`` for anything else (a descriptor,
+      a field, a nested class).
+
+    A class whose order is not read, one with a source class of no join
+    symbol in it, or one whose namespace is open (a keyword, a decorator the
+    lifter does not model, a module store that may write any name,
+    ``ClassDef._creation_writes``) states no row: a method call on it is not
+    dispatched.  A class whose statement the lifter refuses by name states
+    no row either.
+
+    Returns ``(memento, dto)`` pairs, the shape of the universe scan's rows.
+    """
+    from sugar_lift_py_tests.floor.universe_mint_projection import claim_formula
+    from sugar_lift_py_tests.ir import and_, atomic, str_const
+    from sugar_lift_py_tests.proofir.nodes import (
+        ConstructionSite,
+        Provenance,
+        Stated,
+    )
+    from sugar_lift_py_tests.proofir.nodes.universe_mint import UniverseMint
+    from sugar_source_tree.panic import BackendDefect, LifterRefusal
+
+    rows = []
+    for cls in classes_with_contracts(sf):
+        try:
+            facts = _class_namespace_facts(cls)
+        except BackendDefect:
+            raise
+        except LifterRefusal:
+            continue
+        if facts is None:
+            continue
+        symbol, mro, binds = facts
+        statements = [
+            atomic(
+                "python:class_mro",
+                [str_const(symbol), *(str_const(entry) for entry in mro)],
+            )
+        ] + [
+            atomic(
+                "python:class_binds",
+                [
+                    str_const(symbol),
+                    str_const(name),
+                    str_const(kind),
+                    str_const(target),
+                ],
+            )
+            for name, kind, target in binds
+        ]
+        memento = statement_memento(cls, cls.name, file_rel)
+        locus = ConstructionSite(
+            path=file_rel, line=memento.span.start_line, column=memento.span.start_col
+        )
+        provenance = Provenance(
+            node_class="UniverseMint",
+            construction_site=locus,
+            warrant=Stated(locus=locus),
+        )
+        formula = statements[0] if len(statements) == 1 else and_(statements)
+        row = UniverseMint(
+            name=f"{symbol}{CLASS_NAMESPACE_SUFFIX}",
+            slot="inv",
+            formula=claim_formula(
+                formula, formals=(), provenance=provenance, role="inv"
+            ),
+            provenance=provenance,
+            source_warrants=(memento,),
+        )
+        rows.append((memento.to_rpc(), row.to_body_universe()))
+    return rows
+
+
+def _class_namespace_facts(cls):
+    """``(symbol, mro, binds)`` for ``class_namespace_rows``, or None when the
+    class states no namespace row."""
+    from sugar_source_tree.nodes import ClassDef, FunctionDef
+
+    symbol = cls.bridge_source_symbol()
+    order = cls.method_resolution_order()
+    if symbol is None or order is None:
+        return None
+    mro = []
+    for entry in order:
+        if isinstance(entry, ClassDef):
+            entry_symbol = entry.bridge_source_symbol()
+            if entry_symbol is None:
+                return None
+            mro.append(entry_symbol)
+        else:
+            mro.append(f"builtins.{entry}")
+    stores = cls.unit.class_namespace_stores
+    stored = stores(cls)
+    writes, may_write, open_ = cls._creation_writes(stores)
+    if open_ or "*" in stored:
+        return None
+    table = cls.unit.class_symtable(cls.name, cls.line_col_span().start_line)
+    candidates = {
+        item.get_name()
+        for item in table.get_symbols()
+        if item.is_local()
+        and not item.is_declared_global()
+        and not item.is_nonlocal()
+    }
+    candidates |= set(writes) | set(may_write) | (set(stored) - {"*"})
+    binds = []
+    for name in sorted(candidates):
+        held = cls.namespace_binds(name)
+        if held is False:
+            continue
+        if held is None:
+            binds.append((name, "undecided", ""))
+            continue
+        binder = cls.body_binder(name)
+        function = (
+            cls.namespace_value_is_body(name)
+            and type(binder) is FunctionDef
+            and any(item is binder for item in cls.body)
+            and not binder.decorators
+            and not FunctionDef._owns_yield(binder.body)
+        )
+        target = binder.bridge_source_symbol() if function else None
+        if target is None:
+            binds.append((name, "other", ""))
+        else:
+            binds.append((name, _FUNCTION_KIND, target))
+    return symbol, tuple(mro), tuple(binds)
+
+
 def as_its_own_proof_states(outcome, ctx):
     """A function's outcome as its own proof states it: a set of arms (#7766).
 

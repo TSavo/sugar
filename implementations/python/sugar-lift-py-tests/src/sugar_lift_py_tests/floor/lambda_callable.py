@@ -322,7 +322,9 @@ def definition_edge_call(
       call read;
     - ``py.global(<name>, <value>)`` for each ``global:`` input of the
       signature's contract, the binding where the call runs
-      (``global_value_at_call``).
+      (``global_value_at_call``);
+    - ``py.class(<argument key>, <class>)`` for each actual whose class is
+      decided here (``receiver_dispatch.class_arguments``, step 8).
 
     Sent down the path an imported call takes: the one unanswered call
     (``UnknownCalleeCallV1.faces``: completes under its ``completes`` atom,
@@ -378,6 +380,16 @@ def definition_edge_call(
         ctor("py.closure", [str_const(name), value.to_term(owner=owner_name)])
         for name, _cid, value in captured
     ]
+    # The class of each actual whose class is decided here, keyed by the
+    # argument it is (``receiver_dispatch.class_arguments``, #7757 step 8):
+    # what the callee's ``class:<param>`` input is bound to where its contract
+    # dispatches a method call on that parameter.
+    from sugar_lift_py_tests.receiver_dispatch import class_arguments
+
+    if packed:
+        arguments += class_arguments((), tuple(zip(parameters, actuals)))
+    else:
+        arguments += class_arguments(tuple(positional), tuple(keywords))
     if signature is not None:
         module_site = current_module_execution_site()
         arguments += [

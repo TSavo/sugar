@@ -5,8 +5,10 @@ prove"): a class call is its coordinate and an edge, so every receiver below
 (``box = Box()``) is a call's result, and a method of it is not dispatched at
 the reduction; a method call on a receiver whose class is decided is an edge
 to the method's join symbol.  The twins below now state that: ``open`` on
-both halves until dispatch at prove is ruled on, and the in-process checks
-read the undecided faces.  What follows is the rule as it stood before.
+both halves, and the in-process checks read the undecided faces.  #7757 step
+8 dispatches a method of a class call's result at prove where the result is a
+bare instance (no source ``__init__``/``__new__`` runs): ``one-branch`` is
+decided again.  What follows is the rule as it stood before.
 
 A plain call ``f(...)`` runs ``f``'s body through ``CallSiteValue.producer_outcome``
 and carries every face of it: completions and raises.  A bound method call
@@ -51,7 +53,13 @@ from sugar_lift_py_tests.witness_harness import (
 )
 
 
-def _pair(tmp_path: Path, name: str, truthful: str, lying: str) -> None:
+def _pair(
+    tmp_path: Path,
+    name: str,
+    truthful: str,
+    lying: str,
+    expected: tuple[str, str] = ("open", "open"),
+) -> None:
     t = run_source_through_real_solver(tmp_path / f"{name}-truthful", truthful)
     lie = run_source_through_real_solver(tmp_path / f"{name}-lying", lying)
     print(json.dumps({"truthful": t.verdict, "lying": lie.verdict}, sort_keys=True))
@@ -63,12 +71,18 @@ def _pair(tmp_path: Path, name: str, truthful: str, lying: str) -> None:
     )
     # #7757 step 6: the receiver is a class call's result (its coordinate and
     # edge, no instance built at the reduction), so the method's dispatch is
-    # not decided at the reduction nor at prove until the owner rules on
-    # dispatch at prove.  Both halves were decided before (truthful ``sat``,
-    # lying ``unsat``); both are ``open`` now, never ``sat`` for the lie, and
-    # listed on #7661.
-    assert claim_verdict(t.prove_doc, claims_from_line=test_line) == "open"
-    assert lie.verdict == "open"
+    # not decided at the reduction.  #7757 step 8: it is decided at prove
+    # where the class call's result is a bare instance of the class (its
+    # construction runs no source code, ``CallSiteValue.instance_of``) and
+    # the claim reads what the method's contract states: ``expected``.  A
+    # class whose construction runs a source ``__init__`` leaves its
+    # instance's fields to its contract, which the dispatch does not read,
+    # and a method reading ``self.<field>`` reads a field of an instance that
+    # arrived by binding: those stay ``open`` on both halves, never ``sat``
+    # for the lie, listed on #7661.
+    truthful_verdict, lying_verdict = expected
+    assert claim_verdict(t.prove_doc, claims_from_line=test_line) == truthful_verdict
+    assert lie.verdict == lying_verdict
 
 
 _OBJ_CALL = """\
@@ -150,13 +164,19 @@ def test_limit():
 
 
 def test_method_raising_on_one_branch_carries_that_raise(tmp_path: Path) -> None:
-    """``obj.m(n=...)`` raising on one branch: the actual selects the arm."""
+    """``obj.m(n=...)`` raising on one branch: the actual selects the arm.
+
+    ``Limit()`` runs no source code, so ``limit`` is a bare ``Limit``:
+    ``limit.check(n=...)`` is dispatched at prove on ``Limit``'s namespace to
+    ``Limit.check``, whose contract states the raise under ``n > 5`` (#7757
+    step 8).  Decided again: truthful ``sat``, lying ``unsat``."""
 
     _pair(
         tmp_path,
         "one-branch",
         _ONE_BRANCH.format(actual=3),
         _ONE_BRANCH.format(actual=9),
+        expected=("sat", "unsat"),
     )
 
 
