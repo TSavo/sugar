@@ -190,7 +190,6 @@ def test_opaque_native_manager_is_the_heads_reduced_value():
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
     )
-    from sugar_lift_py_tests.lift_rpc import per_source_provisional_contract_refs
     from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
         WithReducedManagerSugar,
     )
@@ -199,9 +198,7 @@ def test_opaque_native_manager_is_the_heads_reduced_value():
     from sugar_source_tree.tree import SourceFile
 
     path = FIXTURES / "consumer_cases.py"
-    context = TreeConstructionContextV1(
-        contract_refs=per_source_provisional_contract_refs(FIXTURES),
-    )
+    context = TreeConstructionContextV1()
     source = SourceFile(
         workspace_path_source(str(path), root=str(FIXTURES)),
         construction_context=context,

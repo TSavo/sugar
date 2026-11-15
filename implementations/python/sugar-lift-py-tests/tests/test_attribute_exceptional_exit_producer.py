@@ -120,26 +120,6 @@ def _assert_undecided(node: Attribute, receiver, *, name: str | None = None) -> 
     assert halt.effect.blame == str(node.fragment)
 
 
-def test_per_source_door_enrolls_the_exact_assertion_manager() -> None:
-    """The one per-source derivation states this site's row: the With item at
-    its coordinate, joined to the authenticated ``pytest.raises`` import."""
-    from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
-    from sugar_lift_py_tests.lift_rpc import _PerSourceDemandRows
-
-    rows = [
-        row
-        for row in _PerSourceDemandRows(
-            authenticated_pandas_corpus().root
-        ).rows_for_source(SOURCE_CID)
-        if row["useSite"]["startLine"] == 103
-        and row["targetSymbol"] == "pytest.raises"
-        and row["gapKind"] is None
-        and row["useSite"]["startCol"] == 13
-        and row["useSite"]["endCol"] == 58
-    ]
-    assert len(rows) >= 1
-
-
 def test_real_pandas_constructed_receiver_attribute_is_named_undecided() -> None:
     site = _authenticated_corpus_file("tests/test_register_accessor.py")
     source = site.read_text(encoding="utf-8")

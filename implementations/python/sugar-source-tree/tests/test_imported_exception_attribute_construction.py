@@ -40,7 +40,6 @@ from sugar_lift_py_tests.context_manager_contract import (
 from sugar_lift_py_tests.context_manager_resolution import (
     ContextManagerContractRefV1,
     ImportSignatureV2,
-    ResolvedContractRefsV1,
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
     _hash_json,
@@ -123,37 +122,6 @@ def _ref(use_site, salt: str) -> ContextManagerContractRefV1:
     )
 
 
-def _boundary(tmp_path: Path, source: str) -> WithEffectBoundarySugar:
-    path = tmp_path / "site.py"
-    path.write_text(source, encoding="utf-8")
-    identity = path_source(str(path))
-    probe = SourceFile(identity)
-    with_node = next(node for node in probe.nodes() if node.kind == "With")
-    coordinate = _coordinate(with_node.items[0].context_expr)
-    context = TreeConstructionContextV1(
-        ResolvedContractRefsV1(
-            _cid("c"), _cid("t"), MappingProxyType({coordinate: _ref(coordinate, "r")})
-        )
-    )
-    function = next(SourceFile(identity, construction_context=context).functions())
-    sugar = function.sugar()
-    boundaries: list[WithEffectBoundarySugar] = []
-
-    def walk(node) -> None:
-        if isinstance(node, WithEffectBoundarySugar):
-            boundaries.append(node)
-        for field in ("body", "statements", "entries", "then_body", "else_body"):
-            for child in getattr(node, field, ()) or ():
-                walk(child)
-        manager = getattr(node, "manager", None)
-        if manager is not None:
-            walk(manager)
-
-    walk(sugar)
-    assert len(boundaries) == 1
-    return boundaries[0]
-
-
 def _attribute(tree: SourceFile, attr: str):
     return next(
         node for node in tree.nodes() if node.kind == "Attribute" and node.attr == attr
@@ -198,45 +166,6 @@ def test_module_name_arrow_exception_identity_is_import_coordinate(tmp_path):
         "python:exception_type_identity",
         [str_const("import"), str_const("pyarrow.ArrowException")],
     )
-
-
-def test_import_bound_exception_desugars_to_authenticated_type(tmp_path):
-    """Truthful twin: manager arg is AuthenticatedExceptionTypeValue, not Attribute."""
-    boundary = _boundary(
-        tmp_path,
-        "import pyarrow as pa\n"
-        "def f():\n"
-        "    with expect(pa.ArrowInvalid):\n"
-        "        raise ValueError('x')\n",
-    )
-    call = boundary.manager.desugar().completed_value()
-    expected = call.arg_values[0]
-    assert isinstance(expected, AuthenticatedExceptionTypeValue)
-    assert expected.exception_type_identity() == ctor(
-        "python:exception_type_identity",
-        [str_const("import"), str_const("pyarrow.ArrowInvalid")],
-    )
-    assert isinstance(expected.value, ExceptionClassValue)
-    assert expected.value.qualified_name == "pyarrow.ArrowInvalid"
-
-
-def test_arrow_exception_module_attr_desugars_to_authenticated_type(tmp_path):
-    """Truthful twin for the parquet residual spelling ``pyarrow.ArrowException``."""
-    boundary = _boundary(
-        tmp_path,
-        "import pyarrow\n"
-        "def f():\n"
-        "    with expect(pyarrow.ArrowException):\n"
-        "        raise ValueError('x')\n",
-    )
-    expected = boundary.manager.desugar().completed_value().arg_values[0]
-    assert isinstance(expected, AuthenticatedExceptionTypeValue)
-    assert expected.exception_type_identity() == ctor(
-        "python:exception_type_identity",
-        [str_const("import"), str_const("pyarrow.ArrowException")],
-    )
-    assert isinstance(expected.value, ExceptionClassValue)
-    assert expected.value.qualified_name == "pyarrow.ArrowException"
 
 
 def test_nested_lib_export_uses_full_import_chain(tmp_path):
@@ -318,10 +247,6 @@ def test_importorskip_binding_authenticates_arrow_invalid(tmp_path):
         "python:exception_type_identity",
         [str_const("import"), str_const("pyarrow.ArrowInvalid")],
     )
-    boundary = _boundary(tmp_path, path.read_text(encoding="utf-8"))
-    expected = boundary.manager.desugar().completed_value().arg_values[0]
-    assert isinstance(expected, AuthenticatedExceptionTypeValue)
-    assert expected.exception_type_identity() == identity
 
 
 def test_import_bound_attribute_body_does_not_invent_member_success(tmp_path):
@@ -440,14 +365,6 @@ def test_from_imported_expected_exception_is_its_target_symbol(tmp_path):
     assert tree.unit.exception_type_mro(operand) is None
     class_value = tree.unit.exception_class_value(operand)
     assert class_value == ExceptionClassValue("pyarrow.ArrowInvalid")
-
-    boundary = _boundary(tmp_path, source)
-    expected = boundary.manager.desugar().completed_value().arg_values[0]
-    assert isinstance(expected, AuthenticatedExceptionTypeValue)
-    assert expected.exception_type_identity() == _import_identity(
-        "pyarrow.ArrowInvalid"
-    )
-    assert expected.value == ExceptionClassValue("pyarrow.ArrowInvalid")
 
 
 def test_module_attribute_raise_and_from_imported_raise_meet_one_door(tmp_path):
@@ -732,34 +649,6 @@ def test_except_star_over_a_star_imported_class_call_routes_and_owes(tmp_path):
     assert completed and halted, outcome.exits
     assert all(isinstance(face.effect, UndeterminedRaiseEffect) for face in halted)
     assert _owed_at(_owed_items(outcome), 4)
-
-
-def test_expected_star_imported_class_is_retained_and_owes(tmp_path):
-    """``with pytest.raises(X)``: the expected operand constructs with the
-    undecided coordinate, owes the member, and a raise matched against it is
-    retained, exactly as against an imported alias."""
-    from sugar_lift_py_tests.authenticated_exception_matching import (
-        MatchRetained,
-        matches_raise_effect,
-    )
-    from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.unanswered_calls import owed_calls
-
-    boundary = _boundary(
-        tmp_path,
-        _STAR
-        + "def f():\n"
-        "    with expect(ArrowInvalid):\n"
-        "        raise ValueError('x')\n",
-    )
-    outcome = boundary.manager.desugar()
-    expected = outcome.completed_value().arg_values[0]
-    assert isinstance(expected, AuthenticatedExceptionTypeValue)
-    identity = expected.exception_type_identity()
-    assert identity.args[0].value == "undecided"
-    assert _owed_at(owed_calls(outcome), 3)
-    probe = RaiseEffect.for_builtin("ValueError", occurrence="probe", blame="probe")
-    assert isinstance(matches_raise_effect(probe, expected), MatchRetained)
 
 
 def test_warning_category_star_imported_is_retained_and_owes(tmp_path):

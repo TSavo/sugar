@@ -66,12 +66,16 @@ def test_plan_states_the_demand_table_and_no_shard_loads_one() -> None:
     assert "--demand-table-path" not in workflow
     assert "--demand-table-out" not in workflow
     assert "prebuilt_demand_table" not in planner
-    assert "provisional_contract_refs_from_demands(demanded_root)" in planner
-    assert planner.index("provisional_contract_refs_from_demands(") < planner.index(
+    # No With demand table is derived anywhere (#7757): the plan and each
+    # shard state the corpus identity, and nothing else.
+    assert "provisional_contract_refs_from_demands" not in planner
+    assert "semantic_identity_for_corpus(demanded_root)" in planner
+    assert planner.index("semantic_identity_for_corpus(") < planner.index(
         "build_plan("
     )
     assert "prebuilt_demand_table" not in worker
-    assert "provisional_contract_refs_from_demands(workspace_root)" in worker
+    assert "provisional_contract_refs_from_demands" not in worker
+    assert "semantic_identity_for_corpus(workspace_root)" in worker
     assert "plan-demand-table-testimony-absent" in worker
 
 

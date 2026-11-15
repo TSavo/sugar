@@ -47,7 +47,6 @@ def _seated_test_function_outcome(directory, source: str):
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
     )
-    from sugar_lift_py_tests.lift_rpc import per_source_provisional_contract_refs
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
     from sugar_lift_python_source.source_oracle import workspace_path_source
     from sugar_source_tree.nodes import FunctionDef
@@ -58,9 +57,7 @@ def _seated_test_function_outcome(directory, source: str):
     path.write_text(source, encoding="utf-8")
     tree = SourceFile(
         workspace_path_source(str(path), root=str(directory)),
-        construction_context=TreeConstructionContextV1(
-            contract_refs=per_source_provisional_contract_refs(directory),
-        ),
+        construction_context=TreeConstructionContextV1(),
     )
     (function,) = tuple(
         node

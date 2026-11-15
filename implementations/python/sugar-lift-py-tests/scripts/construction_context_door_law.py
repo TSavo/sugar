@@ -5,26 +5,22 @@ The bare door is the one opener's first stage opened with **no construction
 context**: ``lift_rpc._open_at_seat(...)`` without ``construction_context=``.
 It used to be spelled ``SourceFile.from_path``, which is deleted (#7757 item
 5); that spelling is still caught if it ever returns. Opening bare is
-legitimate: the step-3 readers (the With rows and the lexical import pass) read
-that way, because their rows are what the context's table is built from.
+legitimate: the step-3 reader (the lexical import pass) reads that way. The
+With demand table that used to read that way too is deleted (#7757); the
+context holds no table.
 
-**CORRECTION — this file used to claim "a demand-table scan ... because none of
-them construct". The demand-table scan CONSTRUCTS.**
+**The bare read CONSTRUCTS.**
 
-    provisional_contract_refs_from_demands  lift_rpc.py
-      -> _PerSourceDemandRows.rows_for_source lift_rpc.py
-      -> _call_use_rows_for_units            lift_rpc.py
-      -> authenticated_import_uses           import_binding.py
+    authenticated_import_uses           import_binding.py
       -> _run_lexical_import_pass            import_binding.py
       -> SourceFile.__new__ -> materialize_module -> _materialize_module_body
       -> Constant.sugar()
 
-The demand table is what MINTS the construction context, and minting it runs a
-lexical import pass that materializes modules, which constructs. **The context
-is a PRODUCT of construction, so a TOTAL law is self-contradictory at
-bootstrap** -- armed as a total rule it killed the census before seat 1. The
-rule below is narrowed accordingly, and the bootstrap's permission is pinned by
-its own teeth in ``sugar-source-tree/tests/
+The lexical import pass materializes modules, which constructs, before any
+context is attached. **So a TOTAL law is self-contradictory at bootstrap** --
+armed as a total rule it killed the census before seat 1. The rule below is
+narrowed accordingly, and the bootstrap's permission is pinned by its own
+teeth in ``sugar-source-tree/tests/
 test_bootstrap_construction_permission.py`` rather than left to the predicate
 happening to exclude ``Constant``.
 
@@ -32,12 +28,12 @@ Constructing through the bare door is a different act, and it fails in **TWO
 DISTINCT MODES**. This file used to name only the first, and the word "LIES"
 collapsed them:
 
-1. **LOUD OVER-COUNT.** Without a context every ``with`` paints
-   ``RuntimeSelectedContextManager`` regardless of resolvability. With a
+1. **LOUD OVER-COUNT.** Without a context every node that asks for one
+   refuses (``BareConstructionDoor``; historically every ``with`` painted
+   ``RuntimeSelectedContextManager`` regardless of resolvability). With a
    testimony reporter seated this is a *named refusal*, not silence -- but it
-   is one refusal per ``with``, so the tree answers with a plausible wrong
-   NUMBER: false frontier rows, halting at the first ``with``. The phantom is
-   in the COUNT, not in the quiet.
+   is one refusal per asking node, so the tree answers with a plausible wrong
+   NUMBER: false frontier rows. The phantom is in the COUNT, not in the quiet.
 
 2. **SILENT CONSTRUCTION.** With a non-testimony reporter seated there is no
    refusal at all: bare door plus a plain ``CollectingReporter`` constructs

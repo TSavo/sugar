@@ -1141,35 +1141,24 @@ def main() -> int:
         )
     pending: list[str] = list(file_names)
 
-    # The With demand table for the corpus ROOT is the per-source door: a
-    # source's rows are derived when that source is measured, so a one-file
-    # run costs one file's derivation. Opening the door content-addresses the
-    # corpus for module identities and parses nothing. Every process (a
-    # serial run, a slice seat, a shard) opens the same door on the same
-    # root; no table is minted, written, loaded or installed in its place
-    # (#7757 item 46). Opening it on anything but the root is the
-    # corpus-context drift defect.
     from sugar_lift_py_tests.demand_table_identity import (
         semantic_identity_for_corpus,
     )
-    from sugar_lift_py_tests.lift_rpc import (
-        provisional_contract_refs_from_demands,
-    )
 
-    contract_refs = _phase_call(
-        "demand_table_derivation",
-        lambda: provisional_contract_refs_from_demands(workspace_root),
+    # There is no With demand table (#7757): a ``with`` constructs from its
+    # head alone. What a plan and its shards still compare is what they
+    # measured over: the corpus manifest (the enrolled paths and their content
+    # CIDs) and the meaning key (corpus bytes, producer source, parser). The
+    # plan fields keep their names (``demandTableCid``, ``demandTableIdentity``).
+    corpus_identity = _phase_call(
+        "corpus_identity",
+        lambda: semantic_identity_for_corpus(workspace_root),
     )
-    # The table's address is what every row is a function of (the enrolled
-    # paths and their source CIDs); its meaning key is a function of the
-    # inputs (corpus bytes, producer source, parser). Neither derives a row.
-    demand_table_cid: str | None = contract_refs.table_cid
-    demand_table_identity: Mapping[str, object] | None = (
-        semantic_identity_for_corpus(workspace_root).as_dict()
-    )
+    demand_table_cid: str | None = corpus_identity.corpus_manifest_cid
+    demand_table_identity: Mapping[str, object] | None = corpus_identity.as_dict()
     _narrate(
-        "RECENSUS DEMAND_TABLE per-source door open "
-        f"(identityCid={demand_table_cid}; zero corpus parse)"
+        "RECENSUS CORPUS_IDENTITY "
+        f"(corpusManifestCid={demand_table_cid}; zero corpus parse)"
     )
     if shard_plan is not None:
         # The plan states the demand table every shard measures under. This

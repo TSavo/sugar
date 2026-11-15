@@ -1,10 +1,10 @@
-"""The content key for the With demand table of a corpus.
+"""The content key for what a corpus measurement is a function of.
 
-The table itself is derived one source at a time, on demand
-(``lift_rpc._PerSourceDemandRows``); no artifact of it is minted or published
-(#7757 item 46). This key states what the table is a function of, so a plan
-and its shards can state they measured under the same one without deriving a
-row.
+There is no With demand table (#7757): a ``with`` constructs from its head
+alone, and nothing derives a row. This key is what remains of the table's
+identity and keeps its names: it states the corpus, producer and parser a
+plan and its shards measured under, so they can state they measured the same
+thing.
 
 THE KEY IS THE PREIMAGE, NOT THE LOCATION. Mirrors `bin/sugarbin`'s existing
 `build_identity()` rule for the Rust binary -- *"Shelf / artifact identity is
@@ -271,12 +271,10 @@ def semantic_identity_for_corpus(
     source_root: pathlib.Path | None = None,
     config: Mapping[str, object] | None = None,
 ) -> DemandTableIdentityV1:
-    """The meaning key of the With demand table this corpus and producer yield.
+    """The meaning key of a measurement over this corpus by this producer.
 
     The key is a function of the inputs (corpus bytes, producer source,
-    parser, config), so it is stated without deriving a single row. The files
-    are step 2's file list, the one the per-source rows are derived over
-    (``lift_rpc._corpus_source_units``), #7757 item 45.
+    parser, config). The files are step 2's file list (#7757 item 45).
     """
     from sugar_source_tree.tree import SourceTree
 

@@ -67,11 +67,6 @@ _ENUMERATION_ACTIVE = False
 # keyed by linkUnitCid, so resume checks a resolution set against the unit it
 # was folded for.
 _RETAINED_LINK_UNITS = {}
-# The per-source With demand table by resolved workspace root: the one
-# derivation of a With item's row (``_PerSourceDemandRows``), memoized so a
-# second open of the same root reuses the sources already derived. Nothing
-# installs a table here in place of the derivation (#7757 item 46).
-_PROVISIONAL_CONTRACT_REFS_BY_ROOT: Dict[str, Any] = {}
 # D3 exposure telemetry, process-local because enumerate_rpc dispatches in-process.
 # The wire DTO stays closed; the recensus consumer takes this observation after
 # the facts demand.  One entry per source CID, popped by the consumer, so a
@@ -91,232 +86,16 @@ def take_d3_residency_observation(source_cid: str) -> Dict[str, Any] | None:
     return dict(row) if row is not None else None
 
 
-def _context_manager_rows_for_paths(paths, *, root: Path) -> List[Dict[str, Any]]:
-    """The typed With occurrences of exactly these files, in the order given.
+def tree_construction_context_for_workspace(root: Path):
+    """Tree handle for construction under ``root``: the workspace it names.
 
-    A With row is a function of its own file; the per-source door below is
-    its only caller. This pass owns only the structural fact that a typed
-    WithItem exists, without constructing any Sugar; import authority is
-    joined from ``_call_use_rows_for_units`` at the identical source
-    coordinate, never reconstructed from spellings.
-
-    Each file is opened by the opener's first stage (``_open_at_seat``), at
-    the seat the opener reads, so the row reads the same bytes at the same
-    seat the enumerate levels construct. It opens with no construction
-    context: these rows are what the context's table is built from. The unit
-    it parses is the one the opener later attaches its context to; the file is
-    parsed once.
-    """
-    from sugar_lift_py_tests.context_manager_resolution import UNDECIDED_GAP_KIND
-    from sugar_lift_python_source.source_oracle import SourceUnavailable
-    from sugar_source_tree.nodes import AsyncWith, With
-
-    rows: List[Dict[str, Any]] = []
-    for path in paths:
-        try:
-            source_file = _open_at_seat(path, root=Path(root))
-        except SourceUnavailable:
-            continue
-        for node in source_file.nodes():
-            if not isinstance(node, (With, AsyncWith)):
-                continue
-            for item in node.items:
-                expression = item.context_expr
-                span = expression.line_col_span()
-                coordinate = {
-                    "sourceCid": source_file.unit.source_cid,
-                    "startLine": span.start_line,
-                    "startCol": span.start_col,
-                    "endLine": span.end_line,
-                    "endCol": span.end_col,
-                }
-                rows.append(
-                    {
-                        "schemaVersion": "1",
-                        "kind": "context-manager-demand",
-                        "useSite": coordinate,
-                        "targetSymbol": None,
-                        "importSignature": {"parameters": []},
-                        "expectedKind": "context-manager-contract",
-                        "gapKind": UNDECIDED_GAP_KIND,
-                    }
-                )
-    return rows
-
-
-def _context_manager_resolutions_from_demand_rows(rows):
-    """Typed gap resolution per With demand row of one source.
-
-    The one projection from demand rows to construction refs; the per-source
-    door is its only caller.
-    """
-    from sugar_lift_py_tests.context_manager_resolution import (
-        UNDECIDED_GAP_KIND,
-        ContextManagerResolutionGapV1,
-        SourceFragmentCoordinateV1,
-        _hash_json,
-    )
-
-    resolutions = {}
-    for row in rows:
-        site = SourceFragmentCoordinateV1.decode(row["useSite"])
-        preimage = {
-            key: row[key]
-            for key in ("useSite", "targetSymbol", "importSignature", "expectedKind")
-        }
-        # A demand row's resolution is undecided until derivation answers it:
-        # one statement, never a label read from the row or a default
-        # (#7757 item 4).
-        resolutions[site] = ContextManagerResolutionGapV1(
-            _hash_json(preimage),
-            site,
-            row.get("targetSymbol"),
-            UNDECIDED_GAP_KIND,
-            (),
-        )
-    return resolutions
-
-
-class _PerSourceDemandRows:
-    """The one derivation of the With demand rows: one source CID at a time.
-
-    Opening this reads and content-addresses the enrolled files (the import
-    join needs every module's identity) and parses nothing. Rows for a source
-    are the With items of the files carrying that source CID, read from the
-    one opened file (``_open_at_seat``), each joined to the authenticated
-    import use at its coordinate -- every row's use site names its own source
-    CID. Files with identical bytes share one source CID and are derived
-    together, in tree order.
-
-    What still reads a row (#7757 item 46): ``With``'s require door reads its
-    item's row on every construction (``With._seated_manager_resolution``),
-    and the no-call body probe reads the joined rows. The board door's
-    with-item census no longer does: it reads the construction roll. Every
-    row is the ``undecided`` gap: the manager is what the head reduces to.
-    """
-
-    def __init__(self, root: Path) -> None:
-        self.root = Path(root)
-        self._units_by_source_cid: Dict[str, list] | None = None
-        self._module_identities: Dict[str, Dict[str, Any]] | None = None
-
-    def _open(self) -> Dict[str, list]:
-        if self._units_by_source_cid is None:
-            units = _corpus_source_units(self.root)
-            grouped: Dict[str, list] = {}
-            for unit in units:
-                grouped.setdefault(unit[2], []).append(unit)
-            self._module_identities = _module_identities_for_units(self.root, units)
-            self._units_by_source_cid = grouped
-        return self._units_by_source_cid
-
-    def source_cids(self) -> tuple[str, ...]:
-        return tuple(self._open())
-
-    def identity_cid(self) -> str:
-        """Content address of what every row here is a function of."""
-        from sugar_lift_python_source.canonical import cid_of_json
-
-        grouped = self._open()
-        return cid_of_json(
-            {
-                "kind": "per-source-provisional-demand-table",
-                "sources": [
-                    {
-                        "path": path.relative_to(self.root).as_posix(),
-                        "sourceCid": source_cid,
-                    }
-                    for source_cid, units in grouped.items()
-                    for path, _source, _cid in units
-                ],
-            }
-        )
-
-    def rows_for_source(self, source_cid: str) -> List[Dict[str, Any]]:
-        units = self._open().get(source_cid, ())
-        assert self._module_identities is not None
-        return _join_call_identity_into_with_demands(
-            _call_use_rows_for_units(self.root, units, self._module_identities),
-            _context_manager_rows_for_paths(
-                [path for path, _source, _cid in units], root=self.root
-            ),
-        )
-
-
-def per_source_provisional_contract_refs(root: Path):
-    """Provisional With-demand refs whose rows are derived per source, on demand.
-
-    A lookup pays for the source it asks about and no other.
-    """
-    from sugar_lift_py_tests.context_manager_resolution import (
-        PerSourceResolutionsV1,
-        ResolvedContractRefsV1,
-    )
-
-    demands = _PerSourceDemandRows(root)
-
-    def derive(source_cid: str):
-        return _context_manager_resolutions_from_demand_rows(
-            demands.rows_for_source(source_cid)
-        )
-
-    table_cid = demands.identity_cid()
-    return ResolvedContractRefsV1(
-        table_cid,
-        table_cid,
-        PerSourceResolutionsV1(demands.source_cids, derive),
-    )
-
-
-def provisional_contract_refs_from_demands(root: Path):
-    """One typed gap row per enrolled With demand: the table every open reads.
-
-    The one door onto the With demand rows (#7757 item 46): the enumerate
-    levels, the board door, the supervised worker and every instrument come
-    here, and nothing installs a table in its place.
-
-    Each demand lands as ``ContextManagerResolutionGapV1`` of the one kind
-    ``undecided`` (#7757 item 4): its manager is what the head reduces to
-    (``With._reduced_manager_sugar``). The row must still be there: an item
-    nobody seated a row for halts by name at the require door
-    (``With._prebound_manager_resolution``).
-
-    Rows are derived per source on first demand: asking about one file costs
-    that file, not the corpus. Process-memoized by resolved root so a second
-    open reuses the sources already derived.
-    """
-    key = str(Path(root).resolve())
-    cached = _PROVISIONAL_CONTRACT_REFS_BY_ROOT.get(key)
-    if cached is not None:
-        return cached
-    refs = per_source_provisional_contract_refs(Path(root))
-    _PROVISIONAL_CONTRACT_REFS_BY_ROOT[key] = refs
-    return refs
-
-
-def clear_provisional_contract_refs_memo() -> None:
-    """Drop process demand-table memo (tests / hermetic process reuse)."""
-    _PROVISIONAL_CONTRACT_REFS_BY_ROOT.clear()
-
-
-def tree_construction_context_for_workspace(
-    root: Path,
-    *,
-    contract_refs=None,
-):
-    """Tree handle for construction: bound refs, or provisional demand gaps.
-
-    Always non-None. Bare ``fn.sugar()`` without this is the instrument defect
-    that paints every With as RuntimeSelected regardless of resolvability.
+    Always non-None. The context holds no table: a ``with``'s manager is what
+    its head reduces to, and nothing outside the tree fills anything a node
+    reads (#7757).
     """
     from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
-    refs = (
-        contract_refs
-        if contract_refs is not None
-        else provisional_contract_refs_from_demands(root)
-    )
-    return TreeConstructionContextV1(refs, workspace_root=str(root))
+    return TreeConstructionContextV1(workspace_root=str(root))
 
 
 def _locus_root(
@@ -377,10 +156,9 @@ def _open_at_seat(
     A file becomes a node tree here and nowhere else (#7757 item 5): its bytes
     are read at its seat (``_read_at_seat``) and parsed into the resident unit.
     ``open_source_file_for_construction`` is this stage under a construction
-    context. The two step-3 readers (the With rows and the
-    lexical import pass) call this stage with no context, because their rows
-    are what that context's table is built from; they read the same seat, the
-    same bytes and the same resident unit the opener does. The files are step
+    context. The step-3 reader (the lexical import pass) calls this stage
+    with no context; it reads the same seat, the same bytes and the same
+    resident unit the opener does. The files are step
     2's file list; no dependency module is opened anywhere.
 
     The one entry: this is the only caller of
@@ -424,13 +202,6 @@ def _open_at_seat(
     )
 
 
-def _enumerate_contract_refs(root: Path):
-    """The table every ``sugar.enumerate`` level constructs against: the
-    provisional demand table for ``root`` (process-memoized per root).
-    """
-    return provisional_contract_refs_from_demands(root)
-
-
 def _open_session(root: Path, resolution_session=None):
     """The resolution session an open runs under: the caller's, else the
     walk-scoped session for ``root``, whose roster is step 2's file list for
@@ -445,35 +216,32 @@ def _open_session(root: Path, resolution_session=None):
     return walk_session_for(root, enrolled_distributions=project_file_roster(root))
 
 
-def _context_minter(table, root: Path):
-    """Mints the opener's construction context on ``table`` for ``root``."""
+def _context_minter(root: Path):
+    """Mints the opener's construction context for ``root``."""
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
     )
 
-    return lambda: TreeConstructionContextV1(table, workspace_root=str(root))
+    return lambda: TreeConstructionContextV1(workspace_root=str(root))
 
 
 def construction_context_for_open(
     path: Path,
     *,
     root: Path,
-    contract_refs=None,
     resolution_session=None,
     source_workspace_root: Path | None = None,
 ):
     """The context the opener opens this file under when the caller names none.
 
-    Built on ``contract_refs``, else on ``_enumerate_contract_refs`` (the Rust
-    prebind's bound refs when installed), and minted once per file and
-    authority (``process_resident_file.open_context``). A caller that passes it
-    to the opener explicitly (the audit leaf) and a caller that passes nothing
-    (the enumerate levels) open the same unit: one parse.
+    Minted once per file and authority (the session;
+    ``process_resident_file.open_context``). A caller that passes it to the
+    opener explicitly (the audit leaf) and a caller that passes nothing (the
+    enumerate levels) open the same unit: one parse.
     """
     from sugar_source_tree.process_resident_file import open_context
 
     session = _open_session(root, resolution_session)
-    table = contract_refs if contract_refs is not None else _enumerate_contract_refs(root)
     _source, seat, source_cid = _read_at_seat(
         path, root=root, source_workspace_root=source_workspace_root
     )
@@ -481,8 +249,8 @@ def construction_context_for_open(
         source_cid,
         seat,
         str(root),
-        (table, session),
-        mint=_context_minter(table, root),
+        (session,),
+        mint=_context_minter(root),
     )
 
 
@@ -491,7 +259,6 @@ def open_source_file_for_construction(
     *,
     root: Path,
     reporter=None,
-    contract_refs=None,
     construction_context=None,
     resolution_session=None,
     source_workspace_root: Path | None = None,
@@ -506,18 +273,16 @@ def open_source_file_for_construction(
     contract, the attribution instruments, the scripts -- reads the same
     tree.
 
-    The context, when the caller names none, is built on
-    ``_enumerate_contract_refs``: the Rust prebind's bound refs when installed,
-    otherwise the provisional demand table for ``root``. ``contract_refs``
-    names a table already derived for this root (a census shares one);
-    ``construction_context`` a frozen context the caller already holds. The
-    context the opener builds is minted once per file and authority
-    (``construction_context_for_open``), so passing it back explicitly is the
-    same open as passing nothing.
+    The context, when the caller names none, names the workspace root and
+    nothing else: it holds no table (#7757). ``construction_context`` is a
+    frozen context the caller already holds. The context the opener builds is
+    minted once per file and authority (``construction_context_for_open``),
+    so passing it back explicitly is the same open as passing nothing.
 
-    One parse per file (#7757 item 5): when the step-3 readers already opened
-    the file through the first stage, which parses with no context, the first
-    stage attaches this open's context to that unit instead of parsing again.
+    One parse per file (#7757 item 5): when the step-3 reader (the lexical
+    import pass) already opened the file through the first stage, which
+    parses with no context, the first stage attaches this open's context to
+    that unit instead of parsing again.
 
     ``resolution_session`` owns every source-resolution memo for this open. When
     omitted, this door uses the walk-scoped session for ``root``, whose roster is
@@ -527,8 +292,8 @@ def open_source_file_for_construction(
     to isolate.
 
     A file is opened once per authority: the same bytes at the same seat,
-    under the same table (or caller-held context), the same session and the
-    same ``root``, return the unit this door already opened
+    under the same session (and caller-held context, if any) and the same
+    ``root``, return the unit this door already opened
     (``process_resident_file.get_opened``), with its reporter rebound and its
     roll call reseated. A walk that reopens its files --
     the enumerate levels, the caller-parameter contract asked once per
@@ -551,25 +316,17 @@ def open_source_file_for_construction(
         path, root=root, source_workspace_root=source_workspace_root
     )
     _source, seat, source_cid = seated
-    # The authority this open constructs under: the table the opener builds
-    # its own context on, with the session. A context the caller holds that
-    # the opener did not mint is its own authority.
+    # The authority this open constructs under: the session. A context the
+    # caller holds that the opener did not mint is its own authority.
+    own = (session,)
     if construction_context is None:
-        table = (
-            contract_refs
-            if contract_refs is not None
-            else _enumerate_contract_refs(root)
-        )
         construction_context = open_context(
             source_cid,
             seat,
             str(root),
-            (table, session),
-            mint=_context_minter(table, root),
+            own,
+            mint=_context_minter(root),
         )
-    else:
-        table = getattr(construction_context, "contract_refs", None)
-    own = (table, session)
     if open_context(source_cid, seat, str(root), own) is construction_context:
         authority = own
     else:
@@ -603,55 +360,6 @@ def open_source_file_for_construction(
         return source_file
     remember_opened(source_cid, seat, str(root), authority, source_file)
     return source_file
-
-
-def _corpus_source_units(root: Path) -> list:
-    """``(path, source, source_cid)`` per readable enrolled file, in tree order."""
-    from sugar_lift_python_source.source_oracle import SourceUnavailable, path_source
-    from sugar_source_tree.tree import SourceTree
-
-    units = []
-    for path in SourceTree(root).paths():
-        try:
-            source, _filename, source_cid = path_source(str(path))
-        except SourceUnavailable:
-            continue
-        units.append((path, source, source_cid))
-    return units
-
-
-def _module_identities_for_units(root: Path, units) -> Dict[str, Dict[str, Any]]:
-    """Module name -> authenticated module identity for the whole corpus."""
-    from sugar_lift_py_tests.import_binding import module_name_for_path
-
-    return {
-        module_name_for_path(root, path): {
-            "kind": "authenticated-python-module",
-            "schemaVersion": "1",
-            "moduleName": module_name_for_path(root, path),
-            "sourceCid": source_cid,
-        }
-        for path, _source, source_cid in units
-    }
-
-
-def _call_use_rows_for_units(
-    root: Path, units, module_identities
-) -> List[Dict[str, Any]]:
-    """Imported call uses of exactly these units, against corpus identities.
-
-    The lexical pass's imported plain calls, by their authenticated use
-    sites. Read only by the With join; never rows of the demand table.
-    """
-    from sugar_lift_py_tests.import_binding import authenticated_import_uses
-
-    rows: List[Dict[str, Any]] = []
-    for path, source, source_cid in units:
-        enrolled, _outcomes = authenticated_import_uses(
-            root, path, source, source_cid, module_identities
-        )
-        rows.extend(enrolled)
-    return rows
 
 
 def _parameter_contract_resume(options: Dict[str, Any]) -> None:
@@ -736,35 +444,6 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
             _RETAINED_LINK_UNITS[unit.link_unit_cid] = unit
             rows.append(unit.to_value())
     return rows
-
-
-def _join_call_identity_into_with_demands(
-    call_rows: List[Dict[str, Any]], cm_rows: List[Dict[str, Any]]
-) -> List[Dict[str, Any]]:
-    """The With demands, each joined to the authenticated call at its coordinate.
-
-    Its call coordinate supplies the authenticated import binding. The table
-    carries With demands only: no call-contract demand or export row is
-    enrolled beside them (nothing reads one)."""
-    from sugar_lift_py_tests.context_manager_resolution import UNDECIDED_GAP_KIND
-
-    calls_by_site = {
-        json.dumps(row["useSite"], sort_keys=True): row for row in call_rows
-    }
-    for row in cm_rows:
-        site = json.dumps(row["useSite"], sort_keys=True)
-        call = calls_by_site.get(site)
-        if call is None:
-            row["targetSymbol"] = None
-            row["gapKind"] = UNDECIDED_GAP_KIND
-            continue
-        target = call["targetSymbol"]
-        row["targetSymbol"] = target.removeprefix("python:")
-        row["importBindingCid"] = call["importBindingCid"]
-        row["importBinding"] = call["importBinding"]
-        row["authenticatedImportUse"] = call["authenticatedImportUse"]
-        row["gapKind"] = None
-    return cm_rows
 
 
 # Passive, process-lifetime context paid for by an enumeration demand. The
@@ -1863,35 +1542,6 @@ def _seat_roll_call_reporter(source_file, reporter) -> None:
         seat(node)
 
 
-def enumerate_construction_context(root: Path):
-    """The ONE preconstruction authority every ``sugar.enumerate`` level opens with.
-
-    Every level of ``_handle_enumerate`` opens its file through
-    ``open_source_file_for_construction`` with this context, so every level
-    reads the same tree under the same authority. A level that opened the file
-    any other way answered according to whichever level happened to make the
-    file process-resident first.
-
-    Bound authenticated refs when the Rust prebind installed them; otherwise the
-    provisional demand table for this workspace root. Never ``None`` and never an
-    empty stand-in: a tree opened without this authority makes every ``With``
-    report ``RuntimeSelectedContextManager`` regardless of resolvability, which
-    is a manufactured frontier, not a measurement.
-
-    This does NOT manufacture a contract ref. It supplies the table the use-site
-    is looked up in; a use-site with no row still resolves to a typed
-    ``ContextManagerResolutionGapV1`` and stays a countable construction panic.
-    """
-    from sugar_lift_py_tests.context_manager_resolution import (
-        TreeConstructionContextV1,
-    )
-
-    return TreeConstructionContextV1(
-        _enumerate_contract_refs(root),
-        workspace_root=str(root),
-    )
-
-
 def _roll_call_audit_leaf(
     full_path: Path,
     file_rel: str,
@@ -1926,16 +1576,13 @@ def _roll_call_audit_leaf(
             )[1]
             resident_before_open = get_resident(expected_source_cid, seat)
         # THE CONSTRUCTION DOOR, never the bare one. `discharge` drives
-        # `.sugar()` over the whole tree, so this scope CONSTRUCTS. Opening
-        # through the bare path door gave the tree no construction context,
-        # and a context-less tree paints every `With`
-        # `RuntimeSelectedContextManager` regardless of resolvability -- one
-        # panic per file, at the file's FIRST `with`, masking everything behind
-        # it. See scripts/construction_context_door_law.py; every production
-        # level opens this way.
+        # `.sugar()` over the whole tree, so this scope CONSTRUCTS. A tree
+        # opened through the bare path door has no construction context, and
+        # a node that asks for one refuses (``BareConstructionDoor``). See
+        # scripts/construction_context_door_law.py; every production level
+        # opens this way.
         #
-        # The context is named here, on the authenticated table when the Rust
-        # prebind installed one, and it is the same context the enumerate
+        # The context is named here, and it is the same context the enumerate
         # levels open this file under (``construction_context_for_open``), so
         # the leaf shares their parse.
         source_file = open_source_file_for_construction(

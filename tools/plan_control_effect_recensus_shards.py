@@ -39,10 +39,6 @@ from sugar_lift_py_tests.authenticated_pytest import (  # noqa: E402
 from sugar_lift_py_tests.demand_table_identity import (  # noqa: E402
     semantic_identity_for_corpus,
 )
-from sugar_lift_py_tests.lift_rpc import (  # noqa: E402
-    provisional_contract_refs_from_demands,
-)
-
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -98,12 +94,12 @@ def main(argv: list[str] | None = None) -> int:
             "--demand-table-corpus-root does not equal the authenticated pandas "
             f"root: requested={demanded_root} authenticated={authenticated_corpus.root}"
         )
-    # The plan states which With demand table its shards measure under: the
-    # address of what every row is a function of, and the meaning key. Neither
-    # derives a row; each shard opens the same per-source door on the same
-    # root and states what it observed (#7757 item 46).
-    demand_table_cid = provisional_contract_refs_from_demands(demanded_root).table_cid
+    # The plan states what its shards measure over: the corpus manifest (the
+    # enrolled paths and their content CIDs) and the meaning key (corpus,
+    # producer, parser). There is no With demand table (#7757); each shard
+    # states the same two from its own root, and the field names are kept.
     demand_table_identity = semantic_identity_for_corpus(demanded_root)
+    demand_table_cid = demand_table_identity.corpus_manifest_cid
     # If path resolver empty for all, equal-count still works via assign_files.
     plan = build_plan(
         enrolled_files=enrolled,

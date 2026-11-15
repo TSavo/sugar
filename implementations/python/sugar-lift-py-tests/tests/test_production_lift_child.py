@@ -38,13 +38,10 @@ def _write(tmp_path: Path, source: str) -> Path:
 def _run(path: Path, rel: str) -> int:
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
-        empty_resolved_contract_refs,
     )
 
     root = path.parent
-    context = TreeConstructionContextV1(
-        empty_resolved_contract_refs(), workspace_root=str(root)
-    )
+    context = TreeConstructionContextV1(workspace_root=str(root))
     return _CHILD.run_production_lift_child(
         path,
         rel,

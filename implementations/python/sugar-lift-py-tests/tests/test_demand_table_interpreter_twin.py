@@ -17,7 +17,6 @@ from sugar_lift_py_tests.demand_table_identity import (
     demand_table_identity_for_manifest,
     semantic_identity_for_corpus,
 )
-from sugar_lift_py_tests.no_call_body_attribution import with_demand_rows
 from sugar_lift_python_source.canonical import blake3_512_of, cid_of_json
 from sugar_source_tree.cpython_adapter import CPythonAstBackend
 
@@ -99,47 +98,3 @@ def test_key_moves_when_a_producer_source_file_disappears(tmp_path: Path) -> Non
     base = _key(source)
     (source / "sugar_lift_py_tests" / "import_binding.py").unlink()
     assert _key(source) != base
-
-
-def test_demand_table_output_interpreter_twin(tmp_path: Path) -> None:
-    """Produce, content-address, and report the real table after corpus auth."""
-    pandas, numpy, lift, manifest_cid = authenticate_environment()
-    corpus = tmp_path / "small-demand-table-corpus"
-    package = corpus / "sample"
-    package.mkdir(parents=True)
-    (package / "__init__.py").write_text("", encoding="utf-8")
-    (package / "format_context.py").write_text(_SOURCE, encoding="utf-8")
-
-    rows = with_demand_rows(corpus)["rows"]
-    assert rows, "the acceptance corpus produced no demand-table rows"
-    output_cid = cid_of_json(
-        {"kind": "python-preconstruction-demand-table", "rows": rows}
-    )
-    interpreter = interpreter_identity()
-    runtime_identity = f"{interpreter.implementation}-{interpreter.version}"
-    assert manifest_cid == MEASURED_CORPUS_MANIFEST_CID
-    assert output_cid == cid_of_json(
-        {
-            "kind": "python-preconstruction-demand-table",
-            "rows": with_demand_rows(corpus)["rows"],
-        }
-    ), "the demand rows are not a function of the corpus"
-    parser_ast_cid = blake3_512_of(
-        ast.dump(ast.parse(_SOURCE), include_attributes=False).encode("utf-8")
-    )
-    parser_identity = CPythonAstBackend().fingerprint()
-    assert parser_ast_cid == MEASURED_PARSER_AST_CIDS[parser_identity]
-    receipt = {
-        "schema": "demand-table-interpreter-twin/v1",
-        "python": runtime_identity,
-        "pythonExecutable": str(interpreter.executable),
-        "parserIdentity": parser_identity,
-        "parserAstCid": parser_ast_cid,
-        "corpusManifestCid": manifest_cid,
-        "pandas": pandas.version,
-        "numpy": numpy.version,
-        "liftPath": str(lift.loaded_from),
-        "demandTableOutputCid": output_cid,
-        "rows": len(rows),
-    }
-    print("DEMAND_TABLE_INTERPRETER_TWIN " + json.dumps(receipt, sort_keys=True))

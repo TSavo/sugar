@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from types import MappingProxyType
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any
 
 from .canonicalizer import blake3_512_of, encode_jcs
 from .context_manager_contract import (
@@ -138,139 +137,15 @@ ContextManagerResolutionV1 = ContextManagerContractRefV1 | ContextManagerResolut
 
 
 @dataclass(frozen=True)
-class NativeDefinitionCoordinateGapV1:
-    receiver: SourceFragmentCoordinateV1
-    slot: NativeProtocolSlot
-    reason: str
-
-
-NativeDefinitionCoordinateResolutionV1 = (
-    SourceFragmentCoordinateV1 | NativeDefinitionCoordinateGapV1
-)
-
-
-class PerSourceResolutionsV1(Mapping):
-    """A ``by_use_site`` table derived one source at a time, on first demand.
-
-    A With use-site's resolution is a function of its own source file, so a
-    lookup pays for that file and no other. Iteration and ``len`` are
-    whole-corpus questions and derive every source; a reader that wants one
-    source's rows asks ``for_source``.
-    """
-
-    def __init__(
-        self,
-        source_cids: Callable[[], Iterable[str]],
-        derive: Callable[[str], Mapping["SourceFragmentCoordinateV1", object]],
-    ) -> None:
-        self._source_cids = source_cids
-        self._derive = derive
-        self._by_source: dict[str, Mapping[SourceFragmentCoordinateV1, object]] = {}
-
-    def for_source(
-        self, source_cid: str
-    ) -> Mapping["SourceFragmentCoordinateV1", object]:
-        derived = self._by_source.get(source_cid)
-        if derived is None:
-            derived = MappingProxyType(dict(self._derive(source_cid)))
-            self._by_source[source_cid] = derived
-        return derived
-
-    def derived_source_cids(self) -> tuple[str, ...]:
-        """Sources whose rows have been derived so far (cost testimony)."""
-        return tuple(self._by_source)
-
-    def __getitem__(self, use_site):
-        source_cid = getattr(use_site, "source_cid", None)
-        if not isinstance(source_cid, str):
-            raise KeyError(use_site)
-        return self.for_source(source_cid)[use_site]
-
-    def __iter__(self):
-        for source_cid in self._source_cids():
-            yield from self.for_source(source_cid)
-
-    def __len__(self) -> int:
-        return sum(len(self.for_source(cid)) for cid in self._source_cids())
-
-
-def resolutions_for_source(
-    by_use_site: object, source_cid: str
-) -> Mapping["SourceFragmentCoordinateV1", object]:
-    """The rows of one source, without asking a per-source table for the corpus."""
-    if isinstance(by_use_site, PerSourceResolutionsV1):
-        return by_use_site.for_source(source_cid)
-    if not by_use_site:
-        return {}
-    return {
-        coordinate: resolution
-        for coordinate, resolution in by_use_site.items()
-        if getattr(coordinate, "source_cid", None) == source_cid
-    }
-
-
-@dataclass(frozen=True)
-class ResolvedContractRefsV1:
-    catalog_cid: str
-    table_cid: str
-    by_use_site: Mapping[SourceFragmentCoordinateV1, ContextManagerResolutionV1]
-    native_definitions: Mapping[
-        tuple[SourceFragmentCoordinateV1, NativeProtocolSlot],
-        NativeDefinitionCoordinateResolutionV1,
-    ] = field(default_factory=dict)
-
-    def require(
-        self, use_site: SourceFragmentCoordinateV1
-    ) -> ContextManagerResolutionV1:
-        try:
-            return self.by_use_site[use_site]
-        except KeyError as exc:
-            raise ContractRefProtocolError(
-                "BackendDefect: enrolled context-manager demand missing from resolution table"
-            ) from exc
-
-    def require_native_definition(
-        self, receiver: SourceFragmentCoordinateV1, slot: NativeProtocolSlot
-    ) -> NativeDefinitionCoordinateResolutionV1:
-        """Resolve one authenticated source definition, or retain UNDECIDED."""
-        result = self.native_definitions.get((receiver, slot))
-        if result is None:
-            return NativeDefinitionCoordinateGapV1(
-                receiver=receiver,
-                slot=slot,
-                reason="authenticated source definition coordinate is not enrolled",
-            )
-        return result
-
-
-# Placeholder table for construction that does not enroll context-manager
-# demands (e.g. sole-path manager-factory construction). With.require still
-# fails closed when a use-site is absent.
-_EMPTY_CONTRACT_TABLE_CID = "blake3-512:" + ("00" * 64)
-
-
-def empty_resolved_contract_refs() -> ResolvedContractRefsV1:
-    from types import MappingProxyType
-
-    return ResolvedContractRefsV1(
-        catalog_cid=_EMPTY_CONTRACT_TABLE_CID,
-        table_cid=_EMPTY_CONTRACT_TABLE_CID,
-        by_use_site=MappingProxyType({}),
-    )
-
-
-@dataclass(frozen=True)
 class TreeConstructionContextV1:
-    """Explicit tree construction handle — the only non-Sugar construction currency.
+    """Explicit tree construction handle: the workspace a tree is built under.
 
-    - ``contract_refs``: prebound With resolutions (empty table is valid; missing
-      use-sites stay loud via ``require``).
-
-    A call's frame is the one its own lexical row's definition applies
-    (``Call._construct_sugar``); the context holds no table of frames.
+    It holds no table (#7757). A ``with``'s manager is what its head reduces
+    to (``With._reduced_manager_sugar``); a call's frame is the one its own
+    lexical row's definition applies (``Call._construct_sugar``). Nothing
+    outside the tree fills anything a node reads here.
     """
 
-    contract_refs: ResolvedContractRefsV1
     workspace_root: str | None = None
 
     @classmethod
@@ -279,11 +154,8 @@ class TreeConstructionContextV1:
         *,
         workspace_root: str | None = None,
     ) -> "TreeConstructionContextV1":
-        """Construction context without CM enrollment."""
-        return cls(
-            contract_refs=empty_resolved_contract_refs(),
-            workspace_root=workspace_root,
-        )
+        """A construction context naming ``workspace_root`` (or none)."""
+        return cls(workspace_root=workspace_root)
 
     @classmethod
     def for_test_without_workspace(cls) -> "TreeConstructionContextV1":
@@ -440,67 +312,3 @@ def _decode_ref(raw: Any) -> ContextManagerContractRefV1:
     )
 
 
-def decode_resolved_contract_refs(raw: Any) -> ResolvedContractRefsV1:
-    if (
-        not isinstance(raw, dict)
-        or set(raw) != {"kind", "schemaVersion", "catalogCid", "tableCid", "byUseSite"}
-        or raw["kind"] != "resolved-contract-refs"
-        or raw["schemaVersion"] != "1"
-    ):
-        raise ContractRefProtocolError("malformed resolved-contract-ref table")
-    table_cid = _cid(raw["tableCid"], "tableCid")
-    identity = {
-        key: raw[key] for key in ("kind", "schemaVersion", "catalogCid", "byUseSite")
-    }
-    if _hash_json(identity) != table_cid:
-        raise ContractRefProtocolError("resolution table CID mismatch")
-    rows = raw["byUseSite"]
-    if not isinstance(rows, list):
-        raise ContractRefProtocolError("byUseSite must be a list")
-    decoded: dict[SourceFragmentCoordinateV1, ContextManagerResolutionV1] = {}
-    catalog_cid = _cid(raw["catalogCid"], "catalogCid")
-    for row in rows:
-        if not isinstance(row, dict) or set(row) != {"useSite", "resolution"}:
-            raise ContractRefProtocolError("malformed resolution row")
-        use_site = SourceFragmentCoordinateV1.decode(row["useSite"])
-        resolution = row["resolution"]
-        if not isinstance(resolution, dict):
-            raise ContractRefProtocolError("malformed resolution")
-        if resolution.get("kind") == "resolved" and set(resolution) == {
-            "kind",
-            "reference",
-        }:
-            value: ContextManagerResolutionV1 = _decode_ref(resolution["reference"])
-            if value.use_site != use_site:
-                raise ContractRefProtocolError("resolution coordinate mismatch")
-        elif resolution.get("kind") == "unresolved" and set(resolution) == {
-            "kind",
-            "gap",
-        }:
-            gap = resolution["gap"]
-            if (
-                not isinstance(gap, dict)
-                or not isinstance(gap.get("kind"), str)
-                or not gap.get("kind")
-            ):
-                raise ContractRefProtocolError(
-                    "malformed context-manager resolution gap"
-                )
-            candidates = gap.get("candidateMemberCids")
-            if not isinstance(candidates, list) or candidates != sorted(candidates):
-                raise ContractRefProtocolError("candidate member CIDs must be sorted")
-            value = ContextManagerResolutionGapV1(
-                _cid(gap.get("demandCid"), "demandCid"),
-                SourceFragmentCoordinateV1.decode(gap.get("useSite")),
-                gap.get("targetSymbol"),
-                gap["kind"],
-                tuple(_cid(v, "candidateMemberCid") for v in candidates),
-            )
-            if value.use_site != use_site:
-                raise ContractRefProtocolError("gap coordinate mismatch")
-        else:
-            raise ContractRefProtocolError("unknown context-manager resolution")
-        if use_site in decoded:
-            raise ContractRefProtocolError("duplicate resolution coordinate")
-        decoded[use_site] = value
-    return ResolvedContractRefsV1(catalog_cid, table_cid, MappingProxyType(decoded))

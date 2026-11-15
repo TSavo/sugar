@@ -94,23 +94,6 @@ def test_verified_pandas_303_reproducers_are_content_pinned() -> None:
     )
 
 
-def test_per_source_door_enrolls_unary_and_complete_boolop_family() -> None:
-    """The one per-source derivation states these sites' rows."""
-    from sugar_lift_py_tests.lift_rpc import _PerSourceDemandRows
-
-    demands = _PerSourceDemandRows(CORPUS)
-    sites = {
-        (row["useSite"]["sourceCid"], row["useSite"]["startLine"])
-        for source_cid in (UNARY_SOURCE_CID, BOOLOP_SOURCE_CID)
-        for row in demands.rows_for_source(source_cid)
-        if row.get("kind") == "context-manager-demand"
-        and row.get("gapKind") is None
-        and row.get("targetSymbol") == "pytest.raises"
-    }
-    assert (UNARY_SOURCE_CID, 257) in sites
-    assert {(BOOLOP_SOURCE_CID, 151), (BOOLOP_SOURCE_CID, 153)} <= sites
-
-
 @pytest.mark.parametrize(
     ("method", "operator"),
     (
@@ -431,10 +414,7 @@ def test_pandas_series_boolop_sites_stay_source_undecided() -> None:
     the UndeterminedRaiseEffect face of the #7681 two-faced truth law.
     """
     from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
-    from sugar_lift_py_tests.caller_parameter_contract import source_coordinate
     from sugar_lift_py_tests.context_manager_resolution import (
-        NativeDefinitionCoordinateGapV1,
-        NativeProtocolSlot,
         TreeConstructionContextV1,
     )
     from sugar_lift_python_source.canonical import blake3_512_of
@@ -472,12 +452,6 @@ def test_pandas_series_boolop_sites_stay_source_undecided() -> None:
             if isinstance(node, BoolOp) and node.line_col_span().start_line == line
         )
         assert len(matches) == 1
-        receiver = source_coordinate(matches[0].values[0].fragment)
-        definition = construction_context.contract_refs.require_native_definition(
-            receiver, NativeProtocolSlot.TRUTH
-        )
-        assert isinstance(definition, NativeDefinitionCoordinateGapV1)
-        assert definition.reason.startswith("authenticated source definition")
         del operator
         _assert_two_faced_symbolic_truth(
             matches[0].sugar().desugar(None), make_var("obj1"), make_var("obj2")

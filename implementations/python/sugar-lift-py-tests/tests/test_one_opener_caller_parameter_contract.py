@@ -56,15 +56,12 @@ def test_the_contract_reads_the_unit_the_board_door_reads(
     assert contract_file.unit.filename == board_file.unit.filename == "producer.py"
     assert contract_file.unit.source_cid == board_file.unit.source_cid
 
-    # The same authority and the same rows.
+    # The same authority: the context names the workspace and holds no table.
     contract_context = contract_file.unit.construction_context
     board_context = board_file.unit.construction_context
     assert contract_context is not None and board_context is not None
     assert contract_context.workspace_root == board_context.workspace_root
-    assert (
-        contract_context.contract_refs.table_cid
-        == board_context.contract_refs.table_cid
-    )
+    assert contract_context == board_context
 
 
 def test_the_contract_opens_each_file_once_per_session(

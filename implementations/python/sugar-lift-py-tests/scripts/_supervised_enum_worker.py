@@ -91,11 +91,9 @@ def _initialize(
     *,
     source_workspace_root: str | None = None,
 ) -> dict:
-    """Freeze the worker's construction context on the root's With demand table.
+    """Freeze the worker's construction context on the workspace root.
 
-    The table is the per-source door (``provisional_contract_refs_from_demands``):
-    a file's rows are derived when that file is lifted. No table is loaded from
-    disk in its place (#7757 item 46)."""
+    The context names the root and holds no table (#7757)."""
     global _CONSTRUCTION_CONTEXT, _CORPUS_ROOT, _SOURCE_WORKSPACE_ROOT
     import os
 
@@ -117,10 +115,7 @@ def _initialize(
             "corpus_root": corpus_root or None,
             "phase": "already-initialized",
         }
-    from sugar_lift_py_tests.lift_rpc import (
-        provisional_contract_refs_from_demands,
-        tree_construction_context_for_workspace,
-    )
+    from sugar_lift_py_tests.lift_rpc import tree_construction_context_for_workspace
 
     if not corpus_root:
         return {
@@ -166,17 +161,10 @@ def _initialize(
             "phase": "resolve-corpus-root",
         }
 
-    # Opening the per-source door content-addresses the enrolled files and
-    # parses nothing. Progress lands before it so a supervisor timeout names
-    # this phase instead of refused: None.
-    _progress("open-per-source-demands", corpus_root=str(root))
-    contract_refs = provisional_contract_refs_from_demands(root)
     _progress("freeze-construction-context", corpus_root=str(root))
     _CORPUS_ROOT = root
     _SOURCE_WORKSPACE_ROOT = workspace_root
-    _CONSTRUCTION_CONTEXT = tree_construction_context_for_workspace(
-        workspace_root, contract_refs=contract_refs
-    )
+    _CONSTRUCTION_CONTEXT = tree_construction_context_for_workspace(workspace_root)
     return {
         "kind": "context-ready",
         "corpus_root": str(root),

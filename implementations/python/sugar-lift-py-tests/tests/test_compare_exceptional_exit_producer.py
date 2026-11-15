@@ -270,31 +270,6 @@ def test_launcher_authenticates_content_manifest_not_path_shape() -> None:
     assert corpus.file_count == 1421
 
 
-def test_per_source_door_enrolls_the_exact_compare_site() -> None:
-    """The one per-source derivation states this site's row: the With item at
-    its coordinate, joined to the authenticated ``pytest.raises`` import."""
-    from sugar_lift_py_tests.lift_rpc import _PerSourceDemandRows
-
-    rows = tuple(
-        row
-        for row in _PerSourceDemandRows(_corpus_root()).rows_for_source(
-            COL_SOURCE_CID
-        )
-        if row.get("kind") == "context-manager-demand"
-        and row.get("targetSymbol") == "pytest.raises"
-        and row.get("gapKind") is None
-        and row.get("useSite")
-        == {
-            "sourceCid": COL_SOURCE_CID,
-            "startLine": 362,
-            "startCol": 9,
-            "endLine": 364,
-            "endCol": 5,
-        }
-    )
-    assert len(rows) == 1
-
-
 def test_pandas_col_membership_retains_both_source_visible_faces() -> None:
     path = _corpus_root() / "tests/test_col.py"
     source = path.read_text(encoding="utf-8")
