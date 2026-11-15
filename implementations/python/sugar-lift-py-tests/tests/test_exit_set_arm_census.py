@@ -377,7 +377,15 @@ def test_and_exit_halts_a_completed_incoming_against_a_completed_exit() -> None:
     neither ``|self| x halted(exit)`` nor ``halted(self) x completed(exit)``
     covers. The census reports it through the verdict-shape counts instead.
     """
-    body = _completed_only(3, "body")
+    # The body a boundary runs over is a suite, and a suite completes with its
+    # record. The boundary halts each such arm FROM that record, so the halt
+    # carries it; a bare value in its place is refused as the halt is built.
+    body = ExitSet(
+        tuple(
+            Completed(_guard(f"body_c{index}"), halt_record(None))
+            for index in range(3)
+        )
+    )
     exit_es = _completed_only(2, "exit")
     disposition = EffectBoundaryDisposition(
         matcher=EffectMatcher(kind="raise", name="ValueError"),
