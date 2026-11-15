@@ -21,7 +21,10 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
+from sugar_lift_py_tests.witness_harness import (
+    claim_verdict,
+    run_source_through_real_solver,
+)
 
 _TWIN = (
     "def double(x):\n"
@@ -37,9 +40,20 @@ _FALSE = {"kind": "not", "operands": [_TRUE]}
 
 
 def test_a_decided_assertion_reaches_the_solver(tmp_path: Path) -> None:
+    """``test_double``'s claim is decided: the floor applies ``double`` to 3.
+
+    ``double``'s own proof has no caller, so ``x`` has no actual and ``x + x``
+    is the operation it owes (``tree_enumerate.as_its_own_proof_states``).
+    A source that owes anything is never ``sat`` as a whole (step 8), so the
+    truthful half is read on the test function's own claims
+    (``witness_harness.claim_verdict``): the member ``double`` owes sits above
+    the test function's ``def`` (line 5) and is set aside; everything
+    ``test_double`` states or owes is read as ``prove_verdict`` reads it."""
     truthful = run_source_through_real_solver(tmp_path / "t", _TWIN.format(claim=6))
     lying = run_source_through_real_solver(tmp_path / "l", _TWIN.format(claim=7))
-    assert truthful.verdict == "sat"
+    assert truthful.verdict == "open"
+    assert truthful.prove_doc["owed"] >= 1
+    assert claim_verdict(truthful.prove_doc, claims_from_line=5) == "sat"
     assert lying.verdict == "unsat"
 
 
