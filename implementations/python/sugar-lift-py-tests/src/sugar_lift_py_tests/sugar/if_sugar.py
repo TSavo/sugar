@@ -65,12 +65,20 @@ def _ground_atomic_truth(formula):
 
 def predicate_formula(value, site):
     """The one truth-to-formula projection shared by all guarded constructs."""
+    return truth_formula(value.truth(site), value)
+
+
+def truth_formula(truth, value):
+    """The formula ``truth`` -- what ``value.truth(site)`` answered -- states:
+    the one projection ``predicate_formula`` reads every guard through.  A
+    truth that is not one plain completed value is refused here; a deferred
+    truth (a formal's, ``SymbolicValue.truth``) is the caller's to carry
+    (``IfSugar._desugar_condition``), never coerced to a formula."""
     from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         plain_completed_value,
     )
 
-    truth = value.truth(site)
     truth_value = plain_completed_value(truth)
     if truth_value is None:
         raise NotImplementedError(
@@ -283,11 +291,19 @@ class IfSugar(Sugar):
         truth) keeps the face's own value, as every condition face did before
         faces selected suites: that gap is the truth law's, not this one's.
         """
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             plain_completed_value,
         )
 
-        if plain_completed_value(value.truth(self.site)) is None:
+        truth = value.truth(self.site)
+        if isinstance(truth, NativeOperationExitCarrierV1):
+            # A deferred truth is carried (``_desugar_condition``), never
+            # taken for the face's own completion.
+            return self._desugar_condition(value, ctx)
+        if plain_completed_value(truth) is None:
             return ExitSet.completed(value)
         return self._desugar_condition(value, ctx)
 
@@ -313,7 +329,36 @@ class IfSugar(Sugar):
             else FalseBoolLiteralSugar(site=self.site)
         )
 
-    def _desugar_condition(self, condition, ctx: object = None) -> ExitSet:
+    def _desugar_condition(self, condition, ctx: object = None):
+        # Branches carry facts/effects: the guard is the condition's TRUTHINESS
+        # as a predicate. `.truth` is uniform -- a predicate condition (`if a ==
+        # b`) stands as its own formula, a bare value (`if c`) emits the Python
+        # `py.truthy(c)` relation. A ground bool (`if True:`) folds to a literal
+        # with no formula and is not lifted yet -- LOUD, never guard by nothing.
+        # A condition expression that raised never gets here: its halted arm
+        # is handed back before any branch is selected.
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+
+        truth = condition.truth(self.site)
+        if isinstance(truth, NativeOperationExitCarrierV1):
+            # The truth of a formal waits on its caller's actual: the
+            # deferred ``truth`` operation (``SymbolicValue.truth``) is
+            # carried, and each value it discharges to selects the suites
+            # through its own formula -- with no actual (the function's own
+            # proof, ``tree_enumerate.as_its_own_proof_states``) the
+            # unanswered truth's arms.  Never coerced to a formula here.
+            return truth.and_then(
+                lambda truth_value: self._select_suites(
+                    condition, predicate_formula(truth_value, self.site), ctx
+                )
+            )
+        return self._select_suites(condition, truth_formula(truth, condition), ctx)
+
+    def _select_suites(self, condition, observed_formula, ctx) -> ExitSet:
+        """The ``if`` on ``condition`` whose truth states ``observed_formula``:
+        a ground formula selects one suite, any other splits both."""
         from sugar_lift_py_tests.floor.branch_result_coordinate import (
             BranchResultAuthentication,
             branch_result_guard,
@@ -324,15 +369,6 @@ class IfSugar(Sugar):
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             reduce_block_to_exitset,
         )
-
-        # Branches carry facts/effects: the guard is the condition's TRUTHINESS
-        # as a predicate. `.truth` is uniform -- a predicate condition (`if a ==
-        # b`) stands as its own formula, a bare value (`if c`) emits the Python
-        # `py.truthy(c)` relation. A ground bool (`if True:`) folds to a literal
-        # with no formula and is not lifted yet -- LOUD, never guard by nothing.
-        # A condition expression that raised never gets here: its halted arm
-        # is handed back before any branch is selected.
-        observed_formula = predicate_formula(condition, self.site)
         from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
 
         formula = (

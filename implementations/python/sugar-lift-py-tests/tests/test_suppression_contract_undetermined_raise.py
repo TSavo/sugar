@@ -31,6 +31,7 @@ from sugar_lift_py_tests.outcome.exit_disposition import (
     exit_disposition_effect,
 )
 from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+from sugar_lift_py_tests.sugar.function_universe_sugar import halt_record
 from sugar_source_tree.panic import SugarNotWritten
 
 _SITE = "suppress_undetermined.py:3:8"
@@ -52,7 +53,8 @@ def _is_type(effect, name):
 
 
 def _halted(effect):
-    return Halted(atomic("true", []), effect, "state")
+    # A halt's state is the record it halted with (``require_halt_record``).
+    return Halted(atomic("true", []), effect, halt_record(None))
 
 
 @pytest.mark.parametrize(

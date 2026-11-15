@@ -26,6 +26,7 @@ from sugar_lift_py_tests.sugar.comprehension_sugar import (
     ComprehensionSugar,
     ComprehensionTargetSugar,
 )
+from sugar_lift_py_tests.sugar.function_universe_sugar import halt_record
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_source_tree.tree import SourceFile
 from sugar_source_tree.nodes import TargetPatternConstructionGapV1
@@ -103,8 +104,9 @@ def test_completed_element_builds_fold_without_exporting_target_binding():
 
 
 def test_halted_element_bypasses_fold_and_retains_exact_outer_state():
-    outer_state = object()
-    fabricated_state = object()
+    # A halt's state is the record it halted with (``require_halt_record``).
+    outer_state = halt_record(None)
+    fabricated_state = halt_record(None)
     effect = ExpectationNotMetEffect("comprehension-element", "test-site")
     incoming = ExitSet((Halted(true_guard(), effect, outer_state),))
 
