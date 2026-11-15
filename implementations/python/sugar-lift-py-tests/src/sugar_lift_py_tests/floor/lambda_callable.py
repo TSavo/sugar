@@ -484,8 +484,16 @@ def _after_labels(
     - ``("cell", name)``: each closure cell the call carries, bound to the
       contract input ``cell:<name>``, where the callee declares it
       ``nonlocal`` (it may rebind it) or it holds a value a call may
-      change."""
-    from sugar_lift_py_tests.contract_input import CELL_INPUT, input_formal
+      change;
+    - ``("global", name)``: each module global the callee declares
+      ``global`` (it may rebind it), bound to the contract formal
+      ``global:<name>`` its post states the global after the call over
+      (``FunctionDef._cells_where_the_body_ends``)."""
+    from sugar_lift_py_tests.contract_input import (
+        CELL_INPUT,
+        GLOBAL_INPUT,
+        input_formal,
+    )
     from sugar_lift_py_tests.sugar.builtin_container_call_sugar import _immutable
 
     labels = []
@@ -502,6 +510,8 @@ def _after_labels(
     for name, _cid, value in captured:
         if name in rebound or not _immutable(value):
             labels.append((("cell", name), input_formal(CELL_INPUT, name)))
+    for name in _declared_global(symbol_definition):
+        labels.append((("global", name), input_formal(GLOBAL_INPUT, name)))
     return tuple(labels)
 
 
@@ -518,6 +528,26 @@ def _declared_nonlocal(definition) -> frozenset:
     )
     return frozenset(
         symbol.get_name() for symbol in table.get_symbols() if symbol.is_nonlocal()
+    )
+
+
+def _declared_global(definition) -> tuple:
+    """The names ``definition`` (a ``def``) declares ``global``, in name
+    order, read off CPython's symtable; none for any other definition (a
+    lambda declares none)."""
+    from sugar_source_tree.nodes import AsyncFunctionDef, FunctionDef
+
+    if not isinstance(definition, (FunctionDef, AsyncFunctionDef)):
+        return ()
+    table = definition.unit.function_symtable(
+        definition.name, definition.line_col_span().start_line
+    )
+    return tuple(
+        sorted(
+            symbol.get_name()
+            for symbol in table.get_symbols()
+            if symbol.is_declared_global()
+        )
     )
 
 

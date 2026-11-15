@@ -1891,8 +1891,9 @@ def _call_slot(kind: str, name) -> tuple:
     object (``_rebind``'s fourth target member, ``(key, slot)``):
     ``("arg", i)`` its ``i``-th positional actual, ``("kw", name)`` a
     keyword actual, ``("cell", name)`` the closure cell the callee reads or
-    declares ``nonlocal``.  The callee's one binder binds each to a formal of
-    its contract (the parameter, or ``cell:<name>``), which
+    declares ``nonlocal``, ``("global", name)`` a module global it declares
+    ``global``.  The callee's one binder binds each to a formal of its
+    contract (the parameter, ``cell:<name>`` or ``global:<name>``), which
     ``definition_edge_call`` records on the call's completed value
     (``CallSiteValue.after_labels``) under the same slot."""
     return (kind, name)
@@ -1903,11 +1904,12 @@ def _names_its_slot(via, name, exact) -> bool:
     bound to the object an actual handed the callee (``exact``), whose state
     after the call is the formal's; for a closure cell, the cell itself
     (``name`` is the cell's), which the callee may rebind -- an alias of the
-    object it held keeps that object."""
+    object it held keeps that object; for a module global the callee
+    declares ``global``, the global's own name likewise."""
     if via is None or name not in exact:
         return False
     _key, slot = via
-    if slot[0] == "cell":
+    if slot[0] in ("cell", "global"):
         return slot[1] == name
     return True
 
@@ -3496,10 +3498,19 @@ def _ambient_targets(statement, call, scope, ambient=None):
     An operation handed the frame's own namespace reaches every name of the
     frame as well (``_frame_targets``), whether or not it runs code: a
     builtin container's own method on a ``locals()`` mapping's member
-    changes the local's object as much as code ``exec`` runs does."""
+    changes the local's object as much as code ``exec`` runs does.
+
+    A source function named at the call rebinds each module global it, or
+    a source function it calls by name, declares ``global``: every such
+    global the caller's frame reads is unknown after the call whatever it
+    held, or what the callee's contract states of it (``_global_targets``,
+    #7757 step 7)."""
     from .nodes import Call
 
-    frame = _frame_targets(statement, call, scope)
+    frame = [
+        *_frame_targets(statement, call, scope),
+        *_global_targets(statement, call, scope),
+    ]
     subjects = reach = None
     if not isinstance(call, Call):
         # An operation no source function is named at: its operands' values
@@ -3570,6 +3581,87 @@ def _cell_slots(call, reach, scope) -> dict:
     return {
         _object_key(cell.node): (key, _call_slot("cell", cell.name)) for cell in direct
     }
+
+
+def _global_targets(statement, call, scope):
+    """``_rebind``'s targets for the module globals a call of a source
+    function may rebind: each global the callee, or a source function it
+    calls by name (``_closure``), declares ``global`` that the caller's
+    frame reads (``scope`` binds it).  Each is unknown after the call
+    whatever it held (``rules`` None).  The ones the callee declares itself
+    carry its slot ``("global", name)`` under the call's key
+    (``_after_call_key``): on the call's completed face the global reads
+    ``python:after(<call result>, "global:<name>")``, which the callee's
+    contract states (``FunctionDef._cells_where_the_body_ends``, #7757 step
+    7).
+
+    Only a statement a function runs: the module body threads its own
+    globals for its readers (``SourceUnit.module_binding_states``), where a
+    global some function rebinds is undecided (``UNDECIDED_MODULE_BINDING``).
+    Empty for any other operation, and where no function of the module
+    declares a global the frame reads."""
+    from .nodes import AsyncFunctionDef, Call, FunctionDef
+
+    if not isinstance(call, Call):
+        return []
+    unit = statement.unit
+    module_table = getattr(unit, "module_symtable", None)
+    if module_table is None:
+        return []
+    declared = _declared_globals_below(module_table)
+    if not any(isinstance(name, str) and name in declared for name in scope):
+        return []
+    owner = unit.innermost_function_containing(statement.line_col_span())
+    if not isinstance(owner, (FunctionDef, AsyncFunctionDef)):
+        return []
+    definition = _source_callee(call, scope)
+    if definition is None:
+        return []
+    functions, _frees, _closed = _closure(definition)
+    key = None
+    targets = []
+    for function in functions:
+        table = function.unit.function_symtable(
+            function.name, function.line_col_span().start_line
+        )
+        for name in sorted(_declared_globals_of(table)):
+            if name not in scope:
+                continue
+            node = _read_of(scope[name])
+            if node is None or getattr(node, "kind", None) == "Name":
+                continue
+            if function is definition:
+                if key is None:
+                    key = _after_call_key(call, scope)
+                if key is not None:
+                    slot = (key, _call_slot("global", name))
+                    targets.append((node, None, None, slot))
+                    continue
+            targets.append((node, None, None))
+    return targets
+
+
+@functools.lru_cache(maxsize=4096)
+def _declared_globals_of(table) -> frozenset:
+    """The names CPython's symtable ``table`` itself declares ``global``."""
+    return frozenset(
+        symbol.get_name()
+        for symbol in table.get_symbols()
+        if symbol.is_declared_global()
+    )
+
+
+@functools.lru_cache(maxsize=64)
+def _declared_globals_below(table) -> frozenset:
+    """The names any scope below CPython's symtable ``table`` declares
+    ``global``."""
+    names = set()
+    pending = list(table.get_children())
+    while pending:
+        current = pending.pop()
+        names.update(_declared_globals_of(current))
+        pending.extend(current.get_children())
+    return frozenset(names)
 
 
 def _frame_targets(statement, call, scope):

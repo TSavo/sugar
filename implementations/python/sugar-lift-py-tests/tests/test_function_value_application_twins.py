@@ -109,6 +109,20 @@ def test_count():
     assert n == {claim}
 """
 
+_GLOBAL_REBOUND = """\
+G = 0
+
+
+def reset():
+    global G
+    G = 5
+
+
+def test_global():
+    reset()
+    assert G == {claim}
+"""
+
 _MODULE_DEF_DEFAULT = """\
 def f(a=3):
     return a
@@ -140,8 +154,11 @@ _TWINS = {
 # rebinds (``python:after(out, "cell:n")``, #7757 step 7).  After an early
 # ``return`` the arm that ran on states it; the ordering ``n > 5`` over the
 # cell's ``0`` is decided at prove (#8812), so the ``return`` arm is not
-# taken.
+# taken.  A module global the callee declares ``global`` and rebinds is
+# stated the same way (``python:after(out, "global:G")``), and the caller's
+# read of the global after the call is that term, keyed on the call.
 _STATED_BY_THE_CALLEE = {
+    "global-rebound": (_GLOBAL_REBOUND, "5", "0"),
     "nonlocal-rebound": (_NONLOCAL_REBOUND_THROUGH_THE_VALUE, "1", "0"),
     "direct-nonlocal-rebound": (_DIRECT_NONLOCAL_REBOUND, "1", "0"),
     "nonlocal-rebound-after-an-early-return": (
