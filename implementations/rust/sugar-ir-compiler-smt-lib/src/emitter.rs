@@ -3894,6 +3894,12 @@ fn py_decided_operation(name: &str, args: &[Term]) -> Option<PyDecided> {
         ) => {
             let left = py_decided(left_term)?;
             let right = py_decided(right_term)?;
+            // `x OP= y` (the kit spells the operator `OP=`,
+            // `_INPLACE_OPERATOR_COORDINATE`) over a builtin `int` or `str`:
+            // neither type defines an in-place method, so Python runs the
+            // binary operator (#7757 step 7). Over any other operand the
+            // term stays the uninterpreted application it was.
+            let operator = operator.strip_suffix('=').unwrap_or(operator.as_str());
             let (ty, law, defined, value) =
                 py_binary(operator, &left, &right, left_term, right_term)?;
             Some(PyDecided::operation(
