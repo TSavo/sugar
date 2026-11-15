@@ -104,7 +104,12 @@ def test_joined_str_names_unground_interpolation_as_an_fstring_coordinate(
     from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temporal
 
     path = Path(tmp_path) / "diag.py"
+    # ``unknown`` must be a name something may bind, or its read is not an
+    # undecided operand at all: a name nothing in the module binds halts with
+    # ``NameError`` (``NameSugar``), and the f-string never completes.  A star
+    # import the lifter cannot read may bind it, so it is the free operand.
     path.write_text(
+        "from elsewhere import *\n"
         'result = f"DID NOT RAISE {unknown.__name__}"\n',
         encoding="utf-8",
     )
