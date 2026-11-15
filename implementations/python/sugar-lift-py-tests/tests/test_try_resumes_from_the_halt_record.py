@@ -293,9 +293,9 @@ def test_a_handler_reads_what_the_callee_did_to_the_callers_list() -> None:
 
 
 def test_a_handler_reads_the_callers_list_wherever_the_call_sits() -> None:
-    # The call is an assignment's value, not a statement alone: nothing the
-    # statement evaluates before ``g(acc)`` can halt, so the halt leaving
-    # ``g`` carries ``acc`` as ``g`` left it (``_halts_before``), ``[1]``.
+    # The call is an assignment's value, not a statement alone: the halt
+    # leaving ``g`` carries ``acc`` as ``g`` left it, ``[1]``, wherever the
+    # call sits (``call_site_value.caller_visible_values``).
     outcome = function_universe_outcome(
         _function(
             "def f():\n"
@@ -479,9 +479,9 @@ def test_a_nested_nonlocal_rebind_is_never_the_old_value() -> None:
 def test_a_nested_nonlocal_increment_is_read_by_the_enclosing_function() -> None:
     # ``bump`` reads and writes the enclosing ``n`` through its cell: the call
     # binds the cell's value at the call (``Call._closure_cells``), the body
-    # writes it, and the enclosing function reads the write after the call
-    # (``source_helper_actual_states``): ``n + 1``, never the ``4`` bound
-    # before and never a refusal.
+    # writes it, and the enclosing function reads the write the call carried
+    # out of the frame (``call_site_value.caller_visible_values``): ``n + 1``,
+    # never the ``4`` bound before and never a refusal.
     outcome = function_universe_outcome(
         _function(
             "def f():\n"

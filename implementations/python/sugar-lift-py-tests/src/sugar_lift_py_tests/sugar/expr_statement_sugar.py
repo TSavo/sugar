@@ -115,12 +115,17 @@ def record_statement_value(value, ctx):
         # No completion kept: apply the call the one way, through
         # ``producer_outcome`` (#7757 entry 6) -- native operations
         # discharge against the bound actuals and the body's raises are
-        # the Call's own.  Each completed face is the Call carrying the
-        # stores its body made; the statement lays them in its record.
+        # the Call's own.  Each completed face is the Call carrying what its
+        # body did to what this frame sees (``caller_visible_values``): the
+        # statement lays the stores in its record, and the rest of the block
+        # reads every other write the call carried, as a walrus's.
         def applied(result):
-            _walrus, more = caller_stores_of(peel_walrus_binds(result)[0])
+            writes, more = caller_stores_of(peel_walrus_binds(result)[0])
             return ExitSet.completed(
-                BlockValue((recorded, *stores, *more), can_fall_through=True)
+                BlockValue(
+                    (carry_walrus_binds(writes, recorded), *stores, *more),
+                    can_fall_through=True,
+                )
             )
 
         return value.producer_outcome(ctx).and_then(applied)

@@ -1035,16 +1035,24 @@ class PathAfterCallSugar(ConstructedTermSugar):
 
 @dataclass(frozen=True)
 class SourceCallActualAfterSugar(ConstructedTermSugar):
-    """An actual after a source helper's cited stores: their one total value.
+    """An object a followed callee shares with its caller, read after the
+    call: the value the call carried out of the callee's frame for it
+    (``call_site_value.caller_visible_values``), bound under ``evaluation``
+    (the call's key, ``nodes.carried_evaluation``, projected by the object's
+    label) on the arm the call left by.  Never a key of the callee's frame,
+    and never the object as it was before the call: what the callee left
+    undecided the call carried as an unknown minted at the call.
 
-    The state re-reads the actual and the helper's cited mutations of it. It
-    is kept only when it evaluates to one plain completed value; anything
-    that could halt, or that the law left undecided, is an unknown minted at
-    the call -- never the pre-call contents and never a second halt."""
+    ``prior`` (set only for a read at a halt inside the statement that holds
+    the call, ``container_mutation.at_halt_read``) is the object as the
+    statement found it: where the halt's record holds no such key, the call
+    never ran before the halt.  Any other read whose key is unbound is
+    refused by name."""
 
-    state: Sugar
+    evaluation: str
     label: str
     site: object = dataclass_field(compare=False)
+    prior: Sugar | None = None
 
     @classmethod
     def witnesses(cls):
@@ -1060,23 +1068,40 @@ class SourceCallActualAfterSugar(ConstructedTermSugar):
             (
                 self.occurrence_term(owner=owner),
                 str_const(self.label),
-                self.state.to_term(owner=owner),
+                str_const(self.evaluation),
             ),
             symbol_kind="coordinate",
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
-        from sugar_lift_py_tests.floor.floor_value import FloorValue
-        from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            plain_completed_value,
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
+            evaluation_read_here,
         )
 
-        outcome = self.state.desugar(ctx)
-        value = plain_completed_value(outcome)
-        if (
-            value is not None
-            and value.follow_rest().continues
-            and isinstance(value, FloorValue)
-        ):
-            return outcome
-        return ExitSet.completed(_unknown_after(self.site, self.label))
+        temporal = getattr(ctx, "temporal", None) if ctx is not None else None
+        key = (
+            self.evaluation
+            if temporal is None
+            else evaluation_read_here(temporal, self.evaluation)
+        )
+        carried = temporal.value_read(key) if temporal is not None else None
+        if carried is not None:
+            return ExitSet.completed(carried)
+        if self.prior is not None and temporal is not None:
+            return self.prior.desugar(ctx)
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        construction_panic_gap(
+            owner="SourceCallActualAfterSugar",
+            blame=self.site,
+            observed=(
+                f"read of `{self.label}` after a followed call with the value "
+                f"the call carries for it ({key}) unbound"
+            ),
+            requested="the value the call carried out of its callee's frame",
+            fix=(
+                "reduce the read after the call in the frame that ran it; the "
+                "call carries each object its callee changed out on every arm "
+                "(call_site_value.caller_visible_values)"
+            ),
+        )

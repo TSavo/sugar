@@ -1875,28 +1875,32 @@ class CallSiteValue(FloorValue):
             return retained
 
         # What the callee did to objects the caller can see is the caller's on
-        # both arms, through the one projection (``caller_visible_stores``),
-        # wherever the call sits.  A completed arm carries the stores its body
-        # made on the Call's value (``CallerStoreValue``) to the statement
+        # both arms, through the one projection (``caller_visible_values``),
+        # wherever the call sits: the receiver field stores its body made,
+        # and what its frame left of every other object it shares with the
+        # caller (its actuals, the module objects and cells it reads), each
+        # a value read in the callee's frame where the arm left it, carried
+        # under the call's key.  A completed arm carries them on the Call's
+        # value (``CallerStoreValue``, a walrus's write) to the statement
         # that evaluates the call, which applies them as it applies a
         # walrus's write (an assignment's value, an argument, a condition) or
-        # lays them in its record (``ExprStatementSugar``); a halt carries the
-        # stores its record holds into the caller's record here
-        # (``at_the_call``).  The callee's locals stay behind on both.
+        # lays the stores in its record (``ExprStatementSugar``); a halt
+        # carries them into the caller's record here (``at_the_call``).  The
+        # callee's locals and keys stay behind on both.
         carries = carries_its_stores_to_the_caller(self)
 
         def completed_at_the_call(value):
             from sugar_lift_py_tests.floor.block_value import BlockValue
             from sugar_lift_py_tests.floor.named_expression_value import (
-                carry_caller_stores,
+                carry_walrus_binds,
             )
 
-            stores = (
-                caller_visible_stores(value.statements)
+            carried = (
+                caller_visible_values(value.statements, self)
                 if carries and isinstance(value, BlockValue)
                 else ()
             )
-            return ExitSet.completed(carry_caller_stores(stores, retaining(value)))
+            return ExitSet.completed(carry_walrus_binds(carried, retaining(value)))
 
         if isinstance(outcome, ExitSet) and outcome.completed_value() is not None:
             # A completed body seats its value on the Call.  A raise is never
@@ -1936,11 +1940,13 @@ class CallSiteValue(FloorValue):
                 if self.site is None
                 else call_frame_path(self.site, self.occurrence_path)
             )
-            stores = (
-                caller_visible_stores(_record_entries(halt.state)) if carries else ()
+            carried = (
+                caller_visible_values(_record_entries(halt.state), self)
+                if carries
+                else ()
             )
             return ExitSet.halted(
-                call_owned(halt.effect, frame), state=at_the_call(ctx, stores)
+                call_owned(halt.effect, frame), state=at_the_call(ctx, carried)
             )
 
         return outcome.sequence(completed_at_the_call, consume=left_the_call)
@@ -1967,9 +1973,9 @@ def caller_visible_stores(entries) -> tuple:
     unconditional: a folded ``isinstance(match, str)`` still stamps the tail
     with ``true_guard``, and that is not a branch.  A store under a real
     branch guard stays in the callee's nested record; it is never flattened
-    onto the receiver.  The one projection of what a callee did to objects
-    its caller sees, for a completed body and for a halt, at the call
-    (``CallSiteValue.project_producer_outcome``)."""
+    onto the receiver.  The stores of the one projection of what a callee
+    did to objects its caller sees, for a completed body and for a halt, at
+    the call (``caller_visible_values``)."""
     from sugar_lift_py_tests.floor.guarded_receiver_field_store_value import (
         GuardedReceiverFieldStoreValue,
     )
@@ -1987,6 +1993,63 @@ def caller_visible_stores(entries) -> tuple:
         elif isinstance(entry, ReceiverFieldStoreValue):
             stores.append(entry)
     return tuple(stores)
+
+
+def caller_visible_values(entries, call) -> tuple:
+    """What ``call``'s callee did to objects its caller sees, read off the
+    record one arm of its body left by (``entries``), as the writes the call
+    carries to its caller on that arm: THE one projection of a callee's
+    effects, for a completed body and for a halt, wherever the call sits
+    (``CallSiteValue.project_producer_outcome``).
+
+    - Each unconditional receiver field store (``caller_visible_stores``),
+      as a callee store (``CallerStoreValue``): it advances every binding of
+      the caller's that names its receiver.
+    - What the callee's frame left of each other object it shares with the
+      caller -- an actual, a module object or a cell its body changed
+      (``SourceVisibleFunctionBodySugar.exit_reads``) -- as a write of the
+      value its own frame read there (``CallerVisibleStateValue``) under the
+      call's key projected by the object's label
+      (``nodes.carried_evaluation``, ``projection_key``): every name of the
+      caller bound to the object reads that key after the call
+      (``SourceCallActualAfterSugar``).  Where the callee's frame did not
+      decide it on this arm, the value is an unknown minted at the call,
+      never the object as it was before the call.  The callee's own keys
+      never reach the caller."""
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        CallerStoreValue,
+        NamedExpressionValue,
+    )
+    from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+        _unknown_after,
+    )
+    from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
+        CallerVisibleStateValue,
+    )
+    from sugar_lift_py_tests.temporal.temporal_context import projection_key
+    from sugar_source_tree.nodes import Call, carried_evaluation
+
+    carried = [CallerStoreValue("", store) for store in caller_visible_stores(entries)]
+    labels = tuple(
+        label for label, _read, _keys in getattr(call.body, "exit_reads", ()) or ()
+    )
+    node = getattr(call.site, "node", None)
+    if not labels or not isinstance(node, Call):
+        return tuple(carried)
+    left = {
+        entry.label: entry.value
+        for entry in entries
+        if isinstance(entry, CallerVisibleStateValue) and entry.frame is call.body
+    }
+    key = carried_evaluation(node)
+    for label in labels:
+        value = left.get(label)
+        if value is None:
+            value = _unknown_after(call.site, label)
+        carried.append(
+            NamedExpressionValue(label, value, evaluation=projection_key(key, label))
+        )
+    return tuple(carried)
 
 
 def _unconditional(guard) -> bool:
@@ -2156,7 +2219,7 @@ def _record_entries(state) -> tuple:
     return ()
 
 
-def at_the_call(ctx, stores=()):
+def at_the_call(ctx, carried=()):
     """The state a call's halt carries once it leaves the callee (#7757).
 
     A halt raised inside a called function reaches its caller at the call:
@@ -2170,20 +2233,24 @@ def at_the_call(ctx, stores=()):
     callee owes (``ExitSet.sequence``).
 
     What the callee did before its halt to an object the caller can see is
-    not rolled back: ``stores`` (``caller_visible_stores``) are the record's
-    entries, and each advances the caller's context
-    (``ReceiverFieldStoreValue.extend_scope``), as a completed call's value
-    carries them to its statement (``CallerStoreValue``).
+    not rolled back: ``carried`` (``caller_visible_values``) are the writes
+    the call carries on this arm, each applied to the caller's context
+    (``bind_walrus_binds``) as a completed call's value carries them to its
+    statement; the receiver field stores among them are the record's
+    entries.
 
     Every halt a call publishes takes it, once, where it crosses the call
     boundary: the body's (``CallSiteValue.project_producer_outcome``) and,
     for a class call, the class statement's it reads first
     (``ClassConstructorBodySugar.enter``)."""
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        bind_walrus_binds,
+        caller_stores_of,
+    )
     from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
-    context = ctx
-    for store in stores:
-        context = store.extend_scope(context)
+    _writes, stores = caller_stores_of(tuple(carried))
+    context = bind_walrus_binds(tuple(carried), ctx)
     return _ReducedBlock(tuple(stores), True, (), context=context)
 
 
