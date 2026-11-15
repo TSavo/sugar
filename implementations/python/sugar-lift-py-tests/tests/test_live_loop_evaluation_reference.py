@@ -116,6 +116,17 @@ def _function(source: str) -> FunctionDef:
     )
 
 
+# A concrete iterable the loop runs item by item: ``tuple((1, 2))`` is no
+# display at construction (``For._concrete_elements`` unrolls only a display,
+# a key holding one, and ``range``), so the ``for`` stays live; at the
+# reduction the builtin over its ground operand is the cited fold's
+# ``(1, 2)``, so each item is concrete.  These tests used a same-file
+# ``g()`` returning ``(1, 2)`` until #7757 steps 5 and 6 (#8705): a same-file
+# call is its coordinate and edge, joined at prove, so a ``for`` over its
+# result is the one undecided iteration (#8775) and runs as the recurrence.
+_LIVE_ITEMS = "tuple((1, 2))"
+
+
 def _item(index: int) -> str:
     return loop_iteration_segment(LOOP, index)
 
@@ -562,16 +573,16 @@ def test_a_live_while_runs_its_items_through_the_header() -> None:
 def _first_bound(items: str) -> str:
     # ``y`` is first bound in the loop: an item that takes the ``else`` arm
     # reads what an earlier item wrote, and ``z`` is read after the loop.
+    # ``tuple(<items>)`` is concrete at the reduction and no display at
+    # construction, so the loop is live and runs item by item (_LIVE_ITEMS).
     return (
         "def f():\n"
-        "    for x in g():\n"
+        f"    for x in tuple({items}):\n"
         "        if x:\n"
         "            y = x\n"
         "        else:\n"
         "            z = y\n"
         "    return z\n"
-        "def g():\n"
-        f"    return {items}\n"
     )
 
 
@@ -746,7 +757,7 @@ def _flattened(values) -> list:
 def test_a_break_under_a_symbolic_if_publishes_on_both_exits() -> None:
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
-    # ``g()`` is concrete, so the loop runs item by item; ``x == stop`` is
+    # ``tuple((1, 2))`` is concrete, so the loop runs item by item; ``x == stop`` is
     # symbolic, so each item may leave by the ``break`` or go on.  ``carried``
     # is carried under its binding coordinate: the read after the loop is a
     # ``LoopBindingRef`` on each face (``BreakExit``, ``NormalExhaustion``),
@@ -756,13 +767,11 @@ def test_a_break_under_a_symbolic_if_publishes_on_both_exits() -> None:
     function = _function(
         "def f(stop):\n"
         "    carried = 0\n"
-        "    for x in g():\n"
+        "    for x in tuple((1, 2)):\n"
         "        if x == stop:\n"
         "            break\n"
         "        carried = x\n"
         "    return carried\n"
-        "def g():\n"
-        "    return (1, 2)\n"
     )
     outcome = function_universe_outcome(function)
     returned = _flattened(_returned_values(outcome))
@@ -839,7 +848,6 @@ def test_two_loops_writing_one_name_publish_under_their_own_keys() -> None:
     assert first_key != second_key
 
 
-_HELPERS = "def g():\n    return (1, 2)\ndef h():\n    return (7, 8)\n"
 
 
 def test_a_loop_in_an_if_after_a_loop_is_read_in_the_branch() -> None:
@@ -851,13 +859,13 @@ def test_a_loop_in_an_if_after_a_loop_is_read_in_the_branch() -> None:
     function = _function(
         "def f(c):\n"
         "    x = 0\n"
-        "    for a in g():\n"
+        "    for a in tuple((1, 2)):\n"
         "        x = a\n"
         "    if c:\n"
-        "        for b in h():\n"
+        "        for b in tuple((7, 8)):\n"
         "            x = b\n"
         "        return x\n"
-        "    return 5\n" + _HELPERS
+        "    return 5\n"
     )
     returned = _flattened(_returned_values(function_universe_outcome(function)))
     assert TermValue(8) in returned, returned
@@ -874,12 +882,12 @@ def test_a_loop_in_an_if_after_a_loop_is_read_after_the_if() -> None:
     function = _function(
         "def f(c):\n"
         "    x = 0\n"
-        "    for a in g():\n"
+        "    for a in tuple((1, 2)):\n"
         "        x = a\n"
         "    if c:\n"
-        "        for b in h():\n"
+        "        for b in tuple((7, 8)):\n"
         "            x = b\n"
-        "    return x\n" + _HELPERS
+        "    return x\n"
     )
     returned = _flattened(_returned_values(function_universe_outcome(function)))
     assert TermValue(8) in returned, returned
@@ -898,12 +906,12 @@ def test_a_loop_in_each_if_arm_is_read_after_the_if() -> None:
         "def f(c):\n"
         "    x = 0\n"
         "    if c:\n"
-        "        for a in g():\n"
+        "        for a in tuple((1, 2)):\n"
         "            x = a\n"
         "    else:\n"
-        "        for b in h():\n"
+        "        for b in tuple((7, 8)):\n"
         "            x = b\n"
-        "    return x\n" + _HELPERS
+        "    return x\n"
     )
     first, second = _loops_in_arms(function)
     assert first.post_binding_keys != second.post_binding_keys
@@ -922,16 +930,16 @@ def test_a_loop_left_by_different_paths_in_an_if_is_read_after_the_if() -> None:
     # different value on each path.  The ``if`` carries each path's value
     # under that path's guard, so the read after the ``if`` is 1 or 2 on the
     # arm the loop ran and 5 on the other: never refused, never a value no
-    # path left.  (``g()`` is concrete and runs item by item; a literal
+    # path left.  (``tuple((1, 2))`` is concrete and runs item by item; a literal
     # iterable is unrolled before any loop key is minted.)
     function = _function(
         "def f(c, d):\n"
         "    x = 5\n"
         "    if c:\n"
-        "        for x in g():\n"
+        "        for x in tuple((1, 2)):\n"
         "            if x == d:\n"
         "                break\n"
-        "    return x\n" + _HELPERS
+        "    return x\n"
     )
     values = _returned_values(function_universe_outcome(function))
     assert any(isinstance(value, GuardedValue) for value in values), values
@@ -1141,7 +1149,7 @@ def test_an_exit_in_the_symbolic_item_reads_a_leaf_of_its_unpack() -> None:
         [ctor("python:unpack.destructure", [item, num(2)], symbol_kind="coordinate")],
     )
     unpack_halts = [exit_ for exit_ in outcome.exits if _is_unpack_halt(exit_)]
-    assert [exit_.guard for exit_ in unpack_halts] == [not_(completes)]
+    _assert_one_unpack_halt_on_the_iterations_completed_face(unpack_halts, completes)
 
 
 def _is_unpack_halt(exit_) -> bool:
@@ -1151,6 +1159,25 @@ def _is_unpack_halt(exit_) -> bool:
         and isinstance(exit_.effect, UndeterminedRaiseEffect)
         and str(exit_.effect.producer_node_owner).endswith(".unpack")
     )
+
+
+def _assert_one_unpack_halt_on_the_iterations_completed_face(
+    unpack_halts, completes
+) -> None:
+    """One unpack halt, under ``not completes``, on the face where ``iter``
+    over the symbolic iterable completed.  A ``for`` over an iterable the
+    reduction has not decided submits the one two-faced undecided iteration
+    (``FloorValue.undecided_iteration``) and its recurrence follows the
+    completed face, so every arm of the item, the unpack's halt among them,
+    holds ``python:iter.completes`` beside its own guard; the iteration's own
+    halt is another arm.  Never the unpack's halt dropped, and never one that
+    stands where the iteration halted."""
+    (halt,) = unpack_halts
+    held = _subformulas(halt.guard)
+    assert not_(completes) in held, halt.guard
+    assert any(
+        getattr(formula, "name", None) == "python:iter.completes" for formula in held
+    ), halt.guard
 
 
 _SYMBOLIC_UNPACK_NO_EXIT = (
@@ -1187,18 +1214,16 @@ def test_a_symbolic_item_with_no_exit_still_unpacks_its_target() -> None:
         [ctor("python:unpack.destructure", [item, num(2)], symbol_kind="coordinate")],
     )
     unpack_halts = [exit_ for exit_ in outcome.exits if _is_unpack_halt(exit_)]
-    assert [exit_.guard for exit_ in unpack_halts] == [not_(completes)]
+    _assert_one_unpack_halt_on_the_iterations_completed_face(unpack_halts, completes)
     assert any(isinstance(exit_, Completed) for exit_ in outcome.exits)
 
 
 _INNER_LOOP_EXIT = (
     "def f(xs):\n"
     "    for x in xs:\n"
-    "        for y in g():\n"
+    "        for y in tuple((1, 2)):\n"
     "            pass\n"
     "        return y\n"
-    "def g():\n"
-    "    return (1, 2)\n"
 )
 
 
@@ -1207,7 +1232,7 @@ def test_an_exit_in_the_symbolic_item_reads_an_inner_loops_publication() -> None
 
     # ``xs`` is symbolic, so the outer loop runs as its recurrence and its
     # body runs once, in its one symbolic item.  The inner loop ahead of
-    # ``return y`` runs there first, over ``g()``'s two items, and publishes
+    # ``return y`` runs there first, over its two items, and publishes
     # ``y`` through its post-loop key with its write slot decided, so the
     # exit's read decides: the last item, 2.  It is never refused for want
     # of an inner loop that did not run.
@@ -1517,8 +1542,6 @@ _RETURN_FROM_AN_ITEM = (
     "        if x == c:\n"
     "            return x\n"
     "    return 0\n"
-    "def g():\n"
-    "    return (1, 2)\n"
 )
 
 
@@ -1534,7 +1557,7 @@ def test_a_concrete_items_guarded_return_guards_every_later_item() -> None:
     # another: the item's guarded return never stands beside a later
     # unguarded ``return 0``.
     outcome = function_universe_outcome(
-        _function(_RETURN_FROM_AN_ITEM.format(params="c", iterable="g()"))
+        _function(_RETURN_FROM_AN_ITEM.format(params="c", iterable=_LIVE_ITEMS))
     )
     arms = _returns_by_arm(outcome)
     assert arms, outcome
@@ -1676,20 +1699,20 @@ _RETURN_FROM_A_LOOPS_ELSE = (
     "        if c:\n"
     "            return 1\n"
     "    return 0\n"
-    "def g():\n"
-    "    return (1, 2)\n"
 )
 
 
 def test_a_concrete_loops_else_guarded_return_guards_the_statement_after() -> None:
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
-    # ``for x in g(): pass`` then ``else: if c: return 1``, then ``return
+    # ``for x in tuple((1, 2)): pass`` then ``else: if c: return 1``, then ``return
     # 0``: the loop leaves by the ``else``'s return under ``c`` and goes on
     # to ``return 0`` only under ``not c`` -- one return per arm.
     _one_return_per_arm_after_a_guarded_return(
         function_universe_outcome(
-            _function(_RETURN_FROM_A_LOOPS_ELSE.format(params="c", iterable="g()"))
+            _function(
+                _RETURN_FROM_A_LOOPS_ELSE.format(params="c", iterable=_LIVE_ITEMS)
+            )
         )
     )
 
@@ -1750,13 +1773,11 @@ def _append_then(control: str, items: str) -> str:
     return (
         "def f():\n"
         "    acc = []\n"
-        "    for x in g():\n"
+        f"    for x in tuple({items}):\n"
         "        acc.append(x)\n"
         "        if x:\n"
         f"            {control}\n"
         "    return acc\n"
-        "def g():\n"
-        f"    return {items}\n"
     )
 
 
@@ -1778,13 +1799,13 @@ def test_a_concrete_items_append_before_its_loop_control_leaves_with_it(
     assert _holds(records, fresh(ListValue, (TermValue(1),))), records
 
 
-@pytest.mark.parametrize("iterable", ["(1, 2)", "g()"])
+@pytest.mark.parametrize("iterable", ["(1, 2)", _LIVE_ITEMS])
 def test_each_item_appends_to_the_list_the_item_before_it_left(iterable: str) -> None:
     from sugar_lift_py_tests.floor.list_value import ListValue
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
     # ``acc.append(x)`` assigns no name, yet it writes ``acc`` to the list
-    # after the append under its key, so the live loop (``g()``) carries it:
+    # after the append under its key, so the live loop (``tuple((1, 2))``) carries it:
     # item 1 appends 2 to the list item 0 left, ``[1, 2]`` as Python has it,
     # never to the pre-loop list (``[2]``).  The literal is unrolled and
     # reads the same.
@@ -1794,8 +1815,6 @@ def test_each_item_appends_to_the_list_the_item_before_it_left(iterable: str) ->
         f"    for x in {iterable}:\n"
         "        acc.append(x)\n"
         "    return acc\n"
-        "def g():\n"
-        "    return (1, 2)\n"
     )
     returned = _flattened(_returned_values(function_universe_outcome(function)))
     assert fresh(ListValue, (TermValue(1), TermValue(2))) in returned, returned
@@ -1808,11 +1827,9 @@ def test_a_bare_mutation_statement_writes_its_receiver_under_a_key() -> None:
     runtime = _live_runtime(
         "def f():\n"
         "    acc = []\n"
-        "    for x in g():\n"
+        "    for x in tuple((1, 2)):\n"
         "        acc.append(x)\n"
         "    return acc\n"
-        "def g():\n"
-        "    return (1, 2)\n"
     )
     assert "acc" in runtime.carried_names
     (header, writes, _else_writes) = runtime.carried_evaluations[
@@ -1836,26 +1853,34 @@ _FIELD_STORE_LOOP = (
     "    return o.n\n"
     "class C:\n"
     "    pass\n"
-    "def g():\n"
-    "    return (1, 2)\n"
 )
 
 
-@pytest.mark.parametrize("iterable", ["(1, 2)", "g()"])
+@pytest.mark.parametrize("iterable", ["(1, 2)", _LIVE_ITEMS])
 def test_each_item_stores_into_the_object_the_item_before_it_left(
     iterable: str,
 ) -> None:
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
     # ``o.n = i`` assigns no name, yet it writes ``o`` to the object after
-    # the store under its key, so the live loop (``g()``) carries it: the
-    # read after the loop is the object the last item left, ``o.n == 2`` as
-    # Python has it, never the pre-loop object.  The literal is unrolled and
-    # reads the same.
+    # the store under its key, so the live loop carries it: the read after
+    # the loop is the object the last item left, never the pre-loop object
+    # nor an earlier item's.  The literal is unrolled and reads the same.
+    #
+    # ``o`` is a same-file class call's result: since #7757 steps 5 and 6
+    # (#8705, #8738) it is the call's coordinate and edge, and since #8746 a
+    # store on it leaves the object after code this read does not see
+    # (``python:receiver_after_call``): its field is not decided here until
+    # the post-call object state is stated (#7757 step 7).  So ``o.n`` is
+    # ``2`` (Python's answer) where it is decided and undecided otherwise --
+    # never the ``1`` an earlier item stored.
     function = _function(_FIELD_STORE_LOOP.format(iterable=iterable))
     returned = _flattened(_returned_values(function_universe_outcome(function)))
-    assert TermValue(2) in returned, returned
+    assert returned, returned
     assert TermValue(1) not in returned, returned
+    assert TermValue(2) in returned or not any(
+        isinstance(value, TermValue) for value in returned
+    ), returned
 
 
 def test_a_field_store_writes_its_receiver_under_a_key() -> None:
@@ -1863,7 +1888,7 @@ def test_a_field_store_writes_its_receiver_under_a_key() -> None:
 
     # The live loop's body statement reports ``o`` among the names it
     # writes, under a key, and the loop carries ``o`` through it.
-    runtime = _live_runtime(_FIELD_STORE_LOOP.format(iterable="g()"))
+    runtime = _live_runtime(_FIELD_STORE_LOOP.format(iterable=_LIVE_ITEMS))
     assert "o" in runtime.carried_names
     (header, writes, _else_writes) = runtime.carried_evaluations[
         runtime.carried_names.index("o")
@@ -1907,8 +1932,6 @@ _STORE_THEN_BREAK = (
     "        y = x\n"
     "        break\n"
     "    return y\n"
-    "def g():\n"
-    "    return (1, 2)\n"
 )
 
 
@@ -1918,7 +1941,7 @@ def test_a_concrete_items_store_before_its_break_is_read_after_the_loop() -> Non
     # ``for x in (1, 2): y = x; break`` then ``return y``: item 0 stored 1
     # and broke, so ``y`` is 1.
     outcome = function_universe_outcome(
-        _function(_STORE_THEN_BREAK.format(iterable="g()"))
+        _function(_STORE_THEN_BREAK.format(iterable=_LIVE_ITEMS))
     )
     assert _returned_value(outcome) == TermValue(1)
 
@@ -2247,8 +2270,6 @@ _RAISE_IN_AN_ITEM = (
     "        if x == 2:\n"
     "            raise ValueError()\n"
     "    return acc\n"
-    "def g():\n"
-    "    return (1, 2)\n"
 )
 
 
@@ -2259,7 +2280,7 @@ def test_a_raise_leaving_a_concrete_item_carries_the_earlier_items_appends() -> 
     # Item 0 appended 1 and went on; item 1 appended 2 and raised.  The
     # raise leaves the loop with item 0's append as well as its own.
     outcome = function_universe_outcome(
-        _function(_RAISE_IN_AN_ITEM.format(iterable="g()"))
+        _function(_RAISE_IN_AN_ITEM.format(iterable=_LIVE_ITEMS))
     )
     records = _halt_records(outcome)
     assert records, outcome
@@ -2311,8 +2332,6 @@ _RAISE_IN_THE_ELSE = (
     "    else:\n"
     "        raise ValueError()\n"
     "    return acc\n"
-    "def g():\n"
-    "    return (1, 2)\n"
 )
 
 
@@ -2323,7 +2342,7 @@ def test_a_raise_leaving_a_concrete_else_carries_the_items_and_publication() -> 
     # Both items appended, then the ``else`` raised: the raise leaves with
     # both appends and the loop's publication of the target's last value.
     outcome = function_universe_outcome(
-        _function(_RAISE_IN_THE_ELSE.format(iterable="g()"))
+        _function(_RAISE_IN_THE_ELSE.format(iterable=_LIVE_ITEMS))
     )
     records = _halt_records(outcome)
     assert _holds(records, fresh(ListValue, (TermValue(1),))), records
@@ -2348,15 +2367,13 @@ def test_a_raise_leaving_a_symbolic_loops_else_carries_the_publication() -> None
 _BREAK_IN_THE_ELSE = (
     "def f(xs):\n"
     "    acc = []\n"
-    "    for y in g():\n"
+    "    for y in tuple((1, 2)):\n"
     "        for x in {iterable}:\n"
     "            acc.append(x)\n"
     "        else:\n"
     "            break\n"
     "        return 0\n"
     "    return acc\n"
-    "def g():\n"
-    "    return (1, 2)\n"
 )
 
 
@@ -2367,7 +2384,7 @@ def test_an_outer_break_in_a_concrete_loops_else_carries_the_items() -> None:
     # The inner loop appended 1 and 2, then its ``else`` broke the outer
     # loop: the outer loop leaves with the inner items' appends.
     outcome = function_universe_outcome(
-        _function(_BREAK_IN_THE_ELSE.format(iterable="g()"))
+        _function(_BREAK_IN_THE_ELSE.format(iterable=_LIVE_ITEMS))
     )
     records = _records(outcome)
     assert records, outcome
