@@ -136,6 +136,14 @@ def _function(source: str) -> FunctionDef:
 
 
 def _outcome(tmp_path: Path, source: str, stem: str):
+    """The function's outcome through its one entrance: always a set of arms.
+
+    A body whose operation on a formal waits for a caller's actual (``if c:``)
+    is stated as its own proof states it (``function_universe_outcome``,
+    ``as_its_own_proof_states``); the function's sugar reduced bare hands back
+    the deferred carrier, which is no result form."""
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
     path = tmp_path / f"{stem}.py"
     path.write_text(source, encoding="utf-8")
     functions = list(
@@ -144,7 +152,7 @@ def _outcome(tmp_path: Path, source: str, stem: str):
             construction_context=TreeConstructionContextV1.for_test_without_workspace(),
         ).functions()
     )
-    return functions[-1].sugar().desugar(None)
+    return function_universe_outcome(functions[-1])
 
 
 def _returned(outcome) -> list:
