@@ -244,11 +244,19 @@ def test_drained_sin_cluster_4_sites_are_absent_on_live_tree() -> None:
     lift = (
         _PYTHON_ROOT / "sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py"
     ).read_text(encoding="utf-8")
-    marker = "def_memento, rows = _tree.function_contract_rows(fn, file_rel)"
-    # First implications arm (target_candidates) has no try wrapping the call.
+    # The one scan that serves every function's rows (#7757): the seek arms
+    # this pin first named (``target_candidates``) are deleted, and the one
+    # call that is left swallows nothing.  A broken backend is re-raised, and
+    # a refusal by name is written as that function's refused member (step
+    # 8); there is no ``except Exception`` between the call and the rows.
+    marker = "def_memento, rows = _tree.function_contract_rows("
+    assert lift.count(marker) == 1
     idx = lift.index(marker)
-    window = lift[idx - 120 : idx + 80]
+    window = lift[idx - 120 : lift.index("_tree.unanswered_call_rows(", idx)]
     assert "except Exception" not in window
+    assert "except BackendDefect:" in window
+    assert "except LifterRefusal as refusal:" in window
+    assert "_tree.refused_function_row(fn, file_rel, refusal)" in window
 
     # Scanner pins: drained kinds absent at drained loci (Try soft residual may remain).
     assert not any(
