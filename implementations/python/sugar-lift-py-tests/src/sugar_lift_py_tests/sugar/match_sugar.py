@@ -51,7 +51,7 @@ from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import _expression_pair
+from sugar_lift_py_tests.sugar.witnesses import _assertion_pair
 
 
 @dataclass(frozen=True)
@@ -982,12 +982,23 @@ class MatchSugar(Sugar):
 
     @classmethod
     def witnesses(cls):
-        return _expression_pair(
+        # A ``match`` statement over the local `z = 5` binds `out` in each
+        # case: the literal pattern ``1`` fails, the wildcard takes it, so the
+        # truthful twin asserts the wildcard arm's 0, the lying twin the
+        # literal arm's 1.
+        return _assertion_pair(
             name="match_value_return",
             owner_sugar="MatchSugar",
-            body="1 if z == 1 else 0",
-            truthful="1",
-            lying="2",
+            statements=(
+                "z = 5\n"
+                "match z:\n"
+                "    case 1:\n"
+                "        out = 1\n"
+                "    case _:\n"
+                "        out = 0"
+            ),
+            truthful="out == 0",
+            lying="out == 1",
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:

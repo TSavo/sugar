@@ -10,7 +10,7 @@ from sugar_lift_py_tests.sugar.sugar_base import (
     Sugar,
     require_constructed_term_sugar,
 )
-from sugar_lift_py_tests.sugar.witnesses import _expression_pair
+from sugar_lift_py_tests.sugar.witnesses import _assertion_pair
 
 
 def _collect(sugars: tuple, ctx, done: tuple, finish, *, earlier: tuple = ()):
@@ -158,12 +158,13 @@ class SpreadCollectionSugar(ConstructedTermSugar):
 
     @classmethod
     def witnesses(cls):
-        return _expression_pair(
+        # ``[*z]`` spreads the tuple `z` into a list display of its members.
+        return _assertion_pair(
             name="spread_collection_len",
             owner_sugar="SpreadCollectionSugar",
-            body="len([*z])",
-            truthful="len(z)",
-            lying="len(z) + 1",
+            statements="z = (1, 2)",
+            truthful="len([*z]) == 2",
+            lying="len([*z]) == 3",
         )
 
     def to_term(self, *, owner: str):
@@ -224,12 +225,14 @@ class SpreadDictSugar(ConstructedTermSugar):
 
     @classmethod
     def witnesses(cls):
-        return _expression_pair(
+        # ``{**z}`` spreads the two entries of the dict `z` into a display:
+        # one spread entry that holds two, so a count of display entries lies.
+        return _assertion_pair(
             name="spread_dict_len",
             owner_sugar="SpreadDictSugar",
-            body="len({**z})",
-            truthful="len(z)",
-            lying="len(z) + 1",
+            statements="z = {1: 2, 3: 4}",
+            truthful="len({**z}) == 2",
+            lying="len({**z}) == 1",
         )
 
     def to_term(self, *, owner: str):
@@ -304,12 +307,14 @@ class SpreadCallSugar(ConstructedTermSugar):
 
     @classmethod
     def witnesses(cls):
-        return _expression_pair(
+        # ``f(*z)`` spreads the tuple `z` into the positional actuals of the
+        # local lambda `f`, applied through its one application: a = 1, b = 2.
+        return _assertion_pair(
             name="spread_call",
             owner_sugar="SpreadCallSugar",
-            body="tuple((*z,))",
-            truthful="tuple(z)",
-            lying="tuple((*z, 0))",
+            statements="z = (1, 2)\nf = lambda a, b: a - b",
+            truthful="f(*z) == -1",
+            lying="f(*z) == 1",
         )
 
     def to_term(self, *, owner: str):
