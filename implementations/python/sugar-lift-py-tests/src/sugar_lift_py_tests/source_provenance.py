@@ -46,8 +46,9 @@ def _monorepo_root() -> Path | None:
         return None
 
 
-def _content_identity(roots: list[Path]) -> str:
-    """Legacy content hash (tests / non-monorepo). Path-safe underscore form."""
+def _content_cid(roots: list[Path]) -> str:
+    """Content hash of every file under ``roots``, as a CID
+    (``blake3-512:<hex>``)."""
     from sugar_lift_py_tests.canonicalizer import blake3_512_of
 
     material = bytearray()
@@ -61,9 +62,15 @@ def _content_identity(roots: list[Path]) -> str:
             payload = path.read_bytes()
             material.extend(f"{index}:".encode() + relative + b"\0")
             material.extend(str(len(payload)).encode() + b"\0" + payload)
-    # blake3_512_of returns blake3-512:<hex> historically; normalize to _.
-    raw = blake3_512_of(bytes(material))
-    return raw.replace(":", "_", 1)
+    return blake3_512_of(bytes(material))
+
+
+def _content_identity(roots: list[Path]) -> str:
+    """Legacy content hash (tests / non-monorepo). Path-safe underscore form
+    of ``_content_cid``, spelled by the filename owner."""
+    from sugar_lift_py_tests.filename import cid_filename_stem
+
+    return cid_filename_stem(_content_cid(roots))
 
 
 def source_provenance_for_roots(roots: Iterable[Path]) -> dict[str, object]:
@@ -101,7 +108,7 @@ def kit_package_roots() -> list[Path]:
 
 def _canonical_content_cid(root: Path) -> str:
     """Content identity in the in-memory CID spelling, never path spelling."""
-    return _content_identity([root]).replace("blake3-512_", "blake3-512:", 1)
+    return _content_cid([root])
 
 
 def _loaded_package_origins() -> dict[str, Path]:

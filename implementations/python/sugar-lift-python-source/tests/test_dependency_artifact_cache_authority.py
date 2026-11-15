@@ -402,7 +402,11 @@ def test_cache_disablement_never_writes_a_memo_that_answers_later(tmp_path):
 
 def _old_disk_seat(tmp_path: Path, artifact_cid: str) -> Path:
     """Where the deleted disk twin kept the graph for ``artifact_cid``."""
-    digest = artifact_cid.removeprefix("blake3-512:")[:32]
+    from sugar_lift_py_tests.canonicalizer import cid_hex
+
+    hex_body = cid_hex(artifact_cid)
+    assert hex_body is not None, artifact_cid
+    digest = hex_body[:32]
     return tmp_path / "xdg" / "sugar" / "dependency-artifact-graphs" / f"{digest}.pkl"
 
 
