@@ -237,12 +237,22 @@ def test_a_case_guard_on_a_formal_refuses_by_name() -> None:
 
 @pytest.mark.parametrize(
     ("arm", "faces"),
-    [("[1]", (1, ())), ("[]", (1, ("RaiseEffect",)))],
+    [("[1]", (2, ())), ("[]", (1, ("RaiseEffect",)))],
     ids=["truthful", "lying"],
 )
 def test_a_guarded_halting_subject_keeps_both_faces_without_the_converters(
     arm: str, faces
 ) -> None:
+    """The subject ``x[0]`` is read on each arm of ``x``, one under ``c`` and
+    one under ``not c``, and each arm selects its own case.
+
+    Truthful (``[1] if c else [2]``): both arms complete, and they are two
+    completions, not one. Under ``c`` the subject is 1 and no case runs; under
+    ``not c`` it is 2 and ``case 2`` binds ``a``. The two leave different
+    records, so they are two completed faces and no halt, as Python has two
+    paths that both return 3. Lying (``[] if c else [2]``): the arm under
+    ``c`` halts at ``x[0]`` with ``IndexError`` and the arm under ``not c``
+    completes: one completion beside the halt, neither dropped."""
     outcome = _function(
         f"def test_f(xs):\n    c = xs is None\n    x = {arm} if c else [2]\n"
         "    match x[0]:\n        case 2:\n            a = 1\n    return 3\n"
