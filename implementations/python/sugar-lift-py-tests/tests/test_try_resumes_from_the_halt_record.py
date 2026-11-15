@@ -68,10 +68,16 @@ def _holds(records, value) -> bool:
 
 
 def _returned_value(outcome):
+    """What the function's one completed face returns.  A call the body does
+    not follow (an import's, a builtin handed a callable) has two faces: it
+    completes under its completes atom and halts under the complement, so the
+    universe is the completed face beside that halt."""
     from sugar_lift_py_tests.floor.return_value import ReturnValue
     from sugar_lift_py_tests.floor.universe_value import UniverseValue
 
-    universe = outcome.completed_value()
+    completed = [exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)]
+    assert len(completed) == 1, outcome
+    universe = completed[0].value
     assert isinstance(universe, UniverseValue), outcome
     (returned,) = [
         entry
