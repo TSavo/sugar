@@ -25,6 +25,17 @@ def _value():
     return AuthenticatedExceptionTypeValue(carried, str_const("exception-type"))
 
 
+def _raised(outcome):
+    """The effect of the one halt the mutation is.
+
+    A raise is a halt of the ``ExitSet``, never a completed value: the set is
+    that one halted arm and nothing else.
+    """
+    (halt,) = outcome.exits
+    assert outcome.halts() == (halt,)
+    return halt.effect
+
+
 @pytest.mark.parametrize(
     ("operation", "owner", "site_index"),
     (
@@ -43,9 +54,10 @@ def test_authenticated_exception_type_attribute_mutations_dispatch_to_exact_carr
         if operation == "setattr"
         else value.delattr("attr", site, None)
     )
-    assert outcome.value.effect.exception_name == "TypeError"
-    assert outcome.value.effect.producer_node_owner == owner
-    assert outcome.value.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
+    effect = _raised(outcome)
+    assert effect.exception_name == "TypeError"
+    assert effect.producer_node_owner == owner
+    assert effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
 
 def test_authenticated_exception_type_attribute_mutations_reject_wrong_site(tmp_path):
@@ -53,5 +65,5 @@ def test_authenticated_exception_type_attribute_mutations_reject_wrong_site(tmp_
     value = _value()
     store = value.setattr("attr", TermValue(7), store_site, None)
     delete = value.delattr("attr", delete_site, None)
-    assert store.value.effect.occurrence_id != f"{delete_site.filename}:{delete_site.line}:{delete_site.col}"
-    assert delete.value.effect.occurrence_id != f"{store_site.filename}:{store_site.line}:{store_site.col}"
+    assert _raised(store).occurrence_id != f"{delete_site.filename}:{delete_site.line}:{delete_site.col}"
+    assert _raised(delete).occurrence_id != f"{store_site.filename}:{store_site.line}:{store_site.col}"

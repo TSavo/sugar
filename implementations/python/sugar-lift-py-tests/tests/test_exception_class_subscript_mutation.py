@@ -16,6 +16,17 @@ def _sites(tmp_path):
     return body[0].fragment, body[1].fragment
 
 
+def _raised(outcome):
+    """The effect of the one halt the mutation is.
+
+    A raise is a halt of the ``ExitSet``, never a completed value: the set is
+    that one halted arm and nothing else.
+    """
+    (halt,) = outcome.exits
+    assert outcome.halts() == (halt,)
+    return halt.effect
+
+
 @pytest.mark.parametrize(
     ("operation", "owner", "site_index"),
     (
@@ -34,9 +45,10 @@ def test_exception_class_subscript_mutations_have_exact_owner_occurrences(
         if operation == "setitem"
         else value.delitem(TermValue(0), site, None)
     )
-    assert outcome.value.effect.exception_name == "TypeError"
-    assert outcome.value.effect.producer_node_owner == owner
-    assert outcome.value.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
+    effect = _raised(outcome)
+    assert effect.exception_name == "TypeError"
+    assert effect.producer_node_owner == owner
+    assert effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
 
 def test_exception_class_subscript_mutations_reject_wrong_site(tmp_path):
@@ -44,5 +56,5 @@ def test_exception_class_subscript_mutations_reject_wrong_site(tmp_path):
     value = ExceptionClassValue("module.CustomError")
     store = value.setitem(TermValue(0), TermValue(7), store_site, None)
     delete = value.delitem(TermValue(0), delete_site, None)
-    assert store.value.effect.occurrence_id != f"{delete_site.filename}:{delete_site.line}:{delete_site.col}"
-    assert delete.value.effect.occurrence_id != f"{store_site.filename}:{store_site.line}:{store_site.col}"
+    assert _raised(store).occurrence_id != f"{delete_site.filename}:{delete_site.line}:{delete_site.col}"
+    assert _raised(delete).occurrence_id != f"{store_site.filename}:{store_site.line}:{store_site.col}"

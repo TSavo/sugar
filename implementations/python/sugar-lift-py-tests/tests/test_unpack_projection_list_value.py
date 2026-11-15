@@ -85,7 +85,9 @@ def test_guarded_tuple_twin_answers_identically() -> None:
     from_tuple = names.submit(
         _guarded(TupleLiteralValue((TermValue(1), TermValue(2)))), None
     )
-    assert from_list.value == from_tuple.value
+    # Each answer is the one completed arm of its ``ExitSet``.
+    assert from_list.completed_value() is not None, from_list
+    assert from_list.completed_value() == from_tuple.completed_value()
 
 
 def test_direct_submit_binds_from_the_value_s_own_members() -> None:
