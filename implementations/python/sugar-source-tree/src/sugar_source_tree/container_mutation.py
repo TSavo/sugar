@@ -58,7 +58,11 @@ receiver an active ``__init__`` constructs):
   ``_constructs_builtin_exception``) and the value is one a call may change; a
   cell a nested scope declares ``nonlocal``, and a module global a body
   writes through a ``global`` declaration (``_frame_globals``), is unknown
-  whatever it holds.
+  whatever it holds.  That holds between the sub-expressions of one
+  statement too, which Python evaluates left to right: a read of such a
+  name after a sub-expression that may run code is the unknown it left,
+  keyed by that sub-expression's evaluation (``rebound_after``,
+  ``nodes._scope_after``): ``(G, g(), G)`` reads two terms.
   Code that runs in the frame's own namespace -- ``exec``/``eval`` handed
   no globals mapping, any operation handed a ``locals()``/``vars()``
   mapping of it -- reaches every name of the frame too (``_frame_targets``):
@@ -4130,7 +4134,7 @@ def _code_subjects(call, scope):
     return subjects
 
 
-def _ambient_objects(site, scope):
+def _ambient_objects(site, scope, *, rebound_only=False):
     """``(objects, rebound, globals_)``: the reads of what the caller at
     ``site`` holds that code it does not follow may reach other than through
     an operand -- the module objects ``scope`` binds
@@ -4141,12 +4145,136 @@ def _ambient_objects(site, scope):
     change; ``rebound``: the cells a nested scope declares ``nonlocal`` and
     those globals, which it may rebind whatever they hold; ``globals_``:
     ``[(name, read)]`` of those globals, for a callee whose reach is read
-    (``_ambient_targets``)."""
-    objects = [node for _name, node in _held_module_objects(scope, site.unit)]
+    (``_ambient_targets``).  ``rebound_only``: ``objects`` is not asked
+    (``rebound_after`` reads only what is rebound)."""
     cells, rebound = _frame_cells(site, scope)
-    objects.extend(cells)
+    if rebound_only:
+        objects = []
+    else:
+        objects = [node for _name, node in _held_module_objects(scope, site.unit)]
+        objects.extend(cells)
     globals_ = _frame_globals(site, scope)
     return objects, [*rebound, *(node for _name, node in globals_)], globals_
+
+
+def rebound_after(scope, evaluated, substituted, operated=()):
+    """``scope`` for what Python evaluates after ``evaluated``, a
+    sub-expression of one statement (``substituted``: its substitution in
+    ``scope``), later in that same statement (``nodes._scope_after``).
+
+    The one exposure rule (``_ambient_targets``) rebinds, after an operation
+    that may run code, each name such code may rebind whatever it holds
+    (``rules`` None): a closure cell a scope declares ``nonlocal`` and a
+    module global a body writes through a ``global`` declaration
+    (``_ambient_objects``' ``rebound``), a module global a source callee
+    declares ``global`` (``_global_targets``), and, at module or class
+    scope, every name of a namespace ``exec`` is handed (``_frame_targets``).
+    The block applies it after each statement (``havoc_after``) and a
+    compound statement after its header (``thread_header``).  Python
+    evaluates a statement's sub-expressions left to right, so it holds
+    between them too: in ``(G, g(), G)``, ``G is f() or G``, ``h(G, g(),
+    G)`` the second read of ``G`` runs after ``g()`` and may see a
+    rebinding.  Each such name reads, after ``evaluated``, the unknown the
+    operation left (``_rebind``, ``_havoc``), keyed by this sub-expression's
+    own evaluation (``_evaluation``: its span and occurrence tags, the
+    per-evaluation key #8592/#8669 use), never the read before it.
+
+    The operations are those ``substituted`` runs itself (``_calls``: not a
+    read of a value an earlier evaluation made, not a lambda's body), and
+    ``operated``: values the enclosing expression runs a dunder of before
+    what follows (``_Operated``: a ``BoolOp``'s truth test of an operand
+    before the next, a chained comparison's leg before the next operand, a
+    conditional expression's test before its arm).  The one call whose
+    contract may state what it left (``_call_slot``) keeps that slot where
+    ``substituted`` runs it once (``_evaluated_once``), as ``havoc_after``
+    does; anywhere else the name is the unknown.
+
+    Objects are not threaded here: what an operation did to an object is
+    decided at reduce by the value the later read reaches.  ``scope``
+    itself when nothing is rebound."""
+    from .nodes import Node
+
+    if not isinstance(evaluated, Node) or not isinstance(substituted, Node):
+        return scope
+    if not operated and not any(
+        getattr(node, "kind", None) in _MAY_OPERATE_KINDS
+        for node in evaluated.walk()
+    ):
+        return scope
+    names = _rebindable_names(evaluated)
+    if names is not None and not any(name in scope for name in names):
+        return scope
+    bound_refs = {
+        _ref(_state(value))
+        for value in scope.values()
+        if isinstance(_state(value), Node)
+    }
+    sites = []
+    if substituted.kind not in _READ_KINDS and _ref(substituted) not in bound_refs:
+        sites.extend(_calls(substituted, bound_refs, include_container_calls=True))
+    sites.extend(_Operated(node) for node in operated)
+    if not sites:
+        return scope
+    held = []
+
+    def holdings():
+        if not held:
+            held.append(_ambient_objects(substituted, scope, rebound_only=True))
+        return held[0]
+
+    targets = []
+    for site in sites:
+        for target in _ambient_targets(substituted, site, scope, holdings):
+            if target[1] is not None:
+                continue
+            if len(target) > 3 and not (
+                site.kind != "Operated" and _evaluated_once(substituted, site)
+            ):
+                target = target[:3]
+            targets.append(target)
+    return _rebind(substituted, scope, scope, targets)
+
+
+# Source kinds whose evaluation runs an operation that may run code
+# (``_sites_at``): a sub-expression holding none rebinds nothing.
+_MAY_OPERATE_KINDS = frozenset(
+    {"Call", "FormattedValue", "Comprehension", *_OPERATION_KINDS}
+)
+
+
+def _rebindable_names(site):
+    """The names code an operation runs may rebind in the frame ``site``
+    runs in, whatever they hold: in a function, each cell a scope declares
+    ``nonlocal`` (``_cell_names``) and each module global it reads as a
+    global that code may rebind (``SourceUnit.module_rebindable_names``,
+    ``_frame_globals``); None at module or class scope when the module
+    reaches a dynamic global writer (``exec`` there may rebind any name,
+    ``_frame_targets``), else none."""
+    from .nodes import AsyncFunctionDef, FunctionDef
+
+    unit = site.unit
+    owner = unit.innermost_function_containing(site.line_col_span())
+    if isinstance(owner, (FunctionDef, AsyncFunctionDef)):
+        return _function_rebindable_names(owner)
+    return None if unit._module_reaches_dynamic_global_writer() else frozenset()
+
+
+@functools.lru_cache(maxsize=4096)
+def _function_rebindable_names(owner) -> frozenset:
+    """``_rebindable_names`` of the function ``owner``, read once off its
+    CPython symtable."""
+    unit = owner.unit
+    table = unit.function_symtable(owner.name, owner.line_col_span().start_line)
+    _captured, declared = _cell_names(table)
+    names = set(declared)
+    for name in unit.module_rebindable_names():
+        try:
+            symbol = table.lookup(name)
+        except KeyError:
+            continue
+        if symbol.is_global():
+            names.add(name)
+    return frozenset(names)
 
 
 def _frame_globals(site, scope):

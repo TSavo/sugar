@@ -6176,13 +6176,26 @@ def _walruses_at(node) -> tuple:
     return below
 
 
-def _scope_after(scope, evaluated, substituted):
+def _scope_after(scope, evaluated, substituted, *, rebinds=False, operated=()):
     """``scope`` for what Python evaluates after ``evaluated`` (a node, a
     tuple of them in evaluation order, or None), whose substitution in
     ``scope`` is ``substituted``: each keyed walrus ``evaluated`` runs bound,
     in the order its writes happen, to a reference to its evaluation
     (``NamedExpr.substitution_binding``), as the block binds a read after a
     walrus statement (#7911).
+
+    ``rebinds``: what follows is evaluated later in the same statement (a
+    later operand, argument, element or leg, a conditional expression's
+    arm, an index after its receiver, a store target after its value, a
+    ``case`` body after its guard).  Each name code ``evaluated`` runs may
+    rebind whatever it holds -- a ``nonlocal`` cell, a module global code
+    may rebind -- is then read after it as another evaluation, keyed by
+    ``evaluated``'s own (``container_mutation.rebound_after``, the one
+    exposure rule); ``operated``: the values the enclosing expression runs
+    a dunder of before what follows (a ``BoolOp``'s truth test, a chained
+    comparison's leg, a conditional expression's test).  A statement's
+    header leaves it False: the statement threads its header itself, by the
+    same rule (``container_mutation.thread_header``).
 
     The one rule for a walrus inside a statement: every sub-expression
     evaluated before another hands its walrus keys to the later one's
@@ -6212,11 +6225,17 @@ def _scope_after(scope, evaluated, substituted):
     if not isinstance(evaluated, Node):
         for item, new in zip(tuple(evaluated), tuple(substituted)):
             if isinstance(item, Node):
-                scope = _scope_after(scope, item, new)
+                scope = _scope_after(scope, item, new, rebinds=rebinds)
         return scope
     if not isinstance(substituted, Node):
         return scope
     scope = _walrus_writes_after(scope, evaluated, substituted)
+    if rebinds:
+        # After the walrus writes: a call after a walrus in ``evaluated``
+        # may rebind what it wrote.
+        from .container_mutation import rebound_after
+
+        scope = rebound_after(scope, evaluated, substituted, operated)
     if not isinstance(scope.get(_INITIALIZER_RECEIVER), _InitializerReceiverV1):
         return scope
     span = evaluated.span
@@ -6227,6 +6246,41 @@ def _scope_after(scope, evaluated, substituted):
     from .container_mutation import calls_on_self_left
 
     return calls_on_self_left(substituted, scope, scope, scope)
+
+
+def _last_child_position(node):
+    """``(field, index)`` of the child ``node`` evaluates last among its
+    ``_child_fields`` (``index`` None for a single-node field), or None
+    when it has none: nothing of ``node`` is evaluated after it."""
+    for name in reversed(type(node)._child_fields):
+        value = getattr(node, name)
+        if value is None:
+            continue
+        if isinstance(value, Node):
+            return (name, None)
+        items = tuple(value)
+        for index in range(len(items) - 1, -1, -1):
+            if isinstance(items[index], Node):
+                return (name, index)
+    return None
+
+
+def _operated_between(node, field, index, before, new):
+    """The values ``node`` runs a dunder of after its child at ``(field,
+    index)`` (substituted ``new``) and before the next child is evaluated
+    (``_scope_after``'s ``operated``): a ``BoolOp`` tests each operand but
+    the last for truth before the next; a chained comparison compares
+    ``before`` (the operand before) with each comparator but the last before
+    the next (``is``/``is not`` run no dunder)."""
+    if node.kind == "BoolOp" and field == "values":
+        return (new,) if index < len(node.values) - 1 else ()
+    if node.kind == "Compare" and field == "comparators":
+        if index >= len(node.comparators) - 1 or before is None:
+            return ()
+        if node.ops[index].kind in ("Is", "IsNot"):
+            return ()
+        return (before, new)
+    return ()
 
 
 def _walrus_writes_after(scope, evaluated, substituted):
@@ -8596,7 +8650,9 @@ class Node(Typed):
         every child in Python's evaluation order (``_child_fields`` order, a
         tuple's items in order), each against the scope the children before it
         leave (``_scope_after``: a walrus in an earlier operand, argument,
-        element or leg is read in a later one through its key); if any
+        element or leg is read in a later one through its key, and a name
+        code an earlier one runs may rebind is read as another evaluation,
+        ``rebinds``); if any
         changed, rebuild me around them (a shadow node borrowing my span); if
         none changed, return myself.  A node calls this DELIBERATELY — it is
         never the silent default, because a scope-owner must mask its bound
@@ -8604,18 +8660,36 @@ class Node(Typed):
         from .shadow import rewrite
 
         changed: dict[str, object] = {}
+        # Each child but the last is followed by a later one in the same
+        # statement: a name code it runs may rebind is read after it as
+        # another evaluation (``_scope_after``'s ``rebinds``).
+        last = _last_child_position(self)
+        before = None
         for name in type(self)._child_fields:
             value = getattr(self, name)
             if value is None or isinstance(value, Node):
                 new, diff = self._substitute_field(value, scope)
-                scope = _scope_after(scope, value, new)
+                if (name, None) != last:
+                    scope = _scope_after(scope, value, new, rebinds=True)
+                if isinstance(new, Node):
+                    before = new
             else:
                 items = tuple(value)
                 new_items = []
-                for item in items:
+                for index, item in enumerate(items):
                     if isinstance(item, Node):
                         new_item = self._substituted_child(item, scope)
-                        scope = _scope_after(scope, item, new_item)
+                        if (name, index) != last:
+                            scope = _scope_after(
+                                scope,
+                                item,
+                                new_item,
+                                rebinds=True,
+                                operated=_operated_between(
+                                    self, name, index, before, new_item
+                                ),
+                            )
+                        before = new_item
                     else:
                         new_item = item
                     new_items.append(new_item)
@@ -10192,7 +10266,13 @@ class MatchCase(Node):
             changed["guard"] = new_guard
         # The guard is evaluated before its case's body: a walrus in it is
         # read there through its key (``_scope_after``).
-        body_scope = _scope_after(inner, self.guard, new_guard)
+        body_scope = _scope_after(
+            inner,
+            self.guard,
+            new_guard,
+            rebinds=self.guard is not None,
+            operated=() if new_guard is None else (new_guard,),
+        )
         new_body, d, net = self._substitute_body_tracked(
             self.body, body_scope, edge_states=edge_states
         )
@@ -14894,7 +14974,7 @@ class Assign(Statement):
         if len(self.targets) != 1 or not isinstance(self.targets[0], Attribute):
             return None
         target = self.targets[0]
-        after_value = _scope_after(scope, self.value, new_value)
+        after_value = _scope_after(scope, self.value, new_value, rebinds=True)
         # The receiver substitutes as every store target's does
         # (``_substituted_store_target``): a read the rewrite replaced
         # answers by that substitution.
@@ -15858,7 +15938,12 @@ class AugAssign(Statement):
         # by that substitution.
         receiver, _changed = self._substitute_field(target.value, scope)
         rhs, _changed = self._substitute_field(
-            self.value, _scope_after(scope, target.value, receiver)
+            self.value,
+            # The field is read off the receiver (``type(o).__getattribute__``)
+            # before the right-hand side is evaluated.
+            _scope_after(
+                scope, target.value, receiver, rebinds=True, operated=(receiver,)
+            ),
         )
         evaluation = self._evaluation_key(scope)
         # Never an identifier: the statement writes each name it rebinds
@@ -22180,7 +22265,9 @@ class IfExp(Expression):
         new_test, d = self._substitute_field(self.test, scope)
         if d:
             changed["test"] = new_test
-        scope = _scope_after(scope, self.test, new_test)
+        scope = _scope_after(
+            scope, self.test, new_test, rebinds=True, operated=(new_test,)
+        )
         for field_name in ("body", "orelse"):
             new, d = self._substitute_field(getattr(self, field_name), scope)
             if d:
@@ -23795,7 +23882,9 @@ class Call(Expression):
         The function runs after the callee and every argument are evaluated,
         so the cells are read in the scope those leave (``_scope_after``): a
         walrus in an argument that rebinds a captured name (``g((y :=
-        2))``) is the binding the body reads, through its key.  The callee
+        2))``) is the binding the body reads, through its key, and a cell
+        code an argument runs may rebind (a ``nonlocal`` one) is read as
+        that code left it (``_scope_after``'s ``rebinds``).  The callee
         itself is the one this scope names before the arguments."""
         definition = self._closure_definition(scope, rewritten)
         if definition is None:
@@ -23805,6 +23894,7 @@ class Call(Expression):
                 scope,
                 (self.func, *self.args, *self.keywords),
                 (rewritten.func, *rewritten.args, *rewritten.keywords),
+                rebinds=True,
             )
         return self._cells_at_call(scope, definition)
 
@@ -25232,7 +25322,7 @@ class Subscript(Expression):
         receiver, receiver_changed = self._substitute_field(self.value, scope)
         # The receiver is evaluated before the index (``_scope_after``).
         index, index_changed = self._substitute_field(
-            self.slice_, _scope_after(scope, self.value, receiver)
+            self.slice_, _scope_after(scope, self.value, receiver, rebinds=True)
         )
         if not receiver_changed and not index_changed:
             return self
