@@ -66,17 +66,33 @@ def test_lying_continue_manufactures_absence():
         function_contract_rows(SimpleNamespace(name="a"), "t.py")
 
 
-def test_production_implications_loop_has_no_exception_continue():
-    """Static twin: lift_rpc implications arm has no try/except around the call."""
+def test_production_universe_scan_has_no_exception_continue():
+    """Static twin: the one production caller of ``function_contract_rows``
+    never drops a function silently.
+
+    The ``implications`` level this twin first read is deleted (#7864); the
+    universe scan is the one caller left.  Its law (step 8): a backend defect
+    is re-raised, a refusal by name is recorded as the function's own
+    ``undecided`` row before the scan moves on, and nothing catches
+    ``Exception``."""
     source = (
         sugar_lift_py_tests_package_root()
         / "src"
         / "sugar_lift_py_tests"
         / "lift_rpc.py"
     ).read_text(encoding="utf-8")
-    marker = "def_memento, rows = _tree.function_contract_rows(fn, file_rel)"
-    assert marker in source
-    idx = source.index(marker)
-    window = source[idx - 120 : idx + 80]
-    assert "try:" not in window
+    marker = "_tree.function_contract_rows("
+    assert source.count(marker) == 1
+    start = source.index(marker)
+    window = source[start : source.index("scan_rows.extend(", start)]
     assert "except Exception" not in window
+    assert "except BaseException" not in window
+    assert "except:" not in window
+    defect = window.index("except BackendDefect:")
+    refusal = window.index("except LifterRefusal as refusal:")
+    recorded = window.index("_tree.refused_function_row(fn, file_rel, refusal)")
+    # The defect arm re-raises, and it is tried first.
+    assert defect < refusal
+    assert "raise" in window[defect:refusal]
+    # The refusal is recorded as the function's row before the scan continues.
+    assert refusal < recorded < window.index("continue", refusal)
