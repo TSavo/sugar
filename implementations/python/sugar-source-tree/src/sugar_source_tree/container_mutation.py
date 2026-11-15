@@ -926,7 +926,8 @@ def thread_header(header, pre_scope, scope, *, repeated=False, operated=False):
     loop's rule.  ``operated``: the statement then runs dunders of the
     header's value before what follows (``_operates_header``: a ``for``
     iterates it, an ``if``/``while`` tests its truth, a ``match`` matches
-    it), which may run code as any operation does (``_Operated``).
+    it, a ``with`` enters it), which may run code as any operation does
+    (``_Operated``).
 
     A compound statement's substitution threads its header before its body
     (``If``, ``While``, ``For``, ``With``, ``Match``, a comprehension's first
@@ -947,11 +948,13 @@ def _operates_header(statement) -> bool:
     (``threaded_header``) before its body: a ``for`` iterates it
     (``__iter__``, ``__next__``), an ``if`` or ``while`` tests its truth
     (``__bool__``, ``__len__``), a ``match`` matches it (``__eq__``,
-    ``__match_args__``, ``__getitem__``, ...)."""
+    ``__match_args__``, ``__getitem__``, ...), a ``with`` enters it
+    (``__enter__``, before its ``as`` target is read and stored and before
+    its body: ``with m as d[G]:`` reads ``G`` after ``m.__enter__()``)."""
     kind = getattr(statement, "kind", None)
     if kind == "LoopRecurrenceStatement":
         return _operates_header(statement.loop)
-    return kind in ("For", "If", "While", "Match")
+    return kind in ("For", "If", "While", "Match", "With")
 
 
 _ABSENT = object()
