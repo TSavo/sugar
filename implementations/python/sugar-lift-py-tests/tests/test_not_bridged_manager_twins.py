@@ -9,18 +9,38 @@ no change to the Python lifter (the shape of
 never asked: the vendor here happens to be Python, and the consumer's lift
 cannot tell.
 
-* truthful consumer claim + imported vendor proof: ``sat``;
-* lying consumer claim (the one thing changed) + the same proof: ``unsat``;
-* the truthful claim with no imported proof: the row stays open (never
-  ``unsat`` from a fabricated fact, never dropped).
+The consumer project holds the consumer's test and nothing else: the vendor's
+source is not in it, so the lifter does not have ``twice``.  The vendor project
+holds ``nb_vendor.py``, so its proof speaks ``python:nb_vendor.twice``, the
+string the consumer's edge carries; the join is by that string (step 9).
+(Before, the consumer project also held a copy of the vendor's source and the
+vendor's proof was minted from ``test_witness.py``, so the staged proof spoke
+another symbol and joined nothing.)
 
-The second pair is the ``with`` head this change routes: ``_thread`` is
-authenticated by no artifact, so the lifter does not have
-``allocate_lock``.  Before this change the head was refused
-(``no-derived-contract``): the interpreter-inspection check cited only C
-types.  Now it is cited as not bridged exactly like ``tempfile`` (pure-Python
-stdlib off the enrolled population), and the claim after the ``with`` stands
-on the completing face.
+* truthful consumer claim + imported vendor proof: the claim's row is
+  discharged;
+* lying consumer claim (the one thing changed) + the same proof: ``unsat``;
+* the truthful claim with no imported proof: the call is owed and the row
+  stays open (never ``unsat`` from a fabricated fact, never dropped).
+
+Staged, the consumer's source still owes one thing: the ``==`` applied to the
+call's result.  At lift that result is a value whose type the lifter does not
+have, so the operation is the one two-faced outcome and owes a member with no
+symbol at its own site (``unanswered_calls``); nothing joins a member with no
+symbol, so it stays owed after the call is answered.  A source that owes
+anything is never ``sat`` as a whole (step 8), so the truthful half reads
+``open`` through ``prove_verdict`` with its claim row discharged: the twin
+states both, and names the one member behind the ``open``.
+
+The second pair is a ``with`` head the lifter does not have: ``_thread`` is
+authenticated by no artifact, and ``tempfile`` is pure-Python stdlib off the
+enrolled population.  Each is cited as not bridged, one way.  Nothing is
+staged for either, so the manager call is owed under its target symbol and
+the claim about what ``__enter__`` returned is not decided: the truthful half
+is ``open`` by the not-bridged rule, and becomes ``sat`` on the day a proof
+for the manager can be imported.  The lying half binds the same name to
+source the lifter has, whose ``__enter__`` returns the one value the claim
+denies: ``unsat``.
 """
 
 from __future__ import annotations
@@ -47,6 +67,12 @@ _VENDOR = (
     "    assert twice(2) == 4\n"
 )
 
+# The consumer's call is owed under this symbol until a proof answers it.
+_CALL_OWED = "undecided:python:nb_vendor.twice"
+# The ``==`` on the call's result, on the consumer's line 5: no symbol, so
+# prove names it by file and line.
+_OPERATION_OWED = "undecided:test_witness.py:5"
+
 
 def _consumer(claim: int) -> str:
     return (
@@ -58,35 +84,68 @@ def _consumer(claim: int) -> str:
     )
 
 
-def _mint(project: Path, source: str, extra: dict[str, str]) -> None:
-    _stage_cli_project(project, source)
-    for name, text in extra.items():
-        (project / name).write_text(text, encoding="utf-8")
-    mint = mint_project(project)
+def _vendor_proof(root: Path) -> Path:
+    """The vendor's proof, minted in its own project from ``nb_vendor.py``."""
+    vendor = root / "vendor"
+    _stage_cli_project(vendor, _VENDOR)
+    (vendor / "test_witness.py").rename(vendor / "nb_vendor.py")
+    mint = mint_project(vendor)
     assert mint.returncode == 0, mint.stderr
+    (proof,) = sorted(vendor.glob("*.proof"))
+    return proof
 
 
-def _consumer_verdict(root: Path, claim: int, vendor_proof: Path | None) -> str:
+def _consumer_prove_doc(root: Path, claim: int, vendor_proof: Path | None) -> dict:
     consumer = root / f"consumer-{claim}-{'import' if vendor_proof else 'none'}"
     _stage_cli_project(consumer, _consumer(claim))
-    (consumer / "nb_vendor.py").write_text(_VENDOR, encoding="utf-8")
     if vendor_proof is not None:
         imports = consumer / ".sugar" / "imports"
         imports.mkdir(parents=True, exist_ok=True)
         shutil.copy(vendor_proof, imports / vendor_proof.name)
     # Mint and prove through the harness's one door (``mint_and_prove``).
-    return prove_verdict(mint_and_prove(consumer).prove_doc)
+    return mint_and_prove(consumer).prove_doc
+
+
+def _claim_statuses(prove_doc: dict) -> set[str]:
+    """The status of the consumer's claim row(s)."""
+    return {
+        row["status"]
+        for row in prove_doc.get("rows") or []
+        if row.get("property") == "consistency:test_consumer"
+    }
+
+
+def _owed(prove_doc: dict) -> set[str]:
+    """The name of every member this project owes."""
+    return {
+        str(row["property"])
+        for row in prove_doc.get("rows") or []
+        if str(row.get("property") or "").startswith("undecided:")
+    }
 
 
 def test_not_bridged_call_binds_to_an_imported_proof(tmp_path: Path) -> None:
-    vendor = tmp_path / "vendor"
-    _mint(vendor, _VENDOR, {})
-    (vendor_proof,) = sorted(vendor.glob("*.proof"))
+    vendor_proof = _vendor_proof(tmp_path)
 
-    assert _consumer_verdict(tmp_path, 6, vendor_proof) == "sat"
-    assert _consumer_verdict(tmp_path, 7, vendor_proof) == "unsat"
-    # No proof answers the symbol: the edge stays open, never refuted.
-    assert _consumer_verdict(tmp_path, 6, None) not in {"unsat", "sat"}
+    truthful = _consumer_prove_doc(tmp_path, 6, vendor_proof)
+    lying = _consumer_prove_doc(tmp_path, 7, vendor_proof)
+    unstaged = _consumer_prove_doc(tmp_path, 6, None)
+
+    # Staged: the call is answered, so it is no longer owed, and the claim's
+    # row is decided each way.
+    assert _claim_statuses(truthful) == {"discharged"}
+    assert _claim_statuses(lying) == {"unsatisfied"}
+    assert prove_verdict(lying) == "unsat"
+    # What the truthful source still owes is the ``==`` on the arrived
+    # result, and only that: the source as a whole reads ``open``.
+    assert _owed(truthful) == {_OPERATION_OWED}
+    assert prove_verdict(truthful) == "open"
+
+    # No proof answers the symbol: the call is owed, the claim is not
+    # discharged and never refuted.
+    assert _CALL_OWED in _owed(unstaged)
+    assert "discharged" not in _claim_statuses(unstaged)
+    assert prove_verdict(unstaged) == "open"
 
 
 _WITH_BODY = (
@@ -117,5 +176,11 @@ def test_not_bridged_manager_is_cited_and_bridged_source_refutes(
     )
     truthful = run_source_through_real_solver(tmp_path / "t", truthful_source)
     lying = run_source_through_real_solver(tmp_path / "l", lying_source)
-    assert truthful.verdict == "sat"
+    # Not bridged: the manager call is owed under its own target symbol, and
+    # the claim on what ``__enter__`` returned is not decided.
+    assert any(
+        owed.startswith(f"undecided:python:{module}.")
+        for owed in _owed(truthful.prove_doc)
+    ), _owed(truthful.prove_doc)
+    assert truthful.verdict == "open"
     assert lying.verdict == "unsat"
