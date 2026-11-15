@@ -24368,7 +24368,34 @@ class GeneratorExp(Expression):
             element=self.elt.sugar(),
             site=self.fragment,
             final_member=self._consumed_whole_in_place(),
+            pulled_where_made=self._handed_to_a_call(),
         )
+
+    def _handed_to_a_call(self) -> bool:
+        """Whether this generator is an argument of a call where it is made
+        (positional or by keyword): the call it is handed to is what pulls
+        it, in the expression that made it, so a halt of its pull stands
+        there (``ComprehensionSugar.pulled_where_made``).  Anywhere else --
+        bound to a name, returned, yielded, held in a display -- it is pulled
+        where a consumer pulls it, and its pull's halts are stated there
+        (``GeneratorValue``)."""
+        module = self.unit._require_typed_module(
+            "GeneratorExp._handed_to_a_call", blame=self.fragment
+        )
+        owner = _function_holding(self)
+        root = owner if owner is not None else module
+        position = _source_position(self)
+        for node in root.walk():
+            if not isinstance(node, Call):
+                continue
+            if any(_source_position(arg) == position for arg in node.args):
+                return True
+            if any(
+                _source_position(keyword.value) == position
+                for keyword in node.keywords
+            ):
+                return True
+        return False
 
     def _consumed_whole_in_place(self) -> bool:
         """Whether this generator is consumed whole where it is made: it is
