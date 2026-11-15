@@ -40,6 +40,7 @@ from sugar_lift_py_tests.effect import (
     AttributeStoreRuntimeEffect,
     UndeterminedRaiseEffect,
 )
+from sugar_lift_py_tests.floor.runtime_effect_testimony import RuntimeEffectTestimony
 from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -129,12 +130,18 @@ def _arms(exits):
 
 
 def _store_entries(state):
+    """The attribute stores a record says happened.
+
+    A store's completed face leaves ``RuntimeEffectTestimony`` of its own
+    effect in the record (``store_faces``, #7826): the one record entry that
+    says the store ran. A completed record holds no halt, so the testimony is
+    never an all-halted ``ExitSet`` entry.
+    """
     return [
-        halt
+        entry
         for entry in getattr(state, "entries", ())
-        if isinstance(entry, ExitSet) and entry.halts() == entry.exits
-        for halt in entry.halts()
-        if isinstance(halt.effect, AttributeStoreRuntimeEffect)
+        if isinstance(entry, RuntimeEffectTestimony)
+        and isinstance(entry.effect, AttributeStoreRuntimeEffect)
     ]
 
 
@@ -271,9 +278,10 @@ def test_sequential_completed_arm_requires_every_store_to_complete(
 
     assert _polarity(arm.guard, "x") is True
     assert _polarity(arm.guard, "y") is True
-    assert str(arm.value.post()) == str(
-        _exits(tmp_path, SEQUENTIAL, "target").exits[-1].value.post()
-    )
+    # The same construction again states the same post on its one completed
+    # arm (found by kind, never by its position among the exits).
+    _, (again,) = _arms(_exits(tmp_path, SEQUENTIAL, "target"))
+    assert str(arm.value.post()) == str(again.value.post())
 
 
 def test_sequential_completed_arm_requires_every_store_to_complete_discrimination(
