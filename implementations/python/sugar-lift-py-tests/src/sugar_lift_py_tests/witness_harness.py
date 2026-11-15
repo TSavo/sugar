@@ -659,22 +659,32 @@ def claim_verdict(
 def _nested_definition_spans(
     lift_doc: dict | None, claims_from_line: int
 ) -> tuple[tuple[tuple[int, int], tuple[int, int]], ...]:
-    """The source span of every function contract the lift states inside the
-    test function (it starts below the test function's ``def`` line): a
-    ``lambda`` or local ``def`` whose own proof owes what its body does with
-    its formals."""
+    """The definition span of every function contract the lift states inside
+    the test function: a ``lambda`` or local ``def`` whose own proof owes what
+    its body does with its formals.
+
+    A contract's definition span is its outermost source warrant (the
+    ``def``/``lambda`` itself); its other warrants are sites inside it (an
+    assertion site's), never a definition, and are not read here.  A contract
+    is nested when its definition starts below the test function's ``def``
+    line; the test function's own contract starts on that line and is never
+    one."""
     spans = []
     for row in (lift_doc or {}).get("ir") or ():
         if not isinstance(row, dict) or row.get("kind") != "function-contract":
             continue
+        warranted = []
         for warrant in row.get("sourceWarrants") or ():
             span = warrant.get("span") if isinstance(warrant, dict) else None
             if not isinstance(span, dict):
                 continue
             start = (span.get("start_line"), span.get("start_col"))
             end = (span.get("end_line"), span.get("end_col"))
-            if not all(isinstance(part, int) for part in (*start, *end)):
-                continue
-            if start[0] > claims_from_line:
-                spans.append((start, end))
+            if all(isinstance(part, int) for part in (*start, *end)):
+                warranted.append((start, end))
+        if not warranted:
+            continue
+        definition = min(warranted)
+        if definition[0][0] > claims_from_line:
+            spans.append(definition)
     return tuple(spans)
