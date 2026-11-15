@@ -103,7 +103,7 @@ def test_concrete_string_slice_is_decided_at_the_one_door(tmp_path: Path) -> Non
 
     (good,) = [node["audit"] for node in truthful["nodes"]]
     assert good["kind"] == "function-contract"
-    assert good["name"] == "test_concrete_string_slice"
+    assert good["name"] == "python:test_slice_subscript.test_concrete_string_slice"
     assert "inv" in good
     assert "panicLoci" not in good
     good_strings = _string_constants(good["inv"], truthful["termTable"])
@@ -133,7 +133,7 @@ def test_symbolic_slice_is_not_decided_in_the_functions_own_proof(
     )
 
     contract = _contract(rows)
-    assert contract["name"] == "test_symbolic_slice"
+    assert contract["name"] == "python:test_slice_subscript.test_symbolic_slice"
     assert contract["formals"] == ["values"]
     undecided = [row for row in rows if row["kind"] == "undecided"]
     assert undecided, rows

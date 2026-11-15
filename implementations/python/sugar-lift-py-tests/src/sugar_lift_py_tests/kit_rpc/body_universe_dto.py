@@ -102,7 +102,9 @@ class BodyUniverseDto:
     # `sourceSymbol -> this contract` bridge (`bind_function_bridge`), resolving the
     # target CID at seal -- which is what lets `collect_ambient_posts` pick the post
     # up as an ambient universal. `bridge_source_symbol` is the definition's one
-    # symbol, `python:<module>.<name>`; the Python kit states no bare name. (The
+    # symbol, `python:<module>.<qualname>` (`@<line>:<col>` where the qualname
+    # alone is not unique), and the contract's `name`; the Python kit states no
+    # bare name. (The
     # verifier still matches a bridge's symbol against a call ctor's name with
     # `call:` or `method:` stripped: a tolerance other kits may rely on, to be
     # deleted with the join by `target_symbol`.)

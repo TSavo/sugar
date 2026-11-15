@@ -556,24 +556,22 @@ def module_level(value):
 '''
 
 
-def test_a_method_at_an_absolute_locus_reaches_no_richer_value(tmp_path) -> None:
+def test_a_method_at_an_absolute_locus_refuses_as_a_module_function_does(
+    tmp_path,
+) -> None:
     """THIRD retroactive check on the 41 -- and the first aimed at the REASONING.
 
     The licence for the 41 was argued on "an absolute locus REFUSES rather than
-    degrading". That refusal is narrower than stated: it sits behind
-    ``self.unit.is_module_level_function(...)``, so for a METHOD the branch
-    never runs and the same context returns ``None`` silently. Silent ``None``
-    is degradation, not refusal -- so if the raise were the load-bearing fact,
-    the licence would be wrong for every method in those 41 files.
+    degrading". Every definition states its one join symbol now (#7757: a
+    method's is ``python:<module>.Holder.method``), so the refusal is no
+    longer narrowed to module-level functions: a METHOD at an absolute locus
+    under a workspace-bearing context refuses at the same bridge-symbol door,
+    never a silent ``None``.
 
-    The substantive ground was always the other one: **no richer value is
-    reachable**. A tempfile path lies under no workspace and an invented literal
-    names a module that exists nowhere, so ``None`` is the CORRECT answer, not a
-    dropped one. This measures that directly instead of arguing it.
-
-    Fails if a workspace-bearing context produces anything richer than the
-    no-workspace one for the method -- which would mean the 41 are silently
-    dropping enrichment at their method sites and must come back out.
+    Without a workspace both state no symbol (``None``): a tempfile path lies
+    under no workspace, so no richer value is reachable there. Fails if a
+    workspace-bearing context constructs a value for either function instead of
+    refusing, or if the two refuse differently.
     """
     import re
 
@@ -612,18 +610,13 @@ def test_a_method_at_an_absolute_locus_reaches_no_richer_value(tmp_path) -> None
     )
     assert "module_level" in claimed, "the fixture produced no module-level function"
 
-    # The module-level arm is the control: it is where the refusal DOES fire, so
-    # if it looks identical to the method arm the fixture is not discriminating.
-    assert bearing["module_level"] != bearing["method"], (
-        "module-level and method behave identically under a workspace context, "
-        "so this fixture cannot tell the narrowed branch from the wide one: "
-        f"{bearing}"
-    )
+    # No workspace: no symbol for either.
+    assert claimed["method"] == "None" and claimed["module_level"] == "None", claimed
 
-    assert claimed["method"] == bearing["method"], (
-        "THE 41's LICENCE IS WRONG AT METHOD SITES. A workspace-bearing context "
-        f"produced {bearing['method']!r} where the no-workspace claim produces "
-        f"{claimed['method']!r}. A richer value IS reachable for methods at an "
-        "absolute locus, so those sites are silently dropping enrichment and "
-        "must come back out. STOP and report."
+    # The module-level arm is the control: the refusal fires there, and the
+    # method refuses at the same door, never a silent ``None``.
+    assert bearing["module_level"] == "<SugarNotWritten>", bearing
+    assert bearing["method"] == bearing["module_level"], (
+        "a method at an absolute locus under a workspace context did not refuse "
+        f"as the module-level function does: {bearing}"
     )

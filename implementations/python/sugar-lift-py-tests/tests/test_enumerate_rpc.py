@@ -765,7 +765,7 @@ def _function_contracts(nodes) -> list:
 
 def test_universe_scan_lists_function_contract_rows(project: Path) -> None:
     """File-level universe scan: one function-contract row per function, named
-    as its ``def`` is and stating the definition's one symbol."""
+    by the definition's one symbol, which it states as its join symbol too."""
     file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
     result = _enumerate("universe", project, at=file_memento, seek=False)
     contracts = sorted(
@@ -773,8 +773,8 @@ def test_universe_scan_lists_function_contract_rows(project: Path) -> None:
         for node in _function_contracts(result["nodes"])
     )
     assert contracts == [
-        ("add", "python:mathy.add"),
-        ("test_add", "python:mathy.test_add"),
+        ("python:mathy.add", "python:mathy.add"),
+        ("python:mathy.test_add", "python:mathy.test_add"),
     ]
     assert result["gaps"] == []
 
@@ -806,7 +806,10 @@ def test_full_tree_universe_rows_come_only_from_the_one_reduction(
         assert "classShapes" not in row, row
         provenance = row.get("proofirProvenance") or {}
         assert provenance.get("nodeClass") != "SourceSidecarCarrier", row
-    init = next(row for row in audits if row.get("name") == "__init__")
+    init = next(
+        row for row in audits if row.get("name") == "python:numpy_box.NumpyBox.__init__"
+    )
+    assert init["bridgeSourceSymbol"] == init["name"]
     assert "post" in init
 
 
