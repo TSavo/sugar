@@ -511,8 +511,10 @@ class EvaluationRefSugar(ConstructedTermSugar):
         - any other: the call is placed inside neither, and is refused by
           name (``SugarNotWritten``), as is a placed read whose member is not
           bound.  The member current where the lambda was made is never
-          read."""
-        from sugar_lift_py_tests.outcome import ExitSet
+          read.
+
+        A symbolic member, current or final, is read by the one rule
+        (``_member_read``): it owes the undecided member."""
         from sugar_source_tree.nodes import (
             comprehension_evaluation_coordinate,
             lambda_evaluation_coordinate,
@@ -529,7 +531,9 @@ class EvaluationRefSugar(ConstructedTermSugar):
             if temporal is not None:
                 final = temporal.value_if_bound(self.evaluation)
             if final is not None:
-                return ExitSet.completed(final)
+                # A symbolic comprehension's final member is a term nothing
+                # decides: its read owes (``_member_read``, #7757).
+                return _member_read(final, self.site)
             placement = (
                 "after the comprehension, with no final member carried (a "
                 "generator not consumed whole in place: the member at the "

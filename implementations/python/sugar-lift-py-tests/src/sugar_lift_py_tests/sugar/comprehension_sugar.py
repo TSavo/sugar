@@ -917,7 +917,9 @@ class ComprehensionSugar(ConstructedTermSugar):
             ctx = bind_temporal(
                 ctx,
                 final_member_coordinate(coordinate),
-                SymbolicValue(term),
+                # No equation ties the final member to a member of the
+                # iterable: its read owes (``holds_recurrence_value``, #7757).
+                SymbolicValue(term, recurrence_member=True),
                 owner="ComprehensionSugar._symbolic_final_ctx",
                 blame=str(self.site),
             )
