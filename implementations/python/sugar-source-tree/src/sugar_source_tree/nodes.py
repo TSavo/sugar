@@ -19864,9 +19864,15 @@ class Import(Statement):
         in the meaning layer: nothing about the import itself is stated as
         a fact. A later `pd.concat(...)` reduces as a method coordinate on
         the free name `pd` -- correct without the import ever having stated
-        anything. So the import contributes an honestly empty record."""
+        anything. So the import contributes an honestly empty record.
+
+        Each alias is the spelling of a name the statement binds
+        (``names_bound_here``), absorbed by it and constructed by nothing:
+        it answers the roll here, by its discharge."""
         from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
 
+        for alias in self.names:
+            alias.discharge_by_substitution()
         return InertSugar(site=self.fragment)
 
 
@@ -19887,9 +19893,12 @@ class ImportFrom(Statement):
         """`from <module> import <names>` binds free symbolics the same way
         plain `import` does: the bound names stay FREE SYMBOLIC in the
         meaning layer, reduced only where a later expression uses them as a
-        coordinate. The import statement itself states nothing."""
+        coordinate. The import statement itself states nothing.  Each alias
+        answers the roll here, by its discharge, as ``import``'s do."""
         from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
 
+        for alias in self.names:
+            alias.discharge_by_substitution()
         return InertSugar(site=self.fragment)
 
 

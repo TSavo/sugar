@@ -111,10 +111,9 @@ def test_a_fully_sugared_file_reads_clean():
 def test_shared_cid_at_distinct_loci_stays_distinct_without_fake_panics():
     # Two identical `import os` statements register two ImportAlias nodes with
     # the SAME sealed fragment CID (equal source text) at DISTINCT loci. The
-    # roll call counts both.  They remain distinct source-audit members even
-    # when an earlier Module panic blocks their own construction.  A blocked
-    # descendant has no authenticated panic payload and therefore must not be
-    # fabricated as a second ConstructionPanic product terminal.
+    # roll call counts both, and each answers at its own locus where its
+    # statement constructs (the statement absorbs it as the spelling of the
+    # name it binds).  Two answers sharing one CID never fuse into one.
     with tempfile.TemporaryDirectory() as root:
         path = Path(root, "t.py")
         path.write_text("import os\nimport os\n")
@@ -128,14 +127,19 @@ def test_shared_cid_at_distinct_loci_stays_distinct_without_fake_panics():
 
     source_audit = leaf["auxiliaryRows"]["sourceAudit"]
     alias_loci = sorted(
-        (row["locus"]["line"], row["locus"]["col"], row["source_cid"])
+        (row["locus"]["line"], row["locus"]["col"], row["source_cid"], row["status"])
         for row in source_audit["loci"]
         if row["kind"] == "ImportAlias"
     )
-    assert [(line, col) for line, col, _cid in alias_loci] == [(1, 7), (2, 7)]
+    assert [(line, col) for line, col, _cid, _status in alias_loci] == [
+        (1, 7),
+        (2, 7),
+    ]
     assert alias_loci[0][2] == alias_loci[1][2], "equal text keeps one content CID"
-    assert source_audit["totals"]["source_unresolved"] > len(panics)
-    assert all("observedEventType" in panic["gap"] for panic in panics)
+    assert [status for *_rest, status in alias_loci] == ["warranted", "warranted"]
+    assert not any(
+        panic["gap"].get("nodeKind") == "ImportAlias" for panic in panics
+    ), "an alias its statement absorbed is never a silent absentee"
 
 
 def test_d3_residency_observer_distinguishes_real_miss_and_hit(tmp_path):
