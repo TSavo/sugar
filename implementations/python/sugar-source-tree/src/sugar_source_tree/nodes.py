@@ -6840,8 +6840,20 @@ def _postponed_annotations(definition) -> Tuple["Node", ...]:
     return tuple(
         annotation
         for annotation in annotations
-        if isinstance(annotation, Constant) and isinstance(annotation.value, str)
+        if _annotation_postponed(definition.unit, annotation)
     )
+
+
+def _annotation_postponed(unit, annotation) -> bool:
+    """Whether Python leaves ``annotation`` of a ``def`` in ``unit``
+    unevaluated where the statement runs (``_postponed_annotations``): every
+    annotation of a module that postpones them, and a string annotation
+    anywhere.  Substitution leaves such an annotation as it stands
+    (``Param.substitute``, ``FunctionDef._substituted_signature``): nothing
+    reads it, so a read minted for it would be constructed by nothing."""
+    return (
+        isinstance(annotation, Constant) and isinstance(annotation.value, str)
+    ) or _annotations_postponed(unit)
 
 
 def _definition_annotations(definition) -> Tuple["Node", ...]:
@@ -9823,8 +9835,21 @@ class Param(Node):
         """A parameter's NAME is a binding site (a str, not a reference), so it
         is never captured; its annotation and default are ordinary expressions
         in the enclosing scope. So this just recurses into them -- the masking
-        of the name itself is the enclosing FunctionDef's job, for the body."""
-        return self._substitute_children(scope)
+        of the name itself is the enclosing FunctionDef's job, for the body.
+
+        A postponed annotation (``_annotation_postponed``) is not evaluated
+        where the ``def`` runs and stands as written: it answers the roll
+        with its definition (``unevaluated_parts``), and a read substitution
+        minted for it would be constructed by nothing.  The default is
+        substituted as ever."""
+        if self.annotation is None or not _annotation_postponed(
+            self.unit, self.annotation
+        ):
+            return self._substitute_children(scope)
+        from .shadow import rewrite
+
+        new_default, changed = self._substitute_field(self.default, scope)
+        return self if not changed else rewrite(self, default=new_default)
 
     def _construct_sugar(self):
         """A formal stands as its symbolic universe variable. A default is
@@ -11687,10 +11712,21 @@ class FunctionDef(Statement):
     def _substituted_signature(self, scope) -> dict:
         """The signature fields (decorators, type params, parameter
         annotations and defaults, the return annotation) substituted in the
-        enclosing scope, unmasked: ``{field: new}`` for each that changed."""
+        enclosing scope, unmasked: ``{field: new}`` for each that changed.
+        A postponed return annotation (``_annotation_postponed``) is not
+        evaluated where the statement runs and stands as written: it answers
+        the roll with the statement (``unevaluated_parts``), and a read
+        substitution minted for it would be constructed by nothing."""
         changed: dict[str, object] = {}
         for field in ("decorators", "type_params", "params", "returns"):
-            new, diff = self._substitute_field(getattr(self, field), scope)
+            value = getattr(self, field)
+            if (
+                field == "returns"
+                and value is not None
+                and _annotation_postponed(self.unit, value)
+            ):
+                continue
+            new, diff = self._substitute_field(value, scope)
             if diff:
                 changed[field] = new
         return changed
