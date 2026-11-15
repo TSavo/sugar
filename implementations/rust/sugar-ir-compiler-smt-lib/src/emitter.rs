@@ -55,7 +55,10 @@ fn emit_term_with_expected(term: &Term, expected_ret: Option<&str>) -> String {
             // (#7763): its value in SMT theory where Python completes it, else
             // the uninterpreted application it always was. See
             // `py_decided_operation`.
+            // A display stands as the application it is (#7757 step 7): it is
+            // read as its container only as an operand of a decided operation.
             if matches!(expected_ret, None | Some("Int"))
+                && !is_py_display(name)
                 && !crate::literal_encoding::term_is_string_tainted(term)
             {
                 if let Some(decided) = py_decided_operation(name, args) {
@@ -3661,18 +3664,76 @@ const PY_VALUE_IS_STR: &str = "|python:value.is_str|";
 const PY_VALUE_IS_INT: &str = "|python:value.is_int|";
 const BV64_BOUND: &str = "18446744073709551616";
 
+// ── Builtin lists, tuples and dicts (#7757 step 7) ─────────────────────────
+//
+// A `list` or `tuple` value is, in this backend's Int universe, a value whose
+// items are an SMT sequence of Int-universe values (`(Seq Int)`, z3's
+// sequence theory); a `dict` (insertion-ordered) is the sequence of its keys
+// and an array from key to value (`(Array Int Int)`). Each is exact: a list
+// display (`array(...)`), a tuple display (`tuple(...)`), a dict display
+// (`python:dict(python:dict_entry(k, v)...)`) whose keys are int or str
+// literals, or an operation the laws below write. An undecided value is read
+// as one only where its exact type is stated (`python:value.is_list` /
+// `is_tuple` / `is_dict`, exclusive of each other and of `int` and `str`),
+// which only an `=` binding it to a decided container states (a joined
+// post's `python:after(out, "0") = python:list.append(self, object)`).
+//
+// The operations, each read only over operands of the exact builtin type:
+// `len` (`call:len`, and its call's result `python:call_result(call:len(x),
+// ...)`, which always completes) is `seq.len`; `x[i]` (`py.subscript`) is
+// `seq.nth` at the index counted from the end when negative, completing only
+// where `-len <= i < len` (Python's `IndexError` otherwise); `d[k]` is the
+// array's value at `k`, completing only where `k` is a key (`KeyError`
+// otherwise). A dict key is read only where Python's key equality is the Int
+// universe's: an `int` (decided or stated) or a `str` literal. The laws
+// prove's builtin answers state a dispatched call's receiver after it by
+// (`consistency::builtin_dispatch_answer`): `python:list.append(l, v)` (the
+// sequence and the unit of `v`), `python:list.extend(l, s)` (concatenation
+// with a list or tuple), `python:list.setitem(l, i, v)` (the item at `i`
+// replaced, in range), `python:list.delitem(l, i)` (the item at `i` removed,
+// in range), `python:dict.setitem(d, k, v)` (the key appended where absent,
+// the array stored), `python:dict.delitem(d, k)` (the key removed, where
+// present). Each states its own completion, `<law>.completes(<law>(...))`:
+// its range or key condition over decided operands, else the uninterpreted
+// atom (the halt stays possible).
+//
+// An item read is no decided builtin type: its value is the item's Int-
+// universe value (`PyType::Value`), whose type its own facts state. List
+// equality is never decided false on two Int-universe item sequences that
+// differ (Python compares items with `==`), only true where they are the
+// same sequence and false where their lengths differ.
+
+const PY_VALUE_IS_LIST: &str = "|python:value.is_list|";
+const PY_VALUE_IS_TUPLE: &str = "|python:value.is_tuple|";
+const PY_VALUE_IS_DICT: &str = "|python:value.is_dict|";
+/// A list's or tuple's items; a dict's keys, in insertion order.
+const PY_VALUE_ITEMS: &str = "|python:value.items|";
+/// A dict's value at each key.
+const PY_VALUE_ENTRIES: &str = "|python:value.entries|";
+const SEQ_INT: &str = "(Seq Int)";
+const ARRAY_INT: &str = "(Array Int Int)";
+
 thread_local! {
     // Set when a rendering used the Python-value functions; read when the
     // preamble declares them. Reset per compile.
     static PY_VALUE_USED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    // Set when a rendering used the container functions (a stated list,
+    // tuple or dict). Reset per compile.
+    static PY_CONTAINER_USED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 fn note_py_value_functions() {
     PY_VALUE_USED.with(|used| used.set(true));
 }
 
+fn note_py_container_functions() {
+    note_py_value_functions();
+    PY_CONTAINER_USED.with(|used| used.set(true));
+}
+
 fn reset_py_value_functions() {
     PY_VALUE_USED.with(|used| used.set(false));
+    PY_CONTAINER_USED.with(|used| used.set(false));
 }
 
 /// The Python-value function declarations, when the body used them.
@@ -3680,12 +3741,22 @@ fn py_value_preamble() -> String {
     if !PY_VALUE_USED.with(|used| used.get()) {
         return String::new();
     }
-    format!(
+    let mut preamble = format!(
         "(declare-fun {PY_VALUE_OF_STR} (String) Int)\n\
          (declare-fun {PY_VALUE_STR} (Int) String)\n\
          (declare-fun {PY_VALUE_IS_STR} (Int) Bool)\n\
          (declare-fun {PY_VALUE_IS_INT} (Int) Bool)\n"
-    )
+    );
+    if PY_CONTAINER_USED.with(|used| used.get()) {
+        preamble.push_str(&format!(
+            "(declare-fun {PY_VALUE_IS_LIST} (Int) Bool)\n\
+             (declare-fun {PY_VALUE_IS_TUPLE} (Int) Bool)\n\
+             (declare-fun {PY_VALUE_IS_DICT} (Int) Bool)\n\
+             (declare-fun {PY_VALUE_ITEMS} (Int) {SEQ_INT})\n\
+             (declare-fun {PY_VALUE_ENTRIES} (Int) {ARRAY_INT})\n"
+        ));
+    }
+    preamble
 }
 
 /// An int or str literal states its own builtin type, when the body used the
@@ -3718,6 +3789,22 @@ fn py_literal_type_axioms(literals: &LiteralConstants) -> String {
 enum PyType {
     Str,
     Int,
+    /// `value` is a `(Seq Int)`: the items.
+    List,
+    /// `value` is a `(Seq Int)`: the items.
+    Tuple,
+    /// `value` is a `(Seq Int)`, the keys in insertion order; `aux` an
+    /// `(Array Int Int)`, the value at each key.
+    Dict,
+    /// No builtin type is decided: `value` is an Int-universe value (an item
+    /// a list or dict read gives), whose type its own facts state.
+    Value,
+}
+
+impl PyType {
+    fn is_container(self) -> bool {
+        matches!(self, PyType::List | PyType::Tuple | PyType::Dict)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -3727,6 +3814,8 @@ struct PyDecided {
     law: String,
     defined: String,
     value: String,
+    /// A dict's entries array (`PyType::Dict`); empty for any other type.
+    aux: String,
 }
 
 impl PyDecided {
@@ -3737,6 +3826,7 @@ impl PyDecided {
             law: "true".to_string(),
             defined: "true".to_string(),
             value,
+            aux: String::new(),
         }
     }
 
@@ -3755,6 +3845,7 @@ impl PyDecided {
             law,
             defined,
             value,
+            aux: String::new(),
         }
     }
 
@@ -3824,9 +3915,33 @@ fn py_decided(term: &Term) -> Option<PyDecided> {
         Term::Const { .. } => {
             term_as_ground_int(term).map(|n| PyDecided::literal(PyType::Int, smt_int_numeral(n)))
         }
-        Term::Ctor { name, args } => py_decided_operation(name, args),
+        // An item read decides no builtin type (`PyType::Value`): it is an
+        // undecided Int-universe value, rendered as the item it reads.
+        Term::Ctor { name, args } => {
+            py_decided_operation(name, args).filter(|decided| decided.ty != PyType::Value)
+        }
         _ => None,
     }
+}
+
+/// The display ctors: a list, a tuple and a dict as the kit spells them.
+/// Rendered as the uninterpreted application they are in term position;
+/// read as their container only as an operand of a decided operation.
+fn is_py_display(name: &str) -> bool {
+    matches!(name, "array" | "tuple" | "python:dict")
+}
+
+/// The ctor of one entry of a dict display.
+const PYTHON_DICT_ENTRY: &str = "python:dict_entry";
+
+/// The one atom a Python call completes under, over its result term (the
+/// kit's `UnknownCalleeCallV1.faces`).
+const PYTHON_UNKNOWN_CALLEE_COMPLETES: &str = "python:unknown_callee_call.completes";
+
+/// The builtin laws prove's builtin answers state (see the section header):
+/// each decided here, and its completion atom `<law>.completes(<law>(...))`.
+fn is_py_builtin_law(name: &str) -> bool {
+    name.starts_with("python:list.") || name.starts_with("python:dict.")
 }
 
 /// The one SMT statement of each Python operation the kit leaves undecided,
@@ -3836,9 +3951,15 @@ fn py_decided(term: &Term) -> Option<PyDecided> {
 fn py_decided_operation(name: &str, args: &[Term]) -> Option<PyDecided> {
     match (name, args) {
         // `str[int]`: IndexError unless -len <= i < len; a negative index
-        // counts from the end.
+        // counts from the end. A list's or a tuple's item, or a dict's value:
+        // `py_container_subscript`.
         ("py.subscript", [receiver, index]) => {
-            let receiver = py_decided(receiver)?;
+            let Some(receiver) = py_decided(receiver) else {
+                return py_container_subscript(None, receiver, index);
+            };
+            if receiver.ty.is_container() {
+                return py_container_subscript(Some(receiver), &args[0], index);
+            }
             let index = py_decided(index)?;
             if receiver.ty != PyType::Str || index.ty != PyType::Int {
                 return None;
@@ -3855,6 +3976,21 @@ fn py_decided_operation(name: &str, args: &[Term]) -> Option<PyDecided> {
                 value,
             ))
         }
+        ("array", items) => py_sequence_display(PyType::List, items),
+        ("tuple", items) => py_sequence_display(PyType::Tuple, items),
+        ("python:dict", entries) => py_dict_display(entries),
+        // `len(x)`: `call:len(x)`, or the call's result
+        // `python:call_result(call:len(x), <occurrence>)`.
+        ("call:len", [operand]) => py_len(operand),
+        ("python:call_result", [Term::Ctor { name: call, args: call_args }, _occurrence])
+            if call == "call:len" =>
+        {
+            match call_args.as_slice() {
+                [operand] => py_len(operand),
+                _ => None,
+            }
+        }
+        (law, operands) if is_py_builtin_law(law) => py_builtin_law(law, operands),
         // `ord(str)`: TypeError unless the str holds one character.
         ("py.ord", [operand]) => {
             let operand = py_decided(operand)?;
@@ -3920,6 +4056,360 @@ fn py_decided_operation(name: &str, args: &[Term]) -> Option<PyDecided> {
     }
 }
 
+/// A sequence of Int-universe values, in order.
+fn smt_seq(items: &[String]) -> String {
+    match items {
+        [] => format!("(as seq.empty {SEQ_INT})"),
+        [only] => format!("(seq.unit {only})"),
+        _ => {
+            let units: Vec<String> = items
+                .iter()
+                .map(|item| format!("(seq.unit {item})"))
+                .collect();
+            format!("(seq.++ {})", units.join(" "))
+        }
+    }
+}
+
+/// An item, a dict value or an operand a law holds, as its Int-universe
+/// value. `None` for a term outside the Int universe (string-theory or
+/// otherwise sorted), which no `(Seq Int)` holds.
+fn py_item(term: &Term) -> Option<String> {
+    if crate::literal_encoding::term_is_string_tainted(term)
+        || !known_term_sort(term)
+            .as_deref()
+            .is_none_or(|sort| sort == "Int")
+    {
+        return None;
+    }
+    Some(emit_term_with_expected(term, Some("Int")))
+}
+
+/// An undecided Int-universe value is exactly of container type `ty`: its
+/// own tester, and none of the others (`int`, `str`, the other containers).
+fn py_container_guard(undecided: &str, ty: PyType) -> String {
+    note_py_container_functions();
+    let (is_str, is_int) = py_type_guards(undecided);
+    let mut parts = vec![format!("(not {is_int})"), format!("(not {is_str})")];
+    for (other, tester) in [
+        (PyType::List, PY_VALUE_IS_LIST),
+        (PyType::Tuple, PY_VALUE_IS_TUPLE),
+        (PyType::Dict, PY_VALUE_IS_DICT),
+    ] {
+        if other == ty {
+            parts.insert(0, format!("({tester} {undecided})"));
+        } else {
+            parts.push(format!("(not ({tester} {undecided}))"));
+        }
+    }
+    format!("(and {})", parts.join(" "))
+}
+
+/// `term` read as a value of builtin type `ty`: its own where it is decided
+/// of that type, else an undecided value read by its stated type
+/// (`py_stated`). `None` for a decided value of another type.
+fn py_read_as(term: &Term, ty: PyType) -> Option<PyDecided> {
+    match py_decided(term) {
+        Some(decided) => (decided.ty == ty).then_some(decided),
+        None => py_stated(term, ty),
+    }
+}
+
+/// `term` read as a list or a tuple: its items.
+fn py_read_sequence(term: &Term) -> Option<PyDecided> {
+    if let Some(decided) = py_decided(term) {
+        return matches!(decided.ty, PyType::List | PyType::Tuple).then_some(decided);
+    }
+    let PySide::Undecided(undecided) = py_side(term)? else {
+        return None;
+    };
+    let ready = format!(
+        "(or {} {})",
+        py_container_guard(&undecided, PyType::List),
+        py_container_guard(&undecided, PyType::Tuple)
+    );
+    Some(PyDecided {
+        ty: PyType::List,
+        ready,
+        law: "true".to_string(),
+        defined: "true".to_string(),
+        value: format!("({PY_VALUE_ITEMS} {undecided})"),
+        aux: String::new(),
+    })
+}
+
+/// A ground dict key whose Python equality is Int-universe equality: a `str`
+/// literal (its own opaque constant), a `bool` or an `int` literal (its
+/// value). Two keys spelled differently are different keys.
+fn py_ground_key(term: &Term) -> Option<String> {
+    match term {
+        Term::Const {
+            value: serde_json::Value::String(_),
+            sort: Sort::Primitive { name },
+        } if name == "String" => Some(emit_term_with_expected(term, Some("Int"))),
+        Term::Const {
+            value: serde_json::Value::Bool(b),
+            ..
+        } => Some((if *b { "1" } else { "0" }).to_string()),
+        _ => term_as_ground_int(term).map(smt_int_numeral),
+    }
+}
+
+/// A dict key whose Python equality is Int-universe equality, `(ready,
+/// key)`: a ground key (`py_ground_key`), or an `int` decided or stated.
+/// `None` for any other key (a `str` no literal spells, a float, an object
+/// whose `__hash__` / `__eq__` is its own): no law reads it.
+fn py_key(term: &Term) -> Option<(String, String)> {
+    if let Some(key) = py_ground_key(term) {
+        return Some(("true".to_string(), key));
+    }
+    let key = py_read_as(term, PyType::Int)?;
+    Some((key.holds(), key.value))
+}
+
+/// `(law, at, len)` of an index into the sequence `items`: Python completes
+/// only where `-len <= index < len`, and a negative index counts from the
+/// end (`at`).
+fn py_index_in_range(items: &str, index: &str) -> (String, String, String) {
+    let len = format!("(seq.len {items})");
+    let law = format!("(and (<= (- {len}) {index}) (< {index} {len}))");
+    let at = format!("(ite (< {index} 0) (+ {index} {len}) {index})");
+    (law, at, len)
+}
+
+/// A list display or a tuple display: its items in order.
+fn py_sequence_display(ty: PyType, items: &[Term]) -> Option<PyDecided> {
+    let rendered = items.iter().map(py_item).collect::<Option<Vec<String>>>()?;
+    Some(PyDecided::literal(ty, smt_seq(&rendered)))
+}
+
+/// A dict display whose every key is ground (`py_ground_key`): its keys in
+/// first-occurrence order, each bound to the last value written for it.
+fn py_dict_display(entries: &[Term]) -> Option<PyDecided> {
+    let mut keys: Vec<String> = Vec::new();
+    let mut values = format!("((as const {ARRAY_INT}) 0)");
+    for entry in entries {
+        let Term::Ctor { name, args } = entry else {
+            return None;
+        };
+        let [key, value] = args.as_slice() else {
+            return None;
+        };
+        if name != PYTHON_DICT_ENTRY {
+            return None;
+        }
+        let key = py_ground_key(key)?;
+        let value = py_item(value)?;
+        values = format!("(store {values} {key} {value})");
+        if !keys.contains(&key) {
+            keys.push(key);
+        }
+    }
+    let mut decided = PyDecided::literal(PyType::Dict, smt_seq(&keys));
+    decided.aux = values;
+    Some(decided)
+}
+
+/// `len(x)` over a decided `str`, a decided or stated list, tuple or dict:
+/// it always completes (the builtin's own `__len__`).
+fn py_len(operand: &Term) -> Option<PyDecided> {
+    let yes = || "true".to_string();
+    if let Some(decided) = py_decided(operand) {
+        let value = match decided.ty {
+            PyType::Str => format!("(str.len {})", decided.value),
+            PyType::List | PyType::Tuple | PyType::Dict => {
+                format!("(seq.len {})", decided.value)
+            }
+            PyType::Int | PyType::Value => return None,
+        };
+        return Some(PyDecided::operation(
+            PyType::Int,
+            &[&decided],
+            yes(),
+            yes(),
+            value,
+        ));
+    }
+    let PySide::Undecided(undecided) = py_side(operand)? else {
+        return None;
+    };
+    let ready = format!(
+        "(or {} {} {})",
+        py_container_guard(&undecided, PyType::List),
+        py_container_guard(&undecided, PyType::Tuple),
+        py_container_guard(&undecided, PyType::Dict)
+    );
+    Some(PyDecided {
+        ty: PyType::Int,
+        ready,
+        law: yes(),
+        defined: yes(),
+        value: format!("(seq.len ({PY_VALUE_ITEMS} {undecided}))"),
+        aux: String::new(),
+    })
+}
+
+/// A list's or a tuple's item at `index` (an `int`, decided or stated):
+/// Python's `IndexError` outside the range.
+fn py_sequence_item(items: &PyDecided, index: &Term) -> Option<PyDecided> {
+    let index = py_read_as(index, PyType::Int)?;
+    let (law, at, _len) = py_index_in_range(&items.value, &index.value);
+    let value = format!("(seq.nth {} {at})", items.value);
+    Some(PyDecided::operation(
+        PyType::Value,
+        &[items, &index],
+        law,
+        "true".to_string(),
+        value,
+    ))
+}
+
+/// A dict's value at `key` (`py_key`): Python's `KeyError` where it is no
+/// key.
+fn py_dict_item(dict: &PyDecided, key: &Term) -> Option<PyDecided> {
+    let (key_ready, key) = py_key(key)?;
+    let law = format!("(seq.contains {} (seq.unit {key}))", dict.value);
+    let value = format!("(select {} {key})", dict.aux);
+    let mut decided =
+        PyDecided::operation(PyType::Value, &[dict], law, "true".to_string(), value);
+    decided.ready = smt_and(&[decided.ready.as_str(), key_ready.as_str()]);
+    Some(decided)
+}
+
+/// `x[i]` / `d[k]` over a container: `receiver` where it is decided, else
+/// the undecided `receiver_term` read as a stated list or tuple (by an
+/// index) or a stated dict (by a key), whichever its stated type is.
+fn py_container_subscript(
+    receiver: Option<PyDecided>,
+    receiver_term: &Term,
+    index: &Term,
+) -> Option<PyDecided> {
+    match receiver {
+        Some(decided) if decided.ty == PyType::Dict => py_dict_item(&decided, index),
+        Some(decided) => py_sequence_item(&decided, index),
+        None => {
+            let by_index =
+                py_read_sequence(receiver_term).and_then(|items| py_sequence_item(&items, index));
+            let by_key = py_stated(receiver_term, PyType::Dict)
+                .and_then(|dict| py_dict_item(&dict, index));
+            match (by_index, by_key) {
+                (Some(item), Some(entry)) => Some(PyDecided {
+                    ty: PyType::Value,
+                    ready: format!("(or {} {})", item.ready, entry.ready),
+                    law: smt_ite(&entry.ready, &entry.law, &item.law),
+                    defined: "true".to_string(),
+                    value: smt_ite(&entry.ready, &entry.value, &item.value),
+                    aux: String::new(),
+                }),
+                (item, entry) => item.or(entry),
+            }
+        }
+    }
+}
+
+/// The laws prove's builtin answers state a dispatched call's receiver after
+/// it by (see the section header), over a receiver of the exact type.
+fn py_builtin_law(law: &str, operands: &[Term]) -> Option<PyDecided> {
+    let yes = || "true".to_string();
+    match (law, operands) {
+        // `list.append(v)`: the items and `v` after them; always completes.
+        ("python:list.append", [list, item]) => {
+            let list = py_read_as(list, PyType::List)?;
+            let item = py_item(item)?;
+            let value = format!("(seq.++ {} (seq.unit {item}))", list.value);
+            Some(PyDecided::operation(
+                PyType::List,
+                &[&list],
+                yes(),
+                yes(),
+                value,
+            ))
+        }
+        // `list.extend(s)` over a list or a tuple: the items of both.
+        ("python:list.extend", [list, other]) => {
+            let list = py_read_as(list, PyType::List)?;
+            let other = py_read_sequence(other)?;
+            let value = format!("(seq.++ {} {})", list.value, other.value);
+            Some(PyDecided::operation(
+                PyType::List,
+                &[&list, &other],
+                yes(),
+                yes(),
+                value,
+            ))
+        }
+        // `l[i] = v`: the item at `i` replaced; `IndexError` out of range.
+        ("python:list.setitem", [list, index, item]) => {
+            let list = py_read_as(list, PyType::List)?;
+            let index = py_read_as(index, PyType::Int)?;
+            let item = py_item(item)?;
+            let items = &list.value;
+            let (law, at, len) = py_index_in_range(items, &index.value);
+            let value = format!(
+                "(seq.++ (seq.extract {items} 0 {at}) (seq.unit {item}) \
+                 (seq.extract {items} (+ {at} 1) (- {len} (+ {at} 1))))"
+            );
+            Some(PyDecided::operation(
+                PyType::List,
+                &[&list, &index],
+                law,
+                yes(),
+                value,
+            ))
+        }
+        // `del l[i]`: the item at `i` removed; `IndexError` out of range.
+        ("python:list.delitem", [list, index]) => {
+            let list = py_read_as(list, PyType::List)?;
+            let index = py_read_as(index, PyType::Int)?;
+            let items = &list.value;
+            let (law, at, len) = py_index_in_range(items, &index.value);
+            let value = format!(
+                "(seq.++ (seq.extract {items} 0 {at}) \
+                 (seq.extract {items} (+ {at} 1) (- {len} (+ {at} 1))))"
+            );
+            Some(PyDecided::operation(
+                PyType::List,
+                &[&list, &index],
+                law,
+                yes(),
+                value,
+            ))
+        }
+        // `d[k] = v`: `k` appended where it is no key, its value stored.
+        ("python:dict.setitem", [dict, key, item]) => {
+            let dict = py_read_as(dict, PyType::Dict)?;
+            let (key_ready, key) = py_key(key)?;
+            let item = py_item(item)?;
+            let keys = &dict.value;
+            let value = format!(
+                "(ite (seq.contains {keys} (seq.unit {key})) {keys} \
+                 (seq.++ {keys} (seq.unit {key})))"
+            );
+            let mut decided = PyDecided::operation(PyType::Dict, &[&dict], yes(), yes(), value);
+            decided.ready = smt_and(&[decided.ready.as_str(), key_ready.as_str()]);
+            decided.aux = format!("(store {} {key} {item})", dict.aux);
+            Some(decided)
+        }
+        // `del d[k]`: `k` removed; `KeyError` where it is no key.
+        ("python:dict.delitem", [dict, key]) => {
+            let dict = py_read_as(dict, PyType::Dict)?;
+            let (key_ready, key) = py_key(key)?;
+            let keys = &dict.value;
+            let law = format!("(seq.contains {keys} (seq.unit {key}))");
+            let at = format!("(seq.indexof {keys} (seq.unit {key}) 0)");
+            let value = format!(
+                "(seq.++ (seq.extract {keys} 0 {at}) \
+                 (seq.extract {keys} (+ {at} 1) (- (seq.len {keys}) (+ {at} 1))))"
+            );
+            let mut decided = PyDecided::operation(PyType::Dict, &[&dict], law, yes(), value);
+            decided.ready = smt_and(&[decided.ready.as_str(), key_ready.as_str()]);
+            decided.aux = dict.aux.clone();
+            Some(decided)
+        }
+        _ => None,
+    }
+}
+
 /// The two operands of a binary operation, each read at a builtin type.
 ///
 /// A decided operand is its own (`py_decided`). An undecided Int-universe
@@ -3959,12 +4449,30 @@ fn py_stated(term: &Term, ty: PyType) -> Option<PyDecided> {
         PySide::Undecided(undecided) => undecided,
     };
     let (is_str, is_int) = py_type_guards(&undecided);
-    let (ready, value) = match ty {
-        PyType::Int => (format!("(and {is_int} (not {is_str}))"), undecided),
+    let (ready, value, aux) = match ty {
+        PyType::Int => (
+            format!("(and {is_int} (not {is_str}))"),
+            undecided,
+            String::new(),
+        ),
         PyType::Str => (
             format!("(and {is_str} (not {is_int}))"),
             format!("({PY_VALUE_STR} {undecided})"),
+            String::new(),
         ),
+        // A list's or a tuple's items, a dict's keys and entries (#7757
+        // step 7), each where its exact type is stated.
+        PyType::List | PyType::Tuple => (
+            py_container_guard(&undecided, ty),
+            format!("({PY_VALUE_ITEMS} {undecided})"),
+            String::new(),
+        ),
+        PyType::Dict => (
+            py_container_guard(&undecided, ty),
+            format!("({PY_VALUE_ITEMS} {undecided})"),
+            format!("({PY_VALUE_ENTRIES} {undecided})"),
+        ),
+        PyType::Value => return None,
     };
     Some(PyDecided {
         ty,
@@ -3972,6 +4480,7 @@ fn py_stated(term: &Term, ty: PyType) -> Option<PyDecided> {
         law: "true".to_string(),
         defined: "true".to_string(),
         value,
+        aux,
     })
 }
 
@@ -4047,11 +4556,15 @@ fn py_binary(
 /// else the uninterpreted application.
 fn py_universe_value(decided: &PyDecided, uninterpreted: &str) -> String {
     let value = match decided.ty {
-        PyType::Int => decided.value.clone(),
+        // An item read's value is the item itself, an Int-universe value.
+        PyType::Int | PyType::Value => decided.value.clone(),
         PyType::Str => {
             note_py_value_functions();
             format!("({PY_VALUE_OF_STR} {})", decided.value)
         }
+        // A container in term position is the application it is; an `=`
+        // binding it states its type and items (`py_value_is`).
+        PyType::List | PyType::Tuple | PyType::Dict => return uninterpreted.to_string(),
     };
     smt_ite(&decided.holds(), &value, uninterpreted)
 }
@@ -4098,6 +4611,38 @@ fn py_eq_guarded(decided: &PyDecided, undecided: &str, atom: &str) -> String {
             "(ite {is_int} (= {undecided} {}) (ite {is_str} false {atom}))",
             decided.value
         ),
+        // A container is never an `int` or a `str` (`list.__eq__` and the
+        // others decline, and so do theirs), nor a container of another
+        // type; of the same type it is equal where the items are the same,
+        // and unequal where their counts differ (#7757 step 7).
+        PyType::List | PyType::Tuple | PyType::Dict => {
+            let other = [PyType::List, PyType::Tuple, PyType::Dict]
+                .into_iter()
+                .filter(|ty| *ty != decided.ty)
+                .map(|ty| py_container_guard(undecided, ty))
+                .collect::<Vec<String>>()
+                .join(" ");
+            let same = py_container_guard(undecided, decided.ty);
+            let items = format!("({PY_VALUE_ITEMS} {undecided})");
+            let by_items = py_container_equality(decided.ty, &items, &decided.value, atom);
+            format!(
+                "(ite (or {is_int} {is_str} {other}) false (ite {same} {by_items} {atom}))"
+            )
+        }
+        PyType::Value => atom.to_string(),
+    }
+}
+
+/// `==` between two values of the same container type `ty`, read by their
+/// items (a dict's by its keys): equal where they are the same sequence (a
+/// list's or a tuple's), unequal where their counts differ, else `atom`
+/// (Python compares the items with `==`, which an Int-universe value does
+/// not decide).
+fn py_container_equality(ty: PyType, left: &str, right: &str, atom: &str) -> String {
+    let counts = format!("(= (seq.len {left}) (seq.len {right}))");
+    match ty {
+        PyType::Dict => format!("(ite {counts} {atom} false)"),
+        _ => format!("(ite (= {left} {right}) true (ite {counts} {atom} false))"),
     }
 }
 
@@ -4133,6 +4678,20 @@ fn py_value_is(decided: &PyDecided, undecided: &str) -> String {
             "(and {is_int} (not {is_str}) (= {undecided} {}))",
             decided.value
         ),
+        // A container's exact type, its items (a dict's keys), and a dict's
+        // entries (#7757 step 7).
+        PyType::List | PyType::Tuple => format!(
+            "(and {} (= ({PY_VALUE_ITEMS} {undecided}) {}))",
+            py_container_guard(undecided, decided.ty),
+            decided.value
+        ),
+        PyType::Dict => format!(
+            "(and {} (= ({PY_VALUE_ITEMS} {undecided}) {}) (= ({PY_VALUE_ENTRIES} {undecided}) {}))",
+            py_container_guard(undecided, decided.ty),
+            decided.value,
+            decided.aux
+        ),
+        PyType::Value => format!("(= {undecided} {})", decided.value),
     }
 }
 
@@ -4158,6 +4717,13 @@ fn py_compare_completes(operator: &str, left: &Term, right: &Term) -> Option<Str
     };
     match (py_side(left)?, py_side(right)?) {
         (PySide::Undecided(_), PySide::Undecided(_)) => None,
+        // Two containers of one type compare their items with `==`, which
+        // may run any item's code (#7757 step 7).
+        (PySide::Decided(left), PySide::Decided(right))
+            if left.ty.is_container() && left.ty == right.ty =>
+        {
+            None
+        }
         (left, right) => {
             let left = builtin(left);
             let right = builtin(right);
@@ -4183,6 +4749,10 @@ fn py_ordering_completes(left: &Term, right: &Term, atom: &str) -> Option<String
             let answer = match (left.ty, right.ty) {
                 (PyType::Int, PyType::Int) => "true",
                 (PyType::Str, PyType::Str) => return None,
+                // Two lists or two tuples compare their items, which may
+                // run any item's code (#7757 step 7); two dicts, or any
+                // other pair, are Python's `TypeError`.
+                (PyType::List, PyType::List) | (PyType::Tuple, PyType::Tuple) => return None,
                 _ => "false",
             };
             let ready = smt_and(&[left.holds().as_str(), right.holds().as_str()]);
@@ -4196,6 +4766,11 @@ fn py_ordering_completes(left: &Term, right: &Term, atom: &str) -> Option<String
             let read = match decided.ty {
                 PyType::Int => format!("(ite {an_int} true (ite {a_str} false {atom}))"),
                 PyType::Str => format!("(ite {an_int} false {atom})"),
+                // A container against an `int` or a `str` is `TypeError`.
+                PyType::List | PyType::Tuple | PyType::Dict => {
+                    format!("(ite (or {an_int} {a_str}) false {atom})")
+                }
+                PyType::Value => atom.to_string(),
             };
             Some(smt_ite(&decided.holds(), &read, atom))
         }
@@ -4219,6 +4794,8 @@ fn emit_python_value_atomic(name: &str, args: &[Term]) -> Result<Option<String>,
             )));
         };
         return Ok(Some(match py_side(operand) {
+            // A list, a tuple or a dict is neither.
+            Some(PySide::Decided(decided)) if decided.ty.is_container() => "false".to_string(),
             Some(PySide::Decided(decided)) => decided.holds(),
             Some(PySide::Undecided(undecided)) => py_builtin(&undecided),
             None => "false".to_string(),
@@ -4229,6 +4806,25 @@ fn emit_python_value_atomic(name: &str, args: &[Term]) -> Result<Option<String>,
         args: protocol_args,
     }] = args
     {
+        // A builtin law's own completion (#7757 step 7): its range or key
+        // condition over decided operands, else the atom as it stands.
+        if is_py_builtin_law(protocol) && name.strip_suffix(".completes") == Some(protocol.as_str())
+        {
+            if let Some(decided) = py_builtin_law(protocol, protocol_args) {
+                let atom = emit_atomic(name, args)?;
+                return Ok(Some(smt_ite(&decided.ready, &decided.law, &atom)));
+            }
+            return Ok(None);
+        }
+        // `len(x)` over a decided or stated `str`, list, tuple or dict always
+        // completes (#7757 step 7).
+        if name == PYTHON_UNKNOWN_CALLEE_COMPLETES && protocol == "python:call_result" {
+            if let Some(decided) = py_decided_operation(protocol, protocol_args) {
+                let atom = emit_atomic(name, args)?;
+                return Ok(Some(smt_ite(&decided.ready, &decided.law, &atom)));
+            }
+            return Ok(None);
+        }
         if name.strip_suffix(".completes") == Some(protocol.as_str()) {
             if let [Term::Ctor {
                 name: operation,
@@ -4266,8 +4862,12 @@ fn emit_python_value_atomic(name: &str, args: &[Term]) -> Result<Option<String>,
     let [left, right] = args else {
         return Ok(None);
     };
-    let is_operation =
-        |term: &Term| matches!(term, Term::Ctor { .. }) && py_decided(term).is_some();
+    // A display is the application it is, never rewritten (#7757 step 7):
+    // an `=` binding one is identity.
+    let is_operation = |term: &Term| match term {
+        Term::Ctor { name, .. } => !is_py_display(name) && py_decided(term).is_some(),
+        _ => false,
+    };
     match name {
         "py.eq" => {}
         "=" if is_operation(left) || is_operation(right) => {}
@@ -4280,10 +4880,15 @@ fn emit_python_value_atomic(name: &str, args: &[Term]) -> Result<Option<String>,
     let rendered = match (left, right) {
         (PySide::Decided(a), PySide::Decided(b)) => {
             let ready = smt_and(&[a.holds().as_str(), b.holds().as_str()]);
-            let same = if a.ty == b.ty {
-                format!("(= {} {})", a.value, b.value)
-            } else {
+            let same = if a.ty != b.ty {
                 "false".to_string()
+            } else if a.ty.is_container() && name == "py.eq" {
+                // `==` compares the items (#7757 step 7).
+                py_container_equality(a.ty, &a.value, &b.value, &atom)
+            } else if a.ty == PyType::Dict {
+                format!("(and (= {} {}) (= {} {}))", a.value, b.value, a.aux, b.aux)
+            } else {
+                format!("(= {} {})", a.value, b.value)
             };
             smt_ite(&ready, &same, &atom)
         }

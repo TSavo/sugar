@@ -4156,7 +4156,9 @@ fn named_argument(arg: &Json) -> Option<Result<(&str, String, Json), ()>> {
 ///
 /// A `py.class(<key>, <class>)` (step 8) supplies the `class:<parameter>`
 /// input of the parameter the argument it names binds: a position the
-/// parameter a positional argument there binds, a keyword that parameter.
+/// parameter a positional argument there binds, a keyword that parameter,
+/// or a contract input the call supplies (`cell:<name>`, #7757 step 7), whose
+/// class input is `class:cell:<name>` -- the one input kind, over the formal.
 /// It names an argument the call passes or it fits nothing; a contract that
 /// takes no such input reads no method of that parameter, and the class is
 /// supplied to nothing.
@@ -5394,6 +5396,13 @@ fn dispatch_answer(post: &AmbientPost, call: &Json) -> Option<AmbientPost> {
         Some(Ok((ClassKey::Position(0), class))) => Some(class),
         _ => None,
     })?;
+    // A builtin class (#7757 step 7): its method's law, or nothing.
+    if let Some(builtin) = builtin_class_name(&class) {
+        if dispatch.read {
+            return None;
+        }
+        return builtin_dispatch_answer(post, builtin, &dispatch.method, args);
+    }
     // A class call's result: the instance its class's constructor contract
     // states it makes (#7757 step 8), never a class nothing states.
     let constructed = constructed_class_symbol(&class).map(str::to_string);
@@ -5423,6 +5432,146 @@ fn dispatch_answer(post: &AmbientPost, call: &Json) -> Option<AmbientPost> {
         dispatch: None,
         receiver: target.receiver,
         plain_stores: Some(Arc::clone(&dispatch.table)),
+        value_calls: None,
+    })
+}
+
+// ── A dispatched call on a builtin list or dict (step 7, #7757) ────────────
+//
+// A callee's contract mutates what it was handed through a method or an item
+// store over the class input of that formal: `xs.append(v)` is
+// `call:dispatch:append(xs, v, py.class("0", class:xs))`, and the callee
+// states `xs` after it as `python:after(<that call's result>, "0")`, the
+// receiver named by its argument key (the kit's
+// `receiver_dispatch.receiver_after_dispatch`). Where the read binds the
+// class input to an exact builtin class (`python:builtin("list")`, the kit's
+// `receiver_dispatch.builtin_class_term`), the method is the builtin's own,
+// and its law answers the call here, as a contract answers an edge: its
+// formals are Python's, its post states the receiver after the call over the
+// law the SMT backend decides (`python:list.append(self, object)` and the
+// rest, `sugar_ir_compiler_smt_lib`'s builtin container section) and the
+// call's value `None`, and its halt is the complement of the law's own
+// completion (`<law>.completes(<law>(...))`): Python's `IndexError` or
+// `KeyError` where the backend decides the index or key is out, and
+// possible wherever it does not decide it (a halt is never dropped). A
+// builtin method no law here writes, an attribute read, or a call whose
+// arguments do not fit the method stays owed. A subclass is never bound to
+// `python:builtin`: the law applies to the exact class only.
+
+/// `python:builtin(<name>)`: the builtin class the builtin namespace binds
+/// under `<name>` (the kit's `receiver_dispatch.BUILTIN_CLASS`), as a caller
+/// binds a class input to it.
+const PYTHON_BUILTIN_CLASS: &str = "python:builtin";
+/// The label a dispatched call's receiver is read by after the call: its
+/// argument key (the kit's `receiver_dispatch.DISPATCH_RECEIVER_LABEL`).
+const DISPATCH_RECEIVER_LABEL: &str = "0";
+/// The out-binding of a builtin law's contract.
+const BUILTIN_LAW_OUT: &str = "out";
+/// The target a builtin law's answer names in place of a contract CID.
+const BUILTIN_LAW_TARGET_PREFIX: &str = "builtin-law:";
+/// `None`'s term (the kit's `NoneValue.to_term`).
+const PYTHON_NONE: &str = "None";
+
+/// The builtin class a `python:builtin(<name>)` names; `None` for any other
+/// term.
+fn builtin_class_name(class: &Json) -> Option<&str> {
+    match ctor_parts(class)? {
+        (PYTHON_BUILTIN_CLASS, args) => match args.as_slice() {
+            [name] => const_str(name),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// A builtin method's law: its formals as Python names them, the law the
+/// SMT backend decides, and whether the call may halt.
+struct BuiltinLaw {
+    formals: &'static [&'static str],
+    law: &'static str,
+    halts: bool,
+}
+
+/// The law of `class.method`, for the builtin methods written here.
+fn builtin_law(class: &str, method: &str) -> Option<BuiltinLaw> {
+    const APPEND: &[&str] = &["self", "object"];
+    const EXTEND: &[&str] = &["self", "iterable"];
+    const STORE: &[&str] = &["self", "key", "value"];
+    const DELETE: &[&str] = &["self", "key"];
+    let (formals, law, halts) = match (class, method) {
+        ("list", "append") => (APPEND, "python:list.append", false),
+        ("list", "extend") => (EXTEND, "python:list.extend", true),
+        ("list", "__setitem__") => (STORE, "python:list.setitem", true),
+        ("list", "__delitem__") => (DELETE, "python:list.delitem", true),
+        ("dict", "__setitem__") => (STORE, "python:dict.setitem", true),
+        ("dict", "__delitem__") => (DELETE, "python:dict.delitem", true),
+        _ => return None,
+    };
+    Some(BuiltinLaw {
+        formals,
+        law,
+        halts,
+    })
+}
+
+/// The answer of a dispatched call of `method` on an instance of the exact
+/// builtin `class` (see the section header): `None` -- the call stays owed --
+/// for a method no law writes or a call whose arguments do not fit it.
+fn builtin_dispatch_answer(
+    post: &AmbientPost,
+    class: &str,
+    method: &str,
+    args: &[Json],
+) -> Option<AmbientPost> {
+    let law = builtin_law(class, method)?;
+    let formals: Vec<String> = law.formals.iter().map(|formal| formal.to_string()).collect();
+    bind_call_arguments(&formals, &[], args)?;
+    let var = |name: &str| json!({"kind": "var", "name": name});
+    let operands: Vec<Json> = law.formals.iter().copied().map(|formal| var(formal)).collect();
+    let operation = json!({"kind": "ctor", "name": law.law, "args": operands});
+    let receiver_after = json!({
+        "kind": "ctor",
+        "name": PYTHON_AFTER,
+        "args": [var(BUILTIN_LAW_OUT), string_const_term(DISPATCH_RECEIVER_LABEL)],
+    });
+    let none = json!({"kind": "ctor", "name": PYTHON_NONE, "args": []});
+    let stated = IrFormula::And(vec![
+        json!({"kind": "atomic", "name": "=", "args": [receiver_after, operation.clone()]}),
+        json!({"kind": "atomic", "name": "=", "args": [var(BUILTIN_LAW_OUT), none]}),
+    ])
+    .to_value();
+    let (answer, halt_guards) = if law.halts {
+        let completes = json!({
+            "kind": "atomic",
+            "name": format!("{}.completes", law.law),
+            "args": [operation],
+        });
+        (
+            json!({"kind": "implies", "operands": [completes.clone(), stated]}),
+            vec![IrFormula::Not(completes).to_value()],
+        )
+    } else {
+        (stated, Vec::new())
+    };
+    Some(AmbientPost {
+        binding: BridgeBinding {
+            source_symbol: format!("{DISPATCH_SYMBOL_PREFIX}{method}"),
+            target_cid: format!("{BUILTIN_LAW_TARGET_PREFIX}{class}.{method}"),
+            target_proof_cid: None,
+            formals,
+            out_binding: BUILTIN_LAW_OUT.to_string(),
+            stated_inputs: Vec::new(),
+        },
+        post: answer,
+        halt_guards,
+        every_halt_guarded: true,
+        typed_halts: Vec::new(),
+        member_cid: post.member_cid.clone(),
+        site_cid: post.site_cid.clone(),
+        refusal: None,
+        dispatch: None,
+        receiver: DispatchReceiver::AsCalled,
+        plain_stores: None,
         value_calls: None,
     })
 }
@@ -13312,6 +13461,55 @@ mod tests {
                 ("global:G".to_string(), int(4)),
             ]
         );
+    }
+
+    #[test]
+    fn a_cell_s_class_binds_the_class_input_of_the_cell() {
+        // #7757 step 7: `py.class("cell:xs", <class>)` binds `class:cell:xs`,
+        // the class of the formal the closure supplies.
+        let list = json!({"kind": "ctor", "name": PYTHON_BUILTIN_CLASS, "args": [string_const("list")]});
+        let bound = bind_call_arguments(
+            &formals(&["cell:xs", "class:cell:xs"]),
+            &[],
+            &[
+                named_arg("py.closure", "xs", int(1)),
+                named_arg(PYTHON_CLASS, "cell:xs", list.clone()),
+            ],
+        )
+        .expect("the call fits the contract");
+        assert!(bound.contains(&("class:cell:xs".to_string(), list)), "{bound:?}");
+    }
+
+    #[test]
+    fn a_builtin_list_s_method_is_answered_by_its_law() {
+        // #7757 step 7: a dispatched call whose receiver's class is bound to
+        // the builtin `list` is answered by the method's law, stated over the
+        // receiver's argument key; a method no law writes stays owed.
+        let post = owed_post(
+            "python:dispatch:append",
+            "member",
+            "site",
+            DroppedAmbientPostReason::Unanswered,
+        );
+        let class = json!({"kind": "ctor", "name": PYTHON_BUILTIN_CLASS, "args": [string_const("list")]});
+        assert_eq!(builtin_class_name(&class), Some("list"));
+        let args = vec![var("xs"), int(1), named_arg(PYTHON_CLASS, "0", class)];
+        let answer =
+            builtin_dispatch_answer(&post, "list", "append", &args).expect("the law answers");
+        assert_eq!(answer.binding.formals, formals(&["self", "object"]));
+        assert!(answer.halt_guards.is_empty() && answer.every_halt_guarded);
+        let spelled = answer.post.to_string();
+        assert!(spelled.contains("python:list.append"), "{spelled}");
+        assert!(spelled.contains(PYTHON_AFTER), "{spelled}");
+        // An item store may raise `IndexError`: its one halt is the
+        // complement of the law's completion.
+        let store = builtin_dispatch_answer(&post, "list", "__setitem__", &[var("xs"), int(0), int(5)])
+            .expect("the law answers an item store");
+        assert_eq!(store.halt_guards.len(), 1);
+        assert!(store.halt_guards[0].to_string().contains("python:list.setitem.completes"));
+        // No law, or a call that does not fit the method: owed.
+        assert!(builtin_dispatch_answer(&post, "list", "count", &args).is_none());
+        assert!(builtin_dispatch_answer(&post, "list", "append", &[var("xs")]).is_none());
     }
 
     #[test]

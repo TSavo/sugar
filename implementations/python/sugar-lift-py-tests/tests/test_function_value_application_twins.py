@@ -21,8 +21,9 @@ the call (#7757 step 7).  The callee's contract states what it leaves in a
 cell it rebinds over that term on each completed arm that ran to the body's
 end (``UniverseValue.after_facts``), so the join decides a ``nonlocal``
 rebinding, also one that stands after an early ``return``.  What an append
-leaves in a cell whose type nothing decides is not stated, so that twin
-stays ``open`` in both halves, never ``sat`` for the lie.
+or an item store leaves in a list or dict the call handed it is stated over
+the dispatched call's receiver and decided at prove where the caller binds
+the object's class to the builtin (#7757 step 7).
 """
 
 from __future__ import annotations
@@ -123,6 +124,39 @@ def test_global():
     assert G == {claim}
 """
 
+_APPEND_TO_A_PARAMETER = """\
+def add(xs):
+    xs.append(1)
+
+
+def test_append():
+    ys = []
+    add(ys)
+    assert len(ys) == {claim}
+"""
+
+_ITEM_STORE_TO_A_PARAMETER = """\
+def put(xs):
+    xs[0] = 5
+
+
+def test_put():
+    ys = [1, 2]
+    put(ys)
+    assert ys[0] == {claim}
+"""
+
+_KEY_STORE_TO_A_PARAMETER = """\
+def put(d):
+    d["k"] = 5
+
+
+def test_put():
+    e = {{}}
+    put(e)
+    assert e["k"] == {claim}
+"""
+
 _MODULE_DEF_DEFAULT = """\
 def f(a=3):
     return a
@@ -157,6 +191,16 @@ _TWINS = {
 # taken.  A module global the callee declares ``global`` and rebinds is
 # stated the same way (``python:after(out, "global:G")``), and the caller's
 # read of the global after the call is that term, keyed on the call.
+#
+# What a callee leaves in a list or dict it was handed -- a captured cell or a
+# parameter -- is stated the same way (#7757 step 7): the mutation is the
+# dispatched edge over the formal's class input (``class:cell:xs``,
+# ``class:xs``), the callee states the object as that call leaves its
+# receiver (``python:after(<call result>, "0")``), the caller binds the class
+# to the builtin (``py.class(<key>, python:builtin("list"))``), and prove
+# answers the dispatched call by the builtin's law (``seq.++`` for
+# ``append``, the item replaced for ``xs[i] = v``, the key stored for ``d[k] =
+# v``) and reads ``len`` and the item through the same theory.
 _STATED_BY_THE_CALLEE = {
     "global-rebound": (_GLOBAL_REBOUND, "5", "0"),
     "nonlocal-rebound": (_NONLOCAL_REBOUND_THROUGH_THE_VALUE, "1", "0"),
@@ -166,14 +210,10 @@ _STATED_BY_THE_CALLEE = {
         "1",
         "0",
     ),
-}
-
-# Decided before step 5 by following the callee's body; ``open`` in both
-# halves while the callee's contract states nothing of what it left in the
-# cell: an append on a cell whose type nothing here decides is not
-# determined by the contract's inputs (#7757 step 7).
-_OPEN_UNTIL_STEP_7 = {
     "append-carried": (_APPEND_THROUGH_THE_VALUE, "1", "0"),
+    "append-to-a-parameter": (_APPEND_TO_A_PARAMETER, "1", "0"),
+    "item-store-to-a-parameter": (_ITEM_STORE_TO_A_PARAMETER, "5", "1"),
+    "key-store-to-a-parameter": (_KEY_STORE_TO_A_PARAMETER, "5", "1"),
 }
 
 # The called function's own contract (its body lifted alone, never the
@@ -272,18 +312,3 @@ def test_a_cell_the_callee_rebinds_is_decided_by_its_contract(
     assert _claim_statuses(truthful.prove_doc) == ["discharged"], truthful.prove_doc
     assert truthful.verdict != "unsat", truthful.prove_doc
     assert lying.verdict == "unsat", lying.prove_doc
-
-
-@pytest.mark.parametrize("shape", sorted(_OPEN_UNTIL_STEP_7))
-def test_an_effect_of_a_same_file_call_is_open_until_its_contract_states_it(
-    shape: str, tmp_path: Path
-) -> None:
-    source, true, false = _OPEN_UNTIL_STEP_7[shape]
-    truthful = run_source_through_real_solver(
-        tmp_path / "t", source.format(claim=true)
-    )
-    lying = run_source_through_real_solver(tmp_path / "l", source.format(claim=false))
-    # The call is joined at prove; nothing it states says what it did to the
-    # caller's cell, which the call left unknown: never ``sat`` for the lie.
-    assert truthful.verdict == "open", truthful.prove_doc
-    assert lying.verdict == "open", lying.prove_doc
