@@ -1153,16 +1153,18 @@ class FunctionUniverseSugar(Sugar):
     #: left the frame before the statements after that ``return``, and
     #: states nothing (#7757 step 7).
     cells_after_every_arm: bool = dataclass_field(default=True, compare=False)
-    #: ``((param, attr), ...)``: every field store of the body's quiet tail
-    #: on a parameter whose class is a contract input
-    #: (``FunctionDef._fields_where_the_body_ends``): the stores whose being
-    #: the plain ``__dict__`` store guards the fields stated below.
+    #: ``((param, attr), ...)``: each stated field's last store on a
+    #: parameter whose class is a contract input, and every field store that
+    #: may run after one (``FunctionDef._fields_where_the_body_ends``): the
+    #: stores whose being the plain ``__dict__`` store guards the fields
+    #: stated below.
     plain_stores: tuple = dataclass_field(default=(), compare=False)
-    #: ``((param, attr, read), ...)``: for each field the tail stores last
-    #: on its parameter, the sugar of the stored value read where the body
-    #: ends.  Each arm that ran to the end reads it in the context it left,
-    #: and the universe states it over ``python:after(out, "<param>")``
-    #: under the plain-store guard (``UniverseValue.fields``, #7757 step 7).
+    #: ``((param, attr, read), ...)``: for each field the body stores last at
+    #: its top level on its parameter, with nothing after it that may change
+    #: it, the read of the stored value through the store's key.  Each arm
+    #: that ran to the end reads it in the context it left, and the universe
+    #: states it over ``python:after(out, "<param>")`` under the plain-store
+    #: guard (``UniverseValue.fields``, #7757 step 7).
     fields_after: tuple = dataclass_field(default=(), compare=False)
 
     @classmethod
@@ -1246,11 +1248,12 @@ class FunctionUniverseSugar(Sugar):
         return tuple(found)
 
     def _fields(self, state) -> tuple:
-        """``((param, attr, value), ...)``: each field the body's quiet tail
-        stores last on a parameter (``fields_after``), its value read in the
-        context the arm whose record is ``state`` left, on an arm that ran to
-        the end (``_ran_to_the_end``); a read that does not complete with one
-        value states nothing (#7757 step 7)."""
+        """``((param, attr, value), ...)``: each field the body stores last
+        on a parameter (``fields_after``), its value read through the
+        store's key in the context the arm whose record is ``state`` left, on
+        an arm that ran to the end (``_ran_to_the_end``: it ran the store); a
+        read that does not complete with one value states nothing (#7757
+        step 7)."""
         if not self.fields_after or not self._ran_to_the_end(state):
             return ()
         found = []

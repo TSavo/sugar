@@ -236,7 +236,7 @@ def test_fields_a_callee_stores_from_its_parameters_are_joined_at_prove(
     tmp_path: Path,
 ) -> None:
     """``fill(box, 7)`` storing ``b.n = v`` and ``b.m = 2`` on a bare
-    instance: both stores are the body's quiet tail, the guard is both
+    instance: nothing after either store may change it, the guard is both
     ``plain_store`` atoms, and ``n`` is stated as the formal ``v``, bound to
     the caller's ``7`` (#7757 step 7).  Truthful ``sat``, lying ``unsat``."""
     t = run_source_through_real_solver(
@@ -250,6 +250,89 @@ def test_fields_a_callee_stores_from_its_parameters_are_joined_at_prove(
     assert t.verdict != "unsat"
     assert claim_verdict(t.prove_doc, claims_from_line=test_line) == "sat"
     assert lie.verdict == "unsat"
+
+
+_STORED_BEFORE_CODE = """\
+class Box:
+    pass
+
+
+def note():
+    return 1
+
+
+def fill(b, v):
+    if v > 9:
+        return None
+    held = v
+    b.n = held
+    note()
+
+
+def test_box():
+    box = Box()
+    fill(box, 7)
+    assert box.n == {expected}
+"""
+
+
+def test_a_field_stored_before_code_that_reaches_no_object_is_joined_at_prove(
+    tmp_path: Path,
+) -> None:
+    """``fill(box, 7)``: ``b.n = held`` comes after an early ``return`` and
+    before ``note()``, a source function that runs no code, and its value
+    is a local -- none of it in a quiet tail.  The store is the last of
+    ``n`` at the top level and nothing after it may change it, so the arm
+    that ran to the end states the value it stored, read through the
+    store's key in the context it left (``v``, bound to the caller's ``7``),
+    under the plain-store guard (#7757 step 7).  Truthful ``sat``, lying
+    ``unsat``."""
+    t = run_source_through_real_solver(
+        tmp_path / "before-code-truthful", _STORED_BEFORE_CODE.format(expected=7)
+    )
+    lie = run_source_through_real_solver(
+        tmp_path / "before-code-lying", _STORED_BEFORE_CODE.format(expected=8)
+    )
+    print(json.dumps({"truthful": t.verdict, "lying": lie.verdict}, sort_keys=True))
+    test_line = _STORED_BEFORE_CODE.splitlines().index("def test_box():") + 1
+    assert t.verdict != "unsat"
+    assert claim_verdict(t.prove_doc, claims_from_line=test_line) == "sat"
+    assert lie.verdict == "unsat"
+
+
+_TOUCHED_AFTER = """\
+class Box:
+    def poke(self):
+        self.n = 9
+
+
+def fill(b, v, other):
+    b.n = v
+    other.poke()
+
+
+def test_box():
+    box = Box()
+    fill(box, 7, box)
+    assert box.n == {expected}
+"""
+
+
+def test_a_field_a_later_call_may_change_is_never_stated(tmp_path: Path) -> None:
+    """``fill(box, 7, box)``: ``b.n = 7``, then ``other.poke()`` on the same
+    object stores ``n = 9``.  A method call after the store may change the
+    field (another parameter may hold the same object), so ``fill`` states
+    nothing of ``n`` (#7757 step 7): the lie ``box.n == 7`` is never
+    ``sat``, and the truth is never ``unsat``."""
+    t = run_source_through_real_solver(
+        tmp_path / "touched-after-truthful", _TOUCHED_AFTER.format(expected=9)
+    )
+    lie = run_source_through_real_solver(
+        tmp_path / "touched-after-lying", _TOUCHED_AFTER.format(expected=7)
+    )
+    print(json.dumps({"truthful": t.verdict, "lying": lie.verdict}, sort_keys=True))
+    assert t.verdict != "unsat"
+    assert lie.verdict != "sat"
 
 
 _DISPATCHED_STORE = """\

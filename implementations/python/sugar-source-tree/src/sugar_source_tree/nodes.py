@@ -1289,74 +1289,144 @@ def _class_input_field_store(statement, inputs):
     return None
 
 
-def _runs_no_code(expression) -> bool:
-    """Whether evaluating ``expression`` runs no code but the read itself:
-    none at all, a constant, or a bare name read."""
-    return expression is None or isinstance(expression, (Constant, Name))
+# The statements that may stand after a stated field store
+# (``_stores_after_the_field``): each runs only the operations its own nodes
+# name, read by the one reading of what may run code
+# (``container_mutation._sites_at``).  A ``with`` (its manager's
+# ``__enter__``/``__exit__``), a ``try`` (a handler's class match), a
+# ``match``, a ``del``, an augmented assignment, a nested scope or an import
+# runs code no site of its own names, so it stands in no such run.
+_FIELD_REGION_STATEMENTS = frozenset(
+    {
+        "Pass",
+        "Expr",
+        "Return",
+        "Raise",
+        "Assign",
+        "AnnAssign",
+        "If",
+        "While",
+        "For",
+        "Assert",
+        "Break",
+        "Continue",
+    }
+)
 
 
-def _stored_value_read(definition, value, final, inputs):
-    """The sugar of a stored value ``value`` (a field store's right-hand
-    side in ``definition``'s body) that reads the same wherever the body
-    ends, or None: a constant, or a parameter of ``definition`` the body
-    never rebinds and whose class is no input (``inputs``: such a parameter
-    is never read bare), read in ``final`` (``_name_read``: its formal).
-    Anything else is not stated (#7757 step 7)."""
-    if isinstance(value, Constant):
-        return value.sugar()
-    if (
-        not isinstance(value, Name)
-        or value.id in inputs
-        or value.id not in {parameter.name for parameter in definition.params}
-        or _binds_name(definition.body, value.id)
-    ):
-        return None
-    read = _name_read(definition, value.id, final)
-    return None if read is None else read.sugar()
+def _stores_after_the_field(region, attr: str, inputs):
+    """``((param, attr), ...)``: the field stores the statements ``region``
+    make on parameters in ``inputs``, in source order, where nothing
+    ``region`` runs may change the field ``attr`` of the object a stored
+    parameter holds (#7757 step 7); None where something may.
 
+    ``region`` is what may run after the last store of that field and
+    before the frame is left.  Each operation it runs
+    (``container_mutation._sites_at``: a call, an operator, a truth test, an
+    iteration, an item or attribute access) is one of:
 
-def _quiet_store_tail(body, inputs) -> tuple:
-    """``((param, attr, value), ...)``: the field stores on a parameter in
-    ``inputs`` (``_class_input_field_store``) that ``body``'s last
-    top-level statements make, with each one's right-hand side, in source
-    order, where nothing after the first of them runs code (#7757 step 7).
+    - an operation that runs no code (``container_mutation._runs_no_code``:
+      a cited pure builtin over constants, a builtin exception class
+      constructed by BaseException's law, an operation over values builtin
+      all the way down);
+    - a call of a source ``def`` by name, undecorated, whose every
+      operation, and every operation of each source function it calls by
+      name, is such a call or runs no code (``container_mutation._closure``
+      closed): it reaches no object to change, so its contract takes none;
+    - a field store ``q.g = v`` on a parameter in ``inputs`` (``g`` no
+      dunder name, and never ``attr``: another parameter may hold the same
+      object), which the contract states only under its plain-store guard,
+      returned so the guard takes it;
+    - a read of an import's member (``container_mutation._import_member``).
 
-    Read backwards from the end: a last ``return`` of nothing, a constant
-    or a name; then ``pass``, a constant expression statement, and field
-    stores whose value is a constant or a name (``_runs_no_code``); then
-    one more field store whose value is anything (it is evaluated before
-    its own store, so nothing it runs follows that store).  Every store in
-    it is followed only by stores and reads that run no code, so no code
-    the frame does not see changes the stored field before the frame is
-    left -- as long as each of those stores is the plain one, which the
-    contract guards (``python:plain_store``)."""
-    statements = list(body)
-    index = len(statements)
-    if (
-        index
-        and isinstance(statements[-1], Return)
-        and _runs_no_code(statements[-1].value)
-    ):
-        index -= 1
-    while index > 0:
-        statement = statements[index - 1]
-        if isinstance(statement, Pass) or (
-            isinstance(statement, Expr) and isinstance(statement.value, Constant)
+    Anything else -- a method call, a field read (``type(q).__getattribute__``
+    and whatever it finds), a call of anything else, an operator or a truth
+    test over a value that is not builtin all the way down (any parameter
+    may hold the object), a statement outside ``_FIELD_REGION_STATEMENTS``,
+    an unpacking target -- may change the field, which is then not
+    stated."""
+    from sugar_lift_py_tests.receiver_dispatch import is_dunder
+
+    from .container_mutation import (
+        _closure,
+        _import_member,
+        _runs_no_code,
+        _sites_at,
+        _source_callee,
+    )
+
+    nodes: list = []
+    for statement in region:
+        nodes.extend(statement.walk())
+    targets = _attribute_store_targets(nodes)
+    stores: list = []
+    for node in nodes:
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
+            return None
+        if isinstance(node, Statement) and node.kind not in _FIELD_REGION_STATEMENTS:
+            return None
+        if isinstance(node, Assign) and not all(
+            isinstance(target, (Name, Attribute)) for target in node.targets
         ):
-            index -= 1
+            return None
+        if isinstance(node, (AnnAssign, For)) and not isinstance(
+            node.target, (Name, Attribute)
+        ):
+            return None
+        if isinstance(node, Attribute):
+            if id(node) not in targets:
+                if _import_member(node):
+                    continue
+                return None
+            held = node.value
+            if (
+                not isinstance(held, Name)
+                or held.id not in inputs
+                or is_dunder(node.attr)
+                or node.attr == attr
+            ):
+                return None
+            if (held.id, node.attr) not in stores:
+                stores.append((held.id, node.attr))
             continue
-        store = _class_input_field_store(statement, inputs)
-        if store is None or not _runs_no_code(statement.value):
-            break
-        index -= 1
-    if index > 0 and _class_input_field_store(statements[index - 1], inputs):
-        index -= 1
-    stores = []
-    for statement in statements[index:]:
-        store = _class_input_field_store(statement, inputs)
-        if store is not None:
-            stores.append((*store, statement.value))
+        for site in _sites_at(node):
+            if _runs_no_code(site):
+                continue
+            callee = _source_callee(site, {})
+            if (
+                type(callee) is FunctionDef
+                and not callee.decorators
+                and _closure(callee)[2]
+            ):
+                continue
+            return None
     return tuple(stores)
+
+
+def _line_col_key(node) -> tuple:
+    """``node``'s source span as a key: a substituted statement keeps the
+    span of the statement it stands for."""
+    lc = node.line_col_span()
+    return (lc.start_line, lc.start_col, lc.end_line, lc.end_col)
+
+
+def _stored_value_reads(body) -> dict:
+    """``{span: (attr, read)}``: for each top-level field store of the
+    substituted ``body`` (``ReceiverFieldStoreStatement``, not a
+    read-modify-store), keyed by the span of the source statement it stands
+    for, the field and the read of what the store put there through the
+    statement's key (its post-state's ``value``, ``KeyedStoreSugar``): the
+    value the statement completed with, read in the context an arm left
+    (#7757 step 7)."""
+    found = {}
+    for statement in body:
+        if getattr(statement, "kind", None) != "ReceiverFieldStoreStatement":
+            continue
+        if statement.read_modifies():
+            continue
+        state = statement.post_state
+        found[_line_col_key(statement)] = (state.attr, state.value)
+    return found
 
 
 # The suites a compound statement holds.
@@ -11008,36 +11078,44 @@ class FunctionDef(Statement):
             found.append((name, read.sugar()))
         return tuple(found)
 
-    def _fields_where_the_body_ends(self, final) -> tuple:
+    def _fields_where_the_body_ends(self, body) -> tuple:
         """``(stores, fields)``: what this ``def`` leaves in the fields it
         stores on its parameters (``self`` included), which the universe
         states over ``python:after(out, "<param>")`` under the guard that each
-        of those stores is the plain ``__dict__`` store (#7757 step 7,
-        ``UniverseValue.fields``).
+        store that may run after it is the plain ``__dict__`` store (#7757
+        step 7, ``UniverseValue.fields``).  ``body`` is the substituted
+        body, whose statements the universe reduces.
 
-        ``stores`` are ``((param, attr), ...)``: every field store of the
-        body's quiet tail (``_quiet_store_tail``) on a parameter whose class
-        is an input of the contract (``_receiver_class_parameters``), in
-        source order.  The guard is the conjunction of
-        ``python:plain_store(class:<param>, "<attr>")`` over all of them: a
-        store that is not the plain one runs code (a ``__setattr__``, a
-        descriptor's ``__set__``) that may change any field.
+        A field is read off the last store of it the body makes at its top
+        level (``_class_input_field_store``: ``p.f = v`` or ``p.f: T = v``
+        on a parameter whose class is an input of the contract,
+        ``_receiver_class_parameters``, never read bare or rebound), where
+        nothing that may run after that store may change the field
+        (``_stores_after_the_field``): every operation after it runs no
+        code, calls a source function that reaches no object, or is a field
+        store on such a parameter of another field.  What runs before the
+        store does not matter: the store overwrites it.
 
-        ``fields`` are ``((param, attr, read), ...)``: for each field the
-        tail stores last on its parameter, the sugar of the stored value
-        where its value is one no evaluation key holds -- a constant, or a
-        parameter the body never rebinds, read in ``final``
-        (``_stored_value_read``) -- so each arm reads it as it is.  A field
-        another parameter's later store in the tail also stores is not
-        stated: the two may be one object.
+        ``fields`` are ``((param, attr, read), ...)``: for each such field,
+        the read of what that store put there through the statement's key
+        (``_stored_value_reads``).  Every arm that ran to the end ran the
+        store, so each reads the value it left in the context it left
+        (``FunctionUniverseSugar._fields``), any value the arm decides over
+        the contract's inputs (``universe_value.stated_by_its_inputs``).
+        An arm an earlier ``return`` ended states nothing.
 
-        The tail is what runs after the stated store and before the frame
-        is left: no code runs there, so nothing the frame does not see (an
-        alias held by a global, a cell, another argument) changes the field
-        after it.  A store before anything that may run code states
-        nothing.  Read only for a plain ``def`` (a generator or an ``async
-        def`` runs nothing at its call), in a module that gives no object
-        another class and stores no computed name
+        ``stores`` are ``((param, attr), ...)``, in source order: each
+        stated store and each field store that may run after one.  The guard
+        is the conjunction of ``python:plain_store(class:<param>, "<attr>")``
+        over all of them: a store that is not the plain one runs code (a
+        ``__setattr__``, a descriptor's ``__set__``) that may change any
+        field.
+
+        A store under a branch, in a loop, in a ``try`` or a ``with``, or
+        followed by code that may reach the object states nothing.  Read
+        only for a plain ``def`` (a generator or an ``async def`` runs
+        nothing at its call), in a module that gives no object another class
+        and stores no computed name
         (``receiver_dispatch.module_attribute_names``), for a field that is
         no dunder name; anywhere else nothing is stated and the caller's
         read of the field after the call stays undecided."""
@@ -11050,26 +11128,31 @@ class FunctionDef(Statement):
 
         if module_attribute_names(self.unit)[1]:
             return (), ()
-        tail = _quiet_store_tail(self.body, inputs)
-        if not tail:
+        statements = list(self.body)
+        last: dict = {}
+        for index, statement in enumerate(statements):
+            store = _class_input_field_store(statement, inputs)
+            if store is not None:
+                last[store] = index
+        if not last:
             return (), ()
-        stores = tuple((param, attr) for param, attr, _value in tail)
+        reads = _stored_value_reads(body)
+        stores: list = []
         stated = []
-        seen = set()
-        for index in range(len(tail) - 1, -1, -1):
-            param, attr, value = tail[index]
-            if (param, attr) in seen:
+        for (param, attr), index in sorted(last.items(), key=lambda item: item[1]):
+            after = _stores_after_the_field(statements[index + 1 :], attr, inputs)
+            if after is None:
                 continue
-            seen.add((param, attr))
-            if any(
-                other != param and other_attr == attr
-                for other, other_attr in stores[index + 1 :]
-            ):
+            read = reads.get(_line_col_key(statements[index]))
+            if read is None or read[0] != attr:
                 continue
-            read = _stored_value_read(self, value, final, inputs)
-            if read is not None:
-                stated.append((param, attr, read))
-        return stores, tuple(reversed(stated))
+            stated.append((param, attr, read[1].sugar()))
+            for pair in ((param, attr), *after):
+                if pair not in stores:
+                    stores.append(pair)
+        if not stated:
+            return (), ()
+        return tuple(stores), tuple(stated)
 
     def substitute_in_block(self, scope):
         """The ``def`` statement where a block threads it: Python evaluates
@@ -11512,6 +11595,7 @@ class FunctionDef(Statement):
                                 substituted.unit, substituted.ref, testimony_reporter
                             )
                         body_stmts = construction_root.body
+                        constructed_body = body_stmts
                         with reduction_span(
                             sugar="Construct.body", role="construction", site=where
                         ):
@@ -11529,6 +11613,7 @@ class FunctionDef(Statement):
                         # Only a loop consumer demands the sealed state projection;
                         # ordinary functions retain the runtime trace without
                         # sealing/hashing every binding (see freeze()).
+                        constructed_body = substituted.body
                         with reduction_span(
                             sugar="Construct.body", role="construction", site=where
                         ):
@@ -11544,7 +11629,9 @@ class FunctionDef(Statement):
                             substitution_trace = trace_builder.freeze()
                     # What the body leaves in the fields it stores on its
                     # parameters, under the plain-store guard (#7757 step 7).
-                    fields = FunctionDef._fields_where_the_body_ends(self, final)
+                    fields = FunctionDef._fields_where_the_body_ends(
+                        self, constructed_body
+                    )
                     # The contract is named by the definition's join symbol
                     # (#7757): ``python:m.B.m`` for a method, never the bare
                     # ``m`` two classes of one file share.
