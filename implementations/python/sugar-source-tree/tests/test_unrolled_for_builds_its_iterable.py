@@ -153,6 +153,20 @@ def test_an_unpack_of_a_dissolved_comprehension_builds_its_iterable(statement):
     assert ("Call", 2, column) not in absent
 
 
+@pytest.mark.parametrize("iterable", ["range(0)", "[]"])
+def test_an_empty_unroll_s_body_answers_with_the_loop(iterable):
+    # Python evaluates no item of an empty iterable: the body and the target
+    # are never evaluated, and answer inert with the loop
+    # (``For._answer_unevaluated_body``), as #8673's empty comprehension
+    # template does.
+    report = _report(
+        f"def f(g):\n    for day in {iterable}:\n        g(day + 1)\n    return g\n"
+    )
+    absent = {(e.kind, e.start_line, e.start_col) for e in report.minority}
+    assert not any(line == 3 for _kind, line, _col in absent), absent
+    assert ("Name", 2, 8) not in absent
+
+
 def test_a_display_iterable_answers_with_the_loop():
     report = _report(
         "def f(g):\n    for key in ['tz', 'freq']:\n        g(key)\n    return g\n"

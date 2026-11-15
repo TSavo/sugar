@@ -17710,6 +17710,7 @@ class For(Statement):
                             )
                             if controlled is not None:
                                 statements, final_bindings = controlled
+                                For._answer_unevaluated_body(self, elements)
                                 return _Splice(
                                     (
                                         *self._iterable_evaluated(subst_iter),
@@ -17723,6 +17724,7 @@ class For(Statement):
                             # below.
                             elements = None
                     if elements is not None and all(b is not None for b in bindings):
+                        For._answer_unevaluated_body(self, elements)
                         target_names = set(target_pattern.names)
                         unrolled: list = [
                             *self._iterable_evaluated(subst_iter),
@@ -18182,6 +18184,22 @@ class For(Statement):
                 hoisted.extend(_iteration_copies(self, index, (evaluated,)))
                 kept.append(unpacked)
         return tuple(hoisted), tuple(kept)
+
+    def _answer_unevaluated_body(self, elements) -> None:
+        """An unrolled loop over an empty iterable (``for x in range(0)``,
+        ``for k in []``): Python evaluates no item, so the body and the
+        target are never evaluated, and the unroll substitutes neither.
+        Every node of them answers with the loop, as a structural part does
+        (``discharge_by_substitution``), as a comprehension's template the
+        unroll never evaluates answers with its display
+        (``ListComp._dissolved_iterable``).  Nothing is evaluated there, so
+        no evaluation is dropped.  The ``else`` runs and answers for
+        itself.  Nothing where there is an item."""
+        if elements:
+            return
+        for root in (self.target, *self.body):
+            for node in root.walk():
+                node.discharge_by_substitution()
 
     def _iterable_evaluated(self, iterable) -> tuple:
         """The statements an unrolled loop opens with for its iterable
