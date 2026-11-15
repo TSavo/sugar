@@ -213,19 +213,26 @@ def test_the_linear_projection_of_a_boundary_is_gone() -> None:
 
 # ---------------------------------------------------------------------------
 # 5. sugar/match_sugar.py linear-halt converters: struck, then deleted
-#    (#7825). A guarded case has no sugar (Match.sugar refuses by name), and a
-#    halting subject is handed back as its own arms.
+#    (#7825). A guarded case is built now; a guard whose truth is not one
+#    decided value where the match is reduced (a formal's, which waits on its
+#    caller's actual) is refused by name, ``MatchSugar.guard``. A halting
+#    subject is handed back as its own arms.
 # ---------------------------------------------------------------------------
 
 
-def test_a_guarded_case_refuses_by_name() -> None:
+def test_a_case_guard_on_a_formal_refuses_by_name() -> None:
+    """``case 5 if c`` with ``c`` a formal: the guard's truth waits on the
+    caller's actual, and the match selects its cases by formula, so the guard
+    is refused by name. Before, it left as ``truth_formula``'s bare
+    ``NotImplementedError``, which names nothing."""
     from sugar_source_tree.panic import SugarNotWritten
 
-    with pytest.raises(SugarNotWritten, match="Match.sugar"):
+    with pytest.raises(SugarNotWritten, match="MatchSugar.guard") as refusal:
         _function(
             "def test_f(c):\n    match 5:\n        case 5 if c:\n"
             "            a = 1\n    return 3\n"
         )
+    assert "not one decided value" in refusal.value.observed
 
 
 @pytest.mark.parametrize(
