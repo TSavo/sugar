@@ -3792,9 +3792,9 @@ class SourceUnit:
             callee = None
             if call.language_callee() in _CALLS_NEVER_A_CLASS:
                 callee = ("none",)
-            elif isinstance(call.func, Name):
-                definition = self.module_definition_at(
-                    call.func.id, call.line_col_span()
+            else:
+                definition = self.module_definition_denoted_by(
+                    call.func, call.line_col_span()
                 )
                 if isinstance(definition, ClassDef):
                     callee = (
@@ -5233,31 +5233,18 @@ class SourceUnit:
         refuses by name (``_require_typed_module``): a call is read only
         through the door that binds its tree.
 
-        A substituted call whose callee read the module threading bound
-        (``DecoratedDefinitionRef``: every read of a module class's name is
-        its statement's key, #7757 item 21) is the same read: its name, at
-        the call, reaching that same class statement.  The callee's spelling
-        never decides the allocation.
+        Which class the callee denotes is the one resolver's
+        (``module_definition_denoted_by``), whatever form the callee's read
+        takes after the rewrite: the callee's spelling never decides the
+        allocation.
         """
         self._require_typed_module(
             "SourceUnit.source_allocation_definition_for_call", blame=self.filename
         )
-        if isinstance(call.func, Name):
-            name = call.func.id
-        elif isinstance(call.func, DecoratedDefinitionRef):
-            name = call.func.definition_name
-        else:
-            return None
         span = call.line_col_span()
-        definition = self.module_definition_at(name, span)
+        definition = self.module_definition_denoted_by(call.func, span)
         if not isinstance(definition, ClassDef):
             return None
-        if isinstance(call.func, DecoratedDefinitionRef):
-            # The statement the threading bound the name to, at its source
-            # span (a substituted copy of the statement keeps it).
-            bound = getattr(call.func, "definition", None)
-            if not isinstance(bound, ClassDef) or bound.span != definition.span:
-                return None
         # Constructing the allocation definition requires constructing its
         # methods. A call occurrence inside that same definition therefore
         # cannot use the definition as already-constructed testimony without a
@@ -5317,7 +5304,7 @@ class SourceUnit:
             return definition if call_applies_own_frame(definition) else None
 
         span = call.line_col_span()
-        definition = self.module_definition_at(call.func.id, span)
+        definition = self.module_definition_denoted_by(call.func, span)
         if not isinstance(
             definition, (FunctionDef, AsyncFunctionDef)
         ) or not call_applies_own_frame(definition):
@@ -5347,6 +5334,48 @@ class SourceUnit:
         if not isinstance(binding, (FunctionDef, AsyncFunctionDef, ClassDef)):
             return None
         return binding
+
+    def module_definition_denoted_by(
+        self, reference, span=None
+    ) -> "FunctionDef | AsyncFunctionDef | ClassDef | None":
+        """THE resolver of which module ``def``/``class`` statement a
+        reference to a definition denotes -- a call's callee, a raised or
+        handled class, a base -- or None.
+
+        A reference takes one of two forms, and both are answered alike: the
+        source read (``Name``), and the read the rewrite left in its place
+        (``DecoratedDefinitionRef``: every read of a module class's name is
+        its statement's evaluation key, #7757 item 21, as every read of a
+        decorated ``def``'s name is).  Each is resolved by the one law
+        (``module_definition_at``: CPython's scope classification at the
+        read, then the unique module binding) for the name it reads, at
+        ``span`` (the read's position; the reference's own when not given).
+        An evaluation reference is admitted only when the statement whose
+        key it reads is that same statement (same source span; a substituted
+        copy of the statement keeps it), so a local class, or any shadow,
+        resolves to nothing.  Any other expression denotes no module
+        definition here: None.  The reference's syntax node never decides
+        what it denotes; its spelling is only the lookup key.
+        """
+        if isinstance(reference, Name):
+            name = reference.id
+        elif isinstance(reference, DecoratedDefinitionRef):
+            name = reference.definition_name
+        else:
+            return None
+        definition = self.module_definition_at(
+            name, reference.line_col_span() if span is None else span
+        )
+        if definition is None:
+            return None
+        if isinstance(reference, DecoratedDefinitionRef):
+            bound = getattr(reference, "definition", None)
+            if (
+                not isinstance(bound, (FunctionDef, AsyncFunctionDef, ClassDef))
+                or bound.span != definition.span
+            ):
+                return None
+        return definition
 
     def _module_binding_read_at(self, name: str, span):
         """The one module binding statement of ``name`` a read of ``name``
@@ -5394,10 +5423,20 @@ class SourceUnit:
         the call (#7757).  A ``contextlib.contextmanager`` generator function
         is the one decorated definition whose call keeps its frame
         (``call_applies_own_frame``).
+
+        Which definition the callee denotes is the one resolver's
+        (``module_definition_denoted_by``).  Only a ``Name`` callee is asked:
+        this answers the source read the call must turn into the value's
+        read.  A callee the rewrite already made that read
+        (``DecoratedDefinitionRef``) is a call of it as it stands
+        (``Call._construct_sugar``'s computed call), with the key and
+        decorator bindings its substitution gave it, never rebuilt here.
         """
         if not isinstance(call.func, Name):
             return None
-        definition = self.module_definition_at(call.func.id, call.line_col_span())
+        definition = self.module_definition_denoted_by(
+            call.func, call.line_col_span()
+        )
         if definition is None or call_applies_own_frame(definition):
             return None
         return definition
@@ -5732,8 +5771,11 @@ class SourceUnit:
           3), never refused for not being local;
         - a ``Name`` that falls through to the builtin namespace nothing in
           the source rebinds (``builtin_reference_at``);
-        - a ``Name`` bound to one module ``class`` statement
-          (``module_definition_at``): its ``source-class`` coordinate.
+        - a reference to one module ``class`` statement -- the ``Name``, or
+          the statement's evaluation reference the rewrite left in its place
+          (``DecoratedDefinitionRef``), resolved by the one resolver
+          (``module_definition_denoted_by``): its ``source-class``
+          coordinate.
 
         A ``Name`` a star import the lifter cannot read may bind is the one
         undecided citation, ``UndecidedExceptionClassV1``: never refused and
@@ -5751,14 +5793,19 @@ class SourceUnit:
         while isinstance(link, Attribute):
             path.append(link.attr)
             link = link.value
-        if not isinstance(link, Name):
+        if isinstance(link, Name):
+            spelling = link.id
+        elif isinstance(link, DecoratedDefinitionRef) and link is node:
+            spelling = link.definition_name
+        else:
             return None
         self._require_typed_module(
             "SourceUnit.exception_type_identity", blame=node.fragment
         )
         span = node.line_col_span()
         cache_key = (
-            link.id,
+            type(link).__name__,
+            spelling,
             tuple(path),
             span.start_line,
             span.start_col,
@@ -5769,16 +5816,22 @@ class SourceUnit:
         if cache_key in cache:
             return cache[cache_key]
 
-        # The target symbol is the table's; it is never rebuilt here.
-        target = self.import_reference_of(node, admit_provider_gate=True)
+        # The target symbol is the table's; it is never rebuilt here.  An
+        # evaluation reference reads a definition statement's key: it is no
+        # import's and no builtin's.
+        target = (
+            None
+            if isinstance(node, DecoratedDefinitionRef)
+            else self.import_reference_of(node, admit_provider_gate=True)
+        )
         if target is None and isinstance(node, Name):
             target = self.builtin_reference_at(node.id, span)
         if target is not None:
             result = exception_type_identity_of_import_target(target)
-        elif not isinstance(node, Name):
+        elif not isinstance(node, (Name, DecoratedDefinitionRef)):
             result = None
         else:
-            definition = self.module_definition_at(node.id, span)
+            definition = self.module_definition_denoted_by(node, span)
             if isinstance(definition, ClassDef):
                 lc = definition.line_col_span()
                 coordinate = (
@@ -5789,9 +5842,11 @@ class SourceUnit:
                     "python:exception_type_identity",
                     [str_const("source-class"), str_const(coordinate)],
                 )
-            elif "*" in self._module_name_rows()[
-                0
-            ] and self._read_falls_through_the_source(node.id, span):
+            elif (
+                isinstance(node, Name)
+                and "*" in self._module_name_rows()[0]
+                and self._read_falls_through_the_source(node.id, span)
+            ):
                 result = UndecidedExceptionClassV1(
                     node.id,
                     f"{self.source_cid}:{span.start_line}:{span.start_col}:"
@@ -5891,18 +5946,14 @@ class SourceUnit:
                     return False
                 if base_identity not in result:
                     result.append(base_identity)
-                if not append_definition(
-                    self.module_definition_at(base.id, base.line_col_span())
-                ):
+                if not append_definition(self.module_definition_denoted_by(base)):
                     return False
             visiting.remove(id(definition))
             return True
 
         return (
             tuple(result)
-            if append_definition(
-                self.module_definition_at(node.id, node.line_col_span())
-            )
+            if append_definition(self.module_definition_denoted_by(node))
             else None
         )
 
@@ -6137,7 +6188,7 @@ class SourceUnit:
         elif kind == "import":
             value = _import_bound_exception_floor(identity)
         else:
-            definition = self.module_definition_at(node.id, node.line_col_span())
+            definition = self.module_definition_denoted_by(node)
             visiting = _visiting | {identity}
             bases = tuple(
                 self.exception_class_value(base, visiting)
@@ -13107,14 +13158,14 @@ class ClassDef(Statement):
         )
 
         read = base.value if isinstance(base, Subscript) else base
-        if not isinstance(read, Name):
-            return None
-        span = read.line_col_span()
-        source = self.unit.module_definition_at(read.id, span)
+        # Which class statement the base denotes is the one resolver's,
+        # whatever form its read takes (``module_definition_denoted_by``).
+        source = self.unit.module_definition_denoted_by(read)
         if isinstance(source, ClassDef):
             return source
-        if read is not base:
+        if read is not base or not isinstance(read, Name):
             return None
+        span = read.line_col_span()
         target = self.unit.name_reference_at(read.id, span)
         if LanguageCallee.of(target) is LanguageCallee.BUILTIN_OBJECT:
             return "object"
@@ -18762,6 +18813,10 @@ class Raise(Statement):
             node = node.value
         if node is not None and node.kind == "Name":
             parts.append(node.id)
+        elif node is not None and node.kind == "DecoratedDefinitionRef":
+            # After substitution a raised module class's name is the read of
+            # its statement's key; its label is the class's name.
+            parts.append(node.definition_name)
         elif node is not None and node.kind == "FormalRef":
             # After substitution a raised formal name is a FormalRef, not a
             # Name; its label is the formal's declared name (`raise exc` -> exc).
@@ -18794,9 +18849,9 @@ class Raise(Statement):
         identity = None
         mro = None
         type_operand = None
-        if isinstance(node, Call) and isinstance(node.func, (Name, Attribute)):
+        if isinstance(node, Call) and isinstance(node.func, _CLASS_REFERENCE_FORMS):
             type_operand = node.func
-        elif isinstance(node, (Name, Attribute)):
+        elif isinstance(node, _CLASS_REFERENCE_FORMS):
             type_operand = node
         if type_operand is not None:
             with reduction_span(
@@ -19458,7 +19513,7 @@ class Try(Statement):
         node = statement.exc
         if isinstance(node, Call):
             node = node.func
-        if not isinstance(node, (Name, Attribute)):
+        if not isinstance(node, _CLASS_REFERENCE_FORMS):
             return None
         return (
             self.unit.exception_type_identity(node),
@@ -19654,7 +19709,7 @@ class Try(Statement):
             else (handler.type_,)
         )
         for node in nodes:
-            if not isinstance(node, (Name, Attribute)):
+            if not isinstance(node, _CLASS_REFERENCE_FORMS):
                 continue
             handler_identity = self.unit.exception_type_identity(node)
             if handler_identity is None:
@@ -19705,7 +19760,7 @@ class Try(Statement):
         )
 
         for node in nodes:
-            if not isinstance(node, (Name, Attribute)):
+            if not isinstance(node, _CLASS_REFERENCE_FORMS):
                 # An unresolved handler operand may name the raised class.
                 return True
             handler_identity = self.unit.exception_type_identity(node)
@@ -19729,7 +19784,7 @@ class Try(Statement):
                 node = statement.exc
                 if isinstance(node, Call):
                     node = node.func
-                if not isinstance(node, (Name, Attribute)):
+                if not isinstance(node, _CLASS_REFERENCE_FORMS):
                     return (None, None)
                 return (
                     self.unit.exception_type_identity(node),
@@ -20189,7 +20244,8 @@ class TryStar(Statement):
                 else (handler.type_,)
             )
             if not type_nodes or any(
-                not isinstance(type_node, Name) for type_node in type_nodes
+                not isinstance(type_node, _DEFINITION_REFERENCE_FORMS)
+                for type_node in type_nodes
             ):
                 raise SugarNotWritten(
                     blame=self.fragment,
@@ -24117,7 +24173,7 @@ class Call(Expression):
                 if keyword.arg == WARNING_CATEGORY_PARAMETER_NAME:
                     actual, location = keyword.value, ("keyword", keyword.arg)
                     break
-        if not isinstance(actual, (Name, Attribute)):
+        if not isinstance(actual, _CLASS_REFERENCE_FORMS):
             return args_sugar, keyword_sugars
         identity = self.unit.exception_type_identity(actual)
         if identity is None:
@@ -25436,6 +25492,19 @@ class DecoratedDefinitionRef(Expression):
             self.fragment,
             evaluation=getattr(self, "evaluation", None),
         )
+
+
+# Every form a reference to a module ``def``/``class`` takes after the
+# rewrite: the source read, and the read of the statement's evaluation key the
+# rewrite leaves in its place.  The shapes the one resolver
+# (``SourceUnit.module_definition_denoted_by``) answers; a reader that gates
+# on a reference's shape before asking it gates on these, never on ``Name``
+# alone (#7757 item 21).
+_DEFINITION_REFERENCE_FORMS = (Name, DecoratedDefinitionRef)
+# A class reference as the one exception-class lookup reads it
+# (``SourceUnit.exception_type_identity``): a definition reference, or a
+# static dotted chain an import binds.
+_CLASS_REFERENCE_FORMS = (*_DEFINITION_REFERENCE_FORMS, Attribute)
 
 
 def call_applies_own_frame(definition) -> bool:
