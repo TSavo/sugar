@@ -366,7 +366,6 @@ fn z3_available() -> bool {
 fn run_verify_json_with_code(project: &Path, witness_dir: &Path) -> (Json, i32) {
     let out = Command::new(sugar_bin())
         .arg("verify")
-        .arg("--project")
         .arg(project)
         .arg("--emit-witnesses")
         .arg(witness_dir)
