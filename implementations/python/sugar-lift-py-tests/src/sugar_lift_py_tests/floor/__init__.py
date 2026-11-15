@@ -27,7 +27,6 @@ from .comprehension_value import ComprehensionValue
 from .dict_literal_value import DictLiteralValue
 
 from .dict_value import DictValue
-from .encoded_string_value import EncodedStringValue
 from .exception_cause_value import ExceptionCauseValue
 from .exception_value import ExceptionValue
 from .exception_class_value import ExceptionClassValue
@@ -104,7 +103,6 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     ComprehensionValue,
     DictLiteralValue,
     DictValue,
-    EncodedStringValue,
     ExceptionCauseValue,
     ExceptionValue,
     EnteredManagerStateValue,
@@ -176,7 +174,6 @@ __all__ = [
     "ComprehensionValue",
     "DictLiteralValue",
     "DictValue",
-    "EncodedStringValue",
     "ExceptionCauseValue",
     "ExceptionValue",
     "ExceptionClassValue",

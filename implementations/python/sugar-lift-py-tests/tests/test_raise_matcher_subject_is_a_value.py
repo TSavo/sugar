@@ -29,6 +29,8 @@ Reproduces on two independently installed pandas versions.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from sugar_lift_py_tests.authenticated_exception_matching import (
@@ -49,6 +51,9 @@ from sugar_lift_py_tests.ir import ctor, make_var, str_const
 from sugar_source_tree.panic import SugarNotWritten
 
 OCCURRENCE = "renamed_module.py:402:19"
+# The fragment the raise halted at: where a refusal about it is blamed
+# (``tree_enumerate.halt_site``), never the matcher's subject.
+SITE = SimpleNamespace(filename="renamed_module.py", line=402, col=19)
 
 
 class _AuthenticatedHandler:
@@ -82,7 +87,7 @@ def _valueless_effect() -> UndeterminedRaiseEffect:
     is no VALUE to state the test over. It still states the fragment it halted
     at -- the raise SITE, which the matcher must not take as the subject.
     """
-    return UndeterminedRaiseEffect(site=OCCURRENCE)
+    return UndeterminedRaiseEffect(site=SITE)
 
 
 # -- the refusal is correct output -------------------------------------------
@@ -224,6 +229,7 @@ def test_valueless_halt_cannot_use_occurrence_as_message_evidence() -> None:
         "ValueError",
         occurrence=OCCURRENCE,
         raised_value=None,
+        site=SITE,
     )
     expected = _AuthenticatedHandler(effect.exception_type_coordinate)
 
@@ -231,7 +237,8 @@ def test_valueless_halt_cannot_use_occurrence_as_message_evidence() -> None:
         raise_effect_message_verdict(effect, expected, StringValue("boom"))
 
     assert raised.value.owner == "authenticated_exception_matching._message_term"
-    assert str(raised.value.blame) == OCCURRENCE
+    assert raised.value.blame is SITE
+    assert raised.value.diagnostic()["blame"] == OCCURRENCE
     assert OCCURRENCE not in raised.value.observed
     assert OCCURRENCE not in raised.value.requested
     assert OCCURRENCE not in raised.value.fix
