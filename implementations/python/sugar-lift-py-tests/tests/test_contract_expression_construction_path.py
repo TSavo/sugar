@@ -5,18 +5,17 @@ import pytest
 from sugar_lift_py_tests.contract_expression import parse_contract_expression
 
 
-def test_renamed_contract_expression_uses_ordinary_call_and_formal_construction():
-    formula = parse_contract_expression(
-        "arbitrary_constructor(arbitrary_formal)", ["arbitrary_formal"]
-    )
-
-    # A renamed, non-vendor callee follows the ordinary CallSiteSugar path.
-    # The old private evaluator emitted an unrelated ctor named only by the
-    # parsed spelling; the sole path emits the native call coordinate.
-    rendered = repr(formula)
-    assert "call:arbitrary_constructor" in rendered
-    assert "arbitrary_formal" in rendered
-    assert "py.truthy" in rendered
+def test_contract_over_an_undecided_call_result_is_not_one_predicate():
+    # A renamed, non-vendor callee follows the ordinary CallSiteSugar path,
+    # and its result's truth is taken through the one truth rule
+    # (``bool_op_sugar.truth_of``).  The call result's type is not decided,
+    # so ``bool`` of it may run code and raise: its truth is two faces, not
+    # one predicate, and the contract stays loud rather than claiming an
+    # unguarded ``py.truthy``.
+    with pytest.raises(ValueError, match="not one completed predicate"):
+        parse_contract_expression(
+            "arbitrary_constructor(arbitrary_formal)", ["arbitrary_formal"]
+        )
 
 
 def test_malformed_contract_expression_stays_loud():

@@ -32,24 +32,30 @@ def truth_of(value, site, *, owner: str):
     ``a != b`` and ``a not in b``, an ``if`` / ``while`` / ``assert`` /
     conditional-expression test, a generator body's branch guard
     (``GeneratorConstructionV1._guard_truth``), each arm of a guarded value
-    (``GuardedValue.truth``), and the native operation carrier's ``truth`` /
-    ``boolop_truth`` / ``unary_truth`` discharge on the caller's actual.
+    (``GuardedValue.truth``), an embedded contract expression
+    (``contract_expression.parse_contract_expression``), a ground call
+    result's dug body (``CallSiteValue._construct_decidable_truth``), and the
+    native operation carrier's ``truth`` / ``boolop_truth`` / ``unary_truth``
+    discharge on the caller's actual.
 
     The value is consumed through the one operand door (``consume_operands``):
     a walrus or a callee's store it carries rides the truth, and the rule
     answers for the value it presents.
 
-    - A formal's truth waits on its caller's actual: the value defers it on
-      the native operation carrier (``SymbolicValue.truth``), whose ``truth``
-      discharge answers through this rule on the actual.
+    - A formal's truth waits on its caller's actual
+      (:func:`_truth_waits_on_its_caller`): the value defers it on the native
+      operation carrier (``SymbolicValue.truth``), whose ``truth`` discharge
+      answers through this rule on the actual.
     - A value whose truth is not decided here -- it denotes a runtime value
       whose type the lift did not decide (``runtime_type_is_decided``), so
       its ``__bool__`` / ``__len__`` is undecided and taking its truth may
       run code (#7585 / #7681) -- is the undecided member's two faces
       (:func:`_unanswered_truth`).  An opaque call result, a bare symbolic
       value, an imported module member (``if mod.FLAG:``), a non-dict mutable
-      global, the exception an undetermined raise threw and its type all take
-      them, each with its own term at its own site.  Nothing stops here by
+      global, the exception an undetermined raise threw and its type, and the
+      class a raise threw (``RaisedExitTypeValue``, which is its own formal
+      coordinate and waits on no caller) all take them, each with its own
+      term at its own site.  Nothing stops here by
       name: a value whose term cannot be stated stops at its own
       ``to_term``.
     - A decided value answers through its own truth floor.
@@ -67,11 +73,26 @@ def truth_of(value, site, *, owner: str):
 
 def _presented_truth(value, site, *, owner: str):
     """:func:`truth_of` for the value an operand presents (no walrus on it)."""
-    if getattr(value, "formal_coordinate", None) is not None:
+    if _truth_waits_on_its_caller(value):
         return value.truth(site)
     if _truth_is_undecided(value):
         return _unanswered_truth(value, site, owner=owner)
     return value.truth(site)
+
+
+def _truth_waits_on_its_caller(value) -> bool:
+    """Whether ``value`` is a formal whose truth waits on its caller's
+    actual: it names a formal coordinate other than itself, and defers its
+    truth on the native operation carrier keyed by that coordinate
+    (``SymbolicValue.truth``).
+
+    A value that is its own formal coordinate is no parameter: no caller's
+    actual is ever bound to it.  ``RaisedExitTypeValue`` (the class a raise
+    threw, handed to ``__exit__``) names itself so its rich operators wait,
+    but its truth -- ``type(cls).__bool__`` / ``__len__`` of a metaclass
+    nothing decided -- is undecided here, so it takes the two faces."""
+    coordinate = getattr(value, "formal_coordinate", None)
+    return coordinate is not None and coordinate is not value
 
 
 def _truth_is_undecided(value) -> bool:

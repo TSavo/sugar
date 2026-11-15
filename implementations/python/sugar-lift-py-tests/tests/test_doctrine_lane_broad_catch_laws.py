@@ -148,6 +148,7 @@ def test_generator_guard_construction_panic_must_not_become_suspension_gap():
                 (YieldStepV1(_int(1)),),
                 (ReturnStepV1(_int(2)),),
                 "frag:audit-if",
+                "guard:audit-if",
             ),
         ),
     )
@@ -190,6 +191,7 @@ def test_generator_guard_construction_panic_is_not_if_carrying_suspension():
                 (YieldStepV1(_int(1)),),
                 (ReturnStepV1(_int(2)),),
                 "frag:audit-if-2",
+                "guard:audit-if-2",
             ),
         ),
     )

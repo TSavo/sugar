@@ -91,10 +91,22 @@ def parse_contract_expression(expr: str, available_names: list[str]) -> Formula:
             "contract expression did not complete through ordinary construction: "
             f"ExitSet with {len(outcome.exits)} exits"
         )
+    from .sugar.bool_op_sugar import truth_of
+
+    # The expression's truth through the one truth rule.  A value whose truth
+    # is not decided is its two faces (its truth completes under a guard or
+    # halts undetermined): that is no single predicate, and a formula cannot
+    # carry the halt, so it stays loud here.
     truth = _require_exit_set(
-        value.truth(node.fragment), owner="parse_contract_expression"
+        truth_of(value, node.fragment, owner="parse_contract_expression"),
+        owner="parse_contract_expression",
     )
     predicate = truth.completed_value()
+    if predicate is None:
+        raise ValueError(
+            "contract expression's truth is not one completed predicate: "
+            f"ExitSet with {len(truth.exits)} exits"
+        )
     if not isinstance(predicate, PredicateValue):
         raise ValueError(
             "contract expression has no constructed truth predicate: "
