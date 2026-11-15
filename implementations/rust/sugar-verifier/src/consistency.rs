@@ -1453,6 +1453,35 @@ fn seal_witness_package_outcome(
     property_name: String,
 ) -> ConsistencyResult {
     match outcome {
+        // A package with no outcome witnessed no test: it decides nothing, so it
+        // is not a discharge (green means decided, #7848). "All 0 passed" is
+        // vacuous; the row is undecided by name.
+        Ok(outcome) if outcome.count == 0 => {
+            let reason = format!(
+                "witness package verified by rust via {} has no outcomes: no test was \
+                 witnessed, so the package decides nothing",
+                outcome.resolved_by
+            );
+            ConsistencyResult {
+                contract_cid,
+                property_name,
+                verdict: ObligationVerdict::Undecidable,
+                reason: reason.clone(),
+                effect: None,
+                witnessed: false,
+                locus: None,
+                verification: Some(VerificationDetail::Witness {
+                    witnessed: false,
+                    verdict: ObligationVerdict::Undecidable.as_str().to_string(),
+                    resolved_by: Some(outcome.resolved_by.clone()),
+                    outcomes: Some(0),
+                    failed: Some(0),
+                    failed_tests: None,
+                    reason,
+                }),
+                dropped_ambient_posts: Vec::new(),
+            }
+        }
         Ok(outcome) if outcome.failed == 0 => {
             let reason = format!(
                 "witness package verified by rust via {}; all {} outcomes passed",
@@ -8964,6 +8993,54 @@ mod tests {
         drop(_guard);
         std::env::remove_var("SUGAR_WITNESS_DISCHARGE_PYTEST");
         let _ = std::fs::remove_dir_all(&project);
+    }
+
+    /// #7848: green means decided. A package that witnessed one passing test
+    /// discharges; a package with zero outcomes (an empty body, committed as
+    /// count=0 passed=0) witnessed nothing and is undecided by name, never
+    /// "all 0 outcomes passed".
+    #[test]
+    fn a_witness_package_with_no_outcomes_is_undecided_not_discharged() {
+        for tool in ["pytest", "cargo-test", "junit", "testng", "build-witness"] {
+            let one = b"{\"outcome\":\"passed\",\"test\":\"one\"}\n";
+            let one_cid = blake3_512_of(one);
+            let _guard = WitnessBodiesGuard::enter(&bodies_for(one));
+            let witnessed = try_witness_discharge(
+                &package_contract(tool, &one_cid, 1, 1),
+                "blake3-512:one-outcome".into(),
+                "witness-package".into(),
+            )
+            .unwrap();
+            drop(_guard);
+            assert_eq!(
+                witnessed.verdict,
+                ObligationVerdict::Discharged,
+                "tool={tool}: one passed outcome is decided: {witnessed:?}"
+            );
+            assert!(witnessed.witnessed);
+
+            let empty: &[u8] = b"";
+            let empty_cid = blake3_512_of(empty);
+            let _guard = WitnessBodiesGuard::enter(&bodies_for(empty));
+            let vacuous = try_witness_discharge(
+                &package_contract(tool, &empty_cid, 0, 0),
+                "blake3-512:no-outcomes".into(),
+                "witness-package".into(),
+            )
+            .unwrap();
+            drop(_guard);
+            assert_eq!(
+                vacuous.verdict,
+                ObligationVerdict::Undecidable,
+                "tool={tool}: a package with no outcomes decides nothing: {vacuous:?}"
+            );
+            assert!(!vacuous.witnessed, "tool={tool}: {vacuous:?}");
+            assert!(
+                vacuous.reason.contains("no outcomes"),
+                "tool={tool}: reason must say the package has no outcomes: {}",
+                vacuous.reason
+            );
+        }
     }
 
     #[test]
