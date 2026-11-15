@@ -178,8 +178,11 @@ def test_for_universal_sugar_is_never_reached_from_source() -> None:
 @pytest.mark.parametrize(
     ("body", "faces"),
     [
-        ("y = 1", (1, ("UndeterminedRaiseEffect",))),
-        ("raise ValueError", (1, ("RaiseEffect", "UndeterminedRaiseEffect"))),
+        ("y = 1", (1, ("UndeterminedRaiseEffect", "UndeterminedRaiseEffect"))),
+        (
+            "raise ValueError",
+            (1, ("RaiseEffect", "UndeterminedRaiseEffect", "UndeterminedRaiseEffect")),
+        ),
     ],
     ids=["truthful", "lying"],
 )
@@ -187,19 +190,24 @@ def test_a_source_loop_keeps_its_body_halt_beside_the_completion(
     body: str, faces, tmp_path: Path
 ) -> None:
     """``xs`` is a formal: nothing here decides its ``iter``, so iterating it
-    is an undecided operation like every other. It completes on one face and
-    raises something undetermined on the other, and both owe the operation
-    as the ``undecided`` member at the loop. So neither half is ``sat``: a
-    source that owes a member never is. The halves differ at the reduction:
-    the lying body's ``raise`` is a halted face of its own beside the
-    completion and beside the undetermined halt of ``iter``."""
+    is an undecided operation like every other, and so is each ``next`` of
+    the iterator ``iter`` completed with (#8844: an iterator whose
+    ``__next__`` is not decided here may raise on any step). Each completes
+    on one face and raises something undetermined on the other, and each
+    owes its operation as an ``undecided`` member at the loop. So neither
+    half is ``sat``: a source that owes a member never is. The halves differ
+    at the reduction: the lying body's ``raise`` is a halted face of its own
+    beside the completion and beside the undetermined halts of ``iter`` and
+    ``next``."""
     source = _FOR.format(body=body)
 
     outcome = _function(source)
     completed, halts = _faces(outcome)
     assert (completed, tuple(sorted(halts))) == faces
-    # ``iter`` over the formal is owed once, at the loop (line 2).
-    assert [item.site.start_line for item in outcome.owed_items()] == [2]
+    # ``iter`` and ``next`` over the formal are owed at the loop (line 2),
+    # and nothing else is (an item is one per symbol and site, so the two
+    # undecided reads at one site may be one item).
+    assert {item.site.start_line for item in outcome.owed_items()} == {2}
     assert _verdict(tmp_path, source) == "open"
 
 
