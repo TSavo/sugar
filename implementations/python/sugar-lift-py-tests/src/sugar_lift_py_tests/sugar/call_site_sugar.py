@@ -1676,10 +1676,14 @@ def _collect_final_evaluations(state, evaluations: list, decisions: list) -> Non
         EvaluationRef,
         IfExp,
         LoopBindingRef,
+        ObjectPlaceStateV1,
+        OpaqueObjectStateV1,
     )
 
     state = unwrap_binding_state(state)
-    if isinstance(state, EvaluationRef):
+    if isinstance(state, (EvaluationRef, ObjectPlaceStateV1, OpaqueObjectStateV1)):
+        # The object a call's result is bound as reads through its
+        # assignment's key, as the reference it refines does.
         evaluations.append(state.evaluation)
     elif isinstance(state, DecoratedDefinitionRef) and isinstance(
         getattr(state, "evaluation", None), str

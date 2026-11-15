@@ -1918,3 +1918,17 @@ def test_an_alias_scan_answers_the_same_with_and_without_a_prior_run(
     assert after.temporal.value_if_bound(key) == advanced
     assert after.temporal.key_read(key).completed_value() == advanced
     assert len(runs) == 1
+
+
+def test_a_global_bound_to_a_calls_result_reads_its_key() -> None:
+    # ``_dtype_obj = np.dtype(object)`` (``core/dtypes/cast.py:122``): the
+    # assignment binds the name to the object the call made
+    # (``Assign._object_place_state``), read through the assignment's key as
+    # the reference it refines is.  A function reading it after import reads
+    # that key; it is never cited undecided (#7757).
+    tree = _source("X = len('ab')\ndef f():\n    return X\n")
+    (key,) = _assignment_keys(tree, "X")
+    final = _function(tree).unit.module_bindings_at(None, {"X"})["X"]
+    assert final is not UNDECIDED_MODULE_BINDING
+    assert final.evaluation == key
+    assert _returned(_function(tree)).evaluation == key
