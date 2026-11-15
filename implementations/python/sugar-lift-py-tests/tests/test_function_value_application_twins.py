@@ -150,7 +150,12 @@ _OPEN_UNTIL_STEP_7 = {
 # test function's own line, is the one undecided equality over the call's
 # result (#8743): prove answers it from the joined post, which decides its
 # operands over literals (#8748).  On scorecard 43738710481 (before #8743)
-# that member was the one row owed in the cell and default twins.
+# that member was the one row owed in the cell and default twins.  Since
+# #8743 the lift owes it and prove pays it at the join: its row stands in the
+# proof, ``discharged`` ("answered: the joined contract ... decides
+# python:compare.completes at this site"), and ``_owed`` reads only what is
+# still owed after prove (scorecard 43745139407 measured the row so in all
+# four shapes, the truthful halves ``sat`` and the lies ``unsat``).
 _OWED_BY_THE_CALLEE = {
     "cell-read-at-the-call": (),
     "direct-cell-read-at-the-call": (),
@@ -170,12 +175,17 @@ def _claim_statuses(prove_doc: dict) -> list:
 
 
 def _owed(prove_doc: dict) -> tuple:
-    """Every ``undecided:`` row the source owes, by its property."""
+    """Every ``undecided:`` row the source still owes after prove, by its
+    property.  A member prove answered from a joined contract (status
+    ``discharged``, reason ``answered: the joined contract ... decides ...``,
+    ``members_answered_at_prove``) is owed by the lift and paid at the join:
+    it is no debt of the source, and ``prove_verdict`` reads it so too."""
     return tuple(
         sorted(
             str(row.get("property"))
             for row in prove_doc.get("rows", [])
             if str(row.get("property") or "").startswith("undecided:")
+            and row.get("status") != "discharged"
         )
     )
 
