@@ -69,7 +69,7 @@ _SHAPES = {
     "subscript": (
         _RESET + "def test_reset():\n"
         "    before = TOKEN\n"
-        "    d = {}\n"
+        "    d = {{}}\n"
         "    d[TOKEN] = reset()\n"
         "    assert {claim}\n",
         10,
@@ -79,7 +79,7 @@ _SHAPES = {
     "unpack-leaf": (
         _RESET + "def test_reset():\n"
         "    before = TOKEN\n"
-        "    d = {}\n"
+        "    d = {{}}\n"
         "    d[TOKEN], b = reset(), 1\n"
         "    assert {claim}\n",
         10,
@@ -89,7 +89,7 @@ _SHAPES = {
     "chain-target": (
         _RESET + "def test_reset():\n"
         "    before = TOKEN\n"
-        "    d = {}\n"
+        "    d = {{}}\n"
         "    b = d[TOKEN] = reset()\n"
         "    assert {claim}\n",
         10,
@@ -115,7 +115,7 @@ _SHAPES = {
         "        n += 1\n"
         "\n"
         "    before = n\n"
-        "    d = {}\n"
+        "    d = {{}}\n"
         "    d[n] = bump()\n"
         "    assert {claim}\n",
         1,

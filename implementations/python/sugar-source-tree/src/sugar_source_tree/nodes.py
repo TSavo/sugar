@@ -17031,6 +17031,9 @@ class For(Statement):
                         halt_names: set = set()
                         for index, element_bindings in enumerate(bindings):
                             final_target_bindings = element_bindings
+                            unpack = self._item_unpack(
+                                unpacks[index], index, carried, scope
+                            )
                             iter_scope = _iteration_scope(
                                 self, index, {**carried, **element_bindings}, scope
                             )
@@ -17041,9 +17044,9 @@ class For(Statement):
                             halt_names |= _loop_item_halt_names(
                                 self, scope, iter_scope, item_edges, item_net
                             )
-                            if unpacks[index] is not None:
+                            if unpack is not None:
                                 # The iteration's unpack of its item opens it.
-                                new_body = (unpacks[index], *new_body)
+                                new_body = (unpack, *new_body)
                             # Each iteration is its own evaluation of the body.
                             new_body = _iteration_copies(self, index, new_body)
                             unrolled.extend(new_body)
@@ -17461,6 +17464,33 @@ class For(Statement):
             resolved.append(store.substitution_binding(iteration))
         return tuple(unpacks), resolved
 
+    def _item_unpack(self, unpack, index, carried, scope):
+        """Item ``index``'s keyed unpack of its item (``_iteration_unpacks``,
+        None where there is none), its store targets read where Python
+        reads them: ``carried`` the state the item begins in (what the
+        items before it left), ``scope`` the loop's.
+
+        Per item Python takes the next value of the iterator, then reads
+        each target's receiver and key, left to right, then stores (code:
+        ``__setitem__``, ``__setattr__``).  An unrolled iterable is a
+        display, a ``range`` or a ground list: its iterator is a builtin
+        one and runs no code, and its members were evaluated before the
+        first item (``_evaluated_before_the_first_item``).  So a store
+        target (``for d[G], x in [p, q]``) is read in the state its item
+        begins in, by the one door every store target takes
+        (``Assign._substituted_store_targets``: ``_substituted_store_target_parts``,
+        ``_scope_after_store_target``, ``_scope_after``'s ``rebinds``):
+        a name code an earlier target or store runs may rebind is read in a
+        later target as another evaluation.  Before, the unpack was keyed
+        and never substituted: its store targets read their names by no
+        state of the item at all.  A target of names alone has nothing to
+        read: the unpack is unchanged."""
+        if unpack is None or not _has_store_leaf(self.target):
+            return unpack
+        return unpack._substituted_store_targets(
+            unpack.value, _iteration_scope(self, index, carried, scope)
+        )
+
     def _evaluated_before_the_first_item(self, elements, unpacks):
         """``(hoisted, unpacks)``: Python evaluates the iterable -- every
         member of its display -- once, before the first item.  An
@@ -17477,17 +17507,23 @@ class For(Statement):
         element's evaluation moves before the first item, whatever the
         item's shape, and the unpack of that evaluation (a ``ValueError`` on
         the wrong arity) stays where that item is taken, never before an
-        earlier item's body.  ``unpacks`` holds None where the store was
-        moved, and the unpack alone where it was parted."""
+        earlier item's body.  A target with a store leaf (``for d[G], x in
+        [f(), g()]``) is parted at the first item too: Python evaluates
+        every member before the first item reads its targets and stores
+        into them, so the store stays where its item is taken, after
+        ``g()``, and reads its targets there (``_item_unpack``).
+        ``unpacks`` holds None where the store was moved, and the unpack
+        alone where it was parted."""
         hoisted = []
         kept = []
+        stores = _has_store_leaf(self.target)
         for index, (element, unpack) in enumerate(
             zip(elements, unpacks, strict=True)
         ):
             if unpack is None or not _evaluates_code(element):
                 kept.append(unpack)
             elif (
-                index == 0
+                (index == 0 and not stores)
                 or self.target.kind == "Name"
                 or element.kind in ("Tuple", "List")
             ):
@@ -17636,6 +17672,9 @@ class For(Statement):
         broke = False
         for index, element_bindings in enumerate(bindings):
             final_target_bindings = element_bindings
+            unpack = self._item_unpack(
+                None if unpacks is None else unpacks[index], index, carried, scope
+            )
             iteration = _iteration_scope(
                 self, index, {**carried, **element_bindings}, scope
             )
@@ -17643,10 +17682,12 @@ class For(Statement):
             if reduced is None:
                 if minted is not None:
                     minted.extend(unrolled)
+                    if unpack is not None:
+                        minted.append(unpack)
                 return None
             statements, iteration, action = reduced
-            if unpacks is not None and unpacks[index] is not None:
-                statements = (unpacks[index], *statements)
+            if unpack is not None:
+                statements = (unpack, *statements)
             unrolled.extend(_iteration_copies(self, index, statements))
             target_names = set(
                 self.unit.require_target_pattern(self, self.target).names
@@ -18805,7 +18846,14 @@ class With(Statement):
         # later item): a walrus in it is read there through its key
         # (``_scope_after``), never the name as it stood before the ``with``,
         # and an object its manager's calls changed is read as they left it
-        # (``container_mutation.thread_header``).
+        # (``container_mutation.thread_header``).  Python then runs the
+        # manager's ``__enter__`` before it reads and stores the ``as``
+        # target (lowered into the body's first statement,
+        # ``_bind_store_target``) and before the body: what that code may
+        # rebind -- a ``nonlocal`` cell, a module global code may rebind --
+        # is read in the target (``with m as d[G]:``) and the body as
+        # another evaluation (``operated``, the one header rule a ``for``,
+        # an ``if``, a ``while`` and a ``match`` take).
         from .container_mutation import thread_header
 
         head_scope = dict(
@@ -18813,6 +18861,7 @@ class With(Statement):
                 tuple(item.context_expr for item in items),
                 scope,
                 _scope_after(scope, self.items, items),
+                operated=True,
             )
         )
         body_scope = dict(head_scope)
