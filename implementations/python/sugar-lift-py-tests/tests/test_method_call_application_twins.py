@@ -7,13 +7,24 @@ actual (``object_value.apply_bound_method``), so a method that raises leaves its
 caller raising.
 
 Each pair differs in exactly one thing and goes through the real solver.  The
-lying source makes the method raise, so the assertion after the call is never
-reached (``unsat``).  The truthful source's claim is not decided (``open``):
-every truthful method body reads its arrived ``self`` (``return self.n``) or
-calls a method on it (``self.check()``, ``self.open(...)``), and a receiver
-that reached a frame by binding is read undecided there -- a subclass may
-override the method or the field may be anything (#8151, #8153).  ``open`` is
-the truthful verdict, not a missing ``sat``.
+lying source makes the method raise on the path taken, so the assertion after
+the call is never reached (``unsat``).
+
+The receiver of every call whose raise a twin is about is made in the frame
+that calls the method (``box = Box()``): its fields are current there
+(``object_identity.contents_current``, the one currency rule), so the lookup
+selects the class's method and its body is applied.  A receiver that reached
+a frame by binding -- a method's own ``self`` is a formal, so it always has --
+is read undecided there: a subclass may override the method or the field may
+be anything (#8151, #8153).  A raise selected through an arrived ``self`` is
+decided in neither half, so a twin of that form cannot tell them apart; that
+form is asserted undecided in process below, not used as a twin.
+
+- self-call, one-branch, spread-call: no truthful body reads an arrived
+  ``self``, so the truthful claim is decided (``sat``).
+- obj-call, super-call: the truthful body returns ``self.n`` off the arrived
+  ``self``, the undecided read, so the truthful claim is ``open``: the
+  truthful verdict, not a missing ``sat``.
 """
 
 from __future__ import annotations
@@ -53,13 +64,15 @@ def bound_method_call_at(call_node, ctx=None):
     )
 
 
-def _pair(tmp_path: Path, name: str, truthful: str, lying: str) -> None:
+def _pair(
+    tmp_path: Path, name: str, truthful: str, lying: str, *, truthful_verdict: str
+) -> None:
     t = run_source_through_real_solver(tmp_path / f"{name}-truthful", truthful)
     lie = run_source_through_real_solver(tmp_path / f"{name}-lying", lying)
     print(json.dumps({"truthful": t.verdict, "lying": lie.verdict}, sort_keys=True))
-    # The truthful body reads the arrived ``self``: the undecided read or
-    # call (#8153), so its claim is ``open``.  See the module docstring.
-    assert t.verdict == "open"
+    # ``open`` only where the truthful body reads the arrived ``self`` (the
+    # undecided read, #8153); see the module docstring.
+    assert t.verdict == truthful_verdict
     assert lie.verdict == "unsat"
 
 
@@ -87,10 +100,107 @@ def test_receiver_method_call_carries_the_method_raise(tmp_path: Path) -> None:
         "obj-call",
         _OBJ_CALL.format(body="        return self.n"),
         _OBJ_CALL.format(body="        raise KeyError('no reading')"),
+        truthful_verdict="open",
     )
 
 
+# A method calls a method of its class on a receiver made in its own frame:
+# the inner method's raise is carried out through the outer method to the
+# test function.  The call is not ``self.check()``: a method's ``self`` is a
+# formal, so a call through it is the undecided call (#8153) and its raise is
+# decided in neither half (``_ARRIVED_SELF_CALL`` below, in process).
 _SELF_CALL = """\
+class Box:
+    def run(self):
+        inner = Box()
+        state = inner.check()
+        return 3
+
+    def check(self):
+{body}
+
+
+def test_box():
+    box = Box()
+    value = box.run()
+    assert value == 3
+"""
+
+
+def test_self_method_call_carries_the_method_raise(tmp_path: Path) -> None:
+    """A method call inside a method: ``m`` completes vs ``m`` always raises."""
+
+    _pair(
+        tmp_path,
+        "self-call",
+        _SELF_CALL.format(body="        return None"),
+        _SELF_CALL.format(body="        raise ValueError('bad box')"),
+        truthful_verdict="sat",
+    )
+
+
+# The test function applies the method on a receiver it made, and the actual
+# selects the arm: the truthful actual takes the completing branch, the lying
+# one the raising branch.
+_ONE_BRANCH = """\
+class Limit:
+    def check(self, n):
+        if n > 5:
+            raise ValueError('too big')
+        return n
+
+
+def test_limit():
+    limit = Limit()
+    value = limit.check(n={actual})
+    assert value == {actual}
+"""
+
+
+def test_method_raising_on_one_branch_carries_that_raise(tmp_path: Path) -> None:
+    """``obj.m(n=...)`` raising on one branch: the actual selects the arm."""
+
+    _pair(
+        tmp_path,
+        "one-branch",
+        _ONE_BRANCH.format(actual=3),
+        _ONE_BRANCH.format(actual=9),
+        truthful_verdict="sat",
+    )
+
+
+# The test function spreads a dict it made into the method applied on a
+# receiver it made.
+_SPREAD_CALL = """\
+class Store:
+    def open(self, mode='r'):
+{body}
+
+
+def test_store():
+    store = Store()
+    options = {{'mode': 'r'}}
+    value = store.open(**options)
+    assert value == 'r'
+"""
+
+
+def test_spread_method_call_carries_the_method_raise(tmp_path: Path) -> None:
+    """``obj.m(**kwargs)``: the method completes vs always raises."""
+
+    _pair(
+        tmp_path,
+        "spread-call",
+        _SPREAD_CALL.format(body="        return mode"),
+        _SPREAD_CALL.format(body="        raise OSError('cannot open')"),
+        truthful_verdict="sat",
+    )
+
+
+# The former forms of the three twins above: the raising method is selected
+# through the method's arrived ``self``.  In process only
+# (``test_a_method_selected_through_an_arrived_self_is_undecided_in_process``).
+_ARRIVED_SELF_CALL = """\
 class Box:
     def __init__(self, n):
         self.n = n
@@ -110,18 +220,7 @@ def test_box():
 """
 
 
-def test_self_method_call_carries_the_method_raise(tmp_path: Path) -> None:
-    """``self.m()`` inside a method: ``m`` completes vs ``m`` always raises."""
-
-    _pair(
-        tmp_path,
-        "self-call",
-        _SELF_CALL.format(body="        return None"),
-        _SELF_CALL.format(body="        raise ValueError('bad box')"),
-    )
-
-
-_ONE_BRANCH = """\
+_ARRIVED_ONE_BRANCH = """\
 class Limit:
     def __init__(self, n):
         self.n = n
@@ -143,15 +242,24 @@ def test_limit():
 """
 
 
-def test_method_raising_on_one_branch_carries_that_raise(tmp_path: Path) -> None:
-    """``self.m(n=n)`` raising on one branch: the actual selects the arm."""
+_ARRIVED_SPREAD_CALL = """\
+class Store:
+    def __init__(self):
+        self.mode = 'r'
 
-    _pair(
-        tmp_path,
-        "one-branch",
-        _ONE_BRANCH.format(actual=3),
-        _ONE_BRANCH.format(actual=9),
-    )
+    def run(self, **kwargs):
+        handle = self.open(**kwargs)
+        return 1
+
+    def open(self, mode='r'):
+{body}
+
+
+def test_store():
+    store = Store()
+    value = store.run(mode='r')
+    assert value == 1
+"""
 
 
 _SUPER_CALL = """\
@@ -184,44 +292,15 @@ def test_super_method_call_carries_the_method_raise(tmp_path: Path) -> None:
         "super-call",
         _SUPER_CALL.format(body="        return None"),
         _SUPER_CALL.format(body="        raise ValueError('bad base')"),
-    )
-
-
-_SPREAD_CALL = """\
-class Store:
-    def __init__(self):
-        self.mode = 'r'
-
-    def run(self, **kwargs):
-        handle = self.open(**kwargs)
-        return 1
-
-    def open(self, mode='r'):
-{body}
-
-
-def test_store():
-    store = Store()
-    value = store.run(mode='r')
-    assert value == 1
-"""
-
-
-def test_spread_method_call_carries_the_method_raise(tmp_path: Path) -> None:
-    """``self.m(**kwargs)``: the method completes vs always raises."""
-
-    _pair(
-        tmp_path,
-        "spread-call",
-        _SPREAD_CALL.format(body="        return mode"),
-        _SPREAD_CALL.format(body="        raise OSError('cannot open')"),
+        truthful_verdict="open",
     )
 
 
 # ---------------------------------------------------------------------------
 # The same pairs in process (a unit check, not a twin): the lifter's own
-# outcome for the test function.  Truthful completes; lying carries only the
-# method's raise.  Before #7756 every lying source here completed.
+# outcome for the test function.  Lying carries only the method's raise;
+# truthful completes alone, or, where its body reads the arrived ``self``, is
+# the undecided read.  Before #7756 every lying source here completed.
 # ---------------------------------------------------------------------------
 
 
@@ -250,6 +329,22 @@ _IN_PROCESS_PAIRS = {
         _SPREAD_CALL.format(body="        return mode"),
         _SPREAD_CALL.format(body="        raise OSError('cannot open')"),
         "OSError",
+    ),
+}
+
+
+_ARRIVED_SELF_PAIRS = {
+    "self-call": (
+        _ARRIVED_SELF_CALL.format(body="        return None"),
+        _ARRIVED_SELF_CALL.format(body="        raise ValueError('bad box')"),
+    ),
+    "one-branch": (
+        _ARRIVED_ONE_BRANCH.format(actual=3),
+        _ARRIVED_ONE_BRANCH.format(actual=9),
+    ),
+    "spread-call": (
+        _ARRIVED_SPREAD_CALL.format(body="        return mode"),
+        _ARRIVED_SPREAD_CALL.format(body="        raise OSError('cannot open')"),
     ),
 }
 
@@ -284,10 +379,6 @@ def _test_function_outcome(source: str):
 # - ``obj-call``: ``gauge.read()`` is selected in the test function, where
 #   ``gauge`` is current, so the lying body's ``KeyError`` reaches the caller;
 #   the truthful body's ``return self.n`` is the undecided read.
-# - ``self-call``, ``one-branch``, ``spread-call``: the call that raises is
-#   itself ``self.check(...)`` / ``self.open(...)`` on the arrived receiver,
-#   so neither half selects the method: both are the undecided call, and no
-#   named raise is decided for either.
 # - ``super-call``: the base method is selected through ``super()``, which
 #   walks ``type(self).__mro__`` and reads no field, so the lying body's
 #   ``ValueError`` reaches the caller.  The truthful body's ``return self.n``
@@ -295,8 +386,16 @@ def _test_function_outcome(source: str):
 #   nothing on it, so nothing after the call makes ``self.n`` known, and the
 #   receiver after the call is the arrived one
 #   (``call_site_value.receiver_after_its_call``): the undecided read.
-_SELECTED_ON_THE_CALLER = ("obj-call", "super-call")
-_SELECTED_THROUGH_AN_ARRIVED_SELF = ("one-branch", "self-call", "spread-call")
+# - ``self-call``, ``one-branch``, ``spread-call``: the raising method is
+#   selected on a receiver made in the calling frame (``inner = Box()`` in
+#   ``Box.run``; ``limit = Limit()``, ``store = Store()`` in the test
+#   function), so the lying body's raise reaches the caller, and no truthful
+#   body reads an arrived ``self``: the truthful half completes alone.
+# - The arrived-``self`` forms (``_ARRIVED_SELF_PAIRS``): the call that raises
+#   is itself ``self.check(...)`` / ``self.open(...)`` on the arrived
+#   receiver, so neither half selects the method: both are the undecided
+#   call, and no named raise is decided for either.
+_TRUTHFUL_READS_AN_ARRIVED_SELF = ("obj-call", "super-call")
 
 
 def _undecided_faces(outcome) -> None:
@@ -321,16 +420,25 @@ def test_method_raise_reaches_the_caller_in_process(form: str) -> None:
     from sugar_lift_py_tests.outcome import ExitSet, Halted
 
     truthful, lying, exception = _IN_PROCESS_PAIRS[form]
-    if form in _SELECTED_THROUGH_AN_ARRIVED_SELF:
+    if form in _TRUTHFUL_READS_AN_ARRIVED_SELF:
         _undecided_faces(_test_function_outcome(truthful))
-        _undecided_faces(_test_function_outcome(lying))
-        return
-    assert form in _SELECTED_ON_THE_CALLER, form
-    _undecided_faces(_test_function_outcome(truthful))
+    else:
+        assert _test_function_outcome(truthful).completed_value() is not None
     outcome = _test_function_outcome(lying)
     assert isinstance(outcome, ExitSet), outcome
     assert [type(face) for face in outcome.exits] == [Halted]
     assert outcome.exits[0].effect.exception_name == exception
+
+
+@pytest.mark.parametrize("form", sorted(_ARRIVED_SELF_PAIRS))
+def test_a_method_selected_through_an_arrived_self_is_undecided_in_process(
+    form: str,
+) -> None:
+    """The raising method selected through a method's own ``self``: decided
+    in neither half (#8153), so this form is no twin."""
+    truthful, lying = _ARRIVED_SELF_PAIRS[form]
+    _undecided_faces(_test_function_outcome(truthful))
+    _undecided_faces(_test_function_outcome(lying))
 
 
 # ---------------------------------------------------------------------------
