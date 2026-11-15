@@ -372,7 +372,8 @@ pub struct Report {
     pub rows: Vec<ReportRow>,
     /// An imported proof's own obligations, carried as that import's state
     /// (step 9): the halt sites, owed members and self-posts of members a
-    /// staged import (`.sugar/imports/**`) spoke. They are that proof's debt,
+    /// staged import (`.sugar/imports/**`) spoke, and the consistency rows of
+    /// groups only an import spoke (its own tests). They are that proof's debt,
     /// not this project's: never in `rows`, never counted in `discharged`,
     /// `violations`, `refused` or `owed`, and they never move `verdict`. A
     /// halt the joined contract states on the consumer's call path enters the

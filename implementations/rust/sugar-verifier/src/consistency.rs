@@ -471,6 +471,40 @@ fn consistency_group_name(candidate: &ConsistencyCandidate) -> String {
     name.to_string()
 }
 
+/// Every consistency group in `pool`, by name, and whether a staged import
+/// spoke every candidate in it (step 9). The grouping is the solve's own
+/// (`consistency_group_name` over `collect_consistency_candidates`), so a
+/// result's `property_name` names its group.
+pub(crate) fn groups_spoken_only_by_imports(pool: &MementoPool) -> BTreeMap<String, bool> {
+    let (candidates, _provenance_refusals) = collect_consistency_candidates(pool);
+    let mut groups: BTreeMap<String, bool> = BTreeMap::new();
+    for candidate in &candidates {
+        let only_imports = groups
+            .entry(consistency_group_name(candidate))
+            .or_insert(true);
+        *only_imports &= candidate.spoken_by_vendor;
+    }
+    groups
+}
+
+/// Is this consistency result an imported proof's own row (step 9)? Its
+/// contract was spoken by a staged import (`MementoPool::is_vendor_member`)
+/// and so was every other candidate of its group. A group the project speaks
+/// any candidate of is the project's row: a consumer's claim conjoined with
+/// an import's stays the consumer's to answer. A provenance refusal is one
+/// contract, its own group.
+pub(crate) fn result_is_imported(
+    pool: &MementoPool,
+    groups: &BTreeMap<String, bool>,
+    result: &ConsistencyResult,
+) -> bool {
+    pool.is_vendor_member(&result.contract_cid)
+        && groups
+            .get(&result.property_name)
+            .copied()
+            .unwrap_or(true)
+}
+
 fn has_crc_value_pin_assertion_pair(
     property_name: &str,
     candidates: &[ConsistencyCandidate],
@@ -5913,6 +5947,86 @@ mod tests {
             ObligationVerdict::Refused,
             "lone constraint has no sibling to contradict — must be Refused (vacuous), not Discharged: {res:?}"
         );
+    }
+
+    /// Step 9: a consistency row a staged import alone spoke is that proof's
+    /// own state (`result_is_imported`). The importer's report carries it in
+    /// `imported` with its status and counts none of it. A group the project
+    /// speaks any candidate of stays the project's row, counted.
+    #[test]
+    fn a_consistency_row_only_an_import_spoke_is_the_imports_own_state() {
+        use crate::types::SpeakerRole;
+        let (plan, reg) = z3_plan_and_registry();
+        let mut pool = MementoPool::default();
+        // The import's own test: a lone constraint, refused as vacuous.
+        insert_contract(
+            &mut pool,
+            "import-own-test",
+            "test_vendor",
+            eqf(var("v"), int(1)),
+        );
+        pool.attribute_member_for_tests(
+            &test_cid_string("import-own-test"),
+            SpeakerRole::Vendor,
+            "the-vendor",
+        );
+        // A callsite-keyed group both speak: the consumer's claim beside the
+        // import's, conjoined into one row.
+        let shared = "numpy.add#euf#callresult_numpy_add_a2(2,3)::assertion";
+        insert_contract(&mut pool, "shared-consumer", shared, eqf(var("r"), int(6)));
+        insert_contract(&mut pool, "shared-vendor", shared, eqf(var("r"), int(5)));
+        pool.attribute_member_for_tests(
+            &test_cid_string("shared-consumer"),
+            SpeakerRole::Consumer,
+            "me",
+        );
+        pool.attribute_member_for_tests(
+            &test_cid_string("shared-vendor"),
+            SpeakerRole::Vendor,
+            "the-vendor",
+        );
+
+        let results = verify_consistency(
+            &pool,
+            &plan,
+            &reg,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
+        let groups = groups_spoken_only_by_imports(&pool);
+        let own = results
+            .iter()
+            .find(|r| r.property_name == "test_vendor")
+            .expect("the import's own row");
+        let mixed = results
+            .iter()
+            .find(|r| r.property_name == shared)
+            .expect("the shared group's row");
+        assert!(result_is_imported(&pool, &groups, own), "{own:?}");
+        assert!(!result_is_imported(&pool, &groups, mixed), "{mixed:?}");
+
+        let mut report = crate::types::Report::default();
+        for result in &results {
+            crate::report::add_consistency_result_spoken(
+                result,
+                result_is_imported(&pool, &groups, result),
+                &mut report,
+            );
+        }
+        // The import's row is visible, with its status, as the import's.
+        assert_eq!(report.imported.len(), 1, "{:?}", report.imported);
+        assert_eq!(report.imported[0].status, own.verdict);
+        assert_eq!(
+            report.imported[0].callsite.property_name,
+            "consistency:test_vendor"
+        );
+        // The project's rows and counts are the shared group alone.
+        assert_eq!(report.rows.len(), 1, "{:?}", report.rows);
+        assert_eq!(
+            report.rows[0].callsite.property_name,
+            format!("consistency:{shared}")
+        );
+        assert_eq!(report.discharged + report.refused + report.violations, 1);
     }
 
     /// #3812 ATTRIBUTION LABELS on the cross-proof contradiction: the row's
