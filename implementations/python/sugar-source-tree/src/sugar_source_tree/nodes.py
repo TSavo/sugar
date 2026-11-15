@@ -11460,20 +11460,30 @@ class FunctionDef(Statement):
         ``def``, ``class`` or ``import`` statement is not the module
         threading's: its read resolves the definition or the import.
         """
-        unit = self.unit
-        candidates = unit.module_threaded_names()
-        if not candidates:
-            return {}
-        table = unit.function_symtable(self.name, self.line_col_span().start_line)
-        reads = {
-            symbol.get_name()
-            for symbol in table.get_symbols()
-            if symbol.is_global() and symbol.is_referenced()
-        } & candidates
+        reads = self._module_globals_read()
         if not reads:
             return {}
         return _module_references_where_called(
             self, reads, owner="FunctionDef._module_global_references"
+        )
+
+    def _module_globals_read(self) -> frozenset:
+        """The module globals this body reads that the module threading
+        binds through a key (``SourceUnit.module_threaded_names``): the names
+        ``_module_global_references`` answers, read off CPython's symtable
+        alone, as ``Lambda._module_globals_read`` reads a lambda's."""
+        unit = self.unit
+        candidates = unit.module_threaded_names()
+        if not candidates:
+            return frozenset()
+        table = unit.function_symtable(self.name, self.line_col_span().start_line)
+        return (
+            frozenset(
+                symbol.get_name()
+                for symbol in table.get_symbols()
+                if symbol.is_global() and symbol.is_referenced()
+            )
+            & candidates
         )
 
     def bridge_source_symbol(self) -> Optional[str]:
@@ -11831,6 +11841,9 @@ class AsyncFunctionDef(Statement):
 
     def _module_global_references(self) -> dict:
         return FunctionDef._module_global_references(self)
+
+    def _module_globals_read(self) -> frozenset:
+        return FunctionDef._module_globals_read(self)
 
     def bridge_source_symbol(self) -> Optional[str]:
         """Same definition symbol as FunctionDef."""
@@ -12569,10 +12582,7 @@ class ClassDef(Statement):
         # frame, never here.
         threaded, _changed = self._substitute_body(
             self.body,
-            {
-                **self._module_name_references(),
-                DEFER_DEFINITION_BODY_REFUSAL: True,
-            },
+            self._module_name_references(),
         )
         # What the threading made of each statement is still a statement the
         # namespace is read for; anything else is refused by name.

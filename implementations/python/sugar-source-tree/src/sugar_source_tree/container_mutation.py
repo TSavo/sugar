@@ -3004,8 +3004,9 @@ def source_helper_actual_states(call, bound_refs, scope):
         for index, actual in actuals
     ]
     # The module globals the helper's own frame reads: each is a name its
-    # frame carries out of the call (``nodes._exit_reads``).
-    read_by_frame = definition._module_global_references()
+    # frame carries out of the call (``nodes._exit_reads``).  Only which
+    # names is asked: the frame reads their bindings where it is built.
+    read_by_frame = definition._module_globals_read()
     for name, node in reach.module:
         if name in node_scope or name not in read_by_frame:
             # A formal of the same name hides the module object from the
@@ -3305,19 +3306,16 @@ def _module_objects_named(call, scope, functions):
     a function reaching it reads it by.
 
     Empty when the caller holds no module object a call may change
-    (``_may_be_changed``).  A module body's own threading
-    (``_MODULE_STATEMENT_STATES``) asks no callee's module bindings: they
-    are read off that threading."""
-    from .nodes import _MODULE_STATEMENT_STATES
-
-    if scope.get(_MODULE_STATEMENT_STATES) is not None:
-        return []
+    (``_may_be_changed``).  One rule for both doors that thread a module
+    body (``Module._construct_sugar`` and the readers' threading,
+    ``SourceUnit.module_binding_states``): a callee's module bindings are
+    read where the call runs (``_module_reads``)."""
     held = _held_module_objects(scope, call.unit)
     if not held:
         return []
     found = []
     taken = set()
-    for owner, name, reference in _module_reads(functions):
+    for owner, name, reference in _module_reads(call, functions):
         for held_name, node in held:
             if _ref(node) in taken:
                 continue
@@ -3363,16 +3361,43 @@ def _held_module_objects(scope, unit):
     return held
 
 
-def _module_reads(functions):
+def _module_reads(call, functions):
     """``[(reader, name, reference)]``: the module binding of each global
-    each of ``functions`` reads where it is called
-    (``FunctionDef._module_global_references``); ``reader`` the function
-    that reads it.  A function whose module read the module body does not
-    decide raises its ``SugarNotWritten`` here."""
+    each of ``functions`` reads (``FunctionDef._module_globals_read``) where
+    ``call`` runs them; ``reader`` the function that reads it.
+
+    A call the module body runs (``SourceUnit.module_execution_site``) runs
+    its callees at its own point of the module body, and each reads a
+    global as the module binds it there; any other call runs them where
+    the function holding it is called (``_MODULE_EXECUTION_SITE``), after
+    import when nothing is (``SourceUnit.module_bindings_at``).  A binding
+    the module body does not decide there (``UNDECIDED_MODULE_BINDING``)
+    names no object the caller holds: it is not a reach, and what the
+    callee may change of the caller's objects takes the exposure rule
+    (``_unfollowed_reach``, ``_ambient_targets``).  The callee's own frame
+    cites it ``undecided`` by name where it is built."""
+    from .nodes import (
+        UNDECIDED_MODULE_BINDING,
+        _site_where_called,
+        current_module_execution_site,
+    )
+
+    site = call.unit.module_execution_site(call)
+    if site is None:
+        site = current_module_execution_site()
     found = []
     for current in functions:
-        references = current._module_global_references()
-        found.extend((current, name, references[name]) for name in sorted(references))
+        reads = current._module_globals_read()
+        if not reads:
+            continue
+        bindings = current.unit.module_bindings_at(
+            _site_where_called(current.unit, site), reads
+        )
+        found.extend(
+            (current, name, bindings[name])
+            for name in sorted(bindings)
+            if bindings[name] is not UNDECIDED_MODULE_BINDING
+        )
     return found
 
 
@@ -4083,16 +4108,12 @@ def _code_subjects(call, scope):
 def _ambient_objects(site, scope):
     """``(objects, rebound)``: the reads of what the caller at ``site`` holds
     that code it does not follow may reach other than through an operand --
-    the module objects ``scope`` binds (``_held_module_objects``; none while
-    a module body threads itself, ``_MODULE_STATEMENT_STATES``) and the
+    the module objects ``scope`` binds (``_held_module_objects``), in a
+    module body's threading for its readers as in any other, and the
     closure cells of the function ``site`` runs in (``_frame_cells``).
     ``objects``: those a call may change; ``rebound``: the cells a nested
     scope declares ``nonlocal``, which it may rebind."""
-    from .nodes import _MODULE_STATEMENT_STATES
-
-    objects = []
-    if scope.get(_MODULE_STATEMENT_STATES) is None:
-        objects.extend(node for _name, node in _held_module_objects(scope, site.unit))
+    objects = [node for _name, node in _held_module_objects(scope, site.unit)]
     cells, rebound = _frame_cells(site, scope)
     objects.extend(cells)
     return objects, rebound
