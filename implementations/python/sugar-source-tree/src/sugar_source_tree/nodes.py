@@ -6740,6 +6740,34 @@ def _evaluation_ref(
     )
 
 
+def _discharge_binding_references(statement, binding) -> None:
+    """Answer the roll for each evaluation reference ``statement`` bound a
+    name to that is no node of the statement (``Assign.target_evaluations``:
+    ``y = e`` binds ``y`` to its projection of the statement's evaluation,
+    minted at the target's span; a live loop's post-loop keys).
+
+    The reference is the binding, a value of the block's scope, never an
+    occurrence any construction reaches: a read of the name is re-spanned to
+    its own site (``Name.substitute``) and that node answers for itself, built
+    or refused.  Minting it registered it, so it answers here, where the
+    statement bound it, by the one discharge of a node a rewrite made and
+    nothing constructs (``discharge_by_substitution``), as the statement it
+    replaced does (#8517).  A reference that is a node of the statement (its
+    right-hand side bound as it stands) is constructed by the statement and
+    is never answered here."""
+    references = [
+        state
+        for state in (unwrap_binding_state(value) for value in binding.values())
+        if isinstance(state, EvaluationRef)
+    ]
+    if not references:
+        return
+    within = {id(node) for node in statement.walk()}
+    for reference in references:
+        if id(reference) not in within:
+            reference.discharge_by_substitution()
+
+
 def _read_at_halt(state) -> "Optional[Node]":
     """The read, at a halt inside a simple statement, of a name unbound before
     it that the statement binds to ``state``: the same reference to the
@@ -8863,6 +8891,7 @@ class Node(Typed):
                     else produced_stmt.substitution_binding(scope)
                 )
                 if binding:
+                    _discharge_binding_references(produced_stmt, binding)
                     binding = produced_stmt._binding_entries(binding, scope)
                     binding = produced_stmt.refine_binding_entries(binding, scope)
                     post_binding = produced_stmt.post_binding_statement(binding)
