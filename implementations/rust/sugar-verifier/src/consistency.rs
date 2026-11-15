@@ -4377,7 +4377,15 @@ pub(crate) fn joined_member_cids(pool: &MementoPool) -> std::collections::BTreeS
         if !is_consistency_candidate(&body) {
             continue;
         }
-        let claim = canonicalize_formula_json(&axiom_context_formula(&body));
+        // The claims as the row's own call binds them (step 5), as
+        // `members_answered_at_prove` and the consistency candidates read
+        // them: a call whose actual is the row's own `global:<name>` input
+        // (`f(LIMIT)`, or the `py.global` a call of a function reading it
+        // supplies) is joined at the value the contract states, not dropped
+        // as an instance over a free input. A row whose claims read an input
+        // nothing states keeps its claims as they stand.
+        let bound = bind_own_inputs(&body).unwrap_or_else(|_| body.clone());
+        let claim = canonicalize_formula_json(&axiom_context_formula(&bound));
         dropped.extend(
             linked_ambient_post_instances_for_inv(&claim, &ambient)
                 .dropped
