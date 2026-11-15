@@ -635,14 +635,21 @@ def test_class_call_never_runs_init_on_a_receiver_new_did_not_return() -> None:
     }
 
 
-def test_class_value_application_refuses_source_new_and_keeps_plain_class() -> None:
+def test_class_value_application_runs_a_returned_new_and_keeps_plain_class() -> None:
     """Both twins on ``ClassDefinitionValue.callable_application_with`` (#7665).
 
-    That door runs only ``__init__``. TRUTHFUL: a class with source ``__new__``
-    refuses by naming it. LYING: the plain zero-argument class (no ``__new__``)
-    must still construct its receiver rather than be refused wholesale.
+    TRUTHFUL: a class whose own ``__new__`` runs and whose ``__init__`` is
+    ``object``'s (``ClassDef.returned_new``) runs that ``__new__`` through
+    the one method door and returns what it returned, never a fresh receiver
+    ``__new__`` did not return: ``1`` is no instance of the class, so
+    ``type.__call__`` runs nothing on it, and the call completes owing
+    nothing.  LYING: the plain zero-argument class (no ``__new__``) must
+    still construct its receiver rather than be refused wholesale.
     """
     from types import SimpleNamespace
+
+    from sugar_lift_py_tests.outcome import Halted
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
 
     def class_value(text: str):
         source = _source_file(text)
@@ -650,14 +657,14 @@ def test_class_value_application_refuses_source_new_and_keeps_plain_class() -> N
         return class_node.sugar().desugar().completed_value()
 
     operation = SimpleNamespace(site="renamed-site", arguments=(), keyword_names=())
-    with pytest.raises(SugarNotWritten) as raised:
-        class_value(
-            "class RenamedWriter:\n"
-            "    def __new__(cls):\n"
-            "        return object.__new__(cls)\n"
-        ).callable_application_with(operation, None)
-    assert raised.value.owner == "ClassDefinitionValue.callable_application_with"
-    assert "RenamedWriter.__new__" in raised.value.observed
+    returned = class_value(
+        "class RenamedWriter:\n    def __new__(cls):\n        return 1\n"
+    ).callable_application_with(operation, None)
+    assert not any(isinstance(face, Halted) for face in returned.exits)
+    assert owed_calls(returned) == ()
+    made = returned.completed_value()
+    assert made is not None
+    assert getattr(made, "class_name", None) != "RenamedWriter"
 
     plain = class_value(
         "class RenamedWriter:\n    def write(self):\n        return 1\n"

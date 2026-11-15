@@ -212,6 +212,12 @@ class ClassConstructorBodySugar(Sugar):
     # initializer's own universe): that receiver reached ``__init__`` by
     # binding and its fields are not current.
     call_site: object | None = field(default=None, compare=False)
+    # The class's own ``def __new__`` whose result the call returns as it is
+    # (``ClassDef.returned_new``): the frame's formal coordinates, its
+    # formals after ``cls``, in order.  The call runs that ``__new__`` on
+    # the actuals bound there (``_returned_by_new``).  None for every other
+    # constructor.
+    returned_new_formal_cids: tuple | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         if self.constructed_new_method is None:
@@ -664,6 +670,8 @@ class ClassConstructorBodySugar(Sugar):
         """
 
         def construct(value):
+            if self.returned_new_formal_cids is not None:
+                return self._returned_by_new(value, ctx)
             refuse_unrun_source_new(
                 value,
                 new_method=self.constructed_new_method,
@@ -728,6 +736,47 @@ class ClassConstructorBodySugar(Sugar):
 
         return self.enter(ctx, lambda value, _body: construct(value))
 
+    def _returned_by_new(self, value, ctx) -> ExitSet:
+        """``Cls(*args)`` over a class whose own ``def __new__`` runs and
+        whose ``__init__`` is ``object``'s (``ClassDef.returned_new``):
+        ``type.__call__`` calls ``Cls.__new__(Cls, *args)`` -- the function
+        read off its class, through the one method door
+        (``ClassDefinitionValue.call_method_value``), on the actuals the
+        class call bound to the frame's formals -- and every face of that
+        call, halts included, is the class call's.
+
+        On each completed face the object ``__new__`` returned is what the
+        class call returns where ``returned_as_it_is`` decides it.  Anywhere
+        else ``type(obj).__init__`` may run on it, which nothing here read:
+        that face is the one unanswered call of the class (two-faced, owed),
+        and no completion is invented for it."""
+        from sugar_source_tree.panic import SugarNotWritten
+
+        owner = "ClassConstructorBodySugar.__new__"
+        site = self.call_site if self.call_site is not None else self.site
+        temporal = getattr(ctx, "temporal", None)
+        actuals = tuple(
+            None if temporal is None else temporal.value_if_bound(cid)
+            for cid in self.returned_new_formal_cids
+        )
+        if any(actual is None for actual in actuals):
+            raise SugarNotWritten(
+                owner=owner,
+                blame=site,
+                observed="a __new__ formal the class call did not bind",
+                requested="the actual the class call bound to each __new__ formal",
+                fix="bind the class call's actuals to its constructor frame first",
+            )
+
+        def returned(made):
+            if returned_as_it_is(made):
+                return ExitSet.completed(made)
+            return value._unanswered_call(value.class_name, actuals, (), site)
+
+        return value.call_method_value(
+            "__new__", (value, *actuals), owner=owner, blame=site, ctx=ctx
+        ).and_then(returned)
+
     def _carrying_exception_args(self, receiver, ctx):
         """``receiver`` with ``args``: the tuple the frame's ``*args`` formal
         bound, which is every positional actual of the call.  A formal the
@@ -750,6 +799,43 @@ class ClassConstructorBodySugar(Sugar):
                 fix="bind the inherited-exception frame's *args before construction",
             )
         return replace(receiver, fields=(*receiver.fields, ObjectField("args", args)))
+
+
+def returned_as_it_is(made) -> bool:
+    """Whether ``type.__call__`` returns ``made``, what a class's own
+    ``__new__`` returned (``ClassDef.returned_new``), as it is.
+
+    ``type_call`` (Objects/typeobject.c) returns the object at once when it
+    is no instance of the class.  The class's order is source classes and
+    ``object`` alone (``ClassDef.returned_new``), so every instance of it
+    has a source class in its MRO, and a value a literal made has none: an
+    ``int`` or ``float`` (a ``TermValue`` holding exactly one), ``None``,
+    ``True``, ``False``.  The value is read as an operation reads it: past
+    the writes it carries (``peel_walrus_binds``), a call's value the one
+    authenticated return its body's reduction retained
+    (``project_operation_receiver_outcome``).
+
+    False for anything else: an object of a class whose ``__init__`` may
+    then run on it, or a value whose class is not decided here."""
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+        TrueBoolLiteralSugar,
+    )
+
+    presented = peel_walrus_binds(made)[1]
+    project = getattr(presented, "project_operation_receiver_outcome", None)
+    if project is not None:
+        presented = project(
+            None, owner="ClassConstructorBodySugar.__new__"
+        ).completed_value()
+    if type(presented) is TermValue:
+        return type(presented.value) in (int, float)
+    return type(presented) in (NoneValue, TrueBoolLiteralSugar, FalseBoolLiteralSugar)
 
 
 def constructor_defaults(value) -> tuple:

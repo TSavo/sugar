@@ -822,6 +822,18 @@ def _class_scope_binds(statement, name: str) -> bool:
     )
 
 
+def _class_constant_if_branch(statement):
+    """The statements a class-body ``if`` whose test is a constant runs: the
+    branch the constant selects (its ``orelse``, maybe empty, when the
+    constant is falsy).  None for any other statement.  The class body runs
+    only that branch, and every reader of the body reads it here: the
+    namespace a body leaves (``_class_statement_binding``) and the
+    constructor-frame admission (``SourceUnit.source_class_has_plain_source_body``)."""
+    if isinstance(statement, If) and isinstance(statement.test, Constant):
+        return statement.body if statement.test.value else statement.orelse
+    return None
+
+
 def _class_block_binding(statements, name: str, state):
     """``name``'s binding in the class namespace once the class-body
     statements ``statements`` have run from ``state``: the statement whose
@@ -853,8 +865,8 @@ def _class_statement_binding(statement, name: str, state):
         return False if name in statement.names_bound_here() else state
     if not _class_scope_binds(statement, name):
         return state
-    if isinstance(statement, If) and isinstance(statement.test, Constant):
-        taken = statement.body if statement.test.value else statement.orelse
+    taken = _class_constant_if_branch(statement)
+    if taken is not None:
         return _class_block_binding(taken, name, state)
     if isinstance(statement, (Try, TryStar)):
         conditional = any(
@@ -5158,8 +5170,13 @@ class SourceUnit:
         exception's is the inherited-exception frame of
         ``source_visible_constructor_frame``, whose instance carries its
         ``args``.  ``__new__`` is refused in every body, by ``def`` or by
-        assignment, and an assigned ``__init__`` is refused (the frame reads
-        only a ``def``).  Constructor hooks, decorators, keywords, type
+        assignment, but the called class's own ``def __new__`` whose result
+        the call returns as it is (``ClassDef.returned_new``: its frame runs
+        that ``__new__``), and an assigned ``__init__`` is refused (the frame
+        reads only a ``def``).  An ``if`` whose test is a constant is the
+        branch it runs (``_class_constant_if_branch``), read as the class
+        body's run reads a conditional (fields and ``pass`` only, its ``def``
+        refused there).  Constructor hooks, decorators, keywords, type
         parameters, and a walk that cannot be read -- a base the lifter
         cannot read, or a builtin exception constructing by its own law
         (``OSError``) -- stay outside this door: that call is the unanswered
@@ -5172,6 +5189,7 @@ class SourceUnit:
         order = definition.construction_order()
         if order is None:
             return False
+        returned_new = definition.returned_new()
         forbidden_methods = {
             "__new__",
             "__getattr__",
@@ -5191,16 +5209,22 @@ class SourceUnit:
         def plain(cls) -> bool:
             if cls.keywords or cls.decorators or cls.type_params:
                 return False
-            for index, member in enumerate(cls.body):
+            return plain_members(cls, cls.body, top=True)
+
+        def plain_members(cls, members, *, top: bool) -> bool:
+            for index, member in enumerate(members):
                 if isinstance(member, Pass) or (
-                    index == 0
+                    top
+                    and index == 0
                     and isinstance(member, Expr)
                     and isinstance(member.value, Constant)
                     and isinstance(member.value.value, str)
                 ):
                     continue
-                if isinstance(member, FunctionDef):
-                    if member.name in forbidden_methods or (
+                if top and isinstance(member, FunctionDef):
+                    if (
+                        member.name in forbidden_methods and member is not returned_new
+                    ) or (
                         member.decorators
                         and cls._method_descriptor_kind(member) is None
                     ):
@@ -5211,6 +5235,11 @@ class SourceUnit:
                         name in forbidden_methods or name == "__init__"
                         for name in field_names(member)
                     ):
+                        return False
+                    continue
+                taken = _class_constant_if_branch(member)
+                if taken is not None:
+                    if not plain_members(cls, taken, top=False):
                         return False
                     continue
                 return False
@@ -12229,6 +12258,45 @@ class ClassDef(Statement):
             return False, None
         return True, binder
 
+    def returned_new(self) -> "FunctionDef | None":
+        """The ``def __new__`` of this class statement whose result a call of
+        the class returns as it is, else None.
+
+        ``Cls(*args)`` is ``type.__call__``: ``obj = Cls.__new__(Cls,
+        *args)``, then, only when ``obj`` is an instance of ``Cls``,
+        ``type(obj).__init__(obj, *args)`` (``type_call``,
+        Objects/typeobject.c).  It is this statement's own ``def __new__``
+        the one lookup selects (``new_entry``), not the authenticated
+        allocation shape (``_authenticated_new_constructor_shape``, its own
+        frame), when the ``__init__`` the lookup selects is ``object``'s
+        (``initializer_entry``) and the order is source classes and
+        ``object`` alone (``construction_order``): no builtin base whose own
+        constructor law runs.  Its formals are positional (no ``*``, ``**``
+        or keyword-only formal), so the class call binds its actuals to them
+        as its own (``source_visible_constructor_frame``) and the one method
+        door passes them on (``ClassConstructorBodySugar``).  What the call
+        returns is then read off what ``__new__`` returned
+        (``class_constructor_body_sugar.returned_as_it_is``).
+        """
+        if self._authenticated_new_constructor_shape() is not None:
+            return None
+        decided, constructor = self.new_entry()
+        if not decided or constructor is None:
+            return None
+        if self.initializer_entry() != "object":
+            return None
+        order = self.construction_order()
+        if order is None or not all(
+            isinstance(entry, ClassDef) or entry == "object" for entry in order
+        ):
+            return None
+        if not constructor.params or any(
+            param.param_kind not in ("positional_only", "positional_or_keyword")
+            for param in constructor.params
+        ):
+            return None
+        return constructor
+
     def dataclass_new_entry(self) -> "tuple[bool, FunctionDef | None]":
         """``new_entry`` for the class call the ``dataclasses.dataclass``
         arm constructs (``_dataclass_generated_init_fields``: its only bases
@@ -12833,11 +12901,18 @@ class ClassDef(Statement):
 
         initializer = self._source_initializer()
         new_shape = self._authenticated_new_constructor_shape()
-        constructor = (
-            initializer
-            if initializer is not None
-            else (None if new_shape is None else new_shape[0])
+        # A ``def __new__`` whose result the call returns as it is
+        # (``returned_new``): the call's formals are its formals after
+        # ``cls``, and the body runs it (``ClassConstructorBodySugar``).
+        returned_new = (
+            self.returned_new() if initializer is None and new_shape is None else None
         )
+        if initializer is not None:
+            constructor = initializer
+        elif new_shape is not None:
+            constructor = new_shape[0]
+        else:
+            constructor = returned_new
         owner_cid = self.fragment.seal().cid
         span = self.line_col_span()
         site = SourceFragmentCoordinateV1(
@@ -12961,7 +13036,13 @@ class ClassDef(Statement):
                 for param in params
             ),
             body=self._source_visible_body(
-                formal_scope, constructed_new_method=constructed_new_method
+                formal_scope,
+                constructed_new_method=constructed_new_method,
+                returned_new_formal_cids=(
+                    None
+                    if returned_new is None
+                    else tuple(coordinate.cid for coordinate in coordinates)
+                ),
             ),
             owner=self,
             constructed_new_method=constructed_new_method,
@@ -13008,6 +13089,7 @@ class ClassDef(Statement):
         constructed_new_method=None,
         dataclass_fields=None,
         exception_args_coordinate_cid=None,
+        returned_new_formal_cids=None,
     ):
         from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
             ClassConstructorBodySugar,
@@ -13135,6 +13217,7 @@ class ClassDef(Statement):
             receiver_formal=receiver_formal,
             cell_class_definition=cell_class_definition,
             receiver_at_end=receiver_at_end,
+            returned_new_formal_cids=returned_new_formal_cids,
         )
 
     def _make_constructed_receiver_ref(self, receiver_coordinate_cid):
