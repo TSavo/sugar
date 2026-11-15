@@ -9,17 +9,23 @@ still refuses by name.  A constructed operand whose construction may raise is
 compared on each receiver face it can be; the construction halt leaves as
 itself.
 
-``Box(1) < Box(2)``: both instances are made in ``f``'s frame, and inside the
-method ``self`` and ``other`` are those actuals with ``f``'s currency (#8249),
-so ``self.n`` / ``other.n`` read the stored fields and the body's result is the
-bool Python computes.
+``Box(1) < Box(2)`` today (#7757 steps 5 and 6, the owner's ruling "Edge,
+join at prove"): each ``Box(...)`` is the class's coordinate and edge
+(#8738), whose body is never applied at lift, so each operand is a class
+call's result.  Which ``__lt__`` an operation on a class call's result runs
+is dispatch at prove (step 8, not merged): the comparison is the undecided
+ordering (``undecided_ordering_faces``), completing with the undecided
+``py.lt`` predicate under its ``completes`` atom and halting under the
+complement.  The truthful result and the three refusals by name (a class
+without the method, ``NotImplemented``, a cross-class order) are decided
+there; until then each source below is that undecided comparison, never a
+bool literal and never a refusal invented at lift.  The native ``exec``
+lines keep what Python computes, the answer step 8 must reach.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-
-import pytest
 
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -27,7 +33,6 @@ from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.floor.receiver_state_partition_value import (
     ReceiverStatePartitionValue,
 )
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.comparison_op_sugar import ComparisonOpSugar
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
@@ -49,10 +54,32 @@ def _returned(source: str):
         if isinstance(node, FunctionDef) and node.name == "f"
     )
     outcome = function_universe_outcome(function)
-    value = outcome.completed_value()
-    assert value is not None
-    (statement,) = value.record.statements
+    (done,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    (statement,) = done.value.record.statements
     return statement.value
+
+
+def _undecided_ordering(source: str) -> None:
+    """``f``'s row compares two class call results: the undecided ordering
+    until dispatch at prove (step 8).  Its one completed face returns the
+    undecided predicate; the class calls and the comparison halt beside it
+    (``Halted`` faces), none dropped."""
+    from sugar_lift_py_tests.floor import PredicateValue
+
+    tree = SourceFile(
+        (source, "rich_ordering.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
+    function = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name == "f"
+    )
+    outcome = function_universe_outcome(function)
+    assert [face for face in outcome.exits if isinstance(face, Halted)], outcome
+    returned = _returned(source)
+    assert isinstance(returned, PredicateValue), type(returned)
+    assert not isinstance(returned, (TrueBoolLiteralSugar, FalseBoolLiteralSugar))
 
 
 _BOX = (
@@ -76,7 +103,9 @@ def test_less_than_dispatches_to_the_source_lt_and_yields_its_result():
     exec(source, native)
     assert native["f"]() is True
 
-    assert isinstance(_returned(source), TrueBoolLiteralSugar)
+    # Was ``TrueBoolLiteralSugar`` while the body was applied at lift; the
+    # source ``__lt__`` is reached by dispatch at prove (step 8).
+    _undecided_ordering(source)
 
 
 def test_less_than_yields_the_source_body_not_a_default_ordering():
@@ -86,7 +115,9 @@ def test_less_than_yields_the_source_body_not_a_default_ordering():
     exec(source, native)
     assert native["f"]() is False
 
-    assert isinstance(_returned(source), FalseBoolLiteralSugar)
+    # Was ``FalseBoolLiteralSugar``; never a default ordering of the
+    # fields at lift either: the undecided predicate until step 8.
+    _undecided_ordering(source)
 
 
 def test_greater_equal_dispatches_to_the_source_ge():
@@ -95,20 +126,25 @@ def test_greater_equal_dispatches_to_the_source_ge():
     exec(source, native)
     assert native["f"]() is True
 
-    assert isinstance(_returned(source), TrueBoolLiteralSugar)
+    # Was ``TrueBoolLiteralSugar``: decided by dispatch at prove (step 8).
+    _undecided_ordering(source)
 
 
 def test_a_class_without_the_method_still_refuses_by_name():
     # Box defines __ge__ only: ``<`` has no source method on the left.
-    source = _box("__ge__", "True", "Box(1) < Box(2)")
-    with pytest.raises(ConstructionPanic, match="FloorValue.less_than_from_left"):
-        _returned(source)
+    # Was the refusal ``FloorValue.less_than_from_left``, which read Box's
+    # namespace off an instance made by applying its constructor at lift.
+    # A class call's result is its coordinate (#8738), so which method runs
+    # is dispatch at prove (step 8); today the comparison is undecided,
+    # never a completion invented for it.
+    _undecided_ordering(_box("__ge__", "True", "Box(1) < Box(2)"))
 
 
 def test_a_not_implemented_result_is_refused_not_accepted():
-    source = _box("__lt__", "NotImplemented", "Box(1) < Box(2)")
-    with pytest.raises(ConstructionPanic, match="ObjectValue.less_than"):
-        _returned(source)
+    # Was the refusal ``ObjectValue.less_than`` of the body's
+    # ``NotImplemented``; the body is the method's contract, reached by
+    # dispatch at prove (step 8).  Today: undecided, never accepted.
+    _undecided_ordering(_box("__lt__", "NotImplemented", "Box(1) < Box(2)"))
 
 
 def test_a_cross_class_method_order_is_refused():
@@ -124,8 +160,9 @@ def test_a_cross_class_method_order_is_refused():
         "def f():\n"
         "    return Box(1) <= Other(2)\n"
     )
-    with pytest.raises(ConstructionPanic, match="ObjectValue.less_equal"):
-        _returned(source)
+    # Was the refusal ``ObjectValue.less_equal``; the method order over two
+    # class call results is dispatch at prove (step 8).  Today: undecided.
+    _undecided_ordering(source)
 
 
 @dataclass(frozen=True)
