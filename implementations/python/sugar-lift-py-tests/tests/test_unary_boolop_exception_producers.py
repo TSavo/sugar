@@ -226,6 +226,69 @@ def test_undecided_not_operand_is_the_two_faced_truth() -> None:
     _assert_two_faced_not(outcome, make_var("obj1"))
 
 
+def _undecided_truth_values():
+    from sugar_lift_py_tests.floor.undetermined_exception_value import (
+        UndeterminedExceptionTypeValue,
+        UndeterminedExceptionValue,
+    )
+
+    raised = UndeterminedExceptionValue("probe:occurrence", "probe:producer")
+    return (
+        SymbolicValue(make_var("obj1")),
+        raised,
+        UndeterminedExceptionTypeValue(raised),
+    )
+
+
+@pytest.mark.parametrize(
+    "value", _undecided_truth_values(), ids=lambda value: type(value).__name__
+)
+def test_every_value_whose_truth_is_undecided_is_the_two_faced_truth(value) -> None:
+    """``bool(value)`` for a value whose runtime type is not decided is the
+    undecided member's two faces, with its own term at its own site -- the
+    exception an undetermined raise threw and its type as much as a bare
+    symbolic value.  None of them is refused."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.ir import py_truthy
+    from sugar_lift_py_tests.outcome.exit_set import Completed
+    from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
+
+    outcome = truth_of(value, _FragmentSite(), owner="probe.truth")
+    term = value.to_term(owner="probe")
+    halted = [edge for edge in outcome.exits if isinstance(edge, Halted)]
+    completed = [edge for edge in outcome.exits if isinstance(edge, Completed)]
+    assert len(halted) == 1 and len(completed) == 1
+    assert type(halted[0].effect) is UndeterminedRaiseEffect
+    assert halted[0].effect.producer_node_owner == "probe.truth"
+    assert "python:truth.completes" in repr(completed[0].guard)
+    assert repr(term) in repr(completed[0].guard)
+    assert isinstance(completed[0].value, PredicateValue)
+    assert completed[0].value.formula == py_truthy(term)
+    assert outcome.owed_items()
+
+
+def test_a_guarded_value_takes_each_arms_truth_through_the_one_truth_rule() -> None:
+    """``bool`` of a guarded value: each arm's truth through the one truth
+    rule.  An arm whose truth is not decided keeps its two faces under its
+    own polarity, beside the other arm's decided truth."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.outcome.exit_set import Completed
+
+    guarded = GuardedValue(
+        atomic("probe:guard", []), SymbolicValue(make_var("obj1")), TermValue(1)
+    )
+    outcome = guarded.truth(_FragmentSite())
+    halted = [edge for edge in outcome.exits if isinstance(edge, Halted)]
+    completed = [edge for edge in outcome.exits if isinstance(edge, Completed)]
+    assert len(halted) == 1
+    assert type(halted[0].effect) is UndeterminedRaiseEffect
+    assert halted[0].effect.producer_node_owner == "GuardedValue.truth"
+    assert "probe:guard" in repr(halted[0].guard)
+    assert len(completed) == 2
+
+
 class _EffectSugar:
     def __init__(self, effect):
         self.effect = effect
@@ -431,13 +494,15 @@ def test_pandas_unary_sites_stay_source_undecided() -> None:
     - ``tests/scalar/test_na_scalar.py`` ``not NA`` (TypeError)
     Source does not state the operand runtime type at the UnaryOp, so the
     producer cannot mint the exception identity.  The arithmetic operators
-    stay the named refusal; ``not obj1`` is the one truth rule's two faces,
-    its raise standing only as the UndeterminedRaiseEffect face.
+    stay the named refusal; ``not obj1`` and ``not NA`` are the one truth
+    rule's two faces, the raise standing only as the UndeterminedRaiseEffect
+    face.
     """
     from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
     )
+    from sugar_lift_py_tests.ir import ctor
     from sugar_lift_python_source.canonical import blake3_512_of
     from sugar_source_tree.nodes import UnaryOp
     from sugar_source_tree.tree import SourceFile
@@ -455,7 +520,13 @@ def test_pandas_unary_sites_stay_source_undecided() -> None:
         ("tests/generic/test_generic.py", 156, "not"),
         ("tests/scalar/test_na_scalar.py", 48, "not"),
     )
-    two_faced = {("tests/generic/test_generic.py", 156): make_var("obj1")}
+    two_faced = {
+        ("tests/generic/test_generic.py", 156): make_var("obj1"),
+        # ``from pandas import NA``: the import member's closed reference.
+        ("tests/scalar/test_na_scalar.py", 48): ctor(
+            "ref:pandas.NA", [], symbol_kind="coordinate"
+        ),
+    }
     for rel, line, operator in cases:
         path = corpus.root / rel
         source = path.read_text(encoding="utf-8")

@@ -3,8 +3,8 @@
 Python semantic law made constructible here (distinct from BoolOp #6595):
 
   a. ``bool(value)`` MAY halt — truth dispatch can raise a source-authenticated
-     exception type (synthetic Floor; pandas ``not NA`` / ``not obj1`` stay
-     undischarged until an NDFrame/NAType truth floor exists).
+     exception type (synthetic Floor); pandas ``not NA`` / ``not obj1`` are the
+     one truth rule's two faces until an NDFrame/NAType truth floor exists.
   b. Only the completed truth face is negated — a halt has no bool to flip.
   c. The result is always ``True``/``False``, never the operand.
   d. Exception type originates in the truth floor, never from an enclosing
@@ -20,7 +20,8 @@ Corpus coordinates (pandas 3.0.3, verified by line content, not by path alone):
 
   - ``tests/scalar/test_na_scalar.py:48`` — ``not NA`` under ``pytest.raises(TypeError)``
   - ``tests/generic/test_generic.py:156`` — ``not obj1`` under ``pytest.raises(ValueError)``
-    (two-faced: ``bool(obj1)`` is taken by the one truth rule)
+    (both two-faced: ``bool(NA)`` and ``bool(obj1)`` are taken by the one
+    truth rule)
 """
 
 from __future__ import annotations
@@ -219,41 +220,46 @@ def test_verified_pandas_303_not_reproducers_are_content_pinned() -> None:
     assert "pytest.raises(ValueError" in generic_lines[154]
 
 
-def test_corpus_not_sites_remain_named_refusals_without_operand_type() -> None:
-    """No admissible Floor for NAType at the import member yet — stay loud.
+def test_corpus_not_over_an_import_member_is_the_two_faced_truth() -> None:
+    """``not NA``: ``bool(NA)`` is not decided here, so it is the two faces.
 
-    Missing Floor law: authenticated ``NAType.__bool__`` that mints TypeError
-    from the real raise body, not from the surrounding ``pytest.raises``.
-    Until that Floor exists, the enrolled pair is undischarged (named
-    refusal), which is the honest third value.  ``not obj1`` over a bare
-    symbolic local is the one truth rule's two faces instead
-    (``test_corpus_not_over_a_symbolic_local_is_the_two_faced_truth``).
+    ``NA`` is ``from pandas import NA``: an import member, whose operand is
+    the closed reference ``ref:pandas.NA`` (#7837).  Its runtime type is not
+    decided, so its truth is the undecided member, exactly as for a bare
+    symbolic local (``test_corpus_not_over_a_symbolic_local_is_the_two_faced
+    _truth``): it completes only under ``python:truth.completes`` over that
+    reference, only the completed truth is negated, and the complement halts
+    with an UndeterminedRaiseEffect.  TypeError is not minted from the
+    surrounding ``pytest.raises``.
     """
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.ir import not_, py_truthy
+
     corpus = authenticated_pandas_corpus()
-    # ``NA`` is ``from pandas import NA``: an import member, so its operand is
-    # the closed reference ``ref:pandas.NA`` (#7837), not a free symbol.
-    cases = (("tests/scalar/test_na_scalar.py", 48, "not", "ImportMemberValue"),)
-    for rel, line, operator, operand in cases:
-        path = corpus.root / rel
-        source = path.read_text(encoding="utf-8")
-        source_cid = blake3_512_of(source.encode("utf-8"))
-        tree = SourceFile(
-            (source, str(path), source_cid),
-            construction_context=TreeConstructionContextV1.for_source_call_construction(),
-        )
-        matches = tuple(
-            node
-            for node in tree.nodes()
-            if isinstance(node, UnaryOp) and node.line_col_span().start_line == line
-        )
-        assert len(matches) == 1, (rel, line)
-        with pytest.raises(SugarNotWritten) as raised:
-            matches[0].sugar().desugar(None)
-        refusal = raised.value
-        assert refusal.owner == "unary_operation_exception_floor"
-        assert refusal.observed == f"{operand} {operator}"
-        assert "TypeError" not in str(refusal)
-        assert "ValueError" not in str(refusal)
+    path = corpus.root / "tests/scalar/test_na_scalar.py"
+    source = path.read_text(encoding="utf-8")
+    tree = SourceFile(
+        (source, str(path), blake3_512_of(source.encode("utf-8"))),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    (node,) = tuple(
+        node
+        for node in tree.nodes()
+        if isinstance(node, UnaryOp) and node.line_col_span().start_line == 48
+    )
+    reference = ctor("ref:pandas.NA", [], symbol_kind="coordinate")
+    outcome = node.sugar().desugar(None)
+    halted = [face for face in outcome.exits if isinstance(face, Halted)]
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert len(halted) == 1 and len(completed) == 1
+    assert type(halted[0].effect) is UndeterminedRaiseEffect
+    assert halted[0].effect.producer_node_owner == "UnaryOpSugar.not"
+    assert "python:truth.completes" in repr(halted[0].guard)
+    assert repr(reference) in repr(halted[0].guard)
+    assert "TypeError" not in repr(halted[0])
+    assert isinstance(completed[0].value, PredicateValue)
+    assert completed[0].value.formula == not_(py_truthy(reference))
 
 
 def test_corpus_not_over_a_symbolic_local_is_the_two_faced_truth() -> None:

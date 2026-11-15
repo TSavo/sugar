@@ -104,13 +104,7 @@ class UnaryOpSugar(ConstructedTermSugar):
         never asked to negate itself."""
         from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
 
-        return truth_of(
-            value,
-            self.site,
-            operator="not",
-            owner="UnaryOpSugar.not",
-            floor="unary_operation_exception_floor",
-        )
+        return truth_of(value, self.site, owner="UnaryOpSugar.not")
 
     def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor.named_expression_value import (

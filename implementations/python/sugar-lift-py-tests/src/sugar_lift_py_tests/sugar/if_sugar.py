@@ -322,10 +322,10 @@ class IfSugar(Sugar):
         # is handed back before any branch is selected.
         #
         # ``bool(condition)`` is taken through the one truth rule
-        # (``bool_op_sugar.truth_of``): an undecided call result or bare
-        # symbolic value is its two faces, and each completed truth face
-        # selects the suites under its own guard; a halted truth halted at
-        # the ``if``'s head, before either suite ran (``halts_recorded``).
+        # (``bool_op_sugar.truth_of``): a value whose truth is not decided
+        # here is its two faces, and each completed truth face selects the
+        # suites under its own guard; a halted truth halted at the ``if``'s
+        # head, before either suite ran (``halts_recorded``).
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
@@ -336,13 +336,7 @@ class IfSugar(Sugar):
             plain_completed_value,
         )
 
-        truth = truth_of(
-            condition,
-            self.site,
-            operator="if",
-            owner="IfSugar.test",
-            floor="truth_exception_floor",
-        )
+        truth = truth_of(condition, self.site, owner="IfSugar.test")
         if isinstance(truth, ExitSet) and plain_completed_value(truth) is None:
             return halts_recorded(truth, halt_record(ctx)).sequence(
                 lambda truth_value: self._select_suites(

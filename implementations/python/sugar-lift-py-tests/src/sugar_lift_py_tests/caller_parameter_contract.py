@@ -610,9 +610,7 @@ def _project_truth(value, site, ctx):
     del ctx
     from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
 
-    return truth_of(
-        value, site, operator="truth", owner="truth", floor="truth_exception_floor"
-    )
+    return truth_of(value, site, owner="truth")
 
 
 def _project_boolop_truth(value, site, ctx):
@@ -622,7 +620,7 @@ def _project_boolop_truth(value, site, ctx):
     del ctx
     from sugar_lift_py_tests.sugar.bool_op_sugar import boolop_truth_selection
 
-    return boolop_truth_selection(value, site, operator="BoolOp truth")
+    return boolop_truth_selection(value, site)
 
 
 def _project_unary_truth(value, unit, site, ctx):
@@ -633,13 +631,7 @@ def _project_unary_truth(value, unit, site, ctx):
     del unit, ctx
     from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
 
-    return truth_of(
-        value,
-        site,
-        operator="not",
-        owner="UnaryOpSugar.not",
-        floor="unary_operation_exception_floor",
-    )
+    return truth_of(value, site, owner="UnaryOpSugar.not")
 
 
 def _project_method_call(receiver, name, keyword_names, *operands_site_and_ctx):

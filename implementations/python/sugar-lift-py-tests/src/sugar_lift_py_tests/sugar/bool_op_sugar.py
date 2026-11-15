@@ -24,104 +24,108 @@ _BOOL_OPERATOR_COORDINATE = {
 }
 
 
-def _refuse_undecided_truth(value, site, *, operator: str, floor: str) -> None:
-    """Keep an undecided ``bool(operand)`` with no two-faced form loud.
-
-    The one truth rule (:func:`truth_of`) answers an undecided call result or
-    bare symbolic operand with its two faces.  Any other value that denotes a
-    runtime value of undecided type has no truth floor that could state those
-    faces: emitting ``py.truthy`` invents a total completion, and naming an
-    exception invents its identity.  It is refused by name at the producer
-    that asked (``floor``), until source-visible type testimony decides.
-    """
-    denotes = getattr(value, "denotes_value", None)
-    decided = getattr(value, "runtime_type_is_decided", None)
-    if not callable(denotes) or not callable(decided):
-        return
-    if not denotes() or decided():
-        return
-
-    from sugar_source_tree.panic import SugarNotWritten
-
-    raise SugarNotWritten(
-        blame=site,
-        owner=floor,
-        observed=f"{type(value).__name__} {operator}",
-        requested=(
-            "source-visible native truth testimony selecting completion "
-            "or an authenticated exceptional exit"
-        ),
-        fix=(
-            "preserve the undecided third value at the truth producer; "
-            "resolve native operand types and their __bool__/__len__ bodies "
-            "from source, or retain this named refusal without inventing an "
-            "exception identity"
-        ),
-    )
-
-
-def truth_of(value, site, *, operator: str, owner: str, floor: str):
+def truth_of(value, site, *, owner: str):
     """``bool(value)`` taken once at ``site``: the one truth rule.
 
     Every truth question takes the operand's truth through here: ``a and b``
     / ``a or b`` (on each non-final operand), ``not x``, the negation in
     ``a != b`` and ``a not in b``, an ``if`` / ``while`` / ``assert`` /
-    conditional-expression test, and the native operation carrier's
-    ``truth`` / ``boolop_truth`` / ``unary_truth`` discharge on the caller's
-    actual.
+    conditional-expression test, a generator body's branch guard
+    (``GeneratorConstructionV1._guard_truth``), each arm of a guarded value
+    (``GuardedValue.truth``), and the native operation carrier's ``truth`` /
+    ``boolop_truth`` / ``unary_truth`` discharge on the caller's actual.
+
+    The value is consumed through the one operand door (``consume_operands``):
+    a walrus or a callee's store it carries rides the truth, and the rule
+    answers for the value it presents.
 
     - A formal's truth waits on its caller's actual: the value defers it on
       the native operation carrier (``SymbolicValue.truth``), whose ``truth``
       discharge answers through this rule on the actual.
-    - An opaque call result or a bare symbolic operand (no formal coordinate)
-      of undecided runtime type has undecided ``__bool__`` / ``__len__``, and
-      taking its truth may run code (#7585 / #7681): its truth completes with
-      the undecided ``py.truthy`` only under ``python:truth.completes(
-      python:truth(<operand term>, <site>))``, keyed on the exact source site,
-      and halts with an ``UndeterminedRaiseEffect`` (producer ``owner``) under
-      the complement.  No exception type is named and no truth is decided;
-      both faces owe the one ``undecided`` member (reason ``unanswered``) at
-      the site (``ExitSet.two_faced``).
-    - Any other undecided-type value is refused by name (``floor``).
+    - A value whose truth is not decided here -- it denotes a runtime value
+      whose type the lift did not decide (``runtime_type_is_decided``), so
+      its ``__bool__`` / ``__len__`` is undecided and taking its truth may
+      run code (#7585 / #7681) -- is the undecided member's two faces
+      (:func:`_unanswered_truth`).  An opaque call result, a bare symbolic
+      value, an imported module member (``if mod.FLAG:``), a non-dict mutable
+      global, the exception an undetermined raise threw and its type all take
+      them, each with its own term at its own site.  Nothing stops here by
+      name: a value whose term cannot be stated stops at its own
+      ``to_term``.
     - A decided value answers through its own truth floor.
 
     ``a and b`` and ``not x`` mint their own carrier for a formal operand
     (``boolop_truth`` / ``unary_truth``), since what follows the truth
     differs; that carrier's discharge comes back here.
     """
+    from sugar_lift_py_tests.floor.named_expression_value import consume_operands
+
+    return consume_operands(
+        lambda presented: _presented_truth(presented, site, owner=owner), value
+    )
+
+
+def _presented_truth(value, site, *, owner: str):
+    """:func:`truth_of` for the value an operand presents (no walrus on it)."""
     if getattr(value, "formal_coordinate", None) is not None:
         return value.truth(site)
-    if _is_undecided_call_result(value) or _is_undecided_symbolic_operand(value):
-        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-        from sugar_lift_py_tests.ir import atomic, ctor, str_const
-        from sugar_lift_py_tests.occurrence import occurrence_key
-        from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            plain_completed_value,
-        )
-
-        truth = value.truth(site)
-        truth_value = plain_completed_value(truth)
-        if truth_value is None:
-            # A truth that did not complete plainly is left as produced.
-            return truth
-        key = occurrence_key(site)
-        term = ctor("python:truth", (value.to_term(owner=owner), str_const(key)))
-        return ExitSet.two_faced(
-            truth_value,
-            UndeterminedRaiseEffect(
-                blame=str(site),
-                occurrence=key,
-                producer_node_owner=owner,
-                site=site,
-            ),
-            guard=atomic("python:truth.completes", [term]),
-            site=site,
-        )
-    _refuse_undecided_truth(value, site, operator=operator, floor=floor)
+    if _truth_is_undecided(value):
+        return _unanswered_truth(value, site, owner=owner)
     return value.truth(site)
 
 
-def negated_truth_of(value, site, *, operator: str, owner: str, floor: str):
+def _truth_is_undecided(value) -> bool:
+    """Whether ``bool(value)`` is not decided here: ``value`` denotes a
+    runtime value whose type the lift did not decide."""
+    denotes = getattr(value, "denotes_value", None)
+    decided = getattr(value, "runtime_type_is_decided", None)
+    return bool(
+        callable(denotes) and callable(decided) and denotes() and not decided()
+    )
+
+
+def _unanswered_truth(value, site, *, owner: str):
+    """``bool(value)`` not decided here: the undecided member's two faces.
+
+    The truth completes with the undecided ``py.truthy(<operand term>)`` only
+    under ``python:truth.completes(python:truth(<operand term>, <site>))``,
+    keyed on the exact source site and its occurrence so two truth tests of
+    one term are never forced to agree, and halts with an
+    ``UndeterminedRaiseEffect`` (producer ``owner``) under the complement.
+    No exception type is named and no truth is decided; both faces owe the
+    one ``undecided`` member (reason ``unanswered``) at the site
+    (``ExitSet.two_faced``).  The operand's term is the one an undecided read
+    names it by (``object_identity.identity_term``); a value with no term
+    stops there, under its own name, and a site with no coordinate stops at
+    its key (``occurrence.site_coordinate_cid``).
+    """
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.object_identity import identity_term
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.ir import atomic, ctor, py_truthy, str_const
+    from sugar_lift_py_tests.occurrence import occurrence_key
+
+    operand = identity_term(value, site, "receiver", owner=owner)
+    key = occurrence_key(site)
+    return ExitSet.two_faced(
+        PredicateValue(
+            py_truthy(operand), site, operand_callsites=tuple(value.callsites())
+        ),
+        UndeterminedRaiseEffect(
+            blame=str(site),
+            occurrence=key,
+            producer_node_owner=owner,
+            site=site,
+        ),
+        guard=atomic(
+            "python:truth.completes",
+            [ctor("python:truth", (operand, str_const(key)))],
+        ),
+        site=site,
+    )
+
+
+def negated_truth_of(value, site, *, owner: str):
     """``not bool(value)``: the one truth rule, then only its completed truth
     negated.
 
@@ -131,64 +135,48 @@ def negated_truth_of(value, site, *, operator: str, owner: str, floor: str):
     unanswered result (a formal's operation its caller had no actual for)
     takes its truth by the same rule first.
     """
-    return truth_of(
-        value, site, operator=operator, owner=owner, floor=floor
-    ).and_then(lambda truth: truth.negate())
+    return truth_of(value, site, owner=owner).and_then(
+        lambda truth: truth.negate()
+    )
 
 
-def boolop_truth_selection(value, site, *, operator: str):
+def boolop_truth_selection(value, site):
     """``bool(value)`` for ``a and b`` / ``a or b``, keeping ``value``.
 
     The truth is taken through the one truth rule; the operand itself is
     what the stopping face returns.  The non-formal operand reaches this at
     construction, a formal's actual at the carrier's ``boolop_truth``
-    discharge.
+    discharge, and the unanswered result a formal's carrier completes with
+    when its caller has no actual (:func:`_answered_selection`).
     """
     from sugar_lift_py_tests.floor.boolop_truth_selection import (
         BoolOpTruthSelection,
     )
 
-    return truth_of(
-        value,
-        site,
-        operator=operator,
-        owner="BoolOpSugar.truth",
-        floor="boolean_operation_exception_floor",
-    ).and_then(
+    return truth_of(value, site, owner="BoolOpSugar.truth").and_then(
         lambda truth_value: ExitSet.completed(BoolOpTruthSelection(value, truth_value))
     )
 
 
-def _is_undecided_call_result(value) -> bool:
-    """An opaque call result whose runtime type the lift did not decide."""
-    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+def _answered_selection(answered, site):
+    """What a formal operand's ``boolop_truth`` carrier completed with, as
+    the selection ``a and b`` / ``a or b`` continues from.
 
-    if not isinstance(value, CallSiteValue):
-        return False
-    denotes = getattr(value, "denotes_value", None)
-    decided = getattr(value, "runtime_type_is_decided", None)
-    return bool(
-        callable(denotes) and callable(decided) and denotes() and not decided()
+    With the caller's actual, the discharge already took the actual's truth
+    through the one truth rule and kept the actual
+    (``caller_parameter_contract._project_boolop_truth``): that selection is
+    its own selection.  With no actual, the carrier completes with the
+    unanswered result (``python:native_operation_result(..)``), which is no
+    selection: its truth is taken here by the same rule (its two faces), and
+    it is the operand the stopping face returns -- the formal itself is not
+    in the caller's scope."""
+    from sugar_lift_py_tests.floor.boolop_truth_selection import (
+        BoolOpTruthSelection,
     )
 
-
-def _is_undecided_symbolic_operand(value) -> bool:
-    """A bare symbolic term (no formal coordinate) of undecided runtime type.
-
-    ``encoding or "utf-8"`` inside ``pandas.io.common.get_handle`` when the
-    manager derivation projects the frame with the caller's actual: nothing
-    names the operand's Python type, so ``bool(operand)`` may complete or
-    raise exactly as for an opaque call result.  A formal coordinate is
-    excluded: it is discharged against the caller's actual instead.
-    """
-    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-
-    return (
-        type(value) is SymbolicValue
-        and value.formal_coordinate is None
-        and value.denotes_value()
-        and not value.runtime_type_is_decided()
-    )
+    if isinstance(answered, BoolOpTruthSelection):
+        return ExitSet.completed(answered)
+    return boolop_truth_selection(answered, site)
 
 
 def select_boolop_operand(
@@ -279,18 +267,19 @@ def select_boolop_operand(
 
     formal_coordinate = getattr(value, "formal_coordinate", None)
     if formal_coordinate is not None:
+        # The carrier completes with the actual's selection, or with the
+        # unanswered result when the caller has no actual: either way what
+        # continues is a selection (``_answered_selection``).
         tested = NativeOperationExitCarrierV1.mint(
             site=site,
             operator="boolop_truth",
             operands=(value,),
             coordinates=(formal_coordinate,),
-        )
+        ).and_then(lambda answered: _answered_selection(answered, site))
     else:
         # The operand's truth is taken once through the one truth rule; the
         # operand itself is what the stopping face returns.
-        tested = boolop_truth_selection(
-            value, site, operator=_BOOL_OPERATOR_COORDINATE[op_kind]
-        )
+        tested = boolop_truth_selection(value, site)
 
     return tested.and_then(
         lambda selection: continue_from(

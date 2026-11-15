@@ -131,7 +131,11 @@ class NamedExpressionValue(FloorValue):
     # (``_halted_after``) -- never one without them.
 
     def truth(self, site):
-        return consume_operands(lambda presented: presented.truth(site), self)
+        # ``bool`` of the value presented, through the one truth rule, which
+        # consumes this walrus through the operand door itself.
+        from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
+
+        return truth_of(self, site, owner="truth")
 
     def negate(self):
         return consume_operands(lambda presented: presented.negate(), self)

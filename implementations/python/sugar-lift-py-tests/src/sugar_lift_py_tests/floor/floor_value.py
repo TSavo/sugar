@@ -831,13 +831,9 @@ class FloorValue:
         # itself. Base cases (True/False literals, PredicateValue) override.
         from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
 
-        return truth_of(
-            self,
-            site,
-            operator="assert",
-            owner="AssertSugar.test",
-            floor="truth_exception_floor",
-        ).and_then(lambda standing: standing.stated(site))
+        return truth_of(self, site, owner="AssertSugar.test").and_then(
+            lambda standing: standing.stated(site)
+        )
 
     def negate(self):
         # Default: this value does not stand on the negate floor -- it cannot flip.

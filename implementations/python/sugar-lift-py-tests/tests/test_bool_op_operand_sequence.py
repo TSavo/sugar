@@ -351,6 +351,35 @@ def test_undecided_caller_actual_is_the_two_faced_truth() -> None:
     assert all("python:truth.completes" in repr(face.guard) for face in completed)
 
 
+def test_formal_boolop_with_no_actual_takes_the_truth_of_the_unanswered_result() -> (
+    None
+):
+    """With no actual, the ``boolop_truth`` operation is unanswered: it
+    completes with ``python:native_operation_result(..)``, which is no
+    selection.  Its truth is taken through the one truth rule (its two
+    faces), and it is the operand the stopping face returns; the continuing
+    face reaches the right operand."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
+    carrier, _formal, evaluations, right = _formal_carrier()
+    exits = carrier.discharge(None, {})
+    completed = [face for face in exits.exits if not isinstance(face, Halted)]
+    halted = [face for face in exits.exits if isinstance(face, Halted)]
+    assert evaluations == ["left", "right"]
+    assert any(face.value is right for face in completed)
+    stopped = [face for face in completed if face.value is not right]
+    assert len(stopped) == 1
+    assert "python:native_operation_result" in repr(
+        stopped[0].value.to_term(owner="unanswered boolop operand")
+    )
+    assert all("python:truth.completes" in repr(face.guard) for face in completed)
+    assert "BoolOpSugar.truth" in {
+        face.effect.producer_node_owner
+        for face in halted
+        if type(face.effect) is UndeterminedRaiseEffect
+    }
+
+
 def test_lying_bool_coercion_cannot_replace_selected_operand() -> None:
     carrier, formal, evaluations, _ = _formal_carrier()
     actual = TermValue(0)

@@ -2,7 +2,7 @@
   "identity": "path + normalized text digest + duplicate ordinal; line is display only",
   "issue": "#3632",
   "law": "REFUSE is the verifier verb; lift outputs are reduced meaning or typed effects.",
-  "lift_output_backlog": 2174,
+  "lift_output_backlog": 2173,
   "occurrences": [
     {
       "key": "implementations/python/sugar-build-witness/src/sugar_build_witness/discharge_cli.py:523c0ad6c899be9b:1",
@@ -3002,16 +3002,6 @@
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
       "text": "partition law exists to refuse.",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/bool_op_sugar.py:70a93924a849931f:1",
-      "line": 58,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/bool_op_sugar.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "\"from source, or retain this named refusal without inventing an \"",
       "wire_marker": "internal-only"
     },
     {
@@ -22719,10 +22709,10 @@
   "speaker_counts": {
     "emitter-provenance-guard": 3,
     "instrument-prose": 8,
-    "lift-output-backlog": 2174,
+    "lift-output-backlog": 2173,
     "provenance-oracle-guard": 57,
     "vendor-language-identifier": 2,
     "verifier-verdict-quote": 32
   },
-  "total_occurrences": 2276
+  "total_occurrences": 2275
 }
