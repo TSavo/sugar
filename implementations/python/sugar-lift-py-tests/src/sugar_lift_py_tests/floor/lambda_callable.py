@@ -428,6 +428,7 @@ def definition_edge_call(
     from sugar_lift_py_tests.sugar.call_site_sugar import (
         _global_inputs,
         global_value_at_call,
+        global_read_at_call,
     )
     from sugar_source_tree.nodes import current_module_execution_site
 
@@ -503,8 +504,24 @@ def definition_edge_call(
             (input_formal(CELL_INPUT, name), value) for name, _cid, value in captured
         ),
     )
+    # The value each module global the callee's contract reads is bound to
+    # where the call runs (``global_read_at_call``, the value its
+    # ``py.global`` states): an input of the contract as an actual is, so
+    # the alias rule asks of it too (below).  A global the call supplies no
+    # one value for is bound to a variable no contract binds, no object.
+    globals_read = ()
     if signature is not None:
         module_site = current_module_execution_site()
+        globals_read = tuple(
+            value
+            for value in (
+                global_read_at_call(
+                    signature, item.coordinate.name, caller_ctx, module_site=module_site
+                )
+                for item in _global_inputs(signature)
+            )
+            if value is not None
+        )
         arguments += [
             ctor(
                 "py.global",
@@ -524,10 +541,11 @@ def definition_edge_call(
     symbol = symbol_definition.bridge_source_symbol()
     # The callee's contract states its post over its formals and inputs as
     # distinct objects: its own proof has no way to know two of them are one.
-    # A call that binds one current mutable object to two of them -- or one
-    # and a container holding it (``f(xs, xs)``, ``f(xs, [xs])``) -- is not
-    # that contract's call: a store through one formal would leave the
-    # other's entry value standing at prove, a lie.  It is the call no
+    # A call that binds one object to two of them -- or one and a container
+    # holding it (``f(xs, xs)``, ``f(xs, [xs])``), or a formal and a module
+    # global or captured cell the callee reads (``g(G)`` where ``g`` reads
+    # ``G``) -- is not that contract's call: a store through one would leave
+    # the other's entry value standing at prove, a lie.  It is the call no
     # contract answers, owed and joined to nothing, the alias rule's own test
     # (``object_identity.actuals_share_an_object``).
     from .object_identity import actuals_share_an_object
@@ -537,6 +555,7 @@ def definition_edge_call(
             *positional,
             *(value for _name, value in keywords),
             *(value for _name, _cid, value in captured),
+            *globals_read,
         )
     ):
         symbol = None

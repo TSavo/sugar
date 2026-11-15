@@ -138,3 +138,81 @@ def test_a_field_store_through_one_formal_is_seen_through_the_other(
     """``poke(box, box)``: ``b.n`` after ``a.n = 1`` is 1, never the 0
     ``__init__`` stored."""
     _never_lies(tmp_path, "field", _FIELD_THROUGH_ONE_FORMAL, true="1", false="0")
+
+
+def test_a_global_the_callee_reads_is_asked_with_the_actuals():
+    """A function's own proof reads a module global as its free input
+    (``global:G``): one input is one object, so an actual that is, or holds,
+    it shares an object with the global the callee reads; two inputs, or an
+    input and a fresh list, do not."""
+    from sugar_lift_py_tests.contract_input import ContractInputV1
+    from sugar_lift_py_tests.floor.object_identity import actuals_share_an_object
+
+    g = ContractInputV1.mint(
+        owner_definition_cid="test", input_kind="global", name="G"
+    ).value()
+    h = ContractInputV1.mint(
+        owner_definition_cid="test", input_kind="global", name="H"
+    ).value()
+    cell = ContractInputV1.mint(
+        owner_definition_cid="test", input_kind="cell", name="G"
+    ).value()
+    xs = ListValue((), allocation="xs-site")
+    assert actuals_share_an_object((g, g))
+    assert actuals_share_an_object((TupleValue((g,)), g))
+    assert actuals_share_an_object((cell, cell))
+    assert not actuals_share_an_object((g, h))
+    assert not actuals_share_an_object((g, cell))
+    assert not actuals_share_an_object((xs, g))
+
+
+_LIST_THROUGH_A_FORMAL_AND_A_GLOBAL = """\
+G = []
+
+
+def grow(a):
+    a.append(1)
+    return len(G)
+
+
+def test_grow():
+    n = grow(G)
+    assert n == {claim}
+"""
+
+
+def test_an_append_through_a_formal_is_seen_through_the_global(tmp_path: Path):
+    """``grow(G)`` where ``grow`` reads ``G``: ``len(G)`` after
+    ``a.append(1)`` is 1, never the 0 the module bound."""
+    _never_lies(
+        tmp_path,
+        "global",
+        _LIST_THROUGH_A_FORMAL_AND_A_GLOBAL,
+        true="1",
+        false="0",
+    )
+
+
+_LIST_THROUGH_A_FORMAL_AND_A_CELL = """\
+def test_grow():
+    xs = []
+
+    def grow(a):
+        a.append(1)
+        return len(xs)
+
+    n = grow(xs)
+    assert n == {claim}
+"""
+
+
+def test_an_append_through_a_formal_is_seen_through_the_cell(tmp_path: Path):
+    """``grow(xs)`` where ``grow`` reads the captured ``xs``: ``len(xs)``
+    after ``a.append(1)`` is 1, never the 0 the cell held."""
+    _never_lies(
+        tmp_path,
+        "cell",
+        _LIST_THROUGH_A_FORMAL_AND_A_CELL,
+        true="1",
+        false="0",
+    )
