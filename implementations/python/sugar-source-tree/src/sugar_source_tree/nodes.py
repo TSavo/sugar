@@ -16945,6 +16945,12 @@ class AugAssign(Statement):
                 unwrap_binding_state(scope.get(self.target.id, self.target)),
                 make_read=self.target._make_binding_read,
             )
+            # The operand substitutes as every operand of the door does
+            # (``Delete``, ``Assign._container_mutation``): a source read the
+            # rewrite replaced (``values += data``'s ``data``, a reference)
+            # or a comprehension it dissolved (``names += [... for ...]``)
+            # answers by that substitution, never left unanswered.
+            operand, _changed = self._substitute_field(self.value, scope)
             mutation = name_mutation_statement(
                 self,
                 scope,
@@ -16952,7 +16958,7 @@ class AugAssign(Statement):
                 name=self.target.id,
                 receiver=prior_read,
                 method=f"__{self.op.inplace_operator}__",
-                args=(self.value.substitute(scope),),
+                args=(operand,),
                 target_name=self.target.id,
                 operator_kind=self.op.kind,
                 operator_site=pre_sub_operator_site,
