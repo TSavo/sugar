@@ -741,9 +741,9 @@ _FIELD_KIND = "field"
 _DESCRIPTOR_KINDS = frozenset({"staticmethod", "classmethod", "property"})
 
 
-def class_namespace_rows(sf: SourceFile, file_rel: str) -> list:
-    """One row per class this file states a constructor contract for
-    (``classes_with_contracts``) whose namespace is closed: what a method call
+def class_namespace_row(cls, file_rel: str) -> list:
+    """The one row a class this file states a constructor contract for
+    (``classes_with_contracts``) states when its namespace is closed: what a method call
     on an instance of it is dispatched on at prove (#7757 step 8,
     ``consistency::dispatched_symbol``).
 
@@ -775,10 +775,14 @@ def class_namespace_rows(sf: SourceFile, file_rel: str) -> list:
     symbol in it, or one whose namespace is open (a keyword, a decorator the
     lifter does not model, a module store that may write any name,
     ``ClassDef._creation_writes``) states no row: a method call on it is not
-    dispatched.  A class whose statement the lifter refuses by name states
-    no row either.
+    dispatched.  A refusal by name reading the namespace (or the class
+    statement a ``classmethod``'s class object is spelled by) is not caught
+    here: the scan reads this row inside the class's one ``try``
+    (``lift_rpc._handle_enumerate``), so the refusal is the class's refused
+    member, the one ``undecided`` row, never a row silently left out.
 
-    Returns ``(memento, dto)`` pairs, the shape of the universe scan's rows.
+    Returns ``(memento, dto)`` pairs (none or one), the shape of the universe
+    scan's rows.
     """
     from sugar_lift_py_tests.floor.universe_mint_projection import claim_formula
     from sugar_lift_py_tests.ir import and_, atomic, str_const
@@ -788,65 +792,56 @@ def class_namespace_rows(sf: SourceFile, file_rel: str) -> list:
         Stated,
     )
     from sugar_lift_py_tests.proofir.nodes.universe_mint import UniverseMint
-    from sugar_source_tree.panic import BackendDefect, LifterRefusal
 
-    rows = []
-    for cls in classes_with_contracts(sf):
-        try:
-            facts = _class_namespace_facts(cls)
-        except BackendDefect:
-            raise
-        except LifterRefusal:
-            continue
-        if facts is None:
-            continue
-        symbol, mro, binds, class_object = facts
-        statements = [
-            atomic(
-                "python:class_mro",
-                [str_const(symbol), *(str_const(entry) for entry in mro)],
-            )
-        ] + [
-            atomic(
-                "python:class_binds",
-                [
-                    str_const(symbol),
-                    str_const(name),
-                    str_const(kind),
-                    str_const(target),
-                ],
-            )
-            for name, kind, target in binds
-        ]
-        if class_object is not None:
-            statements.append(
-                atomic("python:class_object", [str_const(symbol), class_object])
-            )
-        memento = statement_memento(cls, cls.name, file_rel)
-        locus = ConstructionSite(
-            path=file_rel, line=memento.span.start_line, column=memento.span.start_col
+    facts = _class_namespace_facts(cls)
+    if facts is None:
+        return []
+    symbol, mro, binds, class_object = facts
+    statements = [
+        atomic(
+            "python:class_mro",
+            [str_const(symbol), *(str_const(entry) for entry in mro)],
         )
-        provenance = Provenance(
-            node_class="UniverseMint",
-            construction_site=locus,
-            warrant=Stated(locus=locus),
+    ] + [
+        atomic(
+            "python:class_binds",
+            [
+                str_const(symbol),
+                str_const(name),
+                str_const(kind),
+                str_const(target),
+            ],
         )
-        formula = statements[0] if len(statements) == 1 else and_(statements)
-        row = UniverseMint(
-            name=f"{symbol}{CLASS_NAMESPACE_SUFFIX}",
-            slot="inv",
-            formula=claim_formula(
-                formula, formals=(), provenance=provenance, role="inv"
-            ),
-            provenance=provenance,
-            source_warrants=(memento,),
+        for name, kind, target in binds
+    ]
+    if class_object is not None:
+        statements.append(
+            atomic("python:class_object", [str_const(symbol), class_object])
         )
-        rows.append((memento.to_rpc(), row.to_body_universe()))
-    return rows
+    memento = statement_memento(cls, cls.name, file_rel)
+    locus = ConstructionSite(
+        path=file_rel, line=memento.span.start_line, column=memento.span.start_col
+    )
+    provenance = Provenance(
+        node_class="UniverseMint",
+        construction_site=locus,
+        warrant=Stated(locus=locus),
+    )
+    formula = statements[0] if len(statements) == 1 else and_(statements)
+    row = UniverseMint(
+        name=f"{symbol}{CLASS_NAMESPACE_SUFFIX}",
+        slot="inv",
+        formula=claim_formula(
+            formula, formals=(), provenance=provenance, role="inv"
+        ),
+        provenance=provenance,
+        source_warrants=(memento,),
+    )
+    return [(memento.to_rpc(), row.to_body_universe())]
 
 
 def _class_namespace_facts(cls):
-    """``(symbol, mro, binds, class_object)`` for ``class_namespace_rows``,
+    """``(symbol, mro, binds, class_object)`` for ``class_namespace_row``,
     or None when the class states no namespace row.  ``class_object`` is the
     class object's term where a ``classmethod`` is bound and the class
     statement constructs (``_class_object_term``), else None."""
@@ -945,18 +940,14 @@ def _class_object_term(cls):
     """The term the class object of ``cls`` is spelled by
     (``class_definition_value.class_definition_term``), off the class
     statement's one construction (step 5; the cached sugar every reading of
-    the class reads), or None when the statement is refused by name."""
+    the class reads), or None when that construction states no class object.
+    A refusal by name of the statement propagates: it is the class's refused
+    member (``class_namespace_row``)."""
     from sugar_lift_py_tests.floor.class_definition_value import (
         class_definition_term,
     )
-    from sugar_source_tree.panic import BackendDefect, LifterRefusal
 
-    try:
-        sugar = cls.sugar()
-    except BackendDefect:
-        raise
-    except LifterRefusal:
-        return None
+    sugar = cls.sugar()
     cid = getattr(sugar, "class_definition_cid", None)
     return None if cid is None else class_definition_term(cid)
 

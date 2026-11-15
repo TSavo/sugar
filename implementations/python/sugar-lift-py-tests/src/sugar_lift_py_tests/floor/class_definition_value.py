@@ -787,7 +787,7 @@ def class_definition_term(class_definition_cid: str):
     """The term a source class object is spelled by wherever a reduction
     reads it (``ClassDefinitionValue.to_term``):
     ``python:class-definition(<class definition cid>)``.  A class's namespace
-    row states it (``tree_enumerate.class_namespace_rows``,
+    row states it (``tree_enumerate.class_namespace_row``,
     ``python:class_object``), so a ``classmethod`` dispatched at prove binds
     the very term a reading of the class here is (#7757 step 8)."""
     from sugar_lift_py_tests.ir import ctor, str_const

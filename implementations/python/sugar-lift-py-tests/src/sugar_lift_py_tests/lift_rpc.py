@@ -2281,8 +2281,17 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # its join symbol: a call of the class is joined to it at
                 # prove as a call of a ``def`` is. Its refusal by name is the
                 # class's `undecided` row, by the rule a function's follows.
+                # A class whose namespace is closed also states its order and
+                # what its namespace holds, named by its target symbol, so a
+                # method call on an instance of it whose class a call binds
+                # is dispatched at prove (#7757 step 8). That row is read
+                # first, in the same `try`: a refusal reading it is the
+                # class's refused member, never a row silently left out, and
+                # a refused constructor contract still leaves the namespace
+                # row a method call on an instance is dispatched on.
                 for cls in _tree.classes_with_contracts(sf):
                     try:
+                        scan_rows.extend(_tree.class_namespace_row(cls, file_rel))
                         class_memento, rows = _tree.class_contract_rows(
                             cls, file_rel
                         )
@@ -2328,11 +2337,6 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # the imported class is decided at prove through the join
                 # (#7757).
                 scan_rows.extend(_tree.exception_ancestry_rows(sf, file_rel))
-                # Each class whose namespace is closed states its order and
-                # what its namespace holds, named by its target symbol, so a
-                # method call on an instance of it whose class a call binds
-                # is dispatched at prove (#7757 step 8).
-                scan_rows.extend(_tree.class_namespace_rows(sf, file_rel))
 
                 nodes = [
                     {

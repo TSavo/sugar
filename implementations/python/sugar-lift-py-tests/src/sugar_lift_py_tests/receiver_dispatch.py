@@ -21,7 +21,7 @@ argument (its position in decimal digits, or its keyword):
 (``class_arguments``).  Prove's one binder binds ``class:<param>`` from it,
 and the one resolution (``consistency::dispatched_symbol``) looks the method
 up on the order the class's own proof states (``tree_enumerate.
-class_namespace_rows``) and joins that function's contract.  Where nothing
+class_namespace_row``) and joins that function's contract.  Where nothing
 binds a decided class, the call is the owed member: never a guessed target.
 
 One binder, one resolution: nothing here resolves a method.
