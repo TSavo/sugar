@@ -1,9 +1,10 @@
 """Exact post-binding denominator for CPython ``enum.py:304``.
 
-The loop has three completed-state routes (break, internal latch fallthrough,
-normal exhaustion) but only two outward exits (break and exhaustion).  A
-post-binding projection conserves all three states; it must not borrow the
-two-route outward denominator.
+A Python loop statement completes by exactly two routes here: ``break`` and
+normal exhaustion.  ``BodyFallthrough`` is the latch input -- the body running
+to its end and going round again -- so no statement after the loop sees its
+state, and the post-binding projection carries exactly the two exit routes,
+each under its own guard.
 """
 
 from __future__ import annotations
@@ -65,7 +66,7 @@ def _enum_loop_projection_calls(monkeypatch):
     return loop, calls, original
 
 
-def test_enum_post_binding_preserves_three_states_and_two_outward_routes(
+def test_enum_post_binding_carries_exactly_the_two_exit_routes(
     monkeypatch,
 ) -> None:
     loop, calls, _original = _enum_loop_projection_calls(monkeypatch)
@@ -80,14 +81,13 @@ def test_enum_post_binding_preserves_three_states_and_two_outward_routes(
             if record.get("kind") == "loop-post-binding"
             and record["bindingCoordinateCid"] == kwargs["binding_coordinate"].cid
         )
-        assert {record["exitPartitionArity"] for record in post_records} == {3}
-        assert len(projected.completed_faces) == len(post_records) == 3
+        assert {record["exitPartitionArity"] for record in post_records} == {2}
+        assert len(projected.completed_faces) == len(post_records) == 2
         assert {face.completion_kind for face in projected.completed_faces} == {
             "BreakExit",
-            "BodyFallthrough",
             "NormalExhaustion",
         }
-        assert len({face.guard_formula_cid for face in projected.completed_faces}) == 3
+        assert len({face.guard_formula_cid for face in projected.completed_faces}) == 2
         root = graph["root"]
         assert len(root["breakExitObligationCids"]) == 1
         assert root["exhaustionExitObligationCid"]

@@ -1050,18 +1050,24 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
         else_obligation_cid = else_obligation["elseExhaustionObligationCid"]
 
     post_records = []
-    # THE COMPLETED-STATE ROUTES, NAMED BY THE PRODUCER.
+    # THE EXIT ROUTES, NAMED BY THE PRODUCER.
     #
-    # Post-binding projects the carried state through every completed producer
-    # route, including `BodyFallthrough`: it is the internal latch input, not an
-    # outward exit, but it is still a distinct completed state whose exact
-    # guard/state/coordinate testimony must survive the projection.  The root's
-    # break/exhaustion obligations remain the separate outward denominator.
+    # A Python loop statement completes by exactly these routes: `break`
+    # (when the body can break) and normal exhaustion (through the `else`
+    # clause when there is one).  Every halt (raise/return) propagates as an
+    # outward halted face, carried above.  `continue` is not an exit, and
+    # neither is `BodyFallthrough`: it is the latch input -- the body running
+    # to its end and going round again -- so no statement after the loop ever
+    # sees its state.  Projecting it after the loop would add a route Python
+    # does not have.
     #
-    # `exitPartitionArity` is the legacy wire field carrying that producer-owned
-    # completed-route count.  It is deliberately not derived from the outward
-    # obligation roster and not recounted from whatever projection arrived.
-    completed_post_kinds = tuple(kind for kind, _guard in completed_specs)
+    # `exitPartitionArity` is that count carried on the wire so a downstream
+    # projection reads a DECLARED family size instead of counting whatever
+    # happened to arrive; a dropped post-binding record then makes the family
+    # short of its declared size and the projection refuses loudly.
+    completed_post_kinds = tuple(
+        kind for kind, _guard in completed_specs if kind != "BodyFallthrough"
+    )
     exit_partition_arity = len(completed_post_kinds)
     for completion_kind in completed_post_kinds:
         face, state_record, _snapshot = (
