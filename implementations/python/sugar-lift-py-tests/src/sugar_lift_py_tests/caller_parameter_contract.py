@@ -911,6 +911,12 @@ class NativeOperationExitCarrierV1:
         halt leaves from the reducer's pre-effect state when one was enrolled.
         The terms name the operator and the occurrence, never a formal of the
         callee, which is not in the caller's scope.
+
+        The halt states where it halted: the operation's own source fragment
+        (``self.site``, the fragment the carrier was minted at) rides on its
+        effect's ``site``. The demand's ``source_node`` is that fragment's
+        coordinate, not a fragment, so ``two_faced`` filling it would leave
+        the halt without a locus (#7766).
         """
         from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
         from sugar_lift_py_tests.floor import SymbolicValue
@@ -930,6 +936,7 @@ class NativeOperationExitCarrierV1:
                 producer_node_owner=(
                     f"UnansweredNativeOperation:{self.demand.operator}"
                 ),
+                site=self.site,
             ),
             guard=atomic("python:unanswered_native_operation.completes", [operation]),
             site=site,
@@ -1056,7 +1063,9 @@ class NativeOperationExitCarrierV1:
                     effect=effect,
                     pre_effect_state=self.pre_effect_state,
                 )
-            projected_halt = resolution.project(source_node=self.demand.source_node)
+            # The operation's fragment, not its coordinate: a rebuilt raise
+            # states it as its ``site`` (#7766).
+            projected_halt = resolution.project(source_node=self.site)
             # The resolution continues beneath the projector's halt, which this
             # discharge owns and consumes: composed through ``sequence``, the
             # resolution's arms owe what the projector's halt owed.

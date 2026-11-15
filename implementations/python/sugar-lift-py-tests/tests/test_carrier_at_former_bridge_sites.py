@@ -298,6 +298,9 @@ def test_sequence_keeps_a_halt_beside_an_undischarged_carrier():
     completed, raised = unanswered
     assert isinstance(raised.effect, UndeterminedRaiseEffect)
     assert raised.effect.producer_node_owner == "UnansweredNativeOperation:add"
+    # The halt states where it halted: the operation's own fragment, not the
+    # demand's coordinate (#7766, ``halt_locus``).
+    assert raised.effect.site is carrier.site
     # Both faces lie beneath the carrier's prefix arm.
     assert completes in completed.guard.operands
     assert completes in raised.guard.operands
