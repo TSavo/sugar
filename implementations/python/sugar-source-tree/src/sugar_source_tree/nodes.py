@@ -17116,8 +17116,15 @@ class For(Statement):
                 )
             ):
                 return None
+            # Each item read, and the index minted for it, answers where it
+            # is minted, as an unpack's member read does
+            # (``_minted_member_read``): a comprehension that gives up its
+            # dissolve after minting them (``{Timestamp(d): ... for d in
+            # dates}``, whose key no ground value hashes) builds neither,
+            # and a read of the target that reaches an item builds it and
+            # answers again, built or refused by name (#7757).
             return [
-                For._item_of(self, iterable, index)
+                _minted_member_read(For._item_of(self, iterable, index))
                 for index in range(len(ground.elts))
             ]
         if iterable.kind in ("List", "Tuple"):
