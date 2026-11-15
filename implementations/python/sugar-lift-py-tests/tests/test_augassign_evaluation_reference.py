@@ -74,7 +74,7 @@ def test_statement_sugar_carries_its_evaluation_key() -> None:
     function = _function("def f(x):\n    x += 1\n    return x\n")
     statement = function.sugar().statements[0]
     assert isinstance(statement, ContainerMutationStatementSugar)
-    key, _index = statement.result_evaluation
+    key, _index = statement.result_evaluations[0]
     assert isinstance(key, str)
     assert key.startswith(EVALUATION_PREFIX)
 

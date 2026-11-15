@@ -604,6 +604,26 @@ def _havoc(site_node, label, tags, *, prior=None, conditions=None):
     )
 
 
+def object_across_items(loop, name, before):
+    """The object ``name`` denotes at a live loop's header, for a name no item
+    rebinds (``nodes._loop_header_bindings``): the object ``before`` (its
+    read before the loop) denotes, as the earlier items' calls may have
+    changed it -- the value after a call that may have changed it
+    (``ReceiverAfterCall`` with ``prior``, ``_object``).  Only object
+    identity asks it (the header reference's ``of``): the value is the
+    header's key, and nothing reads the value it had before the loop as
+    the shape of the value it has at an item."""
+    from .shadow import occurrence_tags_of
+
+    return _havoc(
+        loop,
+        name,
+        occurrence_tags_of(loop),
+        prior=before,
+        conditions=[(None, _OPERAND_RULES[0])],
+    )
+
+
 def _read_of(value):
     """The node a read of a name bound to ``value`` is (``Name.substitute``),
     or None when the binding holds no node."""
@@ -638,23 +658,47 @@ def _statement(
     name (``r += x``, ``x = r.m()``, ``x = a.b.m()``, ``x = d.setdefault(k,
     v).m()``): the statement writes ``name`` -- the result
     ``evaluated[index]`` -- under ``key``, its evaluation of that name
-    (``_name_write``): the write every later read of ``name`` reads and a
-    live loop carries (``ContainerMutationStatement.written_keys``)."""
+    (``_name_write``): the write every later read of ``name`` reads.
+
+    Every statement, bare or assigned, also writes each other name it binds
+    -- a name bound to the object the call changed, a holder, a name sharing
+    it -- to its state after the call under its own projection of the
+    statement's key (``projection_key(evaluation, name)``), the state
+    evaluated here, once, with the statement's values.  ``writes`` holds
+    every ``(name, index, key)`` the statement writes, the assigned name's
+    first: what a live loop carries from item to item
+    (``ContainerMutationStatement.written_keys``), so an item begins with
+    the object as the item before it left it.  The names' bindings are their
+    states: every later read in the block reads the state, as before."""
     from .backend import Children, Leaf
     from .shadow import _handle_of
 
+    evaluated = list(evaluated)
+    writes = [] if rebinds is None else [tuple(rebinds)]
+    if isinstance(evaluation, str):
+        from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+        assigned = None if rebinds is None else rebinds[0]
+        for name, state in zip(names, states, strict=True):
+            if name == assigned:
+                continue
+            index = next(
+                (position for position, node in enumerate(evaluated) if node is state),
+                None,
+            )
+            if index is None:
+                evaluated.append(state)
+                index = len(evaluated) - 1
+            writes.append((name, index, projection_key(evaluation, name)))
     fields = (
         ("names", Leaf(tuple(names))),
         ("states", Children(tuple(_handle_of(state) for state in states))),
         ("evaluated", Children(tuple(_handle_of(node) for node in evaluated))),
     )
     if rebinds is not None:
-        fields = (
-            *fields,
-            ("rebinds", Leaf(rebinds[0])),
-            ("rebinds_index", Leaf(rebinds[1])),
-            ("rebinds_evaluation", Leaf(rebinds[2])),
-        )
+        fields = (*fields, ("rebinds", Leaf(rebinds[0])))
+    if writes:
+        fields = (*fields, ("writes", Leaf(tuple(writes))))
     if evaluation is not None:
         fields = (*fields, ("evaluation", Leaf(evaluation)))
     if pair_evaluation is not None and pair_evaluation != evaluation:

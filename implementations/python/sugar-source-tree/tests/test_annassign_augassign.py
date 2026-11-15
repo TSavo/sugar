@@ -443,7 +443,7 @@ def test_aug_assign_with_no_prior_binding_is_sound():
     # The in-place statement is present — the binding was not dropped.
     assert any(
         isinstance(s, ContainerMutationStatementSugar)
-        and s.result_evaluation is not None
+        and s.result_evaluations
         for s in sugar.statements
     )
 

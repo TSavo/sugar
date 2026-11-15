@@ -94,7 +94,7 @@ def _in_place_receiver(statement):
 def _in_place_key(statement):
     """The key a ``x += e`` statement binds its in-place result under."""
     assert isinstance(statement, ContainerMutationStatementSugar)
-    key, _index = statement.result_evaluation
+    key, _index = statement.result_evaluations[0]
     return key
 HEADER = EVALUATION_PREFIX + "blake3-512:test-header"
 LATCH = EVALUATION_PREFIX + "blake3-512:test-latch"
@@ -1767,6 +1767,56 @@ def test_a_concrete_items_append_before_its_loop_control_leaves_with_it(
     records = _records(outcome)
     assert records, outcome
     assert _holds(records, fresh(ListValue, (TermValue(1),))), records
+
+
+@pytest.mark.parametrize("iterable", ["(1, 2)", "g()"])
+def test_each_item_appends_to_the_list_the_item_before_it_left(iterable: str) -> None:
+    from sugar_lift_py_tests.floor.list_value import ListValue
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # ``acc.append(x)`` assigns no name, yet it writes ``acc`` to the list
+    # after the append under its key, so the live loop (``g()``) carries it:
+    # item 1 appends 2 to the list item 0 left, ``[1, 2]`` as Python has it,
+    # never to the pre-loop list (``[2]``).  The literal is unrolled and
+    # reads the same.
+    function = _function(
+        "def f():\n"
+        "    acc = []\n"
+        f"    for x in {iterable}:\n"
+        "        acc.append(x)\n"
+        "    return acc\n"
+        "def g():\n"
+        "    return (1, 2)\n"
+    )
+    returned = _flattened(_returned_values(function_universe_outcome(function)))
+    assert fresh(ListValue, (TermValue(1), TermValue(2))) in returned, returned
+    assert fresh(ListValue, (TermValue(2),)) not in returned, returned
+
+
+def test_a_bare_mutation_statement_writes_its_receiver_under_a_key() -> None:
+    # The live loop's body statement reports ``acc`` among the names it
+    # writes, under a key, and the loop carries ``acc`` through it.
+    runtime = _live_runtime(
+        "def f():\n"
+        "    acc = []\n"
+        "    for x in g():\n"
+        "        acc.append(x)\n"
+        "    return acc\n"
+        "def g():\n"
+        "    return (1, 2)\n"
+    )
+    assert "acc" in runtime.carried_names
+    (header, writes, _else_writes) = runtime.carried_evaluations[
+        runtime.carried_names.index("acc")
+    ]
+    [append] = runtime.body_sugars
+    assert isinstance(append, ContainerMutationStatementSugar)
+    assert writes, runtime.carried_evaluations
+    assert set(writes) <= {key for key, _index in append.result_evaluations}
+    # The body reads ``acc`` through the header the item begins with.
+    receiver = append.evaluated[0].receiver
+    assert isinstance(receiver, EvaluationRefSugar)
+    assert receiver.evaluation == header
 
 
 def test_a_symbolic_items_append_before_its_break_leaves_with_it() -> None:

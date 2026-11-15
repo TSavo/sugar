@@ -229,8 +229,11 @@ def _carried_writes(statements, names) -> dict[str, tuple[str, ...]]:
     their evaluation, every assignment (``y = e``, ``y: T = e``, an unpack)
     each target's projection of its evaluation, every assignment (an
     ``if``'s phi among them) its carried write of the name
-    (``carried_write_key``), a mutation statement that assigns a name
-    (``r += x``, ``x = x.m()``) its key of that name, and a nested live loop
+    (``carried_write_key``), a mutation statement, bare or assigned, its key
+    of every name it writes -- the name it assigns (``r += x``, ``x =
+    x.m()``) and each name bound to the object it changes (``acc.append(x)``
+    writes ``acc`` to the list after the append), so the next item begins
+    with the object as this one left it -- and a nested live loop
     the key it publishes the name under: its own post-binding key of a name
     it carries under a binding coordinate (``loop_post_binding_key``,
     ``coordinate_names``), or its post-loop key of any other name it writes
