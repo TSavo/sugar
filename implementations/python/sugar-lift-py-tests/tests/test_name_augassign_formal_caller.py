@@ -39,7 +39,7 @@ from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
 from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_exitset
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.nodes import AugAssign, Call, FunctionDef
+from sugar_source_tree.nodes import AugAssign, FunctionDef
 from sugar_source_tree.operators import Add, BinaryOperator
 from sugar_source_tree.tree import SourceFile
 
@@ -71,19 +71,25 @@ def _aug_sugar(source: str = "def f(x):\n    x += 1\n"):
     return function, call
 
 
-def _call_outcome(body: str, actuals: str, signature: str = "x"):
-    source = f"def f({signature}):\n{body}\n\nf({actuals})\n"
-    tree = _tree(source, "call.py")
-    call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
-    return call.sugar().desugar(None)
+def _row_outcome(body: str, bound: str):
+    """``f``'s own contract row (``function_universe_outcome``), with ``x``
+    bound to ``bound`` in the body before ``body`` runs.
+
+    A same-file call ``f(3)`` is its coordinate and edge, joined at prove
+    (#7757 steps 5 and 6, #8705): the lifter no longer applies ``f``'s body
+    at the call, so what the update does to the binding is read off the row
+    of a body that binds ``x`` itself.  The formal's own discharge is
+    ``test_authenticated_formal_discharge_updates_binding``."""
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    source = f"def f():\n    x = {bound}\n{body}\n"
+    tree = _tree(source, "row.py")
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    return function_universe_outcome(function)
 
 
 def _returned_value(outcome):
-    """The value the call returned.
-
-    A completed call carries what its callee's frame left of each object it
-    shares with the caller as writes riding its value
-    (``caller_visible_values``); the call's own value is what they present."""
+    """The value the one completed face of ``outcome`` returned."""
     from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
 
     assert isinstance(outcome, ExitSet), type(outcome)
@@ -112,32 +118,21 @@ def _returned_value(outcome):
     return value
 
 
-def _left_of_actual(outcome, index: int = 0):
-    """What the completed call carried to its caller for its ``index``-th
-    actual: the caller's object after the call (``caller_visible_values``,
-    the write labelled ``actual:<index>``)."""
-    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
-
-    assert isinstance(outcome, ExitSet), type(outcome)
-    (face,) = outcome.exits
-    assert isinstance(face, Completed), type(face)
-    carried, _value = peel_walrus_binds(face.value)
-    (left,) = [
-        write.assigned_value for write in carried if write.name == f"actual:{index}"
-    ]
-    return left
-
-
 def _caller_returned(source: str):
-    """What the first function of ``source`` returns, reduced as its own
-    universe: the caller of a followed helper, reading after the call."""
+    """What the first function of ``source`` returns on the face where its
+    call of the helper completes, reduced as its own universe.  The call is
+    its coordinate and edge (#8705): it completes under its ``completes``
+    atom and halts under the complement, so the row has one completed face."""
     from sugar_lift_py_tests.floor.return_value import ReturnValue
     from sugar_lift_py_tests.floor.universe_value import UniverseValue
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
     tree = _tree(source, "caller_reads_after.py")
     caller = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-    universe = function_universe_outcome(caller).completed_value()
+    outcome = function_universe_outcome(caller)
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert len(completed) == 1, outcome
+    universe = completed[0].value
     assert isinstance(universe, UniverseValue), universe
     (returned,) = [
         entry for entry in universe.record.statements if isinstance(entry, ReturnValue)
@@ -498,13 +493,13 @@ def test_authenticated_formal_discharge_updates_binding() -> None:
 
 def test_binding_update_return_sees_augmented_value() -> None:
     """``x += 2; return x`` with x=3 → 5."""
-    outcome = _call_outcome("    x += 2\n    return x\n", "3")
+    outcome = _row_outcome("    x += 2\n    return x\n", "3")
     returned = _returned_value(outcome)
     assert returned == TermValue(5)
 
 
 def test_discrimination_successful_update_is_not_prior_value() -> None:
-    outcome = _call_outcome("    x += 2\n    return x\n", "3")
+    outcome = _row_outcome("    x += 2\n    return x\n", "3")
     returned = _returned_value(outcome)
     assert returned == TermValue(5)
     with pytest.raises(AssertionError):
@@ -513,34 +508,14 @@ def test_discrimination_successful_update_is_not_prior_value() -> None:
 
 # ---------------------------------------------------------------------------
 # A rebind of a formal is the callee's local; a mutation of a shared object
-# is the caller's too (#7757)
+# is the caller's too (#7757).  The call is its coordinate and edge (#8705):
+# the caller reads its objects as the one exposure rule leaves them
+# (``ReceiverAfterCall``): an immutable value is kept, a mutable one the call
+# may change is unknown until prove joins the callee's post-call state
+# (#7757 step 7).  The tests that read the writes a followed frame carried
+# out under ``actual:<index>`` (``caller_visible_values``) were deleted with
+# that projection (#8739).
 # ---------------------------------------------------------------------------
-
-
-def test_rebinding_an_immutable_formal_leaves_the_callers_actual() -> None:
-    """``f(3)`` with ``x += 2; return x`` is ``5``, and the caller's ``3`` is
-    as it was: ``x += 2`` on an ``int`` binds the callee's local to another
-    object.  The call carries the actual itself, never the local's ``5``."""
-    outcome = _call_outcome("    x += 2\n    return x\n", "3")
-    assert _returned_value(outcome) == TermValue(5)
-    assert _left_of_actual(outcome) == TermValue(3)
-
-
-def test_discrimination_the_callees_rebind_is_not_the_callers_actual() -> None:
-    """Lying twin: the callee's rebound local written onto the caller's
-    actual would leave the caller's ``3`` reading ``5``."""
-    outcome = _call_outcome("    x += 2\n    return x\n", "3")
-    with pytest.raises(AssertionError):
-        assert _left_of_actual(outcome) == TermValue(5)
-
-
-def test_inplace_on_a_shared_list_reaches_the_callers_actual() -> None:
-    """``x += [2]`` on a list changes the one object the two share: the
-    caller's ``[1]`` is ``[1, 2]`` after the call."""
-    outcome = _call_outcome("    x += [2]\n    return x\n", "[1]")
-    assert _left_of_actual(outcome) == fresh(
-        ListValue, (TermValue(1), TermValue(2))
-    )
 
 
 def test_a_caller_name_keeps_its_immutable_value_after_the_call() -> None:
@@ -561,7 +536,15 @@ def test_a_caller_name_keeps_its_immutable_value_after_the_call() -> None:
 
 def test_a_caller_name_reads_the_list_its_helper_extended_in_place() -> None:
     """The same helper shape on a list: the caller's ``acc`` is the object
-    the helper's ``x += [2]`` changed, so it reads ``[1, 2]``."""
+    the helper's ``x += [2]`` changes.
+
+    Expected value changed (#7757 steps 5 and 6, #8705): it was ``[1, 2]``,
+    read off the followed body.  Today the list the call may change reads
+    as unknown after the call (``python:receiver_after_call``), never the
+    ``[1]`` before it; prove decides ``[1, 2]`` once the callee's post-call
+    object state is joined (#7757 step 7)."""
+    from sugar_lift_py_tests.floor import SymbolicValue
+
     returned = _caller_returned(
         "def f():\n"
         "    acc = [1]\n"
@@ -570,12 +553,14 @@ def test_a_caller_name_reads_the_list_its_helper_extended_in_place() -> None:
         "def g(x):\n"
         "    x += [2]\n"
     )
-    assert returned == fresh(ListValue, (TermValue(1), TermValue(2)))
+    assert isinstance(returned, SymbolicValue), returned
+    assert returned.term.name == "python:receiver_after_call"
+    assert returned != fresh(ListValue, (TermValue(1),))
 
 
 def test_arithmetic_halt_is_not_completed_return_of_prior_binding() -> None:
     """``x += None`` TypeError — not Completed return of pre-update x."""
-    outcome = _call_outcome("    x += None\n    return x\n", "3")
+    outcome = _row_outcome("    x += None\n    return x\n", "3")
     assert isinstance(outcome, ExitSet)
     halted = [e for e in outcome.exits if isinstance(e, Halted)]
     assert halted, outcome.exits

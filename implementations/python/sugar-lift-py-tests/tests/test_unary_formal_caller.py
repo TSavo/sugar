@@ -32,7 +32,7 @@ from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.sugar.unary_op_sugar import UnaryOpSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.nodes import Call, FunctionDef, UnaryOp
+from sugar_source_tree.nodes import FunctionDef, UnaryOp
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
@@ -50,40 +50,60 @@ def _helper(source: str):
     return function, function.sugar().desugar(None)
 
 
-def _call_outcome(signature: str, body: str, actuals: str):
-    """Production call: helper body + call site through call construction."""
-    source = f"def helper({signature}):\n    {body}\n\nhelper({actuals})\n"
+def _call_edge(signature: str, body: str, actuals: str):
+    """Production call: ``helper({actuals})`` in a caller's body, read off
+    the caller's contract row (``function_universe_outcome``).
+
+    A same-file call is its coordinate ``call:<target>(...)`` and an edge
+    to the callee's join symbol, joined at prove (#7757 steps 5 and 6, the
+    owner's ruling "Edge, join at prove", #8705): the lifter binds the
+    actuals by the one binder (``bind_call``) only to read what the call
+    supplies, and never discharges the callee's carrier at the call.  So
+    the row's one completed face (under the call's ``completes`` atom)
+    returns the call's value, and its term carries what prove's binder
+    binds ``helper``'s contract with."""
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    source = (
+        f"def helper({signature}):\n    {body}\n\n\n"
+        f"def caller():\n    return helper({actuals})\n"
+    )
     tree = _tree(source, "unary_call.py")
-    call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
-    return call.sugar().desugar(None)
+    caller = next(
+        n for n in tree.nodes() if isinstance(n, FunctionDef) and n.name == "caller"
+    )
+    outcome = function_universe_outcome(caller)
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert len(completed) == 1, outcome
+    returns = [
+        s for s in completed[0].value.record.statements if isinstance(s, ReturnValue)
+    ]
+    assert returns, completed[0].value
+    edge = returns[-1].value
+    assert isinstance(edge, CallSiteValue), type(edge)
+    return edge
 
 
-def _returned_value(outcome):
-    """Completed production call → body return Floor value."""
-    assert isinstance(outcome, ExitSet), type(outcome)
-    assert len(outcome.exits) == 1
-    face = outcome.exits[0]
-    assert isinstance(face, Completed), type(face)
-    value = face.value
-    force = getattr(value, "force_floor", None)
-    if callable(force):
-        forced = force(None, owner="unary_formal_caller")
-        from sugar_lift_py_tests.floor.block_value import BlockValue
-        from sugar_lift_py_tests.floor.return_value import ReturnValue
+def _edge_arguments(edge) -> list:
+    return list(edge.term.args)
 
-        if isinstance(forced, BlockValue):
-            returns = [s for s in forced.statements if isinstance(s, ReturnValue)]
-            assert returns, forced.statements
-            return returns[-1].value
-        return forced
-    record = getattr(value, "record", None)
-    if record is not None:
-        from sugar_lift_py_tests.floor.return_value import ReturnValue
 
-        returns = [s for s in record.statements if isinstance(s, ReturnValue)]
-        if returns:
-            return returns[-1].value
-    return value
+def _int(edge, value: int):
+    return TermValue(value).to_term(owner=str(edge.site))
+
+
+def _kwarg(edge, name: str, value: int):
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    return ctor("py.kwarg", [str_const(name), _int(edge, value)])
+
+
+def _default(edge, name: str, value: int):
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    return ctor("py.default", [str_const(name), _int(edge, value)])
 
 
 @dataclass(frozen=True)
@@ -193,58 +213,59 @@ def test_not_formal_stays_unary_truth_not_unary_minus() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Production callers: call construction → bind_actuals → discharge → Completed
+# Production callers: the call is its coordinate and edge; the edge carries
+# what prove's one binder binds the helper's carrier with (#7757 steps 5 and
+# 6).  The fold (``-3``) is decided at prove, never at the call.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     "body,actuals,expected",
     [
-        ("return -x", "3", TermValue(-3)),
-        ("return +x", "3", TermValue(3)),
-        ("return ~x", "5", TermValue(~5)),
+        ("return -x", "3", 3),
+        ("return +x", "3", 3),
+        ("return ~x", "5", 5),
     ],
 )
 def test_positional_caller_discharges_unary_through_production_binder(
     body: str, actuals: str, expected
 ) -> None:
-    """Real SourceFile caller — not a hand-built coordinate discharge dict."""
-    outcome = _call_outcome("x", body, actuals)
-    assert isinstance(outcome, ExitSet)
-    assert len(outcome.exits) == 1
-    assert isinstance(outcome.exits[0], Completed)
-    assert _returned_value(outcome) == expected
+    """Real SourceFile caller — not a hand-built coordinate discharge dict.
+    The edge carries the positional actual as written."""
+    edge = _call_edge("x", body, actuals)
+    assert _edge_arguments(edge) == [_int(edge, expected)]
 
 
 def test_keyword_caller_discharges_unary_neg() -> None:
-    outcome = _call_outcome("x", "return -x", "x=4")
-    assert isinstance(outcome.exits[0], Completed)
-    assert _returned_value(outcome) == TermValue(-4)
+    edge = _call_edge("x", "return -x", "x=4")
+    assert _edge_arguments(edge) == [_kwarg(edge, "x", 4)]
 
 
 def test_default_caller_discharges_unary_neg() -> None:
-    outcome = _call_outcome("x=7", "return -x", "")
-    assert isinstance(outcome.exits[0], Completed)
-    assert _returned_value(outcome) == TermValue(-7)
+    # The value the ``def`` statement bound for the default, read where the
+    # call runs, is the edge's ``py.default``; prove binds the omitted formal
+    # to it.
+    edge = _call_edge("x=7", "return -x", "")
+    assert _edge_arguments(edge) == [_default(edge, "x", 7)]
 
 
 def test_positional_keyword_and_default_callers_complete_same_neg_fold() -> None:
-    """Binder twins: positional, keyword, and default all fold ``-x`` the same way."""
-    positional = _call_outcome("x", "return -x", "3")
-    keyword = _call_outcome("x", "return -x", "x=3")
-    default = _call_outcome("x=3", "return -x", "")
-    for outcome in (positional, keyword, default):
-        assert isinstance(outcome, ExitSet)
-        assert isinstance(outcome.exits[0], Completed)
-        assert _returned_value(outcome) == TermValue(-3)
+    """Binder twins: positional, keyword and default each carry ``x = 3`` in
+    the one form prove's binder reads it in."""
+    positional = _call_edge("x", "return -x", "3")
+    keyword = _call_edge("x", "return -x", "x=3")
+    default = _call_edge("x=3", "return -x", "")
+    assert _edge_arguments(positional) == [_int(positional, 3)]
+    assert _edge_arguments(keyword) == [_kwarg(keyword, "x", 3)]
+    assert _edge_arguments(default) == [_default(default, "x", 3)]
 
 
 def test_discrimination_production_neg_is_not_prior_actual() -> None:
-    outcome = _call_outcome("x", "return -x", "3")
-    returned = _returned_value(outcome)
-    assert returned == TermValue(-3)
-    with pytest.raises(AssertionError):
-        assert returned == TermValue(3)
+    # The call does not apply the helper's body: no folded ``-3`` stands in
+    # the caller's row, only the edge with the actual it supplies.
+    edge = _call_edge("x", "return -x", "3")
+    assert _edge_arguments(edge) == [_int(edge, 3)]
+    assert _int(edge, -3) not in _edge_arguments(edge)
 
 
 # ---------------------------------------------------------------------------

@@ -55,7 +55,7 @@ from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.nodes import Call, ClassDef, FunctionDef
+from sugar_source_tree.nodes import ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
 
 MANIFEST_CID = (
@@ -83,29 +83,53 @@ def _helper_definition():
     return function, function.sugar().desugar(None)
 
 
-def _call_outcome(signature: str, actuals: str):
+def _caller_edge(signature: str, actuals: str):
+    """``helper({actuals})`` in a caller's body, read off the caller's
+    contract row (``function_universe_outcome``).
+
+    A same-file call is its coordinate and edge, joined at prove (#7757
+    steps 5 and 6, #8705): the lifter never discharges the helper's
+    ``setattr_named`` carrier at the call.  The call completes under its
+    ``completes`` atom and halts under the complement; the named
+    ``AttributeError`` the helper's contract states for ``1.field = 2`` is
+    its panic locus, which prove joins at the call (#8690) with the type the
+    contract states (#8749).  Returns the row's outcome and the call value
+    its one completed face returns."""
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
     source = (
-        f"def helper({signature}):\n" "    obj.field = value\n\n" f"helper({actuals})\n"
+        f"def helper({signature}):\n"
+        "    obj.field = value\n\n"
+        f"def caller():\n    return helper({actuals})\n"
     )
     tree = _tree(source)
-    call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
-    return call.sugar().desugar(None)
-
-
-def _assert_named_halt(outcome) -> Halted:
-    assert isinstance(outcome, ExitSet)
-    assert len(outcome.exits) == 1
-    halted = outcome.exits[0]
-    assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate == _identity("AttributeError")
-    assert (
-        isinstance(halted.effect.occurrence_id, str)
-        and ":" in halted.effect.occurrence_id
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {halted.effect.occurrence_id!r}"
+    caller = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name == "caller"
     )
-    return halted
+    outcome = function_universe_outcome(caller)
+    assert [face for face in outcome.exits if isinstance(face, Halted)], outcome
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert len(completed) == 1, outcome
+    returns = [
+        s for s in completed[0].value.record.statements if isinstance(s, ReturnValue)
+    ]
+    assert returns, completed[0].value
+    edge = returns[-1].value
+    assert isinstance(edge, CallSiteValue), type(edge)
+    return outcome, edge
+
+
+def _int(edge, value: int):
+    return TermValue(value).to_term(owner=str(edge.site))
+
+
+def _named(edge, kind: str, name: str, value: int):
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    return ctor(kind, [str_const(name), _int(edge, value)])
 
 
 def _source_class_and_helper(class_body: str, field: str = "field"):
@@ -378,36 +402,35 @@ def test_positional_caller_completes_field_store_via_setattr() -> None:
 
 
 def test_positional_caller_halts_with_named_identity_from_setattr() -> None:
-    halted = _assert_named_halt(_call_outcome("obj, value", "1, 2"))
-    # Origin is store dispatch, not a fabricated boundary type alone.
-    assert halted.effect.exception_type_coordinate == _identity("AttributeError")
-    # Source call presentation may name the Call producer for the edge; the
-    # type coordinate is still from setattr floor discharge, not pytest.raises.
-    assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
+    # Expected verdict changed (#7757 steps 5 and 6): the caller's row no
+    # longer holds the named AttributeError as its one halt; the call's halt
+    # is owed to the helper's contract, joined at prove.  The helper's own
+    # store halt on a non-object receiver is
+    # ``test_tuple_receiver_store_halts_from_setattr_not_boundary``.
+    _outcome, edge = _caller_edge("obj, value", "1, 2")
+    assert list(edge.term.args) == [_int(edge, 1), _int(edge, 2)]
 
 
 def test_keyword_caller_reaches_same_demand() -> None:
-    halted = _assert_named_halt(_call_outcome("obj, value", "obj=1, value=2"))
-    assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
+    _outcome, edge = _caller_edge("obj, value", "obj=1, value=2")
+    assert list(edge.term.args) == [
+        _named(edge, "py.kwarg", "obj", 1),
+        _named(edge, "py.kwarg", "value", 2),
+    ]
 
 
 def test_default_value_caller_reaches_same_demand() -> None:
     # The call stands in a function called after import: the omitted
     # ``value`` binds what the ``def`` statement evaluated when the module
-    # ran (``ModuleFinalValue``).  A module-body call reduced alone is
-    # reached by no ``def`` statement's run, and its default read is refused
-    # by name (``DefaultValueSugar``): never the default expression evaluated
-    # again at the call.
-    source = (
-        "def helper(obj, value=2):\n"
-        "    obj.field = value\n\n"
-        "def caller():\n"
-        "    helper(1)\n"
-    )
-    tree = _tree(source)
-    call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
-    halted = _assert_named_halt(call.sugar().desugar(None))
-    assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
+    # ran (``ModuleFinalValue``), and the edge carries it as ``py.default``.
+    # A module-body call reduced alone is reached by no ``def`` statement's
+    # run, and its default read is refused by name (``DefaultValueSugar``):
+    # never the default expression evaluated again at the call.
+    _outcome, edge = _caller_edge("obj, value=2", "1")
+    assert list(edge.term.args) == [
+        _int(edge, 1),
+        _named(edge, "py.default", "value", 2),
+    ]
 
 
 def test_tuple_receiver_store_halts_from_setattr_not_boundary() -> None:
