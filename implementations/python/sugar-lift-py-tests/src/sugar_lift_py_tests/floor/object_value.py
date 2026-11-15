@@ -29,6 +29,16 @@ if TYPE_CHECKING:
 _OBJECT_CLASS_SLOT = vars(object)["__class__"]
 
 
+def _builtin_binds_data_descriptor(owner: str, name: str) -> bool:
+    """Whether the builtin class ``owner`` (its name in ``builtins``) binds
+    ``name`` in its own namespace to a data descriptor: a value whose type
+    defines ``__set__`` or ``__delete__`` (``object.__class__``)."""
+    import builtins
+
+    held = type(vars(getattr(builtins, owner)).get(name))
+    return hasattr(held, "__set__") or hasattr(held, "__delete__")
+
+
 def _sugar_receiver_field_names(value, seen: set[int] | None = None) -> set[str]:
     """Read authenticated helper-body store shape without executing the helper:
     the fields the one field store (``ReceiverFieldStoreSugar``) puts on the
@@ -662,7 +672,10 @@ class ObjectValue(FloorValue):
 
         A receiver built with no class statement has only its own roster
         (``class_member``): a ``__setattr__`` there is that function, none is
-        the default store."""
+        the default store.  A name its roster does not bind and ``object``
+        binds to a data descriptor (``__class__``) is undecided all the same
+        (``_unread_object_descriptor``): that descriptor's ``__set__``, or one
+        an unread class of its MRO binds, answers the store."""
         undecided = ("undecided", None)
         definition = getattr(self.defining_class, "class_definition", None)
         if definition is None:
@@ -691,13 +704,17 @@ class ObjectValue(FloorValue):
                 return "refused", None
             return "plain", None
         if value is None:
-            if self._class_data_descriptor(name):
+            if self._class_data_descriptor(name) or self._unread_object_descriptor(
+                name
+            ):
                 # A builtin owner's data descriptor answers the store, not
                 # the instance ``__dict__``: ``o.__class__ = C`` is
                 # ``object.__class__``'s setter (``object_set_class``), which
                 # gives the object another class or raises ``TypeError``.
                 # Its ``__set__`` is not read here: the unanswered call, and
                 # the object after it of a class this frame does not know.
+                # So on a receiver built with no class statement, whose
+                # type's MRO no lookup reads (``_unread_object_descriptor``).
                 return undecided
             return "plain", None
         return _descriptor_route(value)
@@ -838,7 +855,9 @@ class ObjectValue(FloorValue):
         A name a builtin owner binds to a data descriptor
         (``_class_data_descriptor``: ``object.__class__``) is that
         descriptor's delete, never the instance-field delete
-        (``_builtin_descriptor_delete``).
+        (``_builtin_descriptor_delete``); so is one ``object`` binds to a
+        data descriptor on a receiver built with no class statement whose
+        roster binds nothing for it (``_unread_object_descriptor``).
         """
         from sugar_lift_py_tests.outcome import ExitSet
 
@@ -855,7 +874,7 @@ class ObjectValue(FloorValue):
                 site=site,
                 owner="ObjectValue.delattr",
             )
-        if self._class_data_descriptor(name):
+        if self._class_data_descriptor(name) or self._unread_object_descriptor(name):
             return self._builtin_descriptor_delete(name, site)
         current = contents_current(self)
         remaining = tuple(field for field in self.fields if field.name != name)
@@ -896,16 +915,22 @@ class ObjectValue(FloorValue):
         anything changes, whatever the object: the certain halt.
 
         Anything else -- a ``__delattr__`` the lookup does not decide to be
-        ``object``'s, or another builtin descriptor whose ``__delete__`` is
-        not read here -- is the one unanswered call
-        ``type(self).__delattr__`` (two-faced, owed), the object after it the
-        one ``after_field_store_call`` states.  Nothing is guessed of what it
-        runs."""
+        ``object``'s, another builtin descriptor whose ``__delete__`` is not
+        read here, a receiver built with no class statement, whose type's
+        MRO no lookup reads (``_unread_object_descriptor``) -- is the one
+        unanswered call ``type(self).__delattr__`` (two-faced, owed), the
+        object after it the one ``after_field_store_call`` states.  Nothing
+        is guessed of what it runs."""
         from .string_value import StringValue
 
-        definition = self.defining_class.class_definition
-        decided, owner = definition.namespace_owner(name)
-        delattr_decided, delattr_owner = definition.namespace_owner("__delattr__")
+        definition = getattr(self.defining_class, "class_definition", None)
+        decided = delattr_decided = False
+        owner = delattr_owner = None
+        if definition is not None:
+            decided, owner = definition.namespace_owner(name)
+            delattr_decided, delattr_owner = definition.namespace_owner(
+                "__delattr__"
+            )
         if (
             decided
             and delattr_decided
@@ -1359,12 +1384,26 @@ class ObjectValue(FloorValue):
         if not decided or owner is None:
             return False
         if isinstance(owner, str):
-            import builtins
-
-            held = type(vars(getattr(builtins, owner)).get(name))
-            return hasattr(held, "__set__") or hasattr(held, "__delete__")
+            return _builtin_binds_data_descriptor(owner, name)
         # A source owner's member is the one ``class_member`` selects.
         return self._store_descriptor(name) is True
+
+    def _unread_object_descriptor(self, name: str) -> bool:
+        """Whether a store or delete of ``name`` on this receiver, built with
+        no class statement, meets a data descriptor no lookup reads here:
+        its own roster (``class_member``) binds nothing for ``name``, and
+        ``object``, which every type's MRO ends with, binds it to one
+        (``object.__class__``).  Its type's MRO is not read, so whether a
+        class between overrides it, and what its ``__set__``/``__delete__``
+        runs (``object_set_class``: another class, or ``TypeError``), is not
+        decided: never the instance field.  False for a receiver whose class
+        statement is read: ``_class_data_descriptor`` answers it."""
+        if getattr(self.defining_class, "class_definition", None) is not None:
+            return False
+        if not _builtin_binds_data_descriptor("object", name):
+            return False
+        decided, method, value = self.class_member(name)
+        return decided and method is None and value is None
 
     def _floor_gap(
         self,
