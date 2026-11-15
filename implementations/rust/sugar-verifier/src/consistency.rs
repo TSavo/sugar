@@ -394,8 +394,11 @@ pub(crate) fn is_consistency_candidate(body: &Json) -> bool {
         .unwrap_or("");
     // A class's stated ancestry is a fact its module's proof states, joined
     // into a consumer's obligation (`with_exception_ancestry`), never a claim
-    // checked on its own.
-    !is_setup_binding_name(name) && !name.ends_with(EXCEPTION_ANCESTRY_SUFFIX)
+    // checked on its own. So is a class's stated namespace, read by the
+    // dispatch of a method call (`dispatched_symbol`, step 8).
+    !is_setup_binding_name(name)
+        && !name.ends_with(EXCEPTION_ANCESTRY_SUFFIX)
+        && !name.ends_with(CLASS_NAMESPACE_SUFFIX)
 }
 
 /// A `::facts` / `::facts::N` contract is a setup binding, not an asserted
@@ -3567,6 +3570,9 @@ struct AmbientPostInstances {
     /// the atom, the value is free and the row is not decided on it
     /// (`settle_owed_operations` moves it to `dropped`).
     owed_operations: Vec<(DroppedAmbientPost, Json)>,
+    /// Each dispatched method call's member the claim reads itself (step 8),
+    /// with whether the read resolved it (`dispatch_answer`).
+    dispatched: Vec<(String, bool)>,
 }
 
 /// One vendor answer to one unanswered call (step 9): the consumer's
@@ -3595,6 +3601,10 @@ struct AmbientPost {
     /// `Some` when the answer is wrong: the row that reads this call is
     /// refused by name and `post` is never conjoined.
     refusal: Option<DroppedAmbientPostReason>,
+    /// `Some` for a dispatched method call's member (step 8): owed as it
+    /// stands, answered at a read that binds its receiver's class
+    /// (`dispatch_answer`).
+    dispatch: Option<Arc<DispatchEdge>>,
 }
 
 #[derive(Debug, Clone)]
@@ -3789,12 +3799,63 @@ const CONTRACT_INPUTS: [(&str, &str); 3] = [
 /// The named-argument ctor that binds a parameter by name.
 const PYTHON_KWARG: &str = "py.kwarg";
 
-/// True for a contract input (`cell:`, `global:`, `default:`), never a
-/// parameter.
+/// The named argument that states the class of one of the call's own
+/// arguments (step 8, #7757): `py.class(<key>, <class>)`. `<key>` names the
+/// argument: its position among the call's positional arguments, spelled in
+/// decimal digits, or its keyword. The one binder binds `<class>` to the
+/// answering contract's `class:<parameter>` input, `<parameter>` the formal
+/// that argument binds. A contract that takes no such input calls no method
+/// of that formal: the class is bound to nothing.
+const PYTHON_CLASS: &str = "py.class";
+
+/// The formal prefix of a receiver-class input (step 8, #7757): the class of
+/// the object a parameter binds, whose namespace a method call on that
+/// parameter reads (`dispatched_symbol`). The function's own proof states no
+/// value for it; a caller that knows the class supplies it (`py.class`).
+const CLASS_INPUT_PREFIX: &str = "class:";
+
+/// True for a contract input (`cell:`, `global:`, `default:`, `class:`),
+/// never a parameter.
 fn is_contract_input(formal: &str) -> bool {
-    CONTRACT_INPUTS
-        .iter()
-        .any(|(_, prefix)| formal.starts_with(prefix))
+    formal.starts_with(CLASS_INPUT_PREFIX)
+        || CONTRACT_INPUTS
+            .iter()
+            .any(|(_, prefix)| formal.starts_with(prefix))
+}
+
+/// Which argument of a call a `py.class` states the class of: a positional
+/// argument by its position, or a keyword argument by its keyword.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ClassKey {
+    Position(usize),
+    Keyword(String),
+}
+
+/// A call's `py.class(<key>, <class>)` read as `(key, class)` (step 8). `None`
+/// for any other argument; `Some(Err(()))` for that ctor with a key that is
+/// not a string constant or an arity that is not two.
+fn class_argument(arg: &Json) -> Option<Result<(ClassKey, Json), ()>> {
+    if arg.get("kind").and_then(|v| v.as_str()) != Some("ctor")
+        || arg.get("name").and_then(|v| v.as_str()) != Some(PYTHON_CLASS)
+    {
+        return None;
+    }
+    let read = arg
+        .get("args")
+        .and_then(|v| v.as_array())
+        .and_then(|parts| match parts.as_slice() {
+            [key, class] => {
+                let key = key.get("value").and_then(|v| v.as_str())?;
+                let key = if !key.is_empty() && key.bytes().all(|b| b.is_ascii_digit()) {
+                    ClassKey::Position(key.parse::<usize>().ok()?)
+                } else {
+                    ClassKey::Keyword(key.to_string())
+                };
+                Some((key, class.clone()))
+            }
+            _ => None,
+        });
+    Some(read.ok_or(()))
 }
 
 /// A named argument of a call term: `(ctor, name, value)` for `py.kwarg`,
@@ -3834,6 +3895,13 @@ fn named_argument(arg: &Json) -> Option<Result<(&str, String, Json), ()>> {
 /// call's arguments with a contract's formals (the callsite-scoped bridge
 /// match, the vendor post's universal reading) reads it, never a positional
 /// zip behind a count check.
+///
+/// A `py.class(<key>, <class>)` (step 8) supplies the `class:<parameter>`
+/// input of the parameter the argument it names binds: a position the
+/// parameter a positional argument there binds, a keyword that parameter.
+/// It names an argument the call passes or it fits nothing; a contract that
+/// takes no such input reads no method of that parameter, and the class is
+/// supplied to nothing.
 pub(crate) fn call_argument_formals(
     formals: &[String],
     args: &[Json],
@@ -3845,8 +3913,17 @@ pub(crate) fn call_argument_formals(
         .collect();
     let mut supplied: Vec<(String, Json)> = Vec::with_capacity(args.len());
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut classes: Vec<(ClassKey, Json)> = Vec::new();
     let mut positional = 0usize;
     for arg in args {
+        match class_argument(arg) {
+            Some(Ok(class)) => {
+                classes.push(class);
+                continue;
+            }
+            Some(Err(())) => return None,
+            None => {}
+        }
         let (formal, value) = match named_argument(arg) {
             None => {
                 let parameter = parameters.get(positional)?;
@@ -3874,6 +3951,24 @@ pub(crate) fn call_argument_formals(
             return None;
         }
         supplied.push((formal, value));
+    }
+    for (key, class) in classes {
+        let parameter = match key {
+            ClassKey::Position(position) if position < positional => {
+                (*parameters.get(position)?).to_string()
+            }
+            ClassKey::Position(_) => return None,
+            ClassKey::Keyword(name) if seen.contains(&name) => name,
+            ClassKey::Keyword(_) => return None,
+        };
+        let formal = format!("{CLASS_INPUT_PREFIX}{parameter}");
+        if !formals.contains(&formal) {
+            continue;
+        }
+        if !seen.insert(formal.clone()) {
+            return None;
+        }
+        supplied.push((formal, class));
     }
     Some(supplied)
 }
@@ -4064,6 +4159,309 @@ fn substitute_call_bindings(formula: &Json, bindings: &[(String, Json)]) -> Json
     instance
 }
 
+/// `term` with each bound formal replaced by what it is bound to: the
+/// substitution `substitute_call_bindings` makes in a formula, made in a term.
+fn substitute_term_bindings(term: &Json, bindings: &[(String, Json)]) -> Json {
+    if bindings.is_empty() {
+        return term.clone();
+    }
+    let carrier = json!({"kind": "atomic", "name": "=", "args": [term]});
+    substitute_call_bindings(&carrier, bindings)
+        .get("args")
+        .and_then(|args| args.get(0))
+        .cloned()
+        .unwrap_or_else(|| term.clone())
+}
+
+// ── Dispatch: a method call on an instance whose class is an input (step 8)
+//
+// Inside a method, the class of the object a parameter binds is an input of
+// the method's contract, `class:<parameter>`, as a module global is: the
+// method's own proof states no value for it. `self.m(...)` is the method's
+// coordinate and an edge whose member names the method alone
+// (`python:dispatch:<m>`), carrying `py.class("0", <class>)` for its
+// receiver. A caller that knows the class supplies it at the call
+// (`py.class`), and the one binder binds the input (`call_argument_formals`).
+// Where the read of the call binds the class to a decided instance
+// (`python:instance(<class symbol>, <field>...)`), the method its namespace
+// selects is looked up on the order the class's own proof states
+// (`<class symbol>::namespace`), and its contract answers the call exactly
+// as a contract answers an edge by its symbol. Anything not decided leaves
+// the call owed: never a guessed target, never a free class.
+
+/// The contract-name suffix of a class's namespace row (the Python kit's
+/// `tree_enumerate.CLASS_NAMESPACE_SUFFIX`): `<class symbol>` + this. The row
+/// states facts read by the dispatch, never a claim checked on its own.
+pub(crate) const CLASS_NAMESPACE_SUFFIX: &str = "::namespace";
+/// `python:class_mro(<class>, <entry>...)`: the class's method resolution
+/// order, the class itself first; a source class by its symbol, a builtin
+/// class as `builtins.<name>`.
+const PYTHON_CLASS_MRO: &str = "python:class_mro";
+/// `python:class_binds(<class>, <name>, <kind>, <symbol>)`: a name the class's
+/// own namespace holds, with the kind of value it holds and, for a function
+/// its body wrote, that function's join symbol.
+const PYTHON_CLASS_BINDS: &str = "python:class_binds";
+/// The one kind of namespace value the dispatch joins: a plain function the
+/// class body wrote, which a read off an instance binds to the instance.
+const DISPATCH_FUNCTION_KIND: &str = "function";
+/// The prefix of a builtin class's entry in an order.
+const BUILTIN_CLASS_PREFIX: &str = "builtins.";
+/// A decided instance's class, as a caller binds a class input:
+/// `python:instance(<class symbol>, <field>...)`, the fields every name its
+/// `__dict__` may hold at the call.
+const PYTHON_INSTANCE: &str = "python:instance";
+/// The symbol prefix of a dispatched method call's `undecided` member:
+/// `python:dispatch:<method>`. No join symbol is spelled so.
+const DISPATCH_SYMBOL_PREFIX: &str = "python:dispatch:";
+
+/// What one class's namespace row states (step 8, #7757).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ClassNamespace {
+    /// The method resolution order, the class first. Empty when two proofs
+    /// state the class differently: then nothing about it is decided.
+    mro: Vec<String>,
+    /// Each name the class's own namespace holds: the kind of value, and the
+    /// join symbol of a function its body wrote.
+    binds: BTreeMap<String, (String, String)>,
+}
+
+/// A string constant's value.
+fn const_str(term: &Json) -> Option<&str> {
+    if term.get("kind")?.as_str()? != "const" {
+        return None;
+    }
+    term.get("value")?.as_str()
+}
+
+/// The namespace one contract body states, when it is a namespace row:
+/// `(class symbol, namespace)`. Only facts about the class the row names
+/// are read. A row that states no order states nothing.
+fn class_namespace_of(body: &Json) -> Option<(String, ClassNamespace)> {
+    let symbol = contract_property_name(body)
+        .strip_suffix(CLASS_NAMESPACE_SUFFIX)?
+        .to_string();
+    let inv = canonicalize_formula_json(body.get("inv").filter(|v| v.is_object())?);
+    let mut namespace = ClassNamespace::default();
+    let mut ordered = false;
+    for fact in top_level_conjuncts(inv) {
+        if fact.get("kind").and_then(|v| v.as_str()) != Some("atomic") {
+            continue;
+        }
+        let Some(args) = fact.get("args").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        let Some(strings) = args
+            .iter()
+            .map(|arg| const_str(arg).map(str::to_string))
+            .collect::<Option<Vec<String>>>()
+        else {
+            continue;
+        };
+        if strings.first() != Some(&symbol) {
+            continue;
+        }
+        match fact.get("name").and_then(|v| v.as_str()) {
+            Some(PYTHON_CLASS_MRO) => {
+                namespace.mro = strings[1..].to_vec();
+                ordered = true;
+            }
+            Some(PYTHON_CLASS_BINDS) => {
+                if let [_, name, kind, target] = strings.as_slice() {
+                    namespace
+                        .binds
+                        .insert(name.clone(), (kind.clone(), target.clone()));
+                }
+            }
+            _ => {}
+        }
+    }
+    (ordered && !namespace.mro.is_empty()).then_some((symbol, namespace))
+}
+
+/// Every class namespace the pool's proofs state, own and imported, by class
+/// symbol. A class two proofs state differently is kept with no order:
+/// nothing about it is decided.
+fn collect_class_namespaces(pool: &MementoPool) -> BTreeMap<String, ClassNamespace> {
+    let mut namespaces: BTreeMap<String, ClassNamespace> = BTreeMap::new();
+    for (_cid, member) in pool.contract_members() {
+        let Some(body) = pool
+            .contract_body_for_member(member)
+            .filter(|v| v.is_object())
+        else {
+            continue;
+        };
+        let Some((symbol, namespace)) = class_namespace_of(&body) else {
+            continue;
+        };
+        match namespaces.get_mut(&symbol) {
+            Some(stated) if *stated != namespace => *stated = ClassNamespace::default(),
+            Some(_) => {}
+            None => {
+                namespaces.insert(symbol, namespace);
+            }
+        }
+    }
+    namespaces
+}
+
+/// The join symbol of the function a call of `method` on an instance runs,
+/// the instance's class input bound to `class` (step 8, #7757).
+///
+/// `class` is read as `python:instance(<class symbol>, <field>...)`, and
+/// `method` is looked up as Python's `object.__getattribute__` looks up a
+/// name a class binds to a plain function (a non-data descriptor): the
+/// instance's `__dict__` first, then each class of the order its own proof
+/// states. `None` -- the call stays owed -- whenever that lookup is not
+/// decided by what the proofs state:
+///
+/// - `class` is not a decided instance (a free input, anything else);
+/// - the instance's `__dict__` may hold `method`;
+/// - a class of the order has no namespace row (its namespace is not
+///   closed, or no proof here states it), or two proofs state it differently;
+/// - a class of the order binds `__getattribute__`;
+/// - a builtin class comes before the class that binds `method` (it may
+///   bind it), or a builtin class other than `object` stands in the order;
+/// - the class that binds `method` binds it to anything but a plain
+///   function its body wrote (a descriptor, a field, a generator, an
+///   `async def`), or no class binds it.
+fn dispatched_symbol(
+    namespaces: &BTreeMap<String, ClassNamespace>,
+    method: &str,
+    class: &Json,
+) -> Option<String> {
+    if class.get("kind")?.as_str()? != "ctor" || class.get("name")?.as_str()? != PYTHON_INSTANCE {
+        return None;
+    }
+    let (subject, fields) = class.get("args")?.as_array()?.split_first()?;
+    let subject = const_str(subject)?;
+    for field in fields {
+        if const_str(field)? == method {
+            return None;
+        }
+    }
+    let order = &namespaces.get(subject)?.mro;
+    if order.first().map(String::as_str) != Some(subject) {
+        return None;
+    }
+    let mut found: Option<String> = None;
+    for entry in order {
+        if let Some(builtin) = entry.strip_prefix(BUILTIN_CLASS_PREFIX) {
+            if found.is_none() || builtin != "object" {
+                return None;
+            }
+            continue;
+        }
+        let namespace = namespaces.get(entry)?;
+        if namespace.mro.is_empty() || namespace.binds.contains_key("__getattribute__") {
+            return None;
+        }
+        if found.is_none() {
+            if let Some((kind, target)) = namespace.binds.get(method) {
+                if kind != DISPATCH_FUNCTION_KIND || target.is_empty() {
+                    return None;
+                }
+                found = Some(target.clone());
+            }
+        }
+    }
+    found
+}
+
+/// Everything the join reads to resolve a dispatched method call (step 8):
+/// the namespaces the proofs state, and what the contract each function
+/// they name answers.
+#[derive(Debug, Default)]
+struct DispatchTable {
+    namespaces: BTreeMap<String, ClassNamespace>,
+    /// Each function symbol a namespace names, with the answer its bridge
+    /// gives: `None` when no bridge, more than one target, a wrong answer, no
+    /// post, or a `global:` input (a dispatched call supplies no module
+    /// global, and the value the module's run left is not the one standing
+    /// where the call may run).
+    answers: BTreeMap<String, Option<BridgeAnswer>>,
+}
+
+/// The dispatch table over `pool` (step 8).
+fn dispatch_table(pool: &MementoPool) -> DispatchTable {
+    let namespaces = collect_class_namespaces(pool);
+    let mut answers: BTreeMap<String, Option<BridgeAnswer>> = BTreeMap::new();
+    for namespace in namespaces.values() {
+        for (kind, symbol) in namespace.binds.values() {
+            if kind != DISPATCH_FUNCTION_KIND || symbol.is_empty() || answers.contains_key(symbol) {
+                continue;
+            }
+            let bridges: Vec<&sugar_proof_envelope::StoredMember> = pool
+                .bridge_members()
+                .filter(|(_, bridge)| {
+                    bridge.field("sourceSymbol").and_then(|v| v.as_str()) == Some(symbol.as_str())
+                })
+                .map(|(_, bridge)| bridge)
+                .collect();
+            let targets: std::collections::BTreeSet<&str> = bridges
+                .iter()
+                .filter_map(|bridge| bridge.field("targetContractCid").and_then(|v| v.as_str()))
+                .collect();
+            let answer = match bridges.first() {
+                Some(first) if targets.len() == 1 => bridge_answer(pool, symbol, first)
+                    .ok()
+                    .flatten()
+                    .filter(|(binding, _, _, _)| {
+                        !binding
+                            .formals
+                            .iter()
+                            .any(|formal| formal.starts_with(GLOBAL_INPUT_PREFIX))
+                    }),
+                _ => None,
+            };
+            answers.insert(symbol.clone(), answer);
+        }
+    }
+    DispatchTable {
+        namespaces,
+        answers,
+    }
+}
+
+/// A dispatched method call's member (step 8): the method it names, and the
+/// table the join resolves it through.
+#[derive(Debug)]
+struct DispatchEdge {
+    method: String,
+    table: Arc<DispatchTable>,
+}
+
+/// The contract that answers a dispatched method call at this read (step 8):
+/// the class the read binds the receiver's input to (the call's `py.class`
+/// for its first positional argument) resolved by `dispatched_symbol`, and
+/// the answer of that function's bridge, bound to the call's arguments by
+/// the one binder. `None` -- the call stays owed -- when `post` is no
+/// dispatched member, when nothing decides the method, or when the call's
+/// arguments do not bind the function's formals (the call was spelled for
+/// whatever runs, so a misfit is Python's `TypeError`, which nothing here
+/// states).
+fn dispatch_answer(post: &AmbientPost, call: &Json) -> Option<AmbientPost> {
+    let dispatch = post.dispatch.as_ref()?;
+    let args = call.get("args")?.as_array()?;
+    let class = args.iter().find_map(|arg| match class_argument(arg) {
+        Some(Ok((ClassKey::Position(0), class))) => Some(class),
+        _ => None,
+    })?;
+    let symbol = dispatched_symbol(&dispatch.table.namespaces, &dispatch.method, &class)?;
+    let (binding, answer, halt_guards, typed_halts) =
+        dispatch.table.answers.get(&symbol)?.clone()?;
+    bind_call_arguments(&binding.formals, &binding.stated_inputs, args)?;
+    Some(AmbientPost {
+        binding,
+        post: answer,
+        halt_guards,
+        typed_halts,
+        member_cid: post.member_cid.clone(),
+        site_cid: post.site_cid.clone(),
+        refusal: None,
+        dispatch: None,
+    })
+}
+
 /// THE JOIN (step 9; row 0a.5). Each unanswered call member's `symbol` is
 /// joined to the bridge whose `sourceSymbol` is the same string, over every
 /// proof prove read: the project's own `.proof` and the imported ones alike
@@ -4092,7 +4490,26 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
     let edges = unanswered_edges(pool);
     let mut posts = Vec::new();
     let mut owed = Vec::new();
+    let mut table: Option<Arc<DispatchTable>> = None;
     for edge in &edges {
+        // A dispatched method call (step 8): no bridge states its symbol.
+        // It is owed as it stands; a read that binds its receiver's class
+        // resolves it (`dispatch_answer`).
+        if let Some(method) = edge.symbol.strip_prefix(DISPATCH_SYMBOL_PREFIX) {
+            let table = table.get_or_insert_with(|| Arc::new(dispatch_table(pool)));
+            let mut post = owed_post(
+                &edge.symbol,
+                &edge.member_cid,
+                &edge.site_cid,
+                DroppedAmbientPostReason::Unanswered,
+            );
+            post.dispatch = Some(Arc::new(DispatchEdge {
+                method: method.to_string(),
+                table: Arc::clone(table),
+            }));
+            owed.push(post);
+            continue;
+        }
         let bridges: Vec<&sugar_proof_envelope::StoredMember> = pool
             .bridge_members()
             .filter(|(_, bridge)| {
@@ -4130,6 +4547,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                 member_cid: edge.member_cid.clone(),
                 site_cid: edge.site_cid.clone(),
                 refusal: None,
+                dispatch: None,
             }),
             Ok(None) => owed.push(owed_post(
                 &edge.symbol,
@@ -4152,6 +4570,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                 member_cid: edge.member_cid.clone(),
                 site_cid: edge.site_cid.clone(),
                 refusal: Some(reason),
+                dispatch: None,
             }),
         }
     }
@@ -4213,6 +4632,7 @@ fn owed_post(
         member_cid: member_cid.to_string(),
         site_cid: site_cid.to_string(),
         refusal: Some(reason),
+        dispatch: None,
     }
 }
 
@@ -4230,6 +4650,9 @@ fn owed_post(
 /// The join's answers, by the call site they answer, and where each site is.
 pub(crate) struct JoinedHalts {
     answers: BTreeMap<String, Vec<AmbientPost>>,
+    /// Each dispatched method call's member by its site (step 8): answered
+    /// where the read binds its receiver's class (`dispatch_answer`).
+    dispatch: BTreeMap<String, AmbientPost>,
     /// Site CID to the call site's `(file, line)` (the `undecided` member's).
     sites: BTreeMap<String, (String, u64)>,
 }
@@ -4237,26 +4660,33 @@ pub(crate) struct JoinedHalts {
 impl JoinedHalts {
     pub(crate) fn of(pool: &MementoPool) -> Self {
         let mut answers: BTreeMap<String, Vec<AmbientPost>> = BTreeMap::new();
+        let mut dispatch: BTreeMap<String, AmbientPost> = BTreeMap::new();
         for post in collect_ambient_posts(pool) {
             if post.refusal.is_none() {
                 answers.entry(post.site_cid.clone()).or_default().push(post);
+            } else if post.dispatch.is_some() {
+                dispatch.insert(post.site_cid.clone(), post);
             }
         }
         let mut sites = BTreeMap::new();
-        if !answers.is_empty() {
+        if !answers.is_empty() || !dispatch.is_empty() {
             for (_cid, member) in pool.undecided_members() {
                 let Ok(undecided) = sugar_proof_envelope::UndecidedMember::from_stored(member)
                 else {
                     continue;
                 };
                 let site_cid = undecided_site_coordinate_cid(&undecided.site);
-                if answers.contains_key(&site_cid) {
+                if answers.contains_key(&site_cid) || dispatch.contains_key(&site_cid) {
                     let line = u64::try_from(undecided.site.start_line).unwrap_or_default();
                     sites.insert(site_cid, (undecided.site.file.clone(), line));
                 }
             }
         }
-        Self { answers, sites }
+        Self {
+            answers,
+            dispatch,
+            sites,
+        }
     }
 
     /// The halts `body` reaches through the calls it reads that the join
@@ -4265,17 +4695,21 @@ impl JoinedHalts {
     /// the call site in `body`. The callee's halt site is carried as the
     /// locus's producer (`producerFile`, `producerLine`, `producerSymbol`).
     pub(crate) fn loci_at_calls(&self, pool: &MementoPool, body: &Json) -> Vec<Json> {
-        if self.answers.is_empty() {
+        if self.answers.is_empty() && self.dispatch.is_empty() {
             return Vec::new();
         }
-        self.loci_through(pool, body, &mut Vec::new())
+        self.loci_through(pool, body, &mut Vec::new(), &[])
     }
 
+    /// `outer` binds `body`'s formals to what the reads that reached it bind
+    /// them to: a dispatched call in `body` is resolved at the class its
+    /// receiver's input is bound to there (step 8).
     fn loci_through(
         &self,
         pool: &MementoPool,
         body: &Json,
         visiting: &mut Vec<String>,
+        outer: &[(String, Json)],
     ) -> Vec<Json> {
         let mut loci = Vec::new();
         let mut reads = Vec::new();
@@ -4295,15 +4729,30 @@ impl JoinedHalts {
             let Some(args) = call.get("args").and_then(|v| v.as_array()) else {
                 continue;
             };
-            let Some(answers) = self.answers.get(site_cid) else {
-                continue;
+            // A dispatched call (step 8) is answered where the class its
+            // receiver's input is bound to here decides the method.
+            let dispatched: Vec<AmbientPost> = match self.dispatch.get(site_cid) {
+                Some(post) if !self.answers.contains_key(site_cid) => {
+                    dispatch_answer(post, &substitute_term_bindings(call, outer))
+                        .into_iter()
+                        .collect()
+                }
+                _ => Vec::new(),
             };
+            let answers: Vec<&AmbientPost> = self
+                .answers
+                .get(site_cid)
+                .map(|posts| posts.iter().collect())
+                .unwrap_or_default();
+            if answers.is_empty() && dispatched.is_empty() {
+                continue;
+            }
             let (file, line) = self
                 .sites
                 .get(site_cid)
                 .cloned()
                 .unwrap_or_else(|| (String::new(), 0));
-            for post in answers {
+            for post in answers.into_iter().chain(dispatched.iter()) {
                 // The call's arguments bound to the contract's parameters and
                 // inputs by the one binder the join binds the post with
                 // (step 4). A call that does not fit is refused at the join
@@ -4316,7 +4765,14 @@ impl JoinedHalts {
                 ) else {
                     continue;
                 };
-                for locus in self.callee_loci(pool, &post.binding.target_cid, visiting) {
+                // What the callee's formals are bound to as the reads that
+                // reached this one bind them: what a dispatched call in the
+                // callee reads its receiver's class at.
+                let reached: Vec<(String, Json)> = bindings
+                    .iter()
+                    .map(|(formal, value)| (formal.clone(), substitute_term_bindings(value, outer)))
+                    .collect();
+                for locus in self.callee_loci(pool, &post.binding.target_cid, visiting, &reached) {
                     loci.push(halt_at_call(
                         &locus,
                         &bindings,
@@ -4338,6 +4794,7 @@ impl JoinedHalts {
         pool: &MementoPool,
         target_cid: &str,
         visiting: &mut Vec<String>,
+        reached: &[(String, Json)],
     ) -> Vec<Json> {
         let Some(body) = MementoCid::try_parse(target_cid.to_string())
             .ok()
@@ -4350,7 +4807,7 @@ impl JoinedHalts {
             return loci;
         }
         visiting.push(target_cid.to_string());
-        loci.extend(self.loci_through(pool, &body, visiting));
+        loci.extend(self.loci_through(pool, &body, visiting, reached));
         visiting.pop();
         loci
     }
@@ -4473,12 +4930,20 @@ fn recursive_contract_cids(posts: &[AmbientPost]) -> std::collections::BTreeSet<
 /// claim dropped (open after specialization, a call term that does not
 /// decode) is not answered either: it stays owed, and that claim's row is
 /// not decided on what remains (`refuse_dropped_answers`).
+///
+/// A dispatched method call's member (step 8) is answered where claims read
+/// it themselves and every such read binds its receiver's class to one that
+/// decides the method (`dispatch_answer`). A member read only through a
+/// joined contract (`self.m()` in a method another call joins) stays owed:
+/// the method's own proof states no class for it.
 pub(crate) fn joined_member_cids(pool: &MementoPool) -> std::collections::BTreeSet<String> {
     let ambient = collect_ambient_posts(pool);
     if ambient.is_empty() {
         return std::collections::BTreeSet::new();
     }
     let mut dropped: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut resolved: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut unresolved: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for (_cid, member) in pool.contract_members() {
         let Some(body) = pool
             .contract_body_for_member(member)
@@ -4498,19 +4963,33 @@ pub(crate) fn joined_member_cids(pool: &MementoPool) -> std::collections::BTreeS
         // nothing states keeps its claims as they stand.
         let bound = bind_own_inputs(&body).unwrap_or_else(|_| body.clone());
         let claim = canonicalize_formula_json(&axiom_context_formula(&bound));
+        let partition = linked_ambient_post_instances_for_inv(&claim, &ambient);
         dropped.extend(
-            linked_ambient_post_instances_for_inv(&claim, &ambient)
+            partition
                 .dropped
                 .into_iter()
                 .map(|post| post.member_cid)
                 .filter(|cid| !cid.is_empty()),
         );
+        for (member_cid, answered) in partition.dispatched {
+            if answered {
+                resolved.insert(member_cid);
+            } else {
+                unresolved.insert(member_cid);
+            }
+        }
     }
-    ambient
+    let mut joined: std::collections::BTreeSet<String> = ambient
         .into_iter()
         .filter(|post| post.refusal.is_none() && !dropped.contains(&post.member_cid))
         .map(|post| post.member_cid)
-        .collect()
+        .collect();
+    joined.extend(
+        resolved
+            .into_iter()
+            .filter(|cid| !unresolved.contains(cid) && !dropped.contains(cid)),
+    );
+    joined
 }
 
 // ── An operation with no symbol, answered at prove (step 9; #7766) ─────────
@@ -4818,7 +5297,12 @@ fn linked_ambient_post_instances_for_inv(
     // Owed entries answer nothing: they matter only to a read reached through
     // a contract something answers.
     let is_owed = |post: &AmbientPost| post.refusal.as_ref().is_some_and(|r| r.is_owed());
-    if ambient.iter().all(is_owed) {
+    // A dispatched member is owed as it stands and answered where a read
+    // binds its receiver's class (step 8).
+    if ambient
+        .iter()
+        .all(|post| is_owed(post) && post.dispatch.is_none())
+    {
         return AmbientPostInstances::default();
     }
     let mut callsites = Vec::new();
@@ -4830,6 +5314,7 @@ fn linked_ambient_post_instances_for_inv(
     let mut kept = Vec::new();
     let mut dropped = Vec::new();
     let mut owed_operations: Vec<(DroppedAmbientPost, Json)> = Vec::new();
+    let mut dispatched_members: Vec<(String, bool)> = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     // The join reads only the term the claim constrains: the call's
     // completed result at its occurrence. The vendor's `out` IS that term.
@@ -4872,8 +5357,24 @@ fn linked_ambient_post_instances_for_inv(
             .iter()
             .filter(|post| post.site_cid == site_cid)
             .collect();
-        let answering: Vec<&AmbientPost> =
+        let stated: Vec<&AmbientPost> =
             at_site.iter().copied().filter(|p| !is_owed(*p)).collect();
+        // A dispatched method call (step 8): the class this read binds its
+        // receiver's input to decides which contract answers it, if any.
+        let dispatched: Vec<AmbientPost> = if stated.is_empty() {
+            at_site
+                .iter()
+                .filter_map(|post| dispatch_answer(post, call))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if through.is_empty() {
+            for post in at_site.iter().filter(|post| post.dispatch.is_some()) {
+                dispatched_members.push((post.member_cid.clone(), !dispatched.is_empty()));
+            }
+        }
+        let answering: Vec<&AmbientPost> = stated.into_iter().chain(dispatched.iter()).collect();
         if answering.is_empty() {
             // A site with no member at all is not a call another proof
             // answers: a body the lift reduced states its result in the same
@@ -5046,6 +5547,7 @@ fn linked_ambient_post_instances_for_inv(
         kept,
         dropped,
         owed_operations,
+        dispatched: dispatched_members,
     }
 }
 
@@ -10639,6 +11141,7 @@ mod tests {
             member_cid: "test-member-cid".to_string(),
             site_cid: site_cid.to_string(),
             refusal: None,
+            dispatch: None,
         }
     }
 
@@ -11236,6 +11739,184 @@ mod tests {
             Some(vec![("x".to_string(), int(1))])
         );
         assert!(bind_call_arguments(&contract, &[], &[int(1)]).is_none());
+    }
+
+    /// `python:instance(<class>, <field>...)`: a decided instance's class.
+    fn instance(class: &str, fields: &[&str]) -> Json {
+        let mut args = vec![string_const(class)];
+        args.extend(fields.iter().map(|field| string_const(field)));
+        json!({"kind": "ctor", "name": PYTHON_INSTANCE, "args": args})
+    }
+
+    #[test]
+    fn a_class_argument_supplies_the_class_input_of_the_parameter_it_names() {
+        // Step 8: `py.class("0", C)` states the class of the call's first
+        // positional argument; the binder binds it to `class:<parameter>`
+        // of the parameter that argument binds.
+        let contract = formals(&["self", "k", "class:self"]);
+        let class = instance("python:m.Box", &[]);
+        assert_eq!(
+            bind_call_arguments(
+                &contract,
+                &[],
+                &[var("b"), int(4), named_arg("py.class", "0", class.clone())]
+            ),
+            Some(vec![
+                ("self".to_string(), var("b")),
+                ("k".to_string(), int(4)),
+                ("class:self".to_string(), class.clone()),
+            ])
+        );
+        // By keyword: the parameter the keyword argument binds. This contract
+        // calls no method of `k` (no `class:k`), so that class is skipped.
+        assert_eq!(
+            call_argument_formals(
+                &contract,
+                &[
+                    var("b"),
+                    named_arg("py.kwarg", "k", int(4)),
+                    named_arg("py.class", "k", class.clone()),
+                ]
+            ),
+            Some(vec![("self".to_string(), var("b")), ("k".to_string(), int(4))])
+        );
+        // A contract that calls no method of the parameter takes no class
+        // input: the class is supplied to nothing.
+        assert_eq!(
+            bind_call_arguments(
+                &formals(&["self", "k"]),
+                &[],
+                &[var("b"), int(4), named_arg("py.class", "0", class.clone())]
+            ),
+            Some(vec![("self".to_string(), var("b")), ("k".to_string(), int(4))])
+        );
+        // A class of an argument the call does not pass fits nothing.
+        assert!(call_argument_formals(
+            &contract,
+            &[var("b"), named_arg("py.class", "1", class)]
+        )
+        .is_none());
+    }
+
+    fn namespace(mro: &[&str], binds: &[(&str, &str, &str)]) -> ClassNamespace {
+        ClassNamespace {
+            mro: mro.iter().map(|entry| entry.to_string()).collect(),
+            binds: binds
+                .iter()
+                .map(|(name, kind, symbol)| {
+                    (name.to_string(), (kind.to_string(), symbol.to_string()))
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_method_is_dispatched_on_the_order_the_class_states() {
+        // `class Base: def get(self)`; `class Child(Base): def run(self)`.
+        let mut namespaces = BTreeMap::new();
+        namespaces.insert(
+            "python:m.Base".to_string(),
+            namespace(
+                &["python:m.Base", "builtins.object"],
+                &[("get", "function", "python:m.Base.get")],
+            ),
+        );
+        namespaces.insert(
+            "python:m.Child".to_string(),
+            namespace(
+                &["python:m.Child", "python:m.Base", "builtins.object"],
+                &[("run", "function", "python:m.Child.run")],
+            ),
+        );
+        let child = instance("python:m.Child", &[]);
+        assert_eq!(
+            dispatched_symbol(&namespaces, "get", &child),
+            Some("python:m.Base.get".to_string())
+        );
+        assert_eq!(
+            dispatched_symbol(&namespaces, "run", &child),
+            Some("python:m.Child.run".to_string())
+        );
+        // The instance's `__dict__` may hold the name: not decided.
+        assert_eq!(
+            dispatched_symbol(&namespaces, "get", &instance("python:m.Child", &["get"])),
+            None
+        );
+        // No class binds it before `object`: not decided (a builtin may).
+        assert_eq!(dispatched_symbol(&namespaces, "missing", &child), None);
+        // A free class input: not decided.
+        assert_eq!(dispatched_symbol(&namespaces, "get", &var("class:self")), None);
+        // A class of the order whose namespace no proof states: not decided.
+        namespaces.remove("python:m.Base");
+        assert_eq!(dispatched_symbol(&namespaces, "run", &child), None);
+    }
+
+    #[test]
+    fn a_method_bound_to_anything_but_a_written_function_is_not_dispatched() {
+        let mut namespaces = BTreeMap::new();
+        namespaces.insert(
+            "python:m.C".to_string(),
+            namespace(
+                &["python:m.C", "builtins.object"],
+                &[
+                    ("prop", "other", ""),
+                    ("maybe", "undecided", ""),
+                    ("get", "function", "python:m.C.get"),
+                ],
+            ),
+        );
+        let c = instance("python:m.C", &[]);
+        assert_eq!(dispatched_symbol(&namespaces, "prop", &c), None);
+        assert_eq!(dispatched_symbol(&namespaces, "maybe", &c), None);
+        assert_eq!(
+            dispatched_symbol(&namespaces, "get", &c),
+            Some("python:m.C.get".to_string())
+        );
+        // A class that binds `__getattribute__` decides every read itself.
+        namespaces.insert(
+            "python:m.C".to_string(),
+            namespace(
+                &["python:m.C", "builtins.object"],
+                &[
+                    ("__getattribute__", "function", "python:m.C.__getattribute__"),
+                    ("get", "function", "python:m.C.get"),
+                ],
+            ),
+        );
+        assert_eq!(dispatched_symbol(&namespaces, "get", &c), None);
+    }
+
+    #[test]
+    fn a_class_namespace_row_is_read_off_its_facts() {
+        let fact = |name: &str, args: &[&str]| {
+            json!({
+                "kind": "atomic",
+                "name": name,
+                "args": args.iter().map(|arg| string_const(arg)).collect::<Vec<_>>(),
+            })
+        };
+        let body = json!({
+            "name": "python:m.C::namespace",
+            "inv": {
+                "kind": "and",
+                "operands": [
+                    fact(PYTHON_CLASS_MRO, &["python:m.C", "python:m.C", "builtins.object"]),
+                    fact(PYTHON_CLASS_BINDS, &["python:m.C", "get", "function", "python:m.C.get"]),
+                    fact(PYTHON_CLASS_BINDS, &["python:m.Other", "get", "function", "python:m.Other.get"]),
+                ],
+            },
+        });
+        let (symbol, stated) = class_namespace_of(&body).expect("a namespace row");
+        assert_eq!(symbol, "python:m.C");
+        assert_eq!(
+            stated,
+            namespace(
+                &["python:m.C", "builtins.object"],
+                &[("get", "function", "python:m.C.get")],
+            )
+        );
+        // A namespace row is a statement of fact, never a claim to check.
+        assert!(!is_consistency_candidate(&body));
     }
 
     #[test]
