@@ -269,24 +269,6 @@ def test_spread_function_and_spread_method_calls_take_the_one_routine(
 
 
 # ---------------------------------------------------------------------------
-# A lambda called where it is written is the same call: bound, then applied.
-# ---------------------------------------------------------------------------
-
-_LAMBDA_CALL = """\
-def test_lambda():
-    value = (lambda n: n)(4)
-    assert value == 4
-"""
-
-
-def test_an_inline_lambda_call_takes_the_one_routine(monkeypatch) -> None:
-    outcome, bound, applied = _routed(monkeypatch, _LAMBDA_CALL)
-    assert outcome.completed_value() is not None
-    assert _bound_and_applied(bound, applied, "py.call")
-    assert _every_applied_body_was_bound_by_the_one_binder(bound, applied)
-
-
-# ---------------------------------------------------------------------------
 # A lambda passed as a value and called there -- a callback, ``key=`` -- is the
 # same call: bound, then applied, so its body's raise is the caller's.
 # ---------------------------------------------------------------------------

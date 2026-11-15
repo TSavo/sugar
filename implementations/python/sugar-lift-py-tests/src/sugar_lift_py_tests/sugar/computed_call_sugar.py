@@ -207,49 +207,13 @@ class ComputedCallSugar(ConstructedTermSugar):
             + closure_terms,
             symbol_kind="coordinate",
         )
-        frame = self.source_call_frame
-        if frame is not None:
-            # A lambda called where it is written: the plain call's routine,
-            # so its body runs here and every face of it is this call's.
-            from sugar_lift_py_tests.sugar.call_site_sugar import (
-                bind_source_frame_call,
-                enter_source_frame,
-                with_captured_values,
-            )
-
-            ctx, module_halt = enter_source_frame(
-                frame,
-                ctx,
-                owner="ComputedCallSugar.desugar",
-                blame=self.site,
-                covered=frozenset(name for name, _cid, _value in captured_values),
-            )
-            # Every name the lambda reads from its enclosing function is bound
-            # from the calling scope at this call, as a local ``def``'s call
-            # binds it, or the call is refused by name: the body never reads
-            # the binding the lambda was made under.
-            ctx = with_captured_values(
-                ctx, frame, captured_values, site=self.site, blame="py.call"
-            )
-            if module_halt is not None:
-                return module_halt
-            from sugar_lift_py_tests.floor import LambdaCallable
-
-            return bind_source_frame_call(
-                "py.call",
-                positional,
-                kw_values,
-                frame=frame,
-                ctx=ctx,
-                owner="ComputedCallSugar.desugar",
-                blame=self.site,
-                term=term,
-                # The defaults the called lambda value's expression evaluated
-                # (``LambdaCallable.defaults``).
-                defaults=(
-                    callee.defaults if isinstance(callee, LambdaCallable) else ()
-                ),
-            ).producer_outcome(ctx)
+        # A lambda called where it is written, ``(lambda x: ...)(y)``, or
+        # through the name an assignment bound it to, is the call of the
+        # lambda's value like any other (``apply_callee``,
+        # ``LambdaCallable.callable_application_with``): its coordinate and
+        # edge, joined at prove (#7757 step 6).  Its body is never applied
+        # here; the frame ``Call._construct_sugar`` seated only names the
+        # closure cells the call reads (``captured``).
 
         def unanswered():
             callsite = CallSiteValue(

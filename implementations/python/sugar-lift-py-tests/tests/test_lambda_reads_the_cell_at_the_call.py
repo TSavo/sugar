@@ -249,16 +249,25 @@ def test_a_call_before_the_rebind_carries_the_first_binding() -> None:
     assert cell.evaluation == projection_key(first.evaluation, "x")
 
 
-def test_the_lambda_called_after_the_rebind_returns_2(tmp_path: Path) -> None:
-    returned = _returned(_outcome(tmp_path, CALLED_AFTER_REBIND, "after"))
-    assert TWO in returned, returned
+def test_the_lambda_called_after_the_rebind_is_its_edge(tmp_path: Path) -> None:
+    """Verdict moved (#7757 step 6): ``g()`` of a lambda bound by an
+    assignment is the lambda's coordinate and edge, carrying the cell it read
+    at the call (``py.closure``), joined at prove.  Its body is not applied
+    here, so neither 1 nor 2 is decided at lift, and the call is owed."""
+    outcome = _outcome(tmp_path, CALLED_AFTER_REBIND, "after")
+    returned = _returned(outcome)
     assert ONE not in returned, returned
-
-
-def test_the_lambda_called_before_the_rebind_returns_1(tmp_path: Path) -> None:
-    returned = _returned(_outcome(tmp_path, CALLED_BEFORE_REBIND, "before"))
-    assert ONE in returned, returned
     assert TWO not in returned, returned
+    assert _exits(outcome).halts()
+
+
+def test_the_lambda_called_before_the_rebind_is_its_edge(tmp_path: Path) -> None:
+    """Verdict moved (#7757 step 6), as above."""
+    outcome = _outcome(tmp_path, CALLED_BEFORE_REBIND, "before")
+    returned = _returned(outcome)
+    assert ONE not in returned, returned
+    assert TWO not in returned, returned
+    assert _exits(outcome).halts()
 
 
 # ---------------------------------------------------------------------------

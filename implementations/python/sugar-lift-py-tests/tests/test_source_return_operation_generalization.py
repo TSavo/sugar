@@ -500,26 +500,32 @@ def test_module_scope_lambda_callee_constructs_by_substituting_first() -> None:
 
     This used to pin ``SUGAR NOT WRITTEN [Lambda.sugar]`` -- a deliberate
     gap, not a discrimination. The law is the one a lambda inside a body
-    already had: substitute (mask formals), then construct. Truthful
-    witness: ``(lambda value: value + 1)(2) + 3`` is 6."""
+    already had: substitute (mask formals), then construct.
+
+    Verdict moved (#7757 step 6): the call ``(lambda value: value + 1)(2)``
+    is the lambda's coordinate and edge, joined at prove, so the expression
+    constructs and reduces but 6 is no longer decided at lift: the call is
+    two-faced and owed, and no completed face is a number."""
+    from sugar_lift_py_tests.outcome import Completed
+
     tree, _, _ = _tree("result = (lambda value: value + 1)(2) + 3\n")
     outer = next(
         node
         for node in tree.nodes()
         if isinstance(node, BinOp) and isinstance(node.left, Call)
     )
-    value = outer.sugar().desugar(None).completed_value()
-    if not isinstance(value, TermValue):
-        value = value._dig_floor_or_none(None, owner="module-scope-lambda")
-    assert value == TermValue(6)
+    outcome = outer.sugar().desugar(None)
+    assert outcome.halts()
+    assert TermValue(6) not in [
+        face.value for face in outcome.exits if isinstance(face, Completed)
+    ]
 
 
 def test_module_scope_lambda_never_fabricates_an_unbound_name() -> None:
     """Lying twin: ``missing`` is bound nowhere. The lambda constructs (its
-    formals are its own) and the call applies its body where it is written,
-    as every call does: ``2 + missing`` has an undecided operand type, so the
-    addition is two-faced (#7585), and both faces are the call's own.  The
-    call never completes alone and no number is invented for it.
+    formals are its own) and the call is its coordinate and edge, as every
+    call is (#7757 step 6): two-faced and owed.  The call never completes
+    alone and no number is invented for it.
     """
     from sugar_lift_py_tests.outcome import Completed
 
