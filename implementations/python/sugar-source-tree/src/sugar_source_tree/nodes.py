@@ -21676,35 +21676,19 @@ class IfExp(Expression):
         Arms must be ConstructedTermSugar so IfExpSugar can project to_term.
         SpreadCollectionSugar IS ConstructedTermSugar (to_term admitted) — a
         ``[a, *xs] if c else ys`` arm constructs. Any arm that is still only
-        Sugar refuses with SugarNotWritten, never a raw TypeError.
+        Sugar is refused by name by the one door every nested term slot is
+        closed by (``require_constructed_term_sugar``), here, before anything
+        else of the expression is built.
         """
         from sugar_lift_py_tests.sugar.if_exp_sugar import IfExpSugar
-        from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
-        from sugar_source_tree.panic import SugarNotWritten
+        from sugar_lift_py_tests.sugar.sugar_base import require_constructed_term_sugar
 
         test = self.test.sugar()
         body = self.body.sugar()
         orelse = self.orelse.sugar()
         for arm_name, arm in (("test", test), ("body", body), ("orelse", orelse)):
-            if isinstance(arm, ConstructedTermSugar):
-                continue
-            raise SugarNotWritten(
-                blame=self.fragment,
-                owner="IfExp._construct_sugar",
-                observed=(
-                    f"IfExp.{arm_name} constructed {type(arm).__name__}, which is "
-                    "not ConstructedTermSugar"
-                ),
-                requested=(
-                    "IfExp arms that are ordinary constructed terms so "
-                    "IfExpSugar can project to_term and distribute"
-                ),
-                fix=(
-                    f"write IfExp+{type(arm).__name__} construction (promote the "
-                    "arm sugar to ConstructedTermSugar with to_term), or keep "
-                    "this coordinate loud until that sugar exists — never a "
-                    "bare TypeError from a type assertion"
-                ),
+            require_constructed_term_sugar(
+                arm, owner=f"IfExp.{arm_name}", site=self.fragment
             )
         return IfExpSugar(
             test=test,

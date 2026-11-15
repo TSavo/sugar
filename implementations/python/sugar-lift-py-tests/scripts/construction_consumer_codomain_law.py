@@ -523,7 +523,8 @@ def find_expression_mint_not_term_gaps(
 
     Reach: static AST of Expression-ish ``_construct_sugar`` return Call
     targets. Does NOT follow dynamic getattr/factory variables — those remain
-    runtime-only (require_constructed_term_sugar TypeError + board discharge).
+    runtime-only (require_constructed_term_sugar's named refusal + board
+    discharge).
     """
     gaps: list[Gap] = []
     cache: dict[str, set[str]] = {}
@@ -587,7 +588,7 @@ def find_expression_mint_not_term_gaps(
                         f"construction currency (Constructed*/Place/Receiver) but "
                         f"is not ConstructedTermSugar. Nested slots "
                         f"(AttributeSugar.receiver, BinOpSugar, …) call "
-                        f"require_constructed_term_sugar and TypeError at discharge "
+                        f"require_constructed_term_sugar and refuse at discharge "
                         f"— dynamic path invisible to pure sibling isinstance scans."
                     ),
                     fix=(
@@ -1028,8 +1029,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 " doors + Expression._construct_sugar mint→term proxy)."
                 ' Not "the class is closed forever" — remaining gaps may still'
                 " be dynamic-only (getattr factories, runtime type mutations)."
-                " Those are caught by require_constructed_term_sugar TypeError"
-                " at discharge and sealed-board twins, not by this scan."
+                " Those are caught by require_constructed_term_sugar's named"
+                " refusal at discharge and sealed-board twins, not by this scan."
             )
 
     return 1 if gaps else 0

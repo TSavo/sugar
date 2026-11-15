@@ -27,7 +27,7 @@ from sugar_source_tree.tree import SourceFile
 def _literals() -> tuple[IntLiteralSugar, IntLiteralSugar]:
     """The ``yield 7`` and ``return 9`` values as constructed sugar at their
     own source occurrences: a step's value is a ``ConstructedTermSugar``
-    (``_require_constructed_term``), never a bare IR term, and its term
+    (``require_constructed_term_sugar``), never a bare IR term, and its term
     testimony seals the occurrence it was constructed at."""
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as handle:
         handle.write("def gen():\n    yield 7\n    return 9\n")

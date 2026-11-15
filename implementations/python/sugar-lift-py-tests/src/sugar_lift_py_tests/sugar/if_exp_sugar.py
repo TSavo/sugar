@@ -21,7 +21,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import ExitSet
-from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+from sugar_lift_py_tests.sugar.sugar_base import (
+    ConstructedTermSugar,
+    require_constructed_term_sugar,
+)
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 from sugar_lift_py_tests.sugar.if_sugar import predicate_formula, truth_formula
 
@@ -43,31 +46,16 @@ class IfExpSugar(ConstructedTermSugar):
     walrus_priors: tuple = dataclass_field(compare=False, default=())
 
     def __post_init__(self) -> None:
-        # Defense in depth: construction door is IfExp._construct_sugar, which
-        # raises SugarNotWritten for non-term arms. SpreadCollectionSugar is
-        # ConstructedTermSugar (to_term admitted). If anything bypasses the
-        # door with a bare Sugar arm, refuse the same way — never TypeError.
-        from sugar_source_tree.panic import SugarNotWritten
-
+        # Each arm is a nested term slot, closed by the one door every nested
+        # term slot is closed by (``require_constructed_term_sugar``): an arm
+        # that is not a term is refused by name, at this expression's site.
         for arm_name, arm in (
             ("test", self.test),
             ("body", self.body),
             ("orelse", self.orelse),
         ):
-            if isinstance(arm, ConstructedTermSugar):
-                continue
-            raise SugarNotWritten(
-                blame=self.site,
-                owner=f"IfExpSugar.{arm_name}",
-                observed=(
-                    f"IfExpSugar.{arm_name} is {type(arm).__name__}, not "
-                    "ConstructedTermSugar"
-                ),
-                requested="ConstructedTermSugar arms for to_term / distribute",
-                fix=(
-                    "construct only through IfExp._construct_sugar, which names "
-                    "the missing arm sugar; do not bypass with a raw type assert"
-                ),
+            require_constructed_term_sugar(
+                arm, owner=f"IfExpSugar.{arm_name}", site=self.site
             )
 
     @classmethod

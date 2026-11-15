@@ -57,7 +57,7 @@ def _entry_pair(source_a: str, source_b: str | None = None):
 def _literals() -> tuple[IntLiteralSugar, IntLiteralSugar]:
     """The ``yield 1`` and ``return 2`` values as constructed sugar at their
     own source occurrences: a step's value is a ``ConstructedTermSugar``
-    (``_require_constructed_term``), never a bare IR term, and its term
+    (``require_constructed_term_sugar``), never a bare IR term, and its term
     testimony seals the occurrence it was constructed at."""
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as handle:
         handle.write("def gen():\n    yield 1\n    return 2\n")
