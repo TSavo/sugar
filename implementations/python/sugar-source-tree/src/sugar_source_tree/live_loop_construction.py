@@ -533,8 +533,11 @@ def _control_guards(statements, scope, outer=None):
             halted.append((statement, outer, current))
             continue
         if isinstance(statement, If):
+            # The slot the ``if`` itself decides (``If.branch_slot``: the one
+            # its substitution minted for this evaluation), never one
+            # recomputed from its rewritten test.
             guard = branch_result_guard(
-                branch_result_slot(statement.test), statement.test.fragment
+                statement.branch_slot(current), statement.test.fragment
             )
             b, c, h = _control_guards(statement.body, current, _combine(outer, guard))
             breaks.extend(b)

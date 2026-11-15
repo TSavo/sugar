@@ -19,16 +19,51 @@ def test_unchanged_if_mints_and_stores_its_branch_slot_once(monkeypatch, tmp_pat
     mints = 0
     original = nodes.branch_result_slot
 
-    def counted(test):
+    def counted(test, evaluation=None):
         nonlocal mints
         mints += 1
-        return original(test)
+        return original(test, evaluation)
 
     monkeypatch.setattr(nodes, "branch_result_slot", counted)
     sugar = function.sugar()
 
     assert mints == 1
     assert sugar.statements[0].branch_slot.slot_id.startswith("branch-result:")
+
+
+def test_each_unrolled_iteration_of_an_if_decides_its_own_slot(tmp_path):
+    """A branch decision is made each time the ``if`` runs: two unrolled
+    iterations of one source ``if`` are two evaluations, so two slots, never
+    one decision shared by both runs of the body."""
+    source = (
+        "def f(c):\n"
+        "    x = 0\n"
+        "    for i in (1, 2):\n"
+        "        if c > i:\n"
+        "            x = i\n"
+        "    return x\n"
+    )
+    path = tmp_path / "unrolled_if.py"
+    path.write_text(source, encoding="utf-8")
+    function = next(
+        SourceFile(
+            path_source(path),
+            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+        ).functions()
+    )
+
+    body, _changed = function._substitute_body(function.body, {})
+    slots = [
+        slot
+        for statement in body
+        for node in statement.walk()
+        if node.kind == "If"
+        for slot in (getattr(node, "branch_result_slot_id", None),)
+        if slot is not None
+    ]
+
+    assert len(slots) == 2, slots
+    assert slots[0] != slots[1], "two iterations of one if shared one branch slot"
 
 
 def test_effectful_condition_is_constructed_once_and_one_slot_drives_all_faces(

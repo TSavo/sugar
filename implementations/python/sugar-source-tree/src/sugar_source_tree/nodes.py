@@ -18476,7 +18476,8 @@ class If(Statement):
         re-walk of the branches (the re-read was 2^nesting on real code).
 
         Branch-result slot identity is the SOURCE condition occurrence at the
-        first mint (``branch_result_slot(self.test)`` before rewrite). A later
+        first mint, keyed by this evaluation of the ``if`` (``branch_slot``:
+        ``branch_result_slot(self.test, evaluation)`` before rewrite). A later
         substitute must REUSE that retained pair — not recompute a slot from
         the rewritten test. Name substitution can replace ``if hashable:`` with
         the bound RHS node (e.g. ``is_hashable(other)``) whose span is the
@@ -18515,8 +18516,9 @@ class If(Statement):
                 )
             slot = BranchResultSlot(stored_slot_id)
         else:
-            # First mint: address the SOURCE test occurrence before rewrite.
-            slot = branch_result_slot(self.test)
+            # First mint: the SOURCE test occurrence before rewrite, keyed by
+            # this evaluation of the ``if`` (``branch_slot``).
+            slot = self.branch_slot(scope)
 
         changed = {}
         new_test, d = self._substitute_field(self.test, scope)
@@ -18589,6 +18591,25 @@ class If(Statement):
         if not phis and not availability and not halted:
             return node
         return _Splice((node, *phis), availability, halted)
+
+    def branch_slot(self, scope) -> BranchResultSlot:
+        """This ``if``'s branch-result slot where it is evaluated in
+        ``scope``: the one its first substitution minted and carries
+        (``branch_result_slot_id``), else the one that substitution mints --
+        its SOURCE condition occurrence, keyed by this evaluation of the
+        ``if`` when it is one of several (``_duplicated_evaluation_key``:
+        a loop iteration's copy, an exit path's copy, an occurrence copy).
+
+        A branch decision is made each time the ``if`` runs, so each
+        evaluation decides its own slot, as each evaluation of a call makes
+        its own object (``constructionEvaluation``).  Two iterations of one
+        source ``if`` never share one decision.  The ``if``'s join, its
+        ``BranchResultRef`` and every guard a loop records for it read this
+        one slot, never a slot recomputed from a rewritten test."""
+        stored = getattr(self, "branch_result_slot_id", None)
+        if stored is not None:
+            return BranchResultSlot(stored)
+        return branch_result_slot(self.test, self._duplicated_evaluation_key(scope))
 
     def _rewrite_with_slot(self, changed, slot, *, authenticated_slot=None):
         from .backend import Leaf, materialize
