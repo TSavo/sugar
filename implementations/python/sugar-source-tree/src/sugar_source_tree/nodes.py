@@ -111,13 +111,6 @@ _EVALUATION_OCCURRENCE = object()
 # under the same iterations, evaluated on two exit paths.  Its evaluation
 # coordinate carries these so the two copies never share one key.
 _EVALUATION_EXIT_PATH = object()
-# Set by a door that threads a module body for what it does AT IMPORT
-# (``SourceUnit.module_binding_states``).  A ``def`` statement binds a
-# function object; its body does not run until something calls it.  Under
-# this key the body is not substituted: whoever calls the function
-# substitutes it in its own frame, and a refusal there is that caller's, not
-# testimony about the statement that merely defined it.
-DEFER_DEFINITION_BODY_REFUSAL = object()
 # Set by ``SourceUnit.module_binding_states`` while it threads the module
 # body: the table ``_substitute_body_tracked`` records the binding scope
 # standing before every statement it threads into, at any depth
@@ -4155,7 +4148,9 @@ class SourceUnit:
 
         A reader outside the module block takes a module name from here,
         through ``module_bindings_at``.  A ``def`` statement's body is not
-        threaded (it does not run at import).  Only the names such a reader
+        threaded (it does not run at import): no block substitutes the body
+        of a ``def`` it holds (``FunctionDef.substitute_in_block``).  Only
+        the names such a reader
         reads (``module_threaded_names``) are recorded, at every statement
         and after the last.  A refusal threading the body is remembered and
         raised to every reader that asks.
@@ -4192,10 +4187,7 @@ class SourceUnit:
         try:
             _statements, _changed, final = module._substitute_body_tracked(
                 module.body,
-                {
-                    DEFER_DEFINITION_BODY_REFUSAL: True,
-                    _MODULE_STATEMENT_STATES: record,
-                },
+                {_MODULE_STATEMENT_STATES: record},
             )
         except (SourceTreePanic, ConstructionPanic) as refusal:
             object.__setattr__(
@@ -8366,6 +8358,15 @@ class Node(Typed):
             ),
         )
 
+    def substitute_in_block(self, scope: BindingMap) -> "Node":
+        """This statement's substitution where it stands in a block: what the
+        one block threading asks of each statement it threads
+        (``_substitute_body_tracked``).  It is the statement's own
+        substitution for every statement but a ``def``, whose statement
+        evaluates its signature there and never its body
+        (``FunctionDef.substitute_in_block``)."""
+        return self.substitute(scope)
+
     def _substituted_child(self, child: "Node", scope: BindingMap) -> "Node":
         """``child.substitute(scope)``, asked ONCE per (child, scope) pair.
 
@@ -8777,7 +8778,7 @@ class Node(Typed):
                 role="temporal",
                 site=f"{stmt.unit.filename}:{lc.start_line} {stmt.kind}",
             ):
-                new_stmt = stmt.substitute(scope)
+                new_stmt = stmt.substitute_in_block(scope)
                 live_loop_bindings = None
                 published = {}
                 if isinstance(new_stmt, (For, While)):
@@ -11332,9 +11333,53 @@ class FunctionDef(Statement):
         is why the abstract panics rather than recursing blindly: a blind
         recurse would substitute an outer `x` into a body whose parameter is
         `x`, capturing it. Masking is that capture, left as a gap.
+
+        This is the function's own substitution: its universe
+        (``_construct_sugar``) is the one door that asks for it, and the one
+        substitution of the body (step 5).  A block holding the ``def`` asks
+        ``substitute_in_block``, which never substitutes the body.
         """
         from .shadow import rewrite
 
+        changed = self._substituted_signature(scope)
+        new_body, body_diff = self._substitute_body(self.body, self._body_scope(scope))
+        if body_diff:
+            changed["body"] = new_body
+        if not changed:
+            return self
+        return rewrite(self, **changed)
+
+    def substitute_in_block(self, scope):
+        """The ``def`` statement where a block threads it: Python evaluates
+        its decorators, defaults and annotations where the statement runs
+        (the enclosing scope, unmasked), builds the function and binds its
+        name.  The body runs only when the function is called, and reads its
+        names then, so the block never substitutes it: the function's own
+        universe (``substitute``, ``_construct_sugar``) is the one
+        substitution of the body, and a refusal there is that function's
+        entry's, never the enclosing block's."""
+        from .shadow import rewrite
+
+        changed = self._substituted_signature(scope)
+        if not changed:
+            return self
+        return rewrite(self, **changed)
+
+    def _substituted_signature(self, scope) -> dict:
+        """The signature fields (decorators, type params, parameter
+        annotations and defaults, the return annotation) substituted in the
+        enclosing scope, unmasked: ``{field: new}`` for each that changed."""
+        changed: dict[str, object] = {}
+        for field in ("decorators", "type_params", "params", "returns"):
+            new, diff = self._substitute_field(getattr(self, field), scope)
+            if diff:
+                changed[field] = new
+        return changed
+
+    def _body_scope(self, scope):
+        """The scope the body is substituted in: ``scope`` with the formals
+        and type params held out and bound to their entries, and every local
+        unbound until the body binds it."""
         table = self.unit.function_symtable(self.name, self.line_col_span().start_line)
         parameters = frozenset(table.get_parameters())
         locals_ = frozenset(table.get_locals()) - parameters
@@ -11351,7 +11396,7 @@ class FunctionDef(Statement):
             parameter.name: self._make_parameter_entry(parameter, ordinal, scope)
             for ordinal, parameter in enumerate(self.params)
         }
-        body_scope = {
+        return {
             **body_scope,
             **formal_refs,
             **{
@@ -11359,28 +11404,6 @@ class FunctionDef(Statement):
             },
             _LEXICALLY_BOUND_NAMES: frozenset(inherited_bound) | bound | locals_,
         }
-
-        changed: dict[str, object] = {}
-        # signature: the enclosing scope, unmasked (evaluated before the body).
-        for field in ("decorators", "type_params", "params", "returns"):
-            new, diff = self._substitute_field(getattr(self, field), scope)
-            if diff:
-                changed[field] = new
-        # body: the enclosing scope with the bound names held out, THREADED --
-        # each assignment binds its name for the statements after it.  A door
-        # threading the module for what it does at import does not run the
-        # body: the def statement binds the function, and the caller's frame
-        # substitutes the body when (if) it calls it.
-        if scope.get(DEFER_DEFINITION_BODY_REFUSAL):
-            new_body, body_diff = self.body, False
-        else:
-            new_body, body_diff = self._substitute_body(self.body, body_scope)
-        if body_diff:
-            changed["body"] = new_body
-
-        if not changed:
-            return self
-        return rewrite(self, **changed)
 
     def _substitute_body(self, statements: tuple, scope: BindingMap):
         """Every door that substitutes this function's body (its own sugar,
@@ -11790,6 +11813,17 @@ class AsyncFunctionDef(Statement):
         """Same scope shape as FunctionDef (identical fields)."""
         return FunctionDef.substitute(self, scope)
 
+    def substitute_in_block(self, scope):
+        """Same statement as FunctionDef: a block substitutes the signature,
+        never the body."""
+        return FunctionDef.substitute_in_block(self, scope)
+
+    def _substituted_signature(self, scope) -> dict:
+        return FunctionDef._substituted_signature(self, scope)
+
+    def _body_scope(self, scope):
+        return FunctionDef._body_scope(self, scope)
+
     def _substitute_body(self, statements, scope):
         """Same body door as FunctionDef: a global reads the module's binding
         of it where the function is called."""
@@ -12072,9 +12106,15 @@ class ClassDef(Statement):
             )
             from sugar_source_tree.panic import SugarNotWritten
 
+            # The method is the function its typed occurrence is: the class
+            # body's block substitutes a ``def``'s signature in the class
+            # scope and never its body (``FunctionDef.substitute_in_block``),
+            # and a method body never reads a class-level name.  Its universe
+            # and frame are the ones its own entry and every call construct.
+            original = _typed_original(method)
             try:
-                body = method.sugar()
-                frame = method.source_visible_call_frame()
+                body = original.sugar()
+                frame = original.source_visible_call_frame()
             except (SugarNotWritten, SourceCallFrameCycle):
                 # The class body binds the method; the method body runs only
                 # when called.  Its refusal is deferred to that caller, which
@@ -12087,7 +12127,7 @@ class ClassDef(Statement):
                 return DeferredClassMethodV1(
                     method.name,
                     method.fragment.seal().cid,
-                    method,
+                    original,
                     self._method_descriptor_kind(method),
                 )
         else:
@@ -16996,7 +17036,7 @@ class For(Statement):
                 if action is not None:
                     return produced, current, action
                 continue
-            substituted = statement.substitute(current)
+            substituted = statement.substitute_in_block(current)
             expanded = (
                 substituted.statements
                 if isinstance(substituted, _Splice)
@@ -25344,13 +25384,15 @@ def _decorator_application_sugar(
     )
 
 
-def _definition_call_frame(definition):
-    """``(frame, None)``: the call frame of the source ``def`` ``definition``
-    (its typed occurrence's), or ``(None, refusal)`` where it has none: a
-    definition whose frame is under construction up the stack (a recursion
-    seat), or none built."""
+def _typed_original(definition):
+    """The typed occurrence of the ``def`` ``definition`` (the unit's own
+    node for it, ``SourceUnit.function_nodes``), whatever shell a block's
+    substitution of its statement made.  A block substitutes a ``def``'s
+    signature and never its body (``FunctionDef.substitute_in_block``), so
+    the function, its universe and its frame are the original's: the one
+    the function's own entry constructs and a call by name applies."""
     identity = SourceOccurrenceIdentityV1.of(definition)
-    original = next(
+    return next(
         (
             candidate
             for candidate in definition.unit.function_nodes
@@ -25359,8 +25401,15 @@ def _definition_call_frame(definition):
         ),
         definition,
     )
+
+
+def _definition_call_frame(definition):
+    """``(frame, None)``: the call frame of the source ``def`` ``definition``
+    (its typed occurrence's), or ``(None, refusal)`` where it has none: a
+    definition whose frame is under construction up the stack (a recursion
+    seat), or none built."""
     try:
-        frame = original.source_visible_call_frame()
+        frame = _typed_original(definition).source_visible_call_frame()
     except SourceCallFrameCycle as cycle:
         return None, (
             f"call-graph-cycle:{cycle.definition.name}"
