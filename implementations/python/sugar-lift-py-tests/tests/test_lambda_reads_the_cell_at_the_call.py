@@ -175,13 +175,6 @@ def _returned(outcome) -> list:
 
 
 def _resolved(value):
-    retained = getattr(value, "retained_source_completion_outcome", None)
-    outcome = retained() if callable(retained) else None
-    if outcome is not None:
-        inner = _returned(outcome)
-        if inner:
-            return inner[-1]
-        return _exits(outcome).completed_value()
     if isinstance(value, CallSiteValue) and value.body is not None:
         dug = value._dig_floor_or_none(
             ReduceContext.root(owner="lambda-cell"), owner="lambda-cell"
@@ -371,18 +364,57 @@ def test_a_key_lambda_passed_to_sorted_carries_the_binding_at_the_call() -> None
     assert cid == sugar.source_call_frame.captured_coordinates[0].cid
 
 
-def test_a_carried_lambda_value_decides_where_it_is_called() -> None:
+def _call_term(value):
+    """The ``call:<target>(...)`` term of a call's completed value
+    (``python:call_result(<call>, <occurrence>)``)."""
+    term = value.term
+    if term.name == "python:call_result":
+        term = term.args[0]
+    assert term.name.startswith("call:"), term
+    return term
+
+
+def _subterms(term):
+    yield term
+    for arg in getattr(term, "args", ()) or ():
+        yield from _subterms(arg)
+
+
+def test_a_carried_lambda_value_is_called_with_the_binding_it_carries() -> None:
+    """Verdict moved (#7757 step 6, #8742): a call of a lambda value is its
+    coordinate and edge, joined at prove; its body is not applied here, so
+    ``v + x`` is no longer decided to 3 at the call.  What the call reads is
+    on the call term: the actual 1, and ``py.closure(x, 2)``, the binding the
+    value carries for the cell its body reads (prove binds the lambda
+    contract's ``cell:x`` input with it)."""
+    from sugar_lift_py_tests.ir import str_const
+
     (lam,) = _lambdas(_function(PASSED_ON).substitute({}).body)
     callable_ = lam.sugar().desugar(None).completed_value()
     names, coordinates = lam._captured_bindings()
     carried = replace(callable_, captured=((names[0], coordinates[0].cid, TWO),))
-    outcome = carried.callable_application_with(
-        CallableApplication((ONE,), (), "callback-call"), None
+    outcome = _exits(
+        carried.callable_application_with(
+            CallableApplication((ONE,), (), "callback-call"), None
+        )
     )
-    value = _exits(outcome).completed_value()
-    assert value is not None
-    found = _returned(outcome) or [_resolved(value)]
-    assert TermValue(3) in found, found
+    assert outcome.completed_value() is None, outcome
+    assert outcome.halts(), outcome
+    calls = [
+        exit_.value
+        for exit_ in outcome.exits
+        if isinstance(exit_, Completed) and isinstance(exit_.value, CallSiteValue)
+    ]
+    assert calls, outcome
+    term = _call_term(calls[0])
+    assert ONE.to_term(owner="test") in term.args, term
+    (cell,) = [
+        arg
+        for arg in term.args
+        if getattr(arg, "name", None) == "py.closure"
+        and arg.args[0] == str_const(names[0])
+    ]
+    assert cell.args[1] == TWO.to_term(owner="test"), cell
 
 
 def test_a_lambda_passed_to_map_carries_nothing() -> None:
@@ -408,12 +440,29 @@ def test_a_source_function_that_calls_the_lambda_gets_the_binding() -> None:
     assert cell.evaluation == projection_key(rebind.evaluation, "k")
 
 
-def test_a_lambda_passed_to_a_source_function_that_calls_it_decides(
+def test_a_lambda_passed_to_a_source_function_carries_the_binding_at_the_call(
     tmp_path: Path,
 ) -> None:
+    """Verdict moved (#7757 step 5, #8705): ``apply(lambda v: k, 0)`` is
+    ``apply``'s coordinate and edge, joined at prove; ``apply``'s body is not
+    applied here, so ``f`` no longer returns a decided 2.  The binding the
+    lambda reads is carried on the actual itself: the lambda value in the call
+    term holds ``k``'s cell at 2 (the rebind before the call), never 1.
+    Inside ``apply`` the call ``g(x)`` of a formal names no join symbol, so it
+    stays owed and prove does not decide the 2 either."""
     returned = _returned(_outcome(tmp_path, APPLIED, "applied"))
-    assert TWO in returned, returned
-    assert ONE not in returned, returned
+    assert TWO not in returned and ONE not in returned, returned
+    calls = [value for value in returned if isinstance(value, CallSiteValue)]
+    assert calls, returned
+    term = _call_term(calls[0])
+    cells = [
+        sub
+        for sub in _subterms(term)
+        if getattr(sub, "name", None) == "python:lambda_captured_cell"
+    ]
+    assert len(cells) == 1, term
+    assert cells[0].args[1] == TWO.to_term(owner="test"), cells[0]
+    assert cells[0].args[1] != ONE.to_term(owner="test"), cells[0]
 
 
 def test_a_lambda_a_source_function_keeps_stays_refused() -> None:
