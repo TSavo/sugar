@@ -15,7 +15,15 @@ Concrete program:
         def boom(self):
             raise ValueError
 
-    Raiser().boom()
+    def caller():
+        Raiser().boom()
+
+The call stands in a function, called after import, never in the module body:
+the receiver ``Raiser()`` is read as every read of a module class's name is,
+through the class statement's key in the module's one run (#7757 item 21).  A
+module body whose last statement raises completes on no arm, so no import
+completes and that read is the run's halts (``module_run_halts``), never a
+class: the method call under test would have no receiver.
 
 Transport door (tests only — no production/binder/carrier/ExitSet edits):
 
@@ -139,6 +147,13 @@ def _raise_body(exception: str = "ValueError") -> str:
     return "class Raiser:\n" f"    def boom(self):\n" f"        raise {exception}\n"
 
 
+def _caller(*calls: str, formals: str = "") -> str:
+    """``calls`` as the body of a function called after import, so the
+    module's one run completes and binds every class it defines (see the
+    module docstring)."""
+    return f"\n\ndef caller({formals}):\n" + "".join(f"    {call}\n" for call in calls)
+
+
 # ===========================================================================
 # Named exceptional edge crosses the bound-method call boundary
 # ===========================================================================
@@ -146,7 +161,7 @@ def _raise_body(exception: str = "ValueError") -> str:
 
 def test_bound_method_raise_publishes_named_halt_at_call() -> None:
     """``Raiser().boom()`` body ``raise ValueError`` → sole Halted ValueError."""
-    source = _raise_body() + "\nRaiser().boom()\n"
+    source = _raise_body() + _caller("Raiser().boom()")
     site = _method_callsite(source)
     assert site.arg_values[0].class_name == "Raiser"
     halted = _method_halt(source)
@@ -166,9 +181,7 @@ def test_method_store_indexerror_carries_named_type_and_occurrence() -> None:
         "class Raiser:\n"
         "    def boom(self):\n"
         "        a = [0]\n"
-        "        a[5] = 1\n"
-        "\n"
-        "Raiser().boom()\n"
+        "        a[5] = 1\n" + _caller("Raiser().boom()")
     )
     halted = _method_halt(source)
     assert halted.effect.exception_name == "IndexError"
@@ -184,10 +197,7 @@ def test_distinct_methods_preserve_distinct_raise_occurrences() -> None:
         "    def alpha(self):\n"
         "        raise ValueError\n"
         "    def beta(self):\n"
-        "        raise ValueError\n"
-        "\n"
-        "Raiser().alpha()\n"
-        "Raiser().beta()\n"
+        "        raise ValueError\n" + _caller("Raiser().alpha()", "Raiser().beta()")
     )
     ha = _method_halt(source, "alpha")
     hb = _method_halt(source, "beta")
@@ -215,9 +225,7 @@ def test_a_callee_local_store_stays_behind_at_the_method_call() -> None:
         "    def boom(self):\n"
         "        a = [0]\n"
         "        a[0] = 9\n"
-        "        raise ValueError\n"
-        "\n"
-        "Raiser().boom()\n"
+        "        raise ValueError\n" + _caller("Raiser().boom()")
     )
     halted = _method_halt(source)
     assert halted.state is not None, f"{CODEX1}: halt dropped pre-effect state"
@@ -235,7 +243,7 @@ def test_a_callee_local_store_stays_behind_at_the_method_call() -> None:
 
 def test_caller_try_matching_consumes_method_halt_with_pre_effect_state() -> None:
     """Matching except: handler Completed.value is the exact pre-halt state."""
-    source = _raise_body() + "\nRaiser().boom()\n"
+    source = _raise_body() + _caller("Raiser().boom()")
     halted = _method_halt(source)
     assert halted.state is not None
     routed = _route_try(ExitSet((halted,)), "ValueError")
@@ -247,7 +255,7 @@ def test_caller_try_matching_consumes_method_halt_with_pre_effect_state() -> Non
 
 def test_caller_try_wrong_exception_retains_identical_method_halt() -> None:
     """Unmatched except: effect and state object identity survive."""
-    source = _raise_body() + "\nRaiser().boom()\n"
+    source = _raise_body() + _caller("Raiser().boom()")
     halted = _method_halt(source)
     routed = _route_try(ExitSet((halted,)), "TypeError")
     retained = routed.exits[0]
@@ -257,7 +265,7 @@ def test_caller_try_wrong_exception_retains_identical_method_halt() -> None:
 
 
 def test_caller_try_does_not_fabricate_completed_on_wrong_type_twin() -> None:
-    source = _raise_body("IndexError") + "\nRaiser().boom()\n"
+    source = _raise_body("IndexError") + _caller("Raiser().boom()")
     halted = _method_halt(source)
     routed = _route_try(ExitSet((halted,)), "ValueError")
     with pytest.raises(AssertionError):
@@ -278,9 +286,7 @@ def test_method_raise_under_guard_keeps_guard_on_halt_face() -> None:
         "    def boom(self, flag):\n"
         "        if flag:\n"
         "            raise ValueError\n"
-        "        return 0\n"
-        "\n"
-        "Raiser().boom(x)\n"
+        "        return 0\n" + _caller("Raiser().boom(x)", formals="x")
     )
     outcome = _method_outcome(source)
     assert isinstance(outcome, ExitSet), (
@@ -309,9 +315,7 @@ def test_method_raise_under_true_guard_collapses_to_sole_halt() -> None:
         "    def boom(self, flag):\n"
         "        if flag:\n"
         "            raise ValueError\n"
-        "        return 0\n"
-        "\n"
-        "Raiser().boom(True)\n"
+        "        return 0\n" + _caller("Raiser().boom(True)")
     )
     halted = _method_halt(source)
     assert halted.effect.exception_name == "ValueError"
@@ -330,9 +334,7 @@ def test_method_raise_through_with_never_suppresses_preserves_state() -> None:
         "    def boom(self):\n"
         "        a = [0]\n"
         "        a[0] = 7\n"
-        "        raise ValueError\n"
-        "\n"
-        "Raiser().boom()\n"
+        "        raise ValueError\n" + _caller("Raiser().boom()")
     )
     halted = _method_halt(source)
     assert halted.state is not None
@@ -352,7 +354,7 @@ def test_method_raise_through_with_never_suppresses_preserves_state() -> None:
 
 
 def test_method_raise_through_with_does_not_fabricate_completed_twin() -> None:
-    source = _raise_body() + "\nRaiser().boom()\n"
+    source = _raise_body() + _caller("Raiser().boom()")
     halted = _method_halt(source)
     after = ExitSet((halted,)).and_exit(
         ExitSet.completed(TermValue(0)),
@@ -366,7 +368,7 @@ def test_method_raise_through_with_does_not_fabricate_completed_twin() -> None:
 
 def test_with_then_try_composition_on_method_raise() -> None:
     """Compose with cleanup then matching try — handler value is pre-halt state."""
-    source = _raise_body("IndexError") + "\nRaiser().boom()\n"
+    source = _raise_body("IndexError") + _caller("Raiser().boom()")
     halted = _method_halt(source)
     after_with = ExitSet((halted,)).and_exit(
         ExitSet.completed(TermValue(0)),
@@ -388,7 +390,7 @@ def test_with_then_try_composition_on_method_raise() -> None:
 
 def test_wrong_exception_observation_is_not_the_method_effect() -> None:
     """Bite: foreign RaiseEffect is not the transported method edge."""
-    source = _raise_body() + "\nRaiser().boom()\n"
+    source = _raise_body() + _caller("Raiser().boom()")
     halted = _method_halt(source)
     foreign = RaiseEffect.for_builtin(
         "ValueError",
@@ -404,7 +406,7 @@ def test_wrong_exception_observation_is_not_the_method_effect() -> None:
 
 def test_handler_value_is_not_fabricated_fresh_block_twin() -> None:
     """Matching try handler must be the halt state object, not a fresh empty."""
-    source = _raise_body() + "\nRaiser().boom()\n"
+    source = _raise_body() + _caller("Raiser().boom()")
     halted = _method_halt(source)
     handler = _route_try(ExitSet((halted,)), "ValueError").exits[0]
     assert isinstance(handler, Completed)
@@ -419,9 +421,7 @@ def test_discrimination_completed_return_is_not_valueerror_halt() -> None:
     source = (
         "class Raiser:\n"
         "    def boom(self):\n"
-        "        return 7\n"
-        "\n"
-        "Raiser().boom()\n"
+        "        return 7\n" + _caller("Raiser().boom()")
     )
     site = _method_callsite(source)
     outcome = site.producer_outcome(None)
@@ -439,7 +439,7 @@ def test_discrimination_completed_return_is_not_valueerror_halt() -> None:
 
 def test_self_binding_is_present_but_not_the_exception_identity() -> None:
     """Bound self is prepended; exception identity is ValueError, not the receiver."""
-    source = _raise_body() + "\nRaiser().boom()\n"
+    source = _raise_body() + _caller("Raiser().boom()")
     site = _method_callsite(source)
     assert site.parameters[0] == "self"
     assert isinstance(site.arg_values[0], ObjectValue)
@@ -455,7 +455,7 @@ def test_self_binding_is_present_but_not_the_exception_identity() -> None:
 
 
 def test_bound_method_raise_is_sole_exceptional_edge() -> None:
-    source = _raise_body() + "\nRaiser().boom()\n"
+    source = _raise_body() + _caller("Raiser().boom()")
     outcome = _method_outcome(source)
     assert isinstance(outcome, ExitSet)
     assert (
