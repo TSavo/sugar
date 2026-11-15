@@ -361,6 +361,59 @@ def test_renamed_subclass_matches_by_mro_identity():
     assert [leaf.exception_name for leaf in _leaves(effect)] == ["TypeError"]
 
 
+def test_a_source_class_member_is_its_instance_never_the_class():
+    """``Renamed()`` in a group's member list is the call of the class
+    statement's value: its constructor runs and the instance it builds is of
+    ``Renamed``.  It is never the class it calls, which the group's
+    construction would refuse as a member that is not an exception instance
+    (the ``ValueError`` an ``except* ValueError`` then swallowed whole,
+    dropping the ``TypeError`` beside it)."""
+    from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+
+    effect = _grouped_halt(
+        _desugar(
+            "class Renamed(ValueError):\n"
+            "    pass\n"
+            "def f():\n"
+            "    raise ExceptionGroup('g', [Renamed(), TypeError()])\n",
+            name="renamed_member.py",
+        )
+    )
+    assert [leaf.exception_name for leaf in _leaves(effect)] == [
+        "Renamed",
+        "TypeError",
+    ]
+    identity, _mro = _builtin_exception_identity("ExceptionGroup")
+    assert effect.exception_type_coordinate == identity
+
+
+def test_lying_twin_an_unmatched_remainder_is_never_dropped():
+    """The lying twin of the renamed-subclass split: a source whose
+    ``except*`` leaves a remainder never completes.  With ``Renamed`` a
+    ``ValueError`` the handler takes it and the ``TypeError`` is raised on;
+    with ``Renamed`` a ``KeyError`` nothing matches and both members are
+    raised on.  Neither statement has a completed face, and no face drops a
+    member."""
+    for base, remainder in (
+        ("ValueError", ["TypeError"]),
+        ("KeyError", ["Renamed", "TypeError"]),
+    ):
+        outcome = _desugar(
+            f"class Renamed({base}):\n"
+            "    pass\n"
+            "def f():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('g', [Renamed(), TypeError()])\n"
+            "    except* ValueError:\n"
+            "        pass\n"
+            "    return 1\n",
+            name=f"renamed_remainder_{base}.py",
+        )
+        assert outcome.completed_value() is None, (base, outcome)
+        effect = _grouped_halt(outcome)
+        assert [leaf.exception_name for leaf in _leaves(effect)] == remainder, base
+
+
 def test_type_lying_twin_wrong_handler_type_does_not_match():
     """except* OSError must not absorb a ValueError leaf (spelling-adjacent twin)."""
     effect = _grouped_halt(

@@ -21,6 +21,13 @@ class CallableApplication:
 
     owner: str = "ComputedCallableSugar"
     call_occurrence: SourceFragmentCoordinateV1 | None = None
+    # Exception construction only: the class a ``raise`` authenticated for
+    # the callee (``ComputedCallSugar``).  A source class's constructor
+    # hands it to the call it binds, so the instance it builds carries it
+    # (``ClassDefinitionValue.callable_application_with``); every other
+    # callable ignores it.
+    exception_type_coordinate: object = None
+    exception_type_mro: tuple | None = None
 
     def __post_init__(self) -> None:
         if (
