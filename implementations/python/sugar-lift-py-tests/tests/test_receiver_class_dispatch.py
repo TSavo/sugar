@@ -130,3 +130,72 @@ def test_a_field_stored_under_the_method_s_name_keeps_the_call_undispatched() ->
     outcome = function_universe_outcome(_function(tree, "run"))
     owners = {halt.effect.producer_node_owner for halt in outcome.halts()}
     assert "UnknownCallee:dispatch:check" not in owners
+
+
+_INITIALIZER = """\
+class Base:
+    def __init__(self):
+{body}
+
+    def setup(self):
+        return None
+
+
+class Derived(Base):
+    def __init__(self):
+        super().__init__()
+
+    def setup(self):
+        raise ValueError('override')
+"""
+
+
+def _initializer(tree: SourceFile, class_name: str):
+    from sugar_source_tree.nodes import ClassDef
+
+    (owner,) = tuple(
+        node
+        for node in tree.nodes()
+        if isinstance(node, ClassDef) and node.name == class_name
+    )
+    (initializer,) = tuple(
+        node
+        for node in owner.body
+        if isinstance(node, FunctionDef) and node.name == "__init__"
+    )
+    return initializer
+
+
+def test_self_m_in_an_init_s_own_contract_is_dispatched_over_its_class_input() -> None:
+    """``self.setup()`` in ``Base.__init__``'s own contract: ``self`` is the
+    instance a constructor made, and a subclass's ``super().__init__()``
+    runs this ``__init__`` on an instance of the subclass.  So the class of
+    ``self`` is the contract's ``class:self`` input and the call is the
+    dispatched edge over it -- never an edge to ``Base.setup``, the class that
+    wrote the ``__init__`` (#7757 step 8)."""
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    tree = _tree(_INITIALIZER.format(body="        self.setup()"))
+    initializer = _initializer(tree, "Base")
+    assert _receiver_class_parameters(initializer) == ("self",)
+    outcome = function_universe_outcome(initializer)
+    owners = {halt.effect.producer_node_owner for halt in outcome.halts()}
+    assert "UnknownCallee:dispatch:setup" in owners
+    assert not any("Base.setup" in str(owner) for owner in owners)
+
+
+def test_an_init_that_hands_self_keeps_its_method_call_undispatched() -> None:
+    """``register(self)`` hands the object to code the frame does not see:
+    the class of ``self`` is no input, so nothing binds it and the call is
+    not dispatched (it stays the unanswered call, owed)."""
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    tree = _tree(
+        _INITIALIZER.format(body="        register(self)\n        self.setup()")
+        + "\n\ndef register(item):\n    return None\n"
+    )
+    initializer = _initializer(tree, "Base")
+    assert _receiver_class_parameters(initializer) == ()
+    outcome = function_universe_outcome(initializer)
+    owners = {halt.effect.producer_node_owner for halt in outcome.halts()}
+    assert "UnknownCallee:dispatch:setup" not in owners

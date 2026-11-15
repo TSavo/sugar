@@ -1051,10 +1051,21 @@ class ObjectValue(FloorValue):
         - On an instance that arrived by binding (``receiver_class_decided``
           False) which function runs is not decided: the unanswered call
           (``unanswered_method_call``).
-        - A function the class wrote (``ObjectMethodValue``) is bound with
-          the implicit first actual its descriptor kind binds
+        - A plain function the class wrote (``ObjectMethodValue``, no
+          descriptor kind) on an instance whose class is decided here is
+          the one dispatch of a method call (#7757 step 8,
+          ``receiver_dispatch.dispatch_edge_call``): the coordinate plus the
+          dispatched edge carrying the instance's class
+          (``receiver_dispatch.class_value``), resolved at prove on the
+          order the class's own proof states.  Nothing here names which
+          function runs: the lookup above selected the member only to know
+          that a method call is what this is.
+        - A ``staticmethod``, ``classmethod`` or ``property`` the class wrote
+          is bound with the implicit first actual its descriptor kind binds
           (``bind_method_call``, ``implicit_arguments``) and stands as its
-          coordinate and edge (``method_edge_call``).
+          coordinate and edge (``method_edge_call``); so does a plain
+          function where the instance's class names no join symbol (no
+          workspace root: the edge names none either, owed).
         - A function the class namespace holds as a field (``LambdaCallable``:
           ``f = lambda self: 1``, ``m = some_def``) is a method bound to this
           receiver (``function.__get__``): the receiver is its first actual,
@@ -1070,8 +1081,10 @@ class ObjectValue(FloorValue):
         ):
             # An instance that arrived by binding (``self`` in a method, a
             # formal) may be of a subclass that overrides ``name``: which
-            # function runs is not decided here (#7757 step 6; dispatch at
-            # prove waits on the owner's ruling).
+            # function runs is not decided here.  Where its class is an
+            # input of the contract the call never reaches this door: it is
+            # the dispatched edge over that input
+            # (``receiver_dispatch.dispatch_on_receiver``, #7757 step 8).
             return self.unanswered_method_call(name, arguments, keywords, blame)
         if isinstance(member, ObjectMethodValue):
             if (
@@ -1085,6 +1098,10 @@ class ObjectValue(FloorValue):
                     requested="constructor-bound method",
                     fix=f"construct a diggable body for `{self.class_name}.{name}`",
                 )
+            if member.descriptor_kind is None:
+                dispatched = self._dispatched_call(name, arguments, keywords, blame)
+                if dispatched is not None:
+                    return dispatched
             return method_edge_call(
                 self,
                 member,
@@ -1116,6 +1133,37 @@ class ObjectValue(FloorValue):
             observed=f"{self.class_name}.{name}",
             requested="constructor-bound method",
             fix=f"construct a diggable body for `{self.class_name}.{name}`",
+        )
+
+    def _dispatched_call(self, name, arguments, keywords, site):
+        """``self.<name>(...)`` on this instance, whose class is decided
+        here, as the one dispatched method call (#7757 step 8): its
+        coordinate plus the edge whose receiver class is this instance's
+        class and every field its ``__dict__`` may hold now
+        (``receiver_dispatch.class_value``: ``python:instance(<class>,
+        <field>...)``).  Prove resolves ``name`` on the order the class's own
+        proof states (``consistency::dispatched_symbol``), the same
+        resolution a call on a parameter whose class a caller supplies gets.
+
+        The instance a class's constructor contract makes
+        (``tree_enumerate.class_universe_outcome``) is the instance a call of
+        that class constructs: the contract is joined only by calls of the
+        class it is named for, so the class it states here is the one that
+        call supplies.  None where the class names no join symbol (no
+        workspace root) or the call has no site: no edge could name a class
+        either."""
+        if site is None:
+            return None
+        from sugar_lift_py_tests.receiver_dispatch import (
+            class_value,
+            dispatch_edge_call,
+        )
+
+        receiver_class = class_value(self)
+        if receiver_class is None:
+            return None
+        return dispatch_edge_call(
+            name, self, receiver_class, tuple(arguments), tuple(keywords), site
         )
 
     def has_method(self, name: str) -> "bool | None":
@@ -1449,7 +1497,11 @@ def receiver_class_decided(receiver) -> bool:
     frame reading it made (``allocation``: its class is the class the call
     made it of).  An instance that arrived by binding (``self`` in a method,
     any formal) may be of a subclass that overrides the method: not decided
-    (#7757 step 6; dispatch at prove waits on the owner's ruling)."""
+    here.  A plain method call on either is dispatched at prove (#7757 step
+    8): on a decided instance over its class (``ObjectValue.
+    _dispatched_call``), on an arrived one over its contract's
+    ``class:<param>`` input where it has one
+    (``receiver_dispatch.dispatch_on_receiver``)."""
     from sugar_lift_py_tests.floor.class_definition_value import (
         ClassDefinitionValue,
     )

@@ -346,6 +346,63 @@ def test_a_field_read_through_the_callers_self_reads_the_value(
     )
 
 
+# A base ``__init__`` calls ``self.setup()``; the subclass overrides
+# ``setup`` and reaches the base ``__init__`` through ``super().__init__()``.
+# Python runs the subclass's ``setup``.  ``Base.__init__``'s contract takes
+# the class of ``self`` as its ``class:self`` input, and ``self.setup()`` there
+# is the dispatched edge over it; ``Derived``'s constructor contract supplies
+# ``Derived`` at its ``super().__init__()`` (#7757 step 8).  One base and one
+# override raise, the other completes: the claim after ``Derived()`` holds
+# only where the override runs.
+_INIT_DISPATCH = """\
+class Base:
+    def __init__(self):
+        self.setup()
+
+    def setup(self):
+{base}
+
+
+class Derived(Base):
+    def __init__(self):
+        super().__init__()
+
+    def setup(self):
+{derived}
+
+
+def test_derived():
+    made = Derived()
+    reached = 1
+    assert reached == 1
+"""
+
+_RAISES = "        raise ValueError('ran')"
+_COMPLETES = "        return None"
+
+
+def test_a_base_init_dispatches_self_m_on_the_subclass_reaching_it(
+    tmp_path: Path,
+) -> None:
+    """``Derived()`` runs ``Base.__init__`` through ``super().__init__()``,
+    and ``self.setup()`` there is ``Derived.setup``.  Truthful: the base's
+    ``setup`` raises and the override completes, so the claim is true only
+    of ``Derived.setup``: ``sat``.  Lying: the override raises and the
+    base's completes, so the claim is true only of ``Base.setup``: never
+    ``sat`` (resolving ``self.setup()`` on the class that wrote the
+    ``__init__`` would read it ``sat``)."""
+    truthful = _INIT_DISPATCH.format(base=_RAISES, derived=_COMPLETES)
+    lying = _INIT_DISPATCH.format(base=_COMPLETES, derived=_RAISES)
+    t = run_source_through_real_solver(tmp_path / "init-dispatch-truthful", truthful)
+    lie = run_source_through_real_solver(tmp_path / "init-dispatch-lying", lying)
+    print(json.dumps({"truthful": t.verdict, "lying": lie.verdict}, sort_keys=True))
+    test_line = truthful.splitlines().index("def test_derived():") + 1
+    # ``Base.__init__``'s own proof binds no class: its dispatched member is
+    # owed there, so the truthful half is read on the test function's claims.
+    assert claim_verdict(t.prove_doc, claims_from_line=test_line) == "sat"
+    assert lie.verdict != "sat"
+
+
 # ---------------------------------------------------------------------------
 # The same pairs in process (a unit check, not a twin): the lifter's own
 # outcome for the test function.  Lying carries only the method's raise;
