@@ -51,20 +51,13 @@ def census(root: Path) -> int:
         collect_construction_panic,
     )
     from sugar_lift_py_tests.desugar_axis import DesugarAxis
-    from sugar_lift_py_tests.lift_rpc import (
-        open_source_file_for_construction,
-        provisional_contract_refs_from_demands,
-    )
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
     from sugar_source_tree.panic import LifterRefusal, SugarNotWritten
     from sugar_source_tree.reporter import CollectingReporter
     from sugar_source_tree.tree import SourceTree
 
     # Step 2's file list, the only files any door opens: never a second glob.
     files = list(SourceTree(root).paths())
-    # One demand table for the whole corpus root, exactly like the authoritative
-    # recensus. Deriving it per file (or from ``file.parent``) scans a different
-    # tree and shifts every With resolution — measurement drift, not signal.
-    contract_refs = provisional_contract_refs_from_demands(root)
     families: Counter = Counter()
     desugar = DesugarAxis()
     crashes: Counter = Counter()
@@ -83,14 +76,11 @@ def census(root: Path) -> int:
             nonlocal total_fns, clean_fns, clean_files
             reporter = CollectingReporter()
             # Production door: never a bare open (no construction context).
-            # Without the context every With paints RuntimeSelectedContextManager
-            # whether or not it resolves.
             try:
                 sf = open_source_file_for_construction(
                     _f,
                     root=root,
                     reporter=reporter,
-                    contract_refs=contract_refs,
                 )
             except SugarNotWritten as gap:
                 # Derivation can hit a real missing sugar before any function

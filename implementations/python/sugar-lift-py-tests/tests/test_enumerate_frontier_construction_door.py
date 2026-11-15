@@ -151,21 +151,16 @@ def test_frontier_leaf_never_reaches_the_bare_door(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("source", [UNRESOLVABLE_WITH, "x = 1\n"])
-def test_facts_leaf_never_manufactures_a_contract_ref(
+def test_facts_leaf_opens_under_a_context_that_holds_no_table(
     tmp_path: Path, source: str
 ) -> None:
-    """No use-site is silently promoted: the authority is a table, not a grant."""
-    (tmp_path / "t.py").write_text(source, encoding="utf-8")
+    """The entrance's context names the workspace and nothing else (#7757):
+    there is no table for a use-site to be promoted in."""
+    path = tmp_path / "t.py"
+    path.write_text(source, encoding="utf-8")
 
-    context = lift_rpc.enumerate_construction_context(tmp_path)
-    from sugar_lift_py_tests.context_manager_resolution import (
-        ContextManagerResolutionGapV1,
-    )
-
-    rows = (getattr(context.contract_refs, "by_use_site", None) or {}).values()
-    assert all(isinstance(row, ContextManagerResolutionGapV1) for row in rows), (
-        "the entrance minted a resolution it was never handed: "
-        f"{[type(row).__name__ for row in rows]}"
-    )
+    context = lift_rpc.construction_context_for_open(path, root=tmp_path)
+    assert context.workspace_root == str(tmp_path)
+    assert not hasattr(context, "contract_refs")
 
 

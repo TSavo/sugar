@@ -36,34 +36,6 @@ from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 _SOURCE_ROOT = sugar_lift_py_tests_package_root() / "src"
 
 
-_PRODUCER_FUNCTIONS = (
-    "_context_manager_rows_for_paths",
-    "_call_use_rows_for_units",
-    "_join_call_identity_into_with_demands",
-    "provisional_contract_refs_from_demands",
-)
-
-
-def _producer_bodies() -> dict[str, str]:
-    """The source of each function that actually builds the demand table."""
-    import ast
-
-    module = (_SOURCE_ROOT / "sugar_lift_py_tests" / "lift_rpc.py").read_text(
-        encoding="utf-8"
-    )
-    tree = ast.parse(module)
-    lines = module.splitlines()
-    bodies = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name in _PRODUCER_FUNCTIONS:
-            bodies[node.name] = "\n".join(lines[node.lineno - 1 : node.end_lineno])
-    assert set(bodies) == set(_PRODUCER_FUNCTIONS), (
-        f"producer functions missing from lift_rpc.py: "
-        f"{set(_PRODUCER_FUNCTIONS) - set(bodies)}"
-    )
-    return bodies
-
-
 def _corpus(root: pathlib.Path, files: dict[str, str]) -> pathlib.Path:
     root.mkdir(parents=True, exist_ok=True)
     for name, text in files.items():
@@ -203,57 +175,6 @@ def test_the_key_is_recomputable_from_the_preimage(tmp_path) -> None:
 
 
 # -- the measured law the key depends on --------------------------------------
-
-
-def test_the_producers_perform_no_runtime_observation() -> None:
-    """THE law that keeps runtime out of the content key.
-
-    The table is a pure function of source bytes, which is why one artifact
-    serves a 3.12 offload host and a 3.14 workstation. If a producer ever
-    starts importing, executing, or interrogating the interpreter, the key
-    becomes wrong -- and this must fail LOUDLY rather than let incompatible
-    machines share a table.
-
-    SCOPED TO THE PRODUCERS, AND HERE IS WHY. An earlier draft scanned the
-    whole of `lift_rpc.py` and failed on `_cache_cardinalities`, which reads
-    `sys.modules` to report cache sizes. That is telemetry about OUR OWN
-    installation, it is not called by any producer, and it does not touch the
-    corpus -- so scanning it tested a different claim than the one the key
-    depends on. The narrowing is recorded rather than quietly applied, because
-    narrowing a failing law to reach green is the exact move this suite exists
-    to prevent. `test_the_named_exception_is_not_a_producer` below is what
-    keeps the narrowing honest.
-    """
-    import re
-
-    forbidden = re.compile(
-        r"\bimportlib\b|\b__import__\b|\bexec\(|\beval\(|\bsys\.modules\b|\bpkgutil\b"
-    )
-    offenders = []
-    for name, body in _producer_bodies().items():
-        for line in body.splitlines():
-            if forbidden.search(line) and not line.strip().startswith("#"):
-                offenders.append(f"{name}: {line.strip()}")
-
-    assert offenders == [], (
-        "a demand-table producer now observes the runtime, so the content key "
-        "must include runtime identity or the artifact cannot be shared across "
-        f"interpreters: {offenders}"
-    )
-
-
-def test_the_named_exception_is_not_a_producer() -> None:
-    """Keeps the scoping above honest.
-
-    `_cache_cardinalities` is excluded because it is not on the production
-    path. If a producer ever calls it, the exclusion becomes a hole and this
-    fails -- so the narrowing cannot rot into a blind spot.
-    """
-    for name, body in _producer_bodies().items():
-        assert "_cache_cardinalities" not in body, (
-            f"{name} now calls _cache_cardinalities, which reads sys.modules; "
-            "the runtime-observation law's scoping is no longer sound"
-        )
 
 
 # -- parser identity is authenticated content identity -----------------------

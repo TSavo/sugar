@@ -13,18 +13,35 @@ TABLE_CID = "blake3-512:" + "6" * 128
 
 
 def _call_use_rows(root):
-    """Every enrolled file's imported call uses, by the per-source door's pass."""
-    units = lift_rpc._corpus_source_units(root)
-    return lift_rpc._call_use_rows_for_units(
-        root, units, lift_rpc._module_identities_for_units(root, units)
+    """Every enrolled file's imported call uses, by the one lexical import
+    pass, against the identities of the modules the root lists."""
+    from sugar_lift_py_tests.import_binding import (
+        authenticated_import_uses,
+        module_name_for_path,
     )
+    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_source_tree.tree import SourceTree
 
-
-def _with_demand_rows(root):
-    """Every source's With demand rows, from the one per-source derivation."""
-    from sugar_lift_py_tests.no_call_body_attribution import with_demand_rows
-
-    return with_demand_rows(root)["rows"]
+    units = []
+    for path in SourceTree(root).paths():
+        source, _filename, source_cid = path_source(str(path))
+        units.append((path, source, source_cid))
+    identities = {
+        module_name_for_path(root, path): {
+            "kind": "authenticated-python-module",
+            "schemaVersion": "1",
+            "moduleName": module_name_for_path(root, path),
+            "sourceCid": source_cid,
+        }
+        for path, _source, source_cid in units
+    }
+    rows = []
+    for path, source, source_cid in units:
+        enrolled, _outcomes = authenticated_import_uses(
+            root, path, source, source_cid, identities
+        )
+        rows.extend(enrolled)
+    return rows
 
 
 def test_an_unresolved_reference_stays_loud():
@@ -255,47 +272,6 @@ def test_relative_import_is_package_qualified_and_binding_coordinate_is_typed(tm
     assert use["cid"].startswith("blake3-512:")
 
 
-def test_demand_table_carries_with_demands_only(tmp_path):
-    """No call-contract demand or export row rides the table: nothing reads
-    one since the prebind went (#7879). The With demand still takes its
-    manager's import identity from the call at its coordinate."""
-    (tmp_path / "provider.py").write_text("def pair(x):\n    return (x, x)\n")
-    (tmp_path / "public.py").write_text("from provider import pair\n")
-    (tmp_path / "consumer.py").write_text(
-        "import pytest\n"
-        "from public import pair as renamed\n"
-        "renamed(1)\n"
-        "with pytest.raises(ValueError, match='bad'):\n"
-        "    raise ValueError('bad')\n"
-    )
-
-    rows = _with_demand_rows(tmp_path)
-
-    assert [row["kind"] for row in rows] == ["context-manager-demand"]
-    assert rows[0]["targetSymbol"] == "pytest.raises"
-    assert rows[0]["authenticatedImportUse"]["kind"] == "authenticated-import-use"
-
-
-def test_shadowed_local_raises_does_not_inherit_pytest_provider_contract(tmp_path):
-    (tmp_path / "consumer.py").write_text(
-        "from pytest import raises\n"
-        "def checked():\n"
-        "    raises = lambda *args, **kwargs: object()\n"
-        "    with raises(ValueError):\n"
-        "        pass\n"
-    )
-
-    row = next(
-        row
-        for row in _with_demand_rows(tmp_path)
-        if row["kind"] == "context-manager-demand"
-    )
-
-    assert row["targetSymbol"] is None
-    assert row["gapKind"] == "undecided"
-    assert "importBindingCid" not in row
-
-
 def test_an_imported_call_takes_its_symbol_from_the_one_import_table(tmp_path):
     """Inventory item 26: there is one way to bind a call. The call carries
     the target symbol the one import table (#7837) holds at its callee's own
@@ -306,7 +282,6 @@ def test_an_imported_call_takes_its_symbol_from_the_one_import_table(tmp_path):
     """
     from sugar_lift_python_source.source_oracle import path_source
     from sugar_lift_py_tests.context_manager_resolution import (
-        ResolvedContractRefsV1,
         TreeConstructionContextV1,
     )
     from sugar_source_tree.nodes import Call
@@ -321,12 +296,9 @@ def test_an_imported_call_takes_its_symbol_from_the_one_import_table(tmp_path):
         "dotted = p.pair(v)\n"
         "local(v)\n"
     )
-    cm_refs = ResolvedContractRefsV1(CATALOG_CID, TABLE_CID, MappingProxyType({}))
     tree = SourceFile(
         path_source(str(consumer)),
-        construction_context=TreeConstructionContextV1(
-            cm_refs, workspace_root=str(tmp_path)
-        ),
+        construction_context=TreeConstructionContextV1(workspace_root=str(tmp_path)),
     )
     calls = sorted(
         (node for node in tree.nodes() if isinstance(node, Call)),
@@ -346,7 +318,6 @@ def test_an_imported_call_takes_its_symbol_from_the_one_import_table(tmp_path):
 def test_producer_contract_exports_the_same_module_qualified_symbol(tmp_path):
     from sugar_lift_python_source.source_oracle import path_source
     from sugar_lift_py_tests.context_manager_resolution import (
-        ResolvedContractRefsV1,
         TreeConstructionContextV1,
     )
     from sugar_lift_py_tests.tree_enumerate import function_contract_rows
@@ -356,10 +327,7 @@ def test_producer_contract_exports_the_same_module_qualified_symbol(tmp_path):
     producer.write_text("def pair():\n    return (1, 2)\n")
     tree = SourceFile(
         path_source(str(producer)),
-        construction_context=TreeConstructionContextV1(
-            ResolvedContractRefsV1(CATALOG_CID, TABLE_CID, MappingProxyType({})),
-            workspace_root=str(tmp_path),
-        ),
+        construction_context=TreeConstructionContextV1(workspace_root=str(tmp_path)),
     )
     function = next(tree.functions())
 
@@ -372,7 +340,6 @@ def test_producer_contract_exports_the_same_module_qualified_symbol(tmp_path):
 def test_only_module_level_function_publishes_import_export_symbol(tmp_path):
     from sugar_lift_python_source.source_oracle import path_source
     from sugar_lift_py_tests.context_manager_resolution import (
-        ResolvedContractRefsV1,
         TreeConstructionContextV1,
     )
     from sugar_source_tree.tree import SourceFile
@@ -385,10 +352,7 @@ def test_only_module_level_function_publishes_import_export_symbol(tmp_path):
     )
     tree = SourceFile(
         path_source(str(producer)),
-        construction_context=TreeConstructionContextV1(
-            ResolvedContractRefsV1(CATALOG_CID, TABLE_CID, MappingProxyType({})),
-            workspace_root=str(tmp_path),
-        ),
+        construction_context=TreeConstructionContextV1(workspace_root=str(tmp_path)),
     )
     functions = list(tree.functions())
 

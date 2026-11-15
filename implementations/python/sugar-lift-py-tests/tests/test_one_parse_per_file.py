@@ -57,10 +57,8 @@ def test_the_readers_then_the_opener_parse_the_file_once_into_one_unit(
     path.write_text(_PRODUCER, encoding="utf-8")
     bound = _count_parses(monkeypatch)
 
-    # Step 3: the With rows and the lexical import pass, through the first
-    # stage with no context.
-    rows = lift_rpc._context_manager_rows_for_paths([path], root=tmp_path)
-    assert [row["kind"] for row in rows] == ["context-manager-demand"]
+    # Step 3: the lexical import pass, through the first stage with no
+    # context.
     source, _seat, source_cid = lift_rpc._read_at_seat(path, root=tmp_path)
     _run_lexical_import_pass(tmp_path, path, source, source_cid)
     read = lift_rpc._open_at_seat(path, root=tmp_path)

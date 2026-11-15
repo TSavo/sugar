@@ -32,7 +32,7 @@ def _write_three_functions(path: Path) -> None:
 
 
 def _open(tmp_path: Path, path: Path):
-    ctx = tree_construction_context_for_workspace(tmp_path, contract_refs={})
+    ctx = tree_construction_context_for_workspace(tmp_path)
     return open_source_file_for_construction(
         path,
         root=tmp_path,

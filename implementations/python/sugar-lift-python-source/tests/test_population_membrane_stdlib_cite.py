@@ -129,7 +129,7 @@ def _open_json_once():
     locus = _locus_root_for_corpus(corpus)
     target = corpus / "io" / "json" / "_json.py"
     assert target.is_file(), f"missing planted corpus file {target}"
-    ctx = tree_construction_context_for_workspace(corpus, contract_refs={})
+    ctx = tree_construction_context_for_workspace(corpus)
     reporter = CollectingReporter()
     from sugar_source_tree.panic import SugarNotWritten
 

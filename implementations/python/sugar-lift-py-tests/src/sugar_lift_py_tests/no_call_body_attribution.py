@@ -450,25 +450,6 @@ def attribute_body_probes(probes: Iterable[BodyProbe]) -> AttributionReport:
     )
 
 
-def with_demand_rows(corpus_root: Path) -> dict:
-    """Every With demand row of the corpus, asked source by source.
-
-    The rows are the one per-source derivation's (``_PerSourceDemandRows``),
-    read for every enrolled source; nothing is pulled from a shelf or minted
-    as a table in its place (#7757 item 46).
-    """
-    from sugar_lift_py_tests.lift_rpc import _PerSourceDemandRows
-
-    demands = _PerSourceDemandRows(Path(corpus_root))
-    return {
-        "rows": [
-            row
-            for source_cid in demands.source_cids()
-            for row in demands.rows_for_source(source_cid)
-        ]
-    }
-
-
 def _use_site_coordinate(
     path: Path,
     corpus_root: Path,
