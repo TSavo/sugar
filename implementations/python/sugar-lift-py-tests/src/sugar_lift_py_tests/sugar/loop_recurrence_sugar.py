@@ -1712,8 +1712,12 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                     raise TypeError(
                         "positional target unpack omitted its authenticated roster"
                     )
+                # The roster is this operation's: minted under its occurrence
+                # (``mint_roster``), the one fragment it was built with.
+                # ``target.fragment`` is a new ``SourceFragment`` at every read,
+                # so it is never the roster's by identity.
                 if (
-                    roster.occurrence is not target.fragment
+                    roster.occurrence is not operation.blame
                     or roster.demand_cid != operation.demand_cid()
                     or len(roster.members) != len(target.elts)
                 ):
