@@ -921,7 +921,14 @@ class ConstructionTestimonyReporterV1:
         the present answer. So the coordinate carries exactly one discharge --
         the loud absent one -- never a present testimony it does not have and
         never no discharge at all.
+
+        The gap is given through the one testimony door
+        (``construction_cache.testify``), as every refusal by name is: the
+        construction in flight holds it, so ``Node.sugar`` finds this refusal
+        already testified (``has_testified``) and does not report it a second
+        time, and the row replays it to a reporter that did not hear it.
         """
+        from sugar_source_tree.construction_cache import testify
         from sugar_source_tree.panic import ConstructedValueTestimonyNotWritten
 
         panic = ConstructedValueTestimonyNotWritten(
@@ -940,7 +947,7 @@ class ConstructionTestimonyReporterV1:
         )
         if shape is not None:
             self._failed_by_node_shape[shape] = panic
-        self.report_gap(node, panic)
+        testify(self, "report_gap", node, panic)
         raise panic
 
     def testimony_for(self, node: Node) -> ConstructedValueTestimonyV1 | None:

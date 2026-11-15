@@ -217,6 +217,50 @@ def test_repeated_sugar_reraises_the_memoized_panic_without_new_roll_mass():
         cls._construct_sugar = original
 
 
+def test_a_refusal_raised_while_constructing_is_one_gap_at_the_node():
+    # The constant sits inside a display, so nothing constructs it before the
+    # testimony reporter asks: ``Node.sugar`` constructs it under that
+    # reporter, whose refusal of the constructed value is the node's absent
+    # answer.  The reporter's own door testifies the gap, once, through the
+    # one testimony door; ``Node.sugar`` finds it testified and says nothing
+    # more.  Two gaps for the one refusal would be two discharges.
+    cls, original = _unsupported_constructing("Constant")
+    try:
+        root, reporter, collector = _testimony_tree("x = [1]\n")
+        node = _first(root, "Constant")
+        first = second = None
+        try:
+            node.sugar()
+        except ConstructedValueTestimonyNotWritten as panic:
+            first = panic
+        assert first is not None, "construction stayed green"
+        assert len(collector.gaps) == 1, collector.gaps
+        assert collector.gaps[0][0] is node
+        assert collector.gaps[0][1] is first
+        assert [n for n in collector.present if n.ref is node.ref] == []
+        try:
+            node.sugar()
+        except ConstructedValueTestimonyNotWritten as panic:
+            second = panic
+        assert second is first
+        assert len(collector.gaps) == 1, collector.gaps
+    finally:
+        cls._construct_sugar = original
+
+
+def test_a_constant_inside_a_display_is_present_with_its_testimony():
+    # Truthful half of the test above: the same node, constructing a value
+    # the reporter can content-address, is present with testimony and no gap.
+    root, reporter, collector = _testimony_tree("x = [1]\n")
+    node = _first(root, "Constant")
+    node.sugar()
+    testimony = reporter.testimony_for(node)
+    assert testimony is not None
+    assert testimony.cid.startswith("blake3-512:")
+    assert collector.gaps == []
+    assert [n for n in collector.present if n.ref is node.ref] != []
+
+
 def test_a_reporter_that_refused_a_served_row_is_refused_it_on_every_ask():
     # The constant's row was computed at the open, under a roll that builds
     # no testimony, and holds a present answer.  The testimony reporter is
