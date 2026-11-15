@@ -64,15 +64,24 @@ class DefinitionDefaultsSugar(Sugar):
     in the scope the statement runs in), then the sugar of each annotation
     Python evaluates where the statement runs
     (``nodes._evaluated_annotations``); ``evaluations`` holds ``(key, value
-    index)`` per default, and no annotation is bound under a key.  The statement binds no name of its own here:
-    substitution bound the name to the definition
-    (``nodes._local_definition_binding``), and its body runs only at a
-    call."""
+    index)`` per default, and no annotation is bound under a key.  The
+    function's body runs only at a call.
+
+    ``value``: for a local plain ``def`` substitution bound its name to its
+    function value (``nodes._binds_function_value``), the statement's own
+    application building that function (``nodes._statement_application``),
+    evaluated after every default and annotation and bound under
+    ``evaluation``, the statement's key for the name, which every value read
+    of the name reads.  None where substitution bound the name to the
+    definition itself (``nodes._local_definition_binding``): the statement
+    binds no name of its own."""
 
     values: tuple
     evaluations: tuple
     site: object = dataclass_field(compare=False)
     decorators: tuple = dataclass_field(default=(), compare=False)
+    value: object = dataclass_field(default=None, compare=False)
+    evaluation: str | None = None
     # Evaluating the decorator expressions and the defaults is the
     # statement's only work before it binds.
     halts_at_statement_head: ClassVar[bool] = True
@@ -104,7 +113,20 @@ class DefinitionDefaultsSugar(Sugar):
             evaluate_assignment_values,
         )
 
-        return evaluate_assignment_values(self.values, ctx, evaluations=self.evaluations)
+        if self.value is None:
+            return evaluate_assignment_values(
+                self.values, ctx, evaluations=self.evaluations
+            )
+        # The defaults and annotations, then the function, the statement's
+        # last value; every key is bound once all of them completed.
+        return evaluate_assignment_values(
+            (*self.values, self.value),
+            ctx,
+            evaluations=(
+                *self.evaluations,
+                (self.evaluation, len(self.values)),
+            ),
+        )
 
 
 @dataclass(frozen=True)

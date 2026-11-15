@@ -211,8 +211,9 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
             "    return z\n\n"
         )
         # A local plain ``def`` binds its name to the function value its
-        # statement built, carrying the default it evaluated there: the call
-        # of the name is the call of that value (``nodes._binds_function_value``).
+        # statement built (``nodes._binds_function_value``), and the default
+        # under the key its statement bound it: the call of the name binds
+        # that default (``nodes._definition_defaults_sugar``).
         local = (
             "def A(z):\n"
             "    def g(a=z):\n"

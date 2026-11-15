@@ -3300,10 +3300,11 @@ class _Reach(NamedTuple):
 def _source_callee(call, scope):
     """The source ``def`` a call by name runs: the one the unit's lexical
     rows (or the module) resolve it to, or the local ``def`` ``scope`` binds
-    the name to (``Call._closure_definition``); None otherwise.  A unit whose
+    the name to, itself or its function value (``nodes._local_function_bound``,
+    as ``Call._closure_definition`` reads it); None otherwise.  A unit whose
     resolution of the call raises ``SugarNotWritten`` raises it here."""
     from .binding_state import unwrap_binding_state
-    from .nodes import AsyncFunctionDef, Call, FunctionDef, Name
+    from .nodes import AsyncFunctionDef, Call, FunctionDef, Name, _local_function_bound
 
     if not isinstance(call, Call) or not isinstance(call.func, Name):
         return None
@@ -3313,7 +3314,7 @@ def _source_callee(call, scope):
     bound = scope.get(call.func.id)
     if bound is None:
         return None
-    bound = unwrap_binding_state(bound)
+    bound = _local_function_bound(unwrap_binding_state(bound))
     if type(bound) in (FunctionDef, AsyncFunctionDef) and not bound.decorators:
         return bound
     return None
