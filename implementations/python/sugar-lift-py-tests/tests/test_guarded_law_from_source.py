@@ -13,7 +13,9 @@ TRUTHFUL: each category constructs. At `78714a798` every function in
 `GUARDED_CATEGORIES` raised the ledger's exact panic
 (`owner=guarded ... requested=ride under a guard`); each now completes.
 
-REACHED: the six categories are actually dispatched through `guarded`. Without
+REACHED: the value categories are actually dispatched through `guarded` (the
+ledger's sixth, a `class` statement, is a binding under the one statement
+rule, not a bare value; it is held to TRUTHFUL alone). Without
 this face the truthful one passes vacuously — a change that stops routing these
 values under the guard at all would leave every construction green while the
 law it is supposed to exercise goes untested. That is the shape of a control
@@ -81,16 +83,22 @@ def guarded_obligation(flag, claim):
     return 7
 """
 
-# Each function names the Floor category its guarded entry rides as. The six
-# categories are exactly the non-BlockValue owners the ledger records.
+# Each function names the Floor category its guarded entry rides as: the
+# value categories the ledger records.
 GUARDED_CATEGORIES = {
     "bare_string": "StringValue",
     "bare_true": "TrueBoolLiteralSugar",
     "bare_false": "FalseBoolLiteralSugar",
     "bare_comprehension": "ComprehensionValue",
     "bare_symbolic": "SymbolicValue",
-    "guarded_class_definition": "ClassDefinitionValue",
 }
+
+# A ``class`` statement under the guard is no bare value: it binds its name
+# under its statement's key, as every body's ``class`` statement does
+# (``_body_statement_sugar``, #7757), and ``keep = Inner`` reads that key on
+# the arm that ran it.  It must construct; it is not asked to ride the guard
+# as a bare value's category.
+GUARDED_CONSTRUCTIONS = (*GUARDED_CATEGORIES, "guarded_class_definition")
 
 
 @pytest.fixture
@@ -161,7 +169,7 @@ def guarded_dispatch(monkeypatch):
     return ridden
 
 
-@pytest.mark.parametrize("name", sorted(GUARDED_CATEGORIES))
+@pytest.mark.parametrize("name", sorted(GUARDED_CONSTRUCTIONS))
 def test_guarded_category_constructs_from_source(corpus: Path, name: str) -> None:
     """TRUTHFUL: the ledger's guarded categories complete instead of panicking.
 

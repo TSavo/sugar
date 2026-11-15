@@ -1110,12 +1110,22 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
     records = _conserve_unique_records(records)
     construction = decode_loop_construction_v1({"root": root, "records": records})
     # The body every item runs, the symbolic item included: one tuple of
-    # the body's statement sugars, under the guard an item runs at all.
-    body_sugars = tuple(statement.sugar() for statement in loop.body)
+    # the body's statement sugars, under the guard an item runs at all, each
+    # through the one statement rule every body uses (#7757).
+    from .nodes import (
+        _body_statement_sugar,
+        _loop_header_evaluation_key,
+        _loop_target_evaluation_key,
+    )
+
+    body_sugars = tuple(_body_statement_sugar(statement) for statement in loop.body)
+
+    def else_sugars():
+        return tuple(_body_statement_sugar(statement) for statement in loop.orelse)
+
     construction = replace(
         construction, symbolic_item=LiveSymbolicItemV1(body_sugars, true_guard)
     )
-    from .nodes import _loop_header_evaluation_key, _loop_target_evaluation_key
 
     writes = _carried_writes(items, carried_names)
     else_writes = _carried_writes(loop.orelse, carried_names)
@@ -1161,7 +1171,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
                 carried_names,
                 initial_value_sugars(),
                 body_sugars,
-                tuple(statement.sugar() for statement in loop.orelse),
+                else_sugars(),
                 carried_evaluations,
                 tuple(
                     _loop_target_evaluation_key(loop, name, scope)
@@ -1186,7 +1196,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
                 carried_names,
                 initial_value_sugars(),
                 body_sugars,
-                tuple(statement.sugar() for statement in loop.orelse),
+                else_sugars(),
                 carried_evaluations,
                 While._FUEL,
                 published_evaluations,
