@@ -2565,8 +2565,9 @@ class SourceUnit:
     _module_binding_states_memo: object = field(
         init=False, default=None, repr=False, compare=False
     )
-    # ``(typed module, start offsets, module statements)``: the module body's
-    # statements in source order, for ``module_execution_site``.
+    # ``(typed module, start offsets, module statements, answers)``: the
+    # module body's statements in source order, for ``module_execution_site``,
+    # and each answer it gave, by ``(span start, span end, for-or-with)``.
     _module_statement_starts_memo: object = field(
         init=False, default=None, repr=False, compare=False
     )
@@ -4108,6 +4109,12 @@ class SourceUnit:
         site (its implicit ``__next__`` or ``__exit__``) runs after its body
         too (``after_body``).  Read off the typed tree by source span; a unit
         with no typed root refuses by name (``_require_typed_module``).
+
+        The answer is a function of the span and of whether ``node`` is a
+        ``for`` or ``with`` statement, so it is read off the tree once per
+        such position of a typed root: every statement and implicit call
+        site asks (``_at_module_execution_site``), and every copy
+        substitution makes of a node asks again at the same span.
         """
         module = self._require_typed_module(
             "SourceUnit.module_execution_site", blame=self.filename
@@ -4119,10 +4126,27 @@ class SourceUnit:
                 module,
                 tuple(statement.span.start for statement in statements),
                 statements,
+                {},
             )
             object.__setattr__(self, "_module_statement_starts_memo", memo)
-        _module, starts, statements = memo
+        _module, starts, statements, answers = memo
         span = node.span
+        position = (
+            span.start,
+            span.end,
+            isinstance(node, (For, AsyncFor, With, AsyncWith)),
+        )
+        if position in answers:
+            return answers[position]
+        site = self._module_execution_site_at(node, span, starts, statements)
+        answers[position] = site
+        return site
+
+    def _module_execution_site_at(
+        self, node, span, starts, statements
+    ) -> "Optional[ModuleExecutionSiteV1]":
+        """``module_execution_site``'s walk from the module statement that
+        holds ``span`` down to the statement whose own expressions hold it."""
         index = bisect.bisect_right(starts, span.start) - 1
         if index < 0:
             return None
