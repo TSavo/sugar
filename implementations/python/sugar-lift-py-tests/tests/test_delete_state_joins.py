@@ -85,6 +85,29 @@ METHOD_DROP = (
     "class Holder:\n" "    def drop(self, obj, key):\n" "        del obj[key]\n"
 )
 
+# Since #8857 each seed above takes ``class:obj`` as an input (``obj`` is
+# deleted from and used no other way), so its delete is the dispatched
+# ``__delitem__`` edge, answered at prove by the class a caller binds (#8864):
+# no ``KeyError`` is decided here, and its halt leaves the block with the
+# prefix the body reached (``function_universe_sugar``'s one statement
+# tail).  The carrier these discharge joins read stands for a formal whose
+# class is no input: ``return obj`` reads ``obj`` bare
+# (``nodes._receiver_uses``), so ``project_delitem`` mints it.
+DELITEM_CARRIER = "def helper(obj, key):\n    del obj[key]\n    return obj\n"
+MULTI_PRIOR_STORE_CARRIER = (
+    "def multi(obj, key):\n"
+    "    a = [0]\n"
+    "    a[0] = 9\n"
+    "    del obj[key]\n"
+    "    return obj\n"
+)
+METHOD_DROP_CARRIER = (
+    "class Holder:\n"
+    "    def drop(self, obj, key):\n"
+    "        del obj[key]\n"
+    "        return obj\n"
+)
+
 
 def _tree(source: str, name: str = "delete_state_joins.py") -> SourceFile:
     return SourceFile(
@@ -118,8 +141,50 @@ def _route_try(exits: ExitSet, expected: str) -> ExitSet:
     )
 
 
+def _dispatched_halt(source: str):
+    """The seed's own proof: the dispatched ``__delitem__`` edge's one halt
+    (``call:dispatch:__delitem__(obj, key, py.class("0", class:obj))``,
+    owed), and the call it names."""
+    from sugar_lift_py_tests.call_symbol import call_symbol
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    tree = _tree(source, "delitem_dispatched.py")
+    function = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name in {"helper", "multi", "drop"}
+    )
+    outcome = function.sugar().desugar(None)
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "UnknownCallee:dispatch:__delitem__"
+    ]
+    assert len(halts) == 1, outcome
+    assert "python:dispatch:__delitem__" in {c.symbol for c in owed_calls(outcome)}
+    call = halts[0].effect.raised_by_call.args[0]
+    assert call.name == call_symbol("dispatch:__delitem__"), call
+    return function, halts[0], call
+
+
+def test_dispatched_delete_halt_keeps_the_earlier_store_in_its_state() -> None:
+    """(c) on the dispatched edge: the halt leaves ``multi`` with the record
+    the body reached, ``a[0] = 9`` in it -- never an empty, rolled-back
+    state.  The edge names no exception (prove types it)."""
+    _function, halt, call = _dispatched_halt(MULTI_PRIOR_STORE)
+    assert [arg.name for arg in call.args[:2]] == ["obj", "key"]
+    assert halt.effect.exception_type_coordinate is None
+    assert halt.state is not None, f"{CODEX1}: dispatched delete halt dropped state"
+    assert any(
+        isinstance(entry, ListValue) and entry == fresh(ListValue, (TermValue(9),))
+        for entry in halt.state.entries
+    ), f"{CODEX1}: earlier store absent from entries={halt.state.entries!r}"
+
+
 def _delitem_keyerror_halt(
-    source: str = DELITEM_HELPER,
+    source: str = DELITEM_CARRIER,
 ) -> tuple[NativeOperationExitCarrierV1, Halted]:
     """Sole exceptional edge: formal delitem missing-key KeyError."""
     tree = _tree(source, "delitem_seed.py")
@@ -231,7 +296,7 @@ def test_with_then_try_composition_on_delete_halt() -> None:
 
 def test_earlier_bindings_survive_delete_halt_in_multi_statement_body() -> None:
     """Prior ``a[0]=9`` remains in pre-effect state when later delitem KeyErrors."""
-    pending, halted = _delitem_keyerror_halt(MULTI_PRIOR_STORE)
+    pending, halted = _delitem_keyerror_halt(MULTI_PRIOR_STORE_CARRIER)
     assert halted.state is not None, f"{CODEX1}: multi-statement halt dropped state"
     lists = [e for e in halted.state.entries if isinstance(e, ListValue)]
     assert lists == [
@@ -242,7 +307,7 @@ def test_earlier_bindings_survive_delete_halt_in_multi_statement_body() -> None:
 
 def test_discrimination_completed_return_is_not_the_delete_keyerror_halt() -> None:
     """Positive twin: in-range delete completes; not a KeyError halt face."""
-    tree = _tree(DELITEM_HELPER, "complete_delete.py")
+    tree = _tree(DELITEM_CARRIER, "complete_delete.py")
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     pending = function.sugar().desugar(None)
     assert isinstance(pending, NativeOperationExitCarrierV1)
@@ -265,7 +330,19 @@ def test_discrimination_completed_return_is_not_the_delete_keyerror_halt() -> No
 
 def test_bound_method_delete_retains_obj_key_demand_not_self() -> None:
     """Method alone: delitem formals are obj/key — self is binder, not demand."""
-    tree = _tree(METHOD_DROP, "method_drop_alone.py")
+    # The dispatched edge (#8857): ``type(obj).__delitem__(obj, key)``, its
+    # receiver ``obj`` -- never ``self`` -- with ``obj``'s class input.
+    _method, _halt, call = _dispatched_halt(METHOD_DROP)
+    assert [arg.name for arg in call.args[:2]] == [
+        "obj",
+        "key",
+    ], f"{CODEX3}: dispatched delete shifted by self: {call.args!r}"
+    assert call.args[2].name == "py.class"
+    assert call.args[2].args[1].name == "class:obj"
+    assert len(call.args) == 3
+
+    # The carrier, where ``obj``'s class is no input.
+    tree = _tree(METHOD_DROP_CARRIER, "method_drop_alone.py")
     method = next(
         node
         for node in tree.nodes()
@@ -335,7 +412,7 @@ def test_bound_method_delete_on_a_class_call_result_is_undecided_at_the_call(
 
 def test_fabricated_empty_state_is_not_pre_delete_when_store_preceded() -> None:
     """Bite: multi-statement halt state is not an empty fabricated block."""
-    pending, halted = _delitem_keyerror_halt(MULTI_PRIOR_STORE)
+    pending, halted = _delitem_keyerror_halt(MULTI_PRIOR_STORE_CARRIER)
     fabricated = _ReducedBlock((), True, ())
     assert halted.state is not None
     assert halted.state is pending.pre_effect_state.state
