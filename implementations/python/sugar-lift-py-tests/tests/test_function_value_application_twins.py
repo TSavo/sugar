@@ -14,11 +14,15 @@ imported call is (``LambdaCallable._edge_call``):
   ``def`` statement bound.
 
 What the body does to an object the caller sees (a ``nonlocal`` rebinding,
-an append) is no longer read off the callee's body: the call takes the one
-exposure rule every unanswered call takes, so the caller's cell is unknown
-after the call.  The callee's contract does not yet state its effects on
-what it shares with its caller (step 7), so those twins are ``open`` in both
-halves, never ``sat`` for the lie (decided before step 5, marked below).
+an append) is never read off the callee's body: the call takes the one
+exposure rule every call takes, and on the call's completed face the
+caller's cell reads ``python:after(<call result>, "cell:<name>")``, keyed on
+the call (#7757 step 7).  The callee's contract states what it leaves in a
+cell it rebinds at its top level over that term
+(``UniverseValue.after_facts``), so the join decides a ``nonlocal``
+rebinding.  What an append leaves in a cell whose type nothing decides is
+not stated, so that twin stays ``open`` in both halves, never ``sat`` for
+the lie.
 """
 
 from __future__ import annotations
@@ -117,13 +121,20 @@ _TWINS = {
     "module-def-spread": (_MODULE_DEF_SPREAD, "3", "4"),
 }
 
-# Decided before step 5 by following the callee's body; ``open`` in both
-# halves until the callee's contract states its effects on what it shares
-# with its caller (step 7).
-_OPEN_UNTIL_STEP_7 = {
+# Decided before step 5 by following the callee's body; decided again at
+# prove since the callee's contract states what it left in the cell it
+# rebinds (``python:after(out, "cell:n")``, #7757 step 7).
+_STATED_BY_THE_CALLEE = {
     "nonlocal-rebound": (_NONLOCAL_REBOUND_THROUGH_THE_VALUE, "1", "0"),
-    "append-carried": (_APPEND_THROUGH_THE_VALUE, "1", "0"),
     "direct-nonlocal-rebound": (_DIRECT_NONLOCAL_REBOUND, "1", "0"),
+}
+
+# Decided before step 5 by following the callee's body; ``open`` in both
+# halves while the callee's contract states nothing of what it left in the
+# cell: an append on a cell whose type nothing here decides is not
+# determined by the contract's inputs (#7757 step 7).
+_OPEN_UNTIL_STEP_7 = {
+    "append-carried": (_APPEND_THROUGH_THE_VALUE, "1", "0"),
 }
 
 # The called function's own contract (its body lifted alone, never the
@@ -189,6 +200,29 @@ def test_a_call_through_the_value_is_decided(shape: str, tmp_path: Path) -> None
     owed = _OWED_BY_THE_CALLEE[shape]
     assert _owed(truthful.prove_doc) == owed, truthful.prove_doc
     assert truthful.verdict == ("open" if owed else "sat"), truthful.prove_doc
+
+
+@pytest.mark.parametrize("shape", sorted(_STATED_BY_THE_CALLEE))
+def test_a_cell_the_callee_rebinds_is_decided_by_its_contract(
+    shape: str, tmp_path: Path
+) -> None:
+    source, true, false = _STATED_BY_THE_CALLEE[shape]
+    truthful = run_source_through_real_solver(
+        tmp_path / "t", source.format(claim=true)
+    )
+    lying = run_source_through_real_solver(tmp_path / "l", source.format(claim=false))
+    print(
+        json.dumps(
+            {"truthful": truthful.verdict, "lying": lying.verdict}, sort_keys=True
+        )
+    )
+    # The caller reads its cell after the call as the callee's contract
+    # names it; the join decides it: the truthful claim is discharged and
+    # the lying one refuted.  The callee's ``n += 1`` over its free input
+    # may owe its operation, which keeps the truthful half from ``sat``.
+    assert _claim_statuses(truthful.prove_doc) == ["discharged"], truthful.prove_doc
+    assert truthful.verdict != "unsat", truthful.prove_doc
+    assert lying.verdict == "unsat", lying.prove_doc
 
 
 @pytest.mark.parametrize("shape", sorted(_OPEN_UNTIL_STEP_7))
