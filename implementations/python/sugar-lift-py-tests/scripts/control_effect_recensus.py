@@ -736,6 +736,50 @@ def terminal_after_measure_escape(
     }
 
 
+def _partial_line(
+    measured_rows: list[tuple[str, Mapping[str, Any]]],
+    result: Mapping[str, Any],
+    *,
+    total: int,
+) -> str:
+    """The files that did reach a terminal, when compose refused the board.
+
+    Not ``RECENSUS DONE``: that line is the sealed board's, every number on it
+    read off the composed result, and printing it here would claim a board
+    that was refused. This line says what the walk did reach, so one file's
+    instrument failure does not unmeasure every other file.
+
+    A file counts toward ``files``/``cpanic``/``exhausted`` only when compose
+    named no failure against it; a file compose named (``instrumentFailures``,
+    keyed by file) or whose row is an instrument failure counts once in
+    ``instrument_failures``. ``unmeasured`` is the rest of the enrolment: files
+    with no row at all. The four counts partition ``total``.
+    """
+    failed_files = {
+        str(failure["file"])
+        for failure in (result.get("instrumentFailures") or [])
+        if isinstance(failure, Mapping) and failure.get("file") is not None
+    }
+    failed_files.update(
+        file for file, row in measured_rows if row.get("instrumentFailure")
+    )
+    kinds = Counter(
+        row.get("terminalKind")
+        for file, row in measured_rows
+        if file not in failed_files
+    )
+    completed = kinds["constructed"]
+    cpanic = kinds["construction-panic"]
+    exhausted = kinds["measurement-exhausted"]
+    seen = {file for file, _row in measured_rows}
+    unmeasured = max(0, total - len(seen))
+    return (
+        "RECENSUS PARTIAL "
+        f"files={completed}/{total} cpanic={cpanic} exhausted={exhausted} "
+        f"instrument_failures={len(failed_files)} unmeasured={unmeasured}"
+    )
+
+
 def main() -> int:
     # Line-buffer stdout even when not a TTY (CI pipes / artifact capture).
     try:
@@ -1992,6 +2036,7 @@ def main() -> int:
             f"missing={result.get('missingShards')} "
             f"reasons={result.get('unmeasuredReasons')}"
         )
+        _narrate(_partial_line(measured_rows, result, total=len(file_names)))
         result_path.parent.mkdir(parents=True, exist_ok=True)
         result_path.write_text(json.dumps(result, indent=2) + "\n")
         return 2

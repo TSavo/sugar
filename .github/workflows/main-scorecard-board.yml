@@ -127,16 +127,31 @@ jobs:
               --out-dir "$OUT/join" \
               > "$OUT/join.log" 2>&1
           echo "join rc=$?"
-          grep -a 'RECENSUS DONE' "$OUT/join.log" || echo "no RECENSUS DONE line"
+          grep -a -e 'RECENSUS DONE' -e 'RECENSUS PARTIAL files=' "$OUT/join.log" \
+            || echo "no RECENSUS DONE or RECENSUS PARTIAL line"
       - name: Post the board number
         if: ${{ !cancelled() }}
         shell: bash
         run: |
           set +e -uo pipefail
+          # The sealed board's line; when compose refused the board, the line
+          # naming the files that did reach a terminal and how many files the
+          # instrument failed on (control_effect_recensus._partial_line).
           line="$(grep -a 'RECENSUS DONE' board/join.log 2>/dev/null | tail -n 1 | tr -d '\r')"
+          partial=""
+          if [ -z "$line" ]; then
+            line="$(grep -a 'RECENSUS PARTIAL files=' board/join.log 2>/dev/null | tail -n 1 | tr -d '\r')"
+            [ -n "$line" ] && partial=1
+          fi
           completed="$(printf '%s' "$line" | sed -n 's/.*files=\([0-9]*\)\/\([0-9]*\).*/\1/p')"
           total="$(printf '%s' "$line" | sed -n 's/.*files=\([0-9]*\)\/\([0-9]*\).*/\2/p')"
           cpanic="$(printf '%s' "$line" | sed -n 's/.*cpanic=\([0-9]*\).*/\1/p')"
+          failures="$(printf '%s' "$line" | sed -n 's/.*instrument_failures=\([0-9]*\).*/\1/p')"
+          partial_args=()
+          if [ -n "$partial" ]; then
+            partial_args=(--set "board.instrument_failures=${failures:-?}" \
+              --set "board.note=partial: compose refused the board; ${failures:-?} files failed the instrument and are not counted")
+          fi
           carried=0; rerun=0
           for log in board/s*.log; do
             [ -f "$log" ] || continue
@@ -144,16 +159,17 @@ jobs:
             r="$(grep -a 'RECENSUS CARRY' "$log" | tail -n 1 | sed -n 's/.* rerun=\([0-9]*\).*/\1/p')"
             carried=$((carried + ${c:-0})); rerun=$((rerun + ${r:-0}))
           done
-          echo "board completed=$completed total=$total cpanic=$cpanic rerun=$rerun carried=$carried"
+          echo "board completed=$completed total=$total cpanic=$cpanic instrument_failures=${failures:-0} partial=${partial:-0} rerun=$rerun carried=$carried"
           if [ -n "$completed" ] && [ -n "$total" ]; then
             python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" --final \
               --set "board.completed=$completed" --set "board.total=$total" \
               --set "board.cpanic=${cpanic:-?}" \
               --set "board.line=$(printf '%s' "$line" | cut -c1-300)" \
-              --set "board.carry.rerun=$rerun" --set "board.carry.carried=$carried"
+              --set "board.carry.rerun=$rerun" --set "board.carry.carried=$carried" \
+              "${partial_args[@]}"
           else
             python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" --final \
-              --set board.measured=false --set "board.note=no RECENSUS DONE line"
+              --set board.measured=false --set "board.note=no RECENSUS DONE or RECENSUS PARTIAL line"
           fi
       - name: Upload board logs
         if: ${{ !cancelled() }}

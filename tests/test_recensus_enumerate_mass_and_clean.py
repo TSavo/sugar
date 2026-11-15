@@ -429,6 +429,106 @@ def test_reasonless_unauthenticated_audit_panic_is_instrument_failure() -> None:
     assert str(raw_panic) in row["instrumentFailure"]["message"]
 
 
+def test_unanswered_roll_call_absentee_is_a_construction_panic_terminal() -> None:
+    """The leaf's ``UnaccountedConstruction`` (#8349) decodes as a refusal.
+
+    Shaped exactly as ``lift_rpc._roll_call_audit_leaf`` emits it for a node
+    that never answered on a roll with no refusal: the file's terminal is
+    ``construction-panic``, carrying the absentee's node kind and coordinate,
+    and compose authenticates the row -- it is neither an instrument failure
+    nor ``constructed``.
+    """
+    terminal = "x.py:3:4-3:9[Name]"
+    nodes = [{"memento": {"function_name": "a", "source_cid": "blake3-512:f"}}]
+    leaf_panic = {
+        "kind": "ConstructionPanic",
+        "status": "mandatory-panic",
+        "reason": "Name registered but never answered the roll call",
+        "locus": "x.py:3:4",
+        "demandedSource": "module:blake3-512:x",
+        "terminalGapLocus": terminal,
+        "gap": {
+            "blame": terminal,
+            "kind": "UnaccountedConstruction",
+            "nodeKind": "Name",
+            "reason": "Name registered but never answered the roll call",
+            "owner": "roll_call.discharge",
+            "coordinate": terminal,
+            "observed": "Name registered but never answered the roll call",
+            "requested": f"a present or absent answer from Name at {terminal}",
+            "fix": "find the construction that should answer for this Name",
+            "entrance": "sugar.enumerate:facts:auditFrontier",
+            "observedEventType": "sugar_source_tree.panic.UnaccountedConstruction",
+            "construction_trace": [
+                {
+                    "kind": "source-construct",
+                    "constructOwner": "roll_call.discharge",
+                    "coordinate": terminal,
+                }
+            ],
+        },
+    }
+    row = CONSUMER.terminal_from_enumerate(
+        file_rel="x.py",
+        function_nodes=nodes,
+        function_gaps=[],
+        audit={"semanticCore": {"status": "failed", "panics": [leaf_panic]}},
+        construction_gaps=[],
+        residual_phase_failed=False,
+        ast_fn=1,
+        source_cid="blake3-512:x",
+    )
+    assert "instrumentFailure" not in row
+    assert row["category"] == "panic"
+    assert row["terminalKind"] == "construction-panic"
+    assert row["observedEventType"] == (
+        "sugar_source_tree.panic.UnaccountedConstruction"
+    )
+    assert row["panic"]["coordinate"] == terminal
+    failures = COMPOSE._terminal_row_failures("x.py", row)
+    assert not any(
+        "ConstructionPanic" in str(f.get("reason"))
+        or "construction-panic" in str(f.get("reason"))
+        or "trace" in str(f.get("reason"))
+        for f in failures
+    ), failures
+
+
+def test_refused_compose_still_states_the_files_that_reached_a_terminal() -> None:
+    """One file's instrument failure does not unmeasure every other file.
+
+    When compose refuses the board, the join prints ``RECENSUS PARTIAL`` (never
+    ``RECENSUS DONE``, which is the sealed board's): files compose named no
+    failure against, by terminal kind, plus the files the instrument failed
+    on, each counted once. The counts partition the enrolment.
+    """
+    recensus = _load(
+        "control_effect_recensus",
+        SCRIPTS / "control_effect_recensus.py",
+    )
+    rows = [
+        ("a.py", {"terminalKind": "constructed"}),
+        ("b.py", {"terminalKind": "construction-panic"}),
+        ("c.py", {"terminalKind": "measurement-exhausted"}),
+        ("d.py", {"instrumentFailure": {"phase": "audit-panic-decode"}}),
+        # Reached a terminal, but compose named a failure against it.
+        ("e.py", {"terminalKind": "construction-panic"}),
+    ]
+    result = {
+        "instrumentFailures": [
+            {"file": "d.py", "reason": "audit panic lacks authenticated payload"},
+            {"file": "d.py", "reason": "edgeWitnesses absent"},
+            {"file": "e.py", "reason": "observed_chain_length disagrees with trace"},
+        ]
+    }
+    line = recensus._partial_line(rows, result, total=6)
+    assert line == (
+        "RECENSUS PARTIAL files=1/6 cpanic=1 exhausted=1 "
+        "instrument_failures=2 unmeasured=1"
+    )
+    assert "RECENSUS DONE" not in line
+
+
 def test_compose_refuses_unattested_clean_board() -> None:
     """Legacy rows cannot mint a clean ratio or authenticated frontier width."""
     rows = [

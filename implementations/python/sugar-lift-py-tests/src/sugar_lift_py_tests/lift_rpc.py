@@ -1557,6 +1557,7 @@ def _roll_call_audit_leaf(
     at this serialization boundary from the one ``MinorityReport`` and its
     reporter testimony; no factory gap or audit model is reconstructed.
     """
+    from sugar_source_tree.panic import UnaccountedConstruction
     from sugar_source_tree.reporter import CollectingReporter
     from sugar_source_tree.roll_call import discharge
 
@@ -1687,50 +1688,52 @@ def _roll_call_audit_leaf(
             # cannot be relabelled as a ConstructionPanic product terminal.
             # The leaf is already loud by that refusal.
             continue
-        # With no refusal anywhere on the roll, nothing explains a node that
-        # never answered: it is its own terminal (``UnaccountedConstruction``).
-        # A file whose roll has a silent absentee is never ``clean``.
         lc = node.line_col_span()
         locus = f"{file_rel}:{lc.start_line}:{lc.start_col}"
         terminal = (
             f"{file_rel}:{lc.start_line}:{lc.start_col}-"
             f"{lc.end_line}:{lc.end_col}[{node.kind}]"
         )
-        panic_kind = (
-            type(panic).__name__ if panic is not None else "UnaccountedConstruction"
-        )
-        reason = (
-            panic.observed or str(panic)
-            if panic is not None
-            else f"{node.kind} registered but never answered the roll call"
-        )
+        if panic is None:
+            # With no refusal anywhere on the roll, nothing explains a node
+            # that never answered: it is its own terminal, a refusal minted at
+            # its own coordinate (``UnaccountedConstruction``), and it reaches
+            # the board through the same authenticated payload as every
+            # refusal by name below. A file whose roll has a silent absentee
+            # is never ``clean``.
+            panic = UnaccountedConstruction(
+                blame=node.fragment,
+                owner="roll_call.discharge",
+                observed=f"{node.kind} registered but never answered the roll call",
+                requested=(
+                    f"a present or absent answer from {node.kind} at {terminal}"
+                ),
+                fix=(
+                    f"find the construction that should answer for this "
+                    f"{node.kind} and make it answer, present or refused by name"
+                ),
+            )
+        reason = panic.observed or str(panic)
+        owner = str(panic.owner)
+        coordinate = terminal
         authenticated_gap = {
             "blame": terminal,
-            "kind": panic_kind,
+            "kind": type(panic).__name__,
             "nodeKind": node.kind,
             "reason": reason,
+            "owner": owner,
+            "coordinate": coordinate,
+            "observed": str(panic.observed),
+            "requested": str(panic.requested),
+            "fix": str(panic.fix),
+            "entrance": "sugar.enumerate:facts:auditFrontier",
+            "observedEventType": (
+                f"{type(panic).__module__}.{type(panic).__qualname__}"
+            ),
+            "construction_trace": _construction_trace(
+                panic, owner=owner, coordinate=coordinate
+            ),
         }
-        if panic is not None:
-            owner = str(getattr(panic, "owner", node.kind))
-            coordinate = terminal
-            authenticated_gap.update(
-                {
-                    "owner": owner,
-                    "coordinate": coordinate,
-                    "observed": str(getattr(panic, "observed", reason)),
-                    "requested": str(
-                        getattr(panic, "requested", f"constructed {node.kind}")
-                    ),
-                    "fix": str(getattr(panic, "fix", f"write {node.kind}.sugar")),
-                    "entrance": "sugar.enumerate:facts:auditFrontier",
-                    "observedEventType": (
-                        f"{type(panic).__module__}.{type(panic).__qualname__}"
-                    ),
-                    "construction_trace": _construction_trace(
-                        panic, owner=owner, coordinate=coordinate
-                    ),
-                }
-            )
         panics.append(
             {
                 # Closed-envelope discriminators required by the current Rust

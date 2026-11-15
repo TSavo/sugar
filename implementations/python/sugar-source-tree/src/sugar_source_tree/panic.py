@@ -95,6 +95,15 @@ class SourceTreePanic(LifterRefusal):
             raise TypeError(
                 "blame must be a real source or backend coordinate, not None"
             )
+        # ``observed`` is testimony prose: the board carries it as the
+        # refusal's reason, and a reason is a non-empty string. A raise site
+        # that hands up the observed value itself (a tuple of type names, a
+        # coordinate) is carried as that value's repr -- the same rule the
+        # kit's construction mouth applies (``construction_panic_gap``) -- so
+        # the refusal keeps what it saw instead of failing the board's reader
+        # ("recovered panic reason must be a non-empty string").
+        if not isinstance(observed, str):
+            observed = repr(observed)
         super().__init__(blame, owner, observed, requested, fix)
         self.blame = blame
         self.owner = owner
@@ -258,6 +267,23 @@ class AsyncContextManagerUnsupported(SugarNotWritten):
     """Async with not constructible yet — write the arm or stay loud."""
 
     _LABEL = "ASYNC CONTEXT MANAGER UNSUPPORTED"
+
+
+class UnaccountedConstruction(SourceTreePanic):
+    """A registered node that never answered the roll call, on a roll where
+    nothing refused by name.
+
+    Not a ``SugarNotWritten``: nobody refused. The node is on the roster, it
+    gave neither a present nor an absent answer, and no refusal on its roll
+    explains the silence. It is the node's own terminal, named at its own
+    coordinate, so a file whose roll has a silent absentee is never ``clean``.
+    Minted only by the roll-call audit leaf (``lift_rpc._roll_call_audit_leaf``)
+    and carried to the board through the same payload as every refusal by
+    name. The fix is to find the construction that should have answered for
+    the node and make it answer.
+    """
+
+    _LABEL = "UNACCOUNTED CONSTRUCTION"
 
 
 class SubstituteNotWritten(SourceTreePanic):
