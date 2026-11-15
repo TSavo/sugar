@@ -129,7 +129,7 @@ jobs:
           echo "join rc=$?"
           grep -a 'RECENSUS DONE' "$OUT/join.log" || echo "no RECENSUS DONE line"
       - name: Post the board number
-        if: always()
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           set +e -uo pipefail
@@ -156,7 +156,7 @@ jobs:
               --set board.measured=false --set "board.note=no RECENSUS DONE line"
           fi
       - name: Upload board logs
-        if: always()
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: main-scorecard-board
@@ -166,6 +166,6 @@ jobs:
             board/join/**
           if-no-files-found: warn
       - name: Job wall time
-        if: always()
+        if: ${{ !cancelled() }}
         shell: bash
         run: echo "job wall $(( $(date +%s) - JOB_T0 ))s"

@@ -150,7 +150,7 @@ jobs:
           echo "pytest exit $? (evidence only)"
           grep -a 'SCORECARD CARRY' "$GITHUB_WORKSPACE/suite.log"
       - name: Post the suite number
-        if: always() && steps.plan.outputs.fanout != 'true'
+        if: ${{ !cancelled() && steps.plan.outputs.fanout != 'true' }}
         shell: bash
         run: |
           set +e -uo pipefail
@@ -161,14 +161,14 @@ jobs:
           python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" \
             --put "suite=$RUNNER_TEMP/suite-result.json"
       - name: Upload suite log
-        if: always() && steps.plan.outputs.rerun != '0'
+        if: ${{ !cancelled() && steps.plan.outputs.rerun != '0' }}
         uses: actions/upload-artifact@v4
         with:
           name: main-scorecard-suite
           path: suite.log
           if-no-files-found: ignore
       - name: Job wall time
-        if: always()
+        if: ${{ !cancelled() }}
         shell: bash
         run: echo "job wall $(( $(date +%s) - JOB_T0 ))s"
 
@@ -176,7 +176,7 @@ jobs:
   suite-shard:
     name: suite shard ${{ matrix.shard }}
     needs: [suite]
-    if: always() && needs.suite.outputs.fanout == 'true'
+    if: ${{ !cancelled() && needs.suite.outputs.fanout == 'true' }}
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 120
     strategy:
@@ -229,21 +229,21 @@ jobs:
             grep -a 'SCORECARD CARRY' "$GITHUB_WORKSPACE/suite.log"
           fi
       - name: Upload shard log
-        if: always()
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: main-scorecard-suite-shard-${{ matrix.shard }}
           path: suite.log
           if-no-files-found: ignore
       - name: Job wall time
-        if: always()
+        if: ${{ !cancelled() }}
         shell: bash
         run: echo "job wall $(( $(date +%s) - JOB_T0 ))s"
 
   suite-join:
     name: suite join
     needs: [suite, suite-shard]
-    if: always() && needs.suite.outputs.fanout == 'true'
+    if: ${{ !cancelled() && needs.suite.outputs.fanout == 'true' }}
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
     steps:
@@ -345,7 +345,7 @@ jobs:
           echo "pytest exit $? (evidence only)"
           grep -a 'SCORECARD CARRY' "$GITHUB_WORKSPACE/twins.log"
       - name: Post the twins number
-        if: always()
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           set +e -uo pipefail
@@ -357,7 +357,7 @@ jobs:
             --put "twins=$RUNNER_TEMP/twins-result.json"
       - name: Run examples/python-base64-federation/run.sh
         id: fed
-        if: always() && steps.plan.outputs.fed_carried != 'true'
+        if: ${{ !cancelled() && steps.plan.outputs.fed_carried != 'true' }}
         shell: bash
         env:
           FED_KEY: ${{ steps.plan.outputs.fed_key }}
@@ -377,7 +377,7 @@ jobs:
               --name python-base64-federation --key "$FED_KEY" --value PASS
           fi
       - name: Post the federation verdict
-        if: always()
+        if: ${{ !cancelled() }}
         shell: bash
         env:
           FED_CARRIED: ${{ steps.plan.outputs.fed_carried }}
@@ -398,7 +398,7 @@ jobs:
               --set "federation.note=run.sh did not run"
           fi
       - name: Upload logs
-        if: always()
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: main-scorecard-solver
@@ -407,7 +407,7 @@ jobs:
             federation.log
           if-no-files-found: ignore
       - name: Job wall time
-        if: always()
+        if: ${{ !cancelled() }}
         shell: bash
         run: echo "job wall $(( $(date +%s) - JOB_T0 ))s"
 
@@ -417,7 +417,7 @@ jobs:
   scorecard:
     name: scorecard (final row)
     needs: [suite, suite-shard, suite-join, solver]
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
     steps:
@@ -436,7 +436,7 @@ jobs:
           set +e -uo pipefail
           python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" --final
       - name: Store housekeeping (every 20th run)
-        if: always()
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           set +e -uo pipefail
