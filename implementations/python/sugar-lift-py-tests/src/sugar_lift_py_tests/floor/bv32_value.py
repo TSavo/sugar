@@ -28,20 +28,16 @@ class Bv32Value(FloorValue):
         )
 
     def setattr(self, name, value, site, ctx):
-        del name, value, ctx
-        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+        del value, ctx
+        from sugar_lift_py_tests.floor.ground_exit import builtin_attribute_store_exit
 
-        return ground_exceptional_exit(
-            exception_name="AttributeError", site=site, owner="Bv32Value.setattr"
-        )
+        return builtin_attribute_store_exit(name, site=site, owner="Bv32Value.setattr")
 
     def delattr(self, name, site, ctx):
-        del name, ctx
-        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+        del ctx
+        from sugar_lift_py_tests.floor.ground_exit import builtin_attribute_store_exit
 
-        return ground_exceptional_exit(
-            exception_name="AttributeError", site=site, owner="Bv32Value.delattr"
-        )
+        return builtin_attribute_store_exit(name, site=site, owner="Bv32Value.delattr")
 
     def to_term(self, *, owner: str):
         del owner

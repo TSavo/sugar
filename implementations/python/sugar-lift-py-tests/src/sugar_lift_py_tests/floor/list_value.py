@@ -64,26 +64,24 @@ class ListValue(GuardStableValue):
         return getattr_coordinate(self, name, owner="ListValue.attribute")
 
     def setattr(self, name, value, site, ctx):
-        """Lists have no instance ``__dict__``; attribute store is AttributeError.
+        """Lists have no instance ``__dict__``; attribute store is AttributeError,
+        ``__class__`` TypeError (``builtin_attribute_store_exit``).
 
         Distinct from the read path: ``xs.append`` may resolve as a bound method
         coordinate while ``xs.append = f`` still raises AttributeError.
         """
-        del name, value, ctx
-        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+        del value, ctx
+        from sugar_lift_py_tests.floor.ground_exit import builtin_attribute_store_exit
 
-        return ground_exceptional_exit(
-            exception_name="AttributeError", site=site, owner="ListValue.setattr"
-        )
+        return builtin_attribute_store_exit(name, site=site, owner="ListValue.setattr")
 
     def delattr(self, name, site, ctx):
-        """Lists have no instance ``__dict__``; delete is AttributeError."""
-        del name, ctx
-        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+        """Lists have no instance ``__dict__``; delete is AttributeError,
+        ``__class__`` TypeError (``builtin_attribute_store_exit``)."""
+        del ctx
+        from sugar_lift_py_tests.floor.ground_exit import builtin_attribute_store_exit
 
-        return ground_exceptional_exit(
-            exception_name="AttributeError", site=site, owner="ListValue.delattr"
-        )
+        return builtin_attribute_store_exit(name, site=site, owner="ListValue.delattr")
 
     def to_term(self, *, owner: str):
         # Project elements into FOL — assert equality / dig return faces.

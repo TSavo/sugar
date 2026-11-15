@@ -701,22 +701,20 @@ class TermValue(GuardStableValue):
         )
 
     def setattr(self, name, value, site, ctx):
-        """``(1).x = v`` raises AttributeError — store path, not read path."""
-        del name, value, ctx
-        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+        """``(1).x = v`` raises AttributeError, ``(1).__class__ = C`` TypeError
+        (``builtin_attribute_store_exit``) — store path, not read path."""
+        del value, ctx
+        from sugar_lift_py_tests.floor.ground_exit import builtin_attribute_store_exit
 
-        return ground_exceptional_exit(
-            exception_name="AttributeError", site=site, owner="TermValue.setattr"
-        )
+        return builtin_attribute_store_exit(name, site=site, owner="TermValue.setattr")
 
     def delattr(self, name, site, ctx):
-        """``del (1).x`` raises AttributeError — delete, not read."""
-        del name, ctx
-        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+        """``del (1).x`` raises AttributeError, ``del (1).__class__``
+        TypeError (``builtin_attribute_store_exit``) — delete, not read."""
+        del ctx
+        from sugar_lift_py_tests.floor.ground_exit import builtin_attribute_store_exit
 
-        return ground_exceptional_exit(
-            exception_name="AttributeError", site=site, owner="TermValue.delattr"
-        )
+        return builtin_attribute_store_exit(name, site=site, owner="TermValue.delattr")
 
     def subscript(self, index, site):
         """Numbers are never subscriptable: exact ground TypeError."""

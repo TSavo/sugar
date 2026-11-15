@@ -67,19 +67,19 @@ class EllipsisValue(FloorValue):
         return super().is_identical(other, site)
 
     def setattr(self, name, value, site, ctx):
-        del name, value, ctx
-        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+        del value, ctx
+        from sugar_lift_py_tests.floor.ground_exit import builtin_attribute_store_exit
 
-        return ground_exceptional_exit(
-            exception_name="AttributeError", site=site, owner="EllipsisValue.setattr"
+        return builtin_attribute_store_exit(
+            name, site=site, owner="EllipsisValue.setattr"
         )
 
     def delattr(self, name, site, ctx):
-        del name, ctx
-        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+        del ctx
+        from sugar_lift_py_tests.floor.ground_exit import builtin_attribute_store_exit
 
-        return ground_exceptional_exit(
-            exception_name="AttributeError", site=site, owner="EllipsisValue.delattr"
+        return builtin_attribute_store_exit(
+            name, site=site, owner="EllipsisValue.delattr"
         )
 
     def setitem(self, index, value, site, ctx):
