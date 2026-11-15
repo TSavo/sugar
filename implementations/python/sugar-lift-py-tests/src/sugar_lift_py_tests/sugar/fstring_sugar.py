@@ -60,6 +60,20 @@ def _concatenate_joined_parts(left, right, site, ctx):
     )
 
 
+def _decided_int_display(value) -> str | None:
+    """``str(value)`` for a decided ``int`` or ``bool`` this frame holds, or
+    None.  An ``int`` past CPython's digit limit for ``str``
+    (``sys.int_info.default_max_str_digits``, 4300) raises ``ValueError``
+    there; it is not decided here."""
+    from sugar_lift_py_tests.floor.term_value import TermValue
+
+    if type(value) is not TermValue or type(value.value) not in (int, bool):
+        return None
+    if abs(value.value) >= 10**4000:
+        return None
+    return str(value.value)
+
+
 @dataclass(frozen=True)
 class FormattedValueSugar(ConstructedTermSugar):
     """A Python-reference formatted-value coordinate, without execution."""
@@ -124,6 +138,15 @@ class FormattedValueSugar(ConstructedTermSugar):
                 and self.format_spec is None
             ):
                 return ExitSet.completed(value)
+            displayed = _decided_int_display(value)
+            if (
+                displayed is not None
+                and self.conversion is None
+                and self.format_spec is None
+            ):
+                # ``f'{5}'`` is ``format(5, '')``: ``int.__format__`` with an
+                # empty spec is ``str(5)``, CPython's own, decided here.
+                return ExitSet.completed(StringValue(displayed))
             formatted = SymbolicValue(
                 ctor(
                     "python:fstring_value",
