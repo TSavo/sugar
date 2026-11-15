@@ -50,19 +50,33 @@ import pytest
 # ONE definition, one owner. These were duplicated verbatim while the store
 # ExitSet foundation was still on a branch; it is on main now, so the copy is
 # deleted rather than left to diverge silently.
-from test_store_outcome_composition import _arms, _exits, _polarity, _store_entries
+from test_store_outcome_composition import (
+    _FREE_O,
+    _arms,
+    _exits,
+    _polarity,
+    _store_entries,
+)
 
 # Free undecided ``o`` keeps dual-face AttributeStoreRuntimeEffect composition.
 # Formal receivers mint setattr_named (see test_setattr_named_formal_caller).
-UNPACK_MIXED = """def target(p, q):
+# ``o`` is free only because a star import may bind it (``_FREE_O``): a name
+# nothing in the module binds is a NameError halt, and its store never runs.
+UNPACK_MIXED = (
+    _FREE_O
+    + """def target(p, q):
     x, o.y = p, q
     return x
 """
+)
 
-UNPACK_BOTH = """def target(p, q):
+UNPACK_BOTH = (
+    _FREE_O
+    + """def target(p, q):
     o.x, o.y = p, q
     return p
 """
+)
 
 
 # --------------------------------------------------------------------------
@@ -103,7 +117,10 @@ def test_unpack_mixed_name_and_store_preserves_both_outcomes(tmp_path) -> None:
     # to lose and nothing there to read. The claim with an artifact behind it
     # is the one about anything ESTABLISHED before the store, and the honest
     # spelling of it is a preceding store: it must survive.
-    prior = "def target(p, q):\n    o.z = p\n    x, o.y = p, q\n    return x\n"
+    prior = (
+        _FREE_O
+        + "def target(p, q):\n    o.z = p\n    x, o.y = p, q\n    return x\n"
+    )
     prior_halted, prior_completed = _arms(_exits(tmp_path, prior, "target"))
     survivor = next(h for h in prior_halted if _polarity(h.guard, "y") is False)
     assert _polarity(survivor.guard, "z") is True
@@ -136,7 +153,10 @@ def test_unpack_mixed_name_and_store_preserves_both_outcomes_discrimination(
 
     # ...and the non-rollback reading bites: a halted arm with an empty prefix
     # after an earlier store is the transactional lie.
-    prior = "def target(p, q):\n    o.z = p\n    x, o.y = p, q\n    return x\n"
+    prior = (
+        _FREE_O
+        + "def target(p, q):\n    o.z = p\n    x, o.y = p, q\n    return x\n"
+    )
     prior_halted, _ = _arms(_exits(tmp_path, prior, "target"))
     survivor = next(h for h in prior_halted if _polarity(h.guard, "y") is False)
     with pytest.raises(AssertionError):
@@ -199,7 +219,9 @@ def test_unpack_and_sequential_spellings_produce_the_same_arm_structure(
     contents per halted arm. Anything else means the unpack grew a second
     sequencing door.
     """
-    sequential = "def target(p, q):\n    o.x = p\n    o.y = q\n    return p\n"
+    sequential = (
+        _FREE_O + "def target(p, q):\n    o.x = p\n    o.y = q\n    return p\n"
+    )
 
     def shape(src):
         halted, completed = _arms(_exits(tmp_path, src, "target"))
@@ -222,4 +244,6 @@ def test_unpack_and_sequential_spellings_produce_the_same_arm_structure(
 
     # Discrimination: the instrument is not blind -- a spelling with only ONE
     # store presents a different shape through the same reader.
-    assert shape(UNPACK_BOTH) != shape("def target(p):\n    o.x = p\n    return p\n")
+    assert shape(UNPACK_BOTH) != shape(
+        _FREE_O + "def target(p):\n    o.x = p\n    return p\n"
+    )
