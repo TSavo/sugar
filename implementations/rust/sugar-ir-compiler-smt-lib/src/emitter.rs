@@ -4166,6 +4166,43 @@ fn py_compare_completes(operator: &str, left: &Term, right: &Term) -> Option<Str
     }
 }
 
+/// Whether Python completes an ordering (`<`, `<=`, `>`, `>=`) between a
+/// builtin `int` or `str` and a builtin `int` or `str`, as the rendered
+/// completes atom: two `int`s always compare (`int.__lt__` and the rest
+/// answer, `bool` included), and an `int` against a `str` is Python's
+/// `TypeError` both ways, so it never completes. A decided operand is its own
+/// `holds`; an undecided one is read by its exact stated type
+/// (`python:value.is_int` / `is_str`, which only a literal or a joined
+/// contract's `=` states), as `py.eq` reads it. Two `str`s are not written
+/// here: this backend's `str` universe states no order, so their ordering and
+/// its completion stay the uninterpreted application. `None` for two
+/// undecided operands, as for `py.eq`, and for two `str`s.
+fn py_ordering_completes(left: &Term, right: &Term, atom: &str) -> Option<String> {
+    match (py_side(left)?, py_side(right)?) {
+        (PySide::Decided(left), PySide::Decided(right)) => {
+            let answer = match (left.ty, right.ty) {
+                (PyType::Int, PyType::Int) => "true",
+                (PyType::Str, PyType::Str) => return None,
+                _ => "false",
+            };
+            let ready = smt_and(&[left.holds().as_str(), right.holds().as_str()]);
+            Some(smt_ite(&ready, answer, atom))
+        }
+        (PySide::Decided(decided), PySide::Undecided(undecided))
+        | (PySide::Undecided(undecided), PySide::Decided(decided)) => {
+            let (is_str, is_int) = py_type_guards(&undecided);
+            let an_int = format!("(and {is_int} (not {is_str}))");
+            let a_str = format!("(and {is_str} (not {is_int}))");
+            let read = match decided.ty {
+                PyType::Int => format!("(ite {an_int} true (ite {a_str} false {atom}))"),
+                PyType::Str => format!("(ite {an_int} false {atom})"),
+            };
+            Some(smt_ite(&decided.holds(), &read, atom))
+        }
+        (PySide::Undecided(_), PySide::Undecided(_)) => None,
+    }
+}
+
 /// The Python-value reading of an atom (see the section header): a decided
 /// operation's completes atom, an undecided comparison's completes atom,
 /// `py.eq`, or an `=` with a decided operation on one side. `None` leaves the
@@ -4214,6 +4251,12 @@ fn emit_python_value_atomic(name: &str, args: &[Term]) -> Result<Option<String>,
                     if let Some(completes) = py_compare_completes(operator, left, right) {
                         let atom = emit_atomic(name, args)?;
                         return Ok(Some(smt_ite(&completes, "true", &atom)));
+                    }
+                    if matches!(operator.as_str(), "Lt" | "LtE" | "Gt" | "GtE") {
+                        let atom = emit_atomic(name, args)?;
+                        if let Some(rendered) = py_ordering_completes(left, right, &atom) {
+                            return Ok(Some(rendered));
+                        }
                     }
                 }
             }

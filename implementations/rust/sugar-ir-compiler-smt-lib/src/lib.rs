@@ -2887,11 +2887,48 @@ mod tests {
             "f(\"x\") == \"abc\" under the joined post",
         );
 
-        // An ordering is not written here: it stays undecided, even over
-        // decided operands (`"a" < 1` raises TypeError; nothing here says so).
-        let ordering = py_compare("Lt", string_const("a"), int_const(1), "k");
-        assert_eq!(solve(&ordering), "sat");
-        assert_eq!(solve(&not_formula(ordering)), "sat");
+        // An ordering between two ints always completes; between an int and a
+        // str it is Python's TypeError, so it never completes.
+        for operator in ["Lt", "LtE", "Gt", "GtE"] {
+            let ints = py_compare(operator, int_const(3), int_const(5), "k");
+            assert_eq!(solve(&ints), "sat");
+            assert_eq!(
+                solve(&not_formula(ints)),
+                "unsat",
+                "3 {operator} 5 cannot raise"
+            );
+            let mixed = py_compare(operator, string_const("a"), int_const(1), "k");
+            assert_eq!(solve(&mixed), "unsat", "\"a\" {operator} 1 raises TypeError");
+            assert_eq!(solve(&not_formula(mixed)), "sat");
+        }
+        // Two strs: this backend states no str order, so it stays undecided.
+        let strs = py_compare("Lt", string_const("a"), string_const("b"), "k");
+        assert_eq!(solve(&strs), "sat");
+        assert_eq!(solve(&not_formula(strs)), "sat");
+    }
+
+    #[test]
+    fn an_ordering_over_a_joined_calls_result_completes_where_its_post_states_an_int() {
+        // `f(3) > 5` with `f`'s joined post `out = 1 + 1`: the call's result
+        // is an int, so the ordering cannot raise.
+        let call = joined_call("call:m.f");
+        let completes = py_compare("Gt", call.clone(), int_const(5), "k");
+        let int_post = eq(call.clone(), py_binary("+", int_const(1), int_const(1), "p"));
+        assert_eq!(
+            solve(&all_of(vec![int_post, not_formula(completes.clone())])),
+            "unsat",
+            "an int result compares with an int"
+        );
+        // A str result against an int raises TypeError.
+        let str_post = eq(call.clone(), string_const("ab"));
+        assert_eq!(
+            solve(&all_of(vec![str_post, completes.clone()])),
+            "unsat",
+            "a str result never orders against an int"
+        );
+        // Nothing states the result's type: both faces stay satisfiable.
+        assert_eq!(solve(&completes), "sat");
+        assert_eq!(solve(&not_formula(completes)), "sat");
     }
 
     fn joined_call(callee: &str) -> serde_json::Value {

@@ -2173,7 +2173,9 @@ fn fold_decided_python_atoms(node: &Json) -> Json {
 /// fixes it: `=` / `py.eq` of two `int` literals or two `str` literals is
 /// their equality, and `==` / `!=` between `int` and `str` literals always
 /// completes (`python:compare.completes(python:compare("Eq" | "NotEq", a,
-/// b, <key>))`: neither type's `__eq__` raises). `None` for anything else.
+/// b, <key>))`: neither type's `__eq__` raises). An ordering (`Lt`, `LtE`,
+/// `Gt`, `GtE`) of two `int` literals always completes and one of an `int`
+/// and a `str` never does (`TypeError`). `None` for anything else.
 fn decided_python_atom(node: &Json) -> Option<bool> {
     let name = node.get("name").and_then(|v| v.as_str())?;
     let args = node.get("args").and_then(|v| v.as_array())?;
@@ -2203,6 +2205,18 @@ fn decided_python_atom(node: &Json) -> Option<bool> {
             let literal = |term: &Json| {
                 int_const_value_i128(term).is_some() || str_const_value(term).is_some()
             };
+            if matches!(operator, "Lt" | "LtE" | "Gt" | "GtE") {
+                // An ordering of two ints always completes; an int against
+                // a str is Python's TypeError. Two strs are not decided here
+                // (the emitter states no str order either).
+                let int = |term: &Json| int_const_value_i128(term).is_some();
+                let string = |term: &Json| str_const_value(term).is_some();
+                return match (int(left), int(right), string(left), string(right)) {
+                    (true, true, _, _) => Some(true),
+                    (true, _, _, true) | (_, true, true, _) => Some(false),
+                    _ => None,
+                };
+            }
             (matches!(operator, "Eq" | "NotEq") && literal(left) && literal(right)).then_some(true)
         }
         _ => None,
