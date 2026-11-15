@@ -114,6 +114,31 @@ def test_an_append_through_one_formal_is_seen_through_the_other(tmp_path: Path):
     _never_lies(tmp_path, "list", _LIST_THROUGH_ONE_FORMAL, true="1", false="0")
 
 
+_TWO_FORMALS_RELATED_AFTER_A_STORE = """\
+def diff(a, b):
+    a.append(1)
+    return len(a) - len(b)
+
+
+def test_diff():
+    xs = []
+    n = diff(xs, xs)
+    assert n == {claim}
+"""
+
+
+def test_a_post_relating_two_formals_is_never_applied_to_one_object(
+    tmp_path: Path,
+):
+    """``diff(xs, xs)`` is 0.  The callee's contract states ``len(a) + 1 -
+    len(b)`` over two objects' entry values; read with both standing as one
+    opaque object it would say 1.  The call is joined to no contract
+    (``actuals_share_an_object``), so the lie is never decided."""
+    _never_lies(
+        tmp_path, "related", _TWO_FORMALS_RELATED_AFTER_A_STORE, true="0", false="1"
+    )
+
+
 _FIELD_THROUGH_ONE_FORMAL = """\
 class Box:
     def __init__(self):
