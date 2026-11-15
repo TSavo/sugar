@@ -875,22 +875,29 @@ fn bridge_formal_actuals_match_arg_terms(
     let Some(target_cid) = memento_cid_field(bridge_body, "targetContractCid") else {
         return false;
     };
-    let Some(formals) = pool.contract_formals_by_cid(&target_cid) else {
+    let Some(contract) = pool.contract_body_by_cid(&target_cid) else {
         return false;
     };
-    let Some(formals) = formals
-        .iter()
-        .map(|formal| formal.as_str().map(str::to_string))
-        .collect::<Option<Vec<_>>>()
+    let Some(formals) = contract
+        .get("formals")
+        .and_then(|v| v.as_array())
+        .and_then(|formals| {
+            formals
+                .iter()
+                .map(|formal| formal.as_str().map(str::to_string))
+                .collect::<Option<Vec<_>>>()
+        })
     else {
         return false;
     };
+    let stated = crate::consistency::stated_input_values(&contract);
     // The call's arguments bound to the contract's formals by the one binder
     // the join binds with (`consistency::bind_call_arguments`): positional,
     // `py.kwarg` and each contract input's named argument alike, never a
     // positional zip behind a count check. A call that does not fit the
     // contract matches no bridge.
-    let Some(bindings) = crate::consistency::bind_call_arguments(&formals, arg_terms) else {
+    let Some(bindings) = crate::consistency::bind_call_arguments(&formals, &stated, arg_terms)
+    else {
         return false;
     };
     let Some(formal_actuals) = bridge_body

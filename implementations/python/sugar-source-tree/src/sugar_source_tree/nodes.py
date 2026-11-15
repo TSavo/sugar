@@ -4244,6 +4244,31 @@ class SourceUnit:
         )
         return threaded, unthreaded
 
+    def module_definition_names(self) -> frozenset:
+        """The module names a definition binds through its statement's key: a
+        ``class`` statement, decorated or not, and a decorated ``def`` (the
+        statements ``_module_global_rows`` keys, ``call_applies_own_frame``
+        aside).  Such a name is a definition, as a plain ``def``'s or an
+        import's is: a function reads it at the value the module's run left,
+        and its contract never states it as a ``global:`` input (#7757 step
+        5, decision (c)).  Read off the typed tree as
+        ``_module_global_rows`` reads it."""
+        module = self._require_typed_module(
+            "SourceUnit.module_definition_names", blame=self.filename
+        )
+        names: set[str] = set()
+        stack: list[Node] = list(module.body)
+        while stack:
+            node = stack.pop()
+            if isinstance(
+                node, (ClassDef, FunctionDef, AsyncFunctionDef)
+            ) and not call_applies_own_frame(node):
+                names.add(node.name)
+            if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
+                continue
+            stack.extend(child for _name, _index, child in node._child_edges())
+        return frozenset(names)
+
     def _nested_scope_global_rows(self) -> Tuple[frozenset, frozenset]:
         """``(globals some nested scope reads, globals some nested scope
         writes through a ``global`` declaration)``, read off CPython's
@@ -27409,16 +27434,16 @@ def _contract_inputs(definition) -> tuple:
       ``def`` statement or lambda expression bound under the default's key
       (``_default_evaluation_key``).  The body reads the parameter; prove's
       binder binds a parameter the call omits to this input;
-    - ``global:<name>`` for each module global the body reads
-      (``_module_globals_read``: a global the module threading binds through
-      a key, read when the function runs), in name order.  The function's
-      own row is decided as a root is called, after import (pytest's call):
-      each ``global:<name>`` at the value the module's one run left for it,
-      the module-final binding the frame entry binds its keys to
-      (``call_site_sugar.with_module_final_globals``,
-      ``tree_enumerate.function_universe_outcome``), undecided where the run
-      leaves it undecided.  So the row reads what it read before; the
-      contract names the input.  A caller binds it at the call (step 5).
+    - ``global:<name>`` for each module global a call of the function reads
+      (``_global_input_names``: one an assignment, a loop or a branch merge
+      binds through a key, read by the body or by a function the call runs
+      in this file), in name order.  The contract's post and claims are
+      stated over the free input (``call_site_sugar.bind_global_inputs``);
+      its row states the value the module's one run left for it
+      (``call_site_sugar.stated_global_values``), and prove's one binder
+      binds an input no call supplies to that value (step 5).  A ``class``
+      or a decorated ``def`` is a definition, never an input: the body reads
+      it at the value the module's run left (decision (c), #7757).
 
     The caller supplies each at the call (``py.closure``, ``py.default``,
     ``py.global``), as it supplies an actual for a parameter."""
@@ -27455,9 +27480,45 @@ def _contract_inputs(definition) -> tuple:
             input_kind=GLOBAL_INPUT,
             name=name,
         )
-        for name in sorted(definition._module_globals_read())
+        for name in sorted(_global_input_names(definition))
     )
     return cells + defaults + globals_
+
+
+def _global_input_names(definition) -> frozenset:
+    """The module globals a call of ``definition`` (a ``def``, ``async
+    def`` or lambda) reads that are its contract's ``global:`` inputs: each
+    one its body reads (``_module_globals_read``), and each one read by a
+    function the call may run in this file -- a ``def`` or lambda nested in
+    it, and a source ``def`` it calls by name
+    (``SourceUnit.source_function_definition_for_call``) -- transitively.  A
+    function the call runs reads the global where the call runs, so the
+    caller supplies it at that call (``py.global``) from its own input; the
+    caller's contract takes it so that a caller of the caller can supply it
+    in turn, never the module-final value where the module's run had not
+    reached it.  A definition's name (``SourceUnit.module_definition_names``)
+    is never one."""
+    unit = definition.unit
+    definitions = unit.module_definition_names()
+    names: set[str] = set()
+    seen: set[int] = set()
+    pending = [definition]
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        names.update(current._module_globals_read())
+        for node in current.walk():
+            if node is current:
+                continue
+            if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda)):
+                pending.append(node)
+            elif isinstance(node, Call) and isinstance(node.func, Name):
+                callee = unit.source_function_definition_for_call(node)
+                if callee is not None:
+                    pending.append(callee)
+    return frozenset(names - definitions)
 
 
 def _default_value_sugar(definition, index: int):

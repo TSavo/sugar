@@ -92,6 +92,7 @@ fn push_caller_contract(graph: &mut ProofGraph, contract_name: &str) {
         body_discharge_eligible: true,
         body_discharge_refusal_reason: None,
         panic_loci: vec![panic_locus],
+        input_values: Vec::new(),
         class_shapes: Vec::new(),
         source_warrants: Vec::new(),
         proofir_provenance: Some(json_to_cvalue(&json!({
@@ -135,6 +136,7 @@ fn push_callee_contract(graph: &mut ProofGraph, contract_name: &str) -> String {
         body_discharge_eligible: true,
         body_discharge_refusal_reason: None,
         panic_loci: Vec::new(),
+        input_values: Vec::new(),
         class_shapes: Vec::new(),
         source_warrants: Vec::new(),
         proofir_provenance: Some(json_to_cvalue(&json!({
@@ -547,6 +549,7 @@ fn push_contract_with_formal_sorts(
         body_discharge_eligible: true,
         body_discharge_refusal_reason: None,
         panic_loci: Vec::new(),
+        input_values: Vec::new(),
         class_shapes: Vec::new(),
         source_warrants: Vec::new(),
         proofir_provenance: Some(json_to_cvalue(&json!({

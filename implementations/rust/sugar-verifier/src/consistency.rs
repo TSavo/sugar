@@ -3312,6 +3312,10 @@ struct BridgeBinding {
     target_proof_cid: Option<String>,
     formals: Vec<String>,
     out_binding: String,
+    /// The value the answering contract states for each `global:<name>`
+    /// input it decides (`inputValues`, `stated_input_values`): the binder
+    /// binds a global the call does not supply to it (step 5).
+    stated_inputs: Vec<(String, Json)>,
 }
 
 /// Why an ambient vendor post was not conjoined into the obligation (#4148).
@@ -3637,6 +3641,7 @@ fn bridge_answer(
             .map(|cid| cid.to_string())
     });
     let halt_guards = contract_halt_guards(&body);
+    let stated_inputs = stated_input_values(&body);
     Ok(Some((
         BridgeBinding {
             source_symbol: symbol.to_string(),
@@ -3644,6 +3649,7 @@ fn bridge_answer(
             target_proof_cid,
             formals,
             out_binding,
+            stated_inputs,
         },
         post,
         halt_guards,
@@ -3763,18 +3769,56 @@ pub(crate) fn call_argument_formals(
     Some(supplied)
 }
 
+/// The value a contract states for each `global:<name>` input it decides
+/// (step 5, #7757): the header's `inputValues`, `[{formal, value}, ...]`.
+/// A function reads its own module's globals; called after import, they are
+/// the values the module's one run left, and the producer's own proof states
+/// them. A global the run leaves undecided is not stated. An entry that is
+/// not `{formal: "global:<name>", value: <term>}` states nothing.
+pub(crate) fn stated_input_values(body: &Json) -> Vec<(String, Json)> {
+    body.get("inputValues")
+        .and_then(Json::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| {
+                    let formal = entry.get("formal")?.as_str()?;
+                    if !formal.starts_with(GLOBAL_INPUT_PREFIX) {
+                        return None;
+                    }
+                    let value = entry.get("value").filter(|value| value.is_object())?;
+                    Some((formal.to_string(), value.clone()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The formal prefix of a module global input.
+const GLOBAL_INPUT_PREFIX: &str = "global:";
+
 /// Each formal of the answering contract bound to what the call supplies
 /// for it (step 4): the call's arguments read against the formals by
-/// `call_argument_formals`, and a parameter the call does not pass bound to
-/// the contract's `default:<param>` input. `None` when the call does not fit
-/// the contract (an argument that fits no formal, a parameter neither passed
-/// nor defaulted): the join refuses it as `import-signature-mismatch`.
+/// `call_argument_formals`, a parameter the call does not pass bound to the
+/// contract's `default:<param>` input, and a `global:<name>` input the call
+/// does not supply bound to the value the contract states for it
+/// (`stated`, `stated_input_values`: the module-final value, as the call of a
+/// function after import reads it), exactly as an omitted parameter is bound
+/// to its default. A call made while the module runs supplies its own
+/// `py.global`, which is bound instead. `None` when the call does not fit the
+/// contract (an argument that fits no formal, a parameter neither passed nor
+/// defaulted): the join refuses it as `import-signature-mismatch`.
 ///
-/// An input the call does not supply is left unbound: the instance is open
-/// and the call stays owed (`OpenAfterSpecialization`), never answered on a
-/// value the caller did not give.
+/// An input neither the call supplies nor the contract states is left
+/// unbound: the instance is open and the call stays owed
+/// (`OpenAfterSpecialization`), never answered on a value nobody gave.
+///
+/// The one binder: a call's join binds the callee's post and halt guards
+/// through it, and a row's own claims are bound through it with no caller
+/// (`bind_own_inputs`).
 pub(crate) fn bind_call_arguments(
     formals: &[String],
+    stated: &[(String, Json)],
     args: &[Json],
 ) -> Option<Vec<(String, Json)>> {
     let parameters: Vec<&str> = formals
@@ -3784,6 +3828,11 @@ pub(crate) fn bind_call_arguments(
         .collect();
     let mut bound: std::collections::BTreeMap<String, Json> =
         call_argument_formals(formals, args)?.into_iter().collect();
+    for (formal, value) in stated {
+        if formals.contains(formal) && !bound.contains_key(formal) {
+            bound.insert(formal.clone(), value.clone());
+        }
+    }
     let mut bindings = Vec::with_capacity(formals.len());
     for parameter in &parameters {
         if let Some(actual) = bound.remove(*parameter) {
@@ -3805,6 +3854,85 @@ pub(crate) fn bind_call_arguments(
     }
     bindings.extend(bound);
     Some(bindings)
+}
+
+/// A function's own row bound through the one binder with no caller (step
+/// 5, #7757): pytest calls a test function after import, passing nothing, so
+/// each parameter stays itself and each `global:<name>` input is bound to the
+/// value the contract states for it (`bind_call_arguments` with the
+/// parameters as their own arguments). The row's `inv` and `post` are
+/// substituted alike, so the claims are read over exactly the instance a
+/// caller after import joins. A row with no `formals` or no stated input is
+/// returned as it is.
+///
+/// `Err` names each `global:<name>` the claims still read after the binding:
+/// an input the contract does not state (the module's run left it
+/// undecided). Its claims are not decided on a value nobody gave.
+fn bind_own_inputs(body: &Json) -> Result<Json, Vec<String>> {
+    let Some(formals) = body.get("formals").and_then(Json::as_array).and_then(|formals| {
+        formals
+            .iter()
+            .map(|formal| formal.as_str().map(str::to_string))
+            .collect::<Option<Vec<_>>>()
+    }) else {
+        return Ok(body.clone());
+    };
+    let globals: Vec<&String> = formals
+        .iter()
+        .filter(|formal| formal.starts_with(GLOBAL_INPUT_PREFIX))
+        .collect();
+    if globals.is_empty() {
+        return Ok(body.clone());
+    }
+    let stated = stated_input_values(body);
+    let parameters: Vec<Json> = formals
+        .iter()
+        .filter(|formal| !is_contract_input(formal))
+        .map(|formal| serde_json::json!({"kind": "var", "name": formal}))
+        .collect();
+    let mut instance = body.clone();
+    if let Some(bindings) = bind_call_arguments(&formals, &stated, &parameters) {
+        if let Some(object) = instance.as_object_mut() {
+            for slot in ["inv", "post"] {
+                if let Some(formula) = object.get(slot).filter(|formula| formula.is_object()) {
+                    let bound = substitute_call_bindings(formula, &bindings);
+                    object.insert(slot.to_string(), bound);
+                }
+            }
+        }
+    }
+    let inv = instance.get("inv").cloned().unwrap_or(Json::Null);
+    let unbound: Vec<String> = globals
+        .into_iter()
+        .filter(|formal| formula_reads_var(&inv, formal))
+        .cloned()
+        .collect();
+    if unbound.is_empty() {
+        Ok(instance)
+    } else {
+        Err(unbound)
+    }
+}
+
+/// The row of a function whose claims read a module global its contract
+/// does not state (`bind_own_inputs`): undecidable, by name. Never decided
+/// on the free input, which would let a lying claim be satisfied.
+fn unstated_input_refusal(cid: String, body: &Json, unbound: &[String]) -> ConsistencyResult {
+    let property_name = contract_property_name(body).to_string();
+    ConsistencyResult {
+        contract_cid: cid,
+        property_name: property_name.clone(),
+        verdict: ObligationVerdict::Undecidable,
+        reason: format!(
+            "consistency check undecidable: `{property_name}` reads the module global input(s) {} whose value the module's run leaves undecided",
+            unbound.join(", ")
+        ),
+        effect: None,
+        witnessed: false,
+        locus: None,
+        verification: None,
+        dropped_ambient_posts: Vec::new(),
+    }
 }
 
 /// `formula` with each formal replaced by its binding at once: every formal
@@ -3906,6 +4034,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                     target_proof_cid: None,
                     formals: Vec::new(),
                     out_binding: String::new(),
+                    stated_inputs: Vec::new(),
                 },
                 post: Json::Null,
                 halt_guards: Vec::new(),
@@ -3965,6 +4094,7 @@ fn owed_post(
             target_proof_cid: None,
             formals: Vec::new(),
             out_binding: String::new(),
+            stated_inputs: Vec::new(),
         },
         post: Json::Null,
         halt_guards: Vec::new(),
@@ -4067,7 +4197,11 @@ impl JoinedHalts {
                 // (step 4). A call that does not fit is refused at the join
                 // (`import-signature-mismatch`), so no halt is stated through
                 // it here either.
-                let Some(bindings) = bind_call_arguments(&post.binding.formals, args) else {
+                let Some(bindings) = bind_call_arguments(
+                    &post.binding.formals,
+                    &post.binding.stated_inputs,
+                    args,
+                ) else {
                     continue;
                 };
                 for locus in self.callee_loci(pool, &post.binding.target_cid, visiting) {
@@ -4437,9 +4571,6 @@ pub fn members_answered_at_prove(
         return answered;
     }
     let ambient = collect_ambient_posts(pool);
-    if ambient.is_empty() {
-        return answered;
-    }
     let mut owed: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for (_cid, member) in pool.contract_members() {
         let Some(body) = pool
@@ -4451,7 +4582,15 @@ pub fn members_answered_at_prove(
         if !is_consistency_candidate(&body) {
             continue;
         }
-        let claim = canonicalize_formula_json(&axiom_context_formula(&body));
+        // The claims as the row's own call binds them (step 5): each module
+        // global input at the value the contract states for it, through the
+        // one binder (`bind_own_inputs`). A claim reading an input nothing
+        // states decides nothing.
+        let Ok(bound) = bind_own_inputs(&body) else {
+            continue;
+        };
+        let binds_own_inputs = bound != body;
+        let claim = canonicalize_formula_json(&axiom_context_formula(&bound));
         let mut stated = Vec::new();
         collect_completes_atoms(&claim, &mut stated);
         let mut reads: BTreeMap<String, Vec<&Json>> = BTreeMap::new();
@@ -4466,7 +4605,18 @@ pub fn members_answered_at_prove(
         if reads.is_empty() {
             continue;
         }
-        let context = joined_context(&claim, &ambient, plan, registry, compilers);
+        // What the joined contracts state; where nothing is joined and the
+        // row's own inputs were bound, the bound operation alone (an atom
+        // over the stated values is proved or refuted by itself, or nothing
+        // is answered).
+        let context = joined_context(&claim, &ambient, plan, registry, compilers).or_else(|| {
+            binds_own_inputs.then(|| {
+                (
+                    IrFormula::And(Vec::new()).to_value(),
+                    vec!["the row's own stated inputs".to_string()],
+                )
+            })
+        });
         for (member_cid, atoms) in reads {
             let reason = match &context {
                 Some((joined, symbols))
@@ -4657,7 +4807,11 @@ fn linked_ambient_post_instances_for_inv(
             };
             // Positional and named arguments bound to the contract's
             // parameters and inputs (step 4): one binder for every call.
-            let Some(bindings) = bind_call_arguments(&post.binding.formals, args) else {
+            let Some(bindings) = bind_call_arguments(
+                &post.binding.formals,
+                &post.binding.stated_inputs,
+                args,
+            ) else {
                 dropped.push(DroppedAmbientPost {
                     source_symbol: post.binding.source_symbol.clone(),
                     target_cid: post.binding.target_cid.clone(),
@@ -5093,6 +5247,16 @@ fn collect_consistency_candidates(
         if !is_consistency_candidate(&body) {
             continue;
         }
+        // The row's own claims are read over its inputs bound as a caller
+        // after import binds them (`bind_own_inputs`, the one binder): each
+        // module global at the value the contract states for it.
+        let body = match bind_own_inputs(&body) {
+            Ok(bound) => bound,
+            Err(unbound) => {
+                provenance_refusals.push(unstated_input_refusal(cid.to_string(), &body, &unbound));
+                continue;
+            }
+        };
         match contract_provenance_kind(member, &body) {
             Ok(provenance_kind) => {
                 if let Some(reason) = witness_provenance_kind_error(&body, provenance_kind)
@@ -10414,6 +10578,7 @@ mod tests {
                 target_proof_cid: None,
                 formals,
                 out_binding: "out".to_string(),
+                stated_inputs: Vec::new(),
             },
             post,
             halt_guards: Vec::new(),
@@ -10812,6 +10977,7 @@ mod tests {
     fn the_binder_binds_parameters_by_position_and_name_and_inputs_by_name() {
         let bound = bind_call_arguments(
             &formals(&["x", "y", "cell:k", "global:G"]),
+            &[],
             &[
                 int(1),
                 named_arg("py.kwarg", "y", int(2)),
@@ -10835,34 +11001,95 @@ mod tests {
     fn a_parameter_the_call_omits_is_its_default_input() {
         let contract = formals(&["x", "default:x"]);
         let supplied =
-            bind_call_arguments(&contract, &[named_arg("py.default", "x", int(4))]).unwrap();
+            bind_call_arguments(&contract, &[], &[named_arg("py.default", "x", int(4))]).unwrap();
         assert_eq!(supplied, vec![("x".to_string(), int(4)), ("default:x".to_string(), int(4))]);
         // A default the call does not supply stays the free input: open.
-        let unsupplied = bind_call_arguments(&contract, &[]).unwrap();
+        let unsupplied = bind_call_arguments(&contract, &[], &[]).unwrap();
         assert_eq!(unsupplied, vec![("x".to_string(), var("default:x"))]);
         // No default: a parameter the call omits does not fit.
-        assert!(bind_call_arguments(&formals(&["x"]), &[]).is_none());
+        assert!(bind_call_arguments(&formals(&["x"]), &[], &[]).is_none());
     }
 
     #[test]
     fn a_call_that_does_not_fit_the_contract_is_refused() {
         let contract = formals(&["x", "cell:k"]);
         // More positional arguments than parameters.
-        assert!(bind_call_arguments(&contract, &[int(1), int(2)]).is_none());
+        assert!(bind_call_arguments(&contract, &[], &[int(1), int(2)]).is_none());
         // A name the contract does not take.
-        assert!(bind_call_arguments(&contract, &[int(1), named_arg("py.kwarg", "z", int(2))])
-            .is_none());
-        assert!(bind_call_arguments(&contract, &[int(1), named_arg("py.closure", "j", int(2))])
-            .is_none());
+        assert!(
+            bind_call_arguments(&contract, &[], &[int(1), named_arg("py.kwarg", "z", int(2))])
+                .is_none()
+        );
+        assert!(
+            bind_call_arguments(&contract, &[], &[int(1), named_arg("py.closure", "j", int(2))])
+                .is_none()
+        );
         // A formal bound twice.
-        assert!(bind_call_arguments(&contract, &[int(1), named_arg("py.kwarg", "x", int(2))])
-            .is_none());
+        assert!(
+            bind_call_arguments(&contract, &[], &[int(1), named_arg("py.kwarg", "x", int(2))])
+                .is_none()
+        );
         // An input is never bound as a keyword.
         assert!(bind_call_arguments(
             &contract,
+            &[],
             &[int(1), named_arg("py.kwarg", "cell:k", int(2))]
         )
         .is_none());
+    }
+
+    #[test]
+    fn an_unsupplied_global_is_the_value_its_contract_states() {
+        // `def f(x): return x + G`, `G` a module global the module's run
+        // leaves 7: the contract states `global:G` = 7. A call after import
+        // supplies no `py.global`, so the binder binds the stated value, as it
+        // binds an omitted parameter to its default; a call made while the
+        // module runs supplies its own value, which wins.
+        let contract = formals(&["x", "global:G"]);
+        let stated = vec![("global:G".to_string(), int(7))];
+        assert_eq!(
+            bind_call_arguments(&contract, &stated, &[int(1)]),
+            Some(vec![("x".to_string(), int(1)), ("global:G".to_string(), int(7))])
+        );
+        assert_eq!(
+            bind_call_arguments(&contract, &stated, &[int(1), named_arg("py.global", "G", int(3))]),
+            Some(vec![("x".to_string(), int(1)), ("global:G".to_string(), int(3))])
+        );
+        // Stated nothing (the run left it undecided): unbound, so open.
+        assert_eq!(
+            bind_call_arguments(&contract, &[], &[int(1)]),
+            Some(vec![("x".to_string(), int(1))])
+        );
+    }
+
+    #[test]
+    fn a_row_reads_its_own_claims_at_the_stated_globals() {
+        // `X = 3; def test_x(): assert X == 3`: the claim reads the input
+        // `global:X`; pytest's call after import passes nothing, so the row is
+        // bound through the one binder at the stated module-final value.
+        let body = json!({
+            "formals": ["global:X"],
+            "inputValues": [{"formal": "global:X", "value": int(3)}],
+            "inv": eqf(var("global:X"), int(3)),
+        });
+        let bound = bind_own_inputs(&body).expect("the stated global binds the claim");
+        assert_eq!(bound["inv"], eqf(int(3), int(3)));
+        // A parameter stays itself.
+        let with_parameter = json!({
+            "formals": ["p", "global:X"],
+            "inputValues": [{"formal": "global:X", "value": int(3)}],
+            "inv": eqf(var("p"), var("global:X")),
+        });
+        assert_eq!(
+            bind_own_inputs(&with_parameter).unwrap()["inv"],
+            eqf(var("p"), int(3))
+        );
+        // No stated value: the claim is not decided on the free input.
+        let unstated = json!({
+            "formals": ["global:X"],
+            "inv": eqf(var("global:X"), int(4)),
+        });
+        assert_eq!(bind_own_inputs(&unstated), Err(vec!["global:X".to_string()]));
     }
 
     #[test]
@@ -10899,7 +11126,7 @@ mod tests {
             call_argument_formals(&contract, &[int(1)]),
             Some(vec![("x".to_string(), int(1))])
         );
-        assert!(bind_call_arguments(&contract, &[int(1)]).is_none());
+        assert!(bind_call_arguments(&contract, &[], &[int(1)]).is_none());
     }
 
     #[test]
@@ -10909,7 +11136,7 @@ mod tests {
         // argument. Before, the halt locus zipped formals and arguments by
         // position and dropped the halt when their counts differed.
         let contract = formals(&["x", "global:G"]);
-        let bindings = bind_call_arguments(&contract, &[int(5)])
+        let bindings = bind_call_arguments(&contract, &[], &[int(5)])
             .expect("a positional call fits a contract with an input");
         let locus = json!({
             "file": "producer.py",

@@ -772,29 +772,41 @@ def function_universe_outcome(fn):
     it), the read is refused by name and this function is undecided by it
     (``refused_function_row``).
 
-    A function reduced on its own is called from outside its module's run:
-    its body reads each module global through the module's final binding,
-    and the frame entry every call takes binds those keys, before the body
-    runs, to the values the module body's run bound them to, each demanded
-    only where its key is read (``call_site_sugar.
-    with_module_final_globals``, ``module_end_contexts``).  Its contract
-    names each such global as the input ``global:<name>``
-    (``nodes._contract_inputs``); this row is that contract decided as a
-    root is called, after import, at ``global:<name>`` := the module-final
-    value, which is what the entry binds.
+    A function's contract is stated over its inputs (#7757 step 5, #8292:
+    one contract per function).  Each module global a call of it reads
+    (``nodes._contract_inputs``: assignment, loop and branch-merge
+    bindings, ``global:<name>``) is read as the free input: the keys its
+    final binding reads through are bound to it at the entry
+    (``call_site_sugar.bind_global_inputs``), before anything else binds
+    them.  The row states the value the module's run left for each
+    (``stated_global_values``), and prove's one binder binds the input to
+    it where no call supplies one: pytest's call after import, the row's
+    own claims among them.  A definition the body reads (a class, a
+    decorated ``def``) is no input: the entry binds its key to the value
+    the module body's run bound it to, demanded only where it is read
+    (``call_site_sugar.with_module_final_globals``,
+    ``module_end_contexts``), as it binds the function's own default
+    keys.
 
     The outcome is always a set of arms: an operation on a formal that waits
     for a caller's actual is stated as its own proof states it, with none
     (``as_its_own_proof_states``).
     """
-    from sugar_lift_py_tests.sugar.call_site_sugar import with_module_final_globals
+    from sugar_lift_py_tests.sugar.call_site_sugar import (
+        bind_global_inputs,
+        with_module_final_globals,
+    )
     from sugar_source_tree.nodes import current_module_execution_site
 
     sugar = fn.contract_universe()
     site = current_module_execution_site()
     owner = fn._active_initializer_owner()
     if owner is None:
-        entry = with_module_final_globals(None, (fn,), site=site)
+        entry = with_module_final_globals(
+            bind_global_inputs(None, fn, owner="function_universe_outcome"),
+            (fn,),
+            site=site,
+        )
         return as_its_own_proof_states(sugar.desugar(entry), entry)
 
     from sugar_lift_py_tests.context import ReduceContext
@@ -959,13 +971,25 @@ def function_contract_rows(fn, file_rel: str):
     frontier gap).
     """
     def_memento = function_def_memento(fn, file_rel)
-    return def_memento, reduction_rows(
+    rows = reduction_rows(
         owner_reduction(fn).outcome,
         owner=fn.contract_universe(),
         blame=fn.fragment,
         def_memento=def_memento,
         definition=fn,
     )
+    # The value the module's run left for each module global input the
+    # contract states its post and claims over (#7757 step 5): prove's one
+    # binder binds an input no call supplies to it, the row's own claims
+    # (pytest's call after import) among them.
+    from sugar_lift_py_tests.sugar.call_site_sugar import stated_global_values
+
+    stated = stated_global_values(fn)
+    if rows is not None and stated:
+        import dataclasses
+
+        rows = [dataclasses.replace(row, input_values=stated) for row in rows]
+    return def_memento, rows
 
 
 def _roll_call_identity(entry) -> tuple:

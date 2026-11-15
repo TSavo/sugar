@@ -113,6 +113,12 @@ class BodyUniverseDto:
     # One entry per halted arm of the function's one reduction (#7766): a
     # halt is never dropped. Stated on the function's contract row only.
     panic_loci: tuple[PanicLocusDto, ...] = ()
+    # ``((formal, term), ...)``: the value the module's one run left for each
+    # ``global:<name>`` input the contract states its post and claims over
+    # (#7757 step 5, ``call_site_sugar.stated_global_values``). Prove's one
+    # binder binds an input no call supplies to it, as it binds an omitted
+    # parameter to its default; the row's own claims are bound so too.
+    input_values: tuple[tuple[str, Term], ...] = ()
 
     def __post_init__(self) -> None:
         for slot in ("pre", "post", "inv"):
@@ -138,6 +144,11 @@ class BodyUniverseDto:
             out["panicLoci"] = [
                 locus.to_rpc_with_term_table(term_table) for locus in self.panic_loci
             ]
+        if self.input_values:
+            out["inputValues"] = [
+                {"formal": formal, "value": term_table.reference(term)}
+                for formal, term in self.input_values
+            ]
         self._attach_sidecars(out)
         return out
 
@@ -157,6 +168,19 @@ class BodyUniverseDto:
             out["inv"] = to_rpc_value(self.inv)
         if self.panic_loci:
             out["panicLoci"] = [locus.to_semantic_rpc() for locus in self.panic_loci]
+        if self.input_values:
+            import json
+
+            from sugar_lift_py_tests.canonicalizer import encode_jcs
+            from sugar_lift_py_tests.ir import term_to_value
+
+            out["inputValues"] = [
+                {
+                    "formal": formal,
+                    "value": json.loads(encode_jcs(term_to_value(term))),
+                }
+                for formal, term in self.input_values
+            ]
         self._attach_sidecars(out)
         return out
 
