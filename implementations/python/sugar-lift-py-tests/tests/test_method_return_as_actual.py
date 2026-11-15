@@ -198,11 +198,34 @@ def _completed_compare_is_true(outcome) -> bool:
 
 
 def _store_value_actual(outcome) -> object:
-    """Pull the value actual from a completed ``store(obj, key, value)`` call."""
-    if isinstance(outcome, ExitSet) and len(outcome.exits) == 1:
-        face = outcome.exits[0]
-        if isinstance(face, Completed) and isinstance(face.value, CallSiteValue):
-            args = face.value.arg_values
+    """Pull the value actual from the completed ``store(obj, key, value)`` call.
+
+    ``obj`` is a formal: the list reaches ``store`` by binding
+    (``object_identity.arrived``), so its contents are not current there and
+    the container law does not read the index's bound
+    (``builtin_container_method.apply``).  ``obj[key] = value`` is the cited
+    undecided ``list.__setitem__``: the call completes under
+    ``python:builtin_method.completes`` and halts with an
+    ``UndeterminedRaiseEffect`` under the complement.  The actuals the call
+    bound ride its one completed face."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
+    if isinstance(outcome, ExitSet):
+        completed = [face for face in outcome.exits if isinstance(face, Completed)]
+        halted = [face for face in outcome.exits if isinstance(face, Halted)]
+        if (
+            len(completed) == 1
+            and len(completed) + len(halted) == len(outcome.exits)
+            and len(halted) <= 1
+            and all(
+                isinstance(halt.effect, UndeterminedRaiseEffect)
+                and halt.effect.producer_node_owner
+                == "BuiltinMethodCall:list.__setitem__"
+                for halt in halted
+            )
+            and isinstance(completed[0].value, CallSiteValue)
+        ):
+            args = completed[0].value.arg_values
             assert len(args) == 3, args
             return args[2]
     raise AssertionError(
