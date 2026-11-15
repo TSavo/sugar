@@ -1,9 +1,10 @@
 """The recovered-construction frontier, re-homed onto the tree, is HONEST.
 
 The factory census is gone; the frontier now walks the tree with a
-CollectingReporter. A file with an unwritten-sugar node (a bare Name) must
-report a panic -- status `failed`, R>0 -- not the false `complete` the empty
-stub produced. A fully-sugared file (only `assert 1 == 1`) reports `clean`.
+CollectingReporter. A file with a node that refuses at construction (a
+``del`` of a tuple target) must report a panic -- status `failed`, R>0, the
+refusal by its own name -- not the false `complete` the empty stub produced.
+A fully-sugared file (only `assert 1 == 1`) reports `clean`.
 
 The leaf is demanded the way the board door's D3 demand asks for it (one facts
 leaf sought at each file's memento under auditFrontier) and validated
@@ -75,26 +76,36 @@ def _drive_frontier(source: str) -> _Frontier:
         lift_rpc._send_enumerate_result = orig_send
 
 
-def test_unwritten_sugar_makes_the_frontier_fail_loudly():
-    # a bare Name expression has no sugar written -> a real frontier gap
-    audit = _drive_frontier("def test_one():\n    x\n")
-    assert audit.status == "failed", "unwritten sugar must not read as clean"
-    assert audit.panics, "R must be > 0 when the corpus has unwritten sugar"
+def test_a_construction_refusal_makes_the_frontier_fail_by_name():
+    # ``del (a, b)``: a delete whose target is not a name, attribute or
+    # subscript is not lowered, and ``Delete`` refuses it by name at
+    # construction.  (A bare Name expression, this test's old fixture, has had
+    # its sugar written since.)  The frontier is failed, and the refusal
+    # reaches it under its own name at the node that refused -- never as an
+    # unaccounted absentee.
+    audit = _drive_frontier(
+        "def test_one():\n    a = 1\n    b = 2\n    del (a, b)\n"
+    )
+    assert audit.status == "failed", "a construction refusal must not read as clean"
+    assert audit.panics, "R must be > 0 when the corpus has a refusal"
     blames = {p.gap["blame"] for p in audit.panics}
     assert len(blames) == len(audit.panics), "each gap locus is unique"
+    named = [p for p in audit.panics if p.gap["nodeKind"] == "Delete"]
+    assert len(named) == 1, [p.gap for p in audit.panics]
+    assert named[0].gap["kind"] == "SugarNotWritten"
+    assert named[0].gap["owner"] == "Delete._construct_sugar"
+    assert not any(
+        p.gap["kind"] == "UnaccountedConstruction" for p in audit.panics
+    ), "a named refusal explains every node it stopped"
 
 
-def test_census_fingers_exactly_the_unwritten_kinds():
-    # `assert 1 == 1` -- Assert/Compare/Constant AND now FunctionDef (its body
-    # reduces to a universe) have sugar WRITTEN, so they are NOT gaps; only
-    # Module remains unwritten. The census is precise: it clears every sugared
-    # kind and fingers only the one that is still missing.
+def test_a_fully_sugared_file_reads_clean():
+    # `assert 1 == 1` -- Module, FunctionDef, Assert, Compare and Constant all
+    # have their sugar written, so the roll has no absentee and the census
+    # fingers nothing.
     audit = _drive_frontier("def test_one():\n    assert 1 == 1\n")
-    assert audit.status == "failed"
-    gap_kinds = {p.gap["nodeKind"] for p in audit.panics}
-    assert "Module" in gap_kinds, gap_kinds
-    for written in ("Assert", "Compare", "Constant", "FunctionDef"):
-        assert written not in gap_kinds, f"{written} sugar is written; not a gap"
+    assert audit.status == "clean"
+    assert audit.panics == []
 
 
 def test_shared_cid_at_distinct_loci_stays_distinct_without_fake_panics():
@@ -178,7 +189,7 @@ def test_d3_residency_observer_distinguishes_real_miss_and_hit(tmp_path):
 
 
 if __name__ == "__main__":
-    test_unwritten_sugar_makes_the_frontier_fail_loudly()
-    test_census_fingers_exactly_the_unwritten_kinds()
-    test_shared_cid_at_distinct_loci_stays_distinct_and_located()
+    test_a_construction_refusal_makes_the_frontier_fail_by_name()
+    test_a_fully_sugared_file_reads_clean()
+    test_shared_cid_at_distinct_loci_stays_distinct_without_fake_panics()
     print("ok: frontier is honest -- unwritten kinds finger, written kinds clear")
