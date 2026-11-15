@@ -64,14 +64,6 @@ def _raises(outcome, exception: str) -> list:
     ]
 
 
-def _only_raise(outcome, exception: str) -> None:
-    from sugar_lift_py_tests.outcome import ExitSet, Halted
-
-    assert isinstance(outcome, ExitSet), outcome
-    assert [type(face) for face in outcome.exits] == [Halted], outcome
-    assert outcome.exits[0].effect.exception_name == exception
-
-
 def _call_of(tree: SourceFile, name: str) -> Call:
     return next(
         node
@@ -80,6 +72,112 @@ def _call_of(tree: SourceFile, name: str) -> Call:
         and isinstance(node.func, Name)
         and node.func.id == name
     )
+
+
+# ---------------------------------------------------------------------------
+# A call of a same-file definition is its coordinate and edge (#7757 steps 5
+# and 6, the owner's ruling of 2026-11-15, "Edge, join at prove"): the
+# reduction never applies the callee's body, so what the body returns or
+# raises is no face of the caller's reduction.  The call stands as
+# ``call:<module>.<qualname>(<actuals>, py.default(...), ...)``, owed under
+# the callee's join symbol, and prove joins it to the callee's contract.  A
+# join symbol needs a workspace root (``FunctionDef.bridge_source_symbol``),
+# so these read a file opened under one, by the one opener.
+# ---------------------------------------------------------------------------
+
+
+def _rooted_tree(tmp_path, source: str, module: str = "subject") -> SourceFile:
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+
+    path = tmp_path / f"{module}.py"
+    path.write_text(source)
+    return open_source_file_for_construction(path, root=tmp_path)
+
+
+def _rooted_outcome(tmp_path, source: str, module: str = "subject"):
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    tree = _rooted_tree(tmp_path, source, module)
+    (function,) = tuple(
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name.startswith("test_")
+    )
+    return function_universe_outcome(function)
+
+
+def _owed_symbols(outcome) -> set:
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    return {item.symbol for item in owed_calls(outcome)}
+
+
+def _owes_symbol_starting(outcome, prefix: str) -> bool:
+    return any(
+        isinstance(symbol, str) and symbol.startswith(prefix)
+        for symbol in _owed_symbols(outcome)
+    )
+
+
+def _edge_term(outcome, target: str):
+    """The one call term ``call:<target>...`` of the edges the reduction
+    holds: each halt of such a call is named by the call it came from
+    (``python:raised(<call term>, <occurrence>)``,
+    ``UnknownCalleeCallV1.faces``).  ``target`` is the callee's join symbol
+    without its ``python:`` namespace, or a prefix of it ending in ``@`` for
+    a definition inside a function scope."""
+    from sugar_lift_py_tests.outcome import Halted
+
+    terms = set()
+    for face in getattr(outcome, "exits", ()):
+        if not isinstance(face, Halted):
+            continue
+        raised = getattr(face.effect, "raised_by_call", None)
+        if raised is None:
+            continue
+        term = raised.args[0]
+        name = getattr(term, "name", "")
+        if name == f"call:{target}" or (
+            target.endswith("@") and name.startswith(f"call:{target}")
+        ):
+            terms.add(term)
+    assert len(terms) == 1, (target, terms, outcome)
+    (term,) = terms
+    return term
+
+
+def _supplied_defaults(term) -> dict:
+    """``{param: value term}`` of each ``py.default(param, value)`` the call
+    term carries: the value the ``def`` statement bound for a formal the
+    call omits."""
+    return {
+        arg.args[0].value: arg.args[1]
+        for arg in term.args
+        if getattr(arg, "name", None) == "py.default"
+    }
+
+
+def _positional(term) -> tuple:
+    """The call term's operands that are no ``py.*`` input."""
+    return tuple(
+        arg
+        for arg in term.args
+        if not str(getattr(arg, "name", "")).startswith("py.")
+    )
+
+
+def _lambda_defaults(term) -> list:
+    """The value term of each ``python:lambda_default`` anywhere under
+    ``term``: the defaults a function value carries
+    (``LambdaCallable.to_term``)."""
+    found = []
+    stack = [term]
+    while stack:
+        item = stack.pop()
+        if getattr(item, "name", None) == "python:lambda_default":
+            found.append(item.args[1])
+        stack.extend(getattr(item, "args", ()) or ())
+    return found
 
 
 # ---------------------------------------------------------------------------
@@ -196,10 +294,14 @@ def test_only_a_plain_once_bound_def_is_read_as_its_function() -> None:
     assert answers["plain"].name == "plain"
 
 
-def test_a_def_bound_to_a_local_name_is_called_through_its_function() -> None:
+def test_a_def_bound_to_a_local_name_is_called_through_its_function(
+    tmp_path,
+) -> None:
     """``f = g; f()``: ``f`` holds the function ``g``'s ``def`` statement
-    built, and the call through it applies ``g``'s body by the one call
-    door, as ``g()`` does.  The lying half's raise is the call's."""
+    built, and the call through it is ``g``'s coordinate and edge, as
+    ``g()`` is (#7757 step 5, #8705).  ``g``'s body is never applied here:
+    the lying half's ``ZeroDivisionError`` is ``g``'s contract's halt,
+    joined at prove (#8690), no face of this reduction."""
     source = """\
 def g():
     return {x}
@@ -210,10 +312,11 @@ def test_f():
     a = f()
     return 3
 """
-    truthful = _test_function_outcome(source.format(x="1"))
-    assert _raises(truthful, "ZeroDivisionError") == []
-    assert truthful.completed_value() is not None, truthful
-    _only_raise(_test_function_outcome(source.format(x="1 // 0")), "ZeroDivisionError")
+    for module, x in (("truthful", "1"), ("lying", "1 // 0")):
+        outcome = _rooted_outcome(tmp_path, source.format(x=x), module)
+        assert f"python:{module}.g" in _owed_symbols(outcome), outcome
+        assert _positional(_edge_term(outcome, f"{module}.g")) == ()
+        assert _raises(outcome, "ZeroDivisionError") == []
 
 
 # ---------------------------------------------------------------------------
@@ -240,28 +343,39 @@ def test_scale():
 """
 
 
-def test_a_source_decorator_replaces_a_raising_body() -> None:
-    """The bare body raises; the decorator's result does not: the call
-    completes, so the bare body never ran."""
-    outcome = _test_function_outcome(
+def test_a_source_decorator_replaces_a_raising_body(tmp_path) -> None:
+    """The bare body raises; the decorator's result does not.  ``scale`` is
+    what the module run's ``replace(scale)`` returned: that application is
+    ``replace``'s edge (#7757 step 5, #8705), owed by every function that
+    reads the name, and the bare body is never run."""
+    outcome = _rooted_outcome(
+        tmp_path,
         _SOURCE_DECORATOR.format(
             wrapper="n * 10", body="    raise ValueError('plain body')"
-        )
+        ),
     )
-    assert outcome.completed_value() is not None, outcome
+    assert "python:subject.replace" in _owed_symbols(outcome), outcome
     assert _raises(outcome, "ValueError") == []
 
 
-def test_a_source_decorator_changes_what_the_call_does() -> None:
-    """The bare body returns; the decorator's result raises: the call
-    carries the decorator's raise, so its result is what was called."""
-    outcome = _test_function_outcome(
-        _SOURCE_DECORATOR.format(wrapper="fail(n)", body="    return n")
+def test_a_source_decorator_changes_what_the_call_does(tmp_path) -> None:
+    """The bare body returns; the decorator's result raises.  Its result is
+    what the call calls: the call of ``replace``'s result, which neither the
+    lift nor prove decides until a call of a call's result is dispatched at
+    prove (survey step 8 on #7757, an owner ruling).  Decided here before
+    step 5 by following ``replace``'s body (its one face the ``ValueError``);
+    now ``replace``'s edge is owed and no face names the raise."""
+    outcome = _rooted_outcome(
+        tmp_path, _SOURCE_DECORATOR.format(wrapper="fail(n)", body="    return n")
     )
-    _only_raise(outcome, "ValueError")
+    assert "python:subject.replace" in _owed_symbols(outcome), outcome
+    assert _raises(outcome, "ValueError") == []
 
 
-def test_a_decorated_local_function_calls_the_decorators_result() -> None:
+def test_a_decorated_local_function_calls_the_decorators_result(tmp_path) -> None:
+    """The statement applies ``replace`` where it runs, in ``test_scale``:
+    that application is ``replace``'s edge, its actual the function the
+    local ``def`` built; the bare body is never run."""
     source = """\
 def replace(fn):
     return lambda n: n * 10
@@ -275,8 +389,10 @@ def test_scale():
     value = scale(2)
     assert value == 20
 """
-    outcome = _test_function_outcome(source)
-    assert outcome.completed_value() is not None, outcome
+    outcome = _rooted_outcome(tmp_path, source)
+    assert "python:subject.replace" in _owed_symbols(outcome), outcome
+    (actual,) = _positional(_edge_term(outcome, "subject.replace"))
+    assert getattr(actual, "name", None) == "python:lambda"
     assert _raises(outcome, "ValueError") == []
 
 
@@ -312,10 +428,15 @@ def test_an_imported_decorator_is_undecided_never_the_plain_body() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a_staticmethod_read_off_its_class_takes_no_implicit_argument() -> None:
-    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+def test_a_staticmethod_read_off_its_class_takes_no_implicit_argument(
+    tmp_path,
+) -> None:
+    """``Box.pick(3)`` of a ``staticmethod`` is ``pick``'s edge with the one
+    written actual and nothing implicit (#7757 step 6, #8738).  The body is
+    never applied here: its ``ValueError`` is ``pick``'s contract's halt,
+    joined at prove, so neither body's raise is a face here."""
     from sugar_lift_py_tests.floor import TermValue
-    from sugar_lift_py_tests.outcome import Halted
+    from sugar_lift_py_tests.ir import num
 
     source = """\
 class Box:
@@ -323,30 +444,25 @@ class Box:
     def pick(n):
 {body}
 """
-    for body, raises in (
-        ("        return n", False),
-        ("        raise ValueError('static')", True),
+    for module, body in (
+        ("returns", "        return n"),
+        ("raises", "        raise ValueError('static')"),
     ):
-        text = source.format(body=body)
-        tree = _tree(text)
-        (class_def,) = tuple(
-            node for node in tree.nodes() if isinstance(node, ClassDef)
-        )
-        ctx = ReduceContext.root(owner="test")
-        box = class_def.sugar().desugar(ctx).completed_value()
+        box, ctx = _rooted_class_value(tmp_path, source.format(body=body), module)
         outcome = box.call_method_value(
             "pick", (TermValue(3),), owner="test", blame="pick-site", ctx=ctx
         )
-        halts = [
-            face for face in getattr(outcome, "exits", ()) if isinstance(face, Halted)
-        ]
-        if raises:
-            assert [face.effect.exception_name for face in halts] == ["ValueError"]
-        else:
-            assert halts == []
+        assert _positional(_edge_term(outcome, f"{module}.Box.pick")) == (num(3),)
+        assert "ValueError" not in _halt_names(outcome)
 
 
-def test_a_property_getter_runs_on_the_instance_read() -> None:
+def test_a_property_getter_runs_on_the_instance_read(tmp_path) -> None:
+    """``Receiver().value``: ``Receiver()`` is the class's edge (#7757 step
+    6, #8738) and ``value`` a member of that call's result, the undecided
+    read (``CallSiteValue.attribute``): the getter runs on an instance only
+    a dispatch at prove could select (survey step 8 on #7757, an owner
+    ruling).  Before step 6 the getter's ``ValueError`` was this reduction's
+    one face; now no face names it."""
     source = """\
 class Receiver:
     @property
@@ -358,11 +474,19 @@ def test_value():
     found = Receiver().value
     assert found == 1
 """
-    _only_raise(_test_function_outcome(source), "ValueError")
+    outcome = _rooted_outcome(tmp_path, source)
+    assert "python:subject.Receiver" in _owed_symbols(outcome), outcome
+    assert _raises(outcome, "ValueError") == []
 
 
-def test_typing_final_returns_the_function() -> None:
-    outcome = _test_function_outcome(
+def test_typing_final_returns_the_function(tmp_path) -> None:
+    """``typing.final`` returns its argument, so ``check`` is the function
+    its ``def`` built and ``check(2)`` its edge (#7757 step 5): the body's
+    ``ValueError`` is ``check``'s contract's halt, joined at prove."""
+    from sugar_lift_py_tests.ir import num
+
+    outcome = _rooted_outcome(
+        tmp_path,
         """\
 from typing import final
 
@@ -375,9 +499,11 @@ def check(n):
 def test_check():
     value = check(2)
     assert value == 2
-"""
+""",
     )
-    _only_raise(outcome, "ValueError")
+    assert "python:subject.check" in _owed_symbols(outcome), outcome
+    assert _positional(_edge_term(outcome, "subject.check")) == (num(2),)
+    assert _raises(outcome, "ValueError") == []
 
 
 def test_a_builtin_decorator_is_decided_by_the_one_builtin_arm() -> None:
@@ -496,6 +622,18 @@ def _class_value(source: str):
     return class_def.sugar().desugar(ctx).completed_value(), ctx
 
 
+def _rooted_class_value(tmp_path, source: str, module: str = "subject"):
+    """``_class_value`` of a file opened under a workspace root, so a call
+    of a method is its edge to the method's join symbol
+    (``object_value.method_edge_call``)."""
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+
+    tree = _rooted_tree(tmp_path, source, module)
+    (class_def,) = tuple(node for node in tree.nodes() if isinstance(node, ClassDef))
+    ctx = ReduceContext.root(owner="test")
+    return class_def.sugar().desugar(ctx).completed_value(), ctx
+
+
 def _halt_names(outcome) -> list:
     from sugar_lift_py_tests.outcome import Halted
 
@@ -506,30 +644,41 @@ def _halt_names(outcome) -> list:
     ]
 
 
-def test_a_plain_function_read_off_its_class_takes_no_implicit_argument() -> None:
+def test_a_plain_function_read_off_its_class_takes_no_implicit_argument(
+    tmp_path,
+) -> None:
     """``Box.pick(3)`` calls ``pick(3)``: the function looked up on the class
     is unbound.  Before, the class was bound as a first argument, so the one
-    written actual met a second formal it never had."""
+    written actual met a second formal it never had.  The call is ``pick``'s
+    edge with that one actual (#7757 step 6, #8738); the body's raise is its
+    contract's halt, joined at prove, never a face here."""
     from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.ir import num
 
-    for body, halts in (
-        ("        return n", []),
-        ("        raise ValueError('unbound')", ["ValueError"]),
+    for module, body in (
+        ("returns", "        return n"),
+        ("raises", "        raise ValueError('unbound')"),
     ):
-        box, ctx = _class_value(f"class Box:\n    def pick(n):\n{body}\n")
+        box, ctx = _rooted_class_value(
+            tmp_path, f"class Box:\n    def pick(n):\n{body}\n", module
+        )
         outcome = box.call_method_value(
             "pick", (TermValue(3),), owner="test", blame="pick-site", ctx=ctx
         )
-        assert _halt_names(outcome) == halts
+        assert _positional(_edge_term(outcome, f"{module}.Box.pick")) == (num(3),)
+        assert "ValueError" not in _halt_names(outcome)
 
 
-def test_a_plain_function_read_off_its_class_takes_its_receiver_as_written() -> None:
+def test_a_plain_function_read_off_its_class_takes_its_receiver_as_written(
+    tmp_path,
+) -> None:
     """``Box.pick(obj, 3)`` passes ``obj`` as written: two actuals, two
-    formals, nothing implicit."""
+    formals, nothing implicit, on ``pick``'s edge (#7757 step 6)."""
     from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.ir import num
 
-    box, ctx = _class_value(
-        "class Box:\n    def pick(self, n):\n        raise ValueError('ran')\n"
+    box, ctx = _rooted_class_value(
+        tmp_path, "class Box:\n    def pick(self, n):\n        raise ValueError('ran')\n"
     )
     outcome = box.call_method_value(
         "pick",
@@ -538,41 +687,60 @@ def test_a_plain_function_read_off_its_class_takes_its_receiver_as_written() -> 
         blame="pick-site",
         ctx=ctx,
     )
-    assert _halt_names(outcome) == ["ValueError"]
+    assert _positional(_edge_term(outcome, "subject.Box.pick")) == (num(1), num(3))
+    assert "ValueError" not in _halt_names(outcome)
 
 
-def test_a_classmethod_read_off_its_class_binds_the_class() -> None:
+def test_a_classmethod_read_off_its_class_binds_the_class(tmp_path) -> None:
+    """``Box.make(3)`` of a ``classmethod``: the edge's first actual is the
+    class the lookup binds, then the written one (#7757 step 6)."""
     from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.ir import num
 
-    box, ctx = _class_value(
+    box, ctx = _rooted_class_value(
+        tmp_path,
         "class Box:\n"
         "    @classmethod\n"
         "    def make(cls, n):\n"
-        "        raise ValueError('ran')\n"
+        "        raise ValueError('ran')\n",
     )
     outcome = box.call_method_value(
         "make", (TermValue(3),), owner="test", blame="make-site", ctx=ctx
     )
-    assert _halt_names(outcome) == ["ValueError"]
+    implicit, written = _positional(_edge_term(outcome, "subject.Box.make"))
+    assert written == num(3)
+    assert implicit != num(3)
+    assert "ValueError" not in _halt_names(outcome)
 
 
-def test_an_instance_lookup_binds_by_descriptor_kind() -> None:
+def test_an_instance_lookup_binds_by_descriptor_kind(tmp_path) -> None:
     """Read off an instance: a ``staticmethod`` binds nothing and a
-    ``classmethod`` binds the instance's class, never the instance."""
+    ``classmethod`` binds the instance's class, never the instance.  Each is
+    the method's edge over what its descriptor binds (#7757 step 6)."""
     from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.ir import num
 
     for decorator, formals in (("staticmethod", "n"), ("classmethod", "cls, n")):
-        box, ctx = _class_value(
+        box, ctx = _rooted_class_value(
+            tmp_path,
             "class Box:\n"
             f"    @{decorator}\n"
             f"    def pick({formals}):\n"
-            "        raise ValueError('ran')\n"
+            "        raise ValueError('ran')\n",
+            decorator,
         )
         receiver = box.fresh_receiver("receiver-cid", allocation=FRAME_FRESH)
         outcome = receiver.call_method_value(
             "pick", (TermValue(3),), owner="test", blame="pick-site", ctx=ctx
         )
-        assert _halt_names(outcome) == ["ValueError"], decorator
+        actuals = _positional(_edge_term(outcome, f"{decorator}.Box.pick"))
+        if decorator == "staticmethod":
+            assert actuals == (num(3),), decorator
+        else:
+            implicit, written = actuals
+            assert written == num(3), decorator
+            assert implicit != receiver.to_term(owner="test"), decorator
+        assert "ValueError" not in _halt_names(outcome), decorator
 
 
 def test_the_implicit_arguments_of_each_lookup() -> None:
@@ -629,18 +797,25 @@ def test_scale():
 """
 
 
-def test_a_spread_call_of_a_decorated_name_calls_its_application() -> None:
-    """Before, the call was bodyless (two faces, an undetermined raise); it
-    now runs the decorator's result: the plain body never runs."""
-    outcome = _test_function_outcome(_SPREAD.format(wrapper="n * 10"))
-    assert outcome.completed_value() is not None, outcome
-    assert _raises(outcome, "ValueError") == []
-    raising = _test_function_outcome(_SPREAD.format(wrapper="fail(n)"))
-    _only_raise(raising, "ValueError")
+def test_a_spread_call_of_a_decorated_name_calls_its_application(tmp_path) -> None:
+    """``scale(*(2,))`` calls what the module run's ``replace(scale)``
+    returned, never the plain body.  That application is ``replace``'s edge
+    (#7757 step 5, #8705), owed by the reader; what its result does when
+    called is decided by neither the lift nor prove until a call of a
+    call's result is dispatched at prove (survey step 8 on #7757).  Before
+    step 5 the raising wrapper's ``ValueError`` was this reduction's one
+    face; now no face names it."""
+    for module, wrapper in (("scales", "n * 10"), ("raises", "fail(n)")):
+        outcome = _rooted_outcome(tmp_path, _SPREAD.format(wrapper=wrapper), module)
+        assert f"python:{module}.replace" in _owed_symbols(outcome), outcome
+        assert _raises(outcome, "ValueError") == []
 
 
-def test_a_spread_call_of_a_decorated_local_name_calls_its_application() -> None:
-    outcome = _test_function_outcome(
+def test_a_spread_call_of_a_decorated_local_name_calls_its_application(
+    tmp_path,
+) -> None:
+    outcome = _rooted_outcome(
+        tmp_path,
         """\
 def replace(fn):
     return lambda n: n * 10
@@ -653,9 +828,9 @@ def test_scale():
 
     value = scale(*(2,))
     assert value == 20
-"""
+""",
     )
-    assert outcome.completed_value() is not None, outcome
+    assert "python:subject.replace" in _owed_symbols(outcome), outcome
     assert _raises(outcome, "ValueError") == []
 
 
@@ -752,17 +927,26 @@ def test_inner():
     assert _raises(outcome, "ValueError") == []
 
 
-def test_a_called_nested_def_raises_at_the_call() -> None:
-    outcome = _test_function_outcome(
+def test_a_called_nested_def_raises_at_the_call(tmp_path) -> None:
+    """``inner()`` is the local ``def``'s edge (#7757 step 5, #8705): its
+    ``ValueError`` is ``inner``'s contract's halt, which prove joins at this
+    call (#8690).  Before step 5 the body was followed and the raise was a
+    face of this reduction; now no face names it."""
+    outcome = _rooted_outcome(
+        tmp_path,
         """\
 def test_inner():
     def inner():
         raise ValueError('called')
 
     inner()
-"""
+""",
     )
-    assert _raises(outcome, "ValueError") != []
+    assert _owes_symbol_starting(
+        outcome, "python:subject.test_inner.<locals>.inner@"
+    ), outcome
+    assert _positional(_edge_term(outcome, "subject.test_inner.<locals>.inner@")) == ()
+    assert _raises(outcome, "ValueError") == []
 
 
 # ---------------------------------------------------------------------------
@@ -804,10 +988,15 @@ def test_default():
     assert _raises(plain, "ZeroDivisionError") == []
 
 
-def test_a_default_is_the_binding_at_its_def_statement() -> None:
+def test_a_default_is_the_binding_at_its_def_statement(tmp_path) -> None:
     """``x = 1; def f(a=x); x = 2; f()`` is 1: the call binds the value the
     statement evaluated, never the default expression read again at the
-    call."""
+    call.  The call is ``f``'s edge (#7757 step 5, #8705), and it supplies
+    that value as ``py.default(a, 1)``, which prove's one binder binds to
+    the contract's ``default:a`` (#8693, #8698); the claim over it is
+    decided at prove, no longer at this reduction."""
+    from sugar_lift_py_tests.ir import num
+
     source = """\
 def test_default():
     x = 1
@@ -818,18 +1007,24 @@ def test_default():
     x = 2
     assert f() == {expected}
 """
-    truthful = _test_function_outcome(source.format(expected=1))
-    assert _raises(truthful, "AssertionError") == []
-    assert truthful.completed_value() is not None, truthful
-    lying = _test_function_outcome(source.format(expected=2))
-    assert _raises(lying, "AssertionError") != []
+    for module, expected in (("truthful", 1), ("lying", 2)):
+        outcome = _rooted_outcome(tmp_path, source.format(expected=expected), module)
+        term = _edge_term(outcome, f"{module}.test_default.<locals>.f@")
+        assert _positional(term) == ()
+        assert _supplied_defaults(term) == {"a": num(1)}, term
 
 
-def test_a_method_default_is_the_binding_at_its_class_statement() -> None:
+def test_a_method_default_is_the_binding_at_its_class_statement(tmp_path) -> None:
     """``x = 1; class C: def m(self, a=x): ...; x = 2; C().m()`` is 1: the
     class body runs the method's ``def`` statement, which evaluates the
     default once; the call binds that value (#8020), never ``x`` read again
-    at the call."""
+    at the call.  ``C()`` is the class's edge (#7757 step 6, #8738) and
+    ``.m`` a member of that call's result: the undecided read, so the
+    method's call names no definition and supplies no default until a
+    method of a call's result is dispatched at prove (survey step 8 on
+    #7757, an owner ruling).  Open on both halves today; the class value
+    carrying the default its statement evaluated is
+    ``test_the_class_statement_evaluates_its_methods_defaults``."""
     source = """\
 def test_default():
     x = 1
@@ -841,27 +1036,60 @@ def test_default():
     x = 2
     assert C().m() == {expected}
 """
-    truthful = _test_function_outcome(source.format(expected=1))
-    assert _raises(truthful, "AssertionError") == []
-    assert truthful.completed_value() is not None, truthful
-    lying = _test_function_outcome(source.format(expected=2))
-    assert _raises(lying, "AssertionError") != []
+    for module, expected in (("truthful", 1), ("lying", 2)):
+        outcome = _rooted_outcome(tmp_path, source.format(expected=expected), module)
+        assert _owes_symbol_starting(
+            outcome, f"python:{module}.test_default.<locals>.C@"
+        ), outcome
+        assert not _owes_symbol_starting(
+            outcome, f"python:{module}.test_default.<locals>.C.m@"
+        ), outcome
 
 
-def _binds_the_statements_value(source: str) -> None:
-    truthful = _test_function_outcome(source.format(expected=1))
-    assert _raises(truthful, "AssertionError") == []
-    assert truthful.completed_value() is not None, truthful
-    lying = _test_function_outcome(source.format(expected=2))
-    assert _raises(lying, "AssertionError") != []
+def _binds_the_statements_value(
+    tmp_path, source: str, target: str, *, param: str = "a"
+) -> None:
+    """Each half's call of ``target`` (a join symbol without its namespace,
+    under the half's module) supplies the value the statement bound, 1, as
+    ``py.default(<param>, 1)``, never ``x`` read again at the call (2): the
+    edge of a same-file call (#7757 steps 5 and 6), joined at prove, where
+    the claim over it is decided (#8693).  Decided at this reduction before
+    those steps, by following the callee's body."""
+    from sugar_lift_py_tests.ir import num
+
+    for module, expected in (("truthful", 1), ("lying", 2)):
+        outcome = _rooted_outcome(tmp_path, source.format(expected=expected), module)
+        term = _edge_term(outcome, f"{module}.{target}")
+        assert _supplied_defaults(term).get(param) == num(1), term
 
 
-def test_a_decorated_default_is_the_binding_at_its_def_statement() -> None:
+def _decorator_received_the_statements_default(
+    tmp_path, source: str, decorator: str
+) -> None:
+    """Each half's ``decorator`` edge (#7757 step 5) takes the function the
+    ``def`` statement built, carrying the default it evaluated, 1
+    (``python:lambda_default``, ``LambdaCallable.to_term``), never ``x``
+    read again.  The call of what the decorator returned is a call of a
+    call's result: decided by neither the lift nor prove until it is
+    dispatched at prove (survey step 8 on #7757), so the claim is open on
+    both halves today."""
+    from sugar_lift_py_tests.ir import num
+
+    for module, expected in (("truthful", 1), ("lying", 2)):
+        outcome = _rooted_outcome(tmp_path, source.format(expected=expected), module)
+        assert _owes_symbol_starting(outcome, f"python:{module}.{decorator}"), outcome
+        if decorator.endswith("@"):
+            (function,) = _positional(_edge_term(outcome, f"{module}.{decorator}"))
+            assert _lambda_defaults(function) == [num(1)], function
+
+
+def test_a_decorated_default_is_the_binding_at_its_def_statement(tmp_path) -> None:
     """``x = 1; @deco def f(a=x); x = 2; f()`` is 1: the statement evaluates
     the default after the decorator expression and before the decorator
     applies; the function the decorator returns carries it and the call
     binds it, never ``x`` read again at the call."""
-    _binds_the_statements_value(
+    _decorator_received_the_statements_default(
+        tmp_path,
         """\
 def test_default():
     x = 1
@@ -875,15 +1103,17 @@ def test_default():
 
     x = 2
     assert f() == {expected}
-"""
+""",
+        "test_default.<locals>.deco@",
     )
 
 
-def test_a_decorated_module_default_is_its_statements_binding() -> None:
+def test_a_decorated_module_default_is_its_statements_binding(tmp_path) -> None:
     """The same at module level, called after import: the call reads the
-    value the module run's statement bound, whose function carries the
-    default it evaluated."""
-    _binds_the_statements_value(
+    value the module run's statement bound, ``deco``'s result, whose
+    application the module run made and the reader owes."""
+    _decorator_received_the_statements_default(
+        tmp_path,
         """\
 x = 1
 
@@ -902,7 +1132,8 @@ x = 2
 
 def test_default():
     assert f() == {expected}
-"""
+""",
+        "deco",
     )
 
 
@@ -925,11 +1156,14 @@ def test_default():
     assert _raises(raising, "ZeroDivisionError") != []
 
 
-def test_a_staticmethod_default_is_the_binding_at_its_class_statement() -> None:
+def test_a_staticmethod_default_is_the_binding_at_its_class_statement(
+    tmp_path,
+) -> None:
     """``@staticmethod def m(a=x)``: the class body runs the ``def``
     statement, which evaluates the default before the descriptor applies;
     ``C.m()`` binds that value."""
     _binds_the_statements_value(
+        tmp_path,
         """\
 def test_default():
     x = 1
@@ -941,12 +1175,16 @@ def test_default():
 
     x = 2
     assert C.m() == {expected}
-"""
+""",
+        "test_default.<locals>.C.m@",
     )
 
 
-def test_a_classmethod_default_is_the_binding_at_its_class_statement() -> None:
+def test_a_classmethod_default_is_the_binding_at_its_class_statement(
+    tmp_path,
+) -> None:
     _binds_the_statements_value(
+        tmp_path,
         """\
 def test_default():
     x = 1
@@ -958,7 +1196,8 @@ def test_default():
 
     x = 2
     assert C.m() == {expected}
-"""
+""",
+        "test_default.<locals>.C.m@",
     )
 
 
@@ -967,29 +1206,43 @@ def test_default():
 # ---------------------------------------------------------------------------
 
 
-def test_a_local_class_descriptor_called_off_its_class_runs_its_body() -> None:
+def test_a_local_class_descriptor_called_off_its_class_runs_its_body(
+    tmp_path,
+) -> None:
     """``C.m()`` where ``class C`` stands in the function: ``C`` is the
     class its statement builds, ``m`` the member the one class-namespace
-    lookup selects, and the call runs its body (a ``staticmethod`` with no
-    implicit argument, a ``classmethod`` with the class).  Before, ``C``
-    read as a free name and the call was the unanswered call of ``m``,
-    two-faced instead of the body's one raise."""
-    for decorator, formals in (("staticmethod", ""), ("classmethod", "cls")):
-        outcome = _test_function_outcome(
+    lookup selects, and the call is ``m``'s edge (#7757 step 6, #8738) over
+    what its descriptor binds (a ``staticmethod`` nothing, a ``classmethod``
+    the class).  Before, ``C`` read as a free name and the call was the
+    unanswered call of ``m`` with no definition; then (before step 6) the
+    body ran and its raise was the one face.  The raise is now ``m``'s
+    contract's halt, joined at prove."""
+    for decorator, formals, implicit in (
+        ("staticmethod", "", 0),
+        ("classmethod", "cls", 1),
+    ):
+        outcome = _rooted_outcome(
+            tmp_path,
             "def test_local():\n"
             "    class C:\n"
             f"        @{decorator}\n"
             f"        def m({formals}):\n"
             "            raise ValueError('ran')\n"
             "\n"
-            "    C.m()\n"
+            "    C.m()\n",
+            decorator,
         )
-        _only_raise(outcome, "ValueError")
+        term = _edge_term(outcome, f"{decorator}.test_local.<locals>.C.m@")
+        assert len(_positional(term)) == implicit, decorator
+        assert _raises(outcome, "ValueError") == [], decorator
 
 
-def test_a_local_class_plain_function_takes_its_actuals() -> None:
+def test_a_local_class_plain_function_takes_its_actuals(tmp_path) -> None:
     """A plain function read off its local class is unbound: ``C.m(5)``
-    binds ``n`` to ``5`` and returns it."""
+    binds ``n`` to ``5``: ``m``'s edge with that one actual (#7757 step 6),
+    whose return prove reads off ``m``'s contract."""
+    from sugar_lift_py_tests.ir import num
+
     source = """\
 def test_local():
     class C:
@@ -998,11 +1251,10 @@ def test_local():
 
     assert C.m(5) == {expected}
 """
-    truthful = _test_function_outcome(source.format(expected=5))
-    assert _raises(truthful, "AssertionError") == []
-    assert truthful.completed_value() is not None, truthful
-    lying = _test_function_outcome(source.format(expected=6))
-    assert _raises(lying, "AssertionError") != []
+    for module, expected in (("truthful", 5), ("lying", 6)):
+        outcome = _rooted_outcome(tmp_path, source.format(expected=expected), module)
+        term = _edge_term(outcome, f"{module}.test_local.<locals>.C.m@")
+        assert _positional(term) == (num(5),), term
 
 
 def test_a_local_class_statement_binds_its_name_under_its_evaluation_key() -> None:
@@ -1080,12 +1332,15 @@ def f():
     assert evaluations == [final.evaluation]
 
 
-def test_an_init_default_is_the_binding_at_its_class_statement() -> None:
+def test_an_init_default_is_the_binding_at_its_class_statement(tmp_path) -> None:
     """``x = 1; class C: def __init__(self, a=x): self.a = a; x = 2;
     C().a`` is 1: the class body runs the ``__init__`` statement, which
     evaluates the default; the class value carries it and the class call
-    binds it, never ``x`` read again at the call."""
+    binds it, never ``x`` read again at the call.  ``C()`` is the class's
+    edge (#7757 step 6, #8738) supplying ``py.default(a, 1)``; ``.a`` is
+    read through the class's contract at prove (#8746)."""
     _binds_the_statements_value(
+        tmp_path,
         """\
 x = 1
 
@@ -1100,14 +1355,19 @@ x = 2
 
 def test_default():
     assert C().a == {expected}
-"""
+""",
+        "C",
     )
 
 
-def test_a_source_new_default_is_the_binding_at_its_class_statement() -> None:
+def test_a_source_new_default_is_the_binding_at_its_class_statement(
+    tmp_path,
+) -> None:
     """The same for a source ``__new__`` the class call runs: its default
-    is the value its ``def`` statement evaluated in the class body."""
+    is the value its ``def`` statement evaluated in the class body, which
+    the class's edge supplies (#7757 step 6)."""
     _binds_the_statements_value(
+        tmp_path,
         """\
 x = 1
 
@@ -1124,16 +1384,21 @@ x = 2
 
 def test_default():
     assert C().a == {expected}
-"""
+""",
+        "C",
     )
 
 
-def test_a_spread_class_call_binds_the_init_default_of_its_class_statement() -> None:
+def test_a_spread_class_call_binds_the_init_default_of_its_class_statement(
+    tmp_path,
+) -> None:
     """``C(*(5,))`` is the class call ``C(5)`` is
     (``ClassDefinitionValue.callable_application_with``): the omitted ``b`` binds
     the value the ``__init__`` statement evaluated when the class body ran,
-    never an undecided read and never ``x`` read again at the call."""
+    never an undecided read and never ``x`` read again at the call.  The
+    class's edge (#7757 step 6) supplies ``5`` and ``py.default(b, 1)``."""
     _binds_the_statements_value(
+        tmp_path,
         """\
 x = 1
 
@@ -1149,7 +1414,9 @@ x = 2
 
 def test_default():
     assert C(*(5,)).b == {expected}
-"""
+""",
+        "C",
+        param="b",
     )
 
 
@@ -1369,11 +1636,20 @@ def test_a_classmethod_lookup_call_is_the_method_doors() -> None:
     )
 
 
-def test_a_classmethod_called_off_its_class_runs_its_body() -> None:
-    outcome = _test_function_outcome(
-        _CLASSMETHOD.format(body="raise ValueError('ran')")
+def test_a_classmethod_called_off_its_class_runs_its_body(tmp_path) -> None:
+    """``Box.make(3)`` is ``make``'s edge (#7757 step 6, #8738), the class
+    then ``3``: its ``ValueError`` is ``make``'s contract's halt, joined at
+    prove (#8690), no longer a face of this reduction."""
+    from sugar_lift_py_tests.ir import num
+
+    outcome = _rooted_outcome(
+        tmp_path, _CLASSMETHOD.format(body="raise ValueError('ran')")
     )
-    assert _raises(outcome, "ValueError") != []
+    assert "python:subject.Box.make" in _owed_symbols(outcome), outcome
+    implicit, written = _positional(_edge_term(outcome, "subject.Box.make"))
+    assert written == num(3)
+    assert implicit != num(3)
+    assert _raises(outcome, "ValueError") == []
 
 
 # ---------------------------------------------------------------------------
@@ -1406,9 +1682,18 @@ def test_a_frame_keeps_a_nested_def_it_calls() -> None:
     assert isinstance(statements[0], InertSugar)
 
 
-def test_a_call_into_a_frame_reaches_its_nested_def_through_the_call() -> None:
-    outcome = _test_function_outcome(_OUTER)
-    assert _raises(outcome, "ValueError") != []
+def test_a_call_into_a_frame_reaches_its_nested_def_through_the_call(
+    tmp_path,
+) -> None:
+    """``outer()`` is ``outer``'s edge (#7757 step 5, #8705); ``inner``'s
+    raise reaches it through ``outer``'s contract, whose own call of
+    ``inner`` is joined in turn at prove (#8679, #8690).  Before step 5 the
+    two bodies were followed and the raise was a face here; now no face
+    names it."""
+    outcome = _rooted_outcome(tmp_path, _OUTER)
+    assert "python:subject.outer" in _owed_symbols(outcome), outcome
+    assert _positional(_edge_term(outcome, "subject.outer")) == ()
+    assert _raises(outcome, "ValueError") == []
 
 
 # ---------------------------------------------------------------------------
@@ -1416,20 +1701,25 @@ def test_a_call_into_a_frame_reaches_its_nested_def_through_the_call() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a_descriptor_read_off_an_instance_is_a_callable_value() -> None:
+def test_a_descriptor_read_off_an_instance_is_a_callable_value(tmp_path) -> None:
     """``m = obj.sm; m(3)``: the read is the value the descriptor binds, and
     its call binds by the descriptor kind (nothing for a ``staticmethod``,
-    the class for a ``classmethod``).  Before, the read was refused."""
+    the class for a ``classmethod``).  Before, the read was refused.  The
+    call is ``pick``'s edge over those actuals (#7757 step 6, #8738); the
+    body's raise is its contract's halt, joined at prove."""
     from sugar_lift_py_tests.callable_application import CallableApplication
     from sugar_lift_py_tests.floor import TermValue
     from sugar_lift_py_tests.floor.bound_method_value import BoundMethodValue
+    from sugar_lift_py_tests.ir import num
 
     for decorator, formals in (("staticmethod", "n"), ("classmethod", "cls, n")):
-        box, ctx = _class_value(
+        box, ctx = _rooted_class_value(
+            tmp_path,
             "class Box:\n"
             f"    @{decorator}\n"
             f"    def pick({formals}):\n"
-            "        raise ValueError('ran')\n"
+            "        raise ValueError('ran')\n",
+            decorator,
         )
         receiver = box.fresh_receiver("receiver-cid", allocation=FRAME_FRESH)
         read = receiver.attribute("pick", "pick-site", ctx).completed_value()
@@ -1437,7 +1727,10 @@ def test_a_descriptor_read_off_an_instance_is_a_callable_value() -> None:
         outcome = read.callable_application_with(
             CallableApplication((TermValue(3),), (), "pick-site", owner="test"), ctx
         )
-        assert _halt_names(outcome) == ["ValueError"], decorator
+        actuals = _positional(_edge_term(outcome, f"{decorator}.Box.pick"))
+        assert actuals[-1] == num(3), decorator
+        assert len(actuals) == (1 if decorator == "staticmethod" else 2), decorator
+        assert "ValueError" not in _halt_names(outcome), decorator
 
 
 # ---------------------------------------------------------------------------
@@ -1590,12 +1883,21 @@ def test_no_default_expression_appears_in_a_specialised_body() -> None:
     )
 
 
-def test_an_omitted_formal_still_binds_its_default_at_the_call() -> None:
+def test_an_omitted_formal_still_binds_its_default_at_the_call(tmp_path) -> None:
+    """``f(1)`` omits ``b``: ``f``'s edge (#7757 step 5, #8705) supplies the
+    value its ``def`` statement bound as ``py.default(b, 7)``, which prove's
+    one binder binds to the contract's ``default:b`` (#8693, #8698).  The
+    claim is decided at prove (the solver twin is
+    ``test_function_value_application_twins[module-def-default]``), no
+    longer at this reduction."""
+    from sugar_lift_py_tests.ir import num
+
     source = (
         "def f(a, b=7):\n    return b\n\n\n"
         "def test_f():\n    assert f(1) == {expected}\n"
     )
-    truthful = _test_function_outcome(source.format(expected=7))
-    assert _raises(truthful, "AssertionError") == []
-    lying = _test_function_outcome(source.format(expected=8))
-    assert _raises(lying, "AssertionError") != []
+    for module, expected in (("truthful", 7), ("lying", 8)):
+        outcome = _rooted_outcome(tmp_path, source.format(expected=expected), module)
+        term = _edge_term(outcome, f"{module}.f")
+        assert _positional(term) == (num(1),), term
+        assert _supplied_defaults(term) == {"b": num(7)}, term
