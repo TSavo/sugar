@@ -196,14 +196,28 @@ def _halted_unpack_exits(outcome):
     ]
 
 
+def _conjuncts(guard) -> set:
+    """Every conjunct of ``guard``, nested conjunctions flattened."""
+    operands = getattr(guard, "operands", None)
+    if getattr(guard, "kind", None) == "and" and operands is not None:
+        return {conjunct for operand in operands for conjunct in _conjuncts(operand)}
+    return {guard}
+
+
 def test_guarded_arm_effect_rides_the_branch_guard(tmp_path: Path) -> None:
     """The retained demand is owed on a FACE, not unconditionally.
 
     The block reduction lifts each guarded arm's effect into a partition, so
     the observable artifact is an ExitSet whose halted arms carry the typed
-    unpack effect, each under its own branch's formula (conjoined with the
-    complement of that arm's completes atom).  Both arms are runtime unpacks
-    here, and neither arm's halt is dropped for the other's.
+    unpack effect under its own branch's formula (conjoined with the
+    complement of that arm's completes atom).
+
+    Only the ``else`` arm is a runtime unpack: ``p``, a value no caller has
+    supplied.  The ``if`` arm calls ``pair``, defined in this file: the call
+    is applied (step 6), its return floors to the display ``p, q``, and a
+    2-tuple always unpacks into two names -- Python never raises there, so no
+    unpack halt is owed on that arm (law 6).  The one halt rides
+    ``not py.truthy(c)``, never ``py.truthy(c)``.
     """
     from sugar_lift_py_tests.ir import not_
 
@@ -211,11 +225,13 @@ def test_guarded_arm_effect_rides_the_branch_guard(tmp_path: Path) -> None:
         tmp_path, GUARDED_SYMBOLIC_ELSE, "guarded_else"
     )
     halted = _halted_unpack_exits(outcome)
-    assert len(halted) == 2, outcome
-    first, second = (set(getattr(h.guard, "operands", (h.guard,))) for h in halted)
-    assert (GUARD in first and not_(GUARD) in second) or (
-        GUARD in second and not_(GUARD) in first
-    )
+    assert len(halted) == 1, outcome
+    (halt,) = halted
+    conjuncts = _conjuncts(halt.guard)
+    assert not_(GUARD) in conjuncts, halt.guard
+    assert GUARD not in conjuncts, halt.guard
+    # Both arms complete on their faces: the halts never claim every exit.
+    assert len(outcome.halts()) < len(outcome.exits), outcome
 
 
 def test_guarded_arm_effect_is_not_owed_unconditionally(tmp_path: Path) -> None:
