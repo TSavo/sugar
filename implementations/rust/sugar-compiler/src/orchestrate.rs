@@ -16,7 +16,7 @@
 // NOT wired to anything in the production `MementoPool`/`ProofGraph`
 // pipeline today -- grep confirms zero call sites outside `sugar-linker`'s
 // own crate and its `polyglot_smoke.rs` cross-kit fixture. Production
-// consistency solving (`verify_consistency_from_indexes`) resolves cross-kit
+// consistency solving (`verify_consistency`) resolves cross-kit
 // calls through an ENTIRELY different mechanism: bridges the KIT itself
 // pins at lift time (`bridges_by_symbol`/`bridges_by_callsite` in
 // `sugar_verifier::types::MementoPool`), where an unresolved call is
