@@ -587,11 +587,16 @@ def test_nested_carrier_missing_its_formal_actual_stays_undischarged():
 
 
 def test_guarded_but_undischarged_carrier_cannot_report_completion():
+    """A guarded carrier beneath a guarded arm composes through the one
+    composition (``ExitSet.and_then``, #8635): the answer is still the
+    carrier, owing its caller's actuals -- never an ``ExitSet`` that reports
+    the arm completed before the operation discharges."""
     carrier, _, _ = _carrier()
     guarded = carrier.guarded(atomic("test.guard", []))
     prefix = ExitSet.completed(TermValue(0), guard=atomic("test.prefix", []))
-    with pytest.raises(ConstructionPanic, match="native operation"):
-        prefix.and_then(lambda _value: guarded)
+    composed = prefix.and_then(lambda _value: guarded)
+    assert isinstance(composed, NativeOperationExitCarrierV1), composed
+    assert not isinstance(composed, ExitSet)
 
 
 def test_same_native_operation_demand_can_halt_for_authenticated_actuals():
@@ -621,11 +626,14 @@ def test_same_native_operation_demand_can_halt_for_authenticated_actuals():
 
 
 def test_undischarged_native_operation_is_typed_loud_not_completed():
+    """Beneath a guarded arm the undischarged operation stays the carrier
+    (``ExitSet.and_then``, #8635); no completed arm is reported for it."""
     carrier, _, _ = _carrier()
     prefix = ExitSet.completed(TermValue(0), guard=atomic("test.prefix", []))
 
-    with pytest.raises(ConstructionPanic, match="native operation"):
-        prefix.and_then(lambda _value: carrier)
+    composed = prefix.and_then(lambda _value: carrier)
+    assert isinstance(composed, NativeOperationExitCarrierV1), composed
+    assert not isinstance(composed, ExitSet)
 
 
 def test_missing_authenticated_actual_is_undischarged_not_a_construction_panic():
