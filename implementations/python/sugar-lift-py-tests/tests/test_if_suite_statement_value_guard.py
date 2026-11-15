@@ -37,6 +37,7 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.ir import atomic
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.floor.guarded_value import GuardedValue
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.outcome import Completed
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -87,19 +88,41 @@ def _source(body: str, formals: str = "") -> str:
     "body", ("r[0] = 5", "r.append(5)", "len(r)", "r[0] = -r[0]")
 )
 def test_a_statement_value_in_an_undecided_suite_lifts(body) -> None:
-    """It lifts; its only halt is ``textwrap.dedent``'s own may-raise face.
+    """It lifts; its halts are the guard's two may-raise faces.
 
     ``textwrap`` is not enrolled here, so the guard's call is an unknown
-    callee: it completes under an opaque atom or raises under its complement.
+    callee: it completes under an opaque atom or raises under its complement
+    (``UnknownCallee:textwrap.dedent``).  What it returns is an object of no
+    decided type, so ``bool()`` of it runs that object's ``__bool__`` /
+    ``__len__``, which may raise: the ``if`` takes that truth through the one
+    truth rule, which completes or halts at the ``if`` (``IfSugar.test``).
+    Neither suite runs on either halt.
     """
     outcome = _helper_outcome(_source(body))
     faces = outcome.exits
     assert any(isinstance(face, Completed) for face in faces)
-    assert [
+    assert sorted(
         face.effect.producer_node_owner
         for face in faces
         if not isinstance(face, Completed)
-    ] == ["UnknownCallee:textwrap.dedent"]
+    ) == _GUARD_HALTS
+
+
+# The guard's two halts: the unenrolled call raised, or ``bool()`` of the
+# object it returned raised (its type is not decided here).
+_GUARD_HALTS = ["IfSugar.test", "UnknownCallee:textwrap.dedent"]
+
+
+def _returned(guard, value):
+    """``(guard, value)`` for one returned value.  A name the undecided ``if``
+    joined is one ``GuardedValue``: each arm is returned under the join's
+    guard and its own polarity, ``(guard, join guard, True | False)``."""
+    if isinstance(value, GuardedValue):
+        return [
+            *_returned((guard, value.guard, True), value.when_true),
+            *_returned((guard, value.guard, False), value.when_false),
+        ]
+    return [(guard, value)]
 
 
 def _discharged_returns(source: str, actual: int):
@@ -108,16 +131,18 @@ def _discharged_returns(source: str, actual: int):
     (formal,) = [cid for cid in pending.demand.operand_coordinate_cids if cid]
     exits = pending.discharge(None, {formal: TermValue(actual)})
     returns = []
+    halts = []
     for face in exits.exits:
         if not isinstance(face, Completed):
-            # The unenrolled guard call's own may-raise face returns nothing.
-            assert face.effect.producer_node_owner == "UnknownCallee:textwrap.dedent"
+            # The guard's halts return nothing.
+            halts.append(face.effect.producer_node_owner)
             continue
         for entry in face.value.record.statements:
             if isinstance(entry, ReturnValue):
-                returns.append((face.guard, entry.value))
+                returns.extend(_returned(face.guard, entry.value))
             elif type(entry).__name__ == "GuardedReturn":
-                returns.append((entry.guards, entry.value))
+                returns.extend(_returned(entry.guards, entry.value))
+    assert sorted(halts) == _GUARD_HALTS
     return returns
 
 
@@ -170,20 +195,21 @@ def test_the_stopping_leg_of_a_joined_name_reaches_the_return() -> None:
     returns = _discharged_returns(source, 3)
     by_value = {value.value: guard for guard, value in returns}
     assert sorted(by_value) == [-3, 0]
-    # The stopping leg stands under the complement of the deferred leg's
-    # guard: neither value is claimed on the other's path.
-    then_guard, else_guard = (
-        _within_dedent_completion(by_value[-3]),
-        _within_dedent_completion(by_value[0]),
-    )
-    assert getattr(else_guard, "kind", None) == "not"
-    assert else_guard.operands == (then_guard,)
+    # ``y`` is one value joined under the ``if``: the deferred leg is its
+    # true arm and the stopping leg its false arm, under one join guard, so
+    # neither value is claimed on the other's path.  Both stand on the one
+    # face where ``textwrap.dedent`` completed.
+    then_face, then_join, then_polarity = by_value[-3]
+    else_face, else_join, else_polarity = by_value[0]
+    assert then_face == else_face
+    _within_dedent_completion(then_face)
+    assert then_join == else_join
+    assert (then_polarity, else_polarity) == (True, False)
 
 
 def _within_dedent_completion(guard):
-    """Both legs stand where ``textwrap.dedent`` completed: strip that atom."""
+    """The face stands where ``textwrap.dedent`` completed: its first atom."""
     assert guard.kind == "and", guard
-    completion, inner = guard.operands
+    completion = guard.operands[0]
     assert completion.name == "python:unknown_callee_call.completes"
     assert completion.args[0].args[0].value == "textwrap.dedent"
-    return inner
