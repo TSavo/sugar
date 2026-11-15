@@ -8,6 +8,7 @@ zero is not an honest answer for a parseable file containing a function.
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
@@ -17,10 +18,18 @@ _SCRIPTS = sugar_lift_py_tests_package_root() / "scripts"
 
 
 def _load(name: str):
+    """The script ``name``, loaded as the sibling recensus tests load it: its
+    scripts directory on the path, since the consumer imports the board
+    composer (``compose_control_effect_board``) beside it.  Without it this
+    test passed only when an earlier test in the same process had put the
+    directory there."""
     path = _SCRIPTS / f"{name}.py"
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    if str(_SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(_SCRIPTS))
     spec.loader.exec_module(module)
     return module
 
