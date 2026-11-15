@@ -330,14 +330,52 @@ def test_tuple_coordinate_is_an_instance_of_tuple(tmp_path: Path) -> None:
     assert isinstance(outcome.completed_value(), TrueBoolLiteralSugar)
 
 
+def _mints_tuple_coordinate(outcome) -> bool:
+    """Whether any completed arm of ``outcome`` is a tuple coordinate."""
+    from sugar_lift_py_tests.outcome.exit_set import Completed
+
+    return any(
+        isinstance(arm, Completed) and isinstance(arm.value, TupleCoordinateValue)
+        for arm in getattr(outcome, "exits", ())
+    )
+
+
 def test_shadowed_tuple_call_cannot_mint_tuple_coordinate(tmp_path: Path) -> None:
-    call, _ = _nodes(_tree(tmp_path, "shadowed.py"))
-    ctx = _context("tuple-coordinate-shadow")
-    ctx = ctx.with_temporal(ctx.temporal.bind_value("tuple", TermValue(7)))
+    """A ``tuple`` the source rebinds is not the builtin.
 
-    shadowed = _value(call.sugar().desugar(ctx))
+    What a name is bound to is read off the source when the tree is
+    constructed, never off a name table handed in at reduce: the shadow is
+    written in the source (here ``tuple`` is a formal), as the lifter
+    receives it. The same call over the builtin, beside it, does mint.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+    from sugar_lift_py_tests.lift_rpc import _open_at_seat
 
-    assert not isinstance(shadowed, TupleCoordinateValue)
+    # Each twin is its own project root: one file each, listed once.
+    shadowed_root = tmp_path / "shadowed"
+    builtin_root = tmp_path / "builtin"
+    shadowed_root.mkdir()
+    builtin_root.mkdir()
+    path = shadowed_root / "shadowed.py"
+    path.write_text(
+        "def produce(unknown, tuple):\n"
+        "    return tuple(item for item in unknown)[1:]\n",
+        encoding="utf-8",
+    )
+    shadowed_tree = _open_at_seat(
+        path,
+        root=shadowed_root,
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    shadowed_call, _ = _nodes(shadowed_tree)
+    builtin_call, _ = _nodes(_tree(builtin_root, "builtin.py"))
+
+    assert _mints_tuple_coordinate(
+        builtin_call.sugar().desugar(_context("tuple-coordinate-builtin"))
+    )
+    assert not _mints_tuple_coordinate(
+        shadowed_call.sugar().desugar(_context("tuple-coordinate-shadow"))
+    )
 
 
 def test_tuple_coordinate_rejects_all_reminted_testimony(tmp_path: Path) -> None:
