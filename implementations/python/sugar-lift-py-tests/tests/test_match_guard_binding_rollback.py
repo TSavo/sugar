@@ -53,8 +53,35 @@ def _name(n: str, *, line: int = 1) -> NameSugar:
     return NameSugar(n, site=_Site(line=line, col=0))
 
 
+def _compare_fragment(text: str, *, line: int):
+    """The real source fragment of the comparison ``text`` written on
+    ``line``: the site the lifter hands a comparison.  An undecided operand
+    keys the comparison's two faces on it (``occurrence.occurrence_key``),
+    which refuses a site naming no source coordinate."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_source_tree.nodes import Compare
+    from sugar_source_tree.tree import SourceFile
+
+    source = "\n" * (line - 1) + text + "\n"
+    tree = SourceFile(
+        (source, "match_guard.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
+    return next(node.fragment for node in tree.nodes() if isinstance(node, Compare))
+
+
+def _spelled(operand: Sugar) -> str:
+    if isinstance(operand, NameSugar):
+        return operand.name
+    return str(operand.value)
+
+
 def _gt(left: Sugar, right: Sugar, *, line: int = 1) -> ComparisonOpSugar:
-    return ComparisonOpSugar("Gt", left, right, site=_Site(line=line, col=0))
+    site = _compare_fragment(f"{_spelled(left)} > {_spelled(right)}", line=line)
+    return ComparisonOpSugar("Gt", left, right, site=site)
 
 
 def _ret(value: Sugar, *, line: int = 1) -> ReturnSugar:
