@@ -34,6 +34,9 @@ NOT_BRIDGED_NUMPY_TWINS: tuple[str, ...] = (
     "test_numpy_integer_literal_call_is_not_bridged[add-5-6]",
     "test_numpy_integer_literal_call_is_not_bridged[multiply-6-7]",
     "test_numpy_integer_literal_call_is_not_bridged[subtract--1-1]",
+    "test_numpy_integer_call_over_module_names_is_not_bridged[add-5-6]",
+    "test_numpy_integer_call_over_module_names_is_not_bridged[multiply-6-7]",
+    "test_numpy_integer_call_over_module_names_is_not_bridged[subtract--1-1]",
     "test_numpy_mod_and_floor_divide_literal_call_is_not_bridged[mod-7-3-1-2]",
     "test_numpy_mod_and_floor_divide_literal_call_is_not_bridged[mod--7-3-2--1]",
     "test_numpy_mod_and_floor_divide_literal_call_is_not_bridged[mod-7--3--2-1]",
@@ -102,30 +105,47 @@ def test_numpy_integer_literal_call_is_not_bridged(
 
 
 @pytest.mark.parametrize(
-    ("op", "truth"),
+    ("op", "truth", "lie"),
     [
-        ("add", 5),
-        ("multiply", 6),
-        ("subtract", -1),
+        ("add", 5, 6),
+        ("multiply", 6, 7),
+        ("subtract", -1, 1),
     ],
 )
-def test_numpy_integer_literal_call_accepts_constant_bound_args(
-    tmp_path: Path, op: str, truth: int
+def test_numpy_integer_call_over_module_names_is_not_bridged(
+    request: pytest.FixtureRequest, tmp_path: Path, op: str, truth: int, lie: int
 ) -> None:
-    observed = _run_case(
-        tmp_path / f"{op}-bound",
-        "import numpy as np\n"
-        "\n"
-        "left = 2\n"
-        "right = 3\n"
-        f"def test_np_{op}_bound():\n"
-        f"    assert np.{op}(left, right) == {truth}\n",
-    )
-    print(json.dumps(observed.to_json(), indent=2, sort_keys=True))
+    """``np.add(left, right)`` with ``left = 2`` / ``right = 3`` at module level
+    is the literal twin with its operands read through their module keys
+    (#7757 item 7, #8018): the actuals are 2 and 3, and the call is still an
+    edge nothing binds. The lifter computes no numpy result of its own, so no
+    ``call:numpy.*`` fact is stated and the truthful claim and the lying claim
+    are both ``open``.
 
-    assert observed.verdict == "sat"
-    rows = _numpy_euf_rows(observed.result, f"numpy.{op}")
-    assert _rhs_values(rows) == [truth, truth]
+    This turns back into a ``sat`` / ``unsat`` twin when a numpy proof can be
+    imported.
+    """
+
+    def source(claim: int) -> str:
+        return (
+            "import numpy as np\n"
+            "\n"
+            "left = 2\n"
+            "right = 3\n"
+            f"def test_np_{op}_bound():\n"
+            f"    assert np.{op}(left, right) == {claim}\n"
+        )
+
+    truthful = _run_case(tmp_path / f"{op}-bound-truthful", source(truth))
+    lying = _run_case(tmp_path / f"{op}-bound-lying", source(lie))
+    observed = {"truthful": truthful.to_json(), "lying": lying.to_json()}
+    print(json.dumps(observed, indent=2, sort_keys=True))
+
+    assert request.node.name in NOT_BRIDGED_NUMPY_TWINS
+    assert truthful.verdict == "open"
+    assert lying.verdict == "open"
+    assert _numpy_euf_rows(truthful.result, f"numpy.{op}") == []
+    assert _numpy_euf_rows(lying.result, f"numpy.{op}") == []
 
 
 @pytest.mark.parametrize(
@@ -561,17 +581,6 @@ def _rhs_summary(row: dict) -> object:
     if rhs.get("kind") == "const" and rhs.get("sort", {}).get("name") == "Int":
         return rhs["value"]
     return rhs.get("name") or rhs.get("kind") or rhs
-
-
-def _rhs_values(rows: list[dict]) -> list[int]:
-    return sorted(_rhs_value(row) for row in rows)
-
-
-def _rhs_value(row: dict) -> int:
-    rhs = row["inv"]["args"][1]
-    assert rhs["kind"] == "const"
-    assert rhs["sort"]["name"] == "Int"
-    return rhs["value"]
 
 
 def _warrant_kinds(row: dict) -> set[str]:
