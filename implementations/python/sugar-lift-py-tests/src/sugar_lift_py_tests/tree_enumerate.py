@@ -738,6 +738,13 @@ row is a statement of fact, never a claim to check (``consistency.rs``,
 #: the attribute is read).
 _FUNCTION_KIND = "function"
 _FIELD_KIND = "field"
+#: A name only CPython's type creation may write (``nodes._TYPE_CREATION_NAMES``
+#: the body does not bind and no module store names): whether the class holds
+#: it is undecided as for ``undecided``, and what it may hold is type
+#: creation's own entry -- for ``__dict__`` the instance-dict descriptor, the
+#: plain ``__dict__`` path itself (``consistency::NAMESPACE_CREATION_KIND``,
+#: never a hook of ``plain_access_holds``).
+_CREATION_KIND = "creation"
 _DESCRIPTOR_KINDS = frozenset({"staticmethod", "classmethod", "property"})
 
 
@@ -762,7 +769,9 @@ def class_namespace_row(cls, file_rel: str) -> list:
       ``classmethod`` or ``property`` for such a ``def`` under that one
       builtin decorator (``ClassDef._method_descriptor_kind``); ``field``
       for a lambda the body assigns to the name; ``undecided`` where the
-      lookup does not decide whether it holds it; ``other`` for anything
+      lookup does not decide whether it holds it (``creation`` where that is
+      only because type creation may write it, ``_CREATION_KIND``); ``other``
+      for anything
       else (another decorator, a field of any other value, a nested class);
     - ``python:class_object(<C>, <class term>)``, where a ``classmethod`` is
       bound: the term the class object is spelled by
@@ -845,7 +854,7 @@ def _class_namespace_facts(cls):
     or None when the class states no namespace row.  ``class_object`` is the
     class object's term where a ``classmethod`` is bound and the class
     statement constructs (``_class_object_term``), else None."""
-    from sugar_source_tree.nodes import ClassDef
+    from sugar_source_tree.nodes import _TYPE_CREATION_NAMES, ClassDef
 
     symbol = cls.bridge_source_symbol()
     order = cls.method_resolution_order()
@@ -880,7 +889,13 @@ def _class_namespace_facts(cls):
         if held is False:
             continue
         if held is None:
-            binds.append((name, "undecided", ""))
+            created = (
+                name in _TYPE_CREATION_NAMES
+                and name not in writes
+                and name not in stored
+                and cls._body_binding(name) is False
+            )
+            binds.append((name, _CREATION_KIND if created else "undecided", ""))
             continue
         kind, target = _namespace_value_kind(cls, name)
         if target is None:
