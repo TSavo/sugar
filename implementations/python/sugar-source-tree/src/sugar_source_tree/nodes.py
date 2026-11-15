@@ -6740,6 +6740,17 @@ def _evaluation_ref(
     )
 
 
+def _discharge_spelling_chain(node) -> None:
+    """Answer the roll for every node of an import-bound spelling a read
+    absorbed into its own coordinate: each link of a ``Name.attr...`` chain
+    and its head (an import-bound callee, an import member's receiver)."""
+    chain = node
+    while isinstance(chain, Attribute):
+        chain.discharge_by_substitution()
+        chain = chain.value
+    chain.discharge_by_substitution()
+
+
 def _annotations_postponed(unit) -> bool:
     """Whether the module ``unit`` postpones its annotations (``from
     __future__ import annotations``, PEP 563): no annotation in it is
@@ -23922,11 +23933,7 @@ class Call(Expression):
 
     def _discharge_callee_spelling(self) -> None:
         """Answer the roll call for every node of a callee the call absorbed."""
-        chain = self.func
-        while isinstance(chain, Attribute):
-            chain.discharge_by_substitution()
-            chain = chain.value
-        chain.discharge_by_substitution()
+        _discharge_spelling_chain(self.func)
 
     def _import_reference_callee(self) -> Optional[str]:
         """The target symbol of an import-bound callee, read from the one
@@ -23946,11 +23953,7 @@ class Call(Expression):
         # of a dotted callee chain answers the roll call as present-inert (a
         # Name callee has already answered in its own branch).
         if isinstance(self.func, Attribute):
-            chain = self.func
-            while isinstance(chain, Attribute):
-                chain.discharge_by_substitution()
-                chain = chain.value
-            chain.discharge_by_substitution()
+            _discharge_spelling_chain(self.func)
         return target
 
     def _import_reference_symbol(self) -> Optional[str]:
@@ -24374,11 +24377,18 @@ class Attribute(Expression):
                     fix="preserve the lexical receipt targetSymbol unchanged",
                 )
             qualified_name = qualified_name[len("python:") :]
-            return ImportMemberSugar(
+            member = ImportMemberSugar(
                 qualified_name=qualified_name,
                 receipt=receipt,
                 site=self.fragment,
             )
+            # The receiver chain (``np`` of ``np.add``) is the import's
+            # spelling, absorbed into this read's coordinate: the receipt
+            # authenticates the binding it reads, so the member read is its
+            # evaluation.  Every node of it answers present-inert, as an
+            # import-bound callee's does (``Call._import_reference_callee``).
+            _discharge_spelling_chain(self.value)
+            return member
 
         from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
 
