@@ -1,10 +1,9 @@
-"""A source-call positional actual sequences its retained producer outcome once."""
+"""A call standing as a positional actual is its own operation receiver: no
+callee body is reduced at lift (#7757 step 6, #8751)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, fields, replace
-
-import pytest
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import RaiseEffect
@@ -24,7 +23,6 @@ from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_source_tree.nodes import LanguageCallee
-from sugar_source_tree.panic import SugarNotWritten
 
 
 class _Site:
@@ -121,13 +119,22 @@ def _source_call_partition(result_coordinate: str = "py.listcomp"):
     return callsite, body, comprehension
 
 
-def test_body_bearing_call_without_retained_completion_stays_loud() -> None:
-    """Lying twin: a consumer cannot trigger a second source-body reduction."""
+def test_a_body_bearing_call_is_its_own_receiver_and_never_reduces_its_body() -> (
+    None
+):
+    """A consumer never triggers a source-body reduction.  Was
+    ``test_body_bearing_call_without_retained_completion_stays_loud``: a
+    consumer of a call with no retained completion was refused by name.  The
+    retained completion and the application of a callee body at lift are
+    deleted (#7757 step 6, #8751): a call is its coordinate, joined at prove,
+    so the operation receiver is the call itself, whatever body it carries,
+    and the body is never reduced."""
     callsite, body, _ = _source_call_partition()
-    with pytest.raises(SugarNotWritten, match="retained|producer"):
-        callsite.project_operation_receiver_outcome(
-            None, owner="CallSiteSugar positional actual"
-        )
+    outcome = callsite.project_operation_receiver_outcome(
+        None, owner="CallSiteSugar positional actual"
+    )
+    assert outcome.completed_value() is callsite, outcome
+    assert not outcome.halts(), outcome
     assert body.reductions == 0
 
 

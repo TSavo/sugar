@@ -1747,10 +1747,20 @@ def test_a_descriptor_read_off_an_instance_is_a_callable_value(tmp_path) -> None
 # ---------------------------------------------------------------------------
 
 
-def test_a_lambda_default_is_the_binding_where_the_lambda_is_evaluated() -> None:
+def test_a_lambda_default_is_the_binding_where_the_lambda_is_evaluated(
+    tmp_path,
+) -> None:
     """``x = 1; f = lambda a=x: a; x = 2; f()`` is 1: the lambda expression
     evaluates its default, its value carries it, and the call binds the
-    carried value; the default expression is never evaluated at the call."""
+    carried value; the default expression is never evaluated at the call.
+    The call is the lambda's edge (#7757 steps 5 and 6, #8705, #8742), and it
+    supplies that value as ``py.default(a, 1)``, which prove's one binder
+    binds to the lambda contract's ``default:a`` (#8687, #8693, #8698), never
+    ``x`` read again at the call (2).  The claim over it is decided at prove,
+    no longer at this reduction (was: the truthful half completed, the lying
+    half raised ``AssertionError``)."""
+    from sugar_lift_py_tests.ir import num
+
     source = """\
 def test_default():
     x = 1
@@ -1758,11 +1768,11 @@ def test_default():
     x = 2
     assert f() == {expected}
 """
-    truthful = _test_function_outcome(source.format(expected=1))
-    assert _raises(truthful, "AssertionError") == []
-    assert truthful.completed_value() is not None, truthful
-    lying = _test_function_outcome(source.format(expected=2))
-    assert _raises(lying, "AssertionError") != []
+    for module, expected in (("truthful", 1), ("lying", 2)):
+        outcome = _rooted_outcome(tmp_path, source.format(expected=expected), module)
+        term = _edge_term(outcome, f"{module}.test_default.<locals>.<lambda>@")
+        assert _positional(term) == (), term
+        assert _supplied_defaults(term) == {"a": num(1)}, term
 
 
 def test_a_lambda_default_that_raises_raises_at_the_lambda_expression() -> None:
