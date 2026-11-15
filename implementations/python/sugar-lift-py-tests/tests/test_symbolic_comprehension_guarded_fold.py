@@ -708,24 +708,31 @@ def test_a_comprehension_substituted_into_a_dict_value_is_constructed():
     assert value.args[0] != outer, f"inner iterable was {value.args[0]!r}"
 
 
-def test_a_walrus_in_a_comprehension_element_folds_its_presented_value():
-    # A walrus binds into the enclosing scope, and over a symbolic iterable
-    # its write is carried out as the last member's write, guarded by some
-    # member writing (#7757).  The fold itself folds the value the walrus
-    # PRESENTS: the element is `g(x)`, never the walrus wrapper, and a name
-    # that had no binding before (here `n`) carries no write out at all, so
-    # a read of it after the comprehension is refused by name.
-    for source, kind in (
-        ("def f(xs, g):\n    return [(n := g(x)) for x in xs]\n", "py.listcomp"),
-        ("def f(xs, g):\n    return {(n := g(x)) for x in xs}\n", "py.setcomp"),
-        ("def f(xs, g):\n    return ((n := g(x)) for x in xs)\n", "py.generatorexp"),
-        ("def f(xs, g):\n    return {x: (n := g(x)) for x in xs}\n", "py.dictcomp"),
+def test_a_walrus_in_a_comprehension_element_over_an_undecided_iterator_is_refused_by_name():
+    # A walrus binds into the enclosing scope on every member that reaches
+    # it.  Over a formal, the comprehension runs ``iter`` and then ``next``
+    # per member through the one iterator path (#8832, #8844): ``iter``'s
+    # halt and each ``next``'s halt are kept.  A ``next`` that halts on a
+    # later member halts after an earlier member's walrus bound ``n``, and
+    # the symbolic fold holds no record of that write; the statement's
+    # prefix (where the deferred ``iter`` carrier leaves from) would drop it.
+    # So the statement is refused by name at the block reducer, never handed
+    # a record that drops the bind and never let through with the halt
+    # dropped (#7757 step 6, a halt and its record are never dropped).  The
+    # fold of the presented value it built before #8832 stated no halt of
+    # ``iter`` or ``next`` at all.
+    from sugar_source_tree.panic import SugarNotWritten
+
+    for source in (
+        "def f(xs, g):\n    return [(n := g(x)) for x in xs]\n",
+        "def f(xs, g):\n    return {(n := g(x)) for x in xs}\n",
+        "def f(xs, g):\n    return ((n := g(x)) for x in xs)\n",
+        "def f(xs, g):\n    return {x: (n := g(x)) for x in xs}\n",
     ):
-        post = _post_of(source)
-        observed, iterable, body = _fold(post)
-        assert observed == kind, f"{source} constructed {observed}"
-        assert iterable == make_var("xs"), f"{source} folded {iterable!r}"
-        element = body.body.args[1] if kind == "py.dictcomp" else body.body
-        assert element == _call_result(
-            _ctor("py.call", [make_var("g"), _coordinate(body)])
-        ), f"{source} folded {element!r}"
+        try:
+            _post_of(source)
+        except SugarNotWritten as refused:
+            assert "reduce_block_to_exitset.statement" in str(refused), refused
+            assert "walrus" in str(refused), refused
+            continue
+        raise AssertionError(f"{source} must be refused by name, not folded")
