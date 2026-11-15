@@ -11,8 +11,7 @@ require_constructed_term_sugar — not patches at BinOpSugar.right alone.
 
 from __future__ import annotations
 
-import hashlib
-
+from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.sugar.binop_sugar import BinOpSugar
 from sugar_lift_py_tests.sugar.bytes_literal_sugar import BytesLiteralSugar
 from sugar_lift_py_tests.sugar.complex_literal_sugar import ComplexLiteralSugar
@@ -75,7 +74,10 @@ class _Site:
 
 
 def _cid(source: str) -> str:
-    return hashlib.sha256(source.encode("utf-8")).hexdigest()
+    # The path_source law: a source's CID is the blake3-512 of its text. A
+    # triple claiming any other digest is stale testimony, refused at the
+    # first read that authenticates it (a name read's import-use receipt).
+    return blake3_512_of(source.encode("utf-8"))
 
 
 def _sf(source: str, name: str = "t.py") -> SourceFile:
