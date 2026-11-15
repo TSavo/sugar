@@ -14311,7 +14311,7 @@ class ClassDef(Statement):
                     SourceVisibleFunctionBodySugar,
                 )
 
-                constructor, receiver_target, field_body = new_shape
+                constructor, receiver_target, _field_body = new_shape
                 coordinate = BindingCoordinateV1.mint(
                     self.fragment.seal().cid,
                     receiver_target.fragment,
@@ -14323,8 +14323,13 @@ class ClassDef(Statement):
                     receiver_target.id: BindingEntryV1(coordinate, receiver, None),
                     **scope,
                 }
+                # Everything ``__new__`` runs after its allocation: the field
+                # stores and its ``return``.  The value the class call gets
+                # is what that ``return`` returns (the receiver after the
+                # stores), never the stores' block read as the return
+                # (``ClassConstructorBodySugar.desugar``).
                 substituted_body, _ = constructor._substitute_body(
-                    field_body, constructor_scope
+                    constructor.body[1:], constructor_scope
                 )
                 initializer_body = SourceVisibleFunctionBodySugar(
                     tuple(

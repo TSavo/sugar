@@ -263,14 +263,17 @@ class ClassConstructorBodySugar(Sugar):
 
     def desugar(self, ctx: object = None) -> ExitSet:
         def project_new_return(definition, block):
-            """Return the shadow receiver state produced by source ``__new__``.
+            """The receiver the authenticated source ``__new__`` returns.
 
-            ``ReceiverFieldStoreStateSugar`` updates the immutable receiver in
-            the substituted method body.  Re-scanning that body for the old
-            ReceiverFieldStoreValue statement shape discards the constructed
-            return and recreates the pre-store receiver.  Only the authenticated
-            source ``__new__`` arm may return this value; an ``__init__``
-            call returns its receiver as the initializer left it
+            The body seated for it is everything ``__new__`` runs after its
+            allocation -- its field stores and its ``return``
+            (``ClassDef._source_visible_body``) -- so the value is what that
+            ``return`` returns, the one authenticated return of the block
+            (``project_authenticated_source_return``): the receiver after
+            the stores.  A block is never read as the return, and no
+            statement of it stands for one.  Only the authenticated source
+            ``__new__`` arm may return this value; an ``__init__`` call
+            returns its receiver as the initializer left it
             (``_receiver_where_it_ends``).
             """
             if (
@@ -284,14 +287,6 @@ class ClassConstructorBodySugar(Sugar):
             )
 
             returned = project_authenticated_source_return(block)
-            if (
-                returned is block
-                and len(block.statements) == 1
-                and isinstance(block.statements[0], ObjectValue)
-            ):
-                # reduce_body has already projected the sole ReturnValue and
-                # retained its value as the block's only completed statement.
-                returned = block.statements[0]
             if (
                 isinstance(returned, ObjectValue)
                 and getattr(returned.defining_class, "class_definition_cid", None)
