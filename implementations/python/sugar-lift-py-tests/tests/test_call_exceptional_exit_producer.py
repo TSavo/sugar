@@ -8,7 +8,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
-from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import CallSiteValue
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -83,12 +83,20 @@ def test_guarded_source_call_preserves_completed_and_halted_faces() -> None:
     )
 
     assert isinstance(outcome, ExitSet)
-    assert len(outcome.exits) == 2
-    completed = next(face for face in outcome.exits if isinstance(face, Completed))
-    halted = next(face for face in outcome.exits if isinstance(face, Halted))
+    # Three faces, none dropped: ``flag`` is not decided here, so ``if flag``
+    # asks its truth, and that operation is itself two-faced.  Where it
+    # completes the body either returns or raises ``ValueError``; where it
+    # does not, the test's own undetermined raise leaves the call.
+    assert len(outcome.exits) == 3
+    (completed,) = (face for face in outcome.exits if isinstance(face, Completed))
+    halts = [face for face in outcome.exits if isinstance(face, Halted)]
+    (raised,) = (face for face in halts if isinstance(face.effect, RaiseEffect))
+    (test_halt,) = (
+        face for face in halts if isinstance(face.effect, UndeterminedRaiseEffect)
+    )
     assert isinstance(completed.value, CallSiteValue)
-    assert isinstance(halted.effect, RaiseEffect)
-    assert halted.effect.exception_name == "ValueError"
+    assert raised.effect.exception_name == "ValueError"
+    assert test_halt.effect.exception_name is None
 
 
 def test_runtime_truthful_and_lying_twins_discriminate() -> None:
