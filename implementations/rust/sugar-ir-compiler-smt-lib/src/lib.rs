@@ -2996,6 +2996,72 @@ mod tests {
     }
 
     #[test]
+    fn a_binary_operation_over_a_joined_calls_result_reads_the_type_its_post_states() {
+        // `x = inc(1); total = 0 + x; assert total == 2`, with `inc`'s joined
+        // post `out = 1 + 1`: the post states the call's type and value, so
+        // the caller's `0 + x` is the SMT integer and completes.
+        let call = joined_call("call:m.inc");
+        let post = eq(call.clone(), py_binary("+", int_const(1), int_const(1), "p"));
+        let total = py_binary("+", int_const(0), call.clone(), "k");
+        let completes = py_completes("binary_op", total.clone(), "k");
+        assert_eq!(
+            solve(&all_of(vec![post.clone(), not_formula(completes.clone())])),
+            "unsat",
+            "int + int cannot raise"
+        );
+        assert_twin(
+            all_of(vec![post.clone(), completes.clone(), py_eq(total.clone(), int_const(2))]),
+            all_of(vec![post.clone(), completes.clone(), py_eq(total.clone(), int_const(3))]),
+            "0 + inc(1) under `out = 1 + 1`",
+        );
+        // Nested, both operands read through the post: `(0 + x) * 10 + x`.
+        let nested = py_binary(
+            "+",
+            py_binary("*", total.clone(), int_const(10), "k2"),
+            call.clone(),
+            "k3",
+        );
+        assert_twin(
+            all_of(vec![post.clone(), py_eq(nested.clone(), int_const(22))]),
+            all_of(vec![post.clone(), py_eq(nested, int_const(23))]),
+            "(0 + inc(1)) * 10 + inc(1) under the post",
+        );
+        // A str stated by the post is read as a str: `"a" + x`.
+        let named = joined_call("call:m.name");
+        let str_post = eq(named.clone(), string_const("bc"));
+        let joined = py_binary("+", string_const("a"), named.clone(), "s");
+        assert_twin(
+            all_of(vec![str_post.clone(), py_eq(joined.clone(), string_const("abc"))]),
+            all_of(vec![str_post, py_eq(joined, string_const("abd"))]),
+            "\"a\" + name(3) under `out = \"bc\"`",
+        );
+        // Nothing states the call's type: the operation decides nothing, both
+        // faces of its completion and both values stay satisfiable.
+        assert_eq!(solve(&completes), "sat");
+        assert_eq!(solve(&not_formula(completes.clone())), "sat");
+        assert_eq!(
+            solve(&all_of(vec![
+                completes.clone(),
+                py_eq(total.clone(), int_const(2))
+            ])),
+            "sat"
+        );
+        assert_eq!(
+            solve(&all_of(vec![completes, py_eq(total, int_const(3))])),
+            "sat",
+            "an unjoined call's sum is undecided"
+        );
+        // A formal's operation in a contract stays undecided where nothing
+        // states the formal's type.
+        let formal = py_binary("+", var("a"), int_const(1), "f");
+        assert_eq!(
+            solve(&not_formula(py_completes("binary_op", formal, "f"))),
+            "sat",
+            "`a + 1` over an untyped formal may raise"
+        );
+    }
+
+    #[test]
     fn g1_string_regime_unchanged_without_bv32_atom() {
         // GUARD: a G1 string conjunction (universe + sworn String equality) with
         // NO bv32 atom present must be byte-for-byte unchanged — the contagion
