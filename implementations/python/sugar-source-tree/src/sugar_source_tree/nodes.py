@@ -16649,6 +16649,31 @@ class AnnAssign(Statement):
             return False
         return not _annotations_postponed(unit)
 
+    def unevaluated_parts(self) -> Tuple["Node", ...]:
+        """The annotation, where Python does not evaluate it when this
+        statement runs (``Node.unevaluated_parts``): in a module that
+        postpones its annotations (``_annotations_postponed``), in a function
+        or lambda body (annotations are never evaluated there), and a string
+        annotation that is not spliced as an evaluation
+        (``_evaluates_annotation``).  An annotation Python evaluates here --
+        a module or class body's, not postponed -- is none: the statement
+        builds it, or it stays on the roll."""
+        annotation = self.annotation
+        if _annotations_postponed(self.unit):
+            return (annotation,)
+        if isinstance(
+            self.unit.scope_holding(self.line_col_span()),
+            (FunctionDef, AsyncFunctionDef, Lambda),
+        ):
+            return (annotation,)
+        if (
+            isinstance(annotation, Constant)
+            and isinstance(annotation.value, str)
+            and not self._evaluates_annotation()
+        ):
+            return (annotation,)
+        return ()
+
     def substitution_binding(self, scope):
         # Only an annotated assignment WITH a value binds; a bare `x: int` is a
         # declaration and binds nothing. A Name target binds to its own
