@@ -46,22 +46,20 @@ class SetValue(GuardStableValue):
         return getattr_coordinate(self, name, owner="SetValue.attribute")
 
     def setattr(self, name, value, site, ctx):
-        """Sets have no instance ``__dict__``; store is AttributeError."""
-        del name, value, ctx
-        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+        """Sets have no instance ``__dict__``; store is AttributeError,
+        ``__class__`` TypeError (``builtin_attribute_store_exit``)."""
+        del value, ctx
+        from sugar_lift_py_tests.floor.ground_exit import builtin_attribute_store_exit
 
-        return ground_exceptional_exit(
-            exception_name="AttributeError", site=site, owner="SetValue.setattr"
-        )
+        return builtin_attribute_store_exit(name, site=site, owner="SetValue.setattr")
 
     def delattr(self, name, site, ctx):
-        """Sets have no instance ``__dict__``; delete is AttributeError."""
-        del name, ctx
-        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+        """Sets have no instance ``__dict__``; delete is AttributeError,
+        ``__class__`` TypeError (``builtin_attribute_store_exit``)."""
+        del ctx
+        from sugar_lift_py_tests.floor.ground_exit import builtin_attribute_store_exit
 
-        return ground_exceptional_exit(
-            exception_name="AttributeError", site=site, owner="SetValue.delattr"
-        )
+        return builtin_attribute_store_exit(name, site=site, owner="SetValue.delattr")
 
     def denotes_value(self) -> bool:
         """This floor value denotes a ``set``."""

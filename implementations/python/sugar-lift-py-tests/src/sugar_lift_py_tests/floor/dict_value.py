@@ -239,22 +239,20 @@ class DictValue(GuardStableValue):
         return name == "items" and contents_current(self)
 
     def setattr(self, name, value, site, ctx):
-        """Dicts have no instance ``__dict__``; store is AttributeError."""
-        del name, value, ctx
-        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+        """Dicts have no instance ``__dict__``; store is AttributeError,
+        ``__class__`` TypeError (``builtin_attribute_store_exit``)."""
+        del value, ctx
+        from sugar_lift_py_tests.floor.ground_exit import builtin_attribute_store_exit
 
-        return ground_exceptional_exit(
-            exception_name="AttributeError", site=site, owner="DictValue.setattr"
-        )
+        return builtin_attribute_store_exit(name, site=site, owner="DictValue.setattr")
 
     def delattr(self, name, site, ctx):
-        """Dicts have no instance ``__dict__``; delete is AttributeError."""
-        del name, ctx
-        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+        """Dicts have no instance ``__dict__``; delete is AttributeError,
+        ``__class__`` TypeError (``builtin_attribute_store_exit``)."""
+        del ctx
+        from sugar_lift_py_tests.floor.ground_exit import builtin_attribute_store_exit
 
-        return ground_exceptional_exit(
-            exception_name="AttributeError", site=site, owner="DictValue.delattr"
-        )
+        return builtin_attribute_store_exit(name, site=site, owner="DictValue.delattr")
 
     def to_term(self, *, owner: str):
         # Project as python:dict of entry pairs (layout-preserving coordinate).

@@ -173,3 +173,25 @@ def ground_type_error(*, site, owner: str) -> ExitSet:
     / construction-panic laws; this door is only for the decided TypeError.
     """
     return ground_exceptional_exit(exception_name="TypeError", site=site, owner=owner)
+
+
+def builtin_attribute_store_exit(name: str, *, site, owner: str) -> ExitSet:
+    """``v.name = x`` and ``del v.name`` on a value of a builtin type that
+    has no instance ``__dict__`` (a list, a dict, a set, a tuple, a str,
+    bytes, an int, a bool, a complex, ``None``, ``...``, a slice, an
+    iterator, a bound method): the certain halt, one reader for every such
+    floor.
+
+    ``__class__`` is ``object``'s data descriptor, found on the type before
+    any instance store is tried; its setter (``object_set_class``,
+    Objects/typeobject.c) raises ``TypeError`` on these types whatever is
+    stored ("__class__ assignment only supported for mutable types or
+    ModuleType subclasses": every one of them is an immutable type, so even
+    its own class is refused) and on a delete ("can't delete __class__
+    attribute").  Any other name has no descriptor that stores and no
+    ``__dict__`` to store in: ``AttributeError``."""
+    return ground_exceptional_exit(
+        exception_name="TypeError" if name == "__class__" else "AttributeError",
+        site=site,
+        owner=owner,
+    )

@@ -74,26 +74,20 @@ class NoneValue(GuardStableValue):
         return getattr_coordinate(self, name, owner="NoneValue.attribute")
 
     def setattr(self, name, value, site, ctx):
-        """``None.name = value`` is always AttributeError — store, not read."""
-        del name, value, ctx
-        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+        """``None.name = value`` is AttributeError, ``None.__class__ = C``
+        TypeError (``builtin_attribute_store_exit``) — store, not read."""
+        del value, ctx
+        from sugar_lift_py_tests.floor.ground_exit import builtin_attribute_store_exit
 
-        return ground_exceptional_exit(
-            exception_name="AttributeError",
-            site=site,
-            owner="NoneValue.setattr",
-        )
+        return builtin_attribute_store_exit(name, site=site, owner="NoneValue.setattr")
 
     def delattr(self, name, site, ctx):
-        """``del None.name`` is always AttributeError — delete, not read."""
-        del name, ctx
-        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+        """``del None.name`` is AttributeError, ``del None.__class__``
+        TypeError (``builtin_attribute_store_exit``) — delete, not read."""
+        del ctx
+        from sugar_lift_py_tests.floor.ground_exit import builtin_attribute_store_exit
 
-        return ground_exceptional_exit(
-            exception_name="AttributeError",
-            site=site,
-            owner="NoneValue.delattr",
-        )
+        return builtin_attribute_store_exit(name, site=site, owner="NoneValue.delattr")
 
     def subscript(self, index, site):
         """Construct Python's exact ground ``None[...]`` exceptional exit."""
