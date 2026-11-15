@@ -12,7 +12,7 @@ caller's actual, any other undecided receiver is the one two-faced read
 completes on; the face it raises on is kept.
 
 Where iterating the iterable is decided never to raise -- a list, tuple,
-dict, set or ``str`` in hand (``comprehension_sugar._iteration_total``) --
+dict, set or ``str`` in hand (``iterator_operation.iteration_total``) --
 no halt face is added.
 
 Each program has a truthful source, which completes, and a lying one, which

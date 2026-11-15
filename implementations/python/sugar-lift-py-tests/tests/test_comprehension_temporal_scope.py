@@ -108,14 +108,19 @@ def _the_completed_value(outcome):
 
 def _iteration_halt(face) -> bool:
     """``face`` is the halt of ``iter`` of the comprehension's undecided
-    iterable (``ComprehensionSugar._iterated``)."""
+    iterable, or of ``next`` of the iterator ``iter`` completed with
+    (``ComprehensionSugar._iterated``, ``iterator_operation.stepped``)."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 
     return (
         isinstance(face, Halted)
         and type(face.effect) is UndeterminedRaiseEffect
         and face.effect.producer_node_owner
-        in ("SymbolicValue.iter", "UnansweredNativeOperation:iter")
+        in (
+            "SymbolicValue.iter",
+            "UnansweredNativeOperation:iter",
+            "SymbolicValue.next",
+        )
     )
 
 
@@ -124,11 +129,14 @@ def test_completed_element_builds_fold_without_exporting_target_binding():
         ExitSet.completed(SymbolicValue(make_var("outer_x")))
     ).desugar()
 
-    # ``iter(outer_xs)`` is not decided here: the fold follows the face it
-    # completes on, and the face it raises on is kept.
+    # ``iter(outer_xs)`` is not decided here, nor is ``next`` of the
+    # iterator it completes with: the fold follows the faces they complete
+    # on, and the faces they raise on are kept.
     assert isinstance(result, ExitSet)
-    (halted,) = result.halts()
-    assert _iteration_halt(halted), halted
+    assert sorted(
+        halted.effect.producer_node_owner for halted in result.halts()
+    ) == ["SymbolicValue.iter", "SymbolicValue.next"], result.halts()
+    assert all(_iteration_halt(halted) for halted in result.halts())
     term = _the_completed_value(result).to_term(owner="test")
     assert term.name == "py.listcomp"
     assert term.args[0] == make_var("outer_xs")
@@ -146,10 +154,11 @@ def test_halted_element_bypasses_fold_and_retains_exact_outer_state():
     result = _comprehension(incoming).desugar()
 
     assert isinstance(result, ExitSet)
-    # Two halts: ``iter`` of the undecided iterable, and the element's, on
-    # the face ``iter`` completes on.  Nothing completes.
-    assert len(result.exits) == 2
-    assert sum(1 for face in result.exits if _iteration_halt(face)) == 1
+    # Three halts: ``iter`` of the undecided iterable, ``next`` of its
+    # iterator, and the element's, on the face both complete on.  Nothing
+    # completes.
+    assert len(result.exits) == 3
+    assert sum(1 for face in result.exits if _iteration_halt(face)) == 2
     (halted,) = [
         face
         for face in result.exits

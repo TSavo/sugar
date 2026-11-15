@@ -304,10 +304,11 @@ class ComprehensionSugar(ConstructedTermSugar):
         then every inner member under it), which one evaluation over symbolic
         members does not hold.  Without one it stays the symbolic fold.
 
-        The symbolic fold runs ``iter`` on its iterable first, as a ``for``
-        does (``_iterated``): the fold follows the face it completes on.
-        Where iterating the iterable is decided never to raise
-        (``_iteration_total``) there is no such face to carry.
+        The symbolic fold runs ``iter`` on its iterable first and ``next``
+        per member, as a ``for`` does (``_iterated``): the fold follows the
+        faces they go on by.  Where iterating the iterable is decided never
+        to raise (``iterator_operation.iteration_total``) there is no such
+        face to carry.
         """
         if index == 0 and (
             len(self.generators) == 1 or self._running_coordinates(finite=True)
@@ -381,22 +382,20 @@ class ComprehensionSugar(ConstructedTermSugar):
                 outer=outer,
             )
 
-        if _iteration_total(iterable):
-            return fold(None)
-        return self._iterated(iterable, ctx).and_then(fold)
+        return self._iterated(iterable, ctx, lambda: fold(None))
 
-    def _iterated(self, iterable, ctx):
-        """``iter(iterable)``, which the symbolic fold runs once before any
-        member, as a ``for`` does: the one ``iter`` operation
-        (``IteratorOperation``), submitted to the receiver, which owns the
-        answer (``LoopRecurrenceSugar._desugar_with_iterable``).  A formal's
-        is the ``iter`` carrier its caller's actual discharges; any other
-        receiver whose ``__iter__`` is not decided here is the one two-faced
-        undecided read (``FloorValue.undecided_iteration``); an instance's
-        is its class's ``__iter__``, called.  The fold is what follows the
-        face ``iter`` completes on (``ExitSet.and_then``); the face it raises
-        on leaves the comprehension before any member.  No halt is guessed
-        and none is dropped.
+    def _iterated(self, iterable, ctx, fold):
+        """The symbolic fold (``fold()``) over ``iterable``, run as a ``for``
+        runs its recurrence, through the one iterator path both share
+        (``iterator_operation.iterated`` and ``stepped``): ``iter`` once
+        before any member, then each member's ``next``.  ``iter``'s halt
+        leaves the comprehension before any member; ``next``'s
+        ``StopIteration`` and value are where the fold stands (it covers
+        every member and none), and its halt -- an undecided raise of an
+        iterator whose ``__next__`` is not decided here -- leaves the
+        comprehension, kept beside the fold.  Where the iteration is decided
+        never to raise (``iterator_operation.iteration_total``) neither adds
+        a face.  No halt is guessed and none is dropped.
 
         An expression's halt offers no record of its own: the statement that
         runs the comprehension records it (``halts_recorded``)."""
@@ -404,16 +403,22 @@ class ComprehensionSugar(ConstructedTermSugar):
             NativeOperationExitCarrierV1,
         )
         from sugar_lift_py_tests.operations.iterator_operation import (
-            IteratorOperation,
+            iterated,
+            stepped,
         )
         from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 
-        iterated = IteratorOperation(
-            owner="ComprehensionSugar", blame=self.site
-        ).submit(iterable, ctx)
-        if isinstance(iterated, NativeOperationExitCarrierV1):
-            return iterated
-        return _require_exit_set(iterated, owner="ComprehensionSugar.iter")
+        owner = "ComprehensionSugar"
+        iteration = iterated(iterable, ctx, owner=owner, site=self.site)
+
+        def each(iterator):
+            return stepped(iterable, iterator, ctx, fold, owner=owner, site=self.site)
+
+        if isinstance(iteration, NativeOperationExitCarrierV1):
+            return iteration.and_then(each)
+        return _require_exit_set(iteration, owner="ComprehensionSugar.iter").and_then(
+            each
+        )
 
     def _finite_map(self, generator, iterable, ctx):
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
@@ -1283,30 +1288,6 @@ def _finite_members(iterable):
     if isinstance(iterable, ComprehensionValue) and iterable.finite_elements is not None:
         return iterable.finite_elements
     return None
-
-
-def _iteration_total(iterable) -> bool:
-    """Whether ``iter(iterable)`` and each ``next`` of it are decided never
-    to raise: the iterable is an exact finite container in hand
-    (``_finite_members``), or a decided builtin whose iteration is CPython's
-    own and cannot raise (``source_call_resolution._iterable``: a ``str``,
-    ``bytes``, ``list``, ``tuple``, ``set`` or ``dict``, or an evaluated
-    list/set/dict comprehension) -- the one testimony ``iter(x)``'s
-    totality reads (``builtin_call_total``).  Such a fold states no
-    iteration halt.
-
-    A container whose contents are not current
-    (``object_identity.contents_stale``) is not: its ``iter`` is the
-    undecided read its own receiver answers (``ListValue.iter_with``), as a
-    ``for`` over it reads it.  Anything else -- a formal, a call's result,
-    an instance, any symbolic value -- has its ``iter`` submitted to it
-    (``ComprehensionSugar._iterated``)."""
-    from sugar_lift_py_tests.floor.object_identity import contents_stale
-    from sugar_lift_py_tests.source_call_resolution import _iterable
-
-    if contents_stale(iterable):
-        return False
-    return _finite_members(iterable) is not None or _iterable(iterable)
 
 
 def _last_binds(binds) -> tuple:

@@ -56,7 +56,13 @@ def _post_of(source, path=None):
 # The owners of the halts an undecided ``iter`` of the iterable states: over
 # a formal with no actual (the function's own proof), over any other
 # symbolic value (an inner generator's member).
-_ITERATION_HALT_OWNERS = ("UnansweredNativeOperation:iter", "SymbolicValue.iter")
+_ITERATION_HALT_OWNERS = (
+    "UnansweredNativeOperation:iter",
+    "SymbolicValue.iter",
+    # ``next`` of the iterator ``iter`` completed with, whose ``__next__``
+    # is not decided here (``iterator_operation.stepped``).
+    "SymbolicValue.next",
+)
 
 
 def _completed(outcome):
