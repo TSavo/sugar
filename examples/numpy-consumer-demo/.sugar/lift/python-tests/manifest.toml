@@ -4,13 +4,12 @@ protocol_version = "pep/1.7.0"
 kind = "lift"
 # Dispatch the PYTEST contract lifter. PYTHONPATH points at the lifter source
 # tree (no install/venv needed). working_dir is this project root; the relative
-# paths resolve to the repo's implementations/ tree.
+# paths resolve to the repo's implementations/ tree. The kit's src trees go in
+# front of the caller's PYTHONPATH, never in place of it.
 command = [
-    "/usr/bin/env",
-    "PYTHONPATH=../../implementations/python/sugar-lift-py-tests/src:../../implementations/python/sugar-lift-python-source/src",
-    "python3",
-    "-m",
-    "sugar_lift_py_tests.lsp",
+    "/bin/sh",
+    "-c",
+    'export PYTHONPATH="../../implementations/python/sugar-lift-py-tests/src:../../implementations/python/sugar-lift-python-source/src${PYTHONPATH:+:$PYTHONPATH}"; exec python3 -m sugar_lift_py_tests.lsp',
 ]
 working_dir = "."
 

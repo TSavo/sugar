@@ -177,9 +177,13 @@ lake_project = "{_root() / 'tools' / 'portfolio' / 'lean-mathlib'}"
         f"CAPTURE = Path({str(capture)!r})\n"
         "\n"
         "def main() -> int:\n"
+        # The kit's src trees go IN FRONT of the caller's PYTHONPATH, never in
+        # place of it, as every Python kit manifest starts the kit; the
+        # caller's PYTHONPATH is where the project's own imports resolve.
+        "    caller = os.environ.get('PYTHONPATH')\n"
         "    env = {\n"
         "        **os.environ,\n"
-        "        'PYTHONPATH': PYTHONPATH,\n"
+        "        'PYTHONPATH': PYTHONPATH + (os.pathsep + caller if caller else ''),\n"
         "        'SUGAR_REPO_ROOT': SUGAR_REPO_ROOT,\n"
         "    }\n"
         "    proc = subprocess.Popen(\n"

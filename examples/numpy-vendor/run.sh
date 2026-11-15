@@ -90,8 +90,8 @@ cat > .sugar/lift/python-pytest-witness/manifest.toml <<EOF
 name = "pytest-witness-lift"
 version = "0.1.0"
 kind = "lift"
-command = ["/usr/bin/env", "PYTHONPATH=$PP", "$VENV/bin/python", "-m", "sugar_pytest_witness.lift_lsp"]
-resolve_witness_command = ["/usr/bin/env", "PYTHONPATH=$PP", "$VENV/bin/python", "-m", "sugar_pytest_witness.lift_lsp"]
+command = ["/bin/sh", "-c", 'export PYTHONPATH="$PP\${PYTHONPATH:+:\$PYTHONPATH}"; exec $VENV/bin/python -m sugar_pytest_witness.lift_lsp']
+resolve_witness_command = ["/bin/sh", "-c", 'export PYTHONPATH="$PP\${PYTHONPATH:+:\$PYTHONPATH}"; exec $VENV/bin/python -m sugar_pytest_witness.lift_lsp']
 resolve_witness_method = "sugar.plugin.resolve_witness"
 working_dir = "$HERE"
 [capabilities]

@@ -342,70 +342,49 @@ struct ParsedManifest {
 fn parse_manifest(path: &Path) -> Result<ParsedManifest, String> {
     let text =
         std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    let mut name = String::new();
-    let mut command: Vec<String> = Vec::new();
-    let mut working_dir: Option<PathBuf> = None;
-    let mut library_tag: Option<String> = None;
-    let mut protocol_versions: Vec<String> = Vec::new();
-    let mut capability_kind: Option<String> = None;
-    let mut section = String::new();
-    let strip = |l: &str| -> String {
-        match l.find('#') {
-            Some(pos) => l[..pos].trim().to_string(),
-            None => l.trim().to_string(),
-        }
+    // The manifest is TOML and is read as TOML, the one way every manifest is
+    // read (lift_plugin, component_plan). A hand line-splitter here could not
+    // read a literal string such as the `/bin/sh -c '...'` command that starts a
+    // Python kit with its src trees prepended to the caller's PYTHONPATH.
+    let toml: toml::Value = text
+        .parse()
+        .map_err(|e| format!("invalid TOML in {}: {e}", path.display()))?;
+    let string_field = |table: Option<&toml::Value>, key: &str| -> Option<String> {
+        table
+            .and_then(|table| table.get(key))
+            .and_then(toml::Value::as_str)
+            .map(str::to_string)
     };
-    let lines: Vec<&str> = text.lines().collect();
-    let mut idx = 0;
-    while idx < lines.len() {
-        let line = strip(lines[idx]);
-        idx += 1;
-        if line.is_empty() {
-            continue;
+    let string_array_field = |key: &str| -> Vec<String> {
+        toml.get(key)
+            .and_then(toml::Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(toml::Value::as_str)
+                    .map(str::to_string)
+                    .filter(|value| !value.is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+    let name = string_field(Some(&toml), "name").unwrap_or_default();
+    let working_dir = string_field(Some(&toml), "working_dir").map(PathBuf::from);
+    let protocol_versions = string_array_field("protocol_versions");
+    let command = string_array_field("command");
+    let capability_kind = string_field(toml.get("capabilities"), "kind");
+    let library_tag = match string_field(Some(&toml), "library_tag") {
+        Some(tag) => {
+            validate_library_tag(&tag).map_err(|detail| {
+                format!(
+                    "manifest {} has invalid `library_tag` `{tag}`: {detail}",
+                    path.display()
+                )
+            })?;
+            Some(tag)
         }
-        if line.starts_with('[') && line.ends_with(']') {
-            section = line
-                .trim_start_matches('[')
-                .trim_end_matches(']')
-                .trim()
-                .to_string();
-            continue;
-        }
-        let Some(eq) = line.find('=') else { continue };
-        let key = line[..eq].trim().to_string();
-        let mut val = line[eq + 1..].trim().to_string();
-        // Multi-line array value (TOML `key = [` then elements on later lines):
-        // accumulate continuation lines until the closing `]`, mirroring
-        // cmd_prove::parse_manifest. Without this a multi-line `command` parses
-        // empty and dependency-proof resolution is silently skipped.
-        if val.starts_with('[') && !val.contains(']') {
-            while idx < lines.len() && !val.contains(']') {
-                val.push(' ');
-                val.push_str(&strip(lines[idx]));
-                idx += 1;
-            }
-        }
-        let key = key.as_str();
-        let val = val.as_str();
-        match (section.as_str(), key) {
-            ("", "name") => name = val.trim_matches('"').to_string(),
-            ("", "working_dir") => working_dir = Some(PathBuf::from(val.trim_matches('"'))),
-            ("", "protocol_versions") => protocol_versions = parse_toml_string_array(val),
-            ("", "library_tag") => {
-                let tag = val.trim_matches('"').to_string();
-                validate_library_tag(&tag).map_err(|detail| {
-                    format!(
-                        "manifest {} has invalid `library_tag` `{tag}`: {detail}",
-                        path.display()
-                    )
-                })?;
-                library_tag = Some(tag);
-            }
-            ("", "command") => command = parse_toml_string_array(val),
-            ("capabilities", "kind") => capability_kind = Some(val.trim_matches('"').to_string()),
-            _ => {}
-        }
-    }
+        None => None,
+    };
     if command.is_empty() {
         return Err(format!("manifest {} has no `command`", path.display()));
     }
@@ -417,47 +396,6 @@ fn parse_manifest(path: &Path) -> Result<ParsedManifest, String> {
         protocol_versions,
         capability_kind,
     })
-}
-
-/// Parse a TOML inline string array like `["a", "b", "c"]`.
-///
-/// Quote-aware: commas inside `"..."` are NOT separators.
-fn parse_toml_string_array(value: &str) -> Vec<String> {
-    let inner = value.trim().trim_matches(|c| c == '[' || c == ']');
-    let mut out: Vec<String> = Vec::new();
-    let mut current = String::new();
-    let mut in_quote = false;
-    let mut escape = false;
-    for ch in inner.chars() {
-        if escape {
-            current.push(ch);
-            escape = false;
-            continue;
-        }
-        match ch {
-            '\\' if in_quote => {
-                current.push(ch);
-                escape = true;
-            }
-            '"' => {
-                in_quote = !in_quote;
-                current.push(ch);
-            }
-            ',' if !in_quote => {
-                let trimmed = current.trim().trim_matches('"').to_string();
-                if !trimmed.is_empty() {
-                    out.push(trimmed);
-                }
-                current.clear();
-            }
-            _ => current.push(ch),
-        }
-    }
-    let trimmed = current.trim().trim_matches('"').to_string();
-    if !trimmed.is_empty() {
-        out.push(trimmed);
-    }
-    out
 }
 
 fn validate_library_tag(tag: &str) -> Result<(), &'static str> {

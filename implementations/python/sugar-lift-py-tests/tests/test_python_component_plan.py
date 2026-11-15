@@ -79,16 +79,16 @@ def test_python_component_manifest_registers_cli_rendezvous_transport() -> None:
     assert working_dir == ROOT
     # The kit is started as its module, never as a script path: lift_rpc
     # imports sugar_lift_python_source at load, so both package src trees are
-    # put on PYTHONPATH (relative to the working dir) before the interpreter.
+    # put on PYTHONPATH (relative to the working dir) before the interpreter,
+    # in front of the caller's PYTHONPATH and never in place of it.
     assert command == [
-        "/usr/bin/env",
-        "PYTHONPATH="
+        "/bin/sh",
+        "-c",
+        'export PYTHONPATH="'
         "implementations/python/sugar-lift-py-tests/src"
-        ":implementations/python/sugar-lift-python-source/src",
-        "python3",
-        "-m",
-        "sugar_lift_py_tests.lift_rpc",
-        "--rpc",
+        ":implementations/python/sugar-lift-python-source/src"
+        '${PYTHONPATH:+:$PYTHONPATH}"; '
+        "exec python3 -m sugar_lift_py_tests.lift_rpc --rpc",
     ]
 
 

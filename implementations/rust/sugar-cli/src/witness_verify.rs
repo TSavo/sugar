@@ -397,63 +397,44 @@ fn find_resolvers(
     Ok(found)
 }
 
-/// Minimal TOML read for the `resolve_witness_command` array + `working_dir`,
-/// mirroring cmd_prove's manifest parser (multi-line arrays, `#` comments).
+/// Read the `resolve_witness_command` array, `working_dir` and
+/// `resolve_witness_method` from a lift manifest. The manifest is TOML and is
+/// read as TOML, the one way every manifest is read: a hand line-splitter could
+/// not read a literal string such as the `/bin/sh -c '...'` command that starts
+/// a Python kit with its src trees prepended to the caller's PYTHONPATH.
 fn parse_resolve_command(
     manifest: &Path,
     project_root: &Path,
 ) -> Option<(Vec<String>, Option<PathBuf>, String)> {
     let text = std::fs::read_to_string(manifest).ok()?;
-    let strip = |l: &str| -> String {
-        match l.find('#') {
-            Some(p) => l[..p].to_string(),
-            None => l.to_string(),
-        }
-    };
-    let raw: Vec<String> = text.lines().map(|l| strip(l).trim().to_string()).collect();
-    let mut argv: Vec<String> = Vec::new();
-    let mut working_dir: Option<PathBuf> = None;
-    let mut method: Option<String> = None;
-    let mut i = 0;
-    while i < raw.len() {
-        let line = raw[i].clone();
-        i += 1;
-        if line.is_empty() || line.starts_with('[') {
-            continue;
-        }
-        let Some(eq) = line.find('=') else { continue };
-        let key = line[..eq].trim().to_string();
-        let mut val = line[eq + 1..].trim().to_string();
-        if val.starts_with('[') && !val.contains(']') {
-            while i < raw.len() && !val.contains(']') {
-                val.push(' ');
-                val.push_str(&raw[i]);
-                i += 1;
+    let toml: toml::Value = text.parse().ok()?;
+    let argv: Vec<String> = toml
+        .get("resolve_witness_command")
+        .and_then(toml::Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .map(str::to_string)
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let working_dir = toml
+        .get("working_dir")
+        .and_then(toml::Value::as_str)
+        .map(|dir| {
+            let p = PathBuf::from(dir);
+            if p.is_absolute() {
+                p
+            } else {
+                project_root.join(p)
             }
-        }
-        match key.as_str() {
-            "resolve_witness_command" => {
-                let inner = val.trim_matches(|c| c == '[' || c == ']');
-                argv = inner
-                    .split(',')
-                    .map(|s| s.trim().trim_matches('"').to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-            }
-            "working_dir" => {
-                let p = PathBuf::from(val.trim_matches('"'));
-                working_dir = Some(if p.is_absolute() {
-                    p
-                } else {
-                    project_root.join(p)
-                });
-            }
-            "resolve_witness_method" => {
-                method = Some(val.trim_matches('"').to_string());
-            }
-            _ => {}
-        }
-    }
+        });
+    let method = toml
+        .get("resolve_witness_method")
+        .and_then(toml::Value::as_str)
+        .map(str::to_string);
     if argv.is_empty() {
         return None;
     }

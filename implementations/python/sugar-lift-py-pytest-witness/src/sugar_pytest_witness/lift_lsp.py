@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import sys
 from pathlib import Path
 from typing import Any, List, Optional
@@ -162,27 +163,28 @@ def _first_pytest_claim(params: dict, workspace_root: str) -> Optional[str]:
     return None
 
 
-def _runtime_pythonpath() -> str:
+def _kit_pythonpath() -> str:
     here = Path(__file__).resolve()
     witness_src = here.parents[1]
     python_impl = here.parents[3]
     py_tests_src = python_impl / "sugar-lift-py-tests" / "src"
     py_source_src = python_impl / "sugar-lift-python-source" / "src"
-    paths = [str(witness_src), str(py_tests_src), str(py_source_src)]
-    existing = os.environ.get("PYTHONPATH")
-    if existing:
-        paths.append(existing)
-    return os.pathsep.join(paths)
+    return os.pathsep.join([str(witness_src), str(py_tests_src), str(py_source_src)])
 
 
-def _runtime_module_command(module: str) -> List[str]:
-    return [
-        "/usr/bin/env",
-        f"PYTHONPATH={_runtime_pythonpath()}",
-        sys.executable,
-        "-m",
-        module,
-    ]
+def _runtime_module_command(module: str, *, forward_args: bool = False) -> List[str]:
+    # The kit's src trees go IN FRONT of the PYTHONPATH the command is started
+    # with, never in place of it: that PYTHONPATH is where the project's own
+    # imports resolve. It is read when the command starts, not baked in here.
+    # `forward_args` passes the arguments appended to the command (after the
+    # trailing "sh", which is $0) through to the module.
+    script = (
+        f'export PYTHONPATH="{_kit_pythonpath()}${{PYTHONPATH:+:$PYTHONPATH}}"; '
+        f"exec {shlex.quote(sys.executable)} -m {module}"
+    )
+    if forward_args:
+        return ["/bin/sh", "-c", f'{script} "$@"', "sh"]
+    return ["/bin/sh", "-c", script]
 
 
 def component_plan_result(params: dict) -> dict:
@@ -195,7 +197,9 @@ def component_plan_result(params: dict) -> dict:
         }
 
     lift_command = _runtime_module_command("sugar_pytest_witness.lift_lsp")
-    discharge_command = _runtime_module_command("sugar_pytest_witness.discharge_cli")
+    discharge_command = _runtime_module_command(
+        "sugar_pytest_witness.discharge_cli", forward_args=True
+    )
     return {
         "decision": "claim",
         "claims": [

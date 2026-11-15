@@ -4,13 +4,12 @@ protocol_version = "pep/1.7.0"
 kind = "lift"
 # The ONE assertion lifter. It learns numpy's vocabulary from each test file's
 # imports plus this workspace's .sugar/vocab-exceptions/numpy.testing.json.
-# PYTHONPATH at the one lifter (sugar-lift-py-tests) + the python-source helper.
+# PYTHONPATH at the one lifter (sugar-lift-py-tests) + the python-source helper,
+# in front of the caller's PYTHONPATH, never in place of it.
 command = [
-    "/usr/bin/env",
-    "PYTHONPATH=../../implementations/python/sugar-lift-py-tests/src:../../implementations/python/sugar-lift-python-source/src",
-    "python3",
-    "-m",
-    "sugar_lift_py_tests.assertion_lsp",
+    "/bin/sh",
+    "-c",
+    'export PYTHONPATH="../../implementations/python/sugar-lift-py-tests/src:../../implementations/python/sugar-lift-python-source/src${PYTHONPATH:+:$PYTHONPATH}"; exec python3 -m sugar_lift_py_tests.assertion_lsp',
 ]
 working_dir = "."
 
