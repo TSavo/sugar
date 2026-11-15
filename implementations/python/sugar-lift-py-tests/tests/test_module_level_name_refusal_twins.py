@@ -99,7 +99,7 @@ def _claim(prove_doc: dict, function: str) -> str | None:
     statuses = [
         row.get("status")
         for row in prove_doc.get("rows") or []
-        if row.get("property") == f"consistency:{function}"
+        if row.get("property") == f"consistency:python:test_witness.{function}"
     ]
     if not statuses:
         return None
