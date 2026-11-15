@@ -2020,6 +2020,11 @@ def caller_visible_values(entries, call) -> tuple:
       decide it on this arm, the value is an unknown minted at the call,
       never the object as it was before the call.  The callee's own keys
       never reach the caller.
+    - An actual of an immutable builtin type is the caller's object as it
+      was (``_immutable_actuals``): nothing a callee does changes it, and a
+      rebind of its formal (``x += 2``, ``x = v``) is the callee's local
+      alone.  It is carried as that actual, never as what the callee's frame
+      read of the formal's name.
 
     A record that holds several paths -- each ``return`` taken under its
     branch's guards beside the path that went on to the body's end -- holds
@@ -2056,15 +2061,52 @@ def caller_visible_values(entries, call) -> tuple:
         and entry.frame == frame
     ]
     key = carried_evaluation(node)
+    unchanged = _immutable_actuals(call)
     for label in labels:
-        value = _selected(
-            [entry for entry in left if entry.label == label],
-            lambda: _unknown_after(call.site, label),
-        )
+        value = unchanged.get(label)
+        if value is None:
+            value = _selected(
+                [entry for entry in left if entry.label == label],
+                lambda: _unknown_after(call.site, label),
+            )
         carried.append(
             NamedExpressionValue(label, value, evaluation=projection_key(key, label))
         )
     return tuple(carried)
+
+
+def _immutable_actuals(call) -> dict:
+    """``{label: actual}``: each actual of ``call`` that no callee can
+    change -- a value of an immutable builtin type all the way down
+    (``_immutable``, the one rule by which a name bound to such a value
+    keeps it across a call: ``ReceiverAfterCallSugar``,
+    ``PathAfterCallSugar``) -- under the label its formal's object is
+    carried by (``actual:<index>``, ``nodes._shared_names``).
+
+    A formal is the callee's own local.  ``x += 2`` on an ``int``, a ``str``
+    or a ``tuple`` binds that local to another object and leaves the
+    caller's as it was; only a change to an object the two share reaches the
+    caller.  The body's threading follows ``x += e`` as the formal's object
+    changed in place (``container_mutation.name_mutation_statement``), which
+    its value decides: a ``list``'s in-place result is the list, and what
+    the frame read of the name is then the object.  For an immutable actual
+    that read is the local's new value (``5`` for ``f(3)``), never the
+    caller's object, so the caller's object is the actual itself.
+
+    Empty where the call's actuals are not one per formal: no label names
+    an actual there."""
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+    from sugar_lift_py_tests.sugar.builtin_container_call_sugar import _immutable
+
+    actuals = tuple(call.arg_values)
+    if len(actuals) != len(call.parameters):
+        return {}
+    unchanged = {}
+    for index, actual in enumerate(actuals):
+        _binds, held = peel_walrus_binds(actual)
+        if _immutable(held):
+            unchanged[f"actual:{index}"] = held
+    return unchanged
 
 
 def _selected(laid, unknown):
