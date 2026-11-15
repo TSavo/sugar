@@ -1,21 +1,22 @@
-"""MULTI-HELPER SOURCE-RETURN GENERALIZATION (seam-1 completion suite).
+"""SAME-FILE HELPER RETURNS FEEDING OPERATIONS: the row and the edge.
 
-Unrelated authenticated helpers returning scalar, tuple/container, and
-symbolic Floors must feed BinOp, Compare, Subscript, and store consumers.
-Direct-value twins are outcome-isomorphic. Guarded returns retain guards.
-Opaque/tampered returns stay loud.
+Unrelated helpers returning scalar, tuple/container, and symbolic values
+feed BinOp, Compare, Subscript, and store consumers.
 
-Authentication door (tests only — no helper/provider spelling):
+A call of a same-file function is its coordinate ``call:<target>(...)`` and
+an edge to the callee's join symbol, joined at prove (#7757 steps 5 and 6,
+the owner's ruling "Edge, join at prove", #8705; the application of a callee
+body at lift is deleted, #8751).  So what a helper returns is stated in one
+place, the helper's own contract row (``function_universe_outcome``), and
+the call carries what prove's one binder binds the contract with: its
+actuals, ``py.kwarg``, ``py.default``, ``py.closure``.  An operation on the
+call's result is not decided at lift: the call is two-faced (completes under
+its ``completes`` atom, halts under the complement) and owed, and no
+completed face is the number the helper's body would give.
 
-  each use-site applies its callee's own
-  FunctionDef.source_visible_call_frame() through its lexical row.
-
-No production/binder/carrier/ExitSet edits.
-
-Producer reds are handed to **codex-3**: dig currently floors a returned
-body as BlockValue and does not project the ReturnValue floor into BinOp /
-Compare / Subscript / store operands. When that producer lands, the red
-laws below go green and direct-value twins stay isomorphic.
+This suite used to pin the lift following the helper's body (``force_floor``
+of the call's body, ``_dig_floor_or_none`` projecting the helper's return
+into the operation, "codex-3"); those reads are deleted with the mechanism.
 """
 
 from __future__ import annotations
@@ -28,21 +29,16 @@ from sugar_lift_py_tests.context_manager_resolution import (
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.floor import (
-    BlockValue,
     CallSiteValue,
-    ListValue,
-    LoopControlValue,
+    GuardedReturn,
     ReturnValue,
     TermValue,
     TupleValue,
 )
-from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_py_tests.ir import and_
-from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import (
-    Assign,
     BinOp,
     Call,
     Compare,
@@ -59,7 +55,7 @@ from sugar_source_tree.tree import SourceFile
 
 
 def _tree(source: str, *, name: str = "sr.py"):
-    """Build a tree; each helper call applies its definition's own frame."""
+    """Build a tree; each helper call is its coordinate and edge."""
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = SourceFile(
         (source, name, blake3_512_of(source.encode())),
@@ -91,101 +87,109 @@ def _completed_value(outcome):
     raise AssertionError(f"unexpected outcome {type(outcome).__name__}: {outcome!r}")
 
 
-CODEX3_OWNER = (
-    "codex-3 general source-return producer: dig must project authenticated "
-    "helper ReturnValue floors (scalar/tuple/symbolic) into BinOp, Compare, "
-    "Subscript, and store operands — not stop at BlockValue or leave "
-    "CallSiteValue opaque. tests-only; no local CallSiteValue adaptation."
-)
+def _row(function):
+    """``function``'s own contract row, through the one door a function's
+    universe takes."""
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    return function_universe_outcome(function)
 
 
-@pytest.mark.parametrize(
-    "competing_exit",
-    (
-        # The control exits a block's record can hold.  A halt is not one of
-        # them: a halt is an arm of the body's ExitSet (#7826), never an
-        # entry in a completed record, so no record with an ExitSet inside
-        # it reaches this projection.
-        LoopControlValue("break", "helper.py:3"),
-    ),
-)
-def test_source_return_projection_refuses_any_competing_control_exit(
-    competing_exit,
-) -> None:
-    """One return is ineligible when any other authenticated exit survives."""
-    from sugar_lift_py_tests.floor.call_site_value import (
-        _project_authenticated_source_return,
-    )
+def _row_returns(outcome) -> list:
+    """Every value a completed face of a contract row returns."""
+    found = []
+    for face in outcome.exits:
+        if not isinstance(face, Completed):
+            continue
+        record = getattr(face.value, "record", None)
+        for entry in getattr(record, "statements", ()) or ():
+            if isinstance(entry, (ReturnValue, GuardedReturn)):
+                found.append(entry.value)
+    return found
 
-    body = BlockValue(
-        (ReturnValue(TermValue(3)), competing_exit),
-        fall_through=(),
-        can_fall_through=False,
-    )
 
-    assert _project_authenticated_source_return(body) is body
+def _row_return(outcome):
+    """The one value a row that only completes returns."""
+    assert not outcome.halts(), outcome
+    (returned,) = _row_returns(outcome)
+    return returned
+
+
+def _edge(outcome) -> CallSiteValue:
+    """A same-file call's value: its coordinate and edge, two-faced."""
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert outcome.halts(), outcome
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert len(completed) == 1, outcome
+    value = completed[0].value
+    assert isinstance(value, CallSiteValue), type(value)
+    assert value.body is None
+    return value
+
+
+def _row_edge(outcome) -> CallSiteValue:
+    """The call a row returns as it stands: its coordinate and edge."""
+    assert outcome.halts(), outcome
+    returns = _row_returns(outcome)
+    assert len(returns) == 1, outcome
+    assert isinstance(returns[0], CallSiteValue), type(returns[0])
+    return returns[0]
+
+
+def _not_decided_at_lift(outcome, number: int) -> None:
+    """An operation on a same-file call's result: owed, two-faced, and no
+    completed face is the number the callee's body would give (decided at
+    prove, where the callee's contract joins the edge)."""
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert outcome.halts(), outcome
+    assert TermValue(number) not in [
+        face.value for face in outcome.exits if isinstance(face, Completed)
+    ]
+
+
+def _row_not_decided_at_lift(outcome, number: int) -> None:
+    """The row's return over a same-file call is not the number the
+    callee's body would give: it is decided at prove."""
+    assert outcome.halts(), outcome
+    assert TermValue(number) not in _row_returns(outcome)
 
 
 # ---------------------------------------------------------------------------
-# GREEN: authenticated helper alone projects its returned Floor
+# The helper's row states its return; the call is its edge
 # ---------------------------------------------------------------------------
 
 
-def test_scalar_helper_authenticated_call_projects_return_floor() -> None:
+def test_scalar_helper_row_states_its_return_and_the_call_is_its_edge() -> None:
     tree, _, functions = _tree(
         "def scalar_probe():\n    return 3\n\nscalar_probe()\n",
     )
-    call = _first(tree, Call)
-    outcome = call.sugar().desugar(None)
-    assert outcome.completed_value() is not None
-    assert isinstance(outcome.completed_value(), CallSiteValue)
-    assert outcome.completed_value().body is not None
-    floor = outcome.completed_value().force_floor(
-        None, owner="scalar-return-floor", project_callsite=False
-    )
-    assert isinstance(floor, BlockValue)
-    assert len(floor.statements) == 1
-    assert isinstance(floor.statements[0], ReturnValue)
-    assert floor.statements[0].value == TermValue(3)
-    del functions
+    assert _row_return(_row(functions["scalar_probe"])) == TermValue(3)
+    edge = _edge(_first(tree, Call).sugar().desugar(None))
+    assert edge.arg_values == ()
 
 
-def test_tuple_helper_authenticated_call_projects_container_return() -> None:
-    tree, _, _ = _tree(
+def test_tuple_helper_row_states_its_container_return() -> None:
+    _, _, functions = _tree(
         "def pack_probe():\n    return (1, 2, 3)\n\npack_probe()\n",
     )
-    call = _first(tree, Call)
-    floor = (
-        call.sugar()
-        .desugar(None)
-        .completed_value()
-        .force_floor(None, owner="tuple-return-floor", project_callsite=False)
-    )
-    assert isinstance(floor.statements[0], ReturnValue)
-    assert floor.statements[0].value == TupleValue(
+    assert _row_return(_row(functions["pack_probe"])) == TupleValue(
         (TermValue(1), TermValue(2), TermValue(3))
     )
 
 
-def test_symbolic_helper_authenticated_call_projects_formal_return() -> None:
+def test_symbolic_helper_call_carries_its_actual_on_the_edge() -> None:
     tree, _, functions = _tree(
         "def identity_probe(x):\n    return x\n\nidentity_probe(7)\n",
     )
-    call = _first(tree, Call)
-    floor = (
-        call.sugar()
-        .desugar(None)
-        .completed_value()
-        .force_floor(None, owner="symbolic-return-floor", project_callsite=False)
-    )
-    assert isinstance(floor.statements[0], ReturnValue)
-    # Bound formal projects the actual TermValue(7).
-    assert floor.statements[0].value == TermValue(7)
-    del functions
+    # The row returns its formal, never a caller's actual.
+    assert _row_return(_row(functions["identity_probe"])) != TermValue(7)
+    # The actual is carried on the edge; prove binds the formal to it.
+    edge = _edge(_first(tree, Call).sugar().desugar(None))
+    assert edge.arg_values == (TermValue(7),)
 
 
 # ---------------------------------------------------------------------------
-# GREEN: direct-value operation twins (isomorphism baseline)
+# Direct-value operations (the baseline)
 # ---------------------------------------------------------------------------
 
 
@@ -211,38 +215,14 @@ def test_direct_subscript_completes() -> None:
 
 
 # ---------------------------------------------------------------------------
-# LAW (red until codex-3): helper return floors feed operation consumers
+# A helper's result in an operation: owed at lift, decided at prove
 # ---------------------------------------------------------------------------
 
 
-def test_scalar_helper_feeds_binop_isomorphic_to_direct() -> None:
-    """scalar() + 2 must complete as the same floor family as 3 + 2.
-
-    RED owner=codex-3 until dig projects ReturnValue → TermValue into BinOp.
-    """
-    helper_src = "def scalar():\n    return 3\n\nscalar() + 2\n"
-    direct_src = "3 + 2\n"
-    helper_tree, _, _ = _tree(helper_src)
-    direct_tree, _, _ = _tree(direct_src)
-    direct = _first(direct_tree, BinOp).sugar().desugar(None)
-
-    try:
-        helper = _first(helper_tree, BinOp).sugar().desugar(None)
-    except ConstructionPanic as exc:
-        pytest.fail(f"{CODEX3_OWNER} observed ConstructionPanic on scalar()+2: {exc}")
-    except SugarNotWritten as exc:
-        pytest.fail(f"{CODEX3_OWNER} observed SugarNotWritten on scalar()+2: {exc}")
-
-    # Both complete (or both factored with a completed arm).
-    assert isinstance(
-        helper, ExitSet
-    ), f"{CODEX3_OWNER} helper outcome={type(helper).__name__}"
-    hv = _completed_value(helper)
-    dv = _completed_value(direct)
-    # Isomorphic outcomes: same TermValue (or equal numeric floor).
-    assert hv == dv or (
-        getattr(hv, "value", hv) == getattr(dv, "value", dv)
-    ), f"{CODEX3_OWNER} helper={hv!r} direct={dv!r}"
+def test_scalar_helper_result_in_a_binop_is_not_decided_at_lift() -> None:
+    """``scalar() + 2`` was 5 when the lift applied ``scalar``'s body."""
+    tree, _, _ = _tree("def scalar():\n    return 3\n\nscalar() + 2\n")
+    _not_decided_at_lift(_first(tree, BinOp).sugar().desugar(None), 5)
 
 
 def test_scalar_helper_feeds_compare_isomorphic_to_direct() -> None:
@@ -254,44 +234,28 @@ def test_scalar_helper_feeds_compare_isomorphic_to_direct() -> None:
     try:
         helper = _first(helper_tree, Compare).sugar().desugar(None)
     except (ConstructionPanic, SugarNotWritten) as exc:
-        pytest.fail(f"{CODEX3_OWNER} compare: {exc}")
-    assert isinstance(helper, ExitSet), CODEX3_OWNER
+        pytest.fail(f"compare over a helper's result: {exc}")
+    assert isinstance(helper, ExitSet)
     # At least one completed arm; guards may factor.
     h_completed = [e for e in helper.exits if isinstance(e, Completed)]
     d_completed = [e for e in direct.exits if isinstance(e, Completed)]
-    assert h_completed and d_completed, CODEX3_OWNER
+    assert h_completed and d_completed
 
 
-def test_scalar_helper_feeds_subscript_index() -> None:
-    tree, _, _ = _tree(
-        "def scalar():\n    return 0\n\n[10, 20][scalar()]\n",
-    )
-    try:
-        outcome = _first(tree, Subscript).sugar().desugar(None)
-    except (ConstructionPanic, SugarNotWritten) as exc:
-        pytest.fail(f"{CODEX3_OWNER} subscript index: {exc}")
-    value = _completed_value(outcome)
-    assert (
-        value == TermValue(10) or getattr(value, "value", None) == 10
-    ), f"{CODEX3_OWNER} expected TermValue(10), got {value!r}"
+def test_scalar_helper_result_as_an_index_is_not_decided_at_lift() -> None:
+    """``[10, 20][scalar()]`` was 10 when the lift applied ``scalar``'s body."""
+    tree, _, _ = _tree("def scalar():\n    return 0\n\n[10, 20][scalar()]\n")
+    _not_decided_at_lift(_first(tree, Subscript).sugar().desugar(None), 10)
 
 
-def test_tuple_helper_feeds_subscript_receiver() -> None:
-    tree, _, _ = _tree(
-        "def pack():\n    return (1, 2, 3)\n\npack()[1]\n",
-    )
-    try:
-        outcome = _first(tree, Subscript).sugar().desugar(None)
-    except (ConstructionPanic, SugarNotWritten) as exc:
-        pytest.fail(f"{CODEX3_OWNER} tuple subscript: {exc}")
-    value = _completed_value(outcome)
-    assert (
-        value == TermValue(2) or getattr(value, "value", None) == 2
-    ), f"{CODEX3_OWNER} expected TermValue(2), got {value!r}"
+def test_tuple_helper_result_as_a_receiver_is_not_decided_at_lift() -> None:
+    """``pack()[1]`` was 2 when the lift applied ``pack``'s body."""
+    tree, _, _ = _tree("def pack():\n    return (1, 2, 3)\n\npack()[1]\n")
+    _not_decided_at_lift(_first(tree, Subscript).sugar().desugar(None), 2)
 
 
 def test_scalar_helper_feeds_store_index() -> None:
-    """a[scalar()] = 9 with authenticated scalar return → completed store."""
+    """a[scalar()] = 9 → the consumer's call completes on a face."""
     tree, _, _ = _tree(
         "def scalar():\n"
         "    return 0\n"
@@ -304,34 +268,26 @@ def test_scalar_helper_feeds_store_index() -> None:
     try:
         outcome = consumer_call.sugar().desugar(None)
     except (ConstructionPanic, SugarNotWritten) as exc:
-        pytest.fail(f"{CODEX3_OWNER} store index: {exc}")
-    assert isinstance(outcome, ExitSet), CODEX3_OWNER
-    if isinstance(outcome, ExitSet):
-        assert any(
-            isinstance(e, Completed) for e in outcome.exits
-        ), f"{CODEX3_OWNER} store did not complete: {outcome.exits!r}"
+        pytest.fail(f"store index: {exc}")
+    assert isinstance(outcome, ExitSet)
+    assert any(
+        isinstance(e, Completed) for e in outcome.exits
+    ), f"store did not complete: {outcome.exits!r}"
 
 
-def test_symbolic_helper_feeds_binop() -> None:
+def test_symbolic_helper_result_in_a_binop_is_not_decided_at_lift() -> None:
+    """``identity(2) + 3`` was 5 when the lift applied ``identity``'s body;
+    the call carries ``2`` on its edge."""
     tree, _, _ = _tree(
         "def identity(x):\n    return x\n\nidentity(2) + 3\n",
     )
-    try:
-        outcome = _first(tree, BinOp).sugar().desugar(None)
-    except (ConstructionPanic, SugarNotWritten) as exc:
-        pytest.fail(f"{CODEX3_OWNER} symbolic binop: {exc}")
-    value = _completed_value(outcome)
-    assert (
-        value == TermValue(5) or getattr(value, "value", None) == 5
-    ), f"{CODEX3_OWNER} expected 5, got {value!r}"
+    _not_decided_at_lift(_first(tree, BinOp).sugar().desugar(None), 5)
+    edge = _edge(_calls_named(tree, "identity")[0].sugar().desugar(None))
+    assert edge.arg_values == (TermValue(2),)
 
 
 def test_guarded_helper_return_retains_guards_into_binop() -> None:
-    """if-branch return must retain guard testimony on the BinOp face.
-
-    RED owner=codex-3 until guarded ReturnValue projects through dig with
-    its guard intact (not collapsed to an unguarded TermValue alone).
-    """
+    """``maybe(True) + 1`` keeps a completed arm; nothing collapses it."""
     tree, _, _ = _tree(
         "def maybe(flag):\n"
         "    if flag:\n"
@@ -343,51 +299,26 @@ def test_guarded_helper_return_retains_guards_into_binop() -> None:
     try:
         outcome = _first(tree, BinOp).sugar().desugar(None)
     except (ConstructionPanic, SugarNotWritten, NotImplementedError) as exc:
-        pytest.fail(f"{CODEX3_OWNER} guarded return: {exc}")
-    assert isinstance(outcome, ExitSet), CODEX3_OWNER
+        pytest.fail(f"guarded return: {exc}")
+    assert isinstance(outcome, ExitSet)
     value = outcome.completed_value()
     if value is None:
-        # Guarded path: either factored faces or a completed arm with guard.
-        assert outcome.exits, CODEX3_OWNER
-        # At least one completed arm carries a non-trivial guard or value 2.
+        assert outcome.exits
         completed = [e for e in outcome.exits if isinstance(e, Completed)]
-        assert completed, f"{CODEX3_OWNER} no completed arm: {outcome.exits!r}"
+        assert completed, f"no completed arm: {outcome.exits!r}"
     else:
         assert (
             value == TermValue(2) or getattr(value, "value", None) == 2
-        ), f"{CODEX3_OWNER} guarded return lost value: {value!r}"
+        ), f"guarded return lost value: {value!r}"
 
 
 # ---------------------------------------------------------------------------
-# Discrimination: dig must not stop at BlockValue for binop (documents red)
+# Keywords and defaults ride the edge
 # ---------------------------------------------------------------------------
 
 
-def test_dig_of_scalar_return_must_not_stop_at_blockvalue_for_binop() -> None:
-    """Instrument: if dig yields BlockValue, BinOp cannot stand — producer gap.
-
-    This test *documents* the current dig ceiling. When codex-3 projects
-    ReturnValue out of the block, this assertion flips: dug is TermValue.
-    Until then it fails loudly with the owner string.
-    """
-    tree, _, _ = _tree(
-        "def scalar():\n    return 3\n\nscalar()\n",
-    )
-    call = _first(tree, Call)
-    cs = call.sugar().desugar(None).completed_value()
-    dug = cs._dig_floor_or_none(None, owner="dig-ceiling-probe")
-    assert dug is not None
-    # LAW: dig for operation use must surface the returned Floor, not the block.
-    assert not isinstance(dug, BlockValue), (
-        f"{CODEX3_OWNER} dig stopped at {type(dug).__name__}; "
-        f"need ReturnValue.value (TermValue(3)), statements={getattr(dug, 'statements', None)!r}"
-    )
-    assert dug == TermValue(3) or (
-        isinstance(dug, ReturnValue) and dug.value == TermValue(3)
-    )
-
-
-def test_keyword_bound_source_return_flows_into_binop() -> None:
+def test_keyword_bound_call_carries_its_keyword_on_the_edge() -> None:
+    """``combine(2, right=3) + 1`` was 6 when the lift applied the body."""
     tree, _, _ = _tree(
         "def combine(left, right):\n"
         "    return left + right\n\n"
@@ -398,8 +329,10 @@ def test_keyword_bound_source_return_flows_into_binop() -> None:
         for node in tree.nodes()
         if isinstance(node, BinOp) and isinstance(node.left, Call)
     )
-
-    assert _completed_value(outer.sugar().desugar(None)) == TermValue(6)
+    _not_decided_at_lift(outer.sugar().desugar(None), 6)
+    edge = _edge(_calls_named(tree, "combine")[0].sugar().desugar(None))
+    assert edge.arg_values == (TermValue(2), TermValue(3))
+    assert edge.keyword_names == ("right",)
 
 
 def test_keyword_binding_does_not_accept_an_unknown_formal() -> None:
@@ -423,56 +356,62 @@ def test_keyword_binding_does_not_accept_an_unknown_formal() -> None:
         outer.sugar().desugar(None)
 
 
-@pytest.mark.parametrize(("call", "expected"), (("choose(2)", 7), ("choose(2, 8)", 10)))
-def test_default_and_explicit_source_return_values_stay_distinct_actuals(
-    call: str, expected: int
-) -> None:
+def test_an_explicit_actual_for_a_defaulted_formal_rides_the_edge() -> None:
+    """``choose(2, 8) + 0`` was 10 when the lift applied the body."""
     tree, _, _ = _tree(
         "def choose(left, right=5):\n"
         "    return left + right\n\n"
-        f"result = {call} + 0\n",
+        "result = choose(2, 8) + 0\n",
     )
     outer = next(
         node
         for node in tree.nodes()
         if isinstance(node, BinOp) and isinstance(node.left, Call)
     )
+    _not_decided_at_lift(outer.sugar().desugar(None), 10)
+    edge = _edge(_calls_named(tree, "choose")[0].sugar().desugar(None))
+    assert edge.arg_values == (TermValue(2), TermValue(8))
 
-    assert _completed_value(outer.sugar().desugar(None)) == TermValue(expected)
 
+def test_an_omitted_default_no_def_statement_bound_is_refused_by_name() -> None:
+    """``choose(2) + 0`` reduced alone, outside the module's run.
 
-def test_authenticated_lambda_return_flows_into_binop() -> None:
+    An omitted formal rides the edge as ``py.default(<param>, <value>)``,
+    the value the ``def`` statement bound under its default's key, read
+    where the call runs (#8698, #8705).  Reduced alone, no ``def``
+    statement ran, so nothing bound that key: the binder refuses by name
+    rather than invent ``5``.  (This was 7 when the lift applied the body.)
+    """
     tree, _, _ = _tree(
-        "def consume():\n"
-        "    return (lambda value: value + 1)(2) + 3\n\n"
-        "consume()\n",
+        "def choose(left, right=5):\n"
+        "    return left + right\n\n"
+        "result = choose(2) + 0\n",
     )
-    call = _calls_named(tree, "consume")[0]
-    value = (
-        call.sugar()
-        .desugar(None)
-        .completed_value()
-        ._dig_floor_or_none(None, owner="authenticated-lambda-return")
+    outer = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, BinOp) and isinstance(node.left, Call)
     )
-
-    assert value == TermValue(6)
+    with pytest.raises(SugarNotWritten, match="default did not construct"):
+        outer.sugar().desugar(None)
 
 
-def test_renamed_keyword_lambda_return_flows_into_binop() -> None:
-    tree, _, _ = _tree(
-        "def consume():\n"
-        "    return (lambda renamed: renamed + 1)(renamed=2) + 3\n\n"
-        "consume()\n",
-    )
-    call = _calls_named(tree, "consume")[0]
-    value = (
-        call.sugar()
-        .desugar(None)
-        .completed_value()
-        ._dig_floor_or_none(None, owner="renamed-keyword-lambda-return")
-    )
+# ---------------------------------------------------------------------------
+# Lambdas
+# ---------------------------------------------------------------------------
 
-    assert value == TermValue(6)
+
+@pytest.mark.parametrize(
+    "call",
+    ["(lambda value: value + 1)(2)", "(lambda renamed: renamed + 1)(renamed=2)"],
+)
+def test_a_called_lambda_result_in_a_binop_is_not_decided_at_lift(call: str) -> None:
+    """The lambda's call is its coordinate and edge (#8742): ``consume``'s
+    row does not return the 6 the lambda's body gives."""
+    _, _, functions = _tree(
+        "def consume():\n" f"    return {call} + 3\n\n" "consume()\n",
+    )
+    _row_not_decided_at_lift(_row(functions["consume"]), 6)
 
 
 def test_lambda_rejects_foreign_body_and_formal_coordinate_testimony() -> None:
@@ -506,19 +445,13 @@ def test_module_scope_lambda_callee_constructs_by_substituting_first() -> None:
     is the lambda's coordinate and edge, joined at prove, so the expression
     constructs and reduces but 6 is no longer decided at lift: the call is
     two-faced and owed, and no completed face is a number."""
-    from sugar_lift_py_tests.outcome import Completed
-
     tree, _, _ = _tree("result = (lambda value: value + 1)(2) + 3\n")
     outer = next(
         node
         for node in tree.nodes()
         if isinstance(node, BinOp) and isinstance(node.left, Call)
     )
-    outcome = outer.sugar().desugar(None)
-    assert outcome.halts()
-    assert TermValue(6) not in [
-        face.value for face in outcome.exits if isinstance(face, Completed)
-    ]
+    _not_decided_at_lift(outer.sugar().desugar(None), 6)
 
 
 def test_module_scope_lambda_never_fabricates_an_unbound_name() -> None:
@@ -527,8 +460,6 @@ def test_module_scope_lambda_never_fabricates_an_unbound_name() -> None:
     call is (#7757 step 6): two-faced and owed.  The call never completes
     alone and no number is invented for it.
     """
-    from sugar_lift_py_tests.outcome import Completed
-
     tree, _, _ = _tree("result = (lambda value: value + missing)(2)\n")
     call = next(node for node in tree.nodes() if isinstance(node, Call))
     outcome = call.sugar().desugar(None)
@@ -539,27 +470,34 @@ def test_module_scope_lambda_never_fabricates_an_unbound_name() -> None:
         for face in outcome.exits
         if isinstance(face, Completed)
     )
-def test_nested_function_source_return_projects_into_outer_caller() -> None:
-    tree, _, _ = _tree(
+
+
+# ---------------------------------------------------------------------------
+# Nested functions: the local def's call is its edge in the outer row
+# ---------------------------------------------------------------------------
+
+
+def test_nested_function_result_in_the_outer_row_is_not_decided_at_lift() -> None:
+    """``inner(3) + 2`` was 6 when the lift applied ``inner``'s body."""
+    _, _, functions = _tree(
         "def outer():\n"
         "    def inner(value):\n"
         "        return value + 1\n"
         "    return inner(3) + 2\n\n"
         "outer()\n",
     )
-    call = _calls_named(tree, "outer")[0]
-    value = (
-        call.sugar()
-        .desugar(None)
-        .completed_value()
-        ._dig_floor_or_none(None, owner="nested-function-return")
-    )
-
-    assert value == TermValue(6)
+    _row_not_decided_at_lift(_row(functions["outer"]), 6)
 
 
-def test_nested_function_closure_capture_stays_loud_without_binding_testimony() -> None:
-    tree, _, _ = _tree(
+def test_a_nested_function_call_carries_its_captured_cell() -> None:
+    """Was ``..._closure_capture_stays_loud_without_binding_testimony``: the
+    lift refused the call for want of the captured ``offset``.  A local
+    def's contract states ``cell:offset`` (#8698) and its call carries the
+    binding the calling scope holds as ``py.closure("offset", 2)`` (#8705):
+    the testimony is on the edge, so there is nothing to refuse."""
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    _, _, functions = _tree(
         "def outer():\n"
         "    offset = 2\n"
         "    def inner(value):\n"
@@ -567,15 +505,18 @@ def test_nested_function_closure_capture_stays_loud_without_binding_testimony() 
         "    return inner(3)\n\n"
         "outer()\n",
     )
-    call = _calls_named(tree, "outer")[0]
-
-    with pytest.raises((SugarNotWritten, ConstructionPanic)):
-        call.sugar().desugar(None).completed_value()._dig_floor_or_none(
-            None, owner="nested-closure-refusal"
-        )
+    edge = _row_edge(_row(functions["outer"]))
+    assert edge.arg_values == (TermValue(3),)
+    owner = str(edge.site)
+    assert ctor(
+        "py.closure", [str_const("offset"), TermValue(2).to_term(owner=owner)]
+    ) in list(edge.term.args)
 
 
 def test_nested_shadowed_function_does_not_cross_wire_outer_same_name() -> None:
+    """``outer()`` calls the nested ``inner``, never the module's: the edge
+    in ``outer``'s row and the module-level call's edge target two
+    different definitions."""
     tree, _, _ = _tree(
         "def inner(value):\n"
         "    return value + 10\n\n"
@@ -583,35 +524,44 @@ def test_nested_shadowed_function_does_not_cross_wire_outer_same_name() -> None:
         "    def inner(value):\n"
         "        return value + 1\n"
         "    return inner(3)\n\n"
-        "outer()\n",
+        "inner(3)\n",
     )
-    call = _calls_named(tree, "outer")[0]
-    nested = [
+    module_inner, nested_inner = sorted(
+        (
+            node
+            for node in tree.nodes()
+            if isinstance(node, FunctionDef) and node.name == "inner"
+        ),
+        key=lambda node: node.line_col_span().start_line,
+    )
+    outer = next(
         node
         for node in tree.nodes()
-        if isinstance(node, FunctionDef) and node.name == "inner"
-    ]
-    assert len(nested) == 2
-    # Python: ``outer()`` calls the nested ``inner``, 3 + 1 == 4, never the
-    # module's 3 + 10 == 13.
-    assert call.sugar().desugar(None).completed_value()._dig_floor_or_none(
-        None, owner="nested-shadow-cross-wire"
-    ) == TermValue(4)
+        if isinstance(node, FunctionDef) and node.name == "outer"
+    )
+    nested_edge = _row_edge(_row(outer))
+    module_call = max(
+        _calls_named(tree, "inner"), key=lambda node: node.line_col_span().start_line
+    )
+    module_edge = _edge(module_call.sugar().desugar(None))
+    assert nested_edge.target_name != module_edge.target_name
+    del module_inner, nested_inner
 
 
-def test_lambda_inside_nested_function_composes_with_source_return_projection() -> None:
-    tree, _, _ = _tree(
+def test_lambda_inside_nested_function_result_is_not_decided_at_lift() -> None:
+    _, _, functions = _tree(
         "def outer():\n"
         "    def inner(value):\n"
         "        return (lambda item: item + 1)(value)\n"
         "    return inner(3) + 2\n\n"
         "outer()\n",
     )
-    call = _calls_named(tree, "outer")[0]
+    _row_not_decided_at_lift(_row(functions["outer"]), 6)
 
-    assert call.sugar().desugar(None).completed_value()._dig_floor_or_none(
-        None, owner="nested-lambda-return"
-    ) == TermValue(6)
+
+# ---------------------------------------------------------------------------
+# Lexical resolution of a nested definition
+# ---------------------------------------------------------------------------
 
 
 def _nested_definition_and_call(source: str):
