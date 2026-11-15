@@ -50,19 +50,29 @@ from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 
 @dataclass(frozen=True)
 class DefinitionDefaultsSugar(Sugar):
-    """An undecorated ``def`` statement with defaults: each default evaluated
-    here, once, left to right, its completed value bound under its key.
+    """A ``def`` statement whose decorators apply nothing here
+    (``nodes._definition_defaults_sugar``): each decorator expression
+    evaluated here, once, top to bottom, then each default, left to right,
+    its completed value bound under its key.
 
-    ``values`` are the default sugars (substituted in the scope the statement
-    runs in); ``evaluations`` holds ``(key, value index)`` per default.  The
-    statement binds no name of its own here: substitution bound the name to
-    the definition (``nodes._local_definition_binding``), and its body runs
-    only at a call."""
+    ``decorators`` are the statement's decorator steps, each decided by the
+    one decorator step (``nodes._decorator_step``) and evaluated exactly as
+    the decorated statement's application evaluates them
+    (``DecoratorStepV1.evaluated``); what applies their values is not this
+    statement's (a class body's descriptor table, a ``contextmanager``
+    generator's own frame).  ``values`` are the default sugars (substituted
+    in the scope the statement runs in); ``evaluations`` holds ``(key, value
+    index)`` per default.  The statement binds no name of its own here:
+    substitution bound the name to the definition
+    (``nodes._local_definition_binding``), and its body runs only at a
+    call."""
 
     values: tuple
     evaluations: tuple
     site: object = dataclass_field(compare=False)
-    # Evaluating the defaults is the statement's only work before it binds.
+    decorators: tuple = dataclass_field(default=(), compare=False)
+    # Evaluating the decorator expressions and the defaults is the
+    # statement's only work before it binds.
     halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
@@ -71,12 +81,23 @@ class DefinitionDefaultsSugar(Sugar):
             sugar_name=cls.__name__,
             floor_name="definition default evaluation",
             reason=(
-                "the defaults' own sugars own their faces; this evaluates them "
-                "once at the def statement and binds each under its key"
+                "the decorator expressions' and defaults' own sugars own their "
+                "faces; this evaluates them once at the def statement and "
+                "binds each default under its key"
             ),
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
+        return self._evaluated(self.decorators, ctx)
+
+    def _evaluated(self, remaining: tuple, ctx) -> ExitSet:
+        # The decorator expressions, top to bottom, every face of each the
+        # statement's; then the defaults on every completed path.
+        if remaining:
+            head, *rest = remaining
+            return head.evaluated(
+                ctx, lambda _decorator: self._evaluated(tuple(rest), ctx)
+            )
         from sugar_lift_py_tests.sugar.assigned_value import (
             evaluate_assignment_values,
         )
