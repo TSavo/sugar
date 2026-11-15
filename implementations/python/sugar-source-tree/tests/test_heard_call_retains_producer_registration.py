@@ -85,7 +85,44 @@ def test_a_heard_call_testifies_through_the_computing_rolls_registration(
     assert hearing.testimony_for(call) is not None
 
 
-def test_a_definition_no_roll_registered_stays_refused_by_name(tmp_path) -> None:
+def _retentions(monkeypatch) -> list:
+    """Every write through the one retention door from here on, as
+    ``(roll, backend ref, producer)``."""
+    door = ConstructionTestimonyReporterV1.retain_registered_node_from
+    seen: list = []
+
+    def spy(self, node, producer):
+        retained = door(self, node, producer)
+        seen.append((self, retained.ref, producer))
+        return retained
+
+    monkeypatch.setattr(
+        ConstructionTestimonyReporterV1, "retain_registered_node_from", spy
+    )
+    return seen
+
+
+def test_a_heard_occurrence_is_retained_through_the_one_retention_door(
+    tmp_path, monkeypatch
+) -> None:
+    """One writer of a registration a roll did not construct: the hearing
+    roll's two retentions are writes of ``retain_registered_node_from``, the
+    door a call's construction writes its definition through."""
+    _source, call, hearing = _computing_and_hearing_rolls(tmp_path)
+    sugar = call.sugar()
+    definition = sugar.expected_definition_ref
+    seen = _retentions(monkeypatch)
+
+    hearing.present_construction(call, sugar)
+
+    assert (hearing, definition.ref, definition.reporter) in seen
+    assert (hearing, call.ref, call.reporter) in seen
+    assert len(seen) == 2
+
+
+def test_a_definition_no_roll_registered_stays_refused_by_name(
+    tmp_path, monkeypatch
+) -> None:
     source, call, hearing = _computing_and_hearing_rolls(tmp_path)
     sugar = call.sugar()
     # The same definition, born under a reporter that owns no registration.
@@ -93,6 +130,7 @@ def test_a_definition_no_roll_registered_stays_refused_by_name(tmp_path) -> None
         source.unit, sugar.expected_definition_ref.ref, NULL_REPORTER
     )
     lying = replace(sugar, expected_definition_ref=unregistered)
+    seen = _retentions(monkeypatch)
 
     with pytest.raises(
         ConstructedValueTestimonyNotWritten,
@@ -100,3 +138,5 @@ def test_a_definition_no_roll_registered_stays_refused_by_name(tmp_path) -> None
     ):
         hearing.present_construction(call, lying)
     assert hearing.materialized_node_for_ref(unregistered.ref) is None
+    # It was handed to no door: nothing is retained for it, by any writer.
+    assert all(ref != unregistered.ref for _roll, ref, _producer in seen)

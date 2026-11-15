@@ -544,14 +544,20 @@ class ConstructionTestimonyReporterV1:
         What the guard asks of a heard occurrence is whether the roll that
         built it registered it.  That registration is read through the one
         reading of a producer's roll (``_producer_registration``) and retained
-        here, by backend ref.  An occurrence no roll registered is retained
-        nowhere, and the guard names it as before.
+        through the one retention door (``retain_registered_node_from``), the
+        only writer of a registration this roll did not construct: what is
+        handed to the door is the occurrence the producer registered for this
+        backend ref (a heard node may be a later view of it), and the door's
+        own refusals stand over it.  An occurrence no roll registered is
+        handed to no door and retained nowhere, and the guard below refuses
+        it by its name (``definition-ref-not-materialized``,
+        ``call-ref-not-materialized``) as before.
         """
         if node.ref in self._materialized_by_ref:
             return
         registered = self._producer_registration(node, node.reporter)
         if registered is not None:
-            self._materialized_by_ref[node.ref] = registered
+            self.retain_registered_node_from(registered, node.reporter)
 
     def retain_registered_node_from(
         self, node: Node, producer: "ConstructionTestimonyReporterV1"
@@ -564,6 +570,13 @@ class ConstructionTestimonyReporterV1:
         node *is* the roster occurrence (no separate materialize table) — enroll
         it into this consumer roll once. Other producers (NullReporter, foreign
         remints) stay loud BackendDefect: they never owned the registration.
+
+        THE ONE WRITER of a registration this roll did not construct
+        (``register`` writes the ones it did).  A call reconciling its
+        definition at construction (``Call._project_call_definition_occurrence``)
+        and a roll hearing a call another roll built
+        (``_retain_heard_occurrence``) both write here, so no retention skips
+        the three refusals below.
         """
         from sugar_source_tree.reporter import CollectingReporter
 
