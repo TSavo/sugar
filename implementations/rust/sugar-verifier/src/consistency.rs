@@ -3808,6 +3808,181 @@ fn owed_post(
     }
 }
 
+// ── A joined callee's halts are the caller's halts at the call (step 9) ────
+//
+// When an edge joins a contract, the callee's halt sites stay the callee's
+// own rows (an import's are the import's state). The CALLER can halt there
+// too: in Python, if `f` can raise, `f(x)` raises at the call. So each halt
+// of the joined contract, its guard written over the call's actuals, is a
+// panic-locus row of the caller located at the call site, alongside the
+// callee's own row, never instead of it. A callee's halts include, in turn,
+// the halts of the contracts its own reads join. One join: imported and
+// same-proof callees alike.
+
+/// The join's answers, by the call site they answer, and where each site is.
+pub(crate) struct JoinedHalts {
+    answers: BTreeMap<String, Vec<AmbientPost>>,
+    /// Site CID to the call site's `(file, line)` (the `undecided` member's).
+    sites: BTreeMap<String, (String, u64)>,
+}
+
+impl JoinedHalts {
+    pub(crate) fn of(pool: &MementoPool) -> Self {
+        let mut answers: BTreeMap<String, Vec<AmbientPost>> = BTreeMap::new();
+        for post in collect_ambient_posts(pool) {
+            if post.refusal.is_none() {
+                answers.entry(post.site_cid.clone()).or_default().push(post);
+            }
+        }
+        let mut sites = BTreeMap::new();
+        if !answers.is_empty() {
+            for (_cid, member) in pool.undecided_members() {
+                let Ok(undecided) = sugar_proof_envelope::UndecidedMember::from_stored(member)
+                else {
+                    continue;
+                };
+                let site_cid = undecided_site_coordinate_cid(&undecided.site);
+                if answers.contains_key(&site_cid) {
+                    let line = u64::try_from(undecided.site.start_line).unwrap_or_default();
+                    sites.insert(site_cid, (undecided.site.file.clone(), line));
+                }
+            }
+        }
+        Self { answers, sites }
+    }
+
+    /// The halts `body` reaches through the calls it reads that the join
+    /// answers: one panic locus per halt of each joined contract (and of the
+    /// contracts that one's reads join), its guard over `body`'s terms, at
+    /// the call site in `body`. The callee's halt site is carried as the
+    /// locus's producer (`producerFile`, `producerLine`, `producerSymbol`).
+    pub(crate) fn loci_at_calls(&self, pool: &MementoPool, body: &Json) -> Vec<Json> {
+        if self.answers.is_empty() {
+            return Vec::new();
+        }
+        self.loci_through(pool, body, &mut Vec::new())
+    }
+
+    fn loci_through(
+        &self,
+        pool: &MementoPool,
+        body: &Json,
+        visiting: &mut Vec<String>,
+    ) -> Vec<Json> {
+        let mut loci = Vec::new();
+        let mut reads = Vec::new();
+        for slot in ["pre", "post", "inv"] {
+            if let Some(formula) = body.get(slot).filter(|f| f.is_object()) {
+                for term in call_result_terms(formula) {
+                    if !reads.contains(&term) {
+                        reads.push(term);
+                    }
+                }
+            }
+        }
+        for read in &reads {
+            let Some((call, site_cid)) = call_result_parts(read) else {
+                continue;
+            };
+            let Some(args) = call.get("args").and_then(|v| v.as_array()) else {
+                continue;
+            };
+            let Some(answers) = self.answers.get(site_cid) else {
+                continue;
+            };
+            let (file, line) = self
+                .sites
+                .get(site_cid)
+                .cloned()
+                .unwrap_or_else(|| (String::new(), 0));
+            for post in answers {
+                if post.binding.formals.len() != args.len() {
+                    continue;
+                }
+                for locus in self.callee_loci(pool, &post.binding.target_cid, visiting) {
+                    loci.push(halt_at_call(
+                        &locus,
+                        &post.binding.formals,
+                        args,
+                        &file,
+                        line,
+                        &post.binding.source_symbol,
+                    ));
+                }
+            }
+        }
+        loci
+    }
+
+    /// Every halt of the contract `target_cid`, its guards over its formals:
+    /// its own panic loci, and the halts its reads reach through the join. A
+    /// contract already being followed contributes its own loci only.
+    fn callee_loci(
+        &self,
+        pool: &MementoPool,
+        target_cid: &str,
+        visiting: &mut Vec<String>,
+    ) -> Vec<Json> {
+        let Some(body) = MementoCid::try_parse(target_cid.to_string())
+            .ok()
+            .and_then(|cid| pool.contract_body_by_cid(&cid))
+        else {
+            return Vec::new();
+        };
+        let mut loci = crate::enumerate_callsites::panic_loci_from_body(&body);
+        if visiting.iter().any(|seen| seen == target_cid) {
+            return loci;
+        }
+        visiting.push(target_cid.to_string());
+        loci.extend(self.loci_through(pool, &body, visiting));
+        visiting.pop();
+        loci
+    }
+}
+
+/// A callee's halt locus as the caller's: its guard with the callee's formals
+/// replaced by the call's actuals, located at the call site; the callee's own
+/// site is kept as the producer.
+fn halt_at_call(
+    locus: &Json,
+    formals: &[String],
+    args: &[Json],
+    file: &str,
+    line: u64,
+    symbol: &str,
+) -> Json {
+    let mut at_call = locus.as_object().cloned().unwrap_or_default();
+    if let Some(guard) = locus.get("guard").filter(|g| g.is_object()) {
+        let mut guard = guard.clone();
+        for (formal, actual) in formals.iter().zip(args.iter()) {
+            guard = crate::instantiate::substitute_formula_pub(&guard, formal, actual);
+        }
+        at_call.insert("guard".to_string(), fold_ground_applications(&guard));
+    }
+    let producer_file = locus
+        .get("producerFile")
+        .or_else(|| locus.get("file"))
+        .cloned()
+        .unwrap_or(Json::Null);
+    let producer_line = locus
+        .get("producerLine")
+        .or_else(|| locus.get("line"))
+        .cloned()
+        .unwrap_or(Json::Null);
+    let producer_symbol = locus
+        .get("producerSymbol")
+        .cloned()
+        .unwrap_or_else(|| Json::String(symbol.to_string()));
+    at_call.insert("producerFile".to_string(), producer_file);
+    at_call.insert("producerLine".to_string(), producer_line);
+    at_call.insert("producerSymbol".to_string(), producer_symbol);
+    at_call.insert("file".to_string(), Json::String(file.to_string()));
+    at_call.insert("line".to_string(), Json::from(line));
+    at_call.remove("start_line");
+    at_call.remove("col");
+    Json::Object(at_call)
+}
+
 /// Every `python:call_result` term a formula states outside a quantifier.
 fn call_result_terms(formula: &Json) -> Vec<Json> {
     let mut terms = Vec::new();
@@ -11360,6 +11535,206 @@ mod tests {
         );
         let lying = the_one_claim(&f_reads_owed_operation_pool(4, true).0);
         assert_eq!(lying.verdict, ObligationVerdict::Unsatisfied, "{}", lying.reason);
+    }
+
+    // ── A joined callee's halts are the caller's halts at the call ────────
+    // `def f(x): if x == 3: raise ValueError; return x` and
+    // `def test_f(): assert f(3) == 3`. f's halt stays f's own row; the call
+    // `f(3)` can raise there too, so test_f has a halt row at the call, its
+    // guard over the actual.
+
+    const HALT_CALLEE: &str = "concept:panic-freedom.leaf.runtime-failure-site";
+
+    /// `own_function` with one panic locus at `m.py:<line>` guarded `guard`.
+    fn own_halting_function(
+        pool: &mut MementoPool,
+        name: &str,
+        symbol: &str,
+        post: Json,
+        line: u64,
+        guard: Json,
+    ) -> String {
+        let contract_cid = blake3_512_of(format!("halting-contract-{name}").as_bytes());
+        pool.insert_unanchored_for_tests(
+            test_cid(&contract_cid),
+            json!({
+                "evidence": {
+                    "kind": "contract",
+                    "body": {
+                        "contractName": name,
+                        "formals": ["x"],
+                        "outBinding": "out",
+                        "post": post,
+                        "panicLoci": [{
+                            "callee": HALT_CALLEE,
+                            "file": "m.py",
+                            "line": line,
+                            "guard": guard
+                        }]
+                    }
+                }
+            }),
+        );
+        pool.insert_unanchored_for_tests(
+            test_cid(&blake3_512_of(format!("halting-bridge-{name}").as_bytes())),
+            json!({
+                "evidence": {
+                    "kind": "bridge",
+                    "body": {
+                        "sourceSymbol": symbol,
+                        "targetContractCid": contract_cid
+                    }
+                }
+            }),
+        );
+        contract_cid
+    }
+
+    fn halt_rows_of<'a>(
+        rows: &'a [crate::types::CallSite],
+        property: &str,
+    ) -> Vec<&'a crate::types::CallSite> {
+        rows.iter()
+            .filter(|cs| cs.panic_site && cs.property_name == property)
+            .collect()
+    }
+
+    /// `f` halts when `x == 3`; `test_f` reads `f(actual)`.
+    fn caller_of_halting_f(actual: i64) -> (MementoPool, String) {
+        let test_site = answered_site(4, 12);
+        let test_site_cid = undecided_site_coordinate_cid(&test_site);
+        let mut pool = MementoPool::default();
+        insert_unanswered(&mut pool, Some("python:m.f"), test_site);
+        let f_cid = own_halting_function(
+            &mut pool,
+            "f",
+            "python:m.f",
+            eqf(var("out"), var("x")),
+            2,
+            eqf(var("x"), int(3)),
+        );
+        let call = json!({"kind": "ctor", "name": "call:f", "args": [int(actual)]});
+        insert_contract(
+            &mut pool,
+            "blake3-512:caller-of-halting-f",
+            "test_f",
+            eqf(call_result(call, &test_site_cid), int(actual)),
+        );
+        (pool, f_cid)
+    }
+
+    #[test]
+    fn a_joined_callees_halt_is_the_callers_halt_at_the_call() {
+        let (pool, _) = caller_of_halting_f(3);
+        let rows = crate::enumerate_callsites::run(&pool);
+        let caller = halt_rows_of(&rows, "test_f");
+        assert_eq!(
+            caller.len(),
+            1,
+            "one halt of f, one row of the caller: {rows:?}"
+        );
+        let row = caller[0];
+        assert_eq!(row.bridge_ir_name, HALT_CALLEE);
+        // At the call site.
+        assert_eq!(row.file.as_deref(), Some("test_consumer.py"));
+        assert_eq!(row.line, Some(9));
+        assert_eq!(
+            row.guard_facts,
+            vec![fold_ground_applications(&eqf(int(3), int(3)))],
+            "f's guard `x == 3` over the call's actual"
+        );
+        // f's halt site is carried as the producer.
+        assert_eq!(row.producer_file.as_deref(), Some("m.py"));
+        assert_eq!(row.producer_line, Some(2));
+        assert_eq!(row.producer_symbol.as_deref(), Some("python:m.f"));
+        // f's own halt stays f's row, guarded over its formal.
+        let callee = halt_rows_of(&rows, "f");
+        assert_eq!(callee.len(), 1, "{rows:?}");
+        assert_eq!(callee[0].guard_facts, vec![eqf(var("x"), int(3))]);
+        // A halt the actual rules out is still a row (never dropped); its
+        // guard says the actual rules it out.
+        let (pool, _) = caller_of_halting_f(4);
+        let rows = crate::enumerate_callsites::run(&pool);
+        let caller = halt_rows_of(&rows, "test_f");
+        assert_eq!(caller.len(), 1, "{rows:?}");
+        assert_eq!(
+            caller[0].guard_facts,
+            vec![fold_ground_applications(&eqf(int(4), int(3)))]
+        );
+    }
+
+    #[test]
+    fn a_halt_reached_through_a_joined_callees_own_call_is_the_callers_too() {
+        // `def g(x): if x == 0: raise; return x`, `def f(x): return g(x)`,
+        // `def test_f(): assert f(3) == 3`.
+        let test_site = answered_site(4, 12);
+        let test_site_cid = undecided_site_coordinate_cid(&test_site);
+        let f_site = answered_site(20, 24);
+        let f_site_cid = undecided_site_coordinate_cid(&f_site);
+        let mut pool = MementoPool::default();
+        insert_unanswered(&mut pool, Some("python:m.f"), test_site);
+        insert_unanswered(&mut pool, Some("python:m.g"), f_site);
+        own_halting_function(
+            &mut pool,
+            "g",
+            "python:m.g",
+            eqf(var("out"), var("x")),
+            7,
+            eqf(var("x"), int(0)),
+        );
+        let inner = json!({"kind": "ctor", "name": "call:g", "args": [var("x")]});
+        own_function(
+            &mut pool,
+            "f",
+            "python:m.f",
+            eqf(var("out"), call_result(inner, &f_site_cid)),
+        );
+        insert_contract(
+            &mut pool,
+            "blake3-512:caller-through-f",
+            "test_f",
+            same_proof_claim("call:f", 3, &test_site_cid),
+        );
+        let rows = crate::enumerate_callsites::run(&pool);
+        let in_f = halt_rows_of(&rows, "f");
+        // f calls g: g's halt is f's at that call.
+        assert_eq!(in_f.len(), 1, "{rows:?}");
+        assert_eq!(in_f[0].guard_facts, vec![eqf(var("x"), int(0))]);
+        // g's halt reaches test_f through f.
+        let in_test = halt_rows_of(&rows, "test_f");
+        assert_eq!(in_test.len(), 1, "{rows:?}");
+        assert_eq!(
+            in_test[0].guard_facts,
+            vec![fold_ground_applications(&eqf(int(3), int(0)))]
+        );
+        assert_eq!(in_test[0].producer_symbol.as_deref(), Some("python:m.g"));
+        assert_eq!(in_test[0].producer_line, Some(7));
+        // g's own halt stays g's row.
+        assert_eq!(halt_rows_of(&rows, "g").len(), 1);
+    }
+
+    #[test]
+    fn an_imported_callees_halt_is_the_importers_row_at_the_call() {
+        use crate::types::SpeakerRole;
+        let (mut pool, f_cid) = caller_of_halting_f(3);
+        pool.attribute_member_for_tests(
+            &test_cid_string(&f_cid),
+            SpeakerRole::Vendor,
+            "the-vendor",
+        );
+        let rows = crate::enumerate_callsites::run(&pool);
+        let caller = halt_rows_of(&rows, "test_f");
+        assert_eq!(caller.len(), 1, "{rows:?}");
+        assert!(
+            !crate::report::callsite_is_imported(caller[0], &pool),
+            "the call is the importer's: its halt there is the importer's row"
+        );
+        let callee = halt_rows_of(&rows, "f");
+        assert_eq!(callee.len(), 1, "{rows:?}");
+        assert!(
+            crate::report::callsite_is_imported(callee[0], &pool),
+            "the callee's own halt stays the import's state"
+        );
     }
 
     #[test]

@@ -377,7 +377,9 @@ pub struct Report {
     /// not this project's: never in `rows`, never counted in `discharged`,
     /// `violations`, `refused` or `owed`, and they never move `verdict`. A
     /// halt the joined contract states on the consumer's call path enters the
-    /// consumer's own row through the join, not through here.
+    /// consumer's own rows through the join, not through here: as a path
+    /// condition of the claim that reads the call, and as the consumer's own
+    /// halt row at the call (`consistency::JoinedHalts`).
     pub imported: Vec<ReportRow>,
     pub load_errors: Vec<LoadError>,
     pub call_edges: Vec<ResolvedCallEdge>,
