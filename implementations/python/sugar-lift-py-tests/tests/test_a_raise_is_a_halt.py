@@ -247,8 +247,12 @@ def test_a_truthful_half_calling_a_def_passed_as_a_value_is_not_decided(
 # halts with no completion, as Python does.  So is ``Box()`` over a class
 # whose own ``def __new__`` returns ``1 // 0`` and whose ``__init__`` is
 # ``object``'s (``ClassDef.returned_new``): the class call runs that
-# ``__new__`` through the one method door, and its halt is the call's.
-_FIVE_REDUCED = {"lambda-call", "raising-new"}
+# ``__new__`` through the one method door, and its halt is the call's.  So is
+# ``Box()`` over ``class Box(1 // 0)``: the class statement halts at its base
+# and no class is built, so the lying half has no completion and one halt.
+# The expected-red mark on it was XPASS(strict) on the main scorecard at
+# 18a14aa25 (#8416), so the mark is gone and the assertion stands.
+_FIVE_REDUCED = {"lambda-call", "raising-base", "raising-new"}
 
 
 @pytest.mark.parametrize(
