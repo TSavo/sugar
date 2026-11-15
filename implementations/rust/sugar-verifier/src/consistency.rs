@@ -366,7 +366,8 @@ struct ConsistencyCandidate {
 /// satisfiability against the local universe? We approximate the boundary
 /// structurally: the pass fires for contracts that carry an `inv` and NO
 /// `pre`. A `post` is allowed and is conjoined with the asserted `inv` as the
-/// lifted universe relation. Pre-bearing contracts remain the call-site path's
+/// lifted universe relation where the `inv` reads the contract's result
+/// (`axiom_context_formula`). Pre-bearing contracts remain the call-site path's
 /// job because their `pre` is an obligation, not an established fact.
 ///
 /// SETUP-BINDING EXCLUSION. The Pattern-5 (call-binding) lifter emits, per
@@ -678,12 +679,57 @@ fn source_warrants_provenance_kind(warrants: &Json) -> Result<ProofIrProvenanceK
     }
 }
 
+/// The formula the consistency pass checks for one contract: its asserted
+/// `inv`, and its `post` where the claim reads the contract's result.
+///
+/// A `post` relates the result binding (`out`) to the formals. A claim that
+/// reads the result is checked against it, so a proof cannot carry an
+/// assertion fact that contradicts its own universe contract. A claim that
+/// does not read the result is not constrained by it, and the post is not
+/// conjoined: a function's assertions are its `inv` and its `post` defines
+/// its result on the one contract row (#8292), and that definition is neither
+/// a claim nor a sibling of one. Conjoined regardless, it made a decided
+/// claim (`and([])`, which the vacuity guard admits alone) read as the lone
+/// constraint `out = <result>` and be refused, and it gave a lone opaque
+/// claim the sibling the vacuity guard asks for, so it came back satisfiable
+/// and discharged (#8416).
 fn axiom_context_formula(body: &Json) -> Json {
     let inv = body.get("inv").cloned().unwrap_or(Json::Null);
     match body.get("post").filter(|post| post.is_object()).cloned() {
-        Some(post) => IrFormula::And(vec![inv, post]).to_value(),
-        None => inv,
+        Some(post) if formula_reads_var(&inv, contract_out_binding(body)) => {
+            IrFormula::And(vec![inv, post]).to_value()
+        }
+        _ => inv,
     }
+}
+
+/// The name a contract's `post` binds its result to: `outBinding`, or `out`.
+/// The one reader, for the join (`bridge_answer`) and for the contract's own
+/// consistency formula (`axiom_context_formula`).
+fn contract_out_binding(body: &Json) -> &str {
+    body.get("outBinding")
+        .or_else(|| body.get("out_binding"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("out")
+}
+
+/// True if a `var` named `name` occurs anywhere in the formula/term tree
+/// (`operands`/`args`/`body`, the children `formula_is_closed` walks).
+fn formula_reads_var(node: &Json, name: &str) -> bool {
+    if node.get("kind").and_then(Json::as_str) == Some("var")
+        && node.get("name").and_then(Json::as_str) == Some(name)
+    {
+        return true;
+    }
+    if node.get("body").is_some_and(|body| formula_reads_var(body, name)) {
+        return true;
+    }
+    ["operands", "args"].iter().any(|field| {
+        node.get(field)
+            .and_then(Json::as_array)
+            .is_some_and(|children| children.iter().any(|child| formula_reads_var(child, name)))
+    })
 }
 
 /// Invert a raw-satisfiability solver verdict into a consistency verdict.
@@ -3293,13 +3339,7 @@ fn bridge_answer(
     else {
         return Ok(None);
     };
-    let out_binding = body
-        .get("outBinding")
-        .or_else(|| body.get("out_binding"))
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .unwrap_or("out")
-        .to_string();
+    let out_binding = contract_out_binding(&body).to_string();
     let target_proof_cid = target_proof_cid.or_else(|| {
         pool.bridge_self_bundle_by_symbol
             .get(symbol)
@@ -8782,6 +8822,58 @@ mod tests {
             results[0].reason.contains("contradictory"),
             "inv/post contradiction must be surfaced: {results:?}"
         );
+    }
+
+    /// A function is one contract: its assertions are its `inv` and its
+    /// `post` defines its result (#8292). A claim that does not read the
+    /// result is checked as itself; `out = <result>` is neither its conjunct
+    /// nor its sibling (#8416). Twin of the test above, where the claim reads
+    /// `out` and the post refutes it.
+    ///
+    /// - a decided claim (`and([])`) is discharged, as it is with no post:
+    ///   conjoined, the formula's one constraint was the post and the row was
+    ///   refused as vacuous;
+    /// - its negation is refuted;
+    /// - a lone claim over a free symbol stays refused, as it is with no
+    ///   post: conjoined, the post was counted as its sibling, the pair went
+    ///   to the solver and came back satisfiable.
+    #[test]
+    fn a_claim_that_does_not_read_the_result_is_checked_without_the_post() {
+        let truth = json!({"kind":"and","operands":[]});
+        let falsity = json!({"kind":"not","operands":[truth.clone()]});
+        for (name, inv, expected) in [
+            ("decided_true", truth, ObligationVerdict::Discharged),
+            ("decided_false", falsity, ObligationVerdict::Unsatisfied),
+            ("lone_claim", ne(var("x"), none()), ObligationVerdict::Refused),
+        ] {
+            let mut pool = MementoPool::default();
+            let env = json!({
+                "envelope": {
+                    "header": {
+                        "kind": "contract",
+                        "contractName": name,
+                        "inv": inv,
+                        "post": eqf(var("out"), none()),
+                        "proofirProvenance": proofir_provenance("Stated"),
+                    }
+                }
+            });
+            pool.insert_unanchored_for_tests(test_cid(name), env);
+            let (plan, registry) = z3_plan_and_registry();
+            let results = verify_consistency(
+                &pool,
+                &plan,
+                &registry,
+                &test_compilers(),
+                std::path::Path::new("."),
+            );
+            assert_eq!(results.len(), 1, "{name}: exactly one candidate");
+            assert_eq!(
+                results[0].verdict, expected,
+                "{name}: a result definition is not the claim's sibling: {}",
+                results[0].reason
+            );
+        }
     }
 
     #[test]
