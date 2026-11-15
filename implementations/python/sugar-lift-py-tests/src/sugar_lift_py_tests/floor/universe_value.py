@@ -23,16 +23,18 @@ class UniverseValue(FloorValue):
     cell stays undecided.
 
     ``fields`` -- ``((param, attr, value), ...)`` -- is what this arm left in
-    each field the body's quiet tail stores last on a parameter
-    (``FunctionUniverseSugar.fields_after``), and ``plain_stores`` --
-    ``((param, attr), ...)`` -- every store of that tail.  The post states
-    each field as the plain ``__dict__`` entry a read of it afterwards
-    returns, ``attr:<attr>(python:after(out, "<param>")) == <value>`` and
-    that such a read completes, only under the guard that every store of the
-    tail is the plain store: ``python:plain_store(class:<param>, "<attr>")``
-    over the class input the caller binds, which prove decides on the
-    class's namespace row (#7757 step 7).  Where the guard is not decided,
-    nothing is concluded and the caller's read stays undecided."""
+    each field the body stores last on a parameter where nothing after the
+    store may change it (``FunctionUniverseSugar.fields_after``,
+    ``FunctionDef._fields_where_the_body_ends``), and ``plain_stores`` --
+    ``((param, attr), ...)`` -- those stores and every field store that may
+    run after one.  The post states each field as the plain ``__dict__``
+    entry a read of it afterwards returns, ``attr:<attr>(python:after(out,
+    "<param>")) == <value>`` and that such a read completes, only under the
+    guard that every one of those stores is the plain store:
+    ``python:plain_store(class:<param>, "<attr>")`` over the class input the
+    caller binds, which prove decides on the class's namespace row (#7757
+    step 7).  Where the guard is not decided, nothing is concluded and the
+    caller's read stays undecided."""
 
     name: str
     formals: tuple[str, ...]
@@ -130,10 +132,11 @@ class UniverseValue(FloorValue):
     def field_facts(self):
         """``and(plain_store(class:<p>, "<a>")...) -> and(<field facts>)``:
         for each field this arm left (``fields``) whose value the contract's
-        inputs determine (``stated_by_its_inputs``), the field of the
-        parameter's object after the call and that a read of it completes
-        (``stored_field_facts``), under the guard that every store of the
-        body's quiet tail is the plain ``__dict__`` store (``plain_stores``,
+        inputs determine (``stated_by_its_inputs``) and that names no call's
+        result (``_names_a_call_result``), the field of the parameter's
+        object after the call and that a read of it completes
+        (``stored_field_facts``), under the guard that every store that may
+        run after it is the plain ``__dict__`` store (``plain_stores``,
         ``receiver_dispatch.plain_store_atom``, #7757 step 7).  None where no
         field is stated."""
         from sugar_lift_py_tests.contract_input import CLASS_INPUT, input_formal
@@ -147,7 +150,9 @@ class UniverseValue(FloorValue):
         stated = []
         for param, attr, value in self.fields:
             term = value.to_term(owner="UniverseValue.fields")
-            if not stated_by_its_inputs(term, self.formals):
+            if not stated_by_its_inputs(term, self.formals) or _names_a_call_result(
+                term
+            ):
                 continue
             stored = object_after_call(make_var("out"), param)
             stated.extend(stored_field_facts(stored, attr, term))
@@ -261,6 +266,25 @@ def stated_by_its_inputs(term, formals) -> bool:
                 return False
             pending.extend(current.args)
     return True
+
+
+def _names_a_call_result(term) -> bool:
+    """Whether ``term`` names what a call in the body returned
+    (``python:call_result(<call>, <occurrence>)``, one evaluation of that
+    call).  A field holds the object itself: two calls of the function
+    would state one such term for two objects a call may have made fresh
+    (``Box()``), so the field is not stated, and a caller's read of it
+    stays undecided (#7757 step 7)."""
+    from sugar_lift_py_tests.ir import _Ctor
+
+    pending = [term]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, _Ctor):
+            if current.name == "python:call_result":
+                return True
+            pending.extend(current.args)
+    return False
 
 
 def _stated_formal_sorts(formals, formal_coordinates):

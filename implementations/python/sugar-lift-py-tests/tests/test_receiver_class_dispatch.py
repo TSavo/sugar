@@ -480,11 +480,11 @@ def _atom_names(formula) -> set:
 
 def test_a_field_stored_on_a_parameter_is_stated_under_its_guard() -> None:
     """``fill(b, v)``: the class of ``b`` is the contract's ``class:b``
-    input, and each completed arm states the fields the body's quiet tail
-    stores on ``b`` over ``python:after(out, "b")`` under
-    ``python:plain_store(class:b, "<f>")`` for every store of the tail.  Each
-    store's own completion is guarded by its atom too, so its halt is the
-    store that is not plain (#7757 step 7)."""
+    input, and each completed arm states the fields the body stores last on
+    ``b`` over ``python:after(out, "b")`` under
+    ``python:plain_store(class:b, "<f>")`` for each such store and every
+    store after it.  Each store's own completion is guarded by its atom
+    too, so its halt is the store that is not plain (#7757 step 7)."""
     from sugar_lift_py_tests.outcome import Completed
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
@@ -505,3 +505,83 @@ def test_a_field_stored_on_a_parameter_is_stated_under_its_guard() -> None:
     halts = outcome.halts()
     assert halts
     assert all("python:plain_store" in _atom_names(face.guard) for face in halts)
+
+
+_STORED_BEFORE_CODE = """\
+class Box:
+    pass
+
+
+def note():
+    return 1
+
+
+def fill(b, v):
+    if v > 9:
+        return None
+    held = v
+    b.n = held
+    note()
+"""
+
+
+def _stated_fields(source: str, name: str = "fill") -> list:
+    """``(plain_stores, fields)`` of each completed arm of ``name``'s own
+    reduction that states a field."""
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    outcome = function_universe_outcome(_function(_tree(source), name))
+    return [
+        (face.value.plain_stores, face.value.fields)
+        for face in outcome.exits
+        if isinstance(face, Completed) and face.value.fields
+    ]
+
+
+def test_a_field_stored_before_code_that_reaches_no_object_is_read_per_arm() -> None:
+    """``b.n = held`` after an early ``return`` and before ``note()``, a
+    source function that runs no code: the store is the last of ``n`` at
+    the top level and nothing after it may change it, so each arm that ran
+    to the end reads what the store put there, through its key, in the
+    context it left (#7757 step 7).  The arm the early ``return`` ended
+    states nothing.  The quiet tail stated nothing here (a call follows the
+    store, and ``held`` is a local, no parameter)."""
+    stated = _stated_fields(_STORED_BEFORE_CODE)
+    assert stated
+    for plain_stores, fields in stated:
+        assert plain_stores == (("b", "n"),)
+        assert [(param, attr) for param, attr, _value in fields] == [("b", "n")]
+
+
+@pytest.mark.parametrize(
+    "after",
+    [
+        "    other.poke()",
+        "    print(v)",
+        "    if v:\n        b.n = 0",
+        "    other.n = 3",
+    ],
+    ids=[
+        "method-call",
+        "builtin-over-a-formal",
+        "store-under-a-branch",
+        "alias-store",
+    ],
+)
+def test_a_field_code_after_it_may_change_is_never_stated(after: str) -> None:
+    """``b.n = v`` followed by code that may change ``b.n``: a method call
+    on another parameter (it may be the same object), a builtin over a
+    formal (its dunders run), a later store of ``n`` under a branch, a store
+    of ``n`` on another parameter -- nothing is stated, and a caller's read
+    of ``n`` stays undecided (#7757 step 7)."""
+    source = (
+        "class Box:\n"
+        "    pass\n"
+        "\n"
+        "\n"
+        "def fill(b, v, other):\n"
+        "    b.n = v\n"
+        f"{after}\n"
+    )
+    assert _stated_fields(source) == []
