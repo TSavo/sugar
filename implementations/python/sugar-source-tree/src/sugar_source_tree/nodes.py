@@ -24129,13 +24129,22 @@ class Call(Expression):
             # Whether the receiver's contents are current at this call is its
             # value's (``object_identity.contents_current``), never the spelling
             # of what it was given.
-            return MethodCallSugar(
+            method_call = MethodCallSugar(
                 receiver=self.func.value.sugar(),
                 name=self.func.attr,
                 args=tuple(a.sugar() for a in self.args),
                 site=self.fragment,
                 keywords=keyword_sugars,
             )
+            # The method coordinate absorbs the callee ``o.m``: its receiver
+            # is built above and ``m`` is read through the one attribute
+            # lookup the call makes (``MethodCallSugar``), so the Attribute
+            # constructs nothing of its own and drops no evaluation.  That
+            # absorption is its discharge, as a Name callee's is in the
+            # call-site branch above, answered here where the call
+            # constructed -- never where it refused.
+            self.func.discharge_by_substitution()
+            return method_call
         from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
 
         source_call_frame = None
