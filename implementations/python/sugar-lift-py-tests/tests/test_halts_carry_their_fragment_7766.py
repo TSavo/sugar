@@ -13,6 +13,7 @@ import pytest
 
 from sugar_lift_py_tests.outcome.exit_set import Halted
 
+_SRC = "blake3-512:" + "ab" * 64
 _CID = "blake3-512:" + "ef" * 64
 
 
