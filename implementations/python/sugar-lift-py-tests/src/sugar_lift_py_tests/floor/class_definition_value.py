@@ -184,7 +184,6 @@ class ClassDefinitionValue(GuardStableValue):
             keywords,
             frame=frame,
             parameters=frame.parameters,
-            body=None,
             frame_cid=frame.frame_cid,
             formal_coordinate_cids=tuple(
                 coordinate.cid for coordinate in frame.formal_coordinates
@@ -639,22 +638,16 @@ class ClassDefinitionValue(GuardStableValue):
 
 
 def _instance_held_by(value):
-    """The object ``value`` holds: itself, or -- for a call that already ran
-    its body (a class call: the receiver its constructor left) -- the floor
-    that call completed with (``CallSiteValue._dig_floor_or_none``), under
-    the callee stores it carries.  None where a call's floor is not one
-    completed value, and where the call has not run: the type test never
-    applies a body again."""
+    """The object ``value`` holds: itself.  None for a call's result: no
+    callee body is applied at lift (#7757 step 6), so the type test reads no
+    object off a call; what the call returns is its contract's, joined at
+    prove."""
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
 
     _binds, held = peel_walrus_binds(value)
     if isinstance(held, CallSiteValue):
-        if held.retained_source_completion_outcome() is None:
-            return None
-        return held._dig_floor_or_none(
-            None, owner="ClassDefinitionValue.test_python_type"
-        )
+        return None
     return held
 
 

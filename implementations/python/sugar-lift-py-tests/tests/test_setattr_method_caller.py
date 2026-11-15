@@ -58,7 +58,6 @@ from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute, Call, ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
-from test_method_call_application_twins import bound_method_call_at
 
 from frame_fresh import FRAME_FRESH
 
@@ -114,26 +113,6 @@ def _construct_class(source: str, class_name: str) -> ObjectValue:
     )
     assert isinstance(receiver, ObjectValue)
     return receiver
-
-
-def _method_callsite(source: str) -> CallSiteValue:
-    """Construct the bound method CallSiteValue (self prepended, body retained)."""
-    tree = _tree(source)
-    calls = tuple(
-        node
-        for node in tree.nodes()
-        if isinstance(node, Call)
-        and isinstance(node.func, Attribute)
-        and node.func.attr == "store"
-    )
-    assert len(calls) == 1, calls
-    # #7756: the Call applies the method body itself; the binding under test
-    # is that call as bound, before the application.
-    return bound_method_call_at(calls[0])
-
-
-def _method_call_outcome(source: str):
-    return _method_callsite(source).producer_outcome(None)
 
 
 def _assert_bound_self_first(callsite: CallSiteValue) -> None:
@@ -261,17 +240,6 @@ def _floor_target_arg(arg) -> ObjectValue:
     return floored
 
 
-def test_bound_self_does_not_shift_obj_value_coordinates() -> None:
-    """Positional method call binds self, then obj/value in declaration order."""
-    source = TARGET_CLASS + METHOD_BODY + "\nWriter().store(Target(), 7)\n"
-    callsite = _method_callsite(source)
-    _assert_bound_self_first(callsite)
-    target = _floor_target_arg(callsite.arg_values[1])
-    assert target.class_name == "Target"
-    assert callsite.arg_values[2] == TermValue(7)
-    _assert_completed_call(callsite.producer_outcome(None))
-
-
 def test_discrimination_self_is_not_the_setattr_receiver_slot() -> None:
     """Bite: setattr_named demand coordinates must not be the method's self formal."""
     _class_def, method, pending = _method_definition()
@@ -308,46 +276,6 @@ def test_discrimination_method_alone_is_not_completed() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_positional_keyword_and_default_method_calls_discharge() -> None:
-    sites = (
-        _method_callsite(
-            TARGET_CLASS + METHOD_BODY + "\nWriter().store(Target(), 7)\n"
-        ),
-        _method_callsite(
-            TARGET_CLASS + METHOD_BODY + "\nWriter().store(obj=Target(), value=7)\n"
-        ),
-        _method_callsite(
-            TARGET_CLASS + METHOD_DEFAULTS + "\nWriter().store(Target())\n"
-        ),
-    )
-    for site in sites:
-        _assert_bound_self_first(site)
-        assert _floor_target_arg(site.arg_values[1]).class_name == "Target"
-        assert site.arg_values[2] == TermValue(7)
-        _assert_completed_call(site.producer_outcome(None))
-
-
-def test_discrimination_keyword_swap_is_not_positional_binding() -> None:
-    """Bite: keyword value= must not silently bind as if positional-only."""
-    truthful = _method_callsite(
-        TARGET_CLASS + METHOD_BODY + "\nWriter().store(obj=Target(), value=7)\n"
-    )
-    # Same presentation shape with value=9 — different binding.
-    other = _method_callsite(
-        TARGET_CLASS + METHOD_BODY + "\nWriter().store(obj=Target(), value=9)\n"
-    )
-    _assert_bound_self_first(truthful)
-    _assert_bound_self_first(other)
-    assert truthful.arg_values[2] == TermValue(7)
-    assert other.arg_values[2] == TermValue(9)
-    assert truthful.arg_values[2] != other.arg_values[2]
-
-
-# ---------------------------------------------------------------------------
-# 4. Writable receiver completes
-# ---------------------------------------------------------------------------
-
-
 def test_writable_receiver_completes_via_method_discharge() -> None:
     _, _method, pending = _method_definition()
     target = _construct_class(TARGET_CLASS, "Target")
@@ -367,19 +295,6 @@ def test_writable_receiver_completes_via_method_discharge() -> None:
         and s.fields[-1].value == TermValue(7)
         for s in record.statements
     )
-
-
-def test_discrimination_writable_completion_is_not_attributeerror() -> None:
-    outcome = _method_call_outcome(
-        TARGET_CLASS + METHOD_BODY + "\nWriter().store(Target(), 7)\n"
-    )
-    _assert_completed_call(outcome)
-    assert not outcome.halts()
-
-
-# ---------------------------------------------------------------------------
-# 5. Getter-only property → named AttributeError + pre-effect state
-# ---------------------------------------------------------------------------
 
 
 def test_getter_only_property_named_attribute_error_with_pre_effect_state() -> None:
@@ -420,75 +335,6 @@ def test_getter_only_property_named_attribute_error_with_pre_effect_state() -> N
     assert isinstance(face, Halted)
     assert face.effect is halted.effect
     assert face.state is halted.state
-
-
-def test_getter_only_property_method_call_binds_and_floor_refuses_store() -> None:
-    """Bound-method call binds self/obj/value; Floor store path AttributeErrors.
-
-    ``Target()`` arrives as a constructor CallSiteValue; dig to ObjectValue to
-    prove the property is enrolled.  Floor ``setattr`` is the store path (not
-    read).  Formal discharge with the dug receiver (sibling test) owns the
-    pre-effect state identity; producer_outcome over an undug constructor arg
-    is not the discharge instrument.
-    """
-    # The call stands in a function called after import: in the module body
-    # the store refuses (a getter-only property), the module's one run
-    # completes on no arm, and the read of ``Writer`` -- a module class's
-    # name, read through its statement's key in that run (#7757 item 21) --
-    # would have no class to read.
-    source = (
-        PROPERTY_TARGET
-        + METHOD_BODY
-        + "\n\ndef caller():\n    Writer().store(Target(), 7)\n"
-    )
-    site = _method_callsite(source)
-    _assert_bound_self_first(site)
-    target = _floor_target_arg(site.arg_values[1])
-    assert target.class_name == "Target"
-    assert any(
-        m.name == "field" and m.descriptor_kind == "property" for m in target.methods
-    )
-    assert site.arg_values[2] == TermValue(7)
-    from sugar_lift_py_tests.effect import RaiseEffect
-    # Use a source fragment site from the method body store statement.
-    _, method, _pending = _method_definition()
-    floor_site = method.body[0].fragment
-    direct = target.setattr("field", TermValue(7), floor_site, None)
-    assert direct.halts() == direct.exits
-    (halt,) = direct.halts()
-    assert isinstance(halt.effect, RaiseEffect)
-    assert halt.effect.exception_name == "AttributeError"
-    assert halt.effect.producer_node_owner == "ObjectValue.setattr"
-
-
-def test_discrimination_writable_is_not_getter_only_halt() -> None:
-    outcome = _method_call_outcome(
-        TARGET_CLASS + METHOD_BODY + "\nWriter().store(Target(), 7)\n"
-    )
-    _assert_completed_call(outcome)
-
-
-# ---------------------------------------------------------------------------
-# 6. Off-by-one self-binding and read-authorizes-write twins fail
-# ---------------------------------------------------------------------------
-
-
-def test_off_by_one_callsite_args_do_not_match_truthful_binding() -> None:
-    """Discrimination: pretend self was not prepended (args slide left)."""
-    site = _method_callsite(
-        TARGET_CLASS + METHOD_BODY + "\nWriter().store(Target(), 7)\n"
-    )
-    truthful = site.arg_values
-    assert len(truthful) == 3
-    assert isinstance(truthful[0], ObjectValue)
-    assert truthful[0].class_name == "Writer"
-    # Off-by-one: drop self — remaining (Target, 7) is not the full binding.
-    off_by_one = truthful[1:]
-    assert len(off_by_one) == 2
-    assert off_by_one != truthful
-    assert not (
-        isinstance(off_by_one[0], ObjectValue) and off_by_one[0].class_name == "Writer"
-    )
 
 
 def test_read_does_not_authorize_completed_store_on_getter_only_property() -> None:

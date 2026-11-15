@@ -87,33 +87,6 @@ _TRUTHFUL = (
 )
 
 
-def test_super_dispatches_into_source_defined_base_init() -> None:
-    context, (base, derived) = _constructed(_TRUTHFUL)
-    receiver = derived.fresh_receiver("receiver", allocation=FRAME_FRESH)
-    zuper = BuiltinSuperValue(current_class=derived, receiver=receiver)
-
-    projected = zuper.call_method_value(
-        "__init__",
-        (StringValue("v"),),
-        owner="test",
-        blame="super-init",
-        ctx=context,
-    )
-
-    stores, call = _completed_call(projected)
-    assert isinstance(call, CallSiteValue)
-    # Base.__init__ stored self.x = "v" on the instance the caller holds.
-    assert _receiver_stores(stores, receiver) == [("x", StringValue("v"))]
-    # The base body runs bound to the original instance receiver, and
-    # __class__ inside it is the base (so a chained super would select the
-    # class after Base, not restart from Derived).
-    assert call.lexical_defining_class is base
-    assert call.arg_values[0] is receiver
-    reduced = call.retained_source_completion_outcome()
-    assert reduced.completed_value() is not None
-
-
-# --- lying twin: super() naming a method no class after Derived binds ----------
 _LIAR = (
     "class Base:\n"
     "    def __init__(self, x):\n"
@@ -194,64 +167,4 @@ _ANNOTATED = (
     "        self.expected_exceptions = ()\n"
 )
 
-
-def test_super_init_statement_applies_annotated_field_stores() -> None:
-    """``super().__init__(...)`` in statement position must run Base stores.
-
-    AbstractRaises writes ``self._fail_reason: str | None = None`` in
-    ``__init__``. Leaving the super CallSiteValue unreduced dropped that
-    annotated store, so ``raise AssertionError(self._fail_reason)`` later
-    panicked as ObjectValue.attribute. The stores have to land on the
-    constructing receiver, not only fire against a nested temporal.
-    """
-    from sugar_lift_py_tests.floor.block_value import BlockValue
-    from sugar_lift_py_tests.floor.none_value import NoneValue
-    from sugar_lift_py_tests.floor.object_value import ObjectValue
-    from sugar_lift_py_tests.floor.receiver_field_store_value import (
-        ReceiverFieldStoreValue,
-    )
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
-
-    context, (_base, derived) = _constructed(_ANNOTATED)
-    receiver = derived.fresh_receiver("receiver", allocation=FRAME_FRESH)
-    projected = receiver.call_method_value(
-        "__init__",
-        (),
-        owner="test",
-        blame="derived-init",
-        ctx=context,
-        keywords=(("match", NoneValue()),),
-    )
-    stores, call = _completed_call(projected)
-    assert isinstance(call, CallSiteValue)
-    reduced = call.retained_source_completion_outcome()
-    assert isinstance(reduced, ExitSet), reduced
-    completed = [
-        face.value
-        for face in reduced.exits
-        if type(face).__name__ == "Completed"
-    ]
-    assert completed, reduced
-    block = completed[-1]
-    if not isinstance(block, BlockValue):
-        block = BlockValue((block,), can_fall_through=True)
-    # The record carries every store on the receiver: the base's, spliced
-    # into the ``super().__init__`` statement's record, and the derived
-    # store's post-state.  The same stores ride the call's value to the
-    # caller (``CallerStoreValue``), each on the receiver.
-    assert stores, projected
-    assert all(
-        store.receiver.identity == receiver.identity for store in stores
-    ), stores
-    field_names = set()
-    for entry in block.statements:
-        if isinstance(entry, ReceiverFieldStoreValue):
-            field_names.add(entry.attr)
-        elif isinstance(entry, ObjectValue):
-            field_names |= {field.name for field in entry.fields}
-    assert "match" in field_names
-    assert "_fail_reason" in field_names
-    assert "_nested" in field_names
-    assert "is_baseexception" in field_names
-    assert "expected_exceptions" in field_names
 

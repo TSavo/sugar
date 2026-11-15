@@ -51,7 +51,6 @@ from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute, BinOp, Call, Compare, Name
 from sugar_source_tree.tree import SourceFile
-from test_method_call_application_twins import bound_method_call_at
 
 # ---------------------------------------------------------------------------
 # Owner named on every red face (codex-3 general producer)
@@ -148,18 +147,6 @@ def _attr_call_outcome(source: str, attr: str):
     )
 
 
-def _attr_callsite(source: str, attr: str) -> CallSiteValue:
-    """The bound method call before the Call applies it (#7756)."""
-    tree = _tree(source)
-    calls = tuple(
-        n
-        for n in tree.nodes()
-        if isinstance(n, Call) and isinstance(n.func, Attribute) and n.func.attr == attr
-    )
-    assert calls, (attr, source)
-    return bound_method_call_at(calls[-1])
-
-
 def _identity(name: str):
     from sugar_lift_py_tests.temporal.temporal_context import TemporalContext
 
@@ -198,43 +185,6 @@ def _completed_compare_is_true(outcome) -> bool:
     )
 
 
-def _store_value_actual(outcome) -> object:
-    """Pull the value actual from the completed ``store(obj, key, value)`` call.
-
-    The list is made at the call, and ``obj`` is that actual with the
-    caller's currency (#8249): ``obj[0] = value`` on ``[0]`` is decided, so
-    the call completes alone, as Python's does, and the actuals it bound ride
-    that one face.
-
-    The face's value is the Call carrying what ``store`` did to the list its
-    caller passed, as a write the caller's statement applies
-    (``CallSiteValue.project_producer_outcome``, ``carry_walrus_binds``): the
-    Call is read beneath those writes, and the call carries at least one."""
-    if isinstance(outcome, ExitSet) and len(outcome.exits) == 1:
-        face = outcome.exits[0]
-        if isinstance(face, Completed):
-            writes, call = peel_walrus_binds(face.value)
-            if writes and isinstance(call, CallSiteValue):
-                args = call.arg_values
-                assert len(args) == 3, args
-                return args[2]
-    raise AssertionError(
-        f"{CODEX3_GENERAL_PRODUCER} — setitem store face has no value actual: "
-        f"{type(outcome).__name__} {outcome!r:.200}"
-    )
-
-
-def _returned_floor_from_make(source: str = FACTORY_MAKE_41 + "\nFactory().make()\n"):
-    """Dig the return floor from a completed bound-method call."""
-    site = _attr_callsite(source, "make")
-    assert site.parameters[0] == "self"
-    assert isinstance(site.arg_values[0], ObjectValue)
-    assert site.arg_values[0].class_name == "Factory"
-    dug = site._dig_floor_or_none(None, owner="method-return-as-actual")
-    assert dug is not None, site
-    return dug
-
-
 def _collect_return_values(root) -> list:
     found: list = []
     seen: set[int] = set()
@@ -268,26 +218,6 @@ def _collect_return_values(root) -> list:
 # ---------------------------------------------------------------------------
 
 
-def test_direct_value_twins_establish_green_baselines() -> None:
-    """Direct values complete without method-return projection."""
-    binop = _binop_outcome("41 + 1\n")
-    assert _completed_sum_value(binop) == 42
-
-    compare = _compare_outcome("41 < 50\n")
-    assert _completed_compare_is_true(compare) is True
-
-    store = _name_call_outcome(
-        STORE_DEF + "\nstore([0], 0, 41)\n",
-        "store",
-    )
-    assert _store_value_actual(store) == TermValue(41)
-
-
-# ---------------------------------------------------------------------------
-# 1–2. Method return feeds consumers; isomorphic to direct twins
-# ---------------------------------------------------------------------------
-
-
 def test_method_return_feeds_binop_isomorphic_to_direct_value() -> None:
     """``Factory().make() + 1`` must complete as ``41 + 1`` → 42.
 
@@ -316,130 +246,6 @@ def test_method_return_feeds_compare_isomorphic_to_direct_value() -> None:
         f"{CODEX3_GENERAL_PRODUCER} — Compare method-return face not isomorphic "
         f"to direct 41<50: method={type(method).__name__} direct={type(direct).__name__}"
     )
-
-
-def test_method_return_feeds_setitem_isomorphic_to_direct_value() -> None:
-    """``store([0], 0, Factory().make())`` value actual must be ``TermValue(41)``.
-
-    RED until codex-3 general producer projects the method return into the
-    setitem value slot (today: value actual remains CallSiteValue(Factory.make)).
-    """
-    direct = _name_call_outcome(STORE_DEF + "\nstore([0], 0, 41)\n", "store")
-    method = _name_call_outcome(
-        FACTORY_MAKE_41 + "\n" + STORE_DEF + "\nstore([0], 0, Factory().make())\n",
-        "store",
-    )
-    direct_value = _store_value_actual(direct)
-    method_value = _store_value_actual(method)
-    assert method_value == direct_value == TermValue(41), (
-        f"{CODEX3_GENERAL_PRODUCER} — setitem value actual from method return "
-        f"is not TermValue(41): got {type(method_value).__name__} {method_value!r:.160}"
-    )
-
-
-def test_discrimination_unreduced_callsite_is_not_the_returned_term() -> None:
-    """Lying twin: leaving CallSiteValue(Factory.make) as the value is not 41."""
-    method = _name_call_outcome(
-        FACTORY_MAKE_41 + "\n" + STORE_DEF + "\nstore([0], 0, Factory().make())\n",
-        "store",
-    )
-    value = _store_value_actual(method)
-    # Until codex-3 lands this may still be CallSiteValue — instrument names it.
-    if value != TermValue(41):
-        raise AssertionError(
-            f"{CODEX3_GENERAL_PRODUCER} — value actual must be TermValue(41), "
-            f"not unreduced {type(value).__name__}"
-        )
-
-
-# ---------------------------------------------------------------------------
-# 3. Self binding does not leak into returned testimony
-# ---------------------------------------------------------------------------
-
-
-def test_self_binding_does_not_leak_into_returned_testimony() -> None:
-    """Bound self is prepended at the callsite; return floor is TermValue(41)."""
-    site = _attr_callsite(FACTORY_MAKE_41 + "\nFactory().make()\n", "make")
-    assert site.parameters == ("self",)
-    assert isinstance(site.arg_values[0], ObjectValue)
-    assert site.arg_values[0].class_name == "Factory"
-
-    dug = _returned_floor_from_make()
-    returned = dug
-    assert returned == TermValue(41), returned
-    # Self is not the returned testimony.
-    assert not isinstance(returned, ObjectValue)
-    assert returned != site.arg_values[0]
-
-
-def test_discrimination_returned_term_is_not_the_receiver_object() -> None:
-    site = _attr_callsite(FACTORY_MAKE_41 + "\nFactory().make()\n", "make")
-    dug = site._dig_floor_or_none(None, owner="method-return-as-actual")
-    assert dug == TermValue(41)
-    assert dug != site.arg_values[0]
-
-
-# ---------------------------------------------------------------------------
-# 4. Method returning a raising computation propagates named edge
-# ---------------------------------------------------------------------------
-
-
-def test_method_returning_raise_propagates_named_exceptional_edge() -> None:
-    """``Factory().make()`` body ``raise ValueError()`` → Halted ValueError.
-
-    The raise is located at its own statement (``file:line:col``, the one
-    locus door) and, crossing the call, stamped with the frame the body ran
-    in -- the call's path and the call (``call_site_value.call_owned``) -- so
-    the caller reads which call raised it.
-
-    The call stands in a function called after import: at module level it
-    would make the module's one run halt on every arm, so no import completes
-    and the read of ``Factory`` is that run's halts, never the class
-    (``DecoratorApplicationSugar._module_run_halts``)."""
-    from sugar_lift_py_tests.effect.authenticated_raise_locus import (
-        AuthenticatedRaiseLocus,
-    )
-    from sugar_lift_py_tests.occurrence import call_frame_path
-    from sugar_source_tree.nodes import Raise
-
-    source = RAISING_FACTORY + "\ndef caller():\n    Factory().make()\n"
-    site = _attr_callsite(source, "make")
-    assert isinstance(site.arg_values[0], ObjectValue)
-    assert site.arg_values[0].class_name == "Factory"
-
-    outcome = site.producer_outcome(None)
-    assert isinstance(outcome, ExitSet), outcome
-    assert len(outcome.exits) == 1
-    halted = outcome.exits[0]
-    assert isinstance(halted, Halted), halted
-    assert halted.effect.exception_name == "ValueError"
-    assert halted.effect.exception_type_coordinate == _identity("ValueError")
-    (raise_node,) = tuple(n for n in _tree(source).nodes() if isinstance(n, Raise))
-    locus = AuthenticatedRaiseLocus.of(raise_node.fragment).value
-    frame = "/".join(call_frame_path(site.site, site.occurrence_path))
-    assert halted.effect.occurrence_id == f"{locus}@{frame}"
-
-
-def test_discrimination_completed_return_is_not_valueerror_halt() -> None:
-    """Positive twin returns 41; must not be a ValueError halt."""
-    site = _attr_callsite(FACTORY_MAKE_41 + "\nFactory().make()\n", "make")
-    outcome = site.producer_outcome(None)
-    assert isinstance(outcome, ExitSet), outcome
-    if outcome.completed_value() is not None:
-        dug = outcome.completed_value()._dig_floor_or_none(
-            None, owner="method-return-as-actual"
-        )
-        assert dug == TermValue(41)
-    else:
-        assert not any(
-            isinstance(e, Halted) and e.effect.exception_name == "ValueError"
-            for e in outcome.exits
-        )
-
-
-# ---------------------------------------------------------------------------
-# 5. Chained obj.make().other() stays honestly typed
-# ---------------------------------------------------------------------------
 
 
 def test_chained_method_return_stays_honestly_typed() -> None:
@@ -501,22 +307,3 @@ def test_tampered_return_twin_refuses_isomorphism_with_truthful_sum() -> None:
     assert _completed_sum_value(tampered) != _completed_sum_value(direct)
 
 
-def test_swapped_receiver_is_not_the_returned_value() -> None:
-    """Receiver ObjectValue(Factory) is not TermValue(41) — self is not the return."""
-    site = _attr_callsite(FACTORY_MAKE_41 + "\nFactory().make()\n", "make")
-    receiver = site.arg_values[0]
-    assert isinstance(receiver, ObjectValue)
-    dug = site._dig_floor_or_none(None, owner="method-return-as-actual")
-    assert dug == TermValue(41)
-    assert dug != receiver
-    # A swapped lying map that treats self as the returned actual fails.
-    assert not (isinstance(dug, ObjectValue) and dug.class_name == "Factory")
-
-
-def test_discrimination_list_literal_is_not_make_return() -> None:
-    """Direct setitem list actual is not a method-return CallSiteValue."""
-    direct = _name_call_outcome(STORE_DEF + "\nstore([0], 0, 41)\n", "store")
-    value = _store_value_actual(direct)
-    assert value == TermValue(41)
-    assert not isinstance(value, CallSiteValue)
-    assert value != fresh(ListValue, (TermValue(0),))

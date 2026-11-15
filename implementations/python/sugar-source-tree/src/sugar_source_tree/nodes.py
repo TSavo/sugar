@@ -1403,66 +1403,6 @@ def _initializer_return(
     )
 
 
-def _returns_before_the_end(body) -> bool:
-    """Whether a ``return`` of this body -- not one of a function, lambda or
-    class nested in it -- stands anywhere but as the body's last statement.
-    Where one does, the scope after the last statement is not the scope that
-    ``return`` left with."""
-    last = body[-1] if body else None
-    seen: set[int] = set()
-    stack: list = list(body)
-    while stack:
-        node = stack.pop()
-        if not isinstance(node, Node):
-            continue
-        if isinstance(node, Return):
-            if node is not last:
-                return True
-            continue
-        if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
-            continue
-        nid = id(node)
-        if nid in seen:
-            continue
-        seen.add(nid)
-        stack.extend(child for _name, _index, child in node._child_edges())
-    return False
-
-
-# Statements a body whose effect on its first formal's object is its field
-# stores may hold (``_first_formal_stated_by_stores``), beside an ``if`` and
-# a ``try`` of such: none of them runs a body of its own at a later point (a
-# loop, a ``with``'s exit, a nested definition) or leaves the frame before
-# its end.
-_STATED_STATEMENT_KINDS = frozenset(
-    {
-        "Expr",
-        "Assign",
-        "AnnAssign",
-        "AugAssign",
-        "Pass",
-        "Raise",
-        "Assert",
-        "Return",
-        "Global",
-        "Nonlocal",
-        "Import",
-        "ImportFrom",
-    }
-)
-# Expressions that run code a call's exposure rule does not see run: a
-# lambda's or a comprehension's body.
-_UNSTATED_EXPRESSION_KINDS = frozenset(
-    {"Lambda", "ListComp", "SetComp", "DictComp", "GeneratorExp"}
-)
-
-
-def _runs_unstated_code(node) -> bool:
-    """Whether ``node`` holds a lambda or a comprehension
-    (``_UNSTATED_EXPRESSION_KINDS``)."""
-    return any(child.kind in _UNSTATED_EXPRESSION_KINDS for child in node.walk())
-
-
 def _super_method(node) -> "Optional[str]":
     """The method ``m`` when ``node`` is ``super().m(...)``: a call of an
     attribute read off a zero-argument call of the builtin ``super`` (by its
@@ -1521,8 +1461,8 @@ def _call_on_self_in_place(source, scope, call):
     (``_INITIALIZER_RECEIVER``), whose stores on the receiver are states of
     it in the tree (``ReceiverFieldStoreState``) the base method would not
     see: in any other frame the receiver formal is the frame's coordinate,
-    which every store the base method carries back advances where the call
-    stands (``_first_formal_stated_by_stores``)."""
+    which the base method's call, its coordinate and edge, leaves undecided
+    where the call stands (#7757 step 6)."""
     held = scope.get(_INITIALIZER_RECEIVER)
     if not isinstance(held, _InitializerReceiverV1):
         return None
@@ -1586,166 +1526,6 @@ def _in_a_comprehension(frame, node) -> bool:
         and _encloses(inner.span, span)
         for inner in frame.walk()
     )
-
-
-def _calls_super(node) -> bool:
-    """Whether ``node`` holds a call of the builtin ``super`` (by its
-    binding), not inside a function, lambda or class nested in it."""
-    # Each node once: an expression is a DAG of shared nodes (``Node.walk``).
-    seen: set[int] = set()
-    stack = [node]
-    while stack:
-        current = stack.pop()
-        if not isinstance(current, Node) or id(current) in seen:
-            continue
-        seen.add(id(current))
-        if isinstance(current, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
-            continue
-        if (
-            isinstance(current, Call)
-            and current.language_callee() is LanguageCallee.BUILTIN_SUPER
-        ):
-            return True
-        stack.extend(child for _name, _index, child in current._child_edges())
-    return False
-
-
-def _stores_only_on(statements, name: str, *, top: bool = True) -> bool:
-    """Whether every statement of ``statements`` is a plain one
-    (``_STATED_STATEMENT_KINDS``, an ``if`` or a ``try`` of such) whose only
-    store into an object is ``name.attr = value`` -- a single attribute
-    target on the formal itself -- and which holds no lambda or
-    comprehension.  A ``super()`` is read only as ``super().m(...)`` alone
-    in a statement of the body itself (``top``), never under an ``if`` or a
-    ``try``: the base method runs on the formal's object, and what it did to
-    it is stated by its own call where it stands, in the body's record
-    (``call_site_value.receiver_after_its_call``)."""
-    for statement in statements:
-        if isinstance(statement, If):
-            if _calls_super(statement.test) or _runs_unstated_code(statement.test):
-                return False
-            if not (
-                _stores_only_on(statement.body, name, top=False)
-                and _stores_only_on(statement.orelse, name, top=False)
-            ):
-                return False
-            continue
-        if isinstance(statement, Try):
-            # Each route of a ``try`` is a face of its own, which keeps the
-            # stores made on it (#7757); a handler's type is evaluated code.
-            suites = (
-                statement.body,
-                statement.orelse,
-                statement.finalbody,
-                *(handler.body for handler in statement.handlers),
-            )
-            if any(
-                handler.type_ is not None
-                and (_calls_super(handler.type_) or _runs_unstated_code(handler.type_))
-                for handler in statement.handlers
-            ):
-                return False
-            if not all(_stores_only_on(suite, name, top=False) for suite in suites):
-                return False
-            continue
-        if statement.kind not in _STATED_STATEMENT_KINDS:
-            return False
-        if _runs_unstated_code(statement):
-            return False
-        if (
-            top
-            and isinstance(statement, Expr)
-            and _super_method(statement.value) is not None
-        ):
-            if any(_calls_super(arg) for arg in statement.value.args) or any(
-                _calls_super(keyword.value) for keyword in statement.value.keywords
-            ):
-                return False
-            continue
-        if _calls_super(statement):
-            return False
-        if isinstance(statement, Assign):
-            targets = statement.targets
-        elif isinstance(statement, (AnnAssign, AugAssign)):
-            targets = (statement.target,)
-        else:
-            continue
-        for target in targets:
-            if isinstance(target, Name):
-                continue
-            if (
-                not isinstance(statement, AugAssign)
-                and len(targets) == 1
-                and isinstance(target, Attribute)
-                and isinstance(target.value, Name)
-                and target.value.id == name
-            ):
-                continue
-            if (
-                isinstance(statement, Assign)
-                and isinstance(target, (Tuple_, List))
-                and all(isinstance(element, Name) for element in target.elts)
-            ):
-                continue
-            return False
-    return True
-
-
-def _first_formal_stated_by_stores(definition, start: BindingMap, final: BindingMap):
-    """Whether every effect ``definition``'s body has on the object its first
-    formal binds is one of its field stores on that formal (``self.x = v``),
-    each a ``ReceiverFieldStoreValue`` a call carries to its caller
-    (``call_site_value.caller_visible_stores``).  ``start`` is the frame's
-    scope (each formal its coordinate read), ``final`` the scope its
-    threading left after the body (``FunctionDef._substitute_body_to_end``).
-
-    So: a plain ``def`` (no decorator: the first formal is the receiver a
-    method lookup binds) whose first formal is positional; a body of plain
-    statements (``_stores_only_on``) that leaves the frame only at its end;
-    the threading leaves the formal bound to its own read -- no call the one
-    exposure rule lets reach it, no door, no rebinding -- and no other name
-    the body bound holds its object, or a state of it, or holds it inside
-    another value.  A store under a guard the caller is not carried
-    (``caller_visible_stores``); the call's own record decides that
-    (``call_site_value.receiver_after_its_call``)."""
-    from .container_mutation import _contains, _same_read, _state, same_object
-
-    params = definition.params
-    if (
-        type(definition) is not FunctionDef
-        or definition.decorators
-        or not params
-        or params[0].param_kind not in ("positional_only", "positional_or_keyword")
-    ):
-        return False
-    body = definition.body
-    if FunctionDef._owns_yield(body) or _returns_before_the_end(body):
-        return False
-    name = params[0].name
-    if not _stores_only_on(body, name):
-        return False
-    formal = _state(start.get(name))
-    if not isinstance(formal, Node) or name not in final:
-        return False
-    if not _same_read(_state(final[name]), formal):
-        return False
-    references = definition._module_global_references()
-    for other, value in final.items():
-        if not isinstance(other, str) or other == name:
-            continue
-        if start.get(other) is value or references.get(other) is value:
-            continue
-        state = _state(value)
-        if not isinstance(state, Node):
-            continue
-        if same_object(state, formal):
-            # Another name for the object: only its plain read.
-            if not _same_read(state, formal):
-                return False
-            continue
-        if _contains(state, formal):
-            return False
-    return True
 
 
 _NESTED_COMPREHENSION_TEMPLATE = object()
@@ -10642,9 +10422,6 @@ class FunctionDef(Statement):
             ),
             captured_names=captured_names,
             captured_coordinates=captured_coordinates,
-            first_formal_stated_by_stores=_first_formal_stated_by_stores(
-                self, formal_scope, final
-            ),
         )
 
     def _captured_bindings(self) -> tuple:
@@ -27532,7 +27309,7 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
       name is undecided;
     - a source ``def`` or ``class``: its value, applied through the one call
       routine (``callable_application_with``: ``enter_source_frame``,
-      ``bind_call``, ``producer_outcome``); a decorated one is its own
+      ``bind_call``, ``definition_edge_call``); a decorated one is its own
       application first;
     - any other expression (a factory call, a read): its value, applied the
       same way, or refused by name where it is not a callable this holds.

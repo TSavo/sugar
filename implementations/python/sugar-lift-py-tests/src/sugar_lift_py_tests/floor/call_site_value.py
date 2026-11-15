@@ -6,21 +6,13 @@ from typing import Any, NoReturn
 
 from sugar_lift_py_tests.call_symbol import call_symbol
 from sugar_lift_py_tests.ir import Term, TermTableBuilder
-from sugar_source_tree.construction_cache import AmbientVar
 from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUniverse
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
 from .floor_value import FloorValue
-from .source_return_projection import (
-    project_authenticated_source_return as _project_authenticated_source_return,
-)
 
 _FORCE_FLOOR_BUDGET = 64
-_NESTED_DIG_DEMAND_BUDGET = 8
-_ACTIVE_DIG_DEMAND: AmbientVar = AmbientVar(
-    "sugar_callsite_active_dig_demand", default=0
-)
 
 # Authenticated-coordinate memo: id(CallSiteValue) -> (weakref, coordinate).
 # Weakrefs only, so a dead callsite is never pinned for process lifetime and a
@@ -28,35 +20,6 @@ _ACTIVE_DIG_DEMAND: AmbientVar = AmbientVar(
 # Not a WeakKeyDictionary: that would call ``CallSiteValue.__hash__``, which is
 # the seat being memoized.
 _CALLSITE_COORDINATE: dict[int, tuple["weakref.ReferenceType", tuple]] = {}
-
-
-@dataclass(frozen=True)
-class _RetainedSourceCompletionV1:
-    """Private exact completed Floor carried by one projected arm.
-
-    The constant hash is deliberate: completion Floors may be unhashable, while
-    equality must still compare their exact immutable content.  Hash collisions
-    are resolved by equality and never grant identity.
-    """
-
-    value: object
-
-    def __hash__(self) -> int:
-        return 0x52455441
-
-
-def _retained_completion_invariant(
-    *, owner: str, callsite: "CallSiteValue", observed: str
-):
-    from sugar_source_tree.panic import BackendDefect
-
-    raise BackendDefect(
-        owner=owner,
-        blame=callsite.site,
-        observed=observed,
-        requested="one private retained source completion relation",
-        fix="consume the retained completion; never replay or reseat the source producer",
-    )
 
 
 def _callsite_coordinate_memo_size() -> int:
@@ -281,13 +244,6 @@ class CallSiteValue(FloorValue):
     closure: tuple[tuple[str, FloorValue], ...] = dataclass_field(
         default=(), compare=False, repr=False
     )
-    # The frame this call binds states what its body does to the object of
-    # its first actual: that object's field stores, which the call carries
-    # (``SourceVisibleCallFrameV1.first_formal_stated_by_stores``,
-    # ``receiver_after_its_call``).
-    first_actual_stated_by_stores: bool = dataclass_field(
-        default=False, compare=False, repr=False
-    )
     # True only on the result of a call of a same-file class that is its
     # coordinate and edge (``ClassDefinitionValue.callable_application_with``,
     # #7757 step 7): the instance as its construction left it, whose fields
@@ -299,69 +255,26 @@ class CallSiteValue(FloorValue):
     constructed_by_edge: bool = dataclass_field(
         default=False, compare=False, repr=False
     )
-    _retained_source_completion: object | None = dataclass_field(
-        default=None, init=False, compare=False, repr=False
-    )
 
     def denotes_value(self) -> bool:
         """A call result denotes a Python runtime value."""
         return True
 
     def project_operation_receiver(self, ctx: object, *, owner: str):
-        """Project an authenticated sole return before operation dispatch.
-
-        The call remains a CallSiteValue everywhere else. A bodyless or
-        multi-exit call stays itself, preserving the loud operation law; only
-        this producer can expose the Floor authenticated by its source body.
-        """
-        from sugar_lift_py_tests.floor.block_value import BlockValue
-
-        projected = self._dig_floor_or_none(ctx, owner=owner)
-        if projected is None or isinstance(projected, BlockValue):
-            return self
-        return projected
+        """The receiver an operation over this call's result dispatches on:
+        the call itself.  Its value is its coordinate; no callee body is
+        applied at lift to expose a return (#7757 step 6)."""
+        del ctx, owner
+        return self
 
     def project_operation_receiver_outcome(self, ctx: object, *, owner: str):
-        """Project the completion retained by the sole producer reduction.
-
-        Matches ``project_operation_receiver``: a unique authenticated return
-        is exposed; a multi-exit ``BlockValue`` stays this CallSiteValue so
-        the call remains the semantic value.  ``backquote(_exception_type_name(
-        expected_type))`` must not invent one string for both remaining
-        returns (the singleton ``__name__`` arm and the join-names arm).
-        """
-        del ctx
-        from sugar_lift_py_tests.floor.block_value import BlockValue
+        """``project_operation_receiver`` as an outcome: the call itself,
+        completed.  What it returns is what the callee's contract states,
+        joined at prove (#7757 step 6)."""
+        del ctx, owner
         from sugar_lift_py_tests.outcome import ExitSet
-        from sugar_source_tree.panic import SugarNotWritten
 
-        if self.body is None:
-            return ExitSet.completed(self)
-        retained = self._retained_source_completion
-        if retained is None:
-            raise SugarNotWritten(
-                owner="CallSiteValue.project_operation_receiver_outcome",
-                blame=self.site,
-                observed="body-bearing call lacks retained source completion",
-                requested="producer-retained source completion testimony",
-                fix="project the source body once at CallSiteValue.producer_outcome",
-            )
-        if type(retained) is not _RetainedSourceCompletionV1:
-            _retained_completion_invariant(
-                owner="CallSiteValue.project_operation_receiver_outcome",
-                callsite=self,
-                observed="retained source completion has wrong exact type",
-            )
-        if not isinstance(retained.value, FloorValue):
-            _retained_completion_invariant(
-                owner="CallSiteValue.project_operation_receiver_outcome",
-                callsite=self,
-                observed="retained source completion value is not FloorValue",
-            )
-        projected = _project_authenticated_source_return(retained.value)
-        if isinstance(projected, BlockValue):
-            return ExitSet.completed(self)
-        return ExitSet.completed(projected)
+        return ExitSet.completed(self)
 
     def runtime_type_is_decided(self) -> bool:
         """Undecided: no citation fixes an unexecuted call's result type.
@@ -413,41 +326,17 @@ class CallSiteValue(FloorValue):
             # Only an authenticated exception instance has that field; an
             # ordinary unexecuted call still has no runtime type, so .args
             # is the two-faced undecided read rather than an invented tuple.
-            from sugar_lift_py_tests.floor.object_value import ObjectValue
             from sugar_lift_py_tests.outcome import ExitSet
 
-            if self.bound_source_actuals is None:
-                # A bodiless call's ``args`` is what its construction stored
-                # (``constructed_args``), decided where the call was
-                # constructed: ``OSError(2, 'x', 'f').args`` is ``(2, 'x')``
-                # by the pinned interpreter.  A source, imported or
-                # runtime-selected class runs a constructor nothing here
-                # read: ``.args`` is the two-faced undecided read, never the
-                # actuals.
-                if self.constructed_args is not None:
-                    return ExitSet.completed(self.constructed_args)
-                return self.undecided_attribute(
-                    name, site, owner="CallSiteValue.attribute"
-                )
-            # A class call that ran its constructor frame: the actuals sit in
-            # the frame's formals, not in call order, so the instance the
-            # call made answers (``ClassConstructorBodySugar`` seats the
-            # positional actuals on it as ``args``).  An instance without
-            # them leaves ``.args`` the two-faced undecided read.
-            retained = self._retained_source_completion
-            instance = (
-                None
-                if retained is None
-                else _project_authenticated_source_return(retained.value)
-            )
-            from sugar_lift_py_tests.floor.object_identity import contents_current
-
-            # Its fields are read only while they are the instance's fields
-            # now (``object_identity.contents_current``).
-            if isinstance(instance, ObjectValue) and contents_current(instance):
-                for field in reversed(instance.fields):
-                    if field.name == "args":
-                        return ExitSet.completed(field.value)
+            # A bodiless builtin construction's ``args`` is what it stored
+            # (``constructed_args``), decided where the call was constructed:
+            # ``OSError(2, 'x', 'f').args`` is ``(2, 'x')`` by the pinned
+            # interpreter.  A source, imported or runtime-selected class runs
+            # a constructor nothing here applies (#7757 step 6): ``.args`` is
+            # the two-faced undecided read, what the constructor's contract
+            # states joined at prove, never the actuals.
+            if self.bound_source_actuals is None and self.constructed_args is not None:
+                return ExitSet.completed(self.constructed_args)
             return self.undecided_attribute(
                 name, site, owner="CallSiteValue.attribute"
             )
@@ -508,12 +397,6 @@ class CallSiteValue(FloorValue):
             self.parameters,
             _term_cycle_key(self.term),
         )
-        if self._retained_source_completion is not None:
-            coordinate = (
-                *coordinate,
-                self._retained_source_completion,
-                _term_cycle_key(self.result_term()),
-            )
 
         def _on_die(ref: weakref.ReferenceType, *, _cid: int = cid) -> None:
             current = _CALLSITE_COORDINATE.get(_cid)
@@ -560,35 +443,12 @@ class CallSiteValue(FloorValue):
         return self.result_term()
 
     def result_term(self):
-        """The value ONE evaluation of this call returned.
-
-        ``term`` is the application ``call:<target>(<args>)``: the bridge
-        coordinate contract composition and cycle keys use.  As a value it
-        claims every evaluation of that application returns the same object
-        -- ``(g(), g())`` two equal results, a loop's second pass the first
-        pass's -- which nothing testified.  A call whose source body this
-        producer reduced is ``python:call_result(<application>,
-        <occurrence>)``, keyed on the site and the dynamic occurrence path it
-        was evaluated under; the body's post is applied at that term
-        (:meth:`derived_equality_residue`).  Calls the producer did not reduce
-        keep the application (their own faces mint the result, #7585).
-
-        A body that returns one ground immutable scalar (an int, str, bytes,
-        bool or None literal) returns that value on every evaluation: the
-        result stays ground."""
-        retained = self._retained_source_completion
-        if type(retained) is not _RetainedSourceCompletionV1 or self.site is None:
-            return self.term
-        ground = _ground_scalar_return(retained.value)
-        if ground is not None:
-            return ground
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.occurrence import occurrence_term
-
-        return ctor(
-            "python:call_result",
-            (self.term, occurrence_term(self.site, self.occurrence_path)),
-        )
+        """The value this call returned: the application
+        ``call:<target>(<args>)``, the bridge coordinate contract composition
+        and cycle keys use.  No callee body is applied at lift (#7757 step
+        6), so a call's result is its coordinate, and its faces mint it
+        (#7585)."""
+        return self.term
 
     def denotes_a_value(self) -> bool:
         # A call's RESULT is a value; what it is equal to is undecided until
@@ -1170,10 +1030,8 @@ class CallSiteValue(FloorValue):
         the lifter mints) does too, so ``backquote`` can join
         ``"`" + name + "`"`` without inventing text.
 
-        A retained source body whose every return face already names a string
-        does too: ``_exception_type_name`` of an unfloored tuple still has both
-        the singleton ``__name__`` arm and the join-names arm, but both are
-        string coordinates. Do not invent which arm returns.
+        A source call's result names a string only where its contract states
+        it, joined at prove: its body is never read here (#7757 step 6).
 
         The ``__name__`` / ``__qualname__`` read is known by the marker its
         attribute read mints (``type_name_attribute``), never by the spelling
@@ -1182,27 +1040,7 @@ class CallSiteValue(FloorValue):
         function named ``__add__`` is spelled ``call:__add__`` too, and is not
         one.
         """
-        if self.type_name_attribute or self.string_concatenation:
-            return True
-        return self._retained_completion_names_a_string()
-
-    def _retained_completion_names_a_string(self) -> bool:
-        retained = self._retained_source_completion
-        if type(retained) is not _RetainedSourceCompletionV1:
-            return False
-        from sugar_lift_py_tests.floor.block_value import BlockValue
-        from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
-        from sugar_lift_py_tests.floor.return_value import ReturnValue
-
-        value = retained.value
-        if not isinstance(value, BlockValue):
-            return names_a_string(value)
-        faces = tuple(
-            statement.value
-            for statement in value.statements
-            if isinstance(statement, (ReturnValue, GuardedReturn))
-        )
-        return bool(faces) and all(names_a_string(face) for face in faces)
+        return self.type_name_attribute or self.string_concatenation
 
     @staticmethod
     def named_string_concat(left, right, site):
@@ -1492,10 +1330,14 @@ class CallSiteValue(FloorValue):
     ) -> FloorValue | None:
         """Return a concrete floor when dig succeeds; None when the receiver is opaque.
 
-        Opaque (missing body, all-halted reduce) is an EUF-join residual — not a
-        panic and not a soft DigBoundary row. Budget / recursive demand still
-        panics: those are non-composable, not joinable coordinates.
+        A call's value is its coordinate: no callee body is applied at lift
+        (#7757 step 6, the owner's ruling of 2026-11-15, "Edge, join at
+        prove"), so every call is opaque here -- an EUF-join residual, not a
+        panic -- and what it returns is what the callee's contract states,
+        joined at prove.  Budget / recursive demand still panics: those are
+        non-composable, not joinable coordinates.
         """
+        del ctx, incomplete_outcome
         key = _term_cycle_key(self.term)
         if depth >= budget or len(seen) >= budget:
             _force_floor_gap(
@@ -1517,102 +1359,7 @@ class CallSiteValue(FloorValue):
                     "floor; leave the bridge as axiomatic"
                 ),
             )
-        if self.body is None:
-            return self if preserve_opaque_leaf else None
-        if len(self.parameters) != len(self.arg_values):
-            return None
-        from sugar_lift_py_tests.outcome import ExitSet, complete_value
-
-        reduce_ctx = _ctx_with_curried_args(
-            ctx,
-            self.parameters,
-            self.arg_values,
-            self.formal_coordinate_cids,
-            self.closure,
-        )
-        retained = self._retained_source_completion
-        if retained is not None:
-            if type(retained) is not _RetainedSourceCompletionV1:
-                _retained_completion_invariant(
-                    owner="CallSiteValue._dig_floor_or_none",
-                    callsite=self,
-                    observed="retained source completion has wrong exact type",
-                )
-            if not isinstance(retained.value, FloorValue):
-                _retained_completion_invariant(
-                    owner="CallSiteValue._dig_floor_or_none",
-                    callsite=self,
-                    observed="retained source completion value is not FloorValue",
-                )
-            value = _project_authenticated_source_return(retained.value)
-        else:
-            active_demand = _ACTIVE_DIG_DEMAND.get()
-            nested_budget = min(budget, _NESTED_DIG_DEMAND_BUDGET)
-            if active_demand >= nested_budget:
-                _force_floor_gap(
-                    owner=owner,
-                    target_name=self.target_name,
-                    observed="callsite value demand budget exhausted",
-                    fix=(
-                        f"nested callsite dig exceeded force_floor budget "
-                        f"{nested_budget}; "
-                        "leave the recursive bridge as axiomatic"
-                    ),
-                )
-            token = _ACTIVE_DIG_DEMAND.set(active_demand + 1)
-            try:
-                # The one application (#7757): ``producer_outcome`` applies
-                # the body and discharges a deferred native operation with
-                # the bound actuals under the caller's context.
-                outcome = self._applied_outcome(ctx)
-            finally:
-                _ACTIVE_DIG_DEMAND.reset(token)
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                NativeOperationExitCarrierV1,
-            )
-
-            if isinstance(outcome, ExitSet) and outcome.halts() == outcome.exits:
-                if incomplete_outcome is not None:
-                    incomplete_outcome.append(outcome)
-                return None
-            if isinstance(outcome, ExitSet) and (
-                outcome.completed_value() is None or outcome.owed_items()
-            ):
-                # complete_value's written law: multi-arm store/control
-                # outcomes cannot force_floor to a single value; leave the
-                # projection absent. ``not self.matches(...)`` then stands on
-                # CallSiteValue.truth (py.truthy of the call) instead of
-                # inventing one bool for two completed predicate returns. An
-                # owing arm keeps its debt as an arm, never a bare value.
-                return None
-            if isinstance(outcome, NativeOperationExitCarrierV1):
-                # An undischarged lookup is not a completed floor value.
-                # Forcing it through complete_value panics; leave the
-                # projection absent so ``not self.matches(...)`` stands on
-                # the call instead of inventing a bool for exc.message.
-                return None
-            value = _project_authenticated_source_return(
-                complete_value(outcome, owner=owner)
-            )
-        from sugar_lift_py_tests.floor.block_value import BlockValue
-
-        if isinstance(value, BlockValue):
-            # A block is control-flow testimony, not a semantic value.
-            # ``matches()`` retains several GuardedReturns (early ``return False``
-            # arms and ``return self._check_check(...)``). Leave the projection
-            # absent so ``not self.matches(...)`` stands on CallSiteValue.truth
-            # instead of inventing one bool via BlockValue.truth.
-            return None
-        if isinstance(value, CallSiteValue):
-            return value._dig_floor_or_none(
-                reduce_ctx,
-                owner=owner,
-                preserve_opaque_leaf=preserve_opaque_leaf,
-                seen=seen | {key},
-                depth=depth + 1,
-                budget=budget,
-            )
-        return value
+        return self if preserve_opaque_leaf else None
 
     def force_floor(
         self,
@@ -1624,375 +1371,19 @@ class CallSiteValue(FloorValue):
         budget: int = _FORCE_FLOOR_BUDGET,
         project_callsite: bool = True,
     ):
-        key = _term_cycle_key(self.term)
-        if depth >= budget or len(seen) >= budget:
-            _force_floor_gap(
-                owner=owner,
-                target_name=self.target_name,
-                observed="callsite value demand budget exhausted",
-                fix=(
-                    f"callsite `{self.target_name}` exceeded force_floor dig budget "
-                    f"{budget}; leave the bridge as axiomatic and record a DigBoundary"
-                ),
-            )
-        if key in seen:
-            _force_floor_gap(
-                owner=owner,
-                target_name=self.target_name,
-                observed="recursive callsite value demand",
-                fix=(
-                    f"callsite `{self.target_name}` recursively demanded its own "
-                    "floor; leave the bridge as axiomatic and record a DigBoundary"
-                ),
-            )
-        if self.body is None:
-            _force_floor_gap(
-                owner=owner,
-                target_name=self.target_name,
-                observed="missing callsite body",
-                fix=(
-                    f"carry a factory-built body for callsite `{self.target_name}` "
-                    "or leave the bridge as axiomatic"
-                ),
-            )
-        if len(self.parameters) != len(self.arg_values):
-            _force_floor_gap(
-                owner=owner,
-                target_name=self.target_name,
-                observed="callsite arity mismatch",
-                fix=(
-                    f"callsite `{self.target_name}` argument count does not match "
-                    "its body; add argument binding sugar or leave the bridge axiomatic"
-                ),
-            )
-        from sugar_lift_py_tests.effect import effect_reason
-        from sugar_lift_py_tests.outcome import ExitSet, complete_value
-
-        reduce_ctx = _ctx_with_curried_args(
-            ctx,
-            self.parameters,
-            self.arg_values,
-            self.formal_coordinate_cids,
-            self.closure,
-        )
-        retained = self._retained_source_completion
-        if retained is not None:
-            if type(retained) is not _RetainedSourceCompletionV1:
-                _retained_completion_invariant(
-                    owner="CallSiteValue.force_floor",
-                    callsite=self,
-                    observed="retained source completion has wrong exact type",
-                )
-            if not isinstance(retained.value, FloorValue):
-                _retained_completion_invariant(
-                    owner="CallSiteValue.force_floor",
-                    callsite=self,
-                    observed="retained source completion value is not FloorValue",
-                )
-            value = retained.value
-        else:
-            # The one application (#7757), never a reduction of its own.
-            outcome = self._applied_outcome(ctx)
-            if isinstance(outcome, ExitSet) and outcome.halts() == outcome.exits:
-                reason = "; ".join(
-                    effect_reason(halt.effect) for halt in outcome.halts()
-                )
-                _force_floor_gap(
-                    owner=owner,
-                    target_name=self.target_name,
-                    observed="every arm halts",
-                    fix=(
-                        f"callsite `{self.target_name}` reduced to a runtime effect: "
-                        f"{reason}; leave the floor absent and record a DigBoundary"
-                    ),
-                )
-            value = complete_value(outcome, owner=owner)
-        floor = force_floor(
-            value,
-            reduce_ctx,
+        """A call's value is its coordinate: no callee body is applied at
+        lift (#7757 step 6), so a demand for its concrete floor is the named
+        construction gap, never a value read off the callee's body."""
+        del ctx, seen, depth, budget, project_callsite
+        _force_floor_gap(
             owner=owner,
-            seen=seen | {key},
-            depth=depth + 1,
-            budget=budget,
-            project_callsite=project_callsite,
+            target_name=self.target_name,
+            observed="a call's value is its coordinate; no callee body is applied",
+            fix=(
+                f"read callsite `{self.target_name}` as its coordinate, joined "
+                "at prove to the callee's contract, or leave the bridge as axiomatic"
+            ),
         )
-        if project_callsite:
-            _project_callsite_floor(
-                floor,
-                reduce_ctx,
-                owner=owner,
-                target_name=self.target_name,
-                arg_values=self.arg_values,
-            )
-        return floor
-
-    def retained_source_completion_outcome(self):
-        """The completed body the Call producer already reduced, or None.
-
-        ``producer_outcome`` reduces a source body once, publishes its halts
-        at the Call, and seats the completed Floor here. A consumer that needs
-        that body (a statement-position call splicing its field stores) reads
-        it; reducing it again would replay the producer.
-        """
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        retained = self._retained_source_completion
-        if retained is None:
-            return None
-        if type(retained) is not _RetainedSourceCompletionV1 or not isinstance(
-            retained.value, FloorValue
-        ):
-            _retained_completion_invariant(
-                owner="CallSiteValue.retained_source_completion_outcome",
-                callsite=self,
-                observed="retained source completion has wrong exact type",
-            )
-        return ExitSet.completed(retained.value)
-
-    def _applied_outcome(self, ctx: Any = None):
-        """This call applied by ``producer_outcome``, completed faces read back.
-
-        The demand of a floor (``_dig_floor_or_none``, ``force_floor``) on a
-        call no producer has applied yet applies it here, through the one
-        application (#7757), never by reducing the body itself.  Each
-        completed face ``producer_outcome`` seats on this Call is read back
-        as the body's completion with ``retained_source_completion_outcome``,
-        as a statement-position call reads its block (#7979, #7981).  A face
-        the projection handed on unseated (a native operation the bound
-        actuals discharged) is the body's own already.  Every halt is the
-        Call's, as the producer published it; a still-pending native
-        operation is handed back unchanged.
-        """
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        outcome = self.producer_outcome(ctx)
-        if not isinstance(outcome, ExitSet):
-            return outcome
-
-        from sugar_lift_py_tests.floor.named_expression_value import (
-            peel_walrus_binds,
-        )
-
-        def body_completion(value):
-            # The Call's value under the callee stores it carries
-            # (``CallerStoreValue``): the demand reads the body itself.
-            _stores, call = peel_walrus_binds(value)
-            if (
-                isinstance(call, CallSiteValue)
-                and call._retained_source_completion is not None
-                and call.term is self.term
-                and call.body is self.body
-            ):
-                return call.retained_source_completion_outcome()
-            return ExitSet.completed(value)
-
-        return outcome.and_then(body_completion)
-
-    def _reduce_source_outcome(self, ctx: Any = None):
-        """Reduce this already-constructed source body without floor projection.
-
-        The inner half of ``producer_outcome`` and called only by it: the
-        body's complete ExitSet, method halts included, before the Call
-        projects it (native-operation discharge against the bound actuals,
-        call-owned raises, the retained completion).  Every call is applied
-        through ``producer_outcome`` (#7757 entry 6); a caller that needs the
-        body's block reads it back with ``retained_source_completion_outcome``
-        (a floor demand through ``_applied_outcome``).  It is the only
-        reduction of a callee body and never reconstructs source.
-        """
-        if self._retained_source_completion is not None:
-            _retained_completion_invariant(
-                owner="CallSiteValue._reduce_source_outcome",
-                callsite=self,
-                observed="retained source completion already seated",
-            )
-        if self.body is None or len(self.parameters) != len(self.arg_values):
-            _force_floor_gap(
-                owner="CallSiteValue._reduce_source_outcome",
-                target_name=self.target_name,
-                observed="missing body or callsite arity mismatch",
-                fix="retain the source-visible call frame or keep the call loud",
-            )
-        reduce_ctx = _ctx_with_curried_args(
-            ctx,
-            self.parameters,
-            self.arg_values,
-            self.formal_coordinate_cids,
-            self.closure,
-        )
-        if self.lexical_defining_class is not None:
-            from sugar_lift_py_tests.temporal import curry_temporal
-
-            reduce_ctx = curry_temporal(
-                reduce_ctx,
-                ("__class__",),
-                (self.lexical_defining_class,),
-                owner="CallSiteValue lexical class cell",
-                blame=self.target_name,
-            )
-        return _reduce_callsite_body(
-            self.body, reduce_ctx, blame=self.target_name, frame=self
-        )
-
-    def producer_outcome(self, ctx: Any = None):
-        """Publish authenticated source-body halts at the Call expression.
-
-        The one application of a call: every call bound by
-        ``object_value.bind_call`` -- plain, method, class, computed, with
-        ``*``/``**`` -- is applied here, so every face of the body, raises
-        included, is the call's own however the call was written.
-
-        A completed source body still denotes this ordinary call coordinate;
-        later consumers may demand its returned floor exactly as before.  A
-        halted body is already the Call producer's authenticated exceptional
-        face and must not wait for an assertion (or any other consumer) to dig
-        it out.  Mixed bodies retain every guard and arm testimony while only
-        replacing completed block records with the call coordinate they
-        compute.
-        """
-        if self._retained_source_completion is not None:
-            _retained_completion_invariant(
-                owner="CallSiteValue.producer_outcome",
-                callsite=self,
-                observed="retained source completion already seated",
-            )
-        if self.body is None:
-            from sugar_lift_py_tests.outcome import ExitSet
-
-            return ExitSet.completed(self)
-
-        from sugar_lift_py_tests.context.reduce_context import ReduceContext
-
-        if ctx is not None and not isinstance(ctx, ReduceContext):
-            from sugar_source_tree.panic import SugarNotWritten
-
-            raise SugarNotWritten(
-                owner="CallSiteValue.producer_outcome",
-                blame=self.site,
-                observed="source-visible call under a temporal-only reduction context",
-                requested="a ReduceContext that can record the call",
-                fix=(
-                    "keep the call loud until allocate carries a reduction "
-                    "context; do not invent the callee body"
-                ),
-            )
-        outcome = self._reduce_source_outcome(ctx)
-        return self.project_producer_outcome(outcome, ctx)
-
-    def project_producer_outcome(self, outcome, ctx):
-        """Project a source-authenticated callee outcome onto this Call node.
-
-        A deferred native operation in ``outcome`` discharges under ``ctx``,
-        the context of the caller whose actuals fill its placeholders."""
-
-        if self._retained_source_completion is not None:
-            _retained_completion_invariant(
-                owner="CallSiteValue.project_producer_outcome",
-                callsite=self,
-                observed="retained source completion already seated",
-            )
-
-        from dataclasses import replace
-
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        def retaining(value):
-            if not isinstance(value, FloorValue):
-                _retained_completion_invariant(
-                    owner="CallSiteValue.project_producer_outcome",
-                    callsite=self,
-                    observed="source producer completion is not FloorValue",
-                )
-            retained = replace(self)
-            object.__setattr__(
-                retained,
-                "_retained_source_completion",
-                _RetainedSourceCompletionV1(value),
-            )
-            return retained
-
-        # The receiver field stores the callee's body made are the caller's
-        # on both arms (``caller_visible_stores``), wherever the call sits.
-        # A completed arm carries them on the Call's value
-        # (``CallerStoreValue``, a walrus's write) to the statement that
-        # evaluates the call, which applies them as it applies a walrus's
-        # write or lays them in its record (``ExprStatementSugar``); a halt
-        # carries them into the caller's record here (``at_the_call``).  What
-        # the call did to any other object the caller shares is the one
-        # exposure rule's (#7757 steps 5 and 6).  The callee's locals and
-        # keys stay behind on both.
-        carries = carries_its_stores_to_the_caller(self)
-
-        def completed_at_the_call(value):
-            from sugar_lift_py_tests.floor.block_value import BlockValue
-            from sugar_lift_py_tests.floor.named_expression_value import (
-                carry_walrus_binds,
-            )
-
-            carried = (
-                _carried_stores(value.statements)
-                if carries and isinstance(value, BlockValue)
-                else ()
-            )
-            return ExitSet.completed(carry_walrus_binds(carried, retaining(value)))
-
-        if isinstance(outcome, ExitSet) and outcome.completed_value() is not None:
-            # A completed body seats its value on the Call.  A raise is never
-            # a completion (#7821): it arrives as a halt and takes the arm
-            # below, where it becomes the Call's own halted face.
-            return outcome.and_then(completed_at_the_call)
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
-
-        if isinstance(outcome, NativeOperationExitCarrierV1):
-            if self.bound_source_actuals is not None:
-                outcome = self.bound_source_actuals.project_native_carrier(
-                    outcome, ctx
-                )
-                actuals = None
-            else:
-                actuals = self.bound_native_actuals_by_coordinate
-            if actuals is None:
-                # A discharged ExitSet returns here. A still-pending carrier
-                # names an outer exit value this frame already substituted
-                # and cannot discharge as a formal.
-                return outcome
-            outcome = outcome.discharge(ctx, actuals)
-        # Each completed arm continues as the Call retaining its value; each
-        # halt continues as the Call's own halt, in the caller's record at the
-        # call (``at_the_call``), never the callee's. Both are continuations
-        # beneath the arm, so its guard, faces and ``owed`` ride on, and both
-        # carry the callee's caller-visible stores (above).
-
-        def left_the_call(halt):
-            # The frame the callee reduced under (``_reduce_callsite_body``).
-            from sugar_lift_py_tests.occurrence import call_frame_path
-
-            frame = (
-                None
-                if self.site is None
-                else call_frame_path(self.site, self.occurrence_path)
-            )
-            carried = _carried_stores(_record_entries(halt.state)) if carries else ()
-            return ExitSet.halted(
-                call_owned(halt.effect, frame), state=at_the_call(ctx, carried)
-            )
-
-        return outcome.and_then(completed_at_the_call, consume=left_the_call)
-
-
-def carries_its_stores_to_the_caller(call) -> bool:
-    """Whether the receiver field stores ``call``'s body made are its
-    caller's: a constructor (``__init__``) or a free function (no runtime
-    dispatch receiver).  A method other than ``__init__`` keeps its receiver,
-    and its stores stay nested.  The one condition for both arms of the call,
-    wherever it sits (``CallSiteValue.project_producer_outcome``)."""
-    return call.body is not None and (
-        call.target_name == "__init__"
-        or call.target_name.endswith(".__init__")
-        or call.runtime_dispatch_receiver is None
-    )
 
 
 def caller_visible_stores(entries) -> tuple:
@@ -2003,9 +1394,7 @@ def caller_visible_stores(entries) -> tuple:
     unconditional: a folded ``isinstance(match, str)`` still stamps the tail
     with ``true_guard``, and that is not a branch.  A store under a real
     branch guard stays in the callee's nested record; it is never flattened
-    onto the receiver.  The stores of the one projection of what a callee
-    did to objects its caller sees, for a completed body and for a halt, at
-    the call (``_carried_stores``)."""
+    onto the receiver."""
     from sugar_lift_py_tests.floor.guarded_receiver_field_store_value import (
         GuardedReceiverFieldStoreValue,
     )
@@ -2023,20 +1412,6 @@ def caller_visible_stores(entries) -> tuple:
         elif isinstance(entry, ReceiverFieldStoreValue):
             stores.append(entry)
     return tuple(stores)
-
-
-def _carried_stores(entries) -> tuple:
-    """The receiver field stores among a callee record's ``entries`` that
-    reach its caller (``caller_visible_stores``), each as the callee store
-    the Call's value carries (``CallerStoreValue``): it advances every
-    binding of the caller's that names its receiver.  The one projection of
-    what an applied body did to objects its caller sees, for a completed
-    body and for a halt (``CallSiteValue.project_producer_outcome``)."""
-    from sugar_lift_py_tests.floor.named_expression_value import CallerStoreValue
-
-    return tuple(
-        CallerStoreValue("", store) for store in caller_visible_stores(entries)
-    )
 
 
 def _unconditional(guard) -> bool:
@@ -2058,22 +1433,11 @@ def receiver_after_its_call(receiver, result):
     not, and the receiver is then unknown after the call (the one exposure
     rule, ``PathContainerCallSugar``).
 
-    The call states it through the one projection of what a callee did to
-    objects its caller sees (``caller_visible_stores``), read off the
-    callee's own record where the call stands:
-
-    - a source body run on ``receiver`` as its first actual, whose every
-      effect on that object is a field store on its first formal or a base
-      initializer's own call on it (``first_actual_stated_by_stores``):
-      ``receiver`` with each of the record's stores on it, none under a
-      guard of the body's own, in the order the body made them, and each
-      base initializer call's own statement of it (this rule again; an
-      unanswered one states nothing);
-    - a builtin's own transition of it (``ReceiverOwnedMutationResult``):
-      the receiver after that transition.
-
-    A call that did not run a body on ``receiver`` (an unanswered callee,
-    a body run on another object) states nothing about it.
+    The only call that states it here is a builtin's own transition of it
+    (``ReceiverOwnedMutationResult``): the receiver after that transition.
+    A source call states nothing about it: its body is never applied at
+    lift (#7757 step 6), and what it did to the receiver is what its
+    contract states, joined at prove (step 7).
 
     What the call states is ``receiver``'s object after it, never a newer
     currency: the state is current only where ``receiver`` was and the call's
@@ -2091,67 +1455,21 @@ def receiver_after_its_call(receiver, result):
 
 
 def _stated_after(call, receiver):
-    """``receiver`` after ``call`` (a call's completed value, or a record's
-    entry for one) where the call states it (``receiver_after_its_call``),
-    else None."""
-    from sugar_lift_py_tests.floor.guarded_receiver_field_store_value import (
-        GuardedReceiverFieldStoreValue,
-    )
-    from sugar_lift_py_tests.floor.receiver_field_store_value import (
-        ReceiverFieldStoreValue,
-    )
-
-    from .block_value import BlockValue
-    from .named_expression_value import peel_walrus_binds
+    """``receiver`` after ``call`` (a call's completed value) where the call
+    states it (``receiver_after_its_call``), else None: a builtin base's own
+    transition of it.  A source call states nothing here: its body is never
+    applied at lift, and what it did to the receiver is what its contract
+    states, joined at prove (#7757 steps 6 and 7)."""
     from .object_identity import as_the_alias_holds
     from .receiver_owned_mutation_result import ReceiverOwnedMutationResult
 
-    if isinstance(call, ReceiverOwnedMutationResult):
-        if _same_object_value(call.receiver_before, receiver):
-            # The builtin base's transition, as ``receiver`` holds the object:
-            # its currency and arrival, never the base's own receiver's.
-            return as_the_alias_holds(call.receiver_after, receiver)
-        return None
-    if (
-        not isinstance(call, CallSiteValue)
-        or not call.first_actual_stated_by_stores
-        or not carries_its_stores_to_the_caller(call)
-        or not call.arg_values
-        or not _same_object_value(call.arg_values[0], receiver)
+    if isinstance(call, ReceiverOwnedMutationResult) and _same_object_value(
+        call.receiver_before, receiver
     ):
-        return None
-    completion = call.retained_source_completion_outcome()
-    record = None if completion is None else completion.completed_value()
-    if not isinstance(record, BlockValue) or _guarded_store_on(
-        record.statements, receiver
-    ):
-        return None
-    state = receiver
-    for entry in record.statements:
-        entry = peel_walrus_binds(entry)[1]
-        if isinstance(entry, GuardedReceiverFieldStoreValue):
-            if not _same_object_value(entry.receiver, receiver):
-                continue
-            if not _unconditional(entry.guard):
-                return None
-            state = state.with_field_store(entry.attr, entry.value)
-        elif isinstance(entry, ReceiverFieldStoreValue):
-            if _same_object_value(entry.receiver, receiver):
-                state = state.with_field_store(entry.attr, entry.value)
-        elif isinstance(entry, ReceiverOwnedMutationResult):
-            if _same_object_value(entry.receiver_before, receiver):
-                state = as_the_alias_holds(entry.receiver_after, state)
-        elif isinstance(entry, CallSiteValue):
-            if entry.body is None:
-                # An unanswered call the body made in statement position (a
-                # base initializer whose class is not read among them):
-                # what it did to the object is not stated.
-                return None
-            if entry.arg_values and _same_object_value(entry.arg_values[0], receiver):
-                state = _stated_after(entry, state)
-                if state is None:
-                    return None
-    return state
+        # The builtin base's transition, as ``receiver`` holds the object:
+        # its currency and arrival, never the base's own receiver's.
+        return as_the_alias_holds(call.receiver_after, receiver)
+    return None
 
 
 def _same_object_value(value, receiver) -> bool:
@@ -2164,46 +1482,6 @@ def _same_object_value(value, receiver) -> bool:
         and type(value) is type(receiver)
         and getattr(value, "identity", None) == identity
     )
-
-
-def _guarded_store_on(entries, receiver) -> bool:
-    """Whether a record's ``entries`` hold a field store on ``receiver``'s
-    object under a guard: one the call does not carry
-    (``caller_visible_stores``), so what the body left of it is not its
-    carried stores alone."""
-    from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
-    from sugar_lift_py_tests.floor.guarded_receiver_field_store_value import (
-        GuardedReceiverFieldStoreValue,
-    )
-
-    from .block_value import BlockValue
-
-    for entry in entries:
-        if (
-            isinstance(entry, GuardedReceiverFieldStoreValue)
-            and not _unconditional(entry.guard)
-            and _same_object_value(entry.receiver, receiver)
-        ):
-            return True
-        if isinstance(entry, BlockValue):
-            nested = entry.statements
-        elif isinstance(entry, GuardedFaces):
-            nested = (*entry.unconditional_entries, *entry.entries)
-        else:
-            continue
-        if _guarded_store_on(nested, receiver):
-            return True
-    return False
-
-
-def _record_entries(state) -> tuple:
-    """The entries of a halt's record (``_ReducedBlock``); a halt with no
-    record of its own holds none."""
-    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
-
-    if isinstance(state, _ReducedBlock):
-        return state.entries
-    return ()
 
 
 def at_the_call(ctx, carried=()):
@@ -2219,17 +1497,13 @@ def at_the_call(ctx, carried=()):
     halt. The halt keeps the callee's effect, and its arm keeps what the
     callee owes (``ExitSet.and_then``).
 
-    What the callee did before its halt to an object the caller can see is
-    not rolled back: ``carried`` (``_carried_stores``) are the writes
-    the call carries on this arm, each applied to the caller's context
-    (``bind_walrus_binds``) as a completed call's value carries them to its
-    statement; the receiver field stores among them are the record's
-    entries.
-
-    Every halt a call publishes takes it, once, where it crosses the call
-    boundary: the body's (``CallSiteValue.project_producer_outcome``).  A
-    class call publishes no halt of its class statement: the statement ran
-    where it stands, and the call reads the class it bound."""
+    What the call did before its halt to an object the caller can see is
+    not rolled back: ``carried`` are the writes the call carries on this
+    arm, each applied to the caller's context (``bind_walrus_binds``) as a
+    completed call's value carries them to its statement; the receiver field
+    stores among them are the record's entries.  A class call publishes no
+    halt of its class statement: the statement ran where it stands, and the
+    call reads the class it bound."""
     from sugar_lift_py_tests.floor.named_expression_value import (
         bind_walrus_binds,
         caller_stores_of,
@@ -2239,34 +1513,6 @@ def at_the_call(ctx, carried=()):
     _writes, stores = caller_stores_of(tuple(carried))
     context = bind_walrus_binds(tuple(carried), ctx)
     return _ReducedBlock(tuple(stores), True, (), context=context)
-
-
-def call_owned(effect, frame=None):
-    """A halt of a call as the Call's own face: a raise is owned by the Call
-    node (``producer_node_owner``).  Every halt a call publishes takes it:
-    the body's (``CallSiteValue.project_producer_outcome``).
-
-    ``frame`` is the path the callee reduced under
-    (``occurrence.call_frame_path``: the call's path and the call).  A raise
-    whose occurrence carries no path of its own (a typed ``raise`` keyed by
-    its ``file:line:col`` locus) is stamped with it here, at the crossing, so
-    the caller reads which call raised it (``try_sugar._edge_hits``); an
-    occurrence that already carries a path names its frames already."""
-    from dataclasses import replace
-
-    from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.effect.authenticated_raise_locus import (
-        AuthenticatedRaiseLocus,
-    )
-
-    if isinstance(effect, RaiseEffect):
-        occurrence = effect.occurrence
-        if frame and "@" not in occurrence.value:
-            occurrence = AuthenticatedRaiseLocus.of(
-                f"{occurrence.value}@{'/'.join(frame)}"
-            )
-        return replace(effect, producer_node_owner="Call", occurrence=occurrence)
-    return effect
 
 
 def force_floor(
@@ -2295,68 +1541,6 @@ def _current_occurrence_path() -> tuple[str, ...]:
     from sugar_lift_py_tests.occurrence import current_path
 
     return current_path()
-
-
-def _reduce_callsite_body(
-    body: SugarBody[Any] | FunctionBodyUniverse,
-    ctx: Any,
-    *,
-    blame: str,
-    frame: "CallSiteValue | None" = None,
-):
-    """Reduce a callee body as the frame of ``frame``'s call occurrence."""
-    if frame is None or frame.site is None:
-        return _reduce_callsite_body_in_frame(body, ctx, blame=blame)
-    from sugar_lift_py_tests.occurrence import call_frame_path, occurrence_path
-
-    with occurrence_path(call_frame_path(frame.site, frame.occurrence_path)):
-        return _reduce_callsite_body_in_frame(body, ctx, blame=blame)
-
-
-def _reduce_callsite_body_in_frame(
-    body: SugarBody[Any] | FunctionBodyUniverse,
-    ctx: Any,
-    *,
-    blame: str,
-):
-    from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
-        SourceVisibleFunctionBodySugar,
-    )
-    from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
-        ClassConstructorBodySugar,
-    )
-
-    if isinstance(body, SourceVisibleFunctionBodySugar):
-        return body.desugar(ctx)
-    if isinstance(body, ClassConstructorBodySugar):
-        return body.desugar(ctx)
-    if isinstance(body, SugarBody):
-        return body.reduce(ctx)
-    if isinstance(body, FunctionBodyUniverse):
-        # The one body reduction, the same law the source-visible body's
-        # ``desugar`` above runs (``BlockSugar`` was deleted; #6400).
-        from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_body
-
-        return reduce_body(body.statements, ctx)
-    _force_floor_gap(
-        owner="CallSiteValue.force_floor",
-        target_name=blame,
-        observed=type(body).__name__,
-        fix="carry a closed ordinary source-body variant before demanding a callsite floor",
-    )
-
-
-def _project_callsite_floor(
-    floor: FloorValue,
-    ctx: Any,
-    *,
-    owner: str,
-    target_name: str,
-    arg_values: tuple[FloorValue, ...],
-) -> None:
-    # Currying is already recorded by curry_temporal. Projection contributes
-    # proof/callsite state but must not fabricate a second operation event.
-    del floor, ctx, owner, target_name, arg_values
 
 
 # Data constructors the verifier treats as structural *values* (not operators /
@@ -2506,27 +1690,3 @@ def list_append_coordinate_value(prior, value, site) -> CallSiteValue:
         body=None,
         site=site,
     )
-
-
-def _ground_scalar_return(value):
-    """The term of a sole returned ground immutable scalar, else None."""
-    from sugar_lift_py_tests.effect import is_lift_time_decidable
-    from sugar_lift_py_tests.floor.bytes_value import BytesValue
-    from sugar_lift_py_tests.floor.none_value import NoneValue
-    from sugar_lift_py_tests.floor.string_value import StringValue
-    from sugar_lift_py_tests.floor.term_value import TermValue
-    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
-    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
-
-    projected = _project_authenticated_source_return(value)
-    if type(projected) not in (
-        TermValue,
-        StringValue,
-        BytesValue,
-        NoneValue,
-        TrueBoolLiteralSugar,
-        FalseBoolLiteralSugar,
-    ):
-        return None
-    term = projected.to_term(owner="CallSiteValue ground return")
-    return term if is_lift_time_decidable(term) else None

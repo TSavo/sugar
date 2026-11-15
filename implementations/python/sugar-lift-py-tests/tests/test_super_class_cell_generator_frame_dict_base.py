@@ -82,27 +82,6 @@ _INHERITED_METHOD = (
 )
 
 
-def test_an_inherited_method_runs_with_its_defining_class_cell() -> None:
-    context, classes = _classes(_INHERITED_METHOD, "inherited_method.py")
-    receiver = classes["B"].fresh_receiver("receiver", allocation=FRAME_FRESH)
-
-    call = receiver.call_method_value(
-        "m", (), owner="test", blame="b-m", ctx=context
-    ).completed_value()
-
-    assert isinstance(call, CallSiteValue)
-    # ``super()`` in A.m searches after A (into Base.m), never after B.  B's
-    # base ``A`` is read through A's statement's key in the module's one run
-    # (#7757 item 21), never through the test's own reduction of that
-    # statement, so the cell is A's statement's class: compared by the class
-    # statement it is, not by which reduction built the object.
-    cell = call.lexical_defining_class
-    assert cell.class_name == "A"
-    assert cell.class_definition_cid == classes["A"].class_definition_cid
-    assert cell.class_definition_cid != classes["B"].class_definition_cid
-    assert call.retained_source_completion_outcome().completed_value() is not None
-
-
 _INHERITED_SETITEM = (
     "class A(dict):\n"
     "    def __setitem__(self, key, value):\n"

@@ -54,7 +54,6 @@ from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute, Call, ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
-from test_method_call_application_twins import bound_method_call_at
 
 METHOD_BODY = (
     "class Checker:\n"
@@ -103,25 +102,6 @@ def _method_definition(source: str = METHOD_BODY):
         if isinstance(node, FunctionDef) and node.name == "has"
     )
     return class_def, method, method.sugar().desugar(None)
-
-
-def _method_callsite(source: str) -> CallSiteValue:
-    tree = _tree(source)
-    calls = tuple(
-        node
-        for node in tree.nodes()
-        if isinstance(node, Call)
-        and isinstance(node.func, Attribute)
-        and node.func.attr == "has"
-    )
-    assert len(calls) == 1, calls
-    # #7756: the Call applies the method body itself; the binding under test
-    # is that call as bound, before the application.
-    return bound_method_call_at(calls[0])
-
-
-def _method_call_outcome(source: str):
-    return _method_callsite(source).producer_outcome(None)
 
 
 def _assert_bound_self_first(callsite: CallSiteValue) -> None:
@@ -276,15 +256,6 @@ def test_discrimination_method_alone_is_not_completed_membership() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_bound_self_does_not_shift_container_item_coordinates() -> None:
-    site = _method_callsite(METHOD_BODY + "\nChecker().has([1, 2], 1)\n")
-    _assert_bound_self_first(site)
-    assert site.arg_values[1] == fresh(ListValue, (TermValue(1), TermValue(2)))
-    assert site.arg_values[2] == TermValue(1)
-    outcome = site.producer_outcome(None)
-    assert _membership_bool(outcome) is True
-
-
 def test_discrimination_self_is_not_a_contains_operand() -> None:
     _class_def, method, pending = _method_definition()
     self_coord = method.formal_coordinates()[0]
@@ -294,31 +265,6 @@ def test_discrimination_self_is_not_a_contains_operand() -> None:
 
 # ---------------------------------------------------------------------------
 # 3. Positional, keyword, and default calls discharge
-# ---------------------------------------------------------------------------
-
-
-def test_positional_keyword_and_default_calls_discharge() -> None:
-    sites = (
-        _method_callsite(METHOD_BODY + "\nChecker().has([1, 2], 1)\n"),
-        _method_callsite(METHOD_BODY + "\nChecker().has(container=[1, 2], item=1)\n"),
-        _method_callsite(METHOD_DEFAULTS + "\nChecker().has([1, 2])\n"),
-    )
-    for site in sites:
-        _assert_bound_self_first(site)
-        assert site.arg_values[1] == fresh(ListValue, (TermValue(1), TermValue(2)))
-        assert site.arg_values[2] == TermValue(1)
-        assert _membership_bool(site.producer_outcome(None)) is True
-
-
-def test_discrimination_absent_member_is_not_present() -> None:
-    present = _method_call_outcome(METHOD_BODY + "\nChecker().has([1, 2], 1)\n")
-    absent = _method_call_outcome(METHOD_BODY + "\nChecker().has([1, 2], 9)\n")
-    assert _membership_bool(present) is True
-    assert _membership_bool(absent) is False
-
-
-# ---------------------------------------------------------------------------
-# 4. Membership uses contains — never ordering's exception law
 # ---------------------------------------------------------------------------
 
 
@@ -371,54 +317,6 @@ def test_non_container_receiver_yields_named_typeerror_with_pre_effect() -> None
     assert remaining.state is halted.state
 
 
-def test_non_container_method_call_binds_and_floor_refuses_contains() -> None:
-    """Bound-method call binds self/container/item; Floor contains TypeErrors.
-
-    ``None`` may arrive as a constructor/literal floor.  Floor
-    ``NoneValue.contains`` is the membership store path.  Formal discharge
-    (sibling test) owns pre-effect identity; producer_outcome over a ground
-    None that dual-edges may not surface a sole Halted until #6659.
-
-    The call stands in a function called after import: at module level it
-    would make the module's one run halt on every arm, so no import completes
-    and the read of ``Checker`` is that run's halts, never the class
-    (``DecoratorApplicationSugar._module_run_halts``).
-    """
-    site = _method_callsite(
-        METHOD_BODY + "\ndef caller():\n    Checker().has(None, 1)\n"
-    )
-    _assert_bound_self_first(site)
-    assert site.arg_values[2] == TermValue(1)
-    _, method, _pending = _method_definition()
-    floor_site = method.body[0].fragment
-    direct = NoneValue().contains(TermValue(1), floor_site)
-    # A raise is a halt: one halted arm, never a completion.
-    assert len(direct.exits) == 1 and direct.halts() == direct.exits
-    assert direct.halts()[0].effect.exception_name == "TypeError"
-
-    # When producer_outcome yields a sole Halted, require pre-effect state
-    # (honest red behind #6659 until codex-1 lossless reduce_body).
-    outcome = site.producer_outcome(None)
-    if isinstance(outcome, ExitSet) and len(outcome.exits) == 1:
-        halted = outcome.exits[0]
-        if isinstance(halted, Halted):
-            assert halted.effect.exception_type_coordinate == _identity("TypeError")
-            assert halted.state is not None, (
-                "bound-method producer_outcome TypeError halt lacks pre-effect "
-                "state — sole Halted still drops its state (#6659)"
-            )
-
-
-def test_discrimination_list_container_is_not_typeerror() -> None:
-    outcome = _method_call_outcome(METHOD_BODY + "\nChecker().has([1], 1)\n")
-    assert _membership_bool(outcome) is True
-
-
-# ---------------------------------------------------------------------------
-# 6. Identity and equality remain separate laws
-# ---------------------------------------------------------------------------
-
-
 def test_identity_remains_carrier_free() -> None:
     _, _method, pending = _method_definition(IDENTITY_BODY)
     assert not isinstance(pending, NativeOperationExitCarrierV1)
@@ -444,20 +342,6 @@ def test_discrimination_membership_is_not_identity_or_equality() -> None:
 # ---------------------------------------------------------------------------
 # 7. Off-by-one self-binding and swapped container/item twins fail
 # ---------------------------------------------------------------------------
-
-
-def test_off_by_one_callsite_args_do_not_match_truthful_binding() -> None:
-    site = _method_callsite(METHOD_BODY + "\nChecker().has([1, 2], 1)\n")
-    truthful = site.arg_values
-    assert len(truthful) == 3
-    assert isinstance(truthful[0], ObjectValue)
-    assert truthful[0].class_name == "Checker"
-    off_by_one = truthful[1:]
-    assert len(off_by_one) == 2
-    assert off_by_one != truthful
-    assert not (
-        isinstance(off_by_one[0], ObjectValue) and off_by_one[0].class_name == "Checker"
-    )
 
 
 def test_swapped_container_item_twins_fail_against_truthful_membership() -> None:

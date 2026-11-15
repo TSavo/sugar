@@ -33,8 +33,8 @@ statement runs (``sugar_source_tree.nodes._decorator_step``) into one
   value's sugar, the one read of its name), or any other expression: its
   value is called on the definition through the one call routine,
   ``callable_application_with`` (``enter_source_frame``, ``bind_call``,
-  ``CallSiteValue.producer_outcome``), so every face of the decorator's body
-  is the statement's.
+  ``definition_edge_call``), so the decorator's call is its coordinate and edge
+  and its faces are the statement's.
 
 An ``async def`` or generator function is no value this carries
 (``uncarried``): its decorator expressions are evaluated, and what they make of

@@ -186,19 +186,17 @@ class MappingObjectValue(ObjectValue):
 
     def _source_store(self, name, arguments, site, ctx):
         """``obj[k] = v`` / ``del obj[k]`` through a source ``name`` the MRO
-        selects: the method applied under the store statement's context, and
-        the receiver it leaves read off its one receiver-owned mutation.
-
-        The applied call's value carries the stores the method made on objects
-        its caller sees (``CallerStoreValue``); it is read through the one
-        operand door (``consume_operands``), so the body is read off the Call
-        beneath them and every store rides on to the statement.
-
-        The method's ``__class__`` cell (PEP 3135) is the class whose body
-        defines it, bound where every method application binds it
-        (``object_value.bind_method_call``: ``lexical_defining_class``) --
-        never the receiver's class, which for an inherited method is not the
-        class a zero-argument ``super()`` in its body searches after (#7757).
+        selects: the implicit special-method call, through the one door
+        every such call takes (``ObjectValue.call_method_value``), its
+        coordinate and edge where the receiver's class is decided (#7757
+        step 6) and the unanswered call where it is not.  The method's body
+        is never applied here, so what it left of the receiver is not read:
+        on each completed face the receiver after the call is unknown
+        (``python:receiver_after_call``), as for any undecided mutation, and
+        what the method's contract states about it is joined at prove (step
+        7).  The call's value is read through the one operand door
+        (``consume_operands``), so every write it carries rides on to the
+        statement.
         """
         if ctx is None:
             from sugar_lift_py_tests.gap.panic import construction_panic_gap
@@ -213,6 +211,10 @@ class MappingObjectValue(ObjectValue):
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
         )
+        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+            _unknown_after,
+        )
 
         return (
             super()
@@ -225,9 +227,7 @@ class MappingObjectValue(ObjectValue):
             )
             .and_then(
                 lambda applied: consume_operands(
-                    lambda callsite: callsite.retained_source_completion_outcome().and_then(
-                        self._project_setitem_receiver
-                    ),
+                    lambda _call: ExitSet.completed(_unknown_after(site, name)),
                     applied,
                 )
             )
@@ -277,32 +277,6 @@ class MappingObjectValue(ObjectValue):
             requested="the dict base's storage after the deletion, or its unknown post-state",
             fix="state the deletion's post-state as a DictValue or the undecided receiver",
         )
-
-    def _project_setitem_receiver(self, value):
-        from sugar_lift_py_tests.floor.block_value import BlockValue
-        from sugar_lift_py_tests.floor.receiver_owned_mutation_result import (
-            ReceiverOwnedMutationResult,
-        )
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        entries = value.statements if isinstance(value, BlockValue) else (value,)
-        mutations = tuple(
-            entry
-            for entry in entries
-            if isinstance(entry, ReceiverOwnedMutationResult)
-            and type(entry.receiver_before) is type(self)
-            and entry.receiver_before.identity == self.identity
-        )
-        if len(mutations) != 1:
-            construction_panic_gap(
-                owner="MappingObjectValue.setitem",
-                blame=self.identity,
-                observed=f"{len(mutations)} receiver-owned mutation results",
-                requested="one authenticated __setitem__ receiver transition",
-                fix="preserve the source __setitem__ body mutation or keep loud",
-            )
-        return ExitSet.completed(mutations[0].receiver_after)
 
     def delitem(self, index, site, ctx):
         if self.protocol_owner("__delitem__", site) == "source":

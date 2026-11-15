@@ -47,38 +47,3 @@ def test_receiver_and_inherited_method_retain_distinct_class_owners() -> None:
     assert owner_method.defining_class is base
 
 
-def test_inherited_method_binds_lexical_class_not_runtime_receiver_class() -> None:
-    context, base, derived = _constructed_pair()
-    receiver = derived.fresh_receiver("receiver", allocation=FRAME_FRESH)
-
-    projected = receiver.call_method_value(
-        "owner", (), owner="test", blame="call-owner", ctx=context
-    )
-
-    assert projected.completed_value() is not None
-    assert isinstance(projected.completed_value(), CallSiteValue)
-    assert projected.completed_value().lexical_defining_class is base
-    reduced = projected.completed_value().retained_source_completion_outcome()
-    assert reduced.completed_value() is not None
-    assert reduced.completed_value().statements[0].value is base
-
-
-def test_overriding_method_uses_derived_defining_class() -> None:
-    base, _ = _definitions()
-    source = "class Derived:\n" "    def owner(self):\n" "        return __class__\n"
-    tree = SourceFile(
-        (source, "derived_owner.py", blake3_512_of(source.encode())),
-        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
-    )
-    (derived,) = tuple(node for node in tree.root.body if isinstance(node, ClassDef))
-    context = ReduceContext.root(owner="test")
-    derived_value = derived.sugar().desugar(context).completed_value()
-    receiver = derived_value.fresh_receiver("receiver", allocation=FRAME_FRESH)
-
-    projected = receiver.call_method_value(
-        "owner", (), owner="test", blame="call-owner", ctx=context
-    ).completed_value()
-
-    assert projected.lexical_defining_class is derived_value
-    reduced = projected.retained_source_completion_outcome()
-    assert reduced.completed_value().statements[0].value is derived_value
