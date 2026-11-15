@@ -102,9 +102,11 @@ class ReceiverFieldStoreStateSugar(ConstructedTermSugar):
         """The receiver after a store that ran code: the value its statement
         bound under ``after`` (``ReceiverFieldStoreSugar._ran``), read as any
         key is where this read stands (``evaluation_read_here``).  Where no
-        such key is bound here -- a statement never substituted, a read
-        outside the frame that ran the store -- an unknown minted at the
-        store: the object after code this read does not see."""
+        such key is bound here -- the statement's own evaluation of the
+        state before its store ran (``KeyedStoreSugar.writes``), a statement
+        never substituted, a read outside the frame that ran the store -- an
+        unknown minted at the store: the object after code this read does
+        not see."""
         from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
             _unknown_after,
         )

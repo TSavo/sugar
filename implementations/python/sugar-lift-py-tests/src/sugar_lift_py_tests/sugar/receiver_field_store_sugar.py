@@ -41,9 +41,10 @@ class ReceiverFieldStoreSugar(Sugar):
         one unanswered call: two faces, owed.
 
       A store that ran code leaves the receiver as that call states it
-      (``ObjectValue.after_field_store_call``: unknown where it states
-      nothing, so no field of it is decided), bound under ``after``, the key
-      the receiver's post-state reads it through.
+      (``ObjectValue.after_field_store_call``: where it states nothing, the
+      same instance with its contents not current, so no field of it is
+      decided), bound under ``after``, the key the receiver's post-state
+      reads it through after the statement.
     - any other value takes the ordinary store
       (``store_effect_sugar.project_setattr``): a formal with no
       actual is the undischarged ``setattr_named`` demand, a decided runtime
