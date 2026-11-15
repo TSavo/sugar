@@ -120,6 +120,25 @@ def test_an_undecided_global_is_an_input_with_no_stated_value(tmp_path):
     assert row.input_values == ()
 
 
+def test_a_global_only_a_star_import_may_bind_is_an_input_with_no_stated_value(
+    tmp_path,
+):
+    row = _rows(
+        tmp_path,
+        "from unread_module import *\n\n\ndef f():\n    return undefined_registry\n",
+        lambda tree: [fn for fn in tree.functions() if fn.name == "f"][0],
+    )
+
+    # Nothing the source spells binds ``undefined_registry``; only the star
+    # import may.  It is a module global with no stated value: the free
+    # ``global:undefined_registry`` input, read through its undecided key,
+    # exactly as a global the module's run leaves undecided (#8802).  Never
+    # a bare free variable that refuses the whole function.
+    assert row.formals == ["global:undefined_registry"]
+    assert "global:undefined_registry" in repr(row.post.ir_formula)
+    assert row.input_values == ()
+
+
 def test_a_class_is_a_definition_never_an_input(tmp_path):
     row = _rows(
         tmp_path,

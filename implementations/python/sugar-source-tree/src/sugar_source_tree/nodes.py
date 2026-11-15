@@ -3183,6 +3183,34 @@ class SourceUnit:
             return False
         return not self._module_reaches_dynamic_global_writer()
 
+    def star_import_global(self, name: str) -> bool:
+        """Whether the module global ``name`` is one only a star import may
+        bind: the module has a star import (``from m import *``, whose names
+        the lifter reads none of, ``_module_import_binding``), no statement at
+        module scope binds ``name`` (CPython's module ``symtable``), and it is
+        neither a builtin nor a name the interpreter binds itself.
+
+        Such a global is a module global with no stated value: a function
+        that reads it takes it as its ``global:<name>`` input
+        (``_global_input_names``), read through its undecided key
+        (``undecided_module_binding_key``), exactly as a global the module's
+        run leaves undecided (#8802), and its row states no value for it.
+        A builtin's name under a star import is not one (the builtin
+        reference is withheld there, ``builtin_reference_at``)."""
+        if hasattr(_builtins_module, name) or name in _INTERPRETER_BOUND_NAMES:
+            return False
+        if name in self.module_bound_names:
+            return False
+        return "*" in self._module_name_rows()[0]
+
+    def star_import_global_read(self, name: str, span) -> bool:
+        """Whether the read of ``name`` at ``span`` reads a module global
+        only a star import may bind (``star_import_global``): nothing the
+        source spells binds it there (``_read_falls_through_the_source``)."""
+        return self.star_import_global(name) and self._read_falls_through_the_source(
+            name, span
+        )
+
     def class_namespace_stores(self, statement: "ClassDef") -> frozenset:
         """The names stored on, or deleted from, the class object the module
         ``class`` statement ``statement`` binds, anywhere in this module: an
@@ -10838,6 +10866,26 @@ class FunctionDef(Statement):
             return {}
         return _module_references_where_called(self, reads)
 
+    def _star_import_globals_read(self) -> frozenset:
+        """The module globals this body reads that only a star import may
+        bind (``SourceUnit.star_import_global``), read off CPython's symtable
+        as ``_module_globals_read`` reads the threaded ones.  The body keeps
+        each read as the name (an exception class read there is the
+        undecided citation, ``UndecidedExceptionClassV1``); its value is the
+        free ``global:<name>`` input its undecided key is bound to
+        (``NameSugar``)."""
+        unit = self.unit
+        if "*" not in unit._module_name_rows()[0]:
+            return frozenset()
+        table = unit.function_symtable(self.name, self.line_col_span().start_line)
+        return frozenset(
+            symbol.get_name()
+            for symbol in table.get_symbols()
+            if symbol.is_global()
+            and symbol.is_referenced()
+            and unit.star_import_global(symbol.get_name())
+        )
+
     def _module_globals_read(self) -> frozenset:
         """The module globals this body reads that the module threading
         binds through a key (``SourceUnit.module_threaded_names``): the names
@@ -11225,6 +11273,9 @@ class AsyncFunctionDef(Statement):
 
     def _module_globals_read(self) -> frozenset:
         return FunctionDef._module_globals_read(self)
+
+    def _star_import_globals_read(self) -> frozenset:
+        return FunctionDef._star_import_globals_read(self)
 
     def bridge_source_symbol(self) -> Optional[str]:
         """Same definition symbol as FunctionDef."""
@@ -21681,15 +21732,36 @@ class Lambda(Expression):
         _module_global_references`` asks of a ``def``'s.  A formal, a name
         the body binds (a walrus), a comprehension's member or cell and an
         enclosing function's local are not globals there."""
-        unit = self.unit
-        candidates = unit.module_threaded_names()
+        candidates = self.unit.module_threaded_names()
         if not candidates:
             return frozenset()
-        names = {
-            node.id for node in self.body.walk() if isinstance(node, Name)
-        } & candidates
+        return self._globals_read_among(
+            {node.id for node in self.body.walk() if isinstance(node, Name)}
+            & candidates
+        )
+
+    def _star_import_globals_read(self) -> frozenset:
+        """The module globals this body reads that only a star import may
+        bind (``SourceUnit.star_import_global``), read off CPython's symtable
+        of this lambda as ``_module_globals_read`` reads the threaded ones
+        (``FunctionDef._star_import_globals_read``)."""
+        unit = self.unit
+        if "*" not in unit._module_name_rows()[0]:
+            return frozenset()
+        return self._globals_read_among(
+            {
+                node.id
+                for node in self.body.walk()
+                if isinstance(node, Name) and unit.star_import_global(node.id)
+            }
+        )
+
+    def _globals_read_among(self, names) -> frozenset:
+        """Those of ``names`` CPython's symtable of this lambda calls global
+        and referenced (``SourceUnit.lambda_symtables``)."""
         if not names:
             return frozenset()
+        unit = self.unit
         line = self.line_col_span().start_line
         tables = unit.lambda_symtables(
             line, frozenset(param.name for param in self.params)
@@ -26300,8 +26372,11 @@ def _global_input_names(definition) -> frozenset:
     caller supplies it at that call (``py.global``) from its own input; the
     caller's contract takes it so that a caller of the caller can supply it
     in turn, never the module-final value where the module's run had not
-    reached it.  A definition's name (``SourceUnit.module_definition_names``)
-    is never one."""
+    reached it.  A global only a star import may bind
+    (``_star_import_globals_read``) is one too: the module's run states no
+    value for it, so it is the input with no stated value, as a global the
+    run leaves undecided is (#8802).  A definition's name
+    (``SourceUnit.module_definition_names``) is never one."""
     unit = definition.unit
     definitions = unit.module_definition_names()
     names: set[str] = set()
@@ -26313,6 +26388,7 @@ def _global_input_names(definition) -> frozenset:
             continue
         seen.add(id(current))
         names.update(current._module_globals_read())
+        names.update(current._star_import_globals_read())
         for node in current.walk():
             if node is current:
                 continue
