@@ -1,270 +1,31 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // SEAM 4 of the compiler-shape plan (`~/.claude/plans/sugar-compiler-liftshift.md`):
-// `Kit::testimony` and `Kit::source`, the two resolve verbs. Both are
-// LIFT-AND-SHIFT of an existing RPC mechanic -- no wire protocol change.
+// `Kit::source`, the resolve verb. LIFT-AND-SHIFT of an existing RPC
+// mechanic -- no wire protocol change.
 //
-// `resolve_testimony` is the RPC + blob decode that once lived in
-// `sugar-cli/src/kit_dispatch.rs` (`dependency_proofs_for_command` /
-// `decode_dependency_proof_entry`), moved here as ONE function behind
-// `Kit::testimony`. The CLI's multi-plugin RPC aggregator
-// (`kit_dispatch::dependency_proofs_via_rpc`), which `doctor` and self-check
-// used to stage dependency proofs, was a second staging door and is deleted
-// (item 39 on #7757): imports are staged only by mint, and doctor and
-// self-check read `.sugar/imports` as staged.
+// The testimony verb (`Kit::testimony` / `resolve_testimony`, the
+// `sugar.plugin.resolve_dependency_proofs` client) is deleted (item 47 on
+// #7757): an imported proof is read only from `.sugar/imports/` (step 9 reads
+// `.proof` files only), never fetched from a kit over RPC.
 //
-// `resolve_source` is new client-side plumbing for a wire method
+// `resolve_source` is client-side plumbing for a wire method
 // (`sugar.plugin.resolve_source_memento`) that already exists SERVER-side
 // (`sugar-walk/src/bin/walk_rpc.rs:284`) but had no Rust RPC client before
 // this seam -- the `cmd_lift.rs:3652` region the plan cites turned out, on
 // inspection, to be pure report-rendering over an already-resolved
 // `sourceOracle` JSON field (produced by a kit's OWN walk), not a client
 // call site. So there is no existing client mechanic to lift; this wires
-// the SAME transport pattern `resolve_testimony` uses against the SAME
-// wire shape `resolve_source_memento_rpc` already answers -- zero protocol
-// invention.
+// a one-shot transport against the SAME wire shape
+// `resolve_source_memento_rpc` already answers -- zero protocol invention.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
 
 use libsugar::core::{SourceMemento, SrcSpan};
-use sugar_proof_envelope::Speaker;
-use sugar_verifier::load_all_proofs::ProofBytes;
-
-/// Failure to even hold a conversation with the resolver kit -- distinct
-/// from the kit answering with a substantive protocol error (`RpcError`)
-/// or an honest "I don't do that" (folded into `TestimonyOutcome::Unavailable`
-/// / `SourceRefusal::Unavailable`, never here).
-#[derive(Debug, thiserror::Error)]
-pub enum TestimonyError {
-    #[error("dependency proof resolver `{plugin}` has an empty command")]
-    EmptyCommand { plugin: String },
-    #[error("dependency proof resolver `{plugin}` stdin unavailable")]
-    StdinUnavailable { plugin: String },
-    #[error("dependency proof resolver `{plugin}` stdout unavailable")]
-    StdoutUnavailable { plugin: String },
-    #[error("write resolve_dependency_proofs request to `{plugin}`: {source}")]
-    Write {
-        plugin: String,
-        #[source]
-        source: std::io::Error,
-    },
-    #[error("read resolve_dependency_proofs response from `{plugin}`: {source}")]
-    Read {
-        plugin: String,
-        #[source]
-        source: std::io::Error,
-    },
-    #[error(
-        "resolve_dependency_proofs response from `{plugin}` not valid JSON: {source}; raw={raw}"
-    )]
-    InvalidJson {
-        plugin: String,
-        #[source]
-        source: serde_json::Error,
-        raw: String,
-    },
-    #[error("dependency proof resolver `{plugin}` error: {error}")]
-    RpcError { plugin: String, error: Value },
-    #[error("dependency proof resolver `{plugin}` kit returned dependency proof without a content address for label `{label}`")]
-    MissingContentAddress { plugin: String, label: String },
-}
-
-/// The testimony verb's answer. A kit that simply does not implement
-/// `resolve_dependency_proofs` (or never spawns, or closes without a
-/// response) is a LINK-class absence -- there is no vendor testimony to
-/// fold in, not a protocol failure -- so it is a variant of the success
-/// type, never flattened into `TestimonyError` or a bare `String`.
-#[derive(Debug, Clone)]
-pub enum TestimonyOutcome {
-    Proofs(Vec<ProofBytes>),
-    Unavailable { plugin: String, reason: String },
-}
-
-/// Any proof entry a resolver returned but could not be decoded into a
-/// well-formed `ProofBytes` (invalid `bytes_base64`, non-object entry, bad
-/// CID shape) is dropped with a diagnostic rather than failing the whole
-/// resolve -- the same tolerance `decode_dependency_proof_entry` had.
-/// Callers that want those diagnostics get them back alongside the proofs.
-#[derive(Debug)]
-pub struct TestimonyResolution {
-    pub outcome: TestimonyOutcome,
-    pub diagnostics: Vec<String>,
-}
-
-/// Resolve one command's vendor testimony: spawn it, ask
-/// `sugar.plugin.resolve_dependency_proofs`, decode every returned proof
-/// entry into a content-addressed, speaker-stamped `ProofBytes`.
-///
-/// Moved from `kit_dispatch::dependency_proofs_for_command` +
-/// `decode_dependency_proof_entry` verbatim (the `--rpc` flag injection,
-/// the `sugar.plugin.shutdown` courtesy call, the `proof_paths` legacy-field
-/// diagnostic, the CID/label sort+dedup) -- only the diagnostic sink
-/// changed from a process-global `KIT_DISPATCH_DIAGNOSTICS` mutex to a
-/// returned `Vec<String>`, since this function no longer lives next to that
-/// static.
-pub fn resolve_testimony(
-    plugin_name: &str,
-    command: &[String],
-    working_dir: Option<&Path>,
-    workspace_root: &Path,
-) -> Result<TestimonyResolution, TestimonyError> {
-    let mut diagnostics = Vec::new();
-    if command.is_empty() {
-        return Err(TestimonyError::EmptyCommand {
-            plugin: plugin_name.to_string(),
-        });
-    }
-    let mut cmd = Command::new(&command[0]);
-    if command.len() > 1 {
-        cmd.args(&command[1..]);
-    }
-    if !command.iter().any(|a| a == "--rpc") {
-        cmd.arg("--rpc");
-    }
-    if let Some(wd) = working_dir {
-        cmd.current_dir(wd);
-    }
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::inherit());
-
-    let mut child = match cmd.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            return Ok(TestimonyResolution {
-                outcome: TestimonyOutcome::Unavailable {
-                    plugin: plugin_name.to_string(),
-                    reason: format!(
-                        "dependency proof resolver unavailable for {command:?}: {error}"
-                    ),
-                },
-                diagnostics,
-            });
-        }
-    };
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| TestimonyError::StdinUnavailable {
-            plugin: plugin_name.to_string(),
-        })?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| TestimonyError::StdoutUnavailable {
-            plugin: plugin_name.to_string(),
-        })?;
-    let mut reader = BufReader::new(stdout);
-
-    let req = json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "sugar.plugin.resolve_dependency_proofs",
-        "params": {
-            "project_root": workspace_root.display().to_string(),
-        },
-    });
-    writeln!(stdin, "{req}").map_err(|source| TestimonyError::Write {
-        plugin: plugin_name.to_string(),
-        source,
-    })?;
-
-    let mut line = String::new();
-    reader
-        .read_line(&mut line)
-        .map_err(|source| TestimonyError::Read {
-            plugin: plugin_name.to_string(),
-            source,
-        })?;
-
-    let shutdown = json!({
-        "jsonrpc": "2.0",
-        "id": 2,
-        "method": "sugar.plugin.shutdown",
-    });
-    let _ = writeln!(stdin, "{shutdown}");
-    drop(stdin);
-    let _ = child.wait();
-
-    if line.trim().is_empty() {
-        return Ok(TestimonyResolution {
-            outcome: TestimonyOutcome::Unavailable {
-                plugin: plugin_name.to_string(),
-                reason: format!("dependency proof resolver {command:?} closed without a response"),
-            },
-            diagnostics,
-        });
-    }
-
-    let response: Value =
-        serde_json::from_str(line.trim()).map_err(|source| TestimonyError::InvalidJson {
-            plugin: plugin_name.to_string(),
-            source,
-            raw: line.trim().to_string(),
-        })?;
-    if let Some(error) = response.get("error") {
-        if rpc_error_is_method_not_supported(error, "sugar.plugin.resolve_dependency_proofs") {
-            return Ok(TestimonyResolution {
-                outcome: TestimonyOutcome::Unavailable {
-                    plugin: plugin_name.to_string(),
-                    reason: format!(
-                        "dependency proof resolver {command:?} does not implement sugar.plugin.resolve_dependency_proofs"
-                    ),
-                },
-                diagnostics,
-            });
-        }
-        return Err(TestimonyError::RpcError {
-            plugin: plugin_name.to_string(),
-            error: error.clone(),
-        });
-    }
-
-    let result = response.get("result").cloned().unwrap_or(Value::Null);
-    let proofs = result
-        .get("proofs")
-        .or_else(|| result.get("proofs_base64"))
-        .or_else(|| result.get("proofBytes"))
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let mut out = Vec::new();
-    for proof in proofs {
-        match decode_dependency_proof_entry(plugin_name, command, &proof, &mut diagnostics)? {
-            Some(decoded) => out.push(decoded),
-            None => continue,
-        }
-    }
-
-    let legacy_paths = result
-        .get("proof_paths")
-        .or_else(|| result.get("proofPaths"))
-        .or_else(|| result.get("paths"))
-        .and_then(Value::as_array)
-        .map(Vec::len)
-        .unwrap_or(0);
-    if legacy_paths > 0 {
-        diagnostics.push(format!(
-            "dependency proof resolver {command:?} returned legacy proof_paths; ignoring paths because package proof bytes must cross RPC"
-        ));
-    }
-
-    out.sort_by(|a: &ProofBytes, b: &ProofBytes| {
-        (a.expected_cid.as_str(), a.label.as_str())
-            .cmp(&(b.expected_cid.as_str(), b.label.as_str()))
-    });
-    out.dedup_by(|a, b| a.expected_cid == b.expected_cid && a.bytes == b.bytes);
-
-    Ok(TestimonyResolution {
-        outcome: TestimonyOutcome::Proofs(out),
-        diagnostics,
-    })
-}
 
 fn rpc_error_is_method_not_supported(error: &Value, method: &str) -> bool {
     let code = error.get("code").and_then(Value::as_i64);
@@ -278,76 +39,6 @@ fn rpc_error_is_method_not_supported(error: &Value, method: &str) -> bool {
     (code == Some(-32602) || code == Some(-32603))
         && message.contains("unknown method")
         && message.contains(method)
-}
-
-fn decode_dependency_proof_entry(
-    plugin_name: &str,
-    command: &[String],
-    proof: &Value,
-    diagnostics: &mut Vec<String>,
-) -> Result<Option<ProofBytes>, TestimonyError> {
-    let Some(object) = proof.as_object() else {
-        diagnostics.push(format!(
-            "dependency proof resolver {command:?} returned a non-object proof entry: {proof}"
-        ));
-        return Ok(None);
-    };
-    let label_field = object
-        .get("source")
-        .or_else(|| object.get("label"))
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string);
-    let Some(expected_cid) = object
-        .get("cid")
-        .or_else(|| object.get("proof_cid"))
-        .or_else(|| object.get("proofCid"))
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-    else {
-        let label = label_field
-            .clone()
-            .unwrap_or_else(|| "<unlabeled dependency proof>".to_string());
-        return Err(TestimonyError::MissingContentAddress {
-            plugin: plugin_name.to_string(),
-            label,
-        });
-    };
-    let Some(bytes_base64) = object
-        .get("bytes_base64")
-        .or_else(|| object.get("bytesBase64"))
-        .and_then(Value::as_str)
-    else {
-        diagnostics.push(format!(
-            "dependency proof resolver {command:?} returned a proof entry without bytes_base64: {proof}"
-        ));
-        return Ok(None);
-    };
-    let bytes = match BASE64.decode(bytes_base64) {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            diagnostics.push(format!(
-                "dependency proof resolver {command:?} returned invalid bytes_base64: {error}"
-            ));
-            return Ok(None);
-        }
-    };
-    let label = label_field.unwrap_or_else(|| expected_cid.clone());
-
-    // #3813: a kit's package-manager dependency catalog IS vendor testimony.
-    // Stamp the Vendor role INTO the ProofBytes here, at the one point that
-    // knows where these bytes came from.
-    let speaker = Speaker::vendor(label.clone());
-    match ProofBytes::try_from_parts(label, expected_cid, bytes, speaker) {
-        Ok(proof) => Ok(Some(proof)),
-        Err(error) => {
-            diagnostics.push(format!(
-                "dependency proof resolver {command:?} returned invalid expected_cid: {error}"
-            ));
-            Ok(None)
-        }
-    }
 }
 
 /// One line of resolved source, 1-indexed to match `SrcSpan`.
@@ -670,19 +361,19 @@ mod tests {
     fn optional_rpc_method_refusal_accepts_legacy_unknown_method_error() {
         assert!(rpc_error_is_method_not_supported(
             &json!({"code": -32601, "message": "method not found"}),
-            "sugar.plugin.resolve_dependency_proofs"
+            "sugar.plugin.resolve_source_memento"
         ));
         assert!(rpc_error_is_method_not_supported(
-            &json!({"code": -32602, "message": "unknown method: sugar.plugin.resolve_dependency_proofs"}),
-            "sugar.plugin.resolve_dependency_proofs"
+            &json!({"code": -32602, "message": "unknown method: sugar.plugin.resolve_source_memento"}),
+            "sugar.plugin.resolve_source_memento"
         ));
         assert!(rpc_error_is_method_not_supported(
-            &json!({"code": -32603, "message": "unknown method: sugar.plugin.resolve_dependency_proofs"}),
-            "sugar.plugin.resolve_dependency_proofs"
+            &json!({"code": -32603, "message": "unknown method: sugar.plugin.resolve_source_memento"}),
+            "sugar.plugin.resolve_source_memento"
         ));
         assert!(!rpc_error_is_method_not_supported(
             &json!({"code": -32602, "message": "invalid params"}),
-            "sugar.plugin.resolve_dependency_proofs"
+            "sugar.plugin.resolve_source_memento"
         ));
     }
 }
@@ -732,12 +423,5 @@ mod dialect_tests {
         });
         let resolved = decode_resolved_source("walk", &result).expect("flat dialect must decode");
         assert_eq!(resolved.file, "src/lib.rs");
-    }
-
-    #[test]
-    fn empty_command_is_a_typed_error_not_a_panic() {
-        let err = resolve_testimony("empty", &[], None, Path::new("."))
-            .expect_err("empty command must refuse");
-        assert!(matches!(err, TestimonyError::EmptyCommand { .. }));
     }
 }

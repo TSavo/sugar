@@ -31,7 +31,6 @@ for _sibling in ("sugar-lift-python-source", "sugar-source-tree"):
 
 from sugar_lift_py_tests.call_symbol import call_target
 from sugar_lift_py_tests.effect import SourceOracleEffect, effect_reason, effect_status
-from sugar_lift_py_tests.filename import cid_from_proof_stem
 from sugar_lift_py_tests.kit_rpc import (
     EffectDto,
     LiftReportPayloadDto,
@@ -1334,19 +1333,8 @@ def _kit_declaration_result() -> Dict[str, Any]:
                 # lift is not a kit method: full-tree construction is sugar.enumerate only
                 # {"name": "lift", "required": True},
                 {"name": "sugar.plugin.lift_implications", "required": False},
-                {"name": "sugar.plugin.resolve_dependency_proofs", "required": False},
                 {"name": "shutdown", "required": False},
             ]
-        },
-        # PART 6 FIX (2026-07-08, discovered by `Kit::rendezvous` against a
-        # real python kit for the first time -- no prior rust test exercised
-        # this path with the python kit; the strong `KitDeclaration` schema
-        # (`sugar-claim-envelope`) requires `proofResolution.strategy`
-        # non-empty; this kit's proof-resolution mechanism is exactly its
-        # `sugar.plugin.resolve_dependency_proofs` handler below.
-        "proofResolution": {
-            "strategy": "rpc-proof-bytes",
-            "rpcMethod": "sugar.plugin.resolve_dependency_proofs",
         },
         "residueCategories": [],
         "contractDeclarations": [],
@@ -2796,38 +2784,6 @@ def _handle_initialize(msg_id: Any) -> None:
     )
 
 
-def _handle_resolve_dependency_proofs(msg_id: Any, params: Dict[str, Any]) -> None:
-    """Surface dependency `.proof` files from the project's `.sugar/imports/` so the
-    rust verifier folds the vendor universe into the proof pool. Mirrors lsp.py's
-    handler -- the factory kit must answer this for cross-project federation."""
-    import base64
-
-    project_root = str(
-        params.get("project_root") or params.get("workspace_root") or "."
-    )
-    imports_dir = Path(project_root) / ".sugar" / "imports"
-    proofs: List[Dict[str, Any]] = []
-    if imports_dir.is_dir():
-        for path in sorted(imports_dir.glob("blake3-512_*.proof")):
-            if not path.is_file():
-                continue
-            # Normalize the on-disk filename stem (blake3-512_<hex>) to the
-            # canonical colon form (blake3-512:<hex>) so the Rust verifier's
-            # Rule-1 check (expected_cid == blake3_512_of(bytes)) compares
-            # apples-to-apples.  The filename uses underscore for Windows
-            # path-safety; the in-memory CID always uses colon.
-            stem = path.name[: -len(".proof")]
-            cid = cid_from_proof_stem(stem) or stem
-            proofs.append(
-                {
-                    "cid": cid,
-                    "bytes_base64": base64.b64encode(path.read_bytes()).decode("ascii"),
-                    "source": f"sugar-imports:{path.name}",
-                }
-            )
-    _send({"jsonrpc": "2.0", "id": msg_id, "result": {"proofs": proofs}})
-
-
 def _dispatch_request(msg: Dict[str, Any]) -> bool:
     """Dispatch one accepted request; return whether the session should continue."""
     msg_id = msg.get("id")
@@ -2864,10 +2820,6 @@ def _dispatch_request(msg: Dict[str, Any]) -> bool:
                     params if isinstance(params, dict) else {}
                 ),
             }
-        )
-    elif method == "sugar.plugin.resolve_dependency_proofs":
-        _handle_resolve_dependency_proofs(
-            msg_id, params if isinstance(params, dict) else {}
         )
     elif method == BIND_CONTRACT_REFS_RPC_METHOD:
         from sugar_lift_py_tests.context_manager_resolution import (

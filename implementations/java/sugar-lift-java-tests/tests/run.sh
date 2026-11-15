@@ -62,42 +62,6 @@ JAVA_CMD="java \
   --add-exports jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED \
   -cp $OUT JavaTestAssertionsRpc"
 
-echo
-echo "────────────────────────────────────────────────────────────────"
-echo "TEST 0: dependency proof resolution from Maven-style jar resource"
-echo "────────────────────────────────────────────────────────────────"
-TMP_DEP="$(mktemp -d)"
-mkdir -p "$TMP_DEP/META-INF/sugar"
-printf '%s' 'vendor-proof-catalog-bytes' > "$TMP_DEP/META-INF/sugar/sugar.proof"
-(cd "$TMP_DEP" && jar cf "$TMP_DEP/vendor-proof.jar" META-INF/sugar/sugar.proof)
-RESULT0="$(python3 - "$FIXTURES" <<'PY' | java \
-  --add-exports jdk.compiler/com.sun.source.tree=ALL-UNNAMED \
-  --add-exports jdk.compiler/com.sun.source.util=ALL-UNNAMED \
-  --add-exports jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED \
-  -cp "$OUT:$TMP_DEP/vendor-proof.jar" JavaTestAssertionsRpc 2>/dev/null
-import json, sys
-workspace_root = sys.argv[1]
-print(json.dumps({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}))
-print(json.dumps({"jsonrpc":"2.0","id":2,"method":"sugar.plugin.resolve_dependency_proofs","params":{
-    "project_root": workspace_root,
-}}))
-print(json.dumps({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}}))
-PY
-)"
-python3 - "$RESULT0" <<'PY'
-import base64, json, sys
-responses = [json.loads(line) for line in sys.argv[1].splitlines() if line.strip()]
-resp = next((obj for obj in responses if obj.get("id") == 2), None)
-assert resp is not None, responses
-assert "error" not in resp, resp
-proofs = resp["result"]["proofs"]
-assert len(proofs) == 1, proofs
-proof = proofs[0]
-assert base64.b64decode(proof["bytes_base64"]) == b"vendor-proof-catalog-bytes", proof
-assert proof["source"].endswith("vendor-proof.jar!META-INF/sugar/sugar.proof"), proof
-print("PASS: dependency proof resolver loaded Maven-style jar resource bytes")
-PY
-
 # run_lift <workspace_root> <source_path_relative_to_workspace>
 # Sends initialize + lift(workspace_root, [source_path]) + shutdown to the kit.
 run_lift() {

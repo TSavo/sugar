@@ -61,7 +61,6 @@ fn lift_rpc_serves_rust_contracts_kit_declaration() {
     assert_method_declared(&declaration, "lift");
     assert_method_declared(&declaration, "shutdown");
     assert_method_declared(&declaration, KIT_DECLARATION_RPC_METHOD);
-    assert_eq!(declaration.proof_resolution.strategy, "cargo");
     // concept hub removed: the kit no longer declares a concept vocabulary.
 
     writeln!(

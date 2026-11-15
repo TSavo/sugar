@@ -44,7 +44,6 @@ fn kit_owns_connection_and_enumerate_reuses_it() {
     let rest = &text[start..];
     let end = rest
         .find("\n    /// SEAM 4")
-        .or_else(|| rest.find("\n    pub fn testimony"))
         .or_else(|| rest.find("\n    #[cfg(test)]"))
         .unwrap_or(rest.len().min(1200));
     let enumerate_fn = &rest[..end];

@@ -117,7 +117,6 @@ fn mock_kit_declaration_result(surface: &str) -> Value {
             {"name": "lift", "required": true},
             {"name": "shutdown", "required": false}
         ]},
-        "proofResolution": {"strategy": "none"},
         "residueCategories": []
     })
 }

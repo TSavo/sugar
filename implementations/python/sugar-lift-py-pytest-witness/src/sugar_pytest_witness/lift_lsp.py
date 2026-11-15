@@ -638,7 +638,6 @@ def main() -> None:
                                 {"name": "shutdown", "required": False},
                             ]
                         },
-                        "proofResolution": {"strategy": "pip"},
                         "effectKinds": [],
                         "effectLeaves": [],
                         "guardPredicates": [],

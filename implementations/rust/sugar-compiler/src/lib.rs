@@ -46,8 +46,8 @@ pub mod orchestrate;
 /// (sugar#3857). See `linker_inputs::derive_linker_inputs`.
 pub mod linker_inputs;
 
-/// The resolve verbs (SEAM 4): `Kit::testimony` (vendor dependency proofs)
-/// and `Kit::source` (source-oracle lookup). See `resolve` module docs.
+/// The resolve verb (SEAM 4): `Kit::source` (source-oracle lookup). See
+/// `resolve` module docs.
 pub mod resolve;
 
 /// The `sugar.enumerate` wire method and mint's one whole-tree walk over it

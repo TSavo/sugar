@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
-// Voltron pool assembly: configured kits resolve dependency .proof files
-// through their own package managers, and the verifier unions those files into
-// its pool without teaching the substrate cargo, npm, classpath, sys.path, or
-// any other platform graph. Mint stages them in `.sugar/imports`; `sugar
-// prove` reads only what is staged and never asks a kit (step 9).
+// Pool assembly from imported proofs: the verifier unions dependency .proof
+// files into its pool without teaching the substrate cargo, npm, classpath,
+// sys.path, or any other platform graph. Mint stages them in `.sugar/imports`;
+// `sugar prove` reads only what is staged and never asks a kit (step 9). No
+// kit serves imported proofs over RPC (item 47 on #7757).
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value as Json};
 use sugar_canonicalizer::{blake3_512_of, cid_hex, Value as CValue};
 use sugar_claim_envelope::{
@@ -21,7 +20,6 @@ use sugar_proof_envelope::{
     build_proof_envelope, ed25519_pubkey_string, BridgeMemento, ClaimContractMemento, ContractBody,
     ContractMementoRef, Ed25519Seed, FlatAtom, ProofEnvelopeInput, ProofGraph,
 };
-use sugar_verifier::{Runner, RunnerConfig};
 
 fn unique_dir(suffix: &str) -> PathBuf {
     let stamp = std::time::SystemTime::now()
@@ -469,15 +467,14 @@ fn publish_contradictory_implication_project() -> PathBuf {
     project
 }
 
-fn install_dependency_proof_stub_with_entry(project_dir: &Path, proof_entry: &str) {
+/// Configure a lift kit for the project, so a test can show prove never
+/// starts it.
+fn install_configured_kit_stub(project_dir: &Path) {
     install_smt_compiler_manifest(project_dir);
-    let bin = project_dir.join("resolve-deps-stub.sh");
+    let bin = project_dir.join("kit-stub.sh");
     fs::write(
         &bin,
-        format!(
-            "#!/bin/sh\nwhile IFS= read -r line; do\n  case \"$line\" in\n    *resolve_dependency_proofs*) echo '{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{\"proofs\":[{}]}}}}' ;;\n    *shutdown*) echo '{{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":null}}'; exit 0 ;;\n    *) echo '{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{}}}}' ;;\n  esac\ndone\n",
-            proof_entry
-        ),
+        "#!/bin/sh\nwhile IFS= read -r line; do\n  case \"$line\" in\n    *shutdown*) echo '{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":null}'; exit 0 ;;\n    *) echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}' ;;\n  esac\ndone\n",
     )
     .expect("write stub");
     let manifest_dir = project_dir.join(".sugar").join("lift").join("rust");
@@ -485,50 +482,17 @@ fn install_dependency_proof_stub_with_entry(project_dir: &Path, proof_entry: &st
     fs::write(
         manifest_dir.join("manifest.toml"),
         format!(
-            "name = \"rust-dependency-proof-stub\"\nlibrary_tag = \"test\"\ncommand = [\"/bin/sh\", \"{}\"]\nworking_dir = \".\"\n",
+            "name = \"rust-kit-stub\"\nlibrary_tag = \"test\"\ncommand = [\"/bin/sh\", \"{}\"]\nworking_dir = \".\"\n",
             bin.display()
         ),
     )
     .expect("write manifest");
     fs::write(
         project_dir.join(".sugar").join("config.toml"),
-        "[[plugins]]\nname = \"rust-dependency-proof-stub\"\nkind = \"lift\"\nsurface = \"rust\"\n",
+        "[[plugins]]\nname = \"rust-kit-stub\"\nkind = \"lift\"\nsurface = \"rust\"\n",
     )
     .expect("write config");
     sugar_cli::kit_dispatch::reset_kit_dispatch_registry_cache_for_tests();
-}
-
-fn install_dependency_proof_stub(project_dir: &Path, proof_cid: &str, proof_bytes: &[u8]) {
-    let proof_bytes_base64 = BASE64.encode(proof_bytes);
-    let entry = format!(
-        "{{\"cid\":\"{}\",\"bytes_base64\":\"{}\",\"source\":\"stub-package-proof\"}}",
-        proof_cid, proof_bytes_base64
-    );
-    install_dependency_proof_stub_with_entry(project_dir, &entry);
-}
-
-/// Ask the stub kit for its dependency proofs through the one testimony core
-/// (`sugar_compiler::resolve::resolve_testimony`, behind `Kit::testimony`),
-/// the door mint's walk uses. The RPC aggregator that fanned this out across
-/// every plugin is gone: imports are staged only by mint (item 39 on #7757).
-fn stub_testimony(
-    project_dir: &Path,
-) -> Result<Vec<sugar_verifier::load_all_proofs::ProofBytes>, String> {
-    let command = vec![
-        "/bin/sh".to_string(),
-        project_dir.join("resolve-deps-stub.sh").display().to_string(),
-    ];
-    let resolution = sugar_compiler::resolve::resolve_testimony(
-        "rust-dependency-proof-stub",
-        &command,
-        Some(project_dir),
-        project_dir,
-    )
-    .map_err(|error| error.to_string())?;
-    match resolution.outcome {
-        sugar_compiler::resolve::TestimonyOutcome::Proofs(proofs) => Ok(proofs),
-        sugar_compiler::resolve::TestimonyOutcome::Unavailable { reason, .. } => Err(reason),
-    }
 }
 
 fn z3_available() -> bool {
@@ -537,136 +501,6 @@ fn z3_available() -> bool {
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)
-}
-
-#[test]
-fn dependency_proof_without_cid_is_refused() {
-    let root = unique_dir("missing-cid");
-    let project = root.join("user");
-    let vendor = root.join("vendor");
-    fs::create_dir_all(project.join(".sugar")).expect("mkdir project");
-    let (_target_cid, _bundle_cid, _proof_path, proof_bytes) =
-        publish_vendor_positive_contract(&vendor);
-    let proof_bytes_base64 = BASE64.encode(&proof_bytes);
-    let entry = format!(
-        "{{\"bytes_base64\":\"{}\",\"source\":\"stub-package-proof\"}}",
-        proof_bytes_base64
-    );
-    install_dependency_proof_stub_with_entry(&project, &entry);
-
-    let err = stub_testimony(&project)
-        .expect_err("dependency proof without cid must be a protocol error");
-
-    assert!(
-        err.contains("rust-dependency-proof-stub"),
-        "error must name the kit: {err}"
-    );
-    assert!(
-        err.contains("stub-package-proof"),
-        "error must name the dependency proof label: {err}"
-    );
-    assert!(
-        err.contains("kit returned dependency proof without a content address"),
-        "error must describe the missing trust root: {err}"
-    );
-
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn dependency_proof_with_wrong_cid_is_refused() {
-    let root = unique_dir("wrong-cid");
-    let project = root.join("user");
-    let vendor = root.join("vendor");
-    fs::create_dir_all(project.join(".sugar")).expect("mkdir project");
-    let (_target_cid, _bundle_cid, _proof_path, proof_bytes) =
-        publish_vendor_positive_contract(&vendor);
-    let wrong_cid = format!("blake3-512:{}", "0".repeat(128));
-    install_dependency_proof_stub(&project, &wrong_cid, &proof_bytes);
-
-    let dependency_proofs = stub_testimony(&project).expect("resolve dependency proofs");
-    let runner = Runner::new(RunnerConfig {
-        project_root: project.clone(),
-        extra_proofs: dependency_proofs,
-        ..Default::default()
-    });
-    let (pool, _callsites) = runner.run_load_and_enumerate();
-
-    assert!(
-        pool.load_errors.iter().any(|err| {
-            err.proof_path.contains("stub-package-proof")
-                && err.reason.contains("rule 1 (trust root)")
-                && err.reason.contains(&wrong_cid)
-                && err.reason.contains("content hash")
-        }),
-        "wrong dependency proof CID must be a load error: {:#?}",
-        pool.load_errors
-    );
-
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn dependency_proof_with_correct_cid_loads() {
-    let root = unique_dir("correct-cid");
-    let project = root.join("user");
-    let vendor = root.join("vendor");
-    fs::create_dir_all(project.join(".sugar")).expect("mkdir project");
-    let (target_cid, bundle_cid, _proof_path, proof_bytes) =
-        publish_vendor_positive_contract(&vendor);
-    install_dependency_proof_stub(&project, &bundle_cid, &proof_bytes);
-
-    let dependency_proofs = stub_testimony(&project).expect("resolve dependency proofs");
-    let runner = Runner::new(RunnerConfig {
-        project_root: project.clone(),
-        extra_proofs: dependency_proofs,
-        ..Default::default()
-    });
-    let (pool, _callsites) = runner.run_load_and_enumerate();
-
-    assert!(
-        pool.load_errors.is_empty(),
-        "correct dependency proof CID must load cleanly: {:#?}",
-        pool.load_errors
-    );
-    assert!(
-        pool.mementos.contains_key(target_cid.as_str()),
-        "vendor contract {target_cid} must be reachable"
-    );
-
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn dependency_rpc_union_makes_vendor_contract_reachable() {
-    let root = unique_dir("reachable");
-    let project = root.join("user");
-    let vendor = root.join("vendor");
-    fs::create_dir_all(project.join(".sugar")).expect("mkdir project");
-    let (target_cid, bundle_cid, proof_path, proof_bytes) =
-        publish_vendor_positive_contract(&vendor);
-    publish_user_bridge(&project, &target_cid, &bundle_cid);
-    install_dependency_proof_stub(&project, &bundle_cid, &proof_bytes);
-    fs::remove_file(&proof_path).expect("remove dependency proof path after kit reads it");
-
-    let dependency_proofs = stub_testimony(&project).expect("resolve dependency proofs");
-    assert_eq!(dependency_proofs.len(), 1);
-    assert_eq!(
-        dependency_proofs[0].expected_cid.as_str(),
-        bundle_cid.as_str()
-    );
-
-    let runner = Runner::new(RunnerConfig {
-        project_root: project.clone(),
-        extra_proofs: dependency_proofs,
-        ..Default::default()
-    });
-    let (pool, _callsites) = runner.run_load_and_enumerate();
-    assert!(
-        pool.mementos.get(target_cid.as_str()).is_some(),
-        "vendor contract {target_cid} must be present after dependency proof assembly"
-    );
-    let _ = fs::remove_dir_all(root);
 }
 
 /// Step 9 (ruling 3 on #7766): prove reads a dependency proof only from
@@ -725,23 +559,22 @@ fn prove_reads_a_staged_dependency_and_refuses_cross_dependency_violation() {
 }
 
 /// Step 9 (ruling 3 on #7766): a dependency proof that mint did not stage is
-/// never fetched at prove. The configured kit would hand the vendor proof
-/// over RPC; prove does not ask it. The call that needs the vendor contract
-/// is undecidable by name (its target CID is not in the pool), and the link
-/// surface counts the unbound edge.
+/// never fetched at prove, and prove never starts a configured kit. The call
+/// that needs the vendor contract is undecidable by name (its target CID is
+/// not in the pool), and the link surface counts the unbound edge.
 #[test]
 fn prove_never_asks_a_kit_for_an_unstaged_dependency() {
     let root = unique_dir("e2e-unstaged");
     let project = root.join("user");
     let vendor = root.join("vendor");
     fs::create_dir_all(project.join(".sugar")).expect("mkdir project");
-    let (target_cid, bundle_cid, proof_path, proof_bytes) =
+    let (target_cid, bundle_cid, proof_path, _proof_bytes) =
         publish_vendor_positive_contract(&vendor);
     publish_user_bridge(&project, &target_cid, &bundle_cid);
-    install_dependency_proof_stub(&project, &bundle_cid, &proof_bytes);
+    install_configured_kit_stub(&project);
     fs::remove_file(&proof_path).expect("remove dependency proof path");
     let marker = project.join("stub-invoked");
-    let stub = project.join("resolve-deps-stub.sh");
+    let stub = project.join("kit-stub.sh");
     let script = fs::read_to_string(&stub).expect("read stub");
     fs::write(
         &stub,

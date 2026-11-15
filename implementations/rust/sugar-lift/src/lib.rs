@@ -967,9 +967,6 @@ fn kit_declaration_result() -> serde_json::Value {
                 {"name": KIT_DECLARATION_RPC_METHOD, "required": false}
             ]
         },
-        "proofResolution": {
-            "strategy": "cargo"
-        },
         "residueCategories": []
     })
 }

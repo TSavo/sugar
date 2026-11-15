@@ -334,7 +334,6 @@ fn kit_declaration() -> Value {
             {"name": RESOLVE_WITNESS_RPC_METHOD, "required": false},
             {"name": "shutdown", "required": false},
         ]},
-        "proofResolution": {"strategy": "cargo"},
         "effectKinds": [],
         "effectLeaves": [],
         "guardPredicates": [],

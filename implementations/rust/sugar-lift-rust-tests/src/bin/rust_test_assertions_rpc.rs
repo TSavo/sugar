@@ -171,7 +171,6 @@ fn kit_declaration_result() -> Value {
                 {"name": "shutdown", "required": false},
             ]
         },
-        "proofResolution": {"strategy": "cargo"},
         "effectKinds": [],
         "effectLeaves": [],
         "guardPredicates": [],
