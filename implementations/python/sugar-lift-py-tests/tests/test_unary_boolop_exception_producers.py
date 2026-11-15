@@ -549,9 +549,11 @@ def test_pandas_unary_sites_stay_source_undecided() -> None:
     )
     two_faced = {
         ("tests/generic/test_generic.py", 156): make_var("obj1"),
-        # ``from pandas import NA``: the import member's closed reference.
+        # ``from pandas._libs.missing import NA`` (line 11 of the file): the
+        # import member's closed reference names the import's own target
+        # symbol, the module the source states, never a re-export of it.
         ("tests/scalar/test_na_scalar.py", 48): ctor(
-            "ref:pandas.NA", [], symbol_kind="coordinate"
+            "ref:pandas._libs.missing.NA", [], symbol_kind="coordinate"
         ),
     }
     for rel, line, operator in cases:
