@@ -12071,6 +12071,11 @@ class FunctionDef(Statement):
             self, owner="FunctionDef.contract_name"
         )
 
+    def contract_universe(self):
+        """This definition's own contract: its universe (``_construct_sugar``),
+        the one a ``lambda`` states too (``Lambda.contract_universe``)."""
+        return self.sugar()
+
     def _make_parameter_entry(self, parameter: Param, ordinal: int, scope):
         owner = self._active_initializer_owner()
         if owner is not None and ordinal == 0:
@@ -12407,6 +12412,10 @@ class AsyncFunctionDef(Statement):
     def contract_name(self) -> str:
         """Same contract name as FunctionDef."""
         return FunctionDef.contract_name(self)
+
+    def contract_universe(self):
+        """Same contract universe door as FunctionDef."""
+        return FunctionDef.contract_universe(self)
 
     def _make_parameter_entry(self, parameter: Param, ordinal: int, scope):
         return FunctionDef._make_parameter_entry(self, parameter, ordinal, scope)
@@ -22802,6 +22811,79 @@ class Lambda(Expression):
                 ),
                 self.reporter,
             )
+        )
+
+    def bridge_source_symbol(self) -> Optional[str]:
+        """This lambda's one join symbol (``SourceUnit.definition_symbol``):
+        ``python:m.outer.<locals>.<lambda>@L:C``, by the rule every ``def``
+        follows (``FunctionDef.bridge_source_symbol``)."""
+        return _definition_bridge_source_symbol(
+            self, owner="Lambda.bridge_source_symbol"
+        )
+
+    def contract_name(self) -> str:
+        """The name this lambda's contract row is stated under: its join
+        symbol, as a ``def``'s is (``FunctionDef.contract_name``)."""
+        return _definition_contract_name(self, owner="Lambda.contract_name")
+
+    def _formal_coordinate(self, parameter: "Param", ordinal: int):
+        """The formal coordinate of one parameter, minted by the one door a
+        ``def``'s formals are minted by (``FunctionDef._formal_coordinate``)."""
+        return FunctionDef._formal_coordinate(self, parameter, ordinal)
+
+    def formal_coordinates(self) -> tuple:
+        """The ordered formal coordinates of every parameter, as a ``def``'s
+        (``FunctionDef.formal_coordinates``)."""
+        return FunctionDef.formal_coordinates(self)
+
+    def _make_parameter_ref(self, parameter: "Param", ordinal: int) -> "Node":
+        """The ``FormalRef`` a parameter stands as in this lambda's own
+        contract, as a ``def``'s (``FunctionDef._make_parameter_ref``)."""
+        return FunctionDef._make_parameter_ref(self, parameter, ordinal)
+
+    def _active_initializer_owner(self) -> "ClassDef | None":
+        """A lambda is never a class's ``__init__``: it has no receiver the
+        class call makes (``FunctionDef._active_initializer_owner``)."""
+        return None
+
+    def contract_universe(self):
+        """This lambda's own contract: the universe of ``return <body>`` over
+        its formals, as a ``def``'s universe is (``FunctionDef.
+        _construct_sugar``), named by its join symbol.
+
+        The body is the one its call frame runs (``_source_visible_body``):
+        the lambda substituted where it stands (``_construct_sugar``: a lambda
+        asked for outside a substituted body is substituted first), each
+        module global it reads bound where it is called, and each formal
+        standing free as a ``def``'s does (``FormalRef``), since its own proof
+        has no caller and so no actual. An enclosing local it captures is
+        read through its captured coordinate, which no caller binds here, so
+        that read is refused by name and the lambda is undecided by it
+        (``refused_function_row``), as a local ``def`` reading one is."""
+        from .shadow import ShadowNode
+
+        if not isinstance(self.ref, ShadowNode):
+            return self.substitute({}).contract_universe()
+
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            FunctionUniverseSugar,
+        )
+        from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
+
+        formal_scope = {
+            parameter.name: self._make_parameter_ref(parameter, ordinal)
+            for ordinal, parameter in enumerate(self.params)
+        }
+        body = self.body.substitute(
+            {**self._module_global_references(), **formal_scope}
+        )
+        return FunctionUniverseSugar(
+            name=self.contract_name(),
+            formals=tuple(parameter.name for parameter in self.params),
+            statements=(ReturnSugar(value=body.sugar(), site=self.fragment),),
+            site=self.fragment,
+            bridge_source_symbol=self.bridge_source_symbol(),
+            formal_coordinates=self.formal_coordinates(),
         )
 
     def _construct_sugar(self):

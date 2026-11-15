@@ -2242,8 +2242,9 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
 
                 # Every function's rows, refused member and undecided members
                 # come from this one scan (#7757): no function is skipped for
-                # another door to state.
-                for fn in sf.functions():
+                # another door to state. A lambda is a function: it states its
+                # contract here as a ``def`` does.
+                for fn in (*sf.functions(), *sf.lambdas()):
                     try:
                         def_memento, rows = _tree.function_contract_rows(
                             fn, file_rel

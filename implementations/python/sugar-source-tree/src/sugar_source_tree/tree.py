@@ -198,6 +198,13 @@ class SourceFile:
             found = self.constructed_module.function_nodes
         yield from found
 
+    def lambdas(self) -> Iterator[Node]:
+        """Every ``lambda`` in this file, at any depth, in source order: each
+        is a function and states its own contract, as a ``def`` does
+        (``Lambda.contract_universe``). Read off the module walk, as
+        ``functions`` is."""
+        yield from self.constructed_module.lambda_nodes
+
     def nodes(self) -> Iterator[Node]:
         """Every node of this file, pre-order, iterative."""
         return self.root.walk()
