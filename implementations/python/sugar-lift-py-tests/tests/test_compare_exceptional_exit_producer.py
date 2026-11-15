@@ -44,10 +44,6 @@ MANIFEST_CID = (
 HISTORICAL_PATH_SHAPE_DIGEST = (
     "sha256:a223a4499d0909f22190748b4aca9144e35a58fec31e84cb924e2c25fd3c03d0"
 )
-DEMAND_TABLE_KEY = (
-    "blake3-512:0ce7c645a7525f1fe5189b808162b49d3fc3ba3d898bfb3d5086e0f295b8b8d"
-    "263fe7f530a6aa34adb125615a21e69fdee249e0314bf199b8f43580375153ab0"
-)
 COL_SITE_SHA256 = "a86bcccd3f041ac81a1d6f349d537ee1049c6afa4d799b9293b410da4409f038"
 COL_SOURCE_CID = (
     "blake3-512:58f9629e47ef9bdb4137fbe31d1c322b22fd1918ec8da1b1725f344d0087d5a27"
@@ -232,6 +228,10 @@ def test_launcher_authenticates_content_manifest_not_path_shape() -> None:
 
 
 def test_shared_table_authenticates_the_exact_compare_site(tmp_path: Path) -> None:
+    from sugar_lift_py_tests.no_call_body_attribution import (
+        shared_demand_table_content_key,
+    )
+
     output = tmp_path / "table.json"
     pulled = subprocess.run(
         [
@@ -241,7 +241,7 @@ def test_shared_table_authenticates_the_exact_compare_site(tmp_path: Path) -> No
             "--kind",
             "python-demand-table",
             "--content-key",
-            DEMAND_TABLE_KEY,
+            shared_demand_table_content_key(),
             "--output",
             str(output),
             "--runtime",

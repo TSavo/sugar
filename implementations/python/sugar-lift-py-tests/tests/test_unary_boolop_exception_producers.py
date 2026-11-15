@@ -38,10 +38,6 @@ from sugar_lift_python_source.canonical import blake3_512_of
 CORPUS = authenticated_pandas_corpus().root
 UNARY_SITE = CORPUS / "tests/extension/base/ops.py"
 BOOLOP_SITE = CORPUS / "tests/generic/test_generic.py"
-DEMAND_TABLE_KEY = (
-    "blake3-512:0ce7c645a7525f1fe5189b808162b49d3fc3ba3d898bfb3d5086e0f295b8b8d"
-    "263fe7f530a6aa34adb125615a21e69fdee249e0314bf199b8f43580375153ab0"
-)
 MANIFEST_CID = (
     "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda"
     "1c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530"
@@ -98,6 +94,11 @@ def test_verified_pandas_303_reproducers_are_content_pinned() -> None:
 
 
 def test_shared_table_authenticates_unary_and_complete_boolop_family(tmp_path) -> None:
+    from sugar_lift_py_tests.no_call_body_attribution import (
+        shared_demand_table_content_key,
+    )
+
+    demand_table_key = shared_demand_table_content_key()
     root = resolve_repo_root()
     output = tmp_path / "python-demand-table.json"
     pulled = subprocess.run(
@@ -108,7 +109,7 @@ def test_shared_table_authenticates_unary_and_complete_boolop_family(tmp_path) -
             "--kind",
             "python-demand-table",
             "--content-key",
-            DEMAND_TABLE_KEY,
+            demand_table_key,
             "--output",
             str(output),
             "--runtime",
@@ -120,7 +121,7 @@ def test_shared_table_authenticates_unary_and_complete_boolop_family(tmp_path) -
     )
     assert pulled.returncode == 0, pulled.stderr
     table = json.loads(output.read_text(encoding="utf-8"))
-    assert table["contentKey"] == DEMAND_TABLE_KEY
+    assert table["contentKey"] == demand_table_key
     assert table["authentication"]["python"] == "cpython-3.12.13"
     assert table["authentication"]["authenticatedCorpusManifestCid"] == MANIFEST_CID
     assert table["authentication"]["pandas"] == "3.0.3"
