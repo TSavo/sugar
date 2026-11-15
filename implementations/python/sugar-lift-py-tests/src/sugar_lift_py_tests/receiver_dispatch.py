@@ -429,7 +429,9 @@ def class_arguments(positional, keywords, *, shift: int = 0) -> list:
     return arguments
 
 
-def dispatch_on_receiver(name, receiver, positional, kw_values, site, *, unit):
+def dispatch_on_receiver(
+    name, receiver, positional, kw_values, site, *, unit, halted_at=None
+):
     """``receiver.name(*positional, **kw_values)`` as its coordinate and the
     dispatched edge (``dispatch_edge_call``) when its receiver's class is a
     class input here, else None (the call takes the path it took before):
@@ -462,14 +464,21 @@ def dispatch_on_receiver(name, receiver, positional, kw_values, site, *, unit):
     An instance a construction in this frame made is dispatched where the
     one attribute lookup selected a method (``ObjectValue.call_member``,
     over its class), never here.  ``unit`` is the module the call stands
-    in; without it nothing is dispatched."""
+    in; without it nothing is dispatched.  ``halted_at``: the fragment a
+    halt of a synthetic call leaves at (``UnknownCalleeCallV1.faces``)."""
     if unit is None or site is None:
         return None
     receiver_class = _receiver_class(name, receiver, unit)
     if receiver_class is None:
         return None
     return dispatch_edge_call(
-        name, receiver, receiver_class, positional, kw_values, site
+        name,
+        receiver,
+        receiver_class,
+        positional,
+        kw_values,
+        site,
+        halted_at=halted_at,
     )
 
 
@@ -765,7 +774,15 @@ def initializer_receiver_formals(unit) -> dict:
 
 
 def dispatch_edge_call(
-    name, receiver, receiver_class, positional, kw_values, site, *, read=False
+    name,
+    receiver,
+    receiver_class,
+    positional,
+    kw_values,
+    site,
+    *,
+    read=False,
+    halted_at=None,
 ):
     """THE dispatched method call (#7757 step 8): the coordinate
     ``call:dispatch:<name>(<receiver>, <positional>..., py.kwarg(...)...,
@@ -811,7 +828,7 @@ def dispatch_edge_call(
         authenticated_target_symbol="python:" + target,
         runtime_dispatch_receiver=receiver,
     )
-    return UnknownCalleeCallV1(target).faces(callsite, site)
+    return UnknownCalleeCallV1(target).faces(callsite, site, halted_at=halted_at)
 
 
 #: The label a dispatched call's receiver is read by after the call:
