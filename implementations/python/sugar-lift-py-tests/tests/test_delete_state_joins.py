@@ -53,10 +53,8 @@ from sugar_lift_py_tests.effect.expectation_not_met_effect import (
 )
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor import (
-    CallSiteValue,
     DictValue,
     ListValue,
-    ObjectValue,
     StringValue,
     TermValue,
 )
@@ -292,9 +290,12 @@ def test_bound_method_delete_retains_obj_key_demand_not_self() -> None:
     assert self_coord.coordinate_cid not in set(pending.demand.operand_coordinate_cids)
 
 
-def test_bound_method_delete_callsite_prepends_self_without_shifting_args() -> None:
-    """Callsite: self first; obj/key actuals retain discharge order."""
-    source = METHOD_DROP + "\nHolder().drop({'a': 1}, 'missing')\n"
+def _drop_call_outcome(actuals: str) -> ExitSet:
+    """The one ``Holder().drop(<actuals>)`` call, reduced: a call's
+    reduction applies its body (``CallSiteSugar._apply_bound`` ->
+    ``CallSiteValue.producer_outcome``), so this is the call's outcome, not
+    the unapplied call."""
+    source = METHOD_DROP + f"\nHolder().drop({actuals})\n"
     tree = _tree(source)
     calls = tuple(
         node
@@ -304,38 +305,34 @@ def test_bound_method_delete_callsite_prepends_self_without_shifting_args() -> N
         and node.func.attr == "drop"
     )
     assert len(calls) == 1
-    constructed = calls[0].sugar().desugar(None)
-    assert (
-        constructed.completed_value() is not None
-    ), f"{CODEX3}: expected one completed CallSiteValue, got {constructed!r:.200}"
-    site = constructed.completed_value()
-    assert isinstance(site, CallSiteValue)
-    assert site.parameters == ("self", "obj", "key")
-    assert isinstance(site.arg_values[0], ObjectValue)
-    assert site.arg_values[0].class_name == "Holder"
-    assert len(site.arg_values) == 3
-    # Off-by-one twin: dropping self is not the truthful binding.
-    off_by_one = site.arg_values[1:]
-    assert len(off_by_one) == 2
-    assert not (
-        isinstance(off_by_one[0], ObjectValue) and off_by_one[0].class_name == "Holder"
+    return calls[0].sugar().desugar(None)
+
+
+def test_bound_method_delete_callsite_prepends_self_without_shifting_args() -> None:
+    """Callsite: self first; obj/key actuals retain discharge order.
+
+    With ``self`` bound to the ``Holder`` and ``obj``/``key`` to the dict and
+    the string, ``del obj[key]`` deletes a missing key from the dict: the one
+    ``KeyError``.  Shifted by one (``obj`` the ``Holder``), it would delete
+    from an object with no ``__delitem__``, a ``TypeError``.  Twin: the key
+    present, the call completes and nothing halts."""
+    missing = _drop_call_outcome("{'a': 1}, 'missing'")
+    halts = [e for e in missing.exits if isinstance(e, Halted)]
+    assert len(halts) == 1 and len(missing.exits) == 1, f"{CODEX3}: {missing!r:.300}"
+    assert halts[0].effect.exception_type_coordinate == _identity("KeyError"), (
+        f"{CODEX3}: the delete did not run on the dict with the string key: "
+        f"{halts[0].effect!r:.300}"
+    )
+    present = _drop_call_outcome("{'a': 1}, 'a'")
+    assert present.exits, f"{CODEX3}: {present!r:.300}"
+    assert all(isinstance(e, Completed) for e in present.exits), (
+        f"{CODEX3}: a present key halted: {present!r:.300}"
     )
 
 
 def test_bound_method_delete_producer_outcome_halts_with_named_keyerror() -> None:
-    """Bound-method producer_outcome publishes KeyError with pre-effect state."""
-    source = METHOD_DROP + "\nHolder().drop({'a': 1}, 'missing')\n"
-    tree = _tree(source)
-    calls = tuple(
-        node
-        for node in tree.nodes()
-        if isinstance(node, Call)
-        and isinstance(node.func, Attribute)
-        and node.func.attr == "drop"
-    )
-    site = calls[0].sugar().desugar(None).completed_value()
-    assert isinstance(site, CallSiteValue)
-    outcome = site.producer_outcome(None)
+    """Bound-method call publishes KeyError with pre-effect state."""
+    outcome = _drop_call_outcome("{'a': 1}, 'missing'")
     assert isinstance(
         outcome, ExitSet
     ), f"{CODEX3}: expected ExitSet halt, got {type(outcome).__name__}"
