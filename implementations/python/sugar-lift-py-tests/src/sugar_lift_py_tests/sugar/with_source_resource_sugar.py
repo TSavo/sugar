@@ -81,12 +81,9 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
     from sugar_lift_py_tests.outcome.exit_set import Halted, _require_exit_set
     from sugar_lift_py_tests.outcome.resource_bindings import (
         EnterResultBinding,
-        ExitFaceBinding,
         ManagerBinding,
-        prepend_facts_to_exitset,
     )
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
-        face_record,
         halt_record,
         halts_recorded,
         reduce_block_to_exitset,
@@ -102,6 +99,8 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
 
     # The manager, its enter and its exit are each routed face by face here:
     # a deferred native-operation carrier at any of them is refused by name.
+    # The body is the one exception: a body waiting on its caller's actuals
+    # is routed once it discharges (below).
     # A manager call coordinate is not its returned receiver. Perform its
     # source outcome once, preserving exceptional faces before enter. A
     # manager or enter halt is at the head of the ``with``: it carries the
@@ -151,102 +150,43 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
                 enter_facts = binding.to_facts(site=resource.site)
                 # The body reads ``as x`` as the value ``__enter__`` returned.
                 body_ctx = binding.bound_in(ctx)
-            # The exit is routed per body face: a body whose carrier
-            # ``and_then`` composed is refused by name here.
-            body_es = _require_exit_set(
-                ExitSet((enter_face,)).and_then(
-                    lambda _entered, body_ctx=body_ctx: reduce_block_to_exitset(
-                        resource.body, body_ctx
-                    )
-                ),
-                owner="WithReducedManagerSugar.body",
-            )
-            concrete_exit = getattr(resource.protocol, "exit_outcome_for_body", None)
-            # Generator protocols have a linear resume: retain their single
-            # existing exit reduction instead of resuming per body face.
-            abstract_exit = (
-                None
-                if concrete_exit is not None
-                else _require_exit_set(
-                    resource.protocol.exit_outcome_for(entered, ctx),
-                    owner="WithReducedManagerSugar.exit",
+            # The exit is routed per body face.  A body still waiting on its
+            # caller's actuals (a deferred native-operation carrier, which
+            # ``and_then`` composed beneath the enter face) is routed once it
+            # discharges (``after_discharge``), as a ``try`` routes its body
+            # and a loop continues past its own: its faces exist only then.
+            body_es = ExitSet((enter_face,)).and_then(
+                lambda _entered, body_ctx=body_ctx: reduce_block_to_exitset(
+                    resource.body, body_ctx
                 )
             )
-            for body_face in body_es.exits:
-                # ``__exit__`` runs where the body left this face: a body
-                # halt's record (``resumed``), or the record the body
-                # completed with -- never the context the ``with`` began in.
-                # A halt of it that offers no record of its own carries that
-                # face's record (``halts_recorded``).
-                record = face_record(
-                    body_face,
-                    owner="WithReducedManagerSugar.exit",
-                    blame=resource.site,
-                )
-                exit_es = halts_recorded(
-                    (
-                        _require_exit_set(
-                            concrete_exit(
-                                entered,
-                                body_face,
-                                resumed(
-                                    record,
-                                    ctx,
-                                    owner="WithReducedManagerSugar.exit",
-                                    blame=resource.site,
-                                ).context,
-                            ),
-                            owner="WithReducedManagerSugar.exit",
-                        )
-                        if concrete_exit is not None
-                        else abstract_exit
-                    ),
-                    record,
-                )
-                face_facts = ExitFaceBinding.from_body_exit(
-                    resource.exit_face_id, body_face
-                ).to_facts(site=resource.site, guard=body_face.guard)
-                from sugar_lift_py_tests.context_manager_contract import (
-                    NeverSuppressesDispositionV1,
-                )
-                from sugar_lift_py_tests.effect import (
-                    GroupedRaiseEffect,
-                    RaiseEffect,
-                )
-                from sugar_lift_py_tests.effect.raise_effect import (
-                    UndeterminedRaiseEffect,
+
+            def routed(
+                body_es,
+                entered=entered,
+                manager_facts=manager_facts,
+                enter_facts=enter_facts,
+            ):
+                return _route_exit_over_body(
+                    resource,
+                    entered,
+                    _require_exit_set(body_es, owner="WithReducedManagerSugar.body"),
+                    (*manager_facts, *enter_facts),
+                    ctx,
+                    resume,
                 )
 
-                # An exception (a leaf or a group) is suppressed by a
-                # true exit result; loop control and return are not
-                # exceptions, so the exit result is ignored for them.
-                # A RuntimeEffect is not an exception either: it is the
-                # lift's boundary at an operation whose dispatch exists
-                # only at runtime (it may complete or raise anything).
-                # Every exception Python raises from a decided operation
-                # (``1/0``, ``{}[k]``, a NameError) is a RaiseEffect and
-                # takes the truth split; handing a boundary to exit as a
-                # raise would invent one, so it stays the With's residue.
-                if isinstance(body_face, Halted) and not isinstance(
-                    body_face.effect,
-                    (RaiseEffect, GroupedRaiseEffect, UndeterminedRaiseEffect),
-                ):
-                    routed = ExitSet((body_face,)).and_exit(
-                        exit_es,
-                        disposition=NeverSuppressesDispositionV1(),
-                        resume=resume,
-                    )
-                else:
-                    routed = ExitSet((body_face,)).and_exit_truthiness(
-                        _exit_return_values(exit_es),
-                        site=resource.site,
-                        resume=resume,
-                    )
-                parts.append(
-                    prepend_facts_to_exitset(
-                        routed, (*manager_facts, *enter_facts, *face_facts)
-                    )
-                )
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+
+            # A carrier only once ``and_then`` composed one beneath the enter
+            # face; anything else that is not an ``ExitSet`` is refused by
+            # name in ``routed`` (owner ``WithReducedManagerSugar.body``).
+            if isinstance(body_es, NativeOperationExitCarrierV1):
+                parts.append(body_es.after_discharge(routed))
+            else:
+                parts.append(routed(body_es))
     if not parts:
         from sugar_source_tree.panic import SugarNotWritten
 
@@ -257,8 +197,129 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
             requested="one completed or halted source-derived manager face",
             fix="keep empty protocol testimony loud",
         )
-    result = parts[0]
-    for part in parts[1:]:
+    return _union_parts(tuple(parts))
+
+
+def _union_parts(parts):
+    """The union of the ``with``'s parts, in order.  A part still waiting on
+    its caller's actuals (a body routed once it discharges) joins the union
+    once it discharges, as an ``if`` joins a suite that waits on its own; no
+    part is read before then and none is dropped."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    head, *rest = parts
+    if isinstance(head, NativeOperationExitCarrierV1):
+        return head.after_discharge(
+            lambda discharged: _union_parts((discharged, *rest))
+        )
+    if not rest:
+        return head.normalize()
+    following, *tail = rest
+    if isinstance(following, NativeOperationExitCarrierV1):
+        return following.after_discharge(
+            lambda discharged: _union_parts((head, discharged, *tail))
+        )
+    return _union_parts((head.union(following), *tail))
+
+
+def _route_exit_over_body(resource, entered, body_es, facts, ctx, resume) -> ExitSet:
+    """``__exit__`` over every face of one entered body, under Python's own
+    disposition (8.5), each routed arm carrying the manager's and the enter's
+    ``facts``: the union of the routed arms."""
+    from sugar_lift_py_tests.outcome.exit_set import Halted, _require_exit_set
+    from sugar_lift_py_tests.outcome.resource_bindings import (
+        ExitFaceBinding,
+        prepend_facts_to_exitset,
+    )
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        face_record,
+        halts_recorded,
+        resumed,
+    )
+
+    from sugar_lift_py_tests.context_manager_contract import (
+        NeverSuppressesDispositionV1,
+    )
+    from sugar_lift_py_tests.effect import GroupedRaiseEffect, RaiseEffect
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
+    concrete_exit = getattr(resource.protocol, "exit_outcome_for_body", None)
+    # Generator protocols have a linear resume: retain their single existing
+    # exit reduction instead of resuming per body face.
+    abstract_exit = (
+        None
+        if concrete_exit is not None
+        else _require_exit_set(
+            resource.protocol.exit_outcome_for(entered, ctx),
+            owner="WithReducedManagerSugar.exit",
+        )
+    )
+    routed_faces = []
+    for body_face in body_es.exits:
+        # ``__exit__`` runs where the body left this face: a body halt's
+        # record (``resumed``), or the record the body completed with --
+        # never the context the ``with`` began in.  A halt of it that offers
+        # no record of its own carries that face's record (``halts_recorded``).
+        record = face_record(
+            body_face,
+            owner="WithReducedManagerSugar.exit",
+            blame=resource.site,
+        )
+        exit_es = halts_recorded(
+            (
+                _require_exit_set(
+                    concrete_exit(
+                        entered,
+                        body_face,
+                        resumed(
+                            record,
+                            ctx,
+                            owner="WithReducedManagerSugar.exit",
+                            blame=resource.site,
+                        ).context,
+                    ),
+                    owner="WithReducedManagerSugar.exit",
+                )
+                if concrete_exit is not None
+                else abstract_exit
+            ),
+            record,
+        )
+        face_facts = ExitFaceBinding.from_body_exit(
+            resource.exit_face_id, body_face
+        ).to_facts(site=resource.site, guard=body_face.guard)
+
+        # An exception (a leaf or a group) is suppressed by a true exit
+        # result; loop control and return are not exceptions, so the exit
+        # result is ignored for them.  A RuntimeEffect is not an exception
+        # either: it is the lift's boundary at an operation whose dispatch
+        # exists only at runtime (it may complete or raise anything).  Every
+        # exception Python raises from a decided operation (``1/0``,
+        # ``{}[k]``, a NameError) is a RaiseEffect and takes the truth split;
+        # handing a boundary to exit as a raise would invent one, so it stays
+        # the With's residue.
+        if isinstance(body_face, Halted) and not isinstance(
+            body_face.effect,
+            (RaiseEffect, GroupedRaiseEffect, UndeterminedRaiseEffect),
+        ):
+            routed = ExitSet((body_face,)).and_exit(
+                exit_es,
+                disposition=NeverSuppressesDispositionV1(),
+                resume=resume,
+            )
+        else:
+            routed = ExitSet((body_face,)).and_exit_truthiness(
+                _exit_return_values(exit_es),
+                site=resource.site,
+                resume=resume,
+            )
+        routed_faces.append(prepend_facts_to_exitset(routed, (*facts, *face_facts)))
+    if not routed_faces:
+        return ExitSet(())
+    result = routed_faces[0]
+    for part in routed_faces[1:]:
         result = result.union(part)
     return result.normalize()
 

@@ -1112,27 +1112,32 @@ def test_source_resource_concrete_exit_carrier_is_refused_by_name(_empty_body):
     _refused(excinfo, "WithReducedManagerSugar.exit")
 
 
-@pytest.fixture
-def _carrier_body(monkeypatch):
-    """A ``with`` body that reduces to a deferred carrier."""
+def test_source_resource_body_carrier_routes_its_exit_once_it_discharges(
+    monkeypatch,
+):
+    # A ``with`` body waiting on its caller's actuals is routed once it
+    # discharges, as a ``try`` routes its body: the ``with`` is a carrier,
+    # never refused for the body's shape.  Its discharged faces reach
+    # ``__exit__``'s routing -- here an exit that answers nothing, which
+    # is refused by name under the exit's own owner, after the discharge.
     from sugar_lift_py_tests.sugar import function_universe_sugar
+    from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+        _route_manager_faces,
+    )
 
-    carrier, _, _ = _carrier()
+    carrier, left, right = _carrier()
     monkeypatch.setattr(
         function_universe_sugar,
         "reduce_block_to_exitset",
         lambda sugars, ctx: carrier,
     )
 
+    composed = _route_manager_faces(_source_resource(_protocol()), None)
 
-def test_source_resource_body_carrier_is_refused_by_name(_carrier_body):
-    from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
-        _route_manager_faces,
-    )
-
+    assert isinstance(composed, NativeOperationExitCarrierV1)
     with pytest.raises(ConstructionPanic) as excinfo:
-        _route_manager_faces(_source_resource(_protocol()), None)
-    _refused(excinfo, "WithReducedManagerSugar.body")
+        composed.discharge(None, _actuals(left, right))
+    assert excinfo.value.info.owner == "WithReducedManagerSugar.exit"
 
 
 # --- manager_protocol_construction -----------------------------------------
