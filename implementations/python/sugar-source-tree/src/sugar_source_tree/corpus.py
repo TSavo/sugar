@@ -111,10 +111,13 @@ def emit_corpus(
     bounded by the largest file, not the corpus."""
     from sugar_lift_py_tests.lift_rpc import _open_at_seat
 
+    from .tree import SourceTree
+
     files: list[Path] = []
     for p in paths:
         if p.is_dir():
-            files.extend(sorted(p.rglob("*.py")))
+            # Step 2's file list (#7757 item 45).
+            files.extend(SourceTree(p).paths())
         else:
             files.append(p)
     files.sort()

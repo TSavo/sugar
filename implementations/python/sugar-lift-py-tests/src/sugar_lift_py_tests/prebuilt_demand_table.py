@@ -184,10 +184,14 @@ def semantic_identity_for_corpus(
     is a function of the inputs (corpus bytes, producer source, parser,
     config), so it is stated without deriving a single row.
     """
+    from sugar_source_tree.tree import SourceTree
+
     root = Path(root)
+    # Step 2's file list, the one the rows are derived over
+    # (``_corpus_source_units``), #7757 item 45.
     return demand_table_identity(
         root,
-        sorted(root.rglob("*.py")),
+        list(SourceTree(root).paths()),
         source_root=source_root or Path(__file__).resolve().parents[1],
         config=config,
     )
