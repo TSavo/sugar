@@ -1,29 +1,21 @@
-"""Plan row 1 (step 6): a method called on a class call's result is the one method call.
+"""Plan row 1 (step 6): a method called on a class call's result is one call,
+and its dispatch waits for prove.
 
-``Box(3).get()`` and ``b = Box(3); b.get()`` are the same call: the receiver is
-whatever the class call built, and the method is selected on that receiver and
-applied through the one routine (``ObjectValue.call_method_value`` ending in
-``CallSiteValue.producer_outcome``).
+``Box(3).get()`` and ``b = Box(3); b.get()`` are the same call.  Since #7757
+step 6 the class call is its coordinate and an edge to ``python:<m>.Box``,
+joined at prove to the class's constructor contract: the reduction builds no
+instance, so ``get`` is a method of a call's result, whose dispatch is not
+decided at the reduction (``CallSiteValue.attribute``: the one undecided
+read) and not at prove until the owner rules on dispatch at prove (#7757
+survey step 8).  Before step 6 both halves were decided at the reduction by
+following ``Box``'s constructor and ``get``'s body (truthful ``sat``, lying
+``unsat``); both are now ``open``, never ``sat`` for the lie, and listed on
+#7661.
 
 There used to be a second entry for the inline shape when the class came from an
 authenticated import: preconstruction chose the method frame from the class
 statement and ``Call._construct_sugar`` picked ``MethodCallSugar`` with that
-frame by a ``dispatch_kind == "method"`` flag. That entry is deleted. The
-one-file solver harness cannot stage an imported distribution, so the twins
-below state the rule on a same-file class; the imported shape is covered in
-process by ``sugar-lift-python-source/tests/test_source_call_preconstruction.py``.
-
-Each twin differs in one literal, truthful ``sat``, lying ``unsat``.
-
-The receiver is made in the test function, so inside the applied bodies
-``self`` is the caller's current object and ``self.n + k`` is ``3 + 4``: the
-test function's claim is decided.  ``__init__``'s and ``get``'s OWN proofs
-have no caller: there ``self.n = n`` and ``self.n + k`` act on formals with no
-actual, and each owes an ``undecided`` member of the source (step 8).  A
-source that owes anything is never ``sat`` as a whole, so the truthful half
-is read on the test function's own claims (``witness_harness.claim_verdict``):
-the members the methods' own proofs owe sit above the test function and are
-set aside; the lying half is refuted through ``prove_verdict`` unchanged.
+frame by a ``dispatch_kind == "method"`` flag. That entry is deleted.
 """
 
 from __future__ import annotations
@@ -68,5 +60,5 @@ def test_a_method_on_a_class_call_result_reaches_the_solver(
         for number, line in enumerate(source.splitlines(), start=1)
         if line.startswith("def test_")
     )
-    assert claim_verdict(truthful.prove_doc, claims_from_line=test_line) == "sat"
-    assert lying.verdict == "unsat"
+    assert claim_verdict(truthful.prove_doc, claims_from_line=test_line) == "open"
+    assert lying.verdict == "open"

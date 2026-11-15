@@ -274,84 +274,124 @@ class LambdaCallable(FloorValue):
         self, operation, positional, keywords, captured, bound, frame, caller_ctx
     ):
         """The call of this function value as its coordinate and edge
-        (#7757 step 5): ``call:<target>(<actuals>, py.kwarg(...),
-        py.closure(...), py.default(...), py.global(...))``, ``<target>`` the
-        callee's join symbol without its ``python:`` namespace, carrying
-        exactly what prove's one binder binds the callee's contract with:
-
-        - each positional actual and each keyword actual as written (every
-          formal by name, ``py.kwarg``, when the function takes ``*args`` or
-          ``**kwargs``: its formal is the packed value the call binds);
-        - ``py.closure(<name>, <value>)`` for each captured name, the
-          binding the call read (``CallSiteSugar._captured_values``);
-        - ``py.default(<param>, <value>)`` for each defaulted formal the
-          call omits, the value the ``def`` statement bound under its key;
-        - ``py.global(<name>, <value>)`` for each ``global:`` input of the
-          callee's contract, the binding where the call runs
-          (``global_value_at_call``).
-
-        Sent down the path an imported call takes: the one unanswered call
-        (``UnknownCalleeCallV1.faces``: completes under its ``completes``
-        atom, halts under the complement, both arms owe it), whose edge and
-        ``undecided`` member carry the join symbol.  A callee with no join
-        symbol (no workspace root) is the same call with no symbol: owed,
-        joined to nothing."""
-        from sugar_lift_py_tests.call_symbol import call_symbol
-        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor, str_const
-        from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
-        from sugar_lift_py_tests.sugar.call_site_sugar import (
-            _global_inputs,
-            global_value_at_call,
+        (#7757 step 5), through the one edge every call of a same-file
+        definition stands as (``definition_edge_call``): the function's own
+        ``def`` or lambda names the join symbol and states the signature."""
+        return definition_edge_call(
+            symbol_definition=frame.owner,
+            signature=frame.owner,
+            parameters=tuple(frame.parameters),
+            packed=(
+                self.vararg_parameter is not None or self.kwarg_parameter is not None
+            ),
+            positional=positional,
+            keywords=keywords,
+            captured=captured,
+            actuals=tuple(bound.arg_values),
+            site=operation.site,
+            call_occurrence=operation.call_occurrence,
+            caller_ctx=caller_ctx,
+            fallback_target=self.construction_identity,
         )
-        from sugar_source_tree.nodes import current_module_execution_site
 
-        site = operation.site
-        owner_name = str(site)
-        definition = frame.owner
-        parameters = tuple(frame.parameters)
-        actuals = tuple(bound.arg_values)
-        packed = (
-            self.vararg_parameter is not None or self.kwarg_parameter is not None
-        )
-        if packed:
-            # A formal ``*args`` / ``**kwargs`` is the packed value the call
-            # binds, never one positional actual: every formal by name.
-            arguments = [
-                ctor("py.kwarg", [str_const(name), value.to_term(owner=owner_name)])
-                for name, value in zip(parameters, actuals)
-            ]
-        else:
-            supplied = set(parameters[: len(positional)]) | {
-                name for name, _value in keywords
-            }
-            defaulted = {
-                parameter.name
-                for parameter in getattr(definition, "params", ())
-                if getattr(parameter, "default", None) is not None
-            }
-            arguments = (
-                [value.to_term(owner=owner_name) for value in positional]
-                + [
-                    ctor(
-                        "py.kwarg",
-                        [str_const(name), value.to_term(owner=owner_name)],
-                    )
-                    for name, value in keywords
-                ]
-                + [
-                    ctor(
-                        "py.default",
-                        [str_const(name), value.to_term(owner=owner_name)],
-                    )
-                    for name, value in zip(parameters, actuals)
-                    if name not in supplied and name in defaulted
-                ]
-            )
-        arguments += [
-            ctor("py.closure", [str_const(name), value.to_term(owner=owner_name)])
-            for name, _cid, value in captured
+
+def definition_edge_call(
+    *,
+    symbol_definition,
+    signature,
+    parameters,
+    packed: bool,
+    positional,
+    keywords,
+    captured,
+    actuals,
+    site,
+    call_occurrence,
+    caller_ctx,
+    fallback_target: str,
+    **testimony,
+):
+    """THE call of a same-file definition as its coordinate and edge (#7757
+    steps 5 and 6, the owner's ruling of 2026-11-15, "Edge, join at prove"):
+    a function value (``LambdaCallable``), a class
+    (``ClassDefinitionValue.callable_application_with``) and a method whose
+    receiver's class is decided (``object_value.method_edge_call``) alike.
+    The callee's body is never applied here.
+
+    ``call:<target>(<actuals>, py.kwarg(...), py.default(...),
+    py.closure(...), py.global(...))``, ``<target>`` the join symbol of
+    ``symbol_definition`` (``bridge_source_symbol``) without its ``python:``
+    namespace, carrying exactly what prove's one binder binds the callee's
+    contract with:
+
+    - each positional actual and each keyword actual as written (every
+      formal by name, ``py.kwarg``, when the signature takes ``*args`` or
+      ``**kwargs`` -- ``packed`` -- its formal being the packed value the
+      call binds, ``actuals`` in formal order);
+    - ``py.default(<param>, <value>)`` for each formal the call omits that
+      ``signature`` (the ``def`` whose formals the contract states, or None)
+      defaults, the value its ``def`` statement bound;
+    - ``py.closure(<name>, <value>)`` for each captured name, the binding the
+      call read;
+    - ``py.global(<name>, <value>)`` for each ``global:`` input of the
+      signature's contract, the binding where the call runs
+      (``global_value_at_call``).
+
+    Sent down the path an imported call takes: the one unanswered call
+    (``UnknownCalleeCallV1.faces``: completes under its ``completes`` atom,
+    halts under the complement, both arms owe it), whose edge and
+    ``undecided`` member carry the join symbol, so prove joins it to the
+    callee's contract and each halt the contract states reaches the caller
+    (#8690).  A callee with no join symbol (no workspace root) is the same
+    call under ``fallback_target`` with no symbol: owed, joined to nothing.
+    ``testimony`` is what the call form authenticated about the result
+    (a class call's exception type), carried on the value unchanged."""
+    from sugar_lift_py_tests.call_symbol import call_symbol
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
+    from sugar_lift_py_tests.sugar.call_site_sugar import (
+        _global_inputs,
+        global_value_at_call,
+    )
+    from sugar_source_tree.nodes import current_module_execution_site
+
+    owner_name = str(site)
+    parameters = tuple(parameters)
+    actuals = tuple(actuals)
+    if packed:
+        # A formal ``*args`` / ``**kwargs`` is the packed value the call
+        # binds, never one positional actual: every formal by name.
+        arguments = [
+            ctor("py.kwarg", [str_const(name), value.to_term(owner=owner_name)])
+            for name, value in zip(parameters, actuals)
         ]
+    else:
+        supplied = set(parameters[: len(positional)]) | {
+            name for name, _value in keywords
+        }
+        defaulted = {
+            parameter.name
+            for parameter in getattr(signature, "params", ())
+            if getattr(parameter, "default", None) is not None
+        }
+        arguments = (
+            [value.to_term(owner=owner_name) for value in positional]
+            + [
+                ctor("py.kwarg", [str_const(name), value.to_term(owner=owner_name)])
+                for name, value in keywords
+            ]
+            + [
+                ctor("py.default", [str_const(name), value.to_term(owner=owner_name)])
+                for name, value in zip(parameters, actuals)
+                if name not in supplied and name in defaulted
+            ]
+        )
+    arguments += [
+        ctor("py.closure", [str_const(name), value.to_term(owner=owner_name)])
+        for name, _cid, value in captured
+    ]
+    if signature is not None:
         module_site = current_module_execution_site()
         arguments += [
             ctor(
@@ -359,7 +399,7 @@ class LambdaCallable(FloorValue):
                 [
                     str_const(item.coordinate.name),
                     global_value_at_call(
-                        definition,
+                        signature,
                         item.coordinate.name,
                         caller_ctx,
                         module_site=module_site,
@@ -367,26 +407,27 @@ class LambdaCallable(FloorValue):
                     ),
                 ],
             )
-            for item in _global_inputs(definition)
+            for item in _global_inputs(signature)
         ]
-        symbol = definition.bridge_source_symbol()
-        target = (
-            symbol[len(_PYTHON_NAMESPACE) :]
-            if symbol is not None and symbol.startswith(_PYTHON_NAMESPACE)
-            else self.construction_identity
-        )
-        callsite = CallSiteValue(
-            target_name=target,
-            arg_values=tuple(positional) + tuple(value for _n, value in keywords),
-            parameters=(),
-            term=ctor(call_symbol(target), arguments, symbol_kind="coordinate"),
-            body=None,
-            keyword_names=tuple(name for name, _value in keywords),
-            site=site,
-            call_occurrence=operation.call_occurrence,
-            authenticated_target_symbol=symbol,
-        )
-        return UnknownCalleeCallV1(target).faces(callsite, site)
+    symbol = symbol_definition.bridge_source_symbol()
+    target = (
+        symbol[len(_PYTHON_NAMESPACE) :]
+        if symbol is not None and symbol.startswith(_PYTHON_NAMESPACE)
+        else fallback_target
+    )
+    callsite = CallSiteValue(
+        target_name=target,
+        arg_values=tuple(positional) + tuple(value for _n, value in keywords),
+        parameters=(),
+        term=ctor(call_symbol(target), arguments, symbol_kind="coordinate"),
+        body=None,
+        keyword_names=tuple(name for name, _value in keywords),
+        site=site,
+        call_occurrence=call_occurrence,
+        authenticated_target_symbol=symbol,
+        **testimony,
+    )
+    return UnknownCalleeCallV1(target).faces(callsite, site)
 
 
 # The namespace a join symbol is spelled under (``SourceUnit.definition_symbol``).
@@ -394,10 +435,11 @@ _PYTHON_NAMESPACE = "python:"
 
 
 def _applies_its_own_frame(frame) -> bool:
-    """A generator function's or an ``async def``'s value: its call builds a
+    """A generator function's or an ``async def``'s frame: its call builds a
     generator or a coroutine, which the one application of a frame still
-    builds (``CallSiteSugar._apply_bound``, ``producer_outcome``); step 5
-    switches only the functions whose call runs their body."""
+    builds (``CallSiteSugar._apply_bound``, ``producer_outcome``); steps 5
+    and 6 switch only the definitions whose call runs their body (a
+    function, a method, a class) to the edge (``definition_edge_call``)."""
     from sugar_source_tree.nodes import AsyncFunctionDef
 
     return (

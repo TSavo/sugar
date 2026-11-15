@@ -105,16 +105,19 @@ class ClassDefinitionValue(GuardStableValue):
         """``Cls(*args, **kw)``: the one call of a source class.
 
         Every call of a source class is a call of its value (a read of the
-        class's name is its statement's evaluation key).  It applies the
-        class statement's constructor frame
-        (``ClassDef.source_visible_constructor_frame``: initializer, source
-        ``__new__``, dataclass and inherited-exception arms) through the one
-        application routine, ``CallSiteValue.producer_outcome``.  Every face of the
-        constructor, halts included, is this call's.  The call is bound on
-        this value (``ClassConstructorBodySugar.bind_class_call``, entered
-        with ``class_value``), with the constructor defaults it carries
-        (``constructor_defaults``); the class statement already ran where
-        the value was built and is never reduced again here.
+        class's name is its statement's evaluation key).  It is its
+        coordinate and an edge to the class's join symbol
+        (``definition_edge_call``, ``python:<module>.<Class>``), joined at
+        prove to the class's constructor contract
+        (``tree_enumerate.class_universe_outcome``) as a call of a ``def``
+        is: the owner's ruling of 2026-11-15, #7757 step 6.  The
+        constructor's body is never applied here; every halt its contract
+        states reaches this call at prove.  The call is bound to the
+        constructor frame's signature
+        (``ClassDef.source_visible_constructor_frame``) with the constructor
+        defaults this value carries (``constructor_defaults``), only to read
+        what the edge supplies; the class statement already ran where the
+        value was built and is never reduced again here.
 
         A class whose constructor its own statement does not decide (no
         source ``__new__`` shape, no ``dataclass``-written ``__init__``) and
@@ -163,50 +166,59 @@ class ClassDefinitionValue(GuardStableValue):
                 self.class_name, positional, keywords, operation.site
             )
         frame = definition.source_visible_constructor_frame()
-        # The call reads the class it was given: this value, the class the
-        # statement's run built and the name's read (its evaluation key)
-        # answered.  The constructor is entered on it (``class_value``), at
-        # this call (``call_site``); the class statement is never reduced
-        # again at the call (#7757).
-        from dataclasses import replace
+        from sugar_lift_py_tests.floor.lambda_callable import (
+            _refuse,
+            definition_edge_call,
+        )
 
-        body = replace(frame.body, class_value=self, call_site=operation.site)
-
-        def refuse(*, owner, blame, observed, requested, fix):
-            raise SugarNotWritten(
-                owner=owner,
-                blame=blame,
-                observed=observed,
-                requested=requested,
-                fix=fix,
-            )
-
-        return body.bind_class_call(
-            lambda defaults, body: bind_call(
-                self.class_name,
-                positional,
-                keywords,
-                frame=frame,
-                parameters=frame.parameters,
-                body=body,
-                frame_cid=frame.frame_cid,
-                formal_coordinate_cids=tuple(
-                    coordinate.cid for coordinate in frame.formal_coordinates
-                ),
-                ctx=ctx,
-                owner="ClassDefinitionValue.callable_application_with",
-                blame=operation.site,
-                refuse=refuse,
-                defaults=defaults,
-                # The class a raise authenticated for this callee: the
-                # instance the constructor builds is of it, so the call
-                # carries it, as a plain call of a builtin exception does
-                # (``RaiseSugar._effect`` reads the class off the value).
-                exception_type_coordinate=getattr(
-                    operation, "exception_type_coordinate", None
-                ),
-                exception_type_mro=getattr(operation, "exception_type_mro", None),
-            ).producer_outcome(ctx),
+        # The one binder binds the call to the constructor's signature (a
+        # call that does not fit is refused by name there), each formal the
+        # call omits reading the default the class value carries for it
+        # (``constructor_defaults``): what the edge supplies as
+        # ``py.default``.  No body is bound: the constructor is the class's
+        # contract (``tree_enumerate.class_universe_outcome``), joined at
+        # prove (#7757 step 6).
+        bound = bind_call(
+            self.class_name,
+            positional,
+            keywords,
+            frame=frame,
+            parameters=frame.parameters,
+            body=None,
+            frame_cid=frame.frame_cid,
+            formal_coordinate_cids=tuple(
+                coordinate.cid for coordinate in frame.formal_coordinates
+            ),
+            ctx=ctx,
+            owner="ClassDefinitionValue.callable_application_with",
+            blame=operation.site,
+            refuse=_refuse,
+            defaults=self.constructor_defaults(),
+        )
+        return definition_edge_call(
+            symbol_definition=definition,
+            signature=definition.constructor_definition(),
+            parameters=tuple(frame.parameters),
+            packed=any(
+                kind in ("vararg", "kwarg") for kind in frame.parameter_kinds
+            ),
+            positional=positional,
+            keywords=keywords,
+            captured=(),
+            actuals=tuple(bound.arg_values),
+            site=operation.site,
+            call_occurrence=getattr(operation, "call_occurrence", None),
+            caller_ctx=ctx,
+            fallback_target=self.class_name,
+            # The class a raise authenticated for this callee: the instance
+            # the call makes is of it (its ``__new__`` is a builtin's or one
+            # the constructor reads, ``constructor_is_read``), so the call
+            # carries it, as a plain call of a builtin exception does
+            # (``RaiseSugar._effect`` reads the class off the value).
+            exception_type_coordinate=getattr(
+                operation, "exception_type_coordinate", None
+            ),
+            exception_type_mro=getattr(operation, "exception_type_mro", None),
         )
 
     def _unanswered_call(self, target, positional, keywords, site):
@@ -441,14 +453,16 @@ class ClassDefinitionValue(GuardStableValue):
                     requested="the frame of the method the one lookup selected",
                     fix="authenticate the call against the selected method's frame",
                 )
-            from sugar_lift_py_tests.floor.object_value import bind_method_call
+            from sugar_lift_py_tests.floor.object_value import method_edge_call
             from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
             def refuse(*, owner, blame, observed, requested, fix):
                 del owner, blame, requested, fix
                 raise SourceCallBindingGap(observed)
 
-            return bind_method_call(
+            # The function read off its class is decided by the lookup: the
+            # call is its coordinate and edge (#7757 step 6).
+            return method_edge_call(
                 self,
                 holder.object_method(method),
                 arguments,
@@ -459,7 +473,7 @@ class ClassDefinitionValue(GuardStableValue):
                 blame=blame,
                 refuse=refuse,
                 required_frame=required_frame,
-            ).producer_outcome(ctx)
+            )
         from sugar_lift_py_tests.floor.lambda_callable import LambdaCallable
 
         if isinstance(value, LambdaCallable) and required_frame is None:

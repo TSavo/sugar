@@ -31,12 +31,14 @@ These tests are the guard for the next attempt.
   claim, which must complete, and a lying claim, which must not.  Two
   evaluations of one source span (two iterations, two applications of one
   callee) must never answer for each other.
-- The count tests bound how many times a callee's body is reduced: never
-  more than the count measured when they were written (#7812), never fewer
-  than the calls Python makes.
-- ``a = Box(1); a.get(3)``: ``self`` in ``get`` is the caller's ``a`` with
-  the caller's currency (#8249), so ``self.n`` reads the stored field and the
-  box programs are value programs like the rest.
+- The count tests that bounded how many times a callee's body is reduced
+  (#7812) are gone with the application they measured: no call of a
+  same-file function (step 5), class or method (step 6) applies a body.
+- ``a = Box(1); a.get(3)``: the class call is its coordinate and edge
+  (#7757 step 6), so ``a.get`` is a method of a call's result, whose
+  dispatch is not decided at the reduction (dispatch at prove waits on the
+  owner's ruling): the box programs are values the reduction does not
+  decide (``_JOINED_AT_PROVE``), and open at prove (``_OPEN_UNTIL_DISPATCH``).
 - Through the solver, a helper's own proof (no caller, so no actual) owes
   what it reads off a formal, and a source that owes anything is never
   ``sat`` as a whole (step 8): the truthful claim is read on the test
@@ -45,7 +47,6 @@ These tests are the guard for the next attempt.
 
 from __future__ import annotations
 
-from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -272,6 +273,12 @@ _JOINED_AT_PROVE = {
         "same-call-at-two-sites",
         "rebind",
         "rebind-read-between",
+        # A call of a same-file class is its coordinate and edge too (#7757
+        # step 6): ``Box(1)`` builds no instance at the reduction, and a
+        # method of the call's result is not dispatched there.
+        "box-get",
+        "box-get-read-twice",
+        "unrolled-loop-object",
     )
 }
 
@@ -319,7 +326,6 @@ _READ_INSIDE_THE_LOOP = {
 # real solver: the reduction-level door used above cannot build them (a
 # ``BackendDefect``, "producer reporter owns no registration table").
 _SOLVER_PROGRAMS = {
-    "box-get": _PROGRAMS["box-get"],
     "unrolled-loop-callee": (
         "    total = 0\n"
         "    for i in (1, 2, 3):\n"
@@ -508,68 +514,31 @@ def test_the_solver_holds_the_value_python_computes(name: str, tmp_path: Path) -
     assert lying_run.verdict == "unsat"
 
 
-# ---------------------------------------------------------------------------
-# Applications of a callee body, counted on its ``return`` statement.
-# ---------------------------------------------------------------------------
-
-
-def _reductions_of(body: str, needle: str, monkeypatch) -> int:
-    """How many times the ``return`` statement written as ``needle`` is reduced
-    while the test function's universe is reduced: once per application of the
-    callee that holds it."""
-    from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
-    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
-
-    source, function = _function(body)
-    start = source.index(needle)
-    counts: Counter[str] = Counter()
-    reduce_return = ReturnSugar.desugar
-
-    def counted(self, ctx=None):
-        span = getattr(self.site, "span", None)
-        if span is not None and span.start == start:
-            counts[needle] += 1
-        return reduce_return(self, ctx)
-
-    monkeypatch.setattr(ReturnSugar, "desugar", counted)
-    function_universe_outcome(function)
-    return counts[needle]
-
-
-# name -> (program, the callee's return statement, calls Python makes,
-#          applications measured today)
-#
-# Only method calls remain (step 6): a call of a same-file function applies
-# no body any more (step 5), so its entries (``same-call-at-two-sites``,
-# ``callee-twice-in-one-expression``, ``callee-of-callee``,
-# ``callee-with-a-local-assigned-twice``, ``rebind``,
-# ``rebind-read-between``) were deleted with the application they measured.
-_APPLICATIONS = {
-    "box-get": ("box-get", "return self.n + k", 1, 2),
-    "box-get-read-twice": ("box-get-read-twice", "return self.n + k", 1, 3),
-    "unrolled-loop-object": ("unrolled-loop-object", "return self.n + k", 2, 7),
+# Decided through the solver before #7757 step 6, by following ``Box``'s
+# constructor and ``get``'s body at the reduction.  The class call is now its
+# coordinate and edge, joined to ``python:test_witness.Box`` at prove; ``a.get``
+# is a method of the call's result, whose dispatch is not decided at the
+# reduction or at prove until the owner rules on dispatch at prove.  Open on
+# both halves, never ``sat`` for the lie; listed on #7661.
+_OPEN_UNTIL_DISPATCH = {
+    "box-get": _JOINED_AT_PROVE["box-get"],
 }
 
 
-@pytest.mark.parametrize("name", sorted(_APPLICATIONS))
-def test_applications_of_a_callee_body_measured_today(name: str, monkeypatch) -> None:
-    """Bounded by Python's count below and the #7812 measurement above.
+@pytest.mark.parametrize("name", sorted(_OPEN_UNTIL_DISPATCH))
+def test_a_method_of_a_class_call_result_is_open_until_dispatch_at_prove(
+    name: str, tmp_path: Path
+) -> None:
+    body, truthful, lying = _OPEN_UNTIL_DISPATCH[name]
+    head = _HELPERS + "def test_it():\n"
 
-    ``measured`` is the count when this test was written (#7812): each read
-    of an assigned name applied the callee again, because a right-hand side
-    that is one plain completion was not recorded.  Python makes ``calls``
-    calls.  The test was written to go red when a read became a reference to
-    the statement's evaluation (plan row 7, map item 2) and the count
-    dropped; it did (``callee-of-callee`` measured 2, Python's count, on a
-    later main; ``rebind``, ``rebind-read-between`` and the ``box-get`` pair
-    moved off their numbers too).  The new counts were not re-measured where
-    this was changed, so the test holds what is never a wrong count: never more
-    applications than #7812 measured, never fewer than the calls Python
-    makes (each call's body is applied at least once).
-    """
-    program, needle, calls, measured = _APPLICATIONS[name]
-    body, truthful, _lying = _PROGRAMS[program]
+    truthful_run = run_source_through_real_solver(
+        tmp_path / "t", head + body.format(claim=truthful)
+    )
+    lying_run = run_source_through_real_solver(
+        tmp_path / "l", head + body.format(claim=lying)
+    )
 
-    applications = _reductions_of(body.format(claim=truthful), needle, monkeypatch)
-
-    assert calls <= applications <= measured
+    test_line = head.count("\n")
+    assert claim_verdict(truthful_run.prove_doc, claims_from_line=test_line) != "sat"
+    assert lying_run.verdict != "sat"

@@ -1,5 +1,13 @@
 """A method call applies its body through the one application routine (#7756).
 
+Superseded by #7757 step 6 (the owner's ruling of 2026-11-15, "Edge, join at
+prove"): a class call is its coordinate and an edge, so every receiver below
+(``box = Box()``) is a call's result, and a method of it is not dispatched at
+the reduction; a method call on a receiver whose class is decided is an edge
+to the method's join symbol.  The twins below now state that: ``open`` on
+both halves until dispatch at prove is ruled on, and the in-process checks
+read the undecided faces.  What follows is the rule as it stood before.
+
 A plain call ``f(...)`` runs ``f``'s body through ``CallSiteValue.producer_outcome``
 and carries every face of it: completions and raises.  A bound method call
 ``obj.m(...)`` is the same application with the receiver bound as the first
@@ -80,8 +88,14 @@ def _pair(tmp_path: Path, name: str, truthful: str, lying: str) -> None:
         for number, line in enumerate(truthful.splitlines(), start=1)
         if line.startswith("def test_")
     )
-    assert claim_verdict(t.prove_doc, claims_from_line=test_line) == "sat"
-    assert lie.verdict == "unsat"
+    # #7757 step 6: the receiver is a class call's result (its coordinate and
+    # edge, no instance built at the reduction), so the method's dispatch is
+    # not decided at the reduction nor at prove until the owner rules on
+    # dispatch at prove.  Both halves were decided before (truthful ``sat``,
+    # lying ``unsat``); both are ``open`` now, never ``sat`` for the lie, and
+    # listed on #7661.
+    assert claim_verdict(t.prove_doc, claims_from_line=test_line) == "open"
+    assert lie.verdict == "open"
 
 
 _OBJ_CALL = """\
@@ -457,38 +471,29 @@ def _undecided_faces(outcome) -> None:
 
 
 @pytest.mark.parametrize("form", sorted(_IN_PROCESS_PAIRS))
-def test_method_raise_reaches_the_caller_in_process(form: str) -> None:
-    from sugar_lift_py_tests.outcome import ExitSet, Halted
-
-    truthful, lying, exception = _IN_PROCESS_PAIRS[form]
-    assert _test_function_outcome(truthful).completed_value() is not None
-    outcome = _test_function_outcome(lying)
-    assert isinstance(outcome, ExitSet), outcome
-    assert [type(face) for face in outcome.exits] == [Halted]
-    assert outcome.exits[0].effect.exception_name == exception
-
-
-def test_a_field_read_through_the_callers_self_completes_in_process() -> None:
-    """``box = Box(); box.run()``, ``run`` returning ``self.n``: the test
-    function completes alone -- ``self`` in ``run`` is the caller's current
-    ``box``, never an undecided read of it."""
-    outcome = _test_function_outcome(_FIELD_READ.format(claim=3))
-    assert outcome.completed_value() is not None, outcome
+def test_a_method_of_a_class_call_result_is_undecided_in_process(form: str) -> None:
+    """#7757 step 6: the receiver is a class call's coordinate and edge, so
+    the method the call names is not dispatched at the reduction and no raise
+    of its body is decided there; both halves are the undecided faces.
+    Before step 6 the lying half carried the method's own raise."""
+    truthful, lying, _exception = _IN_PROCESS_PAIRS[form]
+    _undecided_faces(_test_function_outcome(truthful))
+    _undecided_faces(_test_function_outcome(lying))
 
 
-def test_a_method_selected_through_the_callers_self_is_decided_in_process() -> None:
-    """``box = Box(3); box.run()``, ``run`` calling ``self.check()`` and
-    returning ``self.n``: ``self`` is the caller's current ``box``, so the
-    lookup selects ``Box.check`` and its body is applied -- the truthful half
-    completes alone, the lying half carries only ``check``'s raise."""
-    from sugar_lift_py_tests.outcome import ExitSet, Halted
+def test_a_field_read_off_a_class_call_result_is_undecided_in_process() -> None:
+    """``box = Box(); box.run()``: ``box`` is the class call's coordinate, so
+    ``run`` is not dispatched at the reduction (#7757 step 6)."""
+    _undecided_faces(_test_function_outcome(_FIELD_READ.format(claim=3)))
 
+
+def test_a_method_called_through_a_class_call_result_is_undecided_in_process() -> None:
+    """``box = Box(3); box.run()``, ``run`` calling ``self.check()``: the
+    call of ``run`` is a method of a class call's result, not dispatched at
+    the reduction (#7757 step 6); neither half decides ``check``'s raise."""
     truthful, lying = _ARRIVED_SELF_PAIRS["self-call"]
-    assert _test_function_outcome(truthful).completed_value() is not None
-    outcome = _test_function_outcome(lying)
-    assert isinstance(outcome, ExitSet), outcome
-    assert [type(face) for face in outcome.exits] == [Halted]
-    assert outcome.exits[0].effect.exception_name == "ValueError"
+    _undecided_faces(_test_function_outcome(truthful))
+    _undecided_faces(_test_function_outcome(lying))
 
 
 @pytest.mark.parametrize("form", sorted(_ARRIVED_SELF_PAIRS))
