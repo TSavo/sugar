@@ -50,6 +50,15 @@ pub enum VerifyEffect {
         property_name: String,
         solver_reason: String,
     },
+    /// A contract joined to a call the claim reads answers it wrongly
+    /// (`DroppedAmbientPostReason::is_wrong_answer`: an ambiguous target, a
+    /// signature the call's arguments do not bind, a contract of the wrong
+    /// kind, the wrong provider, a stale ref). The row is refused by name and
+    /// the answer never reaches the solve (step 9).
+    JoinWrongAnswer {
+        property_name: String,
+        wrong: Vec<String>,
+    },
     SolverTimeout {
         property_name: String,
         solver_reason: String,
@@ -155,6 +164,7 @@ impl VerifyEffect {
             | VerifyEffect::NoSiblingToContradict { .. }
             | VerifyEffect::MissingIndependentKindWitness { .. }
             | VerifyEffect::ConsistencyNoSoundDischarger { .. }
+            | VerifyEffect::JoinWrongAnswer { .. }
             | VerifyEffect::SolverNoSoundDischarger { .. }
             | VerifyEffect::WitnessOracleResolution { .. }
             | VerifyEffect::WitnessVerification { .. } => ObligationVerdict::Refused,
@@ -194,6 +204,7 @@ impl VerifyEffect {
             VerifyEffect::NoSiblingToContradict { .. }
             | VerifyEffect::MissingIndependentKindWitness { .. }
             | VerifyEffect::ConsistencyNoSoundDischarger { .. }
+            | VerifyEffect::JoinWrongAnswer { .. }
             | VerifyEffect::SolverTimeout { .. }
             | VerifyEffect::SolverNoSoundDischarger { .. }
             | VerifyEffect::WitnessOracleResolution { .. }
@@ -214,6 +225,7 @@ impl VerifyEffect {
             }
             VerifyEffect::MissingProvenanceKind { .. }
             | VerifyEffect::ConsistencyNoSoundDischarger { .. }
+            | VerifyEffect::JoinWrongAnswer { .. }
             | VerifyEffect::SolverTimeout { .. }
             | VerifyEffect::SolverNoSoundDischarger { .. }
             | VerifyEffect::UnwitnessedDischarge { .. }
@@ -274,6 +286,11 @@ impl fmt::Display for VerifyEffect {
             } => write!(
                 f,
                 "refused: no sound discharger `{property_name}` [{solver_reason}]"
+            ),
+            VerifyEffect::JoinWrongAnswer { wrong, .. } => write!(
+                f,
+                "join refused: a contract answers the call wrongly ({})",
+                wrong.join(", ")
             ),
             VerifyEffect::SolverTimeout {
                 property_name,

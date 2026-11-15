@@ -3529,12 +3529,16 @@ fn refuse_dropped_answers(result: &mut ConsistencyResult) {
         .map(|d| format!("{} for {}", d.reason.label(), d.source_symbol))
         .collect();
     if !wrong.is_empty() {
-        result.verdict = ObligationVerdict::Refused;
-        result.reason = format!(
-            "join refused: a contract answers the call wrongly ({})",
-            wrong.join(", ")
-        );
-        result.effect = None;
+        // A refused row carries its typed effect: the report seat refuses a
+        // refused result with none (`VerifyEffectCarrier::from_producer`).
+        let effect = VerifyEffect::JoinWrongAnswer {
+            property_name: result.property_name.clone(),
+            wrong,
+        };
+        let boundary = effect.to_legacy_boundary();
+        result.verdict = boundary.verdict;
+        result.reason = boundary.reason;
+        result.effect = Some(effect);
         result.verification = None;
         return;
     }
@@ -11974,6 +11978,18 @@ mod tests {
             result.reason.contains("ambiguous-target for python:idn.ident"),
             "{}",
             result.reason
+        );
+        // The refusal carries its typed effect, so the report seat
+        // (`VerifyEffectCarrier::from_producer`) takes it instead of panicking.
+        assert!(
+            matches!(&result.effect, Some(VerifyEffect::JoinWrongAnswer { wrong, .. })
+                if wrong.iter().any(|w| w.contains("ambiguous-target"))),
+            "{:?}",
+            result.effect
+        );
+        let _ = crate::effects::VerifyEffectCarrier::from_producer(
+            result.verdict,
+            result.effect.as_ref(),
         );
 
         // Formals that do not match the call's arguments: refused, never skipped.
