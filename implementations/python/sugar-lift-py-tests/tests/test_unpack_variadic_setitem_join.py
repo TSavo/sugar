@@ -165,7 +165,8 @@ def _the_call(actuals: str):
     its coordinate and edge, joined at prove (#7757 steps 5 and 6, #8705),
     owing its halt under the complement of its ``completes`` atom.  Its
     ``arg_values`` are the actuals as written; the one binder's packing of
-    ``*values`` is on its term, every formal by name (``py.kwarg``)."""
+    ``*values`` is on its term, every formal by name (``py.kwarg``, the
+    variadic ``py.packed``)."""
     from sugar_lift_py_tests.floor import CallSiteValue
     from sugar_lift_py_tests.outcome.exit_set import complement_guard
 
@@ -196,9 +197,13 @@ def _coordinate(call):
 
 
 def _formal(call, name: str, value):
+    """A parameter ``name`` by name, ``py.kwarg``; the helper's variadic
+    ``values`` as the packed value it stands as, ``py.packed`` (a keyword
+    naming it would go into ``**kwargs``, never bind it)."""
     from sugar_lift_py_tests.ir import ctor, str_const
 
-    return ctor("py.kwarg", [str_const(name), value.to_term(owner=str(call.site))])
+    form = "py.packed" if name == "values" else "py.kwarg"
+    return ctor(form, [str_const(name), value.to_term(owner=str(call.site))])
 
 
 def test_source_caller_packs_remaining_positionals_into_values() -> None:

@@ -77,7 +77,8 @@ def _edge(program: str, actuals: str):
     coordinate and edge, joined at prove (#7757 steps 5 and 6, #8705).  Its
     ``arg_values`` are the actuals as written; what the one binder packs
     into ``*values`` / ``**values`` is on its term, every formal by name
-    (``py.kwarg``), as prove's binder binds the helper's contract."""
+    (``py.kwarg``, the variadic ``py.packed``), as prove's binder binds
+    the helper's contract."""
     from sugar_lift_py_tests.floor import CallSiteValue
 
     completed = [
@@ -105,10 +106,14 @@ def _coordinate(edge):
 
 
 def _formal(edge, name: str, value):
-    """``py.kwarg(name, value)``: the formal ``name`` bound to ``value``."""
+    """The formal ``name`` bound to ``value``: ``py.kwarg(name, value)`` for
+    a parameter, ``py.packed(name, value)`` for the helper's variadic
+    ``values`` (a keyword naming it would go into ``**kwargs``, never bind
+    it)."""
     from sugar_lift_py_tests.ir import ctor, str_const
 
-    return ctor("py.kwarg", [str_const(name), value.to_term(owner=str(edge.site))])
+    form = "py.packed" if name == "values" else "py.kwarg"
+    return ctor(form, [str_const(name), value.to_term(owner=str(edge.site))])
 
 
 def _identity(name: str):

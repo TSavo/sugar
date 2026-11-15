@@ -169,6 +169,7 @@ class ClassDefinitionValue(GuardStableValue):
         from sugar_lift_py_tests.floor.lambda_callable import (
             _refuse,
             definition_edge_call,
+            variadic_formals,
         )
 
         # The one binder binds the call to the constructor's signature (a
@@ -198,9 +199,7 @@ class ClassDefinitionValue(GuardStableValue):
             symbol_definition=definition,
             signature=definition.constructor_definition(),
             parameters=tuple(frame.parameters),
-            packed=any(
-                kind in ("vararg", "kwarg") for kind in frame.parameter_kinds
-            ),
+            packed=variadic_formals(frame),
             positional=positional,
             keywords=keywords,
             captured=(),

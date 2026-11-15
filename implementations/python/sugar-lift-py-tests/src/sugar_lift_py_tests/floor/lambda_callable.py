@@ -330,9 +330,7 @@ class LambdaCallable(FloorValue):
             symbol_definition=frame.owner,
             signature=frame.owner,
             parameters=tuple(frame.parameters),
-            packed=(
-                self.vararg_parameter is not None or self.kwarg_parameter is not None
-            ),
+            packed=variadic_formals(frame),
             positional=positional,
             keywords=keywords,
             captured=captured,
@@ -344,12 +342,27 @@ class LambdaCallable(FloorValue):
         )
 
 
+def variadic_formals(frame) -> tuple[str, ...]:
+    """The ``*args`` and ``**kwargs`` formals of ``frame``'s signature, by
+    name, in formal order (its ``parameter_kinds``): what a same-file
+    definition's edge supplies packed (``definition_edge_call``)."""
+    return tuple(
+        name
+        for name, kind in zip(
+            getattr(frame, "parameters", ()),
+            getattr(frame, "parameter_kinds", ()),
+            strict=False,
+        )
+        if kind in ("vararg", "kwarg")
+    )
+
+
 def definition_edge_call(
     *,
     symbol_definition,
     signature,
     parameters,
-    packed: bool,
+    packed: tuple[str, ...],
     positional,
     keywords,
     captured,
@@ -377,10 +390,15 @@ def definition_edge_call(
     namespace, carrying exactly what prove's one binder binds the callee's
     contract with:
 
-    - each positional actual and each keyword actual as written (every
-      formal by name, ``py.kwarg``, when the signature takes ``*args`` or
-      ``**kwargs`` -- ``packed`` -- its formal being the packed value the
-      call binds, ``actuals`` in formal order);
+    - each positional actual and each keyword actual as written; when the
+      signature takes ``*args`` or ``**kwargs`` (``packed``, those formals
+      by name), every formal by name, ``actuals`` in formal order: a
+      parameter as ``py.kwarg(<name>, <value>)`` and each variadic formal
+      as ``py.packed(<name>, <tuple|dict>)``, the packed value the call's
+      own binding made.  A ``py.kwarg`` is always a keyword argument as
+      Python reads one: it binds a named parameter, or goes into
+      ``**kwargs``, never a variadic formal by its name; ``py.packed`` is
+      the one spelling of a variadic formal supplied as it stands;
     - ``py.default(<param>, <value>)`` for each formal the call omits that
       ``signature`` (the ``def`` whose formals the contract states, or None)
       defaults, the value its ``def`` statement bound;
@@ -426,9 +444,14 @@ def definition_edge_call(
     actuals = tuple(actuals)
     if packed:
         # A formal ``*args`` / ``**kwargs`` is the packed value the call
-        # binds, never one positional actual: every formal by name.
+        # binds, never one positional actual: every formal by name, each
+        # variadic one as ``py.packed`` (a ``py.kwarg`` naming it would be a
+        # keyword argument, which Python puts in ``**kwargs``).
         arguments = [
-            ctor("py.kwarg", [str_const(name), value.to_term(owner=owner_name)])
+            ctor(
+                "py.packed" if name in packed else "py.kwarg",
+                [str_const(name), value.to_term(owner=owner_name)],
+            )
             for name, value in zip(parameters, actuals)
         ]
     else:
