@@ -91,6 +91,25 @@ def test_a_range_item_answers_where_it_is_minted(comprehension):
     assert ("Constant", 2, 11) not in absent
 
 
+@pytest.mark.parametrize(
+    ("comprehension", "kind", "column"),
+    [
+        ("[0 for i in range(0)]", "Constant", 12),
+        ("[x + 1 for x in [1, 2] if x > 5]", "BinOp", 12),
+        ("{x: x + 1 for x in range(0) if x > 5}", "Compare", 42),
+    ],
+)
+def test_a_template_never_evaluated_answers_with_the_display(
+    comprehension, kind, column
+):
+    # ``core/_numba/kernels/mean_.py:161``: Python evaluates no element of
+    # an empty unroll (nor a filter where there is no item); the template
+    # answers with the display it dissolved into.
+    report = _report(f"def f():\n    return {comprehension}\n")
+    absent = {(e.kind, e.start_line, e.start_col) for e in report.minority}
+    assert (kind, 2, column) not in absent
+
+
 def test_a_display_iterable_answers_with_the_loop():
     report = _report(
         "def f(g):\n    for key in ['tz', 'freq']:\n        g(key)\n    return g\n"
