@@ -3394,9 +3394,16 @@ def _body_calls(definition):
     ``def``, ``class`` or ``lambda`` (which run when called)."""
     from .nodes import AsyncFunctionDef, ClassDef, FunctionDef, Lambda, Node
 
+    # Each node once: a body a block already threaded (a local ``def`` the
+    # scope binds) is a DAG of shared nodes, and ``_closure`` asks of each
+    # operation only whether it is there.
+    seen = set()
     stack = list(definition.body)
     while stack:
         current = stack.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
         if isinstance(current, (Lambda, FunctionDef, AsyncFunctionDef, ClassDef)):
             continue
         yield from _sites_at(current)
