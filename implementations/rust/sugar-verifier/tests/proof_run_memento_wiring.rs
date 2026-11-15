@@ -13,6 +13,7 @@ use sugar_proof_envelope::{
     StageReceiptMemento,
 };
 use sugar_verifier::load_all_proofs;
+use sugar_verifier::runner::persist_proof_run_to_project;
 use sugar_verifier::{LegacyZ3Fallback, Runner, RunnerConfig, VERIFIER_STAGE_VOCABULARY};
 
 fn make_unique_dir(suffix: &str) -> PathBuf {
@@ -190,6 +191,9 @@ fn honest_stage_receipt_roundtrip() {
     let run = runner
         .run_with_proof_run()
         .expect("run emits honest proof-run bundle");
+    // Solve seals the proof-run in memory; the face persists it (#3990).
+    persist_proof_run_to_project(&project_root, &run.bundle_cid, &run.bundle_bytes)
+        .expect("face persists the sealed proof-run bundle");
 
     let reloaded = load_all_proofs::run(&project_root);
 
@@ -223,7 +227,11 @@ fn prove_run_emits_durable_content_addressed_run_and_stage_receipts() {
         .run_with_proof_run()
         .expect("run emits proof-run memento bundle");
 
-    assert!(run.bundle_path.exists(), "proof-run bundle must be durable");
+    // Solve seals the proof-run in memory; the face persists it (#3990).
+    let bundle_path =
+        persist_proof_run_to_project(&project_root, &run.bundle_cid, &run.bundle_bytes)
+            .expect("face persists the sealed proof-run bundle");
+    assert!(bundle_path.exists(), "proof-run bundle must be durable");
     assert_eq!(run.stage_receipts.len(), VERIFIER_STAGE_VOCABULARY.len());
     assert_eq!(
         run.memento.header.stage_receipt_cids.len(),
@@ -241,7 +249,7 @@ fn prove_run_emits_durable_content_addressed_run_and_stage_receipts() {
         .to_string();
     assert_eq!(run_member_cid, run.memento.header.cid);
 
-    let members = read_members(&run.bundle_path);
+    let members = read_members(&bundle_path);
     assert!(members.contains_key(&run.memento.header.cid));
     for receipt in &run.stage_receipts {
         let jcs = receipt.to_jcs_string().expect("stage jcs");
