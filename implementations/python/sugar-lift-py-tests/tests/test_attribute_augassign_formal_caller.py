@@ -503,14 +503,21 @@ def test_authenticated_discharge_get_iadd_setattr_updates_field() -> None:
     if isinstance(value, ReceiverFieldStoreValue):
         assert value.value == TermValue(11)
     else:
+        # The function's record carries the receiver as the one field store
+        # left it (``ObjectValue.with_field_store``): the caller's object, by
+        # its identity, its ``field`` now the in-place result and known
+        # stored on it.
         record = getattr(value, "record", None)
         assert record is not None
-        stores = [
-            s for s in record.statements if isinstance(s, ReceiverFieldStoreValue)
+        receivers = [
+            s
+            for s in record.statements
+            if isinstance(s, ObjectValue) and s.identity == receiver.identity
         ]
-        assert stores, record.statements
-        assert stores[-1].attr == "field"
-        assert stores[-1].value == TermValue(11)
+        assert receivers, record.statements
+        stored = receivers[-1]
+        assert "field" in stored.stored_fields
+        assert {f.name: f.value for f in stored.fields}["field"] == TermValue(11)
 
 
 def test_enum_attribute_augassign_owner_is_refused_for_its_undecided_global() -> None:
