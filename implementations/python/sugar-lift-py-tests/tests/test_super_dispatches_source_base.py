@@ -3,6 +3,13 @@ from __future__ import annotations
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.floor import CallSiteValue
 from sugar_lift_py_tests.floor.builtin_super_value import BuiltinSuperValue
+from sugar_lift_py_tests.floor.named_expression_value import (
+    caller_stores_of,
+    peel_walrus_binds,
+)
+from sugar_lift_py_tests.floor.receiver_field_store_value import (
+    ReceiverFieldStoreValue,
+)
 from sugar_lift_py_tests.floor.string_value import StringValue
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef
@@ -26,6 +33,29 @@ def _constructed(source: str):
         context.temporal = context.temporal.bind_value(value.class_name, value)
         values.append(value)
     return context, values
+
+
+def _completed_call(outcome):
+    """``(stores, call)``: the call ``outcome`` completes with, beneath the
+    stores the body made on objects its caller sees (``CallerStoreValue``,
+    ``caller_visible_stores``), which ride the call's value to the caller's
+    statement; a walrus write rides none of it."""
+    value = outcome.completed_value()
+    assert value is not None, outcome
+    binds, call = peel_walrus_binds(value)
+    walrus, stores = caller_stores_of(binds)
+    assert walrus == (), value
+    return stores, call
+
+
+def _receiver_stores(stores, receiver) -> list[tuple[str, object]]:
+    """The ``(attr, value)`` of each store on ``receiver``'s identity."""
+    return [
+        (store.attr, store.value)
+        for store in stores
+        if isinstance(store, ReceiverFieldStoreValue)
+        and store.receiver.identity == receiver.identity
+    ]
 
 
 # --- truthful twin: zero-arg super() into a same-module source base -----------
@@ -53,8 +83,10 @@ def test_super_dispatches_into_source_defined_base_init() -> None:
         ctx=context,
     )
 
-    call = projected.completed_value()
+    stores, call = _completed_call(projected)
     assert isinstance(call, CallSiteValue)
+    # Base.__init__ stored self.x = "v" on the instance the caller holds.
+    assert _receiver_stores(stores, receiver) == [("x", StringValue("v"))]
     # The base body runs bound to the original instance receiver, and
     # __class__ inside it is the base (so a chained super would select the
     # class after Base, not restart from Derived).
@@ -116,20 +148,19 @@ def test_super_runs_the_first_class_after_the_cell_that_binds_the_name() -> None
     context, (base, _middle, derived) = _constructed(_OWN_METHOD_ONLY)
     receiver = derived.fresh_receiver("receiver", allocation=FRAME_FRESH)
 
-    call = (
-        BuiltinSuperValue(current_class=derived, receiver=receiver)
-        .call_method_value(
+    stores, call = _completed_call(
+        BuiltinSuperValue(current_class=derived, receiver=receiver).call_method_value(
             "__init__",
             (StringValue("v"),),
             owner="test",
             blame="super-init",
             ctx=context,
         )
-        .completed_value()
     )
 
     assert isinstance(call, CallSiteValue)
     assert call.lexical_defining_class is base
+    assert _receiver_stores(stores, receiver) == [("x", StringValue("v"))]
 
 
 _ANNOTATED = (
@@ -174,7 +205,7 @@ def test_super_init_statement_applies_annotated_field_stores() -> None:
         ctx=context,
         keywords=(("match", NoneValue()),),
     )
-    call = projected.completed_value()
+    stores, call = _completed_call(projected)
     assert isinstance(call, CallSiteValue)
     reduced = call.retained_source_completion_outcome()
     assert isinstance(reduced, ExitSet), reduced
@@ -189,7 +220,12 @@ def test_super_init_statement_applies_annotated_field_stores() -> None:
         block = BlockValue((block,), can_fall_through=True)
     # The record carries every store on the receiver: the base's, spliced
     # into the ``super().__init__`` statement's record, and the derived
-    # store's post-state.
+    # store's post-state.  The same stores ride the call's value to the
+    # caller (``CallerStoreValue``), each on the receiver.
+    assert stores, projected
+    assert all(
+        store.receiver.identity == receiver.identity for store in stores
+    ), stores
     field_names = set()
     for entry in block.statements:
         if isinstance(entry, ReceiverFieldStoreValue):
