@@ -157,18 +157,37 @@ def _prefixed(state: _ReducedBlock, inner: _ReducedBlock) -> _ReducedBlock:
 
 
 def _halt_state(state: _ReducedBlock, exit_) -> object:
-    """The temporal record a halted arm of a nested statement carries.
+    """The temporal record a halted arm of a statement leaves the block with,
+    ``state`` being everything the block established before the statement.
 
-    ``_prefixed``: the nested reduction's own record with this block's prefix
-    spliced in front. Every halt a compound statement hands back carries a
-    record (``halt_record``, ``halts_recorded``): one at its head, before
-    anything of the statement ran, carries the empty record in the context
-    it halted in, and the prefix spliced here is then its whole record.
+    THE ONE RECORD of a statement's halt, whether the statement handed its
+    exits back at once or waited on its caller's actuals:
+
+    - A halt that offers no record (``None``) reaches here only from a
+      statement that binds nothing before its own halt (checked first,
+      ``_require_recorded_halts``): it halted at the statement's head, and
+      ``state`` is its whole record.
+    - A halt that already left from ``state`` itself is whole: a deferred
+      operation's halt, and a halt a continuation minted while it
+      discharged, leave from the state this block enrolled on the carrier
+      (``NativeOperationExitCarrierV1._halts_leave_enrolled_state``), which
+      is ``state``, the same object. Splicing the prefix in front of it
+      would state every earlier entry twice.
+    - Any other record is the nested reduction's own (``_prefixed``): this
+      block's prefix is spliced in front. Every halt a compound statement
+      hands back carries one (``halt_record``, ``halts_recorded``): one at
+      its head, before anything of the statement ran, carries the empty
+      record in the context it halted in, and the prefix spliced here is
+      then its whole record. A record a nested block enrolled on a carrier
+      (a suite's statement, a callee's) is that nested block's, and gets
+      the prefix like any other.
     """
+    if exit_.state is None or exit_.state is state:
+        return state
     return _prefixed(state, exit_.state)
 
 
-def _require_recorded_halts(outcome, statement) -> None:
+def _require_recorded_halts(outcome, statement, prefix=None) -> None:
     """THE BOUNDARY between an expression's halt and a block's: stop by name
     (``SugarNotWritten``, owner ``reduce_block_to_exitset.statement``) a
     statement that hands the block reducer a halt with no record.
@@ -199,10 +218,27 @@ def _require_recorded_halts(outcome, statement) -> None:
     ``AssertSugar._stated``). One that still offers no record from a
     statement holding a walrus is refused here like any other: the prefix
     would drop the bind.
+
+    A statement that waited on its caller's actuals meets the same check
+    once its exits are known (``reduce_block_to_exitset``: the one tail).
+    ``prefix`` is the block's state before the statement. A halt that left
+    from ``prefix`` itself took the prefix as its record already: the
+    deferred operation's carrier recorded it from the state this block
+    enrolled, on the block's behalf (``halts_recorded`` hands a carrier
+    back unrecorded). For a statement that declares it binds nothing before
+    a halt, that is the same claim, and it is checked the same way: one
+    that holds a walrus is refused, never left with a record that may lack
+    the bind. A compound statement declares nothing: the halt of its
+    deferred header halted at its head, where the prefix is its record, and
+    stands; its record-less halt is refused as any statement's is.
     """
-    if not any(
+    recordless = any(
         isinstance(exit_, Halted) and exit_.state is None for exit_ in outcome.exits
-    ):
+    )
+    took_prefix = prefix is not None and any(
+        isinstance(exit_, Halted) and exit_.state is prefix for exit_ in outcome.exits
+    )
+    if not recordless and not took_prefix:
         return
     name = type(statement).__name__
     declared = getattr(statement, "halts_at_statement_head", False)
@@ -211,6 +247,8 @@ def _require_recorded_halts(outcome, statement) -> None:
 
         if not holds_a_walrus(statement):
             return
+    elif not recordless:
+        return
     from sugar_source_tree.panic import SugarNotWritten
 
     site = getattr(statement, "site", None)
@@ -218,8 +256,14 @@ def _require_recorded_halts(outcome, statement) -> None:
         owner="reduce_block_to_exitset.statement",
         blame=site if site is not None else name,
         observed=(
-            f"a {name} statement holding a walrus handing the block a halt "
-            "with no record: the walrus may have bound before it halted"
+            (
+                f"a {name} statement holding a walrus handing the block a halt "
+                "with no record: the walrus may have bound before it halted"
+                if recordless
+                else f"a {name} statement holding a walrus whose deferred "
+                "operation halted from the block's prefix: the walrus may "
+                "have bound before it halted"
+            )
             if declared
             else f"a {name} statement handing the block a halt with no record"
         ),
@@ -919,6 +963,80 @@ def reduce_block_to_exitset(
                     )
                 )
 
+            def leaves(outcome):
+                # THE ONE TAIL of a statement: what the block does once the
+                # statement's exits are known. A statement that hands its
+                # exits back at once takes it at once; one that waits on its
+                # caller's actuals takes it when it discharges, on the exits
+                # it discharges to (``after_discharge``, below). There is no
+                # second composition for a deferred statement: its halts are
+                # guarded by the fall-through, the earlier ``return``s stand
+                # beside them, a nested record gets the prefix, and the
+                # walrus requirement holds, exactly as for any other.
+                plain = plain_completed_value(outcome)
+                if plain is not None and not isinstance(plain, _ReducedBlock):
+                    # One plain completion: the statement's value carries the
+                    # block straight on. The value owns its contribution, its
+                    # follow and its scope (``project``); the fall-through
+                    # guard stays in the record, where every earlier statement
+                    # left it. A store is not split here: its producer answers
+                    # its two faces (``store_faces``), and they arrive through
+                    # the seam below.
+                    return project(plain)
+
+                # The boundary: a halt leaves a statement with its record, or
+                # from the head of a statement that declares it binds nothing
+                # before any halt. ``None`` lives only inside an expression.
+                _require_recorded_halts(outcome, statement, state)
+
+                effect = _plain_halt(outcome)
+                if effect is not None:
+                    # One plain halt at the statement: nothing ran inside it
+                    # before the halt, so its pre-halt state is this block's
+                    # prefix.
+                    halted = ExitSet.halted(effect, state=state)
+                    returned = _prior_return_face(state, active_ctx)
+                    if returned is not None:
+                        # Reached only where no earlier ``return`` fired.
+                        return halted.guarded(_fall_through_guard(state)).union(
+                            returned
+                        )
+                    return halted
+
+                returned = _prior_return_face(state, active_ctx)
+                if state.fall_through:
+                    outcome = outcome.guarded(_fall_through_guard(state))
+
+                # A statement that reduces to its OWN ExitSet (a nested block:
+                # try/with, or an unpack assignment whose store leaves are
+                # sequenced by this same reducer) hands back halted arms whose
+                # state is the state reached INSIDE that statement. It cannot
+                # know the prefix -- `head.desugar(ctx)` is given no state --
+                # so the prefix is spliced on here, at the one seam that owns
+                # sequencing. Without this, a halt inside a nested statement
+                # would report an empty temporal state and every earlier store
+                # would read as rolled back (Python never rolls back a store).
+
+                def spliced(halt):
+                    # The halt leaves with the one record a statement's halt
+                    # leaves the block with (``_halt_state``): the prefix for
+                    # a halt at the statement's head, the prefix spliced onto
+                    # a nested record; ``sequence`` keeps its guard, faces and
+                    # ``owed``. A record-less arm reaches here only from a
+                    # statement that binds nothing before its own halt
+                    # (``halts_at_statement_head`` and no walrus, checked
+                    # above: an expression halt, a store's halted face) -- the
+                    # same state the plain halt above gives.
+                    return ExitSet.halted(halt.effect, state=_halt_state(state, halt))
+
+                composed = outcome.sequence(project, consume=spliced)
+                if returned is not None:
+                    # The faces of every earlier ``return`` stand beside the
+                    # statement's own: ``project`` and ``spliced`` answer exits,
+                    # so ``composed`` is exits, never a waiting continuation.
+                    return composed.union(returned)
+                return composed
+
             from sugar_lift_py_tests.caller_parameter_contract import (
                 NativeOperationExitCarrierV1,
                 ReducerPreEffectStateV1,
@@ -926,80 +1044,24 @@ def reduce_block_to_exitset(
 
             if isinstance(outcome, NativeOperationExitCarrierV1):
                 # A formal native operation is neither a completion nor a halt
-                # until an authenticated caller supplies its actual operands.
-                # Retain the ordinary statement projection as a continuation;
-                # discharge will feed its Completed face through this exact
-                # block seam, while its Halted face bypasses the tail.
+                # until an authenticated caller supplies its actual operands:
+                # the statement's exits are not known yet. The tail waits for
+                # them (``after_discharge``): it is handed every exit the
+                # statement discharges to, completed and halted, after the
+                # statement's own continuations ran and before anything the
+                # block enrolls after it (the next statement).
                 # Enroll this block's reducer state only once. A callee that
                 # already enrolled at the lookup (stringify_exception at
                 # exc.message) keeps that inner state; this caller omits a
-                # second conflicting enrollment and only appends project.
-                if outcome.pre_effect_state is not None:
-                    return outcome.and_then(project)
-                return outcome.and_then(
-                    project,
-                    pre_effect_state=ReducerPreEffectStateV1._from_reducer(state),
-                )
+                # second conflicting enrollment, and the inner record gets
+                # this block's prefix in the tail like any nested record.
+                if outcome.pre_effect_state is None:
+                    outcome = outcome._enroll_pre_effect_state(
+                        ReducerPreEffectStateV1._from_reducer(state)
+                    )
+                return outcome.after_discharge(leaves)
 
-            plain = plain_completed_value(outcome)
-            if plain is not None and not isinstance(plain, _ReducedBlock):
-                # One plain completion: the statement's value carries the block
-                # straight on. The value owns its contribution, its follow and
-                # its scope (``project``); the fall-through guard stays in the
-                # record, where every earlier statement left it. A store is not
-                # split here: its producer answers its two faces
-                # (``store_faces``), and they arrive through the seam below.
-                return project(plain)
-
-            # The boundary: a halt leaves a statement with its record, or
-            # from the head of a statement that declares it binds nothing
-            # before any halt. ``None`` lives only inside an expression.
-            _require_recorded_halts(outcome, statement)
-
-            effect = _plain_halt(outcome)
-            if effect is not None:
-                # One plain halt at the statement: nothing ran inside it before
-                # the halt, so its pre-halt state is this block's prefix.
-                halted = ExitSet.halted(effect, state=state)
-                returned = _prior_return_face(state, active_ctx)
-                if returned is not None:
-                    # Reached only where no earlier ``return`` fired.
-                    return halted.guarded(_fall_through_guard(state)).union(returned)
-                return halted
-
-            returned = _prior_return_face(state, active_ctx)
-            if state.fall_through:
-                outcome = outcome.guarded(_fall_through_guard(state))
-
-            # A statement that reduces to its OWN ExitSet (a nested block:
-            # try/with, or an unpack assignment whose store leaves are
-            # sequenced by this same reducer) hands back halted arms whose
-            # state is the state reached INSIDE that statement. It cannot
-            # know the prefix -- `head.desugar(ctx)` is given no state -- so
-            # the prefix is spliced on here, at the one seam that owns
-            # sequencing. Without this, a halt inside a nested statement
-            # would report an empty temporal state and every earlier store
-            # would read as rolled back (Python never rolls back a store).
-
-            def spliced(halt):
-                # The halt leaves from the prefix spliced onto its own state;
-                # ``sequence`` keeps its guard, faces and ``owed``. A
-                # record-less arm reaches here only from a statement that
-                # binds nothing before its own halt (``halts_at_statement_head``
-                # and no walrus, checked above: an expression halt, a store's
-                # halted face): it halted at the head, where the prefix is the
-                # whole record -- the same state the plain halt above gives.
-                return ExitSet.halted(
-                    halt.effect,
-                    state=(
-                        state if halt.state is None else _halt_state(state, halt)
-                    ),
-                )
-
-            composed = outcome.sequence(project, consume=spliced)
-            if returned is not None:
-                return _beside_prior_returns(composed, returned)
-            return composed
+            return leaves(outcome)
 
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
@@ -1041,30 +1103,6 @@ def reduce_block_to_exitset(
     # No completed record holds a halt (#7826): every halt is already a halted
     # arm, so there is nothing to promote out of a record here.
     return exits
-
-
-def _beside_prior_returns(composed, returned: ExitSet):
-    """``composed`` with the faces of every earlier ``return`` beside it.
-
-    ``composed`` is what ``ExitSet.sequence`` answered for a statement. A
-    continuation still waiting on its caller's actuals keeps waiting: the
-    returned faces join its exits once it discharges (``after_discharge``);
-    no arm is read off an undischarged carrier.
-    """
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-    from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
-
-    def beside(continued):
-        exits = _require_exit_set(
-            continued, owner="reduce_block_to_exitset.prior-returns"
-        )
-        return exits.union(returned)
-
-    if isinstance(composed, NativeOperationExitCarrierV1):
-        return composed.after_discharge(beside)
-    return beside(composed)
 
 
 def reduce_body(statements: tuple, ctx: object = None):

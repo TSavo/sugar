@@ -1005,31 +1005,6 @@ def test_try_star_body_carrier_completion_runs_the_else(monkeypatch):
     assert "owed.body" in arm.owed
 
 
-# --- function_universe_sugar ------------------------------------------------
-
-
-def test_prior_returns_join_a_composed_carrier_once_it_discharges():
-    from sugar_lift_py_tests.sugar.function_universe_sugar import (
-        _beside_prior_returns,
-    )
-
-    carrier, left, right = _carrier()
-    returned = ExitSet.completed(TermValue(9), atomic("test.returned", []))
-
-    composed = _beside_prior_returns(carrier, returned)
-
-    assert isinstance(composed, NativeOperationExitCarrierV1)
-    exits = composed.discharge(None, _actuals(left, right))
-    assert isinstance(exits, ExitSet)
-    eager = _beside_prior_returns(
-        carrier.discharge(None, _actuals(left, right)), returned
-    )
-    assert exits == eager
-    values = [exit_.value for exit_ in exits.exits]
-    assert TermValue(3) in values
-    assert TermValue(9) in values
-
-
 # --- with_source_resource_sugar (the reduced-manager router) -----------------
 
 

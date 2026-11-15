@@ -54,7 +54,9 @@ def test_undecidable_filtered_listcomp_retains_guard_without_guessing_verdict():
     left, right = carrier.operands
     assert left.to_term(owner="comprehension carrier tooth").name == "x"
     assert right.formal_coordinate.declared_name == "limit"
-    assert len(carrier.continuations) == 5
+    # The block's statement tail waits as an ExitSet-wide step
+    # (``after_discharge``), not as a continuation.
+    assert len(carrier.continuations) == 4
 
 
 def test_dictcomp_over_concrete_range_dissolves():
