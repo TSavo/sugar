@@ -126,18 +126,29 @@ def _else_left_from(runtime, else_ctx, witnesses, halt, *, site):
 # The recurrence's value of a name a live loop writes
 # (``LoopRecurrenceSugar._recurrence_head``).
 RECURRENCE_HEAD = "python:loop.recurrence"
+# The recurrence's one symbolic item of the iterable
+# (``LoopRecurrenceSugar._enter_symbolic_item``).
+LOOP_ITEM = "python:loop.item"
+# The values a live loop's recurrence states and nothing decides.
+_RECURRENCE_VALUES = frozenset({RECURRENCE_HEAD, LOOP_ITEM})
 
 
 def holds_recurrence_value(value) -> bool:
-    """Whether ``value`` is, on some face, a live loop's recurrence value of
-    a name (``RECURRENCE_HEAD``): a guarded value is opened into its arms.
+    """Whether ``value`` is, on some face, a value a live loop's recurrence
+    states and nothing decides: its value of a name (``RECURRENCE_HEAD``) or
+    its symbolic item (``LOOP_ITEM``).  A guarded value is opened into its
+    arms.
 
-    The recurrence states that value only as the fixed point of the loop's
-    step (``head = python:loop.step(head, ...)``), and the step is
-    uninterpreted: nothing at prove constrains it, no input decides it, and
-    no closed form or loop invariant is stated for it on this path.  Read as
-    it stands it is a free term the solver may choose, so a claim over it --
-    a lie included -- could read ``sat`` (#7757, step 6)."""
+    The recurrence states the value of a name only as the fixed point of the
+    loop's step (``head = python:loop.step(head, ...)``), and the step is
+    uninterpreted.  It states the item as ``python:loop.item(<loop>,
+    <iterable>)`` and nothing else: no equation ties it to a member of the
+    iterable.  Nothing at prove constrains either, no input decides either,
+    and no closed form or loop invariant is stated on this path.  Read as it
+    stands either is a free term the solver may choose, so a claim over it --
+    a lie included -- could read ``sat`` (#7757, step 6).  A decided item (a
+    member of an in-hand list, tuple or range) is a concrete item's value,
+    never ``LOOP_ITEM``: the loop runs unrolled over it."""
     from sugar_lift_py_tests.floor.guarded_value import GuardedValue
     from sugar_lift_py_tests.ir import _Ctor
 
@@ -148,20 +159,21 @@ def holds_recurrence_value(value) -> bool:
             pending.extend((current.when_true, current.when_false))
         elif isinstance(current, SymbolicValue):
             term = current.term
-            if isinstance(term, _Ctor) and term.name == RECURRENCE_HEAD:
+            if isinstance(term, _Ctor) and term.name in _RECURRENCE_VALUES:
                 return True
     return False
 
 
 def read_of_bound_value(value, site):
     """A read, at ``site``, of the value a key holds: the value itself, or,
-    where it holds a live loop's recurrence value (``holds_recurrence_value``)
-    -- the name the loop carries read after it (``LoopBindingRefSugar``), in
-    its ``else`` suite or inside its symbolic item through the header
-    (``EvaluationRefSugar``) -- the undecided member, as a slot nothing
-    decided is (``branch_result_coordinate.undecided_slot_debt``): the value
-    still stands, and every claim that reads it owes, never decided by a
-    value the solver selects (#7757)."""
+    where it holds a value a live loop's recurrence states and nothing
+    decides (``holds_recurrence_value``) -- the name the loop carries read
+    after it (``LoopBindingRefSugar``), in its ``else`` suite or inside its
+    symbolic item through the header, or the item itself read through the
+    target's key (``EvaluationRefSugar``) -- the undecided member, as a slot
+    nothing decided is (``branch_result_coordinate.undecided_slot_debt``):
+    the value still stands, and every claim that reads it owes, never
+    decided by a value the solver selects (#7757)."""
     if not holds_recurrence_value(value):
         return value
     from sugar_lift_py_tests.floor.branch_result_coordinate import (
@@ -1635,8 +1647,10 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             with item():
                 header_ctx = self._enter_header(runtime, ctx, starts, decide=False)
             return ExitSet.completed(()), lambda _projections: (header_ctx, ()), item
+        # The item is free: a read of it through the target's key owes the
+        # undecided member (``read_of_bound_value``).
         element = ctor(
-            "python:loop.item",
+            LOOP_ITEM,
             [
                 str_const(self.target_cid),
                 *(
