@@ -1,11 +1,13 @@
 """AnnAssign (`x: T = v` / bare `x: T`) and AugAssign (`x OP= e`) -- both are
 INERT at the meaning layer for a plain Name target, because their binding (if
 any) already threaded via substitute/substitution_binding before sugar runs;
-an annotation states nothing at runtime either way. Attribute/subscript
-augmented targets build one typed runtime-store effect; a valued annotation of
-an attribute/subscript target is the plain store ``Assign`` (#7757), followed
-in a module body by the annotation's evaluation; bare non-Name annotations
-remain loud gaps."""
+an annotation states nothing at runtime either way. An attribute augmented
+target is the one field store of the field's in-place result, a subscript one
+the container-mutation door's read-modify-store; a valued annotation of an
+attribute/subscript target is the plain store ``Assign`` (#7757), followed in
+a module body by the annotation's evaluation; a bare attribute annotation
+evaluates its receiver, and in a module body then its annotation; other bare
+non-Name annotations remain loud gaps."""
 
 import tempfile
 
@@ -23,7 +25,11 @@ from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
     ContainerMutationStatementSugar,
     PathContainerCallSugar,
 )
-from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
+from sugar_lift_py_tests.sugar.assign_sugar import KeyedStoreSugar
+from sugar_lift_py_tests.sugar.augassign_sugar import AttributeAugAssignSugar
+from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
+    ReceiverFieldStoreSugar,
+)
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
@@ -237,8 +243,34 @@ def test_valued_attribute_annotation_does_not_enter_bare_declaration_arm():
         "    return supplied\n"
     ).substitute({})
     sugar = function.body[0].sugar()
-    assert isinstance(sugar, AttributeStoreEffectSugar)
+    # The one field store, keyed, whatever the receiver is.
+    assert isinstance(sugar, KeyedStoreSugar)
+    assert isinstance(sugar.store, ReceiverFieldStoreSugar)
     assert not isinstance(sugar, ExprStatementSugar)
+
+
+def test_attribute_aug_assign_is_the_one_field_store():
+    """``o.x += v`` is the one field store of the field's in-place result
+    (#7757): the same statement ``o.x = v`` makes, its receiver evaluated
+    once, first, and bound under its key."""
+    body = _fn("def A(o, v):\n    o.x += v\n    return o\n").substitute({}).body
+    store = body[0]
+    assert store.kind == "ReceiverFieldStoreStatement"
+    assert store.read_modifies()
+    assert store.receiver_value is not None
+    plain = _fn("def A(o, v):\n    o.x = v\n    return o\n").substitute({}).body
+    assert plain[0].kind == store.kind
+    assert not plain[0].read_modifies()
+    sugar = store.sugar()
+    assert isinstance(sugar, KeyedStoreSugar)
+    assert isinstance(sugar.value, AttributeAugAssignSugar)
+    assert isinstance(sugar.store, ReceiverFieldStoreSugar)
+    assert sugar.receiver_evaluation == store.receiver_evaluation
+    # Every later read of ``o`` reads the post-state over the receiver's key.
+    returned = body[-1].value
+    assert returned.kind == "ReceiverFieldStoreState"
+    assert returned.receiver.kind == "EvaluationRef"
+    assert returned.receiver.evaluation == store.receiver_evaluation
 
 
 def _outcome_shape(outcome):
@@ -352,6 +384,41 @@ def test_module_annotated_store_never_substituted_refuses_by_name():
     assert refused.value.owner == "AnnAssign._construct_sugar"
 
 
+def test_module_bare_attribute_annotation_evaluates_its_annotation():
+    """``o.f: T`` in a module body: Python evaluates the receiver, then the
+    annotation, and stores nothing (#7757).  The statement is the receiver's
+    evaluation, then the annotation as an expression statement."""
+    body = _module(_MODULE_PRELUDE + "o.f: int\n").substitute({}).body
+    receiver, evaluated = body[-2], body[-1]
+    assert receiver.kind == "AnnAssign"
+    assert receiver.value is None
+    assert isinstance(receiver.sugar(), ExprStatementSugar)
+    assert evaluated.kind == "Expr"
+    assert evaluated.value.kind == "Name"
+    assert evaluated.value.id == "int"
+
+
+def test_module_bare_attribute_annotation_under_postponed_annotations():
+    """``from __future__ import annotations``: the receiver only."""
+    future = "from __future__ import annotations\n"
+    body = _module(future + _MODULE_PRELUDE + "o.f: int\n").substitute({}).body
+    assert body[-1].kind == "AnnAssign"
+    assert not any(
+        statement.kind == "Expr"
+        and statement.value.kind == "Name"
+        and statement.value.id == "int"
+        for statement in body
+    )
+
+
+def test_module_bare_attribute_annotation_never_substituted_refuses_by_name():
+    statement = _module(_MODULE_PRELUDE + "o.f: int\n").body[-1]
+    assert statement.kind == "AnnAssign"
+    with pytest.raises(SugarNotWritten) as refused:
+        statement.sugar()
+    assert refused.value.owner == "AnnAssign._construct_sugar"
+
+
 def test_bare_annotated_store_target_stores_nothing():
     """``o[k]: int`` with no value stores nothing: it never becomes a
     store."""
@@ -395,10 +462,7 @@ if __name__ == "__main__":
     test_annotated_assign_with_value_is_inert_and_threads()
     test_bare_annotation_lifts_and_states_nothing()
     test_aug_assign_rebinds_and_is_inert()
-    test_attribute_aug_assign_builds_store_effect()
-    test_subscript_aug_assign_builds_store_effect()
     test_annotated_attribute_with_value_builds_store_effect()
-    test_annotated_subscript_with_value_builds_store_effect()
     test_aug_assign_with_no_prior_binding_is_sound()
     test_discrimination_annassign_value_changes_the_post()
     print("ok: AnnAssign/AugAssign target roles build or stay loud by shape")

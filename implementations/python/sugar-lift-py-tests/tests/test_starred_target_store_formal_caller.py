@@ -27,8 +27,8 @@ from sugar_lift_py_tests.floor import ListValue, ObjectValue, TermValue
 from sugar_lift_py_tests.floor.floor_value import FloorValue
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.assign_sugar import (
-
     DynamicUnpackStoreAssignSugar,
+    KeyedStoreSugar,
     UnpackStoreAssignSugar,
 )
 from sugar_lift_py_tests.sugar.dynamic_unpack_assign_sugar import (
@@ -36,10 +36,10 @@ from sugar_lift_py_tests.sugar.dynamic_unpack_assign_sugar import (
 )
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
 from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_exitset
-from sugar_lift_py_tests.sugar.store_effect_sugar import (
-    AttributeStoreEffectSugar,
-    SubscriptStoreEffectSugar,
+from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
+    ReceiverFieldStoreSugar,
 )
+from sugar_lift_py_tests.sugar.store_effect_sugar import SubscriptStoreEffectSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.unpack_projection_targets import (
     NameUnpackTarget,
@@ -94,7 +94,7 @@ def _attr_store(receiver, attr: str, site, ordinal: int = 0):
     """``receiver.attr = <member>``: the leaf's own store statement's sugar,
     its value read through the leaf's member key (``Assign._store_statements``)."""
     key = _member_key(ordinal)
-    return AttributeStoreEffectSugar(
+    return ReceiverFieldStoreSugar(
         receiver=_FloorSugar(receiver),
         value=EvaluationRefSugar(
             evaluation=key, name=f"<member {ordinal}>", site=site, place=True
@@ -142,7 +142,9 @@ def test_star_store_constructs_typed_targets_not_string_tags() -> None:
     )
     assert isinstance(stmt.targets[0], StoreUnpackTarget)
     assert isinstance(stmt.targets[1], StarUnpackTarget)
-    assert stmt.targets[0].store.attr == "x"
+    # The leaf's own statement: the one field store, keyed.
+    assert isinstance(stmt.targets[0].store, KeyedStoreSugar)
+    assert stmt.targets[0].store.store.attr == "x"
     assert stmt.targets[1].name == "rest"
     # No fabricated synthetic name map on the sugar.
     assert not hasattr(stmt, "leaves")
@@ -174,7 +176,8 @@ def test_attribute_and_subscript_production_construction() -> None:
         if isinstance(s, DynamicUnpackStoreAssignSugar)
     )
     assert isinstance(stmt.targets[0], StoreUnpackTarget)
-    assert isinstance(stmt.targets[0].store, AttributeStoreEffectSugar)
+    assert isinstance(stmt.targets[0].store, KeyedStoreSugar)
+    assert isinstance(stmt.targets[0].store.store, ReceiverFieldStoreSugar)
     assert isinstance(stmt.targets[1], StoreUnpackTarget)
     assert isinstance(stmt.targets[1].store, SubscriptStoreEffectSugar)
     assert isinstance(stmt.targets[2], StarUnpackTarget)

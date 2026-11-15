@@ -21,7 +21,9 @@ Python semantic law made constructible (PARTIAL):
 
 Named seams (``test_producer_and_consumer_methods_are_the_named_seams``):
 
-  producer: ``AttributeStoreEffectSugar.desugar`` / ``_store``
+  producer: the one field store, ``ReceiverFieldStoreSugar.desugar`` /
+  ``_store`` (``store_effect_sugar.project_setattr`` for a receiver that is
+  no source instance)
   consumer: ``FloorValue.setattr`` / ``ObjectValue.setattr``
 
 Pinned pandas 3.0.3 (line content verified on installed seat):
@@ -62,8 +64,15 @@ from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import PrimitiveSort, make_var, str_const
 from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.outcome.exit_set import Halted
+from sugar_lift_py_tests.floor.receiver_field_store_value import (
+    ReceiverFieldStoreValue,
+)
+from sugar_lift_py_tests.sugar.assign_sugar import KeyedStoreSugar
 from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_exitset
-from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
+from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
+    ReceiverFieldStoreSugar,
+)
+from sugar_lift_py_tests.sugar import store_effect_sugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_lift_py_tests.lift_rpc import tree_construction_context_for_workspace
@@ -111,7 +120,7 @@ class _ObservedSugar(Sugar):
 
 
 def _store(receiver, value, log, site, attr: str = "attr"):
-    return AttributeStoreEffectSugar(
+    return ReceiverFieldStoreSugar(
         receiver=_ObservedSugar("receiver", receiver, log),
         value=_ObservedSugar("value", value, log),
         attr=attr,
@@ -145,12 +154,14 @@ def _formal(site) -> FormalParameterCoordinateV1:
 
 
 def test_producer_and_consumer_methods_are_the_named_seams() -> None:
-    assert hasattr(AttributeStoreEffectSugar, "desugar")
-    assert hasattr(AttributeStoreEffectSugar, "_store")
-    assert hasattr(AttributeStoreEffectSugar, "mint_setattr_named_carrier")
+    assert hasattr(ReceiverFieldStoreSugar, "desugar")
+    assert hasattr(ReceiverFieldStoreSugar, "_store")
+    assert callable(store_effect_sugar.mint_setattr_named_carrier)
+    # One field store: no effect store beside it.
+    assert not hasattr(store_effect_sugar, "AttributeStoreEffectSugar")
     # A chain's or an unpack's store target is ``o.x = v``'s own statement:
     # there is no second door that stores a value reduced elsewhere.
-    assert not hasattr(AttributeStoreEffectSugar, "desugar_store")
+    assert not hasattr(ReceiverFieldStoreSugar, "desugar_store")
     assert hasattr(FloorValue, "setattr")
     assert hasattr(ObjectValue, "setattr")
     assert FloorValue.setattr is not FloorValue.attribute
@@ -169,8 +180,11 @@ def test_attribute_store_evaluates_rhs_and_receiver_once_in_python_order(tmp_pat
     outcome = _store(receiver, TermValue(7), log, _site(tmp_path)).desugar()
 
     assert log == ["value", "receiver"]
-    assert outcome.completed_value() is not None
-    assert outcome.completed_value().fields[-1].value == TermValue(7)
+    stored = outcome.completed_value()
+    assert isinstance(stored, ReceiverFieldStoreValue)
+    assert stored.receiver == receiver
+    assert stored.attr == "attr"
+    assert stored.value == TermValue(7)
 
 
 def test_rhs_halt_wins_before_receiver_evaluation(tmp_path):
@@ -194,7 +208,7 @@ def test_rhs_halt_wins_before_receiver_evaluation(tmp_path):
         def witnesses(cls):
             raise AssertionError
 
-    store = AttributeStoreEffectSugar(
+    store = ReceiverFieldStoreSugar(
         receiver=_ObservedSugar(
             "receiver", ObjectValue("R", (), allocation=FRAME_FRESH), log
         ),
@@ -220,8 +234,12 @@ def test_ground_object_field_store_completes(tmp_path):
         "R", (ObjectField("attr", TermValue(0)),), allocation=FRAME_FRESH
     )
     outcome = _store(receiver, TermValue(9), [], _site(tmp_path)).desugar()
-    assert outcome.completed_value() is not None
-    assert outcome.completed_value().fields[-1].value == TermValue(9)
+    stored = outcome.completed_value()
+    assert isinstance(stored, ReceiverFieldStoreValue)
+    assert stored.value == TermValue(9)
+    # The object after the store, as every binding of it reads it.
+    after = stored.receiver.with_field_store(stored.attr, stored.value)
+    assert after.fields[-1].value == TermValue(9)
 
 
 def test_readable_immutable_receiver_raises_on_store(tmp_path):
@@ -357,7 +375,7 @@ def test_setattr_named_carrier_mint_contract(tmp_path):
     formal = _formal(site)
     receiver = SymbolicValue(make_var("obj"), formal)
     value = TermValue(7)
-    carrier = AttributeStoreEffectSugar.mint_setattr_named_carrier(
+    carrier = store_effect_sugar.mint_setattr_named_carrier(
         site=site, receiver=receiver, attr="attr", value=value
     )
     assert isinstance(carrier, NativeOperationExitCarrierV1)
@@ -471,8 +489,10 @@ def test_pinned_pandas_name_attr_unpack_coordinate_is_real() -> None:
     )
     assert unpack.bindings[0][0] == "original_name"
     store = unpack.stores[0]
-    assert isinstance(store, AttributeStoreEffectSugar)
-    assert store.attr == "name"
+    # The store target's own statement: the one field store, keyed.
+    assert isinstance(store, KeyedStoreSugar)
+    assert isinstance(store.store, ReceiverFieldStoreSugar)
+    assert store.store.attr == "name"
     # Formal ``index`` mints setattr_named (undischarged until caller).
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
@@ -514,9 +534,10 @@ def _real_pandas_name_store():
         for statement in function.sugar().statements
         if isinstance(statement, UnpackStoreAssignSugar)
     )
-    store = unpack.stores[0]
-    pending = store.desugar(_member_bound(unpack))
-    assert isinstance(store, AttributeStoreEffectSugar)
+    keyed = unpack.stores[0]
+    store = keyed.store
+    pending = keyed.desugar(_member_bound(unpack))
+    assert isinstance(store, ReceiverFieldStoreSugar)
     assert isinstance(pending, NativeOperationExitCarrierV1)
     assert pending.demand.operator == "setattr_named"
     assert store.site.line_col_span.start_line == CORPUS_LINE

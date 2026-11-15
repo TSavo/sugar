@@ -412,7 +412,9 @@ def test_tuple_receiver_store_halts_from_setattr_not_boundary() -> None:
     assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
     # Direct setattr owner is proven on the incomplete path before carrier
     # re-projects the exceptional resolution.
-    from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
+    from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
+        ReceiverFieldStoreSugar,
+    )
     from sugar_lift_py_tests.sugar.sugar_base import Sugar as _S
 
     @dataclass(frozen=True)
@@ -426,7 +428,7 @@ def test_tuple_receiver_store_halts_from_setattr_not_boundary() -> None:
         def witnesses(cls):
             return ()
 
-    direct = AttributeStoreEffectSugar(
+    direct = ReceiverFieldStoreSugar(
         _V(TupleValue((TermValue(1),))),
         _V(TermValue(9)),
         "field",

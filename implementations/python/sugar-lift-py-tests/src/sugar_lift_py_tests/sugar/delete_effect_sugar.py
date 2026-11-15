@@ -11,7 +11,7 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 class AttributeDeleteEffectSugar(Sugar):
     """`del receiver.attr` — evaluate once, then project the delete face.
 
-    Projection arms (mirrors :class:`AttributeStoreEffectSugar`):
+    Projection arms (mirrors ``store_effect_sugar.project_setattr``):
 
     1. **Formal receiver** → ``NativeOperationExitCarrierV1`` demand
        ``delattr_named`` with operands

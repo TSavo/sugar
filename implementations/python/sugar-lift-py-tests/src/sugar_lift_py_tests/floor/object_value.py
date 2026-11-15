@@ -24,9 +24,21 @@ if TYPE_CHECKING:
 
 
 def _sugar_receiver_field_names(value, seen: set[int] | None = None) -> set[str]:
-    """Read authenticated helper-body store shape without executing the helper."""
+    """Read authenticated helper-body store shape without executing the helper:
+    the fields the one field store (``ReceiverFieldStoreSugar``) puts on the
+    helper's own receiver -- a receiver read through its binding coordinate,
+    after any stores before it (``ReceiverFieldStoreStateSugar``)."""
     from dataclasses import fields, is_dataclass
 
+    from sugar_lift_py_tests.sugar.binding_coordinate_ref_sugar import (
+        BindingCoordinateRefSugar,
+    )
+    from sugar_lift_py_tests.sugar.constructed_receiver_ref_sugar import (
+        ConstructedReceiverRefSugar,
+    )
+    from sugar_lift_py_tests.sugar.receiver_field_store_state_sugar import (
+        ReceiverFieldStoreStateSugar,
+    )
     from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
         ReceiverFieldStoreSugar,
     )
@@ -34,7 +46,11 @@ def _sugar_receiver_field_names(value, seen: set[int] | None = None) -> set[str]
     from sugar_lift_py_tests.sugar_body import SugarBody
 
     if isinstance(value, ReceiverFieldStoreSugar):
-        return {value.attr}
+        receiver = value.receiver
+        while isinstance(receiver, ReceiverFieldStoreStateSugar):
+            receiver = receiver.receiver
+        if isinstance(receiver, (BindingCoordinateRefSugar, ConstructedReceiverRefSugar)):
+            return {value.attr}
     if isinstance(value, (tuple, list)):
         return set().union(*(_sugar_receiver_field_names(item, seen) for item in value))
     if not isinstance(value, (Sugar, SugarBody)) or not is_dataclass(value):
@@ -88,6 +104,18 @@ class ObjectValue(FloorValue):
     # ``identity_term``).
     arrival: str | None = dataclass_field(
         default=None,
+        kw_only=True,
+        compare=False,
+        metadata={"testimony": "provenance"},
+    )
+    # The fields a store in this frame put on the instance (the one field
+    # store, ``with_field_store``): each is the instance's field now even
+    # where the instance arrived by binding and its other fields are not
+    # current (``attribute``).  An arrival by binding clears them
+    # (``object_identity.arrived``): code this frame does not see may have
+    # changed them since.
+    stored_fields: tuple[str, ...] = dataclass_field(
+        default=(),
         kw_only=True,
         compare=False,
         metadata={"testimony": "provenance"},
@@ -301,6 +329,11 @@ class ObjectValue(FloorValue):
         descriptor (``_class_data_descriptor``) is answered from the class,
         and never from the instance's fields.
 
+        A field a store in this frame put on the instance
+        (``stored_fields``, the one field store) is the instance's field now,
+        current or not: the store makes that field known; the rest of an
+        arrived instance stays as its currency says.
+
         Every member read off the class -- a property, a class field, a
         method -- is the one the one class-namespace lookup selects
         (``class_member``: the binding the class body left last); a lookup
@@ -315,6 +348,15 @@ class ObjectValue(FloorValue):
         from .object_identity import contents_current
 
         current = contents_current(self)
+        if not current and name in self.stored_fields:
+            # A store this frame made: the field is the instance's now,
+            # whatever the rest of an arrived instance holds.  A stored name
+            # meets no data descriptor (``with_field_store`` refuses one).
+            for field in reversed(self.fields):
+                if field.name == name:
+                    from sugar_lift_py_tests.outcome import ExitSet
+
+                    return ExitSet.completed(field.value)
         if not current and not self._class_data_descriptor(name):
             return self.undecided_attribute(name, site, owner="ObjectValue.attribute")
         for field in reversed(self.fields if current else ()):
@@ -506,9 +548,11 @@ class ObjectValue(FloorValue):
             self.deferred_helper_fields,
             still_deleted,
             self.defining_class,
-            # The same object: it keeps its ``allocation`` and ``arrival``.
+            # The same object: it keeps its ``allocation`` and ``arrival``,
+            # and the field is known on it from here (``stored_fields``).
             allocation=self.allocation,
             arrival=self.arrival,
+            stored_fields=(*(n for n in self.stored_fields if n != name), name),
         )
 
     def _store_descriptor(self, name: str) -> "bool | None":

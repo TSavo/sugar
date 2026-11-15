@@ -390,7 +390,9 @@ def _arrived(value, through):
         return replace(value, when_true=when_true, when_false=when_false)
     if isinstance(value, ObjectValue):
         # An instance's fields are its contents: each object reachable
-        # through them arrived with it.
+        # through them arrived with it.  So are the fields a store put on it
+        # (``stored_fields``): code this frame does not see may have changed
+        # them since.
         fields = []
         for field in value.fields:
             held = _arrived(field.value, inner(f".{field.name}"))
@@ -399,9 +401,20 @@ def _arrived(value, through):
             )
         unchanged = all(a is b for a, b in zip(fields, value.fields))
         stamp = value.arrival if value.arrival is not None else through()
-        if unchanged and value.allocation is None and stamp == value.arrival:
+        if (
+            unchanged
+            and value.allocation is None
+            and stamp == value.arrival
+            and not value.stored_fields
+        ):
             return value
-        return replace(value, fields=tuple(fields), allocation=None, arrival=stamp)
+        return replace(
+            value,
+            fields=tuple(fields),
+            allocation=None,
+            arrival=stamp,
+            stored_fields=(),
+        )
     if kind is ReceiverStatePartitionValue:
         # A constructor's receiver on each of its faces: each one arrived.
         from sugar_lift_py_tests.outcome import ExitSet

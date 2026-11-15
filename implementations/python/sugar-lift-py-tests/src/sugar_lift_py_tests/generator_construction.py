@@ -1896,11 +1896,12 @@ class GeneratorConstructionV1:
         if isinstance(step, DefinitionDefaultsStepV1):
             return self._transition_definition_defaults(step, 0, requested)
         if isinstance(step, AttributeAssignStepV1):
-            from sugar_lift_py_tests.sugar.store_effect_sugar import (
-                AttributeStoreEffectSugar,
+            # The one field store: the receiver's value decides it.
+            from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
+                ReceiverFieldStoreSugar,
             )
 
-            outcome = AttributeStoreEffectSugar(
+            outcome = ReceiverFieldStoreSugar(
                 receiver=step.receiver,
                 value=step.value,
                 attr=step.attr,
