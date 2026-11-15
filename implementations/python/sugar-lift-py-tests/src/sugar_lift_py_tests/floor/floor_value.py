@@ -666,7 +666,8 @@ class FloorValue:
         with ``__eq__``), which this frame did not look at, so ``item in self``
         may raise anything -- the #7585 law.  It completes with the undecided
         ``py.in(item, container)`` predicate only under
-        ``python:compare.completes(python:compare("In", site))`` and halts with
+        ``python:compare.completes(python:compare("In", item, container,
+        site))`` and halts with
         an ``UndeterminedRaiseEffect`` (owner ``UndecidedCompare:In``) under the
         complement.  No exception type is named and no membership is decided.
         ``not in`` dispatches the same ``__contains__``: the caller negates the
@@ -1070,7 +1071,8 @@ class FloorValue:
           this frame did not look at, so the comparison may raise anything --
           the #7585 law, exactly as for ``==``.  Returned as two faces: the
           undecided ``py.lt/le/gt/ge`` predicate completes only under
-          ``python:compare.completes(python:compare(op, site))`` and an
+          ``python:compare.completes(python:compare(op, left, right,
+          site))`` and an
           ``UndeterminedRaiseEffect`` (owner ``UndecidedCompare:<op>``) halts
           under the complement.  Never a sole ``ExitSet.completed(PredicateValue)``.
         * **Decided (or non-undecided) with no ground arm**: construction

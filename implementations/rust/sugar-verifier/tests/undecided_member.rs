@@ -12,6 +12,7 @@
 //   - a member the join answers (its symbol bound to an imported contract)
 //     is not owed; a member with no symbol at the same line still is.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -149,7 +150,7 @@ fn prove_reports_each_member_owed_and_undecidable() {
     let pool = load_all_proofs::run_prove_inputs(&dir);
     assert!(pool.load_errors.is_empty(), "{:?}", pool.load_errors);
     let mut report = Report::default();
-    sugar_verifier::report::add_undecided_members(&pool, &mut report);
+    sugar_verifier::report::add_undecided_members(&pool, &BTreeMap::new(), &mut report);
     assert_eq!(report.owed, 2);
     assert_eq!(report.violations, 0);
     let mut names: Vec<_> = report
@@ -199,7 +200,7 @@ fn an_imported_proofs_owed_members_are_its_own_never_the_importers() {
     assert!(pool.load_errors.is_empty(), "{:?}", pool.load_errors);
     assert_eq!(pool.undecided_members().count(), 3);
     let mut report = Report::default();
-    sugar_verifier::report::add_undecided_members(&pool, &mut report);
+    sugar_verifier::report::add_undecided_members(&pool, &BTreeMap::new(), &mut report);
 
     assert_eq!(report.owed, 1, "only the project's own member is owed");
     assert_eq!(report.violations, 0);
@@ -303,7 +304,7 @@ fn consumer_pool(staged: bool) -> MementoPool {
 
 fn owed_names(pool: &MementoPool) -> Vec<String> {
     let mut report = Report::default();
-    sugar_verifier::report::add_undecided_members(pool, &mut report);
+    sugar_verifier::report::add_undecided_members(pool, &BTreeMap::new(), &mut report);
     assert_eq!(report.owed, report.rows.len());
     let mut names: Vec<_> = report
         .rows
@@ -334,6 +335,46 @@ fn a_member_the_join_answers_is_not_owed() {
     );
 }
 
+/// Step 9: a member with no symbol that prove answered (the joined contract
+/// decides its operation) is not owed. Its row is `discharged` and says what
+/// answered it; a member prove did not answer stays owed beside it.
+#[test]
+fn a_member_prove_answers_is_reported_answered_and_not_owed() {
+    let pool = consumer_pool(true);
+    let (_call, compare) = consumer_line_nine();
+    let answer = "the joined contract (python:b64vendor.encodeBase64) decides \
+                  python:compare.completes at this site";
+
+    // Not answered: owed, `undecidable`.
+    let mut owing = Report::default();
+    sugar_verifier::report::add_undecided_members(&pool, &BTreeMap::new(), &mut owing);
+    assert_eq!(owing.owed, 1);
+    assert_eq!(owing.discharged, 0);
+    assert_eq!(owing.rows[0].status, ObligationVerdict::Undecidable);
+
+    // Answered: the same member, `discharged`, never owed.
+    let answered = BTreeMap::from([(compare.header_cid(), answer.to_string())]);
+    let mut report = Report::default();
+    sugar_verifier::report::add_undecided_members(&pool, &answered, &mut report);
+    assert_eq!(report.owed, 0, "an answered member is not owed");
+    assert_eq!(report.violations, 0);
+    assert_eq!(report.discharged, 1);
+    assert_eq!(report.rows.len(), 1, "the joined call has no row of its own");
+    let row = &report.rows[0];
+    assert_eq!(row.status, ObligationVerdict::Discharged);
+    assert_eq!(row.callsite.property_name, "undecided:test_consumer.py:9");
+    assert_eq!(row.reason, format!("answered: {answer}"));
+    assert_eq!(row.discharge_method.as_deref(), Some("answered"));
+    assert_eq!(report.verdict(), sugar_verifier::ReportVerdict::Green);
+
+    // An answer for another member answers nothing here.
+    let other = BTreeMap::from([("blake3-512:not-this-member".to_string(), answer.to_string())]);
+    let mut unrelated = Report::default();
+    sugar_verifier::report::add_undecided_members(&pool, &other, &mut unrelated);
+    assert_eq!(unrelated.owed, 1);
+    assert_eq!(unrelated.discharged, 0);
+}
+
 #[test]
 fn an_unanswered_member_without_a_symbol_names_its_site() {
     let dir = make_unique_dir("unanswered");
@@ -344,7 +385,7 @@ fn an_unanswered_member_without_a_symbol_names_its_site() {
     let pool = load_all_proofs::run_prove_inputs(&dir);
     assert!(pool.load_errors.is_empty(), "{:?}", pool.load_errors);
     let mut report = Report::default();
-    sugar_verifier::report::add_undecided_members(&pool, &mut report);
+    sugar_verifier::report::add_undecided_members(&pool, &BTreeMap::new(), &mut report);
     assert_eq!(report.owed, 1);
     assert_eq!(report.rows[0].callsite.property_name, "undecided:m.py:4");
     assert_eq!(

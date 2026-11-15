@@ -236,6 +236,15 @@ def _assert_dual_dispatch(outcome, *, atom: str, blame: str) -> None:
     # With no two-faced operand the pair is exactly the atom and its complement.
     if completed_conjuncts == (completes,):
         assert halted.guard == complement_guard(completed.guard)
+    # The completes atom names the operation it is about (#7766): the operator
+    # kind, the operand terms of the comparison the predicate states, then the
+    # site key.  Prove reads the operands there, so a joined contract that
+    # decides their types decides whether the comparison completes.
+    (dispatch,) = completes.args
+    assert dispatch.name == "python:compare"
+    stated_operands = getattr(completed.value.formula, "args", None)
+    if stated_operands is not None:
+        assert tuple(dispatch.args[1:-1]) == tuple(stated_operands)
 
 
 def _assert_compare_dual(node, *, atom: str) -> None:

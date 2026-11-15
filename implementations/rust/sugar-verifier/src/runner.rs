@@ -470,7 +470,15 @@ impl Runner {
             report_stage::add_consistency_result(cr, &mut report);
         }
         report_stage::add_toolchain_plans(&pool, &mut report);
-        report_stage::add_undecided_members(&pool, &mut report);
+        // Step 9: an operation with no symbol is answered where the joined
+        // contracts decide it; every other `undecided` member is owed.
+        let answered_members = crate::consistency::members_answered_at_prove(
+            &pool,
+            &self.plan,
+            &self.registry,
+            &self.compilers,
+        );
+        report_stage::add_undecided_members(&pool, &answered_members, &mut report);
 
         let invs = invs_sink.into_inner().unwrap_or_default();
         let mut per_solver: BTreeMap<String, SolverStats> = BTreeMap::new();
@@ -710,7 +718,11 @@ impl Runner {
             report_stage::add_consistency_result(cr, &mut report);
         }
         report_stage::add_toolchain_plans(&pool, &mut report);
-        report_stage::add_undecided_members(&pool, &mut report);
+        // Step 9: an operation with no symbol is answered where the joined
+        // contracts decide it; every other `undecided` member is owed.
+        let answered_members =
+            crate::consistency::members_answered_at_prove(&pool, plan, registry, compilers);
+        report_stage::add_undecided_members(&pool, &answered_members, &mut report);
 
         // Aggregate per-solver stats from telemetry sink.
         let invs = invs_sink.into_inner().unwrap_or_default();
@@ -1262,7 +1274,12 @@ fn fold_self_post_results(
     violations
 }
 
-fn callsite_row_is_owned_by_consistency(cs: &CallSite, pool: &MementoPool) -> bool {
+/// Is this callsite's row the consistency row's (step 9)? The join binds a
+/// contract to a call the callsite's own contract reads, so the consistency
+/// row decides every callsite of that contract and none has a row of its own.
+/// The one rule the report fold and the link surface
+/// (`sugar_compiler::linker_inputs`) both read.
+pub fn callsite_row_is_owned_by_consistency(cs: &CallSite, pool: &MementoPool) -> bool {
     let Some(property_cid) = cs.property_cid.as_ref() else {
         return false;
     };

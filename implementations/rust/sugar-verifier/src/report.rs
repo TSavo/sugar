@@ -345,7 +345,17 @@ pub fn add_consistency_with_verification(
 /// imported proof spoke is that proof's own debt (step 9): carried as the
 /// import's state (`Report::imported`), never counted in this project's
 /// `owed`.
-pub fn add_undecided_members(pool: &MementoPool, r: &mut Report) {
+///
+/// `answered` holds the members with no symbol that prove answered (step 9,
+/// `consistency::members_answered_at_prove`): member CID to the reason. Such a
+/// member is not owed: its row is `discharged`, reason `answered: <reason>`,
+/// naming the joined contract that decides the operation. A member not in
+/// `answered` and not joined by its symbol is owed, as before.
+pub fn add_undecided_members(
+    pool: &MementoPool,
+    answered: &std::collections::BTreeMap<String, String>,
+    r: &mut Report,
+) {
     use sugar_proof_envelope::{UndecidedMember, UndecidedReason};
     // A call the join answers (step 9) is no longer owed: an imported
     // contract states its post, and the row that reads the call decides.
@@ -354,6 +364,7 @@ pub fn add_undecided_members(pool: &MementoPool, r: &mut Report) {
         if joined.contains(&cid.to_string()) {
             continue;
         }
+        let answer = answered.get(cid.as_str());
         let reason;
         let mut cs = CallSite::default();
         match UndecidedMember::from_stored(member) {
@@ -382,21 +393,35 @@ pub fn add_undecided_members(pool: &MementoPool, r: &mut Report) {
             }
         }
         cs.property_cid = Some(cid.clone());
+        // Answered at prove: the joined contract decides the operation, so
+        // the member is not owed. Its row says what answered it.
+        let (status, reason, method) = match answer {
+            Some(answer) => (
+                ObligationVerdict::Discharged,
+                format!("answered: {answer}"),
+                "answered",
+            ),
+            None => (ObligationVerdict::Undecidable, reason, "undecided"),
+        };
         let row = ReportRow {
             callsite: cs,
-            status: ObligationVerdict::Undecidable,
+            status,
             reason,
-            discharge_method: Some("undecided".to_string()),
+            discharge_method: Some(method.to_string()),
             body_discharge_tier: None,
             verification: None,
-            verify_effect: VerifyEffectCarrier::from_producer(ObligationVerdict::Undecidable, None),
+            verify_effect: VerifyEffectCarrier::from_producer(status, None),
         };
         if member_is_imported(pool, cid) {
             add_imported(row, r);
             continue;
         }
         r.rows.push(row);
-        r.owed += 1;
+        if answer.is_some() {
+            r.discharged += 1;
+        } else {
+            r.owed += 1;
+        }
     }
 }
 

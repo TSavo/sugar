@@ -3397,6 +3397,251 @@ pub(crate) fn joined_member_cids(pool: &MementoPool) -> std::collections::BTreeS
         .collect()
 }
 
+// ── An operation with no symbol, answered at prove (step 9; #7766) ─────────
+//
+// An `undecided` member with no symbol is an operation the lifter left
+// two-faced at its site: an `==` on a call's result, whose dispatch is not
+// decided at lift because the result's type is not known there. It completes
+// only under its own `python:<p>.completes(python:<p>(…, <site key>))` atom.
+// No contract answers it by name. Prove answers it only where the contracts
+// the join binds decide the operation itself: under what the joined posts
+// state, alone, the solver proves the atom (the operation completes) or its
+// negation (it raises). The joined post is what pins the operand's type and
+// value, so the member is answered by the joined contract, exactly as a call
+// member is answered by the contract its symbol joins. Where the join leaves
+// the operand undecided, nothing is proved and the member stays owed.
+
+/// The site an operation's completes atom is keyed on: an atomic
+/// `<p>.completes(<p>(…, <key>))` whose key (the protocol term's last
+/// argument, the kit's `occurrence_key`) is the site's coordinate CID, alone
+/// or followed by `@<occurrence path>`. `None` when the atom is not that
+/// shape.
+fn completes_atom_site(atom: &Json) -> Option<&str> {
+    let protocol = atom.get("name")?.as_str()?.strip_suffix(".completes")?;
+    let [operation] = atom.get("args")?.as_array()?.as_slice() else {
+        return None;
+    };
+    if operation.get("kind")?.as_str()? != "ctor" || operation.get("name")?.as_str()? != protocol {
+        return None;
+    }
+    let key = operation.get("args")?.as_array()?.last()?.get("value")?.as_str()?;
+    Some(key.split_once('@').map_or(key, |(site, _path)| site))
+}
+
+/// Every completes atom a claim states outside a quantifier, with its site.
+fn collect_completes_atoms<'a>(node: &'a Json, out: &mut Vec<(&'a str, &'a Json)>) {
+    match node.get("kind").and_then(|k| k.as_str()) {
+        Some("atomic") => {
+            if let Some(site) = completes_atom_site(node) {
+                out.push((site, node));
+            }
+        }
+        // A quantified body speaks of its bound instances, never of this
+        // site's one evaluation.
+        Some("forall") | Some("exists") => {}
+        _ => {
+            if let Some(operands) = node.get("operands").and_then(|v| v.as_array()) {
+                for operand in operands {
+                    collect_completes_atoms(operand, out);
+                }
+            }
+        }
+    }
+}
+
+/// Every `undecided` member with `reason: unanswered` and no symbol, by the
+/// coordinate CID of its site: site CID to member CID.
+fn unanswered_operations(pool: &MementoPool) -> BTreeMap<String, String> {
+    use sugar_proof_envelope::{UndecidedMember, UndecidedReason};
+    let mut operations = BTreeMap::new();
+    for (cid, member) in pool.undecided_members() {
+        let Ok(undecided) = UndecidedMember::from_stored(member) else {
+            continue;
+        };
+        if undecided.reason != UndecidedReason::Unanswered {
+            continue;
+        }
+        if undecided.symbol.as_deref().is_some_and(|s| !s.is_empty()) {
+            continue;
+        }
+        operations.insert(
+            undecided_site_coordinate_cid(&undecided.site),
+            cid.to_string(),
+        );
+    }
+    operations
+}
+
+/// Does the solver answer `goal` with `verdict`? The plan proves a goal by
+/// refuting its negation: `Discharged` is "valid", `Unsatisfied` is "its
+/// negation is satisfiable". Anything else (unknown, timeout, an encoding
+/// stop) answers nothing.
+fn joined_goal_has_verdict(
+    goal: Json,
+    verdict: ObligationVerdict,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+) -> bool {
+    let goal = canonicalize_formula_json(&fold_ground_applications(&goal));
+    match CompilerInput::decode_json(goal) {
+        Ok(input) => run_plan_with_compilers(plan, registry, compilers, &input).0 == verdict,
+        Err(_) => false,
+    }
+}
+
+/// What the contracts joined to `claim`'s calls state, alone: the
+/// conjunction of the kept linked post instances, with the symbols they
+/// answer. `None` when nothing joined, when a joined answer was dropped or
+/// refused, or when the conjunction is not satisfiable (the call certainly
+/// halts, so no operation after it is reached and none is decided by it).
+fn joined_context(
+    claim: &Json,
+    ambient: &[AmbientPost],
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+) -> Option<(Json, Vec<String>)> {
+    let partition = linked_ambient_post_instances_for_inv(claim, ambient);
+    if partition.kept.is_empty() || !partition.dropped.is_empty() {
+        return None;
+    }
+    let mut symbols: Vec<String> = partition
+        .kept
+        .iter()
+        .map(|post| post.binding.source_symbol.clone())
+        .collect();
+    symbols.sort();
+    symbols.dedup();
+    let context = IrFormula::And(
+        partition
+            .kept
+            .iter()
+            .map(|post| post.instantiated_post.clone())
+            .collect(),
+    )
+    .to_value();
+    let satisfiable = joined_goal_has_verdict(
+        IrFormula::Not(context.clone()).to_value(),
+        ObligationVerdict::Unsatisfied,
+        plan,
+        registry,
+        compilers,
+    );
+    satisfiable.then_some((context, symbols))
+}
+
+/// Does `context` decide `atom`: does it prove the atom, or its negation?
+fn joined_context_decides(
+    context: &Json,
+    atom: &Json,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+) -> bool {
+    // `context` entails a face exactly when `context` with the other face is
+    // unsatisfiable: `not(context and counter)` is valid.
+    let excludes = |counter: Json| -> bool {
+        let goal =
+            IrFormula::Not(IrFormula::And(vec![context.clone(), counter]).to_value()).to_value();
+        joined_goal_has_verdict(goal, ObligationVerdict::Discharged, plan, registry, compilers)
+    };
+    // The atom is proved (its negation is excluded), or refuted.
+    excludes(IrFormula::Not(atom.clone()).to_value()) || excludes(atom.clone())
+}
+
+/// The `undecided` members with no symbol that prove answers (step 9): member
+/// CID to the reason, which names the joined contracts and the atoms they
+/// decide.
+///
+/// A member is answered when a claim states its operation's completes atoms
+/// (keyed at the member's site) and, in every claim that states them, what
+/// the joined contracts state decides each one. A claim nothing joins, a
+/// joined post that leaves the operand's type open, or a wrong or dropped
+/// answer decides nothing: the member stays owed.
+pub fn members_answered_at_prove(
+    pool: &MementoPool,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+) -> BTreeMap<String, String> {
+    let mut answered: BTreeMap<String, String> = BTreeMap::new();
+    let operations = unanswered_operations(pool);
+    if operations.is_empty() {
+        return answered;
+    }
+    let ambient = collect_ambient_posts(pool);
+    if ambient.is_empty() {
+        return answered;
+    }
+    let mut owed: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for (_cid, member) in pool.contract_members() {
+        let Some(body) = pool
+            .contract_body_for_member(member)
+            .filter(|v| v.is_object())
+        else {
+            continue;
+        };
+        if !is_consistency_candidate(&body) {
+            continue;
+        }
+        let claim = canonicalize_formula_json(&axiom_context_formula(&body));
+        let mut stated = Vec::new();
+        collect_completes_atoms(&claim, &mut stated);
+        let mut reads: BTreeMap<String, Vec<&Json>> = BTreeMap::new();
+        for (site, atom) in stated {
+            if let Some(member_cid) = operations.get(site) {
+                let atoms = reads.entry(member_cid.clone()).or_default();
+                if !atoms.contains(&atom) {
+                    atoms.push(atom);
+                }
+            }
+        }
+        if reads.is_empty() {
+            continue;
+        }
+        let context = joined_context(&claim, &ambient, plan, registry, compilers);
+        for (member_cid, atoms) in reads {
+            let reason = match &context {
+                Some((joined, symbols))
+                    if atoms.iter().copied().all(|atom| {
+                        joined_context_decides(joined, atom, plan, registry, compilers)
+                    }) =>
+                {
+                    let mut names: Vec<&str> = atoms
+                        .iter()
+                        .copied()
+                        .filter_map(|atom| atom.get("name").and_then(|v| v.as_str()))
+                        .collect();
+                    names.sort_unstable();
+                    names.dedup();
+                    Some(format!(
+                        "the joined contract ({}) decides {} at this site",
+                        symbols.join(", "),
+                        names.join(", ")
+                    ))
+                }
+                _ => None,
+            };
+            match reason {
+                Some(reason) if !owed.contains(&member_cid) => {
+                    answered.entry(member_cid).or_insert(reason);
+                }
+                _ => {
+                    answered.remove(&member_cid);
+                    owed.insert(member_cid);
+                }
+            }
+        }
+    }
+    info!(
+        operations = operations.len(),
+        answered = answered.len(),
+        "verifier/linker: undecided operations answered by the joined contracts"
+    );
+    answered
+}
+
 /// `python:call_result(<call>, python:occurrence(<site CID>, …))` read as
 /// `(<call>, <site CID>)`. `None` when the term is not that shape.
 fn call_result_parts(term: &Json) -> Option<(&Json, &str)> {
@@ -9704,6 +9949,203 @@ mod tests {
         assert_eq!(
             DroppedAmbientPostReason::CallTermDecodeFailed.label(),
             "call-term-decode-failed"
+        );
+    }
+
+    // ── Step 9: an operation with no symbol, answered by the joined contract ──
+    // consumer: `assert concat(<actual>) == "abc"`. The call is an unanswered
+    // member with the symbol `python:v.concat`; the `==` on its result is a
+    // second member, at its own site, with no symbol. The vendor's `concat`
+    // states `out = x + "c"`. With a `str` actual the joined post pins the
+    // result to a `str`, so `==` is decided and its member is answered. With
+    // nothing staged, or an actual that leaves `x + "c"` undecided, it is not.
+
+    fn answered_site(start_col: i64, end_col: i64) -> sugar_proof_envelope::UndecidedSite {
+        sugar_proof_envelope::UndecidedSite {
+            file: "test_consumer.py".into(),
+            source_cid: sugar_proof_envelope::AtomCid::try_parse(format!(
+                "blake3-512:{}",
+                "c".repeat(128)
+            ))
+            .unwrap(),
+            start_line: 9,
+            start_col,
+            end_line: 9,
+            end_col,
+        }
+    }
+
+    /// Insert one `reason: unanswered` member; returns its member CID.
+    fn insert_unanswered(
+        pool: &mut MementoPool,
+        symbol: Option<&str>,
+        site: sugar_proof_envelope::UndecidedSite,
+    ) -> String {
+        let member = sugar_proof_envelope::UndecidedMember {
+            symbol: symbol.map(str::to_string),
+            site,
+            reason: sugar_proof_envelope::UndecidedReason::Unanswered,
+        };
+        let cid = member.header_cid();
+        let mut header = member.header_preimage();
+        header["cid"] = Json::String(cid.clone());
+        pool.insert_unanchored_for_tests(test_cid(&cid), json!({ "header": header }));
+        cid
+    }
+
+    /// The consumer's pool, and the member CID of its `==`.
+    fn answered_pool(actual: Json, staged: bool) -> (MementoPool, String) {
+        let call_site = answered_site(11, 23);
+        let compare_site = answered_site(11, 32);
+        let call_site_cid = undecided_site_coordinate_cid(&call_site);
+        let compare_key = undecided_site_coordinate_cid(&compare_site);
+        let mut pool = MementoPool::default();
+        insert_unanswered(&mut pool, Some("python:v.concat"), call_site);
+        let compare_member = insert_unanswered(&mut pool, None, compare_site);
+
+        let result = call_result(
+            json!({"kind": "ctor", "name": "call:v.concat", "args": [actual]}),
+            &call_site_cid,
+        );
+        let completes = json!({
+            "kind": "atomic",
+            "name": "python:compare.completes",
+            "args": [{
+                "kind": "ctor",
+                "name": "python:compare",
+                "args": [
+                    str_const("Eq"),
+                    result.clone(),
+                    str_const("abc"),
+                    str_const(&compare_key)
+                ]
+            }]
+        });
+        let holds = json!({
+            "kind": "atomic",
+            "name": "py.eq",
+            "args": [result, str_const("abc")]
+        });
+        insert_contract(
+            &mut pool,
+            "blake3-512:answered-consumer",
+            "test_consumer",
+            json!({"kind": "and", "operands": [completes, holds]}),
+        );
+        if staged {
+            let contract_cid = blake3_512_of(b"answered-vendor-concat-contract");
+            let concat = json!({
+                "kind": "ctor",
+                "name": "python:binary_result",
+                "args": [str_const("+"), var("x"), str_const("c"), str_const("vendor-site")]
+            });
+            pool.insert_unanchored_for_tests(
+                test_cid(&contract_cid),
+                json!({
+                    "evidence": {
+                        "kind": "contract",
+                        "body": {
+                            "contractName": "concat",
+                            "formals": ["x"],
+                            "outBinding": "out",
+                            "post": eqf(var("out"), concat)
+                        }
+                    }
+                }),
+            );
+            pool.insert_unanchored_for_tests(
+                test_cid(&blake3_512_of(b"answered-vendor-concat-bridge")),
+                json!({
+                    "evidence": {
+                        "kind": "bridge",
+                        "body": {
+                            "sourceSymbol": "python:v.concat",
+                            "targetContractCid": contract_cid
+                        }
+                    }
+                }),
+            );
+        }
+        (pool, compare_member)
+    }
+
+    fn answered_at_prove(pool: &MementoPool) -> BTreeMap<String, String> {
+        let (plan, registry) = z3_plan_and_registry();
+        members_answered_at_prove(pool, &plan, &registry, &test_compilers())
+    }
+
+    #[test]
+    fn a_completes_atom_is_read_at_its_site_and_occurrence() {
+        let atom = |key: &str| {
+            json!({
+                "kind": "atomic",
+                "name": "python:compare.completes",
+                "args": [{
+                    "kind": "ctor",
+                    "name": "python:compare",
+                    "args": [str_const("Eq"), var("a"), var("b"), str_const(key)]
+                }]
+            })
+        };
+        assert_eq!(completes_atom_site(&atom("blake3-512:s")), Some("blake3-512:s"));
+        // An evaluation under an occurrence path is the same site.
+        assert_eq!(
+            completes_atom_site(&atom("blake3-512:s@loop:1/call:f")),
+            Some("blake3-512:s")
+        );
+        // Not a completes atom; and a completes atom whose term is another
+        // protocol's is not read.
+        assert_eq!(completes_atom_site(&eqf(var("a"), var("b"))), None);
+        let mismatched = json!({
+            "kind": "atomic",
+            "name": "python:compare.completes",
+            "args": [{"kind": "ctor", "name": "python:truth", "args": [str_const("k")]}]
+        });
+        assert_eq!(completes_atom_site(&mismatched), None);
+
+        // Atoms under connectives are found; a quantified body is not read.
+        let claim = json!({"kind": "and", "operands": [
+            {"kind": "not", "operands": [atom("blake3-512:s")]},
+            atom("blake3-512:t@loop:2"),
+            {"kind": "forall", "name": "q", "sort": {"kind": "primitive", "name": "Int"},
+             "body": atom("blake3-512:u")}
+        ]});
+        let mut found = Vec::new();
+        collect_completes_atoms(&claim, &mut found);
+        let sites: Vec<&str> = found.iter().map(|(site, _atom)| *site).collect();
+        assert_eq!(sites, vec!["blake3-512:s", "blake3-512:t"]);
+    }
+
+    #[test]
+    fn an_operation_the_joined_contract_decides_is_answered_at_prove() {
+        let (pool, compare_member) = answered_pool(str_const("ab"), true);
+        let answered = answered_at_prove(&pool);
+        assert_eq!(
+            answered.keys().collect::<Vec<_>>(),
+            vec![&compare_member],
+            "the `==` on a result the joined post pins to a str is answered: {answered:?}"
+        );
+        let reason = &answered[&compare_member];
+        assert!(reason.contains("python:v.concat"), "{reason}");
+        assert!(reason.contains("python:compare.completes"), "{reason}");
+    }
+
+    #[test]
+    fn an_operation_the_join_leaves_undecided_stays_owed() {
+        // Nothing staged: no contract joins the call, so nothing decides the
+        // `==` on its result.
+        let (unstaged, _) = answered_pool(str_const("ab"), false);
+        assert!(
+            answered_at_prove(&unstaged).is_empty(),
+            "an unjoined call's `==` stays owed"
+        );
+        // Staged, but the actual is an int: `3 + "c"` is not an operation
+        // the solver decides, so the joined post states no type for the
+        // result, and its `==` stays owed.
+        let (undecided, _) = answered_pool(int(3), true);
+        assert!(
+            answered_at_prove(&undecided).is_empty(),
+            "a join that leaves the operand undecided answers nothing"
         );
     }
 

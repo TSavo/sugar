@@ -2769,6 +2769,94 @@ mod tests {
         );
     }
 
+    /// `python:compare.completes(python:compare(<op>, <left>, <right>, <site>))`:
+    /// the completes atom of an undecided comparison, naming its operands.
+    fn py_compare(
+        op: &str,
+        left: serde_json::Value,
+        right: serde_json::Value,
+        site: &str,
+    ) -> serde_json::Value {
+        atomic(
+            "python:compare.completes",
+            vec![ctor(
+                "python:compare",
+                vec![string_const(op), left, right, string_const(site)],
+            )],
+        )
+    }
+
+    #[test]
+    fn python_eq_over_builtin_operands_completes_and_an_undecided_operand_decides_nothing() {
+        // `==` between two decided builtin values always completes: a str and
+        // an int are unequal, and the comparison never raises.
+        let decided = py_compare("Eq", string_const("a"), int_const(1), "k");
+        assert_eq!(solve(&decided), "sat");
+        assert_eq!(
+            solve(&not_formula(decided)),
+            "unsat",
+            "\"a\" == 1 cannot raise"
+        );
+
+        // Over a call's result nothing here decides, the comparison's
+        // completion is the declared predicate it was: both faces are sat.
+        let call = ctor(
+            "python:call_result",
+            vec![
+                ctor("call:m.f", vec![string_const("x")]),
+                ctor("python:occurrence", vec![string_const("call-site")]),
+            ],
+        );
+        let completes = py_compare("Eq", call.clone(), string_const("abc"), "k");
+        let parts = fixture_compile_asserted_to_parts(&completes).expect("compile");
+        let script = format!("{}{}", parts.preamble, parts.body);
+        assert!(
+            script.contains("(|python:compare.completes| "),
+            "an undecided operand keeps the uninterpreted completes atom:\n{script}"
+        );
+        assert_eq!(solve(&completes), "sat");
+        assert_eq!(
+            solve(&not_formula(completes.clone())),
+            "sat",
+            "an unjoined call's `==` may raise"
+        );
+
+        // A joined post binds the call's result to a decided `str` operation:
+        // the operand's builtin type is stated, so the comparison completes
+        // (its raising face is unsat) and its value is the content equality.
+        let pinned = eq(
+            call.clone(),
+            py_binary("+", string_const("ab"), string_const("c"), "p"),
+        );
+        assert_eq!(
+            solve(&all_of(vec![
+                pinned.clone(),
+                not_formula(completes.clone())
+            ])),
+            "unsat",
+            "a `str` result's `==` with a `str` cannot raise"
+        );
+        assert_twin(
+            all_of(vec![
+                pinned.clone(),
+                completes.clone(),
+                py_eq(call.clone(), string_const("abc")),
+            ]),
+            all_of(vec![
+                pinned,
+                completes,
+                py_eq(call, string_const("abd")),
+            ]),
+            "f(\"x\") == \"abc\" under the joined post",
+        );
+
+        // An ordering is not written here: it stays undecided, even over
+        // decided operands (`"a" < 1` raises TypeError; nothing here says so).
+        let ordering = py_compare("Lt", string_const("a"), int_const(1), "k");
+        assert_eq!(solve(&ordering), "sat");
+        assert_eq!(solve(&not_formula(ordering)), "sat");
+    }
+
     #[test]
     fn g1_string_regime_unchanged_without_bv32_atom() {
         // GUARD: a G1 string conjunction (universe + sworn String equality) with
