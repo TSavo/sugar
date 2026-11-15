@@ -71,7 +71,12 @@ _OPEN_UNTIL_STEP_8 = (
 )
 
 
-def _assert_open_pair(tmp_path: Path, module: str, truthful: str, lying: str) -> None:
+def _assert_open_pair(
+    tmp_path: Path, module: str, truthful: str, lying: str, *, lie: str = "open"
+) -> None:
+    """The truthful half reads `open` on the test function's claims; the lie
+    reads `lie`: `open`, or `unsat` where the claim is refuted on every arm
+    without the class (never `sat`)."""
     told = run_source_through_real_solver(
         tmp_path / "t", module.format(claim=truthful)
     )
@@ -80,7 +85,7 @@ def _assert_open_pair(tmp_path: Path, module: str, truthful: str, lying: str) ->
         claim_verdict(told.prove_doc, claims_from_line=_test_line(module)) == "open"
     ), _OPEN_UNTIL_STEP_8
     # Never ``sat`` for the lie.
-    assert lied.verdict == "open", _OPEN_UNTIL_STEP_8
+    assert lied.verdict == lie, _OPEN_UNTIL_STEP_8
 
 
 _WITH_SAME_MODULE_MANAGER = (
@@ -156,5 +161,13 @@ def test_a_same_module_exception_class_raised_and_handled_in_a_function(
 ) -> None:
     """``raise Boom()`` and ``except Boom`` in ``f``: both reads denote the
     one class statement (its ``source-class`` identity), so the handler
-    surely matches and ``f()`` is 1."""
-    _assert_open_pair(tmp_path, _RAISE_AND_HANDLE_SAME_MODULE_CLASS, "1", "2")
+    surely matches and ``f()`` is 1.
+
+    The lie (`f() == 2`) is refuted without the class: `f`'s one
+    completing arm is the handler's `return 1`, and the arm where the
+    handler does not take the raise halts, so wherever `f()` completes it is
+    1 (scorecard 43745139407 measured `unsat`).  The truthful half stays
+    `open` until the class of the raised value is stated at prove."""
+    _assert_open_pair(
+        tmp_path, _RAISE_AND_HANDLE_SAME_MODULE_CLASS, "1", "2", lie="unsat"
+    )
