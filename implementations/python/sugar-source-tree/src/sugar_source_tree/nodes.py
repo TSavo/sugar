@@ -1147,8 +1147,16 @@ def _denotes(value, target) -> bool:
 
 def _name_read(owner: "Node", name: str, scope: BindingMap):
     """``name`` substituted in ``scope`` at ``owner``'s site, or None when
-    nothing is bound to it there."""
-    read = For._make_name(owner, name).substitute(scope)
+    nothing is bound to it there.
+
+    The ``Name`` minted to ask the scope is no source read: substitution
+    replaces it by the binding, or it is dropped where nothing is bound, so
+    nothing constructs it.  It answers the roll here, where it is minted, by
+    the discharge of a node the rewrite replaced, as the cell read at a call
+    does (``Call._cells_at_call``)."""
+    asked = For._make_name(owner, name)
+    read = asked.substitute(scope)
+    asked.discharge_by_substitution()
     return None if isinstance(read, Name) else read
 
 
@@ -23148,9 +23156,14 @@ class ListComp(Expression):
         if not walruses:
             return node
         roster = tuple((walrus.target.id, walrus.evaluation) for walrus in walruses)
-        priors = tuple(
-            For._make_name(self, name).substitute(scope) for name, _key in roster
-        )
+        # Each prior is the scope's binding of the name, asked through a
+        # ``Name`` minted here; where substitution replaced it, the minted
+        # read is constructed by nothing and answers the roll here.
+        asked = tuple(For._make_name(self, name) for name, _key in roster)
+        priors = tuple(read.substitute(scope) for read in asked)
+        for read, prior in zip(asked, priors):
+            if prior is not read:
+                read.discharge_by_substitution()
         desc = node.ref.describe()
         span = desc.raw_span or node.span
         slots = (
