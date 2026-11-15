@@ -22,6 +22,10 @@ from sugar_lift_py_tests.floor.builtin_semantic_callable import (
     zero_argument_super_receiver,
 )
 from sugar_lift_py_tests.floor.list_value import ListValue
+from sugar_lift_py_tests.floor.named_expression_value import (
+    caller_stores_of,
+    peel_walrus_binds,
+)
 from sugar_lift_py_tests.floor.string_value import StringValue
 from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_py_tests.ir import make_var
@@ -155,7 +159,7 @@ def test_super_init_dispatches_with_a_receiver_not_spelled_self() -> None:
     _base, derived = values
     receiver = derived.fresh_receiver("receiver", allocation=FRAME_FRESH)
 
-    call = receiver.call_method_value(
+    value = receiver.call_method_value(
         "__init__",
         (StringValue("v"),),
         owner="test",
@@ -163,6 +167,13 @@ def test_super_init_dispatches_with_a_receiver_not_spelled_self() -> None:
         ctx=context,
     ).completed_value()
 
+    # A completed call carries the stores its callee made on the caller's
+    # object (``CallerStoreValue``) around the call it presents: here the
+    # receiver's ``x``, stored by ``Base.__init__`` through ``super()``, and
+    # its ``y``.  Both reach the receiver only if ``super()`` bound ``this``.
+    binds, call = peel_walrus_binds(value)
+    _walrus, stores = caller_stores_of(binds)
+    assert sorted(store.attr for store in stores) == ["x", "y"], stores
     assert isinstance(call, CallSiteValue)
     reduced = call.retained_source_completion_outcome()
     assert any(type(face).__name__ == "Completed" for face in reduced.exits), reduced
