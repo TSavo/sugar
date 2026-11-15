@@ -133,6 +133,26 @@ def test_a_dissolved_comprehension_builds_each_member_before_its_elements(
     assert not any(e.kind == "EvaluationRef" for e in report.minority)
 
 
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "a, b = [x for x in range(2)]",
+        "a, (b, c) = 1, [x for x in range(2)]",
+        "a, *b = [x for x in range(3)]",
+    ],
+)
+def test_an_unpack_of_a_dissolved_comprehension_builds_its_iterable(statement):
+    # The unpack consumes the dissolved display member by member and
+    # evaluates what it carries before its first member
+    # (``Assign._unpacked_in_order``): the ``range(...)`` call is built.
+    report = _report(f"def f():\n    {statement}\n    return a\n")
+    column = 4 + statement.index("range")
+    present = {(e.kind, e.start_line, e.start_col) for e in report.present}
+    assert ("Call", 2, column) in present
+    absent = {(e.kind, e.start_line, e.start_col) for e in report.minority}
+    assert ("Call", 2, column) not in absent
+
+
 def test_a_display_iterable_answers_with_the_loop():
     report = _report(
         "def f(g):\n    for key in ['tz', 'freq']:\n        g(key)\n    return g\n"

@@ -67,6 +67,21 @@ _PROGRAMS = {
         "1",
         "2",
     ),
+    # An unpack consumes the dissolved display member by member
+    # (``Assign._unpacked_in_order``): what the display carries is evaluated
+    # before its first member.
+    "unpack-of-a-dissolved-comprehension": (
+        "    ok = 0\n"
+        "    try:\n"
+        "        a, b = [inv(x) for x in [zero(), boom()]]\n"
+        "    except ValueError:\n"
+        "        ok = 1\n"
+        "    except ZeroDivisionError:\n"
+        "        ok = 2\n"
+        "    assert ok == {claim}\n",
+        "1",
+        "2",
+    ),
 }
 
 
