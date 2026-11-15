@@ -88,34 +88,45 @@ def _line_96_bitand(source: str, path: Path):
     return matches[0]
 
 
-def _assert_dual_edge_dispatch(node, *, producer: str = "BinOp") -> None:
-    """Undecided native dispatch throws named — never nameless dual-edge halt.
+def _assert_two_faced_dispatch(node, *, operator: str = "&") -> None:
+    """Undecided native dispatch is the one two-faced outcome.
 
-    Historical name kept so call sites stay stable; the law is now
-    ``SugarNotWritten`` at ``binary_operation_exception_floor``.
+    The one undecided-binary law (``FloorValue._undecided_binary_law``): the
+    operation completes only under its own atom and halts undetermined (owner
+    ``UndecidedBinary:<op>``) under the complement. It neither refuses the
+    whole operation nor names an exception type: no TypeError is invented.
     """
-    del producer
-    from sugar_source_tree.panic import SugarNotWritten
-
-    with pytest.raises(SugarNotWritten) as raised:
-        node.sugar().desugar(None)
-    assert raised.value.owner == "binary_operation_exception_floor"
-    assert "undecided" in raised.value.observed.lower()
-    assert "TypeError" not in (raised.value.observed or "")
-
-
-def _assert_two_faced_read(node, *, owner: str) -> None:
-    """The operand read is the one two-faced unanswered outcome, not a refusal."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-    from sugar_lift_py_tests.outcome import Halted
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+
+    exits = node.sugar().desugar(None).exits
+    assert any(isinstance(arm, Completed) for arm in exits)
+    halts = [
+        arm
+        for arm in exits
+        if isinstance(arm, Halted)
+        and type(arm.effect) is UndeterminedRaiseEffect
+        and arm.effect.producer_node_owner == f"UndecidedBinary:{operator}"
+    ]
+    assert halts
+    for halt in halts:
+        assert halt.effect.exception_name is None
+
+
+def _assert_import_member_operand(node, *, qualified_name: str) -> None:
+    """The operand is the import door's member, read through its receipt.
+
+    The unit's lexical import pass seats the member-use receipt at the exact
+    ``np.nan`` occurrence, so the read completes as that one import member:
+    it is not a second, receiver-typed attribute read of the alias.
+    """
+    from sugar_lift_py_tests.floor.import_member_value import ImportMemberValue
+    from sugar_lift_py_tests.outcome.exit_set import Completed
 
     outcome = node.sugar().desugar(None)
-    owners = [
-        arm.effect.producer_node_owner
-        for arm in outcome.exits
-        if isinstance(arm, Halted) and isinstance(arm.effect, UndeterminedRaiseEffect)
-    ]
-    assert owner in owners
+    (member,) = [arm.value for arm in outcome.exits if isinstance(arm, Completed)]
+    assert type(member) is ImportMemberValue
+    assert member.qualified_name == qualified_name
 
 
 def _binop_at(source: str, path: Path, *, line: int, kind: str):
@@ -141,10 +152,11 @@ def test_pandas_series_nan_bitand_retains_child_gap_and_binary_dispatch_twin() -
     Site: ``pandas/tests/series/test_logical_ops.py:96`` ``s_0123 & np.nan``.
 
     Operand evaluation runs before the BinOp floor. On the truthful site the
-    right operand is ``np.nan`` — an unresolved imported member. Replacing the
-    right operand with a term (``0``) removes that child gap and reaches the
-    BinOp producer's completed/exceptional dispatch split. Neither edge
-    invents TypeError.
+    right operand is ``np.nan`` — the import door's member ``numpy.nan``, read
+    through its receipt. Replacing the right operand with a term (``0``)
+    removes that member. On both twins the left Series type is undecided, so
+    each reaches the BinOp producer's completed/exceptional dispatch split.
+    Neither edge invents TypeError.
     """
     path = _corpus_file()
     truthful = path.read_text(encoding="utf-8")
@@ -159,14 +171,13 @@ def test_pandas_series_nan_bitand_retains_child_gap_and_binary_dispatch_twin() -
     assert (series & 0).tolist() == [0, 0, 0, 0]
 
     lying = truthful.replace("s_0123 & np.nan", "s_0123 & 0")
-    # This focused SourceFile door has no authenticated import table, so it must
-    # not pretend that ``np.nan`` resolved: the read of ``.nan`` is the
-    # two-faced unanswered read. The ground lying twin removes that child
-    # read and reaches the BinOp producer's own dispatch.
-    _assert_two_faced_read(
-        _line_96_bitand(truthful, path), owner="SymbolicValue.attribute"
-    )
-    _assert_dual_edge_dispatch(_line_96_bitand(lying, path))
+    # The truthful right operand is the one import member the unit's receipt
+    # names; the ground lying twin has no member to read. Either way the
+    # BinOp producer's own dispatch is two-faced.
+    truthful_node = _line_96_bitand(truthful, path)
+    _assert_import_member_operand(truthful_node.right, qualified_name="numpy.nan")
+    _assert_two_faced_dispatch(truthful_node)
+    _assert_two_faced_dispatch(_line_96_bitand(lying, path))
 
 
 @pytest.mark.parametrize(
@@ -192,7 +203,7 @@ def test_pandas_series_bitand_mixed_rights_publish_both_dispatch_faces(
 
     Each site raises TypeError at CPython on a concrete Series, but the
     producer only sees a SymbolicValue left.  The shared undecided-binary law
-    throws named without inventing TypeError.
+    is two-faced without inventing TypeError.
     """
     path = _corpus_file()
     source = path.read_text(encoding="utf-8")
@@ -205,14 +216,14 @@ def test_pandas_series_bitand_mixed_rights_publish_both_dispatch_faces(
     with pytest.raises(TypeError):
         series & runtime_right
 
-    _assert_dual_edge_dispatch(_binop_at(source, path, line=line, kind=kind))
+    _assert_two_faced_dispatch(_binop_at(source, path, line=line, kind=kind))
 
 
 def test_source_decided_int_float_bitand_emits_type_error() -> None:
     """Truthful twin of ``s_0123 & 3.14`` with both types source-decided.
 
     Enrolled site: ``pandas/tests/series/test_logical_ops.py:98``.  With an
-    undecided Series left the producer throws named; with two TermValues the
+    undecided Series left the producer is two-faced; with two TermValues the
     bitwise floor halts with an authenticated TypeError. The twin is
     built on a workspace-relative locus so the ground exit can cite source.
     """
