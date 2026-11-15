@@ -7,8 +7,15 @@ producer — that list is the seam-3 residual for T.
 Shared store seed (formal unpack × setitem, post-#6644):
 
     def f(a, i, p, q):
-        x, a[i] = p, q
+        b = a
+        x, b[i] = p, q
         return x
+
+``b = a`` reads ``a`` bare, so ``a``'s class is no input of ``f``'s contract
+and the store is the deferred ``setitem`` carrier these rows route.  Without
+it (``x, a[i] = p, q`` alone) ``a`` takes ``class:a`` since #8925 and the
+store is the dispatched ``__setitem__`` edge, owed with its halt and the
+block's state kept, as row R2's helper below states for ``a[i] = q``.
 
 Invalid index → sole Halted face; ``pending.pre_effect_state.state is
 halted.state``. Earlier Name ``x←p`` is not rolled into a Completed return.
@@ -77,7 +84,10 @@ from sugar_source_tree.tree import SourceFile
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
-UNPACK_SETITEM = "def f(a, i, p, q):\n    x, a[i] = p, q\n    return x\n"
+# ``b = a`` hands ``a`` on bare: its class is no input, so the unpack's store
+# through ``b`` is the ``setitem`` carrier over ``a``'s formal coordinate
+# (#8925 makes ``x, a[i] = p, q`` alone the dispatched edge).
+UNPACK_SETITEM = "def f(a, i, p, q):\n    b = a\n    x, b[i] = p, q\n    return x\n"
 
 
 def _tree(source: str, name: str = "state_survival_matrix.py") -> SourceFile:
