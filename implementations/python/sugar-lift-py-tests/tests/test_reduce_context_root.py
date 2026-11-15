@@ -4,9 +4,18 @@ from sugar_lift_py_tests.context.reduce_context import ReduceContext
 
 
 def test_root_mints_empty_temporal() -> None:
+    """The empty temporal is Python's builtin names and nothing else: every
+    ordinary scope starts with them (``builtin_name_temporal``), so a root
+    binds no name of the program's."""
+    from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+        builtin_name_temporal,
+    )
+
     ctx = ReduceContext.root(owner="test")
 
-    assert ctx.temporal.bindings == ()
+    assert ctx.temporal is builtin_name_temporal()
+    assert ctx.temporal.value_if_bound("len") is not None
+    assert ctx.temporal.value_if_bound("x") is None
 
 
 def test_derived_carries_temporal_forward() -> None:
