@@ -4611,8 +4611,72 @@ fn bind_own_inputs_with_unstated(body: &Json) -> (Json, Vec<String>) {
     (instance, unbound)
 }
 
+/// The Python kit's states no input determines (`UNDETERMINED_STATES`,
+/// `floor/universe_value.py`): an object after an operation nothing decided
+/// (`python:receiver_after_call`, keyed on that operation's occurrence
+/// alone -- what a call, a manager's `__exit__` or an unrolled item's call
+/// may have left), an undecided builtin method, a native operation's result
+/// or its unanswered exit. No contract states their value and no input
+/// binds them: like a module global the run leaves undecided, each is a
+/// value nobody gave.
+const UNDETERMINED_STATES: [&str; 4] = [
+    "python:receiver_after_call",
+    "python:builtin_method",
+    "python:native_operation_result",
+    "python:unanswered_native_operation",
+];
+
+/// Each state no input determines (`UNDETERMINED_STATES`) the row's claims
+/// read, spelled with its constant operands. The solver interprets such a
+/// term freely, so a claim over it is satisfiable for a value it chose: the
+/// row is decided over every value of it (`decide_over_unstated_inputs`),
+/// exactly as over an unstated module global, and never sat on the solver's
+/// choice (#7757: `inside is TOKEN` after a `with` whose `__exit__` rebinds
+/// `TOKEN` read `sat` over two such terms).
+fn undetermined_states_read(body: &Json) -> Vec<String> {
+    fn collect(node: &Json, out: &mut Vec<String>) {
+        if node.get("kind").and_then(Json::as_str) == Some("ctor") {
+            if let Some(name) = node.get("name").and_then(Json::as_str) {
+                if UNDETERMINED_STATES.iter().any(|state| *state == name) {
+                    let operands: Vec<String> = node
+                        .get("args")
+                        .and_then(Json::as_array)
+                        .map(|args| {
+                            args.iter()
+                                .map(|arg| match arg.get("value").and_then(Json::as_str) {
+                                    Some(value) => format!("{value:?}"),
+                                    None => "_".to_string(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    out.push(format!("{name}({})", operands.join(", ")));
+                }
+            }
+        }
+        if let Some(body) = node.get("body") {
+            collect(body, out);
+        }
+        for field in ["operands", "args"] {
+            if let Some(children) = node.get(field).and_then(Json::as_array) {
+                for child in children {
+                    collect(child, out);
+                }
+            }
+        }
+    }
+    let mut read = Vec::new();
+    if let Some(inv) = body.get("inv").filter(|inv| inv.is_object()) {
+        collect(inv, &mut read);
+    }
+    read.sort();
+    read.dedup();
+    read
+}
+
 /// A row whose claims read a module global input its contract states no
-/// value for (`bind_own_inputs_with_unstated`), decided over every value of
+/// value for (`bind_own_inputs_with_unstated`), or a state no input
+/// determines (`undetermined_states_read`), decided over every value of
 /// that input (step 9). The consistency check has already solved the row
 /// with the input as a free constant:
 ///
@@ -4635,14 +4699,14 @@ fn decide_over_unstated_inputs(
     let inputs = unstated.join(", ");
     if holds_for_every_value() {
         result.reason = format!(
-            "{} [holds for every value of the module global input(s) {inputs}, whose value the module's run leaves undecided]",
+            "{} [holds for every value of {inputs}, whose value the module's run leaves undecided]",
             result.reason
         );
         return;
     }
     result.verdict = ObligationVerdict::Undecidable;
     result.reason = format!(
-        "consistency check undecidable: `{}` reads the module global input(s) {inputs} whose value the module's run leaves undecided, and whether it holds depends on that value",
+        "consistency check undecidable: `{}` reads {inputs}, whose value the module's run leaves undecided, and whether it holds depends on that value",
         result.property_name
     );
     result.effect = None;
@@ -8281,7 +8345,10 @@ fn collect_consistency_candidates(
         // the contract states no value for stays a free variable of the row,
         // and the row is decided over every value of it
         // (`decide_over_unstated_inputs`), never refused for reading it.
-        let (body, unstated_inputs) = bind_own_inputs_with_unstated(&body);
+        // A state no input determines (`undetermined_states_read`) is a value
+        // nobody gave as well: the row is decided over every value of it.
+        let (body, mut unstated_inputs) = bind_own_inputs_with_unstated(&body);
+        unstated_inputs.extend(undetermined_states_read(&body));
         match contract_provenance_kind(member, &body) {
             Ok(provenance_kind) => {
                 if let Some(reason) = witness_provenance_kind_error(&body, provenance_kind)
@@ -14522,6 +14589,29 @@ mod tests {
         let (instance, inputs) = bind_own_inputs_with_unstated(&unstated);
         assert_eq!(instance["inv"], eqf(var("global:X"), int(4)));
         assert_eq!(inputs, vec!["global:X".to_string()]);
+    }
+
+    #[test]
+    fn a_state_no_input_determines_is_a_value_nobody_gave() {
+        // `inside is TOKEN` after a `with` whose `__exit__` rebinds `TOKEN`:
+        // both sides are what the exit left, keyed on its occurrence alone.
+        let after = |label: &str| {
+            json!({"kind": "ctor", "name": "python:receiver_after_call", "args": [
+                str_const("occ"), str_const(label)
+            ]})
+        };
+        let body = json!({
+            "inv": {"kind": "atomic", "name": "identity", "args": [after("inside"), after("TOKEN")]},
+        });
+        assert_eq!(
+            undetermined_states_read(&body),
+            vec![
+                "python:receiver_after_call(\"occ\", \"TOKEN\")".to_string(),
+                "python:receiver_after_call(\"occ\", \"inside\")".to_string(),
+            ]
+        );
+        // A claim over decided values reads none.
+        assert!(undetermined_states_read(&json!({"inv": eqf(int(1), int(1))})).is_empty());
     }
 
     #[test]
