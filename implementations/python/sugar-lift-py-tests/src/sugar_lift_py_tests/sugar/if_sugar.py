@@ -475,7 +475,7 @@ class IfSugar(Sugar):
                     lambda else_discharged: join(then_discharged, else_discharged)
                 )
             )
-        if then_deferred ^ else_deferred:
+        if then_deferred != else_deferred:
             # One suite holds a formal native operation (``message =
             # exc.message`` evaluated at its assignment): its exits exist only
             # once caller actuals discharge it. The join waits for that
