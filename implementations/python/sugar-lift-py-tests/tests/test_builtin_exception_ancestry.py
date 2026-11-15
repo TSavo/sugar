@@ -36,31 +36,18 @@ def _residual_raises(source: str) -> tuple[str, ...]:
     )
     function = next(iter(source_file.functions()))
     exit_set = function.sugar().desugar()
-    names: list[str] = []
-    seen: set[int] = set()
-
-    def walk(value: object) -> None:
-        if value is None or isinstance(value, (str, int, bool, float, bytes)):
-            return
-        key = id(value)
-        if key in seen:
-            return
-        seen.add(key)
-        # A halted arm, or any value carrying a raise effect.
-        effect = getattr(value, "effect", None)
-        if isinstance(effect, RaiseEffect):
-            names.append(effect.exception_name)
-        for attribute in ("statements", "record", "value", "exits"):
-            child = getattr(value, attribute, None)
-            if isinstance(child, tuple):
-                for item in child:
-                    walk(item)
-            else:
-                walk(child)
-
-    for face in exit_set.exits:
-        walk(face)
-    return tuple(sorted(set(names)))
+    # A raise survives the `try` only as a halted arm of the function's one
+    # reduction. A completed arm's record may hold the caught halt (the
+    # handler resumed from it); that raise was caught, not survived.
+    return tuple(
+        sorted(
+            {
+                halted.effect.exception_name
+                for halted in exit_set.halts()
+                if isinstance(halted.effect, RaiseEffect)
+            }
+        )
+    )
 
 
 def _try_source(*, raised: str, handled: str) -> str:
