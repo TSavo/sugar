@@ -8265,11 +8265,10 @@ mod tests {
             mint_plan_memento(&plan_memento).expect("mint plan memento for the expected cid");
         let envelope: Value =
             serde_json::from_slice(&envelope_bytes).expect("canonical plan memento JSON");
-        let expected_plan_cid = envelope
-            .pointer("/header/planCid")
-            .and_then(Value::as_str)
-            .expect("plan memento header carries planCid")
-            .to_string();
+        let Ok(Member::PlanMemento(plan_member)) = Member::from_value(&envelope) else {
+            panic!("expected plan-memento member, got {:?}", envelope.get("kind"));
+        };
+        let expected_plan_cid = plan_member.plan_cid.as_str().to_string();
 
         let mut response = json!({
             "kind": "ir-document",
