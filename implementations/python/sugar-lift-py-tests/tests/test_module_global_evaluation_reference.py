@@ -952,7 +952,20 @@ def test_the_call_constructs_its_callee_frame_at_its_site() -> None:
     tree = _source(CALLED_DURING_IMPORT)
     first, _second = _module_evaluations(tree)
     (call,) = _calls(tree)
-    frame = call.sugar().source_call_frame
+    # A call of a plain ``def`` seats no frame by its name (#8647): it is the
+    # call of the function the ``def`` statement built (``ComputedCallSugar``
+    # over ``DecoratorApplicationSugar``), and that function's frame -- the
+    # one its application enters -- is constructed where the call is.
+    from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
+    from sugar_lift_py_tests.sugar.decorator_application_sugar import (
+        DecoratorApplicationSugar,
+    )
+
+    sugar = call.sugar()
+    assert isinstance(sugar, ComputedCallSugar), sugar
+    assert sugar.source_call_frame is None
+    assert isinstance(sugar.callee, DecoratorApplicationSugar), sugar.callee
+    frame = sugar.callee.definition_frame
     assert frame is not None
     assert frame.module_execution_site == call.unit.module_execution_site(call)
     returned = frame.body.statements[-1]

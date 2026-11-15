@@ -191,6 +191,28 @@ def test_empty_star_stores_honest_empty_tuple() -> None:
     )
 
 
+def _applied_frame(program: str):
+    """The frame the program's last call applies: ``helper``'s own.
+
+    A call of a plain ``def`` seats no frame by its name (#8647): it is the
+    call of the function the ``def`` statement built (``ComputedCallSugar``),
+    which applies its definition's own frame
+    (``LambdaCallable.source_call_frame``) and binds the actuals there."""
+    from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
+
+    tree = _tree(program)
+    call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
+    sugar = call.sugar()
+    assert isinstance(sugar, ComputedCallSugar), sugar
+    assert sugar.source_call_frame is None
+    helper = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name == "helper"
+    )
+    return helper.source_visible_call_frame()
+
+
 def test_bind_actuals_packs_star_without_self_name_shift() -> None:
     """SourceCallFrame.bind_actuals packs remaining positionals into *values.
 
@@ -199,9 +221,7 @@ def test_bind_actuals_packs_star_without_self_name_shift() -> None:
     """
     from sugar_lift_py_tests.floor import ListValue
 
-    tree = _tree(HELPER_STAR + "\nhelper([0], 1, 2, 3)\n")
-    call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
-    frame = call.sugar().source_call_frame
+    frame = _applied_frame(HELPER_STAR + "\nhelper([0], 1, 2, 3)\n")
     assert frame.parameters == ("obj", "values")
     assert frame.parameter_kinds == ("positional_or_keyword", "vararg")
     bound = frame.bind_actuals(
@@ -220,9 +240,7 @@ def test_bind_actuals_packs_kw_without_self_name_shift() -> None:
     """SourceCallFrame.bind_actuals packs extra keywords into **values."""
     from sugar_lift_py_tests.floor import ListValue
 
-    tree = _tree(HELPER_KW + "\nhelper([0], a=1, b=2)\n")
-    call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
-    frame = call.sugar().source_call_frame
+    frame = _applied_frame(HELPER_KW + "\nhelper([0], a=1, b=2)\n")
     assert frame.parameters == ("obj", "values")
     assert frame.parameter_kinds == ("positional_or_keyword", "kwarg")
     bound = frame.bind_actuals(
