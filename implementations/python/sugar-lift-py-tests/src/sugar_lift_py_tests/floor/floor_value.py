@@ -1206,7 +1206,7 @@ class FloorValue:
         (#7622).  It completes with the undecided result
         ``python:binary_result(op, left, right, <occurrence>)`` -- each
         evaluation its own unknown -- only under
-        ``python:binary_op.completes(python:binary_op(op, <occurrence>))`` and
+        ``python:binary_op.completes(python:binary_op(<result>, <occurrence>))`` and
         halts with an ``UndeterminedRaiseEffect`` (owner
         ``UndecidedBinary:<op>``) under the complement.  No exception type is
         named and no result is folded.
@@ -1455,9 +1455,13 @@ def undecided_binary_faces(left, right, site, operator: str):
             ),
         )
     )
+    # The completes atom names the operation it is about -- its result term,
+    # operands and all -- as every undecided protocol read's does
+    # (``python:subscript(<term>, <key>)``): where a joined actual decides the
+    # operands' types, the solver reads whether Python completes it (#7763).
     completes = atomic(
         "python:binary_op.completes",
-        [ctor("python:binary_op", (str_const(operator), str_const(key)))],
+        [ctor("python:binary_op", (result.term, str_const(key)))],
     )
     return ExitSet.two_faced(
         result,

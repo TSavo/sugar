@@ -2493,6 +2493,282 @@ mod tests {
         );
     }
 
+    // ── Python values over decided builtin operands (#7763) ───────────────
+    // Each operation the Python kit leaves undecided is written once in SMT
+    // theory when its operands' builtin types are decided; an undecided
+    // operand leaves it the uninterpreted application.
+
+    fn py_binary(
+        op: &str,
+        left: serde_json::Value,
+        right: serde_json::Value,
+        site: &str,
+    ) -> serde_json::Value {
+        ctor(
+            "python:binary_result",
+            vec![string_const(op), left, right, string_const(site)],
+        )
+    }
+
+    fn py_completes(protocol: &str, term: serde_json::Value, site: &str) -> serde_json::Value {
+        atomic(
+            &format!("python:{protocol}.completes"),
+            vec![ctor(
+                &format!("python:{protocol}"),
+                vec![term, string_const(site)],
+            )],
+        )
+    }
+
+    fn py_eq(a: serde_json::Value, b: serde_json::Value) -> serde_json::Value {
+        atomic("py.eq", vec![a, b])
+    }
+
+    fn all_of(operands: Vec<serde_json::Value>) -> serde_json::Value {
+        serde_json::json!({"kind": "and", "operands": operands})
+    }
+
+    fn solve(formula: &serde_json::Value) -> String {
+        let z3 = which_z3().expect("z3 required for Python value interpretation");
+        let parts = fixture_compile_asserted_to_parts(formula).expect("compile");
+        let script = format!("{}{}", parts.preamble, parts.body);
+        let out = run_z3(&z3, &script);
+        assert!(
+            !out.contains("error"),
+            "the script must be well-formed:\n{script}\n{out}"
+        );
+        out.trim().to_string()
+    }
+
+    fn assert_twin(truthful: serde_json::Value, lying: serde_json::Value, what: &str) {
+        assert_eq!(solve(&truthful), "sat", "{what}: the truthful claim is sat");
+        assert_eq!(solve(&lying), "unsat", "{what}: the lying claim is unsat");
+    }
+
+    #[test]
+    fn python_str_subscript_is_smt_string_index() {
+        let at = |i: i64| ctor("py.subscript", vec![string_const("xyz"), int_const(i)]);
+        assert_twin(
+            py_eq(at(1), string_const("y")),
+            py_eq(at(1), string_const("z")),
+            "\"xyz\"[1]",
+        );
+        assert_twin(
+            py_eq(at(-1), string_const("z")),
+            py_eq(at(-1), string_const("x")),
+            "\"xyz\"[-1]",
+        );
+        // IndexError: the operation does not complete out of range.
+        assert_twin(
+            py_completes("subscript", at(2), "k"),
+            py_completes("subscript", at(3), "k"),
+            "\"xyz\"[3] completes",
+        );
+        assert_eq!(
+            solve(&py_completes("subscript", at(-4), "k")),
+            "unsat",
+            "\"xyz\"[-4] raises IndexError"
+        );
+    }
+
+    #[test]
+    fn python_ord_and_chr_are_smt_code_points() {
+        let ord = |s: &str| ctor("py.ord", vec![string_const(s)]);
+        assert_twin(
+            py_eq(ord("x"), int_const(120)),
+            py_eq(ord("x"), int_const(121)),
+            "ord(\"x\")",
+        );
+        // TypeError: ord of a string that is not one character.
+        assert_twin(
+            py_completes("ord", ord("x"), "k"),
+            py_completes("ord", ord("xy"), "k"),
+            "ord(\"xy\") completes",
+        );
+        let chr = |i: i64| ctor("py.chr", vec![int_const(i)]);
+        assert_twin(
+            py_eq(chr(65), string_const("A")),
+            py_eq(chr(65), string_const("B")),
+            "chr(65)",
+        );
+        assert_twin(
+            py_completes("chr", chr(65), "k"),
+            py_completes("chr", chr(-1), "k"),
+            "chr(-1) completes",
+        );
+        // ord over a subscript over a str: the operands compose.
+        let nested = ctor(
+            "py.ord",
+            vec![ctor(
+                "py.subscript",
+                vec![string_const("xyz"), int_const(2)],
+            )],
+        );
+        assert_twin(
+            py_eq(nested.clone(), int_const(122)),
+            py_eq(nested, int_const(120)),
+            "ord(\"xyz\"[2])",
+        );
+    }
+
+    #[test]
+    fn python_int_shift_and_mask_are_smt_integer_ops() {
+        let op = |o: &str, a: i64, b: i64| py_binary(o, int_const(a), int_const(b), "k");
+        for (o, a, b, truth, lie) in [
+            (">>", 120, 2, 30, 31),
+            (">>", -7, 1, -4, -3),
+            ("<<", 3, 4, 48, 49),
+            ("&", 120, 3, 0, 3),
+            ("&", -1, 63, 63, -1),
+            ("&", 12, 10, 8, 10),
+            ("|", 48, 7, 55, 54),
+            ("^", 5, 3, 6, 7),
+            ("+", 2, 3, 5, 6),
+            ("-", 2, 3, -1, 1),
+            ("*", 6, 7, 42, 43),
+        ] {
+            assert_twin(
+                py_eq(op(o, a, b), int_const(truth)),
+                py_eq(op(o, a, b), int_const(lie)),
+                &format!("{a} {o} {b}"),
+            );
+        }
+        // A negative shift count is ValueError: the shift does not complete.
+        assert_twin(
+            py_completes("binary_op", op(">>", 8, 1), "k"),
+            py_completes("binary_op", op(">>", 8, -1), "k"),
+            "8 >> -1 completes",
+        );
+        let concat = py_binary("+", string_const("ab"), string_const("c"), "k");
+        assert_twin(
+            py_eq(concat.clone(), string_const("abc")),
+            py_eq(concat, string_const("abd")),
+            "\"ab\" + \"c\"",
+        );
+    }
+
+    #[test]
+    fn python_eq_on_str_and_int_is_smt_equality() {
+        assert_eq!(solve(&py_eq(string_const("a"), string_const("a"))), "sat");
+        assert_eq!(solve(&py_eq(string_const("a"), string_const("b"))), "unsat");
+        assert_eq!(solve(&py_eq(int_const(3), int_const(4))), "unsat");
+        // bool IS int; a str is never an int.
+        assert_eq!(solve(&py_eq(bool_const(true), int_const(1))), "sat");
+        assert_eq!(solve(&py_eq(string_const("1"), int_const(1))), "unsat");
+    }
+
+    #[test]
+    fn python_operation_on_an_undecided_operand_stays_undecided() {
+        // `s[0]` with `s` a formal: its type is not decided, so neither its
+        // value nor its completion is: both claims and both faces are sat,
+        // and the completes atom is the declared predicate it was.
+        let at = ctor("py.subscript", vec![var("s"), int_const(0)]);
+        let completes = py_completes("subscript", at.clone(), "k");
+        let parts = fixture_compile_asserted_to_parts(&completes).expect("compile");
+        let script = format!("{}{}", parts.preamble, parts.body);
+        assert!(
+            script.contains("(|python:subscript.completes| "),
+            "an undecided operand keeps the uninterpreted completes atom:\n{script}"
+        );
+        assert!(
+            !script.contains("str.at"),
+            "an undecided operand is never indexed as a string:\n{script}"
+        );
+        assert_eq!(solve(&completes), "sat");
+        assert_eq!(solve(&not_formula(completes)), "sat");
+        assert_eq!(
+            solve(&all_of(vec![
+                py_eq(at.clone(), string_const("a")),
+                py_eq(at, string_const("b")),
+            ])),
+            "sat",
+            "an undecided subscript decides no value"
+        );
+        let ord = ctor("py.ord", vec![var("c")]);
+        assert_eq!(
+            solve(&all_of(vec![
+                py_eq(ord.clone(), int_const(1)),
+                py_eq(ord, int_const(2)),
+            ])),
+            "sat",
+            "ord of an undecided operand decides no value"
+        );
+    }
+
+    #[test]
+    fn joined_python_post_pins_the_call_value_for_py_eq() {
+        // The base64 federation's vendor post (`encodeBase64`) joined on the
+        // consumer's call `encodeBase64("xyz")`: the formal is the actual, so
+        // every operation's operands are decided and the post pins `out`.
+        let value = string_const("xyz");
+        let alphabet =
+            string_const("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/");
+        let mut guards = Vec::new();
+        let mut site = 0;
+        let mut next_site = || {
+            site += 1;
+            format!("site-{site}")
+        };
+        let mut byte = |i: i64, guards: &mut Vec<serde_json::Value>| {
+            let at = ctor("py.subscript", vec![value.clone(), int_const(i)]);
+            guards.push(py_completes("subscript", at.clone(), &next_site()));
+            let ord = ctor("py.ord", vec![at]);
+            guards.push(py_completes("ord", ord.clone(), &next_site()));
+            ord
+        };
+        let b0 = byte(0, &mut guards);
+        let b1 = byte(1, &mut guards);
+        let b2 = byte(2, &mut guards);
+        let mut bin = |op: &str,
+                       l: serde_json::Value,
+                       r: serde_json::Value,
+                       guards: &mut Vec<serde_json::Value>| {
+            let key = next_site();
+            let term = py_binary(op, l, r, &key);
+            guards.push(py_completes("binary_op", term.clone(), &key));
+            term
+        };
+        let c0 = bin(">>", b0.clone(), int_const(2), &mut guards);
+        let hi0 = bin("&", b0, int_const(3), &mut guards);
+        let hi0 = bin("<<", hi0, int_const(4), &mut guards);
+        let lo1 = bin(">>", b1.clone(), int_const(4), &mut guards);
+        let c1 = bin("|", hi0, lo1, &mut guards);
+        let hi1 = bin("&", b1, int_const(15), &mut guards);
+        let hi1 = bin("<<", hi1, int_const(2), &mut guards);
+        let lo2 = bin(">>", b2.clone(), int_const(6), &mut guards);
+        let c2 = bin("|", hi1, lo2, &mut guards);
+        let c3 = bin("&", b2, int_const(63), &mut guards);
+        let mut chars = Vec::new();
+        for c in [c0, c1, c2, c3] {
+            let at = ctor("py.subscript", vec![alphabet.clone(), c]);
+            guards.push(py_completes("subscript", at.clone(), &format!("alpha-{}", chars.len())));
+            chars.push(at);
+        }
+        let mut chars = chars.into_iter();
+        let mut out = chars.next().unwrap();
+        for c in chars {
+            out = bin("+", out, c, &mut guards);
+        }
+        let call = ctor(
+            "python:call_result",
+            vec![
+                ctor("call:b64vendor.encodeBase64", vec![value.clone()]),
+                ctor("python:occurrence", vec![string_const("consumer-site")]),
+            ],
+        );
+        let post = implies(all_of(guards), eq(call.clone(), out));
+        let claim = |s: &str| all_of(vec![post.clone(), py_eq(call.clone(), string_const(s))]);
+        assert_eq!(solve(&claim("eHl6")), "sat", "base64(\"xyz\") == \"eHl6\"");
+        assert_eq!(solve(&claim("AAAA")), "unsat", "base64(\"xyz\") != \"AAAA\"");
+        assert_eq!(solve(&claim("eHl7")), "unsat", "base64(\"xyz\") != \"eHl7\"");
+        // Without the post nothing pins the call: the bad claim is sat.
+        assert_eq!(
+            solve(&py_eq(call, string_const("AAAA"))),
+            "sat",
+            "an unjoined call is undecided"
+        );
+    }
+
     #[test]
     fn g1_string_regime_unchanged_without_bv32_atom() {
         // GUARD: a G1 string conjunction (universe + sworn String equality) with

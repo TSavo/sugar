@@ -956,6 +956,16 @@ class NativeOperationExitCarrierV1:
         The terms name the operator and the occurrence, never a formal of the
         callee, which is not in the caller's scope.
 
+        A subscript is the exception: its unanswered position is the one form
+        every undecided subscript takes (``FloorValue.undecided_subscript``),
+        ``py.subscript(<receiver>, <index>)`` completing under
+        ``python:subscript.completes(python:subscript(<term>, <key>))``, over
+        the demand's own operand terms. A formal with no actual is reduced
+        only in its function's own proof (``FormalRefSugar.desugar``), whose
+        formals are the proof's own, so the post states the read over the
+        formal, and a caller's actual joined on it (step 9) decides it where
+        its type is decided (#7763).
+
         The halt states where it halted: the operation's own source fragment
         (``self.site``, the fragment the carrier was minted at) rides on its
         effect's ``site``. The demand's ``source_node`` is that fragment's
@@ -968,12 +978,21 @@ class NativeOperationExitCarrierV1:
         from sugar_lift_py_tests.outcome import ExitSet
 
         site = self.demand.source_node
-        operation = ctor(
-            "python:unanswered_native_operation",
-            (str_const(self.demand.operator), occurrence_term(site)),
-        )
+        if self.demand.operator == "subscript":
+            value = ctor("py.subscript", self.demand.operand_terms)
+            guard = atomic(
+                "python:subscript.completes",
+                [ctor("python:subscript", (value, str_const(occurrence_key(site))))],
+            )
+        else:
+            operation = ctor(
+                "python:unanswered_native_operation",
+                (str_const(self.demand.operator), occurrence_term(site)),
+            )
+            value = ctor("python:native_operation_result", (operation,))
+            guard = atomic("python:unanswered_native_operation.completes", [operation])
         return ExitSet.two_faced(
-            SymbolicValue(ctor("python:native_operation_result", (operation,))),
+            SymbolicValue(value),
             UndeterminedRaiseEffect(
                 blame=f"authenticated caller actual absent for {absent}",
                 occurrence=occurrence_key(site),
@@ -982,7 +1001,7 @@ class NativeOperationExitCarrierV1:
                 ),
                 site=self.site,
             ),
-            guard=atomic("python:unanswered_native_operation.completes", [operation]),
+            guard=guard,
             site=site,
             state=(
                 None if self.pre_effect_state is None else self.pre_effect_state.state
