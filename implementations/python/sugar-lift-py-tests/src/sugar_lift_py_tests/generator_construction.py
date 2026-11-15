@@ -3322,7 +3322,12 @@ class GeneratorConstructionV1:
         occurrence (``generator:<instance coordinate>`` on the occurrence
         path): two live generators over one branch are two evaluations of
         the guard, so their truths and the exceptions they may throw are two
-        occurrences, never one (``occurrence.occurrence_key``).
+        occurrences, never one (``occurrence.occurrence_key``).  A formal's
+        truth waits on its caller's actual (a native operation carrier the
+        caller discharges later, outside this extent): the carrier carries
+        the instance's segment (``evaluated_within``), and its discharge
+        keys the actual's truth under it, so the deferred truth is the same
+        instance's occurrence as a truth taken here.
 
         Guard Sugar is reduced under :meth:`_guard_evaluation_context` so
         BindingCoordinateRefSugar resolves binder Floors at the exact
@@ -3349,15 +3354,22 @@ class GeneratorConstructionV1:
             value = outcome.completed_value()
         if not hasattr(value, "truth"):
             return None
-        from sugar_lift_py_tests.occurrence import entered
+        from sugar_lift_py_tests.occurrence import (
+            entered,
+            generator_instance_segment,
+        )
         from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
 
+        segment = generator_instance_segment(self.instance_coordinate)
         # ConstructionPanic is BaseException by design so ordinary Exception
         # handlers cannot silence it. Do not catch BaseException here — that
         # would reclassify incomplete floors as undecided suspension gaps.
-        with entered(f"generator:{self.instance_coordinate}"):
+        with entered(segment):
             outcome = truth_of(value, site, owner="GeneratorConstructionV1.guard")
-        if isinstance(outcome, (ExitSet, NativeOperationExitCarrierV1)):
+        if isinstance(outcome, NativeOperationExitCarrierV1):
+            # Deferred to the caller: discharged under this instance too.
+            return outcome.evaluated_within(segment)
+        if isinstance(outcome, ExitSet):
             return outcome
         return None
 
