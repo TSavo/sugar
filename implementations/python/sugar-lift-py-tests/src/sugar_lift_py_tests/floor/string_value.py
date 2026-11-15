@@ -624,7 +624,6 @@ class StringValue(GuardStableValue):
         unsupported methods and non-ground argument types return ``None`` so
         the ordinary call coordinate remains loud.
         """
-        del ctx
         if keywords:
             return None
         from types import SimpleNamespace
@@ -636,6 +635,9 @@ class StringValue(GuardStableValue):
                 arguments=tuple(arguments),
                 owner=owner,
                 blame=blame,
+                # ``join`` iterates its argument under the caller's context
+                # (``_joined``): a formal's ``iter`` waits on its actual.
+                ctx=ctx,
             ),
         )
 
@@ -712,18 +714,144 @@ def _fold_string_method(receiver: StringValue, operation):
     if name in {"strip", "lstrip", "rstrip", "splitlines"}:
         return opaque_coordinate() if len(args) == 1 else None
     if name == "join" and len(args) == 1:
-        from sugar_lift_py_tests.floor.generator_value import GeneratorValue
-
-        if isinstance(args[0], GeneratorValue):
-            # ``join`` drains a generator: its pull's halts are this call's
-            # (``GeneratorValue.pull``), never dropped.
-            return args[0].pull(lambda: opaque_coordinate(LanguageCallee.STR_JOIN))
-        # An opaque iterable (vendor columns, a symbolic sequence).
-        return opaque_coordinate(LanguageCallee.STR_JOIN)
+        # An iterable the cited fold did not decide (a formal, a call's
+        # result, a generator, a container with an opaque member): iterated
+        # through the one iterator path, each member checked to be a
+        # ``str``, then the coordinate (``_joined``).
+        return _joined(
+            args[0],
+            getattr(operation, "ctx", None),
+            site=operation.blame,
+            result=lambda: opaque_coordinate(LanguageCallee.STR_JOIN),
+        )
     if name == "split" and 1 <= len(args) <= 2:
         # An opaque separator or maxsplit.
         return opaque_coordinate(LanguageCallee.STR_SPLIT)
     return None
+
+
+def _joined(iterable, ctx, *, site, result):
+    """``sep.join(iterable)`` the cited fold did not decide: ``iterable``
+    iterated through the one iterator path a ``for`` and a comprehension take
+    (``iterator_operation.iterated``, then ``stepped``), each member checked
+    to be a ``str`` (``_str_members``), then ``result()`` (the ``STR_JOIN``
+    coordinate).
+
+    CPython's ``PyUnicode_Join`` (Objects/unicodeobject.c) first runs
+    ``PySequence_Fast`` on its argument -- ``iter`` and every ``next`` -- and
+    then raises ``TypeError`` for a member that is not a ``str`` instance.
+    So no halt is dropped:
+
+    - ``iter``'s halt leaves before any member; a formal's ``iter`` waits on
+      its caller's actual (the carrier ``iterated`` hands back).
+    - Each ``next``'s halt leaves as itself, and its ``StopIteration`` ends
+      the iteration (``exhausted``: no member to check).  A generator is
+      pulled there (``GeneratorValue.next_with``), as any consumer pulls it.
+    - Each member not known to be a ``str`` may raise ``TypeError``
+      (``_str_member``).
+
+    Where the iteration is decided never to raise
+    (``iterator_operation.iteration_total``) neither ``iter`` nor ``next``
+    adds a face."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.operations.iterator_operation import (
+        iterated,
+        stepped,
+    )
+    from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
+
+    owner = "StringValue.join"
+    iteration = iterated(iterable, ctx, owner=owner, site=site)
+
+    def each(iterator):
+        return stepped(
+            iterable,
+            iterator,
+            ctx,
+            lambda: _str_members(iterable, iterator, site, owner=owner).and_then(
+                lambda _checked: result()
+            ),
+            owner=owner,
+            site=site,
+            exhausted=result,
+        )
+
+    if isinstance(iteration, NativeOperationExitCarrierV1):
+        return iteration.and_then(each)
+    return _require_exit_set(iteration, owner=f"{owner}.iter").and_then(each)
+
+
+def _str_members(iterable, iterator, site, *, owner):
+    """The ``str`` check ``join`` makes of each member ``iterable`` yields
+    (``iterator``: what ``iter`` completed with, or ``None`` where no
+    ``iter`` was submitted).
+
+    A ``str``'s members are one-character strings.  Members in hand (an
+    exact finite container, or an iterator over one:
+    ``comprehension_sugar._finite_members``) are each checked: one known to
+    be a ``str`` (``call_site_value.names_a_string``) passes, any other is
+    its own ``_str_member``.  Members not in hand are one symbolic member
+    per evaluation, as the one ``next`` step stands for every item."""
+    from sugar_lift_py_tests.floor.call_site_value import names_a_string
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.sugar.comprehension_sugar import _finite_members
+
+    if names_a_string(iterable):
+        return ExitSet.completed(None)
+    members = None if iterator is None else _finite_members(iterator)
+    if members is None:
+        members = _finite_members(iterable)
+    if members is None:
+        return _str_member(site, "member", owner=owner)
+    checked = ExitSet.completed(None)
+    for index, member in enumerate(members):
+        if names_a_string(member):
+            continue
+        checked = checked.and_then(
+            lambda _checked, index=index: _str_member(site, str(index), owner=owner)
+        )
+    return checked
+
+
+def _str_member(site, member: str, *, owner):
+    """A member of ``str.join`` not known to be a ``str``: ``join`` goes on
+    only where it is one, and raises ``TypeError`` (``sequence item N:
+    expected str instance``) where it is not.  The member's type is not
+    decided here, so this is the one two-faced outcome (``ExitSet.two_faced``):
+    it completes under ``python:str_join_member.completes(...)``, keyed on
+    the call's occurrence and the member (``member``: its index, or
+    ``"member"`` for the symbolic one), halts with the ``TypeError`` under the
+    complement, and both faces owe the undecided member at ``site``.  The
+    check runs no user code, so ``TypeError`` is the only exception it
+    raises."""
+    from sugar_lift_py_tests.floor.exception_value import ExceptionValue
+    from sugar_lift_py_tests.floor.ground_exit import ground_raise_effect
+    from sugar_lift_py_tests.ir import atomic, ctor, str_const
+    from sugar_lift_py_tests.occurrence import occurrence_key
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    completes = atomic(
+        "python:str_join_member.completes",
+        [
+            ctor(
+                "python:str_join_member",
+                (str_const(occurrence_key(site)), str_const(member)),
+            )
+        ],
+    )
+    return ExitSet.two_faced(
+        None,
+        ground_raise_effect(
+            exception_name="TypeError",
+            site=site,
+            owner=owner,
+            raised_value=ExceptionValue("TypeError", (), site),
+        ),
+        guard=completes,
+        site=site,
+    )
 
 
 def _is_none_floor(value) -> bool:
