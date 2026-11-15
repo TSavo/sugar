@@ -372,11 +372,17 @@ def test_enumerate_with_rows_reach_partition_with_identical_keys(
 def test_resolution_enumeration_keeps_rows_when_provider_projection_reaches_gap(
     tmp_path: Path,
 ) -> None:
-    """The raw producer keeps a provider construction terminal loud."""
+    """The raw producer keeps the row of a ``with`` whose head is a name bound
+    to a call nobody answers.
+
+    It enumerates the table ``With`` reads, coordinate by coordinate; it does
+    not construct, so it has no construction terminal to raise.  The item is
+    one row, keyed on its own coordinate, with the ``unconstructed`` outcome:
+    never dropped, never reported as constructed.
+    """
     _load()
     from recensus_enumerate_consumer import demand_context_manager_resolution_events
     from sugar_lift_python_source.source_oracle import path_source
-    from sugar_source_tree.panic import ContextManagerResolutionConstructionGap
 
     path = tmp_path / "provider.py"
     path.write_text(
@@ -388,12 +394,18 @@ def test_resolution_enumeration_keeps_rows_when_provider_projection_reaches_gap(
     )
     source_cid = path_source(str(path))[2]
 
-    with pytest.raises(ContextManagerResolutionConstructionGap):
-        demand_context_manager_resolution_events(
-            workspace_root=tmp_path,
-            file_rel="provider.py",
-            source_cid=source_cid,
-        )
+    events, gaps = demand_context_manager_resolution_events(
+        workspace_root=tmp_path,
+        file_rel="provider.py",
+        source_cid=source_cid,
+    )
+    assert gaps == []
+    assert len(events) == 1, events
+    (event,) = events
+    assert event["outcome"] == "unconstructed"
+    assert event["outcome"] != "constructed"
+    # The row is keyed on a coordinate, as every row the partition reads is.
+    assert isinstance(event["inputKey"], dict) and event["inputKey"]
 
 
 def test_provider_resolution_gap_is_enrolled_once_without_losing_with_key(
