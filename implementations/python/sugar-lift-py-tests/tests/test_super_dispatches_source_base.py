@@ -3,14 +3,9 @@ from __future__ import annotations
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.floor import CallSiteValue
 from sugar_lift_py_tests.floor.builtin_super_value import BuiltinSuperValue
-from sugar_lift_py_tests.floor.named_expression_value import (
-    caller_stores_of,
-    peel_walrus_binds,
-)
-from sugar_lift_py_tests.floor.receiver_field_store_value import (
-    ReceiverFieldStoreValue,
-)
+from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
 from sugar_lift_py_tests.floor.string_value import StringValue
+from sugar_lift_py_tests.outcome import Completed
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
@@ -52,27 +47,17 @@ def _call_fragment(source: str, text: str):
     )
 
 
-def _completed_call(outcome):
-    """``(stores, call)``: the call ``outcome`` completes with, beneath the
-    stores the body made on objects its caller sees (``CallerStoreValue``,
-    ``caller_visible_stores``), which ride the call's value to the caller's
-    statement; a walrus write rides none of it."""
-    value = outcome.completed_value()
-    assert value is not None, outcome
-    binds, call = peel_walrus_binds(value)
-    walrus, stores = caller_stores_of(binds)
-    assert walrus == (), value
-    return stores, call
-
-
-def _receiver_stores(stores, receiver) -> list[tuple[str, object]]:
-    """The ``(attr, value)`` of each store on ``receiver``'s identity."""
-    return [
-        (store.attr, store.value)
-        for store in stores
-        if isinstance(store, ReceiverFieldStoreValue)
-        and store.receiver.identity == receiver.identity
-    ]
+def _edge_call(outcome):
+    """The call coordinate ``outcome`` completes with: a method call on a
+    receiver whose class is decided is its coordinate and edge (#7757 step
+    6, #8738), the unanswered call's two faces, completing under its
+    ``completes`` atom and halting under the complement.  The method's body
+    is never applied here."""
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    assert outcome.halts(), outcome
+    _binds, call = peel_walrus_binds(done.value)
+    assert isinstance(call, CallSiteValue), type(call)
+    return call
 
 
 # --- truthful twin: zero-arg super() into a same-module source base -----------
@@ -135,10 +120,17 @@ _OWN_METHOD_ONLY = (
 
 
 def test_super_runs_the_first_class_after_the_cell_that_binds_the_name() -> None:
-    context, (base, _middle, derived) = _constructed(_OWN_METHOD_ONLY)
+    # ``Middle`` binds no ``__init__``: the first class after ``Derived``'s
+    # cell that does is ``Base``, never the one ``Middle`` inherits through.
+    # The call is ``Base.__init__``'s coordinate and edge (#7757 step 6,
+    # #8738); the store ``self.x = x`` its body makes on the receiver is
+    # joined from ``Base.__init__``'s contract at prove (step 7), so it is
+    # no longer read here (it was, while the body was applied at lift; the
+    # application was deleted by #8751).
+    context, (_base, _middle, derived) = _constructed(_OWN_METHOD_ONLY)
     receiver = derived.fresh_receiver("receiver", allocation=FRAME_FRESH)
 
-    stores, call = _completed_call(
+    call = _edge_call(
         BuiltinSuperValue(current_class=derived, receiver=receiver).call_method_value(
             "__init__",
             (StringValue("v"),),
@@ -148,9 +140,9 @@ def test_super_runs_the_first_class_after_the_cell_that_binds_the_name() -> None
         )
     )
 
-    assert isinstance(call, CallSiteValue)
-    assert call.lexical_defining_class is base
-    assert _receiver_stores(stores, receiver) == [("x", StringValue("v"))]
+    assert call.target_name.endswith("Base.__init__"), call.target_name
+    assert "Middle" not in call.target_name
+    assert call.arg_values[-1] == StringValue("v")
 
 
 _ANNOTATED = (

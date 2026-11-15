@@ -94,14 +94,24 @@ _INHERITED_SETITEM = (
 
 def test_a_source_store_runs_an_inherited_override_with_its_defining_class() -> None:
     context, classes = _classes(_INHERITED_SETITEM, "inherited_setitem.py")
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.outcome.exit_set import Completed
+
     receiver = classes["B"].fresh_receiver("receiver", allocation=FRAME_FRESH)
 
     stored = receiver.setitem(StringValue("k"), TermValue(7), "caller", context)
 
-    after = stored.completed_value()
-    assert isinstance(after, MappingObjectValue)
-    assert after.identity == receiver.identity
-    assert after.entries == ((StringValue("k"), TermValue(7)),)
+    # The store selects ``A.__setitem__`` (B inherits it) and is that
+    # method's coordinate and edge (#7757 step 6, #8738): its body, whose
+    # ``super()`` searches after A, is A's contract, joined at prove.  It is
+    # never applied here (the application was deleted by #8751), so what it
+    # leaves of the receiver is not read at lift: the completed face states
+    # the receiver after the call as unknown, and the store's entries are
+    # joined from the method's contract at prove (step 7).
+    (done,) = [arm for arm in stored.exits if isinstance(arm, Completed)]
+    assert stored.halts(), stored
+    assert isinstance(done.value, SymbolicValue)
+    assert not isinstance(done.value, MappingObjectValue)
 
 
 _INHERITED_INIT = (
