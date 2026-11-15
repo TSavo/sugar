@@ -65,7 +65,15 @@ def test_intentional_typed_gap_is_typed_gap_not_failure(tmp_path: Path, capsys) 
     # A construct with no written sugar raises SugarNotWritten -- the sanctioned
     # typed loud gap. The child marks the file typed-gap and exits 0; the floors
     # must NOT count this as a bare exception.
-    path = _write(tmp_path, "def a():\n    with open('x'):\n        pass\n")
+    #
+    # ``async with`` is that construct (``AsyncWith._raise_async_gap``:
+    # ``AsyncContextManagerUnsupported``, a ``SugarNotWritten``). A plain
+    # ``with open('x')`` was the fixture while a native manager was refused at
+    # construction; a ``with``'s manager is now what its head reduces to
+    # (#8280), so that tree builds and the file completes.
+    path = _write(
+        tmp_path, "async def a():\n    async with open('x'):\n        pass\n"
+    )
     assert _run(path, "mod.py") == 0
     terminal = _CHILD.terminal_outcome(capsys.readouterr().out)
     assert terminal == _CHILD.OUTCOME_TYPED_GAP
