@@ -767,7 +767,9 @@ def test_a_method_selected_through_an_arrived_self_is_undecided_in_process(
 #
 # What the rule claims, through the solver: what is asserted after the call is
 # asserted on the call's completing face, and that face stands under
-# ``python:unknown_callee_call.completes``, which nothing here decides.  So a
+# ``python:unanswered_native_operation.completes`` (the ``method_call``
+# operation over the receiver's ``global:`` input, #8843), which nothing here
+# decides.  So a
 # true claim after the call is not decided (``open``): nothing proves the call
 # completes.  A false claim is refuted on every face (``unsat``).  Before this
 # change the call completed alone and the true claim came back ``sat``: a
@@ -832,8 +834,16 @@ def test_lookup():
 def test_unknown_receiver_method_call_is_two_faced_in_process() -> None:
     """Reduction level: the completion is guarded and the raise is a face.
 
-    A receiver the lifter does not hold is the plain unknown call, completing
-    only under ``python:unknown_callee_call.completes`` and raising otherwise.
+    A receiver the lifter does not hold -- here a global only a star import
+    may bind, the function's ``global:undefined_registry`` input with no
+    stated value (#8843) -- is an operand that waits for its value as a
+    parameter does: the call is the ``method_call`` operation over that
+    input (``NativeOperationExitCarrierV1``), and in the function's own
+    proof, with no value, it completes only under
+    ``python:unanswered_native_operation.completes`` and raises otherwise,
+    undetermined (``_unanswered_exits``).  Before #8843 the receiver was a
+    free operand and the call the plain unknown call
+    (``python:unknown_callee_call.completes``, ``UnknownCallee:lookup``).
     A receiver made by a same-file class call (``Registry()``) no longer
     completes alone: the class call is its coordinate and edge and the method
     of its result is not dispatched at the reduction (#7757 step 6, #8738), so
@@ -850,11 +860,13 @@ def test_unknown_receiver_method_call_is_two_faced_in_process() -> None:
     halted = [face for face in outcome.exits if isinstance(face, Halted)]
     assert completed and halted
     assert all(
-        "python:unknown_callee_call.completes" in repr(face.guard)
+        "python:unanswered_native_operation.completes" in repr(face.guard)
         for face in completed
     )
     assert any(
         isinstance(face.effect, UndeterminedRaiseEffect)
-        and face.effect.producer_node_owner == "UnknownCallee:lookup"
+        and face.effect.exception_name is None
+        and face.effect.producer_node_owner
+        == "UnansweredNativeOperation:method_call"
         for face in halted
     )
