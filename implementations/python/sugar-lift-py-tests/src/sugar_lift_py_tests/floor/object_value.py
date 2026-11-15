@@ -189,9 +189,10 @@ class ObjectValue(FloorValue):
         a right-hand subclass).  This constructs exactly the case whose method
         order is authenticated without reflection: both operands instances of
         the same source class (or an exact native right operand) and the
-        left's definition-owned ordinary method frame.  A result other than a
-        native boolean -- ``NotImplemented`` included -- stays a named
-        refusal, as does every reflected or subclass order.
+        left's definition-owned ordinary method frame; every reflected or
+        subclass order stays a named refusal.  The call is its coordinate and
+        edge: its result, ``NotImplemented`` included, is what the method's
+        contract states, joined at prove (#7757 step 6).
 
         The method is the one the one class-namespace lookup selects
         (``class_member``); a lookup it does not decide is the unanswered
@@ -231,63 +232,13 @@ class ObjectValue(FloorValue):
                 requested=f"the definition-owned ordinary {dunder} method frame",
                 fix="construct its exact frame/descriptor binding before invoking it",
             )
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import ExitSet
-        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
-        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
-
-        def returned(value):
-            if isinstance(
-                value, (PredicateValue, TrueBoolLiteralSugar, FalseBoolLiteralSugar)
-            ) or (isinstance(value, TermValue) and type(value.value) is bool):
-                return ExitSet.completed(value)
-            return self._floor_gap(
-                owner=owner,
-                blame=site,
-                observed=f"source {dunder} returned {type(value).__name__}",
-                requested="native boolean or authenticated exceptional outcome",
-                fix="construct non-boolean/NotImplemented result dispatch before accepting it",
-            )
-
-        from sugar_lift_py_tests.floor.block_value import BlockValue
-        from sugar_lift_py_tests.floor.return_value import ReturnValue
-
-        def completed(block):
-            # A scalar comparison cannot silently erase a completed callee's
-            # stores/effect prefix. Halted faces keep their original state via
-            # ExitSet.and_then; richer normal-state transport is still a gap.
-            if (
-                not isinstance(block, BlockValue)
-                or len(block.statements) != 1
-                or not isinstance(block.statements[0], ReturnValue)
-            ):
-                return self._floor_gap(
-                    owner=owner,
-                    blame=site,
-                    observed=f"source {dunder} completion has untransported state or effects",
-                    requested="a sole native return, or explicit callee-state transport",
-                    fix="preserve the completed method prefix before extracting its scalar result",
-                )
-            return returned(block.statements[0].value)
-
-        from sugar_lift_py_tests.floor.named_expression_value import (
-            consume_operands,
-        )
-
-        # The applied call's value carries the stores the method made on
-        # objects its caller sees (``CallerStoreValue``): the body is read off
-        # the Call beneath them, through the one operand door, and each store
-        # rides on.
+        # The call is its coordinate and edge, joined at prove to the
+        # method's contract (``call_member``, ``method_edge_call``, #7757
+        # step 6): what it returns -- a native boolean, ``NotImplemented``,
+        # anything -- is that contract's, never its body applied here.  The
+        # comparison's value is the call's, its truth the call's own.
         return self.call_member(
             dunder, method, (other,), owner=owner, blame=site, ctx=ctx
-        ).and_then(
-            lambda applied: consume_operands(
-                lambda call: call.retained_source_completion_outcome().and_then(
-                    completed
-                ),
-                applied,
-            )
         )
 
     def matrix_multiply(self, other, site, ctx):
@@ -1167,76 +1118,6 @@ class ObjectValue(FloorValue):
             fix=f"construct a diggable body for `{self.class_name}.{name}`",
         )
 
-    def bound_method_call(
-        self,
-        name: str,
-        arguments: tuple[FloorValue, ...],
-        *,
-        owner: str,
-        blame: object,
-        ctx: Any | None = None,
-        keywords: tuple[tuple[str, FloorValue], ...] = (),
-        required_frame: object | None = None,
-    ):
-        """The call ``<method>(self, *arguments, **keywords)``, bound,
-        unapplied: the method is the one the one class-namespace lookup
-        selects for ``name`` (``class_member``).  A frame the caller requires
-        must be that method's own; no other method of the roster stands in
-        for it.  A lookup it does not decide has no method to bind and
-        refuses by name (``call_method_value`` answers it with the
-        unanswered call)."""
-        _decided, method, _value = self.class_member(name)
-        return self._bind_member(
-            name,
-            method,
-            arguments,
-            owner=owner,
-            blame=blame,
-            ctx=ctx,
-            keywords=keywords,
-            required_frame=required_frame,
-        )
-
-    def _bind_member(
-        self,
-        name: str,
-        method,
-        arguments: tuple[FloorValue, ...],
-        *,
-        owner: str,
-        blame: object,
-        ctx: Any | None = None,
-        keywords: tuple[tuple[str, FloorValue], ...] = (),
-        required_frame: object | None = None,
-    ):
-        """The call of ``method`` -- the function ``class_member`` selected
-        for ``name`` -- bound to this receiver, unapplied.  No method, or a
-        frame the caller requires that is not the method's own, refuses by
-        name."""
-        if method is None or (
-            required_frame is not None
-            and method.source_call_frame_cid != required_frame.frame_cid
-        ):
-            return self._floor_gap(
-                owner=owner,
-                blame=blame,
-                observed=f"{self.class_name}.{name}",
-                requested="constructor-bound method",
-                fix=f"construct a diggable body for `{self.class_name}.{name}`",
-            )
-        return bind_method_call(
-            self,
-            method,
-            arguments,
-            keywords,
-            class_name=self.class_name,
-            ctx=ctx,
-            owner=owner,
-            blame=blame,
-            refuse=self._floor_gap,
-            required_frame=required_frame,
-        )
-
     def has_method(self, name: str) -> "bool | None":
         """Whether the one class-namespace lookup selects a member for
         ``name`` on this receiver's type (``class_member``): a source method,
@@ -1488,8 +1369,8 @@ def bind_method_call(
 ):
     """``receiver.m(*arguments, **keywords)``: the call of the selected
     function with the implicit first actual its lookup binds
-    (``implicit_arguments``), for ``CallSiteValue.producer_outcome`` to
-    apply.  Every method dispatch (``obj.m()``, ``self.m()``, a
+    (``implicit_arguments``), bound to read what the call's edge supplies
+    (``method_edge_call``); its body is never applied.  Every method dispatch (``obj.m()``, ``self.m()``, a
     ``BoundMethodValue`` called with or without ``**``, zero-argument
     ``super().m()``, ``Cls.m()`` read off the class) binds here.
 
@@ -1513,7 +1394,6 @@ def bind_method_call(
             fix=f"add method binding sugar for `{target_name}`",
         )
     selected_frame = required_frame or method.source_call_frame
-    body = method.body
     frame_cid = method.source_call_frame_cid
     formal_coordinate_cids = method.formal_coordinate_cids
     if required_frame is None and selected_frame is not None:
@@ -1527,7 +1407,6 @@ def bind_method_call(
         at_site = frame_at_current_module_execution_site(selected_frame)
         if at_site is not selected_frame:
             selected_frame = at_site
-            body = at_site.body
             frame_cid = at_site.frame_cid
             formal_coordinate_cids = tuple(
                 coordinate.cid for coordinate in at_site.formal_coordinates
@@ -1548,7 +1427,6 @@ def bind_method_call(
         keywords,
         frame=selected_frame,
         parameters=method.parameters,
-        body=body,
         frame_cid=frame_cid,
         formal_coordinate_cids=formal_coordinate_cids,
         lexical_defining_class=method.defining_class,
@@ -1741,7 +1619,6 @@ def bind_call(
     *,
     frame,
     parameters,
-    body,
     frame_cid,
     formal_coordinate_cids,
     lexical_defining_class=None,
@@ -1761,9 +1638,10 @@ def bind_call(
     a method call ``obj.m(...)``/``self.m(...)``/``super().m(...)`` (the
     receiver first, ``bind_method_call``) and a class call (the class
     statement's constructor frame).  The frame's own ``bind_actuals`` puts
-    every actual in its formal slot; the result is the ``CallSiteValue`` that
-    ``CallSiteValue.producer_outcome`` applies, the one application.  With no
-    frame the actuals are taken as already in formal order, the keyword
+    every actual in its formal slot; the result is the bodiless
+    ``CallSiteValue`` whose actuals the call's edge supplies
+    (``lambda_callable.definition_edge_call``): no body is bound, and none is
+    ever applied (#7757 step 6).  With no frame the actuals are taken as already in formal order, the keyword
     actuals after the positional ones under their names.
 
     ``term`` is the call coordinate when the call form has its own (a plain
@@ -1819,7 +1697,7 @@ def bind_call(
         parameters=parameters,
         term=term,
         keyword_names=keyword_names,
-        body=body,
+        body=None,
         site=blame,
         source_call_frame_cid=frame_cid,
         formal_coordinate_cids=formal_coordinate_cids,
@@ -1831,8 +1709,5 @@ def bind_call(
         ),
         bound_source_actuals=bound_source_actuals,
         lexical_defining_class=lexical_defining_class,
-        first_actual_stated_by_stores=(
-            getattr(frame, "first_formal_stated_by_stores", False) is True
-        ),
         **testimony,
     )

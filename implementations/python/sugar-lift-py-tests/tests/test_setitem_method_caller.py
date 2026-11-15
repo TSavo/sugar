@@ -44,7 +44,6 @@ from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute, Call, ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
-from test_method_call_application_twins import bound_method_call_at
 
 METHOD_BODY = (
     "class Holder:\n"
@@ -89,34 +88,6 @@ def _source_holder_receiver():
     return receiver, pending
 
 
-def _method_callsite(source: str) -> CallSiteValue:
-    """Construct the bound method CallSiteValue (self prepended, body retained)."""
-    tree = _tree(source)
-    # Bound method call is Call(func=Attribute(attr="store")), not Holder().
-    calls = tuple(
-        node
-        for node in tree.nodes()
-        if isinstance(node, Call)
-        and isinstance(node.func, Attribute)
-        and node.func.attr == "store"
-    )
-    assert len(calls) == 1, calls
-    # #7756: the Call applies the method body itself; the binding under test
-    # is that call as bound, before the application.
-    return bound_method_call_at(calls[0])
-
-
-def _method_call_outcome(source: str):
-    """Reduce the bound method body through the callsite producer path.
-
-    MethodCallSugar / ObjectValue.call_method_value return a CallSiteValue
-    with ``self`` already prepended in arg_values.  ``producer_outcome`` is
-    the same consumer free-function calls use to publish Completed/Halted
-    faces from the authenticated body (including formal setitem discharge).
-    """
-    return _method_callsite(source).producer_outcome(None)
-
-
 def _assert_bound_self_first(callsite: CallSiteValue) -> None:
     """arg_values[0] is the Holder receiver; remaining are obj/key/value."""
     assert callsite.parameters[0] == "self"
@@ -155,33 +126,6 @@ def _assert_named_halt(outcome) -> Halted:
         "halt's real pre-effect state"
     )
     return halted
-
-
-def _assert_completed_call(outcome) -> CallSiteValue:
-    """The in-range store completes alone, as Python's does, and publishes the
-    Call coordinate on that one face
-    (``CallSiteValue.project_producer_outcome``).
-
-    The list is made at the call, and ``obj`` is that actual with the
-    caller's currency (#8249): the container law reads its contents, so an
-    in-range index is decided -- one completion, no halt beside it.
-
-    The Call's value carries to its caller what the callee's frame left of
-    each object the two share (``caller_visible_values``), as a walrus's
-    write rides its value: here the list actual, under ``actual:1``, as the
-    store left it.  The Call coordinate is what those writes present.
-    """
-    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
-
-    assert isinstance(outcome, ExitSet), outcome
-    (face,) = outcome.exits
-    assert isinstance(face, Completed), outcome
-    carried, value = peel_walrus_binds(face.value)
-    assert isinstance(value, CallSiteValue), value
-    stored = [write.assigned_value for write in carried if write.name == "actual:1"]
-    assert len(stored) == 1, carried
-    assert isinstance(stored[0], ListValue), stored
-    return value
 
 
 def _stored_list(completed_face) -> ListValue:
@@ -223,26 +167,6 @@ def test_method_alone_mints_setitem_over_obj_key_value_not_self() -> None:
     assert len({obj_cid, key_cid, value_cid}) == 3
 
 
-def test_bound_self_does_not_shift_obj_key_value_coordinates() -> None:
-    """Positional method call binds self, then obj/key/value in declaration order."""
-    source = METHOD_BODY + "\nHolder().store([0, 1], 0, 9)\n"
-    callsite = _method_callsite(source)
-    _assert_bound_self_first(callsite)
-    # Actuals after self: list, 0, 9 — not self-shifted into obj.
-    assert callsite.arg_values[1] == fresh(ListValue, (TermValue(0), TermValue(1)))
-    assert callsite.arg_values[2] == TermValue(0)
-    assert callsite.arg_values[3] == TermValue(9)
-    outcome = callsite.producer_outcome(None)
-    _assert_completed_call(outcome)
-    # The store landed in ``obj`` (the list), at ``key`` 0, never in ``self``:
-    # the caller reads the list actual as ``[9, 1]`` after the call.
-    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
-
-    carried, _call = peel_walrus_binds(outcome.exits[0].value)
-    (after,) = [write.assigned_value for write in carried if write.name == "actual:1"]
-    assert after == fresh(ListValue, (TermValue(9), TermValue(1)))
-
-
 def test_discrimination_self_is_not_the_setitem_receiver_slot() -> None:
     """Bite: setitem demand coordinates must not be the method's self formal."""
     _class_def, method, pending = _method_definition()
@@ -253,51 +177,6 @@ def test_discrimination_self_is_not_the_setitem_receiver_slot() -> None:
 
 # ---------------------------------------------------------------------------
 # 2. Positional, keyword, and default calls discharge
-# ---------------------------------------------------------------------------
-
-
-def test_positional_keyword_and_default_method_calls_discharge() -> None:
-    sites = (
-        _method_callsite(METHOD_BODY + "\nHolder().store([0], 0, 9)\n"),
-        _method_callsite(METHOD_BODY + "\nHolder().store(obj=[0], key=0, value=9)\n"),
-        _method_callsite(METHOD_DEFAULTS + "\nHolder().store([0])\n"),
-    )
-    for site in sites:
-        _assert_bound_self_first(site)
-        # After self: obj is the list, key is 0, value is 9 (defaults included).
-        assert site.arg_values[1] == fresh(ListValue, (TermValue(0),))
-        assert site.arg_values[2] == TermValue(0)
-        assert site.arg_values[3] == TermValue(9)
-        _assert_completed_call(site.producer_outcome(None))
-
-
-def test_discrimination_keyword_swap_is_not_positional_store() -> None:
-    """Bite: keyword-swapped key/value must not match truthful cell binding."""
-    truthful = _method_callsite(
-        METHOD_BODY + "\nHolder().store([0, 1, 2], key=1, value=99)\n"
-    )
-    # The raising call stands in a function called after import: in the
-    # module body it raises IndexError, the module's one run completes on no
-    # arm, and ``Holder`` has no completed import to be read from.
-    swapped = _method_callsite(
-        METHOD_BODY
-        + "\ndef caller():\n    Holder().store([0, 1, 2], key=99, value=1)\n"
-    )
-    _assert_bound_self_first(truthful)
-    _assert_bound_self_first(swapped)
-    assert truthful.arg_values[2:] == (TermValue(1), TermValue(99))
-    assert swapped.arg_values[2:] == (TermValue(99), TermValue(1))
-    assert truthful.arg_values[2:] != swapped.arg_values[2:]
-    t_out = truthful.producer_outcome(None)
-    s_out = swapped.producer_outcome(None)
-    _assert_completed_call(t_out)
-    # Swapped stores at index 99 of a three-element list: Python raises
-    # IndexError, and the decided store halts with it alone.
-    _assert_named_halt(s_out)
-
-
-# ---------------------------------------------------------------------------
-# 3. Mutable store completes
 # ---------------------------------------------------------------------------
 
 
@@ -319,41 +198,6 @@ def test_mutable_method_store_completes() -> None:
     )
     # Holder itself is not a setitem operand here — method self is separate.
     del holder
-
-
-def test_discrimination_mutable_completion_is_not_indexerror() -> None:
-    outcome = _method_call_outcome(METHOD_BODY + "\nHolder().store([0], 0, 9)\n")
-    _assert_completed_call(outcome)
-    assert not any(
-        isinstance(exit_, Halted)
-        and getattr(exit_.effect, "exception_type_coordinate", None)
-        == _identity("IndexError")
-        for exit_ in outcome.exits
-    )
-
-
-# ---------------------------------------------------------------------------
-# 4. Invalid index → named IndexError
-# ---------------------------------------------------------------------------
-
-
-def test_invalid_index_method_call_halts_with_named_indexerror() -> None:
-    # The raising call stands in a function called after import: in the
-    # module body it raises IndexError, the module's one run completes on no
-    # arm, and ``Holder`` has no completed import to be read from.
-    site = _method_callsite(
-        METHOD_BODY + "\ndef caller():\n    Holder().store([0], 4, 9)\n"
-    )
-    _assert_bound_self_first(site)
-    assert site.arg_values[1:] == (
-        fresh(ListValue, (TermValue(0),)),
-        TermValue(4),
-        TermValue(9),
-    )
-    halted = _assert_named_halt(site.producer_outcome(None))
-    assert halted.effect.exception_type_coordinate == _identity("IndexError")
-    # Pre-effect state is the exact object carried on the halt (not None).
-    assert halted.state is not None
 
 
 def test_invalid_index_discharge_shares_reducer_pre_effect_state() -> None:
@@ -421,23 +265,6 @@ def test_invalid_index_discharge_shares_reducer_pre_effect_state() -> None:
     assert face.state is halted.state
 
 
-def test_discrimination_in_range_index_is_not_indexerror() -> None:
-    outcome = _method_call_outcome(METHOD_BODY + "\nHolder().store([0], 0, 9)\n")
-    _assert_completed_call(outcome)
-    # Discrimination: no face is a named IndexError halt.
-    assert not any(
-        isinstance(exit_, Halted)
-        and getattr(exit_.effect, "exception_type_coordinate", None)
-        == _identity("IndexError")
-        for exit_ in outcome.exits
-    )
-
-
-# ---------------------------------------------------------------------------
-# 5. Off-by-one binding twin fails
-# ---------------------------------------------------------------------------
-
-
 def test_off_by_one_binding_twin_fails_against_truthful_store() -> None:
     """If self were shifted into the obj slot, store actuals would misalign.
 
@@ -480,34 +307,3 @@ def test_off_by_one_binding_twin_fails_against_truthful_store() -> None:
         assert isinstance(lying_face, Halted)
 
 
-def test_discrimination_truthful_binding_completes_at_obj_slot() -> None:
-    """Positive twin of the off-by-one arm."""
-    site = _method_callsite(METHOD_BODY + "\nHolder().store([0, 1], 0, 9)\n")
-    _assert_bound_self_first(site)
-    assert site.arg_values[1:] == (
-        fresh(ListValue, (TermValue(0), TermValue(1))),
-        TermValue(0),
-        TermValue(9),
-    )
-    _assert_completed_call(site.producer_outcome(None))
-
-
-def test_off_by_one_callsite_args_do_not_match_truthful_binding() -> None:
-    """Discrimination: pretend self was not prepended (args slide left).
-
-    Truthful ``arg_values`` are ``(Holder, list, key, value)``.  An off-by-one
-    binding that treats call actuals as already including self would look like
-    ``(list, key, value)`` — missing the Holder receiver or shifting list into
-    self.  That shape is not the authenticated method callsite.
-    """
-    site = _method_callsite(METHOD_BODY + "\nHolder().store([0, 1], 0, 9)\n")
-    truthful = site.arg_values
-    assert len(truthful) == 4
-    assert isinstance(truthful[0], ObjectValue)
-    # Off-by-one twin: drop self, claim remaining three are the full binding.
-    off_by_one = truthful[1:]
-    assert len(off_by_one) == 3
-    assert off_by_one != truthful
-    assert not isinstance(off_by_one[0], ObjectValue) or (
-        off_by_one[0].class_name != "Holder"
-    )

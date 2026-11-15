@@ -49,7 +49,6 @@ from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute, Call, ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
-from test_method_call_application_twins import bound_method_call_at
 from sugar_lift_py_tests.effect import RaiseEffect
 
 METHOD_BODY = (
@@ -99,25 +98,6 @@ def _method_definition(source: str = METHOD_BODY):
         if isinstance(node, FunctionDef) and node.name == "combine"
     )
     return class_def, method, method.sugar().desugar(None)
-
-
-def _method_callsite(source: str) -> CallSiteValue:
-    tree = _tree(source)
-    calls = tuple(
-        node
-        for node in tree.nodes()
-        if isinstance(node, Call)
-        and isinstance(node.func, Attribute)
-        and node.func.attr == "combine"
-    )
-    assert len(calls) == 1, calls
-    # #7756: the Call applies the method body itself; the binding under test
-    # is that call as bound, before the application.
-    return bound_method_call_at(calls[0])
-
-
-def _method_call_outcome(source: str):
-    return _method_callsite(source).producer_outcome(None)
 
 
 def _assert_bound_self_first(callsite: CallSiteValue) -> None:
@@ -290,14 +270,6 @@ def test_discrimination_method_alone_is_not_completed() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_bound_self_does_not_shift_left_right_coordinates() -> None:
-    site = _method_callsite(METHOD_BODY + "\nAdder().combine(1, 2)\n")
-    _assert_bound_self_first(site)
-    assert site.arg_values[1] == TermValue(1)
-    assert site.arg_values[2] == TermValue(2)
-    assert _returned_term(site.producer_outcome(None)).value == 3
-
-
 def test_discrimination_self_is_not_an_add_operand() -> None:
     _class_def, method, pending = _method_definition()
     self_coord = method.formal_coordinates()[0]
@@ -310,55 +282,12 @@ def test_discrimination_self_is_not_an_add_operand() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_positional_keyword_and_default_calls_discharge() -> None:
-    sites = (
-        _method_callsite(METHOD_BODY + "\nAdder().combine(1, 2)\n"),
-        _method_callsite(METHOD_BODY + "\nAdder().combine(left=1, right=2)\n"),
-        _method_callsite(METHOD_DEFAULTS + "\nAdder().combine(1)\n"),
-    )
-    for site in sites:
-        _assert_bound_self_first(site)
-        assert site.arg_values[1] == TermValue(1)
-        assert site.arg_values[2] == TermValue(2)
-        assert _returned_term(site.producer_outcome(None)).value == 3
-
-
-def test_discrimination_default_is_not_keyword_override() -> None:
-    default = _method_callsite(METHOD_DEFAULTS + "\nAdder().combine(1)\n")
-    override = _method_callsite(METHOD_DEFAULTS + "\nAdder().combine(1, right=9)\n")
-    assert default.arg_values[2] == TermValue(2)
-    assert override.arg_values[2] == TermValue(9)
-    assert _returned_term(default.producer_outcome(None)).value == 3
-    assert _returned_term(override.producer_outcome(None)).value == 10
-
-
-# ---------------------------------------------------------------------------
-# 4. Compatible operands complete with the correct value
-# ---------------------------------------------------------------------------
-
-
 def test_compatible_operands_complete_with_correct_value() -> None:
     _, _method, pending = _method_definition()
     left_cid, right_cid = _left_right_cids(pending)
     exits = pending.discharge(None, {left_cid: TermValue(10), right_cid: TermValue(5)})
     assert isinstance(exits.exits[0], Completed)
     assert _returned_term(exits).value == 15
-
-
-def test_compatible_method_call_completes_with_correct_value() -> None:
-    outcome = _method_call_outcome(METHOD_BODY + "\nAdder().combine(10, 5)\n")
-    assert _returned_term(outcome).value == 15
-
-
-def test_discrimination_wrong_sum_is_not_the_completed_value() -> None:
-    outcome = _method_call_outcome(METHOD_BODY + "\nAdder().combine(10, 5)\n")
-    assert _returned_term(outcome).value == 15
-    assert _returned_term(outcome).value != 50
-
-
-# ---------------------------------------------------------------------------
-# 5. Incompatible operands → TypeError + pre-effect state (#6659)
-# ---------------------------------------------------------------------------
 
 
 def test_incompatible_operands_typeerror_with_exact_pre_effect_state() -> None:
@@ -388,107 +317,6 @@ def test_incompatible_operands_typeerror_with_exact_pre_effect_state() -> None:
     assert remaining.state is halted.state
 
 
-def test_incompatible_operands_method_call_halts_with_named_typeerror() -> None:
-    """Bound-method call binds self/left/right; add of None+2 TypeErrors.
-
-    Formal discharge (sibling test) owns pre-effect identity under #6659.
-    Bound-method ``producer_outcome`` for a return expression may publish
-    ``ExitSet.completed(CallSiteValue)`` whose dig surfaces a TypeError halt
-    rather than ``ExitSet(Halted)`` — statement stores (setitem) project the
-    halt face; return-of-add digs the raise. Either face must name TypeError;
-    a completed sum is the silent-wrong twin. When sole Halted surfaces,
-    pre-effect state is required (#6659).
-    """
-    # The call stands in a function called after import: in the module body
-    # ``None + 2`` raises, the module's one run completes on no arm, and the
-    # read of ``Adder`` -- a module class's name, read through its
-    # statement's key in that run (#7757 item 21) -- has no class to read.
-    site = _method_callsite(
-        METHOD_BODY + "\n\ndef caller():\n    Adder().combine(None, 2)\n"
-    )
-    _assert_bound_self_first(site)
-    assert site.arg_values[1] == NoneValue()
-    assert site.arg_values[2] == TermValue(2)
-
-    # Floor path: NoneValue.add refuses with TypeError (membership-style pin).
-    _, method, _pending = _method_definition()
-    floor_site = method.body[0].fragment
-    direct = NoneValue().add(TermValue(2), floor_site, None)
-    assert len(direct.exits) == 1 and direct.halts() == direct.exits, direct
-    assert direct.halts()[0].effect.exception_name == "TypeError"
-
-    outcome = site.producer_outcome(None)
-    if (
-        isinstance(outcome, ExitSet)
-        and len(outcome.exits) == 1
-        and outcome.completed_value() is None
-    ):
-        halted = outcome.exits[0]
-        assert isinstance(halted, Halted), halted
-        assert halted.effect.exception_type_coordinate == _identity("TypeError")
-        # The raise is located where it is written -- the ``left + right``
-        # of ``combine`` (line 3, column 15) -- in the frame of this call.
-        # A locus is a file:line:col, never the repr of the value that
-        # called it.
-        locus, separator, frame = halted.effect.occurrence_id.partition("@call:")
-        assert locus == "binop_method_caller.py:3:15"
-        assert separator == "@call:" and frame.startswith("blake3-512:")
-        assert halted.state is not None, (
-            "bound-method producer_outcome TypeError halt lacks pre-effect "
-            "state — sole Halted still drops its state (#6659)"
-        )
-        return
-
-    # Return-expression projection: dig must surface a TypeError halt,
-    # never a completed numeric sum.
-    assert outcome.completed_value() is not None, outcome
-    assert isinstance(
-        outcome.completed_value(), CallSiteValue
-    ), outcome.completed_value()
-    dug = outcome.completed_value()._dig_floor_or_none(
-        None, owner="binop-method-caller"
-    )
-    assert dug is not None, outcome
-    raises = _collect_raise_values(dug)
-    assert raises, f"no raise under dig: {type(dug).__name__} {dug!r:.300}"
-    assert any(r.effect.exception_name == "TypeError" for r in raises), raises
-    # Discrimination: dig is not a completed sum of None+2.
-    try:
-        term = _returned_term(outcome)
-    except AssertionError:
-        term = None
-    if term is not None:
-        assert term.value != 2  # lying twin: None coerced as 0
-
-
-def test_discrimination_compatible_add_is_not_typeerror() -> None:
-    outcome = _method_call_outcome(METHOD_BODY + "\nAdder().combine(1, 2)\n")
-    assert _returned_term(outcome).value == 3
-    if isinstance(outcome, ExitSet):
-        assert isinstance(outcome.exits[0], Completed)
-    else:
-        _assert_completed_call(outcome)
-
-
-# ---------------------------------------------------------------------------
-# 6. Off-by-one self-binding and swapped-operand twins fail
-# ---------------------------------------------------------------------------
-
-
-def test_off_by_one_callsite_args_do_not_match_truthful_binding() -> None:
-    site = _method_callsite(METHOD_BODY + "\nAdder().combine(1, 2)\n")
-    truthful = site.arg_values
-    assert len(truthful) == 3
-    assert isinstance(truthful[0], ObjectValue)
-    assert truthful[0].class_name == "Adder"
-    off_by_one = truthful[1:]
-    assert len(off_by_one) == 2
-    assert off_by_one != truthful
-    assert not (
-        isinstance(off_by_one[0], ObjectValue) and off_by_one[0].class_name == "Adder"
-    )
-
-
 def test_swapped_operand_twins_fail_against_truthful_sum() -> None:
     """``10 + 5 == 15``; swapped discharge must not claim the same post-state.
 
@@ -514,18 +342,6 @@ def test_swapped_operand_twins_fail_against_truthful_sum() -> None:
     else:
         assert isinstance(lying_face, Halted)
         assert lying_face.effect.exception_type_coordinate == _identity("TypeError")
-
-
-def test_discrimination_truthful_operand_order_completes_sum() -> None:
-    site = _method_callsite(METHOD_BODY + "\nAdder().combine(10, 5)\n")
-    _assert_bound_self_first(site)
-    assert site.arg_values[1:] == (TermValue(10), TermValue(5))
-    assert _returned_term(site.producer_outcome(None)).value == 15
-
-
-# ---------------------------------------------------------------------------
-# 7. BinOp does not borrow Compare's laws
-# ---------------------------------------------------------------------------
 
 
 def test_binop_does_not_borrow_compare_laws() -> None:

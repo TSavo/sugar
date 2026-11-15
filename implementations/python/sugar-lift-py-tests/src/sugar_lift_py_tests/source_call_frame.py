@@ -361,14 +361,6 @@ class SourceVisibleCallFrameV1:
     #: A call binds each from its own scope's binding at the call.
     captured_names: tuple[str, ...] = ()
     captured_coordinates: tuple[BindingCoordinateV1, ...] = ()
-    #: Every effect the body has on the object its first formal binds is one
-    #: of its field stores on that formal, which a call carries to its caller
-    #: (``nodes._first_formal_stated_by_stores``): the call states that
-    #: object after it (``call_site_value.receiver_after_its_call``).  Read
-    #: off the body's own threading; a lookup aid, never testimony.
-    first_formal_stated_by_stores: bool = field(
-        default=False, compare=False, metadata={"testimony": "lookup"}
-    )
     frame_cid: str = field(init=False)
 
     def __post_init__(self) -> None:

@@ -437,11 +437,7 @@ def _typed_conversion_kind(handler: ast.ExceptHandler) -> tuple[str | None, list
                 for leaf in call_leaves
                 if leaf is not None
                 and not _is_typed_testimony_leaf(leaf)
-                and (
-                    "construct" in leaf.lower()
-                    or "project" in leaf.lower()
-                    or leaf == "_reduce_source_outcome"
-                )
+                and ("construct" in leaf.lower() or "project" in leaf.lower())
             )
             if recovery_calls:
                 return "typed-gap-or-construction-recovery", [

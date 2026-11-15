@@ -51,33 +51,6 @@ from sugar_lift_py_tests.witness_harness import (
 )
 
 
-def bound_method_call_at(call_node, ctx=None):
-    """The method call at ``call_node`` as bound, before it is applied.
-
-    ``receiver.m(args)`` desugars to ``m(receiver, args)`` bound by the
-    receiver's ``bound_method_call`` and applied once by
-    ``CallSiteValue.producer_outcome``.  Unit tests that inspect the binding
-    (the receiver in slot 0, the actuals in formal order) read it here; the
-    Call itself yields the applied outcome.
-    """
-    sugar = call_node.sugar()
-
-    def operand(item):
-        return item.desugar(ctx).completed_value().project_operation_receiver(
-            ctx, owner="bound_method_call_at"
-        )
-
-    return operand(sugar.receiver).bound_method_call(
-        sugar.name,
-        tuple(operand(argument) for argument in sugar.args),
-        owner="bound_method_call_at",
-        blame=sugar.site,
-        ctx=ctx,
-        keywords=tuple((name, operand(value)) for name, value in sugar.keywords),
-        required_frame=sugar.source_call_frame,
-    )
-
-
 def _pair(tmp_path: Path, name: str, truthful: str, lying: str) -> None:
     t = run_source_through_real_solver(tmp_path / f"{name}-truthful", truthful)
     lie = run_source_through_real_solver(tmp_path / f"{name}-lying", lying)

@@ -906,7 +906,6 @@ class CallSiteSugar(ConstructedTermSugar):
             kw_values,
             frame=frame,
             parameters=frame.parameters,
-            body=None,
             frame_cid=frame.frame_cid,
             formal_coordinate_cids=tuple(
                 item.cid for item in frame.formal_coordinates
@@ -1165,8 +1164,8 @@ def enter_source_frame(
     frame here: it is the one typed variant, a closure body has its captured
     coordinates (``covered``: the captured names the call carries), the
     keys of the module-final bindings its body reads are bound when the
-    call runs after import (``with_module_final_globals``, at the site the
-    frame's body is read at: ``source_frame_body``), and a module whose
+    call runs after import (``with_module_final_globals``, at the frame's
+    module execution site), and a module whose
     constant halts is the call's halt.  Returns ``(ctx, halt)``: ``halt``
     is that module halt, else ``None``.
     """
@@ -1228,54 +1227,6 @@ def _frame_global_readers(frame) -> tuple:
     return tuple(readers)
 
 
-def source_frame_body(frame, *, owner: str, blame: object):
-    """The body a call into ``frame`` reduces: its declaration's.
-
-    The declaration body keeps formal BindingCoordinateRefs whose cids match
-    the frame's formal coordinates, which the call curries with its bound
-    FloorValue actuals.  ``Call._construct_sugar`` may have
-    ``bind_node_actuals``-specialized the frame body by inlining the caller's
-    formal nodes (e.g. make_guard's BindingCoordinateRef into
-    Class.__init__); those refs are not this frame's, so the specialized body
-    is never the one reduced.  A class call reduces the class statement's
-    constructor frame.
-
-    The declaration frame is read again at the module execution site the
-    call was constructed at: a body reads a module global as the module
-    binds it where the call runs (#7757 item 7).
-    """
-    from sugar_source_tree.nodes import construct_at_module_execution_site
-
-    module_execution_site = getattr(frame, "module_execution_site", None)
-    owner_node = getattr(frame, "owner", None)
-    if owner_node is not None and hasattr(
-        owner_node, "source_visible_constructor_frame"
-    ):
-        return construct_at_module_execution_site(
-            module_execution_site, owner_node.source_visible_constructor_frame
-        ).body
-    if owner_node is not None and hasattr(owner_node, "source_visible_call_frame"):
-        from sugar_lift_py_tests.source_call_frame import (
-            frame_read_at_module_execution_site,
-        )
-
-        declaration_frame = frame_read_at_module_execution_site(
-            frame, module_execution_site
-        )
-        if declaration_frame.frame_cid != frame.declaration_frame_cid:
-            from sugar_source_tree.panic import BackendDefect
-
-            raise BackendDefect(
-                owner=owner,
-                blame=blame,
-                observed="declaration/source frame mismatch",
-                requested="byte-identical authenticated source frame",
-                fix="retain the callee declaration frame across node binding",
-            )
-        return declaration_frame.body
-    return frame.body
-
-
 def _refuse_loud(*, owner, blame, observed, requested, fix):
     from sugar_source_tree.panic import SugarNotWritten
 
@@ -1299,30 +1250,24 @@ def bind_source_frame_call(
     blame: object,
     term,
     refuse=_refuse_loud,
-    body=None,
     **testimony,
 ):
     """``target_name(*positional, **keywords)`` bound by the one binder.
 
     ``object_value.bind_call`` with what ``frame`` (entered through
-    ``enter_source_frame``) says about the callee: its formals, its
-    declaration body (``source_frame_body``, or ``body`` where the caller
-    already has it: a class call's constructor body entered on its class
-    value, ``ClassDefinitionValue.callable_application_with``), its coordinates.
-    With no frame the call is bound bodyless.  The result is applied by
-    ``CallSiteValue.producer_outcome``, as every call is.
+    ``enter_source_frame``) says about the callee: its formals and its
+    coordinates.  With no frame the call is bound with its actuals as
+    written.  No body is bound: a call is its coordinate and edge, and no
+    callee body is applied at lift (#7757 step 6).
     """
     from sugar_lift_py_tests.floor.object_value import bind_call
 
-    if body is None and frame is not None:
-        body = source_frame_body(frame, owner=owner, blame=blame)
     return bind_call(
         target_name,
         positional,
         keywords,
         frame=frame,
         parameters=() if frame is None else frame.parameters,
-        body=body,
         frame_cid=None if frame is None else frame.frame_cid,
         formal_coordinate_cids=(
             ()

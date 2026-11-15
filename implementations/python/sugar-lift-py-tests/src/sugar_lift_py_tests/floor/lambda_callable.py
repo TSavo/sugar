@@ -242,7 +242,6 @@ class LambdaCallable(FloorValue):
             keywords,
             frame=frame,
             parameters=frame.parameters,
-            body=None,
             frame_cid=frame.frame_cid,
             formal_coordinate_cids=tuple(
                 item.cid for item in frame.formal_coordinates

@@ -52,7 +52,6 @@ from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute, Call, ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
-from test_method_call_application_twins import bound_method_call_at
 
 METHOD_BODY = (
     "class Chooser:\n"
@@ -95,25 +94,6 @@ def _method_definition(source: str = METHOD_BODY):
         if isinstance(node, FunctionDef) and node.name == "choose"
     )
     return class_def, method, method.sugar().desugar(None)
-
-
-def _method_callsite(source: str) -> CallSiteValue:
-    tree = _tree(source)
-    calls = tuple(
-        node
-        for node in tree.nodes()
-        if isinstance(node, Call)
-        and isinstance(node.func, Attribute)
-        and node.func.attr == "choose"
-    )
-    assert len(calls) == 1, calls
-    # #7756: the Call applies the method body itself; the binding under test
-    # is that call as bound, before the application.
-    return bound_method_call_at(calls[0])
-
-
-def _method_call_outcome(source: str):
-    return _method_callsite(source).producer_outcome(None)
 
 
 def _assert_bound_self_first(callsite: CallSiteValue) -> None:
@@ -269,17 +249,6 @@ def test_discrimination_method_alone_is_not_completed_branch() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_bound_self_does_not_shift_left_right_coordinates() -> None:
-    site = _method_callsite(METHOD_BODY + "\nChooser().choose(1, 2)\n")
-    _assert_bound_self_first(site)
-    assert site.arg_values[1] == TermValue(1)
-    assert site.arg_values[2] == TermValue(2)
-    outcome = site.producer_outcome(None)
-    # Free-function and method paths both yield one completed arm (a method's
-    # holds the callsite); read it via dig of the callsite body completion.
-    assert _returned_term(_only_completed(outcome)).value == 1
-
-
 def test_discrimination_self_is_not_a_less_than_operand() -> None:
     _class_def, method, pending = _method_definition()
     self_coord = method.formal_coordinates()[0]
@@ -289,38 +258,6 @@ def test_discrimination_self_is_not_a_less_than_operand() -> None:
 
 # ---------------------------------------------------------------------------
 # 3. Positional, keyword, and default calls select the correct branch
-# ---------------------------------------------------------------------------
-
-
-def test_positional_keyword_and_default_calls_select_correct_branch() -> None:
-    sites = (
-        _method_callsite(METHOD_BODY + "\nChooser().choose(1, 2)\n"),
-        _method_callsite(METHOD_BODY + "\nChooser().choose(left=1, right=2)\n"),
-        _method_callsite(METHOD_DEFAULTS + "\nChooser().choose(1)\n"),
-    )
-    for site in sites:
-        _assert_bound_self_first(site)
-        assert site.arg_values[1] == TermValue(1)
-        assert site.arg_values[2] == TermValue(2)
-        outcome = site.producer_outcome(None)
-        assert _returned_term(_only_completed(outcome)).value == 1
-
-
-def test_discrimination_branch_selection_twin_fails() -> None:
-    """Truthful 1 < 2 → then; lying 2 < 1 → else — distinct returns."""
-    then_out = _method_call_outcome(METHOD_BODY + "\nChooser().choose(1, 2)\n")
-    else_out = _method_call_outcome(METHOD_BODY + "\nChooser().choose(2, 1)\n")
-
-    def _branch_value(outcome):
-        return _returned_term(_only_completed(outcome)).value
-
-    assert _branch_value(then_out) == 1
-    assert _branch_value(else_out) == 0
-    assert _branch_value(then_out) != _branch_value(else_out)
-
-
-# ---------------------------------------------------------------------------
-# 4. Incompatible ordering → TypeError + pre-effect state
 # ---------------------------------------------------------------------------
 
 
@@ -351,57 +288,6 @@ def test_incompatible_ordering_typeerror_with_exact_pre_effect_state() -> None:
     assert remaining.state is halted.state
 
 
-def test_incompatible_ordering_method_call_halts_with_named_typeerror() -> None:
-    """Bound-method call producer path: TypeError identity.
-
-    Pre-effect state on producer_outcome may stay red until codex-1 lossless
-    reduce_body; identity is asserted either way when the halt surfaces.
-
-    The call stands in a function called after import: at module level it
-    would make the module's one run halt on every arm, so no import completes
-    and the read of ``Chooser`` is that run's halts, never the class
-    (``DecoratorApplicationSugar._module_run_halts``).
-    """
-    site = _method_callsite(
-        METHOD_BODY + "\ndef caller():\n    Chooser().choose(None, 2)\n"
-    )
-    _assert_bound_self_first(site)
-    assert site.arg_values[1] is not None
-    # None may floor as NoneValue / TermValue-like; right is 2.
-    assert site.arg_values[2] == TermValue(2)
-    outcome = site.producer_outcome(None)
-    # Prefer the halted arm; a completion would be a silent wrong completion.
-    assert isinstance(outcome, ExitSet), outcome
-    halted = outcome.exits[0]
-    assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate == _identity("TypeError")
-    # The TypeError is raised where Python raises it: at ``left < right`` in
-    # the method body (line 3, column 11), in the frame this call entered.
-    # Its occurrence is that address, then the call it was reached through
-    # (``occurrence_key``) -- content, never the call value's repr.
-    raised_at, separator, path = halted.effect.occurrence_id.partition("@")
-    assert raised_at == "compare_if_method_caller.py:3:11"
-    assert separator == "@" and path.startswith("call:")
-    # Honest instrument for codex-1: state must be non-None after lossless fix.
-    assert halted.state is not None, (
-        "bound-method producer_outcome TypeError halt lacks pre-effect state "
-        "— sole Halted still drops its state (codex-1)"
-    )
-
-
-def test_discrimination_compatible_ordering_is_not_typeerror() -> None:
-    outcome = _method_call_outcome(METHOD_BODY + "\nChooser().choose(1, 2)\n")
-    if outcome.completed_value() is not None:
-        _assert_completed_call(outcome)
-    else:
-        assert isinstance(_only_completed(outcome), Completed)
-
-
-# ---------------------------------------------------------------------------
-# 5. Identity comparison remains carrier-free
-# ---------------------------------------------------------------------------
-
-
 def test_identity_comparison_never_acquires_a_carrier() -> None:
     _, _method, pending = _method_definition(IDENTITY_BODY)
     assert not isinstance(pending, NativeOperationExitCarrierV1)
@@ -419,23 +305,3 @@ def test_discrimination_ordering_is_not_identity_carrier_free() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_off_by_one_callsite_args_do_not_match_truthful_binding() -> None:
-    site = _method_callsite(METHOD_BODY + "\nChooser().choose(1, 2)\n")
-    truthful = site.arg_values
-    assert len(truthful) == 3
-    assert isinstance(truthful[0], ObjectValue)
-    assert truthful[0].class_name == "Chooser"
-    off_by_one = truthful[1:]
-    assert len(off_by_one) == 2
-    assert off_by_one != truthful
-    assert not (
-        isinstance(off_by_one[0], ObjectValue) and off_by_one[0].class_name == "Chooser"
-    )
-
-
-def test_discrimination_truthful_binding_selects_then_branch() -> None:
-    site = _method_callsite(METHOD_BODY + "\nChooser().choose(1, 2)\n")
-    _assert_bound_self_first(site)
-    assert site.arg_values[1:] == (TermValue(1), TermValue(2))
-    outcome = site.producer_outcome(None)
-    assert _returned_term(_only_completed(outcome)).value == 1

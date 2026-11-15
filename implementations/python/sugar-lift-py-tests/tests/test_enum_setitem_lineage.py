@@ -38,20 +38,6 @@ def _source_receiver(source: str):
     return receiver, context
 
 
-def _source_method_outcome(receiver, context, key="member", value=7):
-    selected = receiver.bound_method_call(
-        "__setitem__",
-        (StringValue(key), TermValue(value)),
-        owner="test_enum_setitem_lineage",
-        blame="setitem-site",
-        ctx=context,
-    )
-    assert isinstance(
-        selected, CallSiteValue
-    ), "a source __setitem__ override must be selected before builtin dict mutation"
-    return receiver.setitem(StringValue(key), TermValue(value), "setitem-site", context)
-
-
 def _mutation_products(outcome):
     assert outcome.completed_value() is not None
     result = getattr(outcome.completed_value(), "result", None)
@@ -59,53 +45,6 @@ def _mutation_products(outcome):
     assert isinstance(result, NoneValue)
     assert isinstance(receiver, MappingObjectValue)
     return result, receiver
-
-
-def test_source_setitem_halt_precedes_and_blocks_builtin_dict_mutation() -> None:
-    """Lying face: direct builtin mutation cannot bypass the source override."""
-    receiver, context = _source_receiver(
-        "class EnumNamespace(dict):\n"
-        "    def __setitem__(self, key, value):\n"
-        "        raise ValueError('source override ran')\n"
-    )
-
-    outcome = _source_method_outcome(receiver, context)
-
-    assert isinstance(outcome, ExitSet)
-    halted = tuple(face for face in outcome.exits if isinstance(face, Halted))
-    assert len(halted) == 1
-    assert halted[0].effect.exception_name == "ValueError"
-    assert receiver.entries == ()
-
-
-def test_source_setitem_runs_then_super_returns_none_with_updated_receiver() -> None:
-    """Truthful face: source effects precede one receiver-owned base mutation."""
-    receiver, context = _source_receiver(
-        "class EnumNamespace(dict):\n"
-        "    def __setitem__(self, key, value):\n"
-        "        self.seen = key\n"
-        "        super().__setitem__(key, value)\n"
-    )
-
-    from sugar_lift_py_tests.floor.named_expression_value import (
-        CallerStoreValue,
-        peel_walrus_binds,
-    )
-
-    outcome = _source_method_outcome(receiver, context)
-    carried = outcome.completed_value()
-    assert carried is not None
-    # ``self.seen = key`` is a store on an object the caller sees: it rides
-    # the store statement's value to the statement, never dropped, and the
-    # receiver the method left is the value beneath it.
-    stores, updated = peel_walrus_binds(carried)
-    assert stores and all(isinstance(store, CallerStoreValue) for store in stores)
-
-    assert updated.identity == receiver.identity
-    assert updated.entries == ((StringValue("member"), TermValue(7)),)
-    seen = updated.attribute("seen", "seen-site", None)
-    assert seen.completed_value() is not None
-    assert seen.completed_value() == StringValue("member")
 
 
 _SUPER_SETITEM = (

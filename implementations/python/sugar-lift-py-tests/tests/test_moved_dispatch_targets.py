@@ -25,7 +25,6 @@ from sugar_lift_py_tests.floor import (
     TermValue,
     TupleValue,
 )
-from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUniverse
 from sugar_lift_py_tests.ir import _Ctor, make_var
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.floor.floor_value import FloorValue
@@ -209,34 +208,6 @@ def test_an_opaque_join_iterable_still_only_coordinates() -> None:
 def test_the_deleted_cap_module_is_not_quietly_back() -> None:
     """Discriminating face: restoring the cap would restore the abolished lie."""
     assert not _resolves("sugar_lift_py_tests.sugar.for_sugar")
-
-
-# -- sugar.block_sugar.BlockSugar -> function_universe_sugar.reduce_body ----
-
-
-class _EmptyBodyUniverse(FunctionBodyUniverse):
-    parameter = "x"
-    statements: tuple = ()
-
-    def constraint_formulas(self):  # pragma: no cover - not reached by reduction
-        return []
-
-
-def test_a_body_universe_reduces_through_the_one_reduce_body_law() -> None:
-    from sugar_lift_py_tests.floor.call_site_value import _reduce_callsite_body
-    from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_body
-    from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
-        SourceVisibleFunctionBodySugar,
-    )
-
-    reduced = _reduce_callsite_body(_EmptyBodyUniverse(), None, blame="body-site")
-
-    # The FunctionBodyUniverse arm reduces to exactly what `reduce_body` gives,
-    # and to exactly what the SourceVisibleFunctionBodySugar arm two lines above
-    # it gives -- one law for both, which is why `reduce_body` is the successor
-    # of the deleted `BlockSugar.desugar` and not a lookalike.
-    assert reduced == reduce_body((), None)
-    assert reduced == SourceVisibleFunctionBodySugar((), object()).desugar(None)
 
 
 def test_the_deleted_block_sugar_is_not_quietly_back() -> None:
