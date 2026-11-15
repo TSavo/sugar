@@ -8,11 +8,13 @@ exception is pushed), then matches with ``PyErr_GivenExceptionMatches``: a
 tuple matches when any member does, an empty tuple matches nothing.
 
 The arm is therefore the expression's Sugar, desugared in the routing context
-of each raise.  Only a value whose meaning is closed is admitted: an exception
-class with an authenticated identity, or a tuple of them (possibly empty).
-Anything else -- an expression that may itself raise, a non-class member
-(CPython's ``TypeError: catching classes that do not inherit from
-BaseException is not allowed``), a value nobody testified to -- stays loud.
+of each raise, every face of it carried: a halt of the expression is the
+``try``'s halt where the raise reached the arm.  A completed face is admitted
+only when its value's meaning is closed: an exception class with an
+authenticated identity, or a tuple of them (possibly empty).  Anything else --
+a non-class member (CPython's ``TypeError: catching classes that do not
+inherit from BaseException is not allowed``), a value nobody testified to --
+stays loud.
 """
 
 from __future__ import annotations
@@ -56,34 +58,38 @@ class ComputedExceptionTypeSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx=None):
+        """Every face of the handler expression: a halted face is the
+        expression's own raise (the ``try`` halts there, ``TrySugar``'s
+        router); each completed face must hold an exception class, or a tuple
+        of them, else it is refused by name.  A deferred carrier is refused by
+        name (``_require_exit_set``)."""
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
         from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
         from sugar_source_tree.panic import SugarNotWritten
 
-        outcome = self.value.desugar(ctx)
-        value = (
-            outcome.completed_value() if isinstance(outcome, ExitSet) else None
+        outcome = _require_exit_set(
+            self.value.desugar(ctx), owner="ComputedExceptionTypeSugar.desugar"
         )
-        if value is None:
-            raise SugarNotWritten(
-                blame=self.site,
-                owner="ComputedExceptionTypeSugar.desugar",
-                observed="computed except type may not complete",
-                requested="an except expression that completes",
-                fix="model the handler expression's own raise, or keep it loud",
-            )
-        members = value.elements if type(value) is TupleValue else (value,)
-        for member in members:
-            reader = getattr(member, "exception_type_identity", None)
-            if reader is None or reader() is None:
-                raise SugarNotWritten(
-                    blame=self.site,
-                    owner="ComputedExceptionTypeSugar.desugar",
-                    observed=(
-                        "computed except type member without authenticated "
-                        f"exception identity: {type(member).__name__}"
-                    ),
-                    requested="exception classes, or a tuple of them",
-                    fix="keep the arm loud; CPython raises TypeError for a non-class",
-                )
-        return outcome
+
+        def closed(value):
+            members = value.elements if type(value) is TupleValue else (value,)
+            for member in members:
+                reader = getattr(member, "exception_type_identity", None)
+                if reader is None or reader() is None:
+                    raise SugarNotWritten(
+                        blame=self.site,
+                        owner="ComputedExceptionTypeSugar.desugar",
+                        observed=(
+                            "computed except type member without authenticated "
+                            f"exception identity: {type(member).__name__}"
+                        ),
+                        requested="exception classes, or a tuple of them",
+                        fix=(
+                            "keep the arm loud; CPython raises TypeError for a "
+                            "non-class"
+                        ),
+                    )
+            return ExitSet.completed(value)
+
+        return outcome.and_then(closed)
