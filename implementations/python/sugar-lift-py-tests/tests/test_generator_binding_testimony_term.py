@@ -12,7 +12,9 @@ import tempfile
 
 import pytest
 
+from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_py_tests.generator_construction import (
+    FormalFloorBindingV1,
     GeneratorConstructionV1,
     ReturnStepV1,
     YieldStepV1,
@@ -22,6 +24,7 @@ from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.binding_provenance import ConstructedValueTestimonyV1
 from sugar_source_tree.binding_state import (
+    BindingEntryV1,
     BindingStateWireGap,
     RuntimeBindingEntryFactoryV1,
     seal_bound_binding_entry_v1,
@@ -67,6 +70,20 @@ def _literals() -> tuple[IntLiteralSugar, IntLiteralSugar]:
     )
 
 
+def _formal_floors(binding):
+    """The binder's pairing for each formal entry: its coordinate and the
+    Floor actual seated there (``CallSiteSugar`` pairs
+    ``source_call_frame.formal_coordinates`` with ``callsite.arg_values``).
+    Allocation's roster law refuses a sealed entry with no floor at its
+    coordinate (``FormalFloorBindingGap``), so the fixture supplies the one
+    production always supplies."""
+    return tuple(
+        FormalFloorBindingV1(entry.coordinate.cid, TermValue(entry.state.value))
+        for entry in binding
+        if isinstance(entry, BindingEntryV1)
+    )
+
+
 def _machine(binding):
     yielded, returned = _literals()
     return GeneratorConstructionV1.allocate(
@@ -74,6 +91,7 @@ def _machine(binding):
         frame_coordinate="frame:gen",
         binding_state=binding,
         steps=(YieldStepV1(yielded), ReturnStepV1(returned)),
+        formal_floor_bindings=_formal_floors(binding),
     )
 
 
