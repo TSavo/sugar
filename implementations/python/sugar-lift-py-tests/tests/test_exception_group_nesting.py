@@ -462,59 +462,59 @@ def test_twin_full_outer_consume_is_complete_not_nested_residual():
     assert outcome.completed_value() is not None, outcome
 
 
-def test_nested_handler_preserves_temporal_bindings_across_inner_try_star():
-    """Outer except* binding remains visible after nested TryStar fully consumes.
+def test_nested_handler_binding_before_a_later_arm_is_refused_by_name():
+    """An outer ``except*`` arm that binds, with a later arm on the same group.
 
-    Pins temporal state through two handler levels: ``y`` assigned before the
-    nested TryStar is still bound after the inner except* completes and the
-    outer TypeError residual is drained, and is what the function returns.
+    ``ExceptionGroup('outer', [ValueError('a'), TypeError('b')])`` runs both
+    arms in turn: ``except* ValueError`` (which binds ``y``, and ``z`` through
+    its nested ``try``/``except*``) and then ``except* TypeError`` on the rest,
+    in the state the first arm left.  Python returns ``y == 1`` (and ``z ==
+    2``).  The one temporal rewrite of a ``try`` states one arm per halt, each
+    begun from the body's halt (``TryStar._arm_entry_state``, #8489): it does
+    not state the state a later arm begins from after an earlier arm changed
+    a binding, so the function is refused by name -- never answered as if the
+    earlier arm had not run.
 
     The ``return`` stands after the ``try``: Python compiles no ``return``,
     ``break`` or ``continue`` inside an ``except*`` block (a SyntaxError), so
     a source with one there is not a Python program.
     """
-    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    import pytest
 
-    outcome = _desugar(
-        "def f():\n"
-        "    try:\n"
-        "        raise ExceptionGroup('outer', [ValueError('a'), TypeError('b')])\n"
-        "    except* ValueError:\n"
-        "        y = 1\n"
-        "        try:\n"
-        "            raise ExceptionGroup('inner', [KeyError('k')])\n"
-        "        except* KeyError:\n"
-        "            z = 2\n"
-        "    except* TypeError:\n"
-        "        pass\n"
-        "    return y\n",
-        name="nested_temporal_y.py",
-    )
-    completed = outcome.completed_value()
-    assert completed is not None, outcome
-    returns = [s for s in completed.record.statements if isinstance(s, ReturnValue)]
-    assert returns, completed.record.statements
-    assert returns[0].value.value == 1
+    from sugar_source_tree.panic import SugarNotWritten
 
-    # Inner-handler binding made inside the nested except* (same arm), read
-    # after both statements.
-    outcome_z = _desugar(
-        "def f():\n"
-        "    try:\n"
-        "        raise ExceptionGroup('outer', [ValueError('a'), TypeError('b')])\n"
-        "    except* ValueError:\n"
-        "        try:\n"
-        "            raise ExceptionGroup('inner', [KeyError('k')])\n"
-        "        except* KeyError:\n"
-        "            z = 2\n"
-        "    except* TypeError:\n"
-        "        pass\n"
-        "    return z\n",
-        name="nested_temporal_z.py",
-    )
-    completed_z = outcome_z.completed_value()
-    assert completed_z is not None, outcome_z
-    returns_z = [
-        s for s in completed_z.record.statements if isinstance(s, ReturnValue)
-    ]
-    assert returns_z and returns_z[0].value.value == 2
+    sources = {
+        "nested_temporal_y.py": (
+            "def f():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('outer', [ValueError('a'), TypeError('b')])\n"
+            "    except* ValueError:\n"
+            "        y = 1\n"
+            "        try:\n"
+            "            raise ExceptionGroup('inner', [KeyError('k')])\n"
+            "        except* KeyError:\n"
+            "            z = 2\n"
+            "    except* TypeError:\n"
+            "        pass\n"
+            "    return y\n"
+        ),
+        # The binding made inside the nested except* (same outer arm).
+        "nested_temporal_z.py": (
+            "def f():\n"
+            "    try:\n"
+            "        raise ExceptionGroup('outer', [ValueError('a'), TypeError('b')])\n"
+            "    except* ValueError:\n"
+            "        try:\n"
+            "            raise ExceptionGroup('inner', [KeyError('k')])\n"
+            "        except* KeyError:\n"
+            "            z = 2\n"
+            "    except* TypeError:\n"
+            "        pass\n"
+            "    return z\n"
+        ),
+    }
+    for name, source in sources.items():
+        with pytest.raises(SugarNotWritten) as excinfo:
+            _desugar(source, name=name)
+        assert "an except* arm changes a binding" in str(excinfo.value), name
+        assert f"{name}:4:4" in str(excinfo.value), name
