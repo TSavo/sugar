@@ -555,10 +555,11 @@ def answers_identity_by_object(value) -> bool:
 
 
 # The language's singletons: every ``None`` is the one ``None``, every
-# ``True`` the one ``True``, every ``False`` the one ``False``.  No other
-# value is promised one object (small ints, interned strings, the empty
-# tuple and merged code constants are CPython's choice).
-_SINGLETON_KINDS = ("None", "bool")
+# ``True`` the one ``True``, every ``False`` the one ``False``, every ``...``
+# the one ``Ellipsis``.  No other value is promised one object (small ints,
+# interned strings, the empty tuple and merged code constants are CPython's
+# choice).
+_SINGLETON_KINDS = ("None", "bool", "ellipsis")
 
 
 def object_identity(left, right, site):
@@ -629,6 +630,7 @@ def _known_type(value):
 
     from .bytes_value import BytesValue
     from .dict_value import DictValue
+    from .ellipsis_value import EllipsisValue
     from .list_value import ListValue
     from .none_value import NoneValue
     from .object_value import ObjectValue
@@ -641,6 +643,8 @@ def _known_type(value):
         return ("object", value.class_name)
     if type(value) in (TrueBoolLiteralSugar, FalseBoolLiteralSugar):
         return ("bool",)
+    if type(value) is EllipsisValue:
+        return ("ellipsis",)
     if type(value) is TermValue:
         payload = type(value.value)
         return (payload.__name__,) if payload in (int, float, bool, complex) else None
@@ -672,6 +676,7 @@ def _ground_key(value, depth=0):
     )
 
     from .bytes_value import BytesValue
+    from .ellipsis_value import EllipsisValue
     from .none_value import NoneValue
     from .string_value import StringValue
     from .term_value import TermValue
@@ -682,6 +687,8 @@ def _ground_key(value, depth=0):
         return None
     if kind is NoneValue:
         return ("None",)
+    if kind is EllipsisValue:
+        return ("ellipsis",)
     if kind is TrueBoolLiteralSugar:
         return ("bool", True)
     if kind is FalseBoolLiteralSugar:
