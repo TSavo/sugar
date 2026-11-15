@@ -62,8 +62,10 @@ def test_assert_with_message_builds_and_carries_message_provenance():
 
     assert isinstance(sugar, AssertSugar)
     assert sugar.message == node.msg.sugar()
-    assert outcome.value.site.memento().extra["assertMessage"] == "'boom'"
-    assert outcome.value.site.memento().to_rpc()["assertMessage"] == "'boom'"
+    support = outcome.completed_value()
+    assert support is not None
+    assert support.site.memento().extra["assertMessage"] == "'boom'"
+    assert support.site.memento().to_rpc()["assertMessage"] == "'boom'"
 
 
 def test_assert_support_retains_its_own_occurrence_not_a_foreign_site():
