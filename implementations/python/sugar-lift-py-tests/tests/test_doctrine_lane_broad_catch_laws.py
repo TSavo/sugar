@@ -34,7 +34,7 @@ from sugar_lift_py_tests.generator_construction import (
     ReturnStepV1,
     YieldStepV1,
 )
-from sugar_lift_py_tests.ir import num
+from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.binding_state import (
@@ -61,6 +61,12 @@ def _constant_entry():
         state=value,
     )
     return value, entry
+
+
+def _int(value: int) -> IntLiteralSugar:
+    """A step's value is constructed sugar (``_require_constructed_term``),
+    never a bare IR term."""
+    return IntLiteralSugar(value, site=f"literal:{value}")
 
 
 def test_generator_guard_construction_panic_must_not_become_suspension_gap():
@@ -94,8 +100,8 @@ def test_generator_guard_construction_panic_must_not_become_suspension_gap():
         steps=(
             IfStepV1(
                 PanicGuard(),
-                (YieldStepV1(num(1)),),
-                (ReturnStepV1(num(2)),),
+                (YieldStepV1(_int(1)),),
+                (ReturnStepV1(_int(2)),),
                 "frag:audit-if",
             ),
         ),
@@ -141,8 +147,8 @@ def test_generator_guard_construction_panic_is_not_if_carrying_suspension():
         steps=(
             IfStepV1(
                 PanicGuard(),
-                (YieldStepV1(num(1)),),
-                (ReturnStepV1(num(2)),),
+                (YieldStepV1(_int(1)),),
+                (ReturnStepV1(_int(2)),),
                 "frag:audit-if-2",
             ),
         ),

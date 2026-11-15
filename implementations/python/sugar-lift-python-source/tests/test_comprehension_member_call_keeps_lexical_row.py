@@ -15,9 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from sugar_lift_py_tests.floor.list_value import ListValue
-from sugar_source_tree.panic import SugarNotWritten
 
 from test_assignment_evaluates_rhs import _rows
 from test_undetermined_raise_except_matching import _exits
@@ -40,10 +38,13 @@ def test_member_call_to_module_function_projects_its_body(tmp_path: Path) -> Non
     assert len(_returns(rows)) == 1, rows
 
 
-def test_member_call_to_nested_function_ends_in_a_named_refusal(tmp_path: Path) -> None:
+def test_member_call_to_nested_function_projects_its_body(tmp_path: Path) -> None:
     # The board file's shape: ``tdf`` is defined inside the test.  A call to a
-    # nested def has no seated frame (a separate gap), so the run ends in that
-    # named refusal -- a terminal -- not in a BackendDefect.
+    # nested def carries the frame it read from its definition, read once at
+    # construction (never read again out of the seated-frame table at
+    # desugar), so the member call projects its body as a module function's
+    # does -- never a BackendDefect, never a refusal for a frame no table
+    # seats.
     source = (
         "def f():\n"
         "    def tdf(name):\n"
@@ -52,8 +53,8 @@ def test_member_call_to_nested_function_ends_in_a_named_refusal(tmp_path: Path) 
         "    dfs = [tdf(s) for s in sheets]\n"
         "    return dict(zip(sheets, dfs))\n"
     )
-    with pytest.raises(SugarNotWritten, match="foreign lexical owner"):
-        _exits(tmp_path, source)
+    rows = _rows(_exits(tmp_path, source))
+    assert len(_returns(rows)) == 1, rows
 
 
 def test_member_calls_are_each_their_own_evaluation(tmp_path: Path) -> None:

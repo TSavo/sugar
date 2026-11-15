@@ -103,10 +103,10 @@ from sugar_source_tree.nodes import (
     ObjectPlaceStateV1,
     OpaqueObjectStateV1,
     PathAfterCall,
+    PathContainerCall,
     ReceiverFieldStoreState,
     ReceiverFieldStoreStatement,
     Return,
-    Subscript,
     With,
     _occurrence_testimony,
     ground_subscript_key,
@@ -693,79 +693,88 @@ def test_no_constructor_call_is_reduced_at_substitution() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 10. ``box[k] = 1``: which field a subscript store or read names is the key
-#     expression's ground value (``ground_subscript_key``), never the key
-#     reduced at substitution.
+# 10. ``box[k] = 1``: an item store on a name is the one mutation door's
+#     statement (``container_mutation.name_mutation_statement``, #8096),
+#     whatever ``box`` was given; the receiver's value decides
+#     ``__setitem__`` at reduce.  The statement keeps its key expression,
+#     never the key reduced at substitution, and a later read of ``box``
+#     reads the object after the store through the statement's key.
 # ---------------------------------------------------------------------------
 
 
 def _item_stores(body) -> list:
+    """``(statement, call)`` for each item store: the door's statement and
+    the one ``__setitem__`` operation it evaluates (``evaluated[0]``)."""
     return [
-        node
+        (node, node.evaluated[0])
         for node in body
-        if isinstance(node, Assign)
-        and len(node.targets) == 1
-        and isinstance(node.targets[0], Subscript)
+        if isinstance(node, ContainerMutationStatement)
+        and node.evaluated
+        and isinstance(node.evaluated[0], PathContainerCall)
+        and node.evaluated[0].method == "__setitem__"
     ]
+
+
+def _reads_after(read, store) -> None:
+    """``read`` reads the object after ``store`` through the statement's key:
+    the call's pair is read there, never the call (and its key and value)
+    evaluated again."""
+    afters = [node for node in read.walk() if isinstance(node, PathAfterCall)]
+    assert any(after.evaluation == store.evaluation for after in afters), afters
+    for after in afters:
+        pair = after.sugar().call
+        assert isinstance(pair, EvaluationRefSugar)
+        assert pair.place
+        assert pair.evaluation == after.evaluation
 
 
 def test_a_literal_key_read_reads_the_stores_key() -> None:
     body = _function(PLACE_ITEM).substitute({}).body
-    (store,) = _item_stores(body)
+    ((store, call),) = _item_stores(body)
     assert isinstance(store.evaluation, str)
     # The statement keeps its key expression: it evaluates it itself.
-    assert store.targets[0].slice_.kind == "Constant"
+    key, _value = call.args
+    assert key.kind == "Constant"
     ret = body[-1]
     assert isinstance(ret, Return)
-    # ``box['a']`` reads what ``box['a'] = 1`` put there, through its key.
-    assert ret.value.kind == "EvaluationRef"
-    assert ret.value.place is True
-    assert ret.value.evaluation == store.evaluation
+    # ``box['a']`` reads the object ``box['a'] = 1`` left, through its key.
+    _reads_after(ret.value, store)
 
 
 def test_a_ground_name_key_read_reads_the_stores_key() -> None:
     body = _function(PLACE_ITEM_BY_NAME).substitute({}).body
-    (store,) = _item_stores(body)
+    ((store, call),) = _item_stores(body)
     assert isinstance(store.evaluation, str)
     # The store's key is ``k``'s key reference, never a value built for it.
-    key = store.targets[0].slice_
+    key, _value = call.args
     assert key.kind == "EvaluationRef"
     assert not getattr(key, "place", False)
+    assert ground_subscript_key(key) == "a"
     ret = body[-1]
     assert isinstance(ret, Return)
-    # ``k`` holds ``'a'`` (its reference's ``of``): ``box['a']`` reads it.
-    assert ret.value.kind == "EvaluationRef"
-    assert ret.value.place is True
-    assert ret.value.evaluation == store.evaluation
+    # ``box['a']`` reads the object ``box[k] = 1`` left, through its key.
+    _reads_after(ret.value, store)
 
 
 def test_a_call_key_leaves_the_field_unknown_and_is_not_called_again() -> None:
     body = _function(PLACE_ITEM_BY_CALL).substitute({}).body
-    first, by_call = _item_stores(body)
+    (first, _first_call), (by_call, call) = _item_stores(body)
     # The store keeps its call as the key: the statement evaluates it, once,
     # at reduce; nothing was built for it at substitution.
-    assert by_call.targets[0].slice_.kind == "Call"
-    key_span = by_call.targets[0].slice_.span
-    calls = [
-        node
-        for statement in body
-        for node in statement.walk()
-        if node.kind == "Call" and node.span == key_span
-    ]
-    # No second term for ``g()``: only the store's own key expression.
-    assert len(calls) == 1, calls
+    key, _value = call.args
+    assert key.kind == "Call"
     ret = body[-1]
     assert isinstance(ret, Return)
-    # ``g()`` may name ``'a'``: the read is not the first store's key, and
-    # the object after the store is unknown, never its fields before it.
+    # ``g()`` may name ``'a'``: the read is not the first store's key; it
+    # reads the object after the second store, through that statement's key,
+    # and every post-state it holds reads its call's pair there: ``g()`` is
+    # never called again.
     assert not (
         ret.value.kind == "EvaluationRef"
         and getattr(ret.value, "place", False)
         and ret.value.evaluation == first.evaluation
     )
-    assert ret.value.kind == "Subscript"
-    assert isinstance(ret.value.value, ObjectPlaceStateV1)
-    assert ret.value.value.invalidated_by_opaque_call is True
+    _reads_after(ret.value, by_call)
 
 
 # ---------------------------------------------------------------------------
@@ -776,17 +785,16 @@ def test_a_call_key_leaves_the_field_unknown_and_is_not_called_again() -> None:
 
 def test_a_negative_key_read_reads_the_stores_key() -> None:
     body = _function(PLACE_ITEM_NEGATIVE).substitute({}).body
-    (store,) = _item_stores(body)
+    ((store, call),) = _item_stores(body)
     assert isinstance(store.evaluation, str)
     # The statement keeps its key expression: ``-1`` is a unary minus.
-    assert store.targets[0].slice_.kind == "UnaryOp"
-    assert ground_subscript_key(store.targets[0].slice_) == -1
+    key, _value = call.args
+    assert key.kind == "UnaryOp"
+    assert ground_subscript_key(key) == -1
     ret = body[-1]
     assert isinstance(ret, Return)
-    # ``box[-1]`` reads what ``box[-1] = 1`` put there, through its key.
-    assert ret.value.kind == "EvaluationRef"
-    assert ret.value.place is True
-    assert ret.value.evaluation == store.evaluation
+    # ``box[-1]`` reads the object ``box[-1] = 1`` left, through its key.
+    _reads_after(ret.value, store)
 
 
 def test_a_dict_display_key_is_decided_by_its_ground_value() -> None:
