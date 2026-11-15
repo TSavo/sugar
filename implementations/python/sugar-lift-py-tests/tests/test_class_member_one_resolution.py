@@ -306,10 +306,19 @@ def test_delattr_and_the_helper_rebuild_keep_the_class() -> None:
     assert receiver.with_deferred_helper_fields().defining_class is box
 
 
+def _delete_site():
+    """The fragment of a real ``del o.__class__`` statement: a ground exit
+    cites source it can re-read (``ground_exit.ground_raise_effect``), never
+    a prose locus."""
+    tree = _tree("def f(o):\n    del o.__class__\n", "delete_class.py")
+    return next(tree.functions()).body[0].fragment
+
+
 def test_deleting_the_class_is_the_type_error_halt() -> None:
     """``del o.__class__`` is ``object.__class__``'s setter with no value
     (``object_set_class``): ``TypeError``, never the instance-field delete
-    and never ``AttributeError`` (#7757, surfaced in #8803)."""
+    and never ``AttributeError`` (#7757, surfaced in #8803).  The halt is a
+    ground exit, which cites the statement's fragment."""
     box = _bare_class_value(_classes("class Box:\n    pass\n")["Box"])
     receiver = ObjectValue(
         "Box",
@@ -319,7 +328,7 @@ def test_deleting_the_class_is_the_type_error_halt() -> None:
         allocation=FRAME_FRESH,
     )
 
-    outcome = receiver.delattr("__class__", "del-site", None)
+    outcome = receiver.delattr("__class__", _delete_site(), None)
     assert _halt_names(outcome) == ["TypeError"]
     assert len(outcome.exits) == 1
 
