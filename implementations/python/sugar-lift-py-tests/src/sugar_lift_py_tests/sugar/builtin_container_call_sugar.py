@@ -521,6 +521,13 @@ class PathContainerCallSugar(ConstructedTermSugar):
     # zero-argument ``super()`` reads the formal
     # (``nodes._call_on_self_in_place``).
     frame_receiver: str | None = dataclass_field(default=None, compare=False)
+    # The module the operation stands in: what an item store or delete on a
+    # formal whose class is an input dispatches through
+    # (``receiver_dispatch.dispatch_on_receiver``, #7757 step 7).  A lookup
+    # aid, never testimony, as ``MethodCallSugar.unit`` is.
+    unit: object = dataclass_field(
+        default=None, compare=False, repr=False, metadata={"testimony": "lookup"}
+    )
 
     @classmethod
     def witnesses(cls):
@@ -654,7 +661,52 @@ class PathContainerCallSugar(ConstructedTermSugar):
             if decided is not None:
                 return decided
             return _opaque_pair(kind, self.method, self.site)
+        dispatched = self._dispatched_item_operation(receiver, operands)
+        if dispatched is not None:
+            return dispatched
         return self._ordinary(receiver, operands, ctx)
+
+    def _dispatched_item_operation(self, receiver, operands):
+        """``r[k] = v`` / ``del r[k]`` on a formal or a cell whose class is an
+        input of the contract (``receiver_dispatch.dispatch_on_receiver``):
+        Python runs ``type(r).__setitem__(r, k, v)`` / ``__delitem__(r,
+        k)``, so the operation is the dispatched edge, resolved at prove at
+        the class the caller binds (a builtin ``list`` or ``dict`` takes its
+        law, ``consistency::builtin_dispatch_answer``), never a store this
+        frame decides (#7757 step 7).  Its pair: the receiver as the call
+        left it (``receiver_dispatch.receiver_after_dispatch``) and ``None``,
+        on the call's completed face; its halted face is the edge's own.
+        None for an in-place operator, any other operation, or a receiver
+        that is not a formal's or a cell's plain value whose class is an
+        input here."""
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+        if (
+            type(receiver) is not SymbolicValue
+            or self.operator is not None
+            or self.method not in ("__setitem__", "__delitem__")
+        ):
+            return None
+        from sugar_lift_py_tests.floor import builtin_container_method as law
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
+        from sugar_lift_py_tests.receiver_dispatch import (
+            dispatch_on_receiver,
+            receiver_after_dispatch,
+        )
+
+        outcome = dispatch_on_receiver(
+            self.method, receiver, tuple(operands), (), self.site, unit=self.unit
+        )
+        if outcome is None:
+            return None
+
+        def pair(result):
+            post = receiver_after_dispatch(receiver, result)
+            if post is None:
+                post = self._after(receiver)
+            return ExitSet.completed(TupleValue((post, law._none())))
+
+        return outcome.and_then(pair)
 
     def _ordinary(self, receiver, operands, ctx) -> ExitSet:
         """The operation on a value the container law does not cite: the
@@ -716,6 +768,7 @@ class PathContainerCallSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.floor import builtin_container_method as law
         from sugar_lift_py_tests.floor.call_site_value import receiver_after_its_call
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
+        from sugar_lift_py_tests.receiver_dispatch import receiver_after_dispatch
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             plain_completed_value,
         )
@@ -731,11 +784,16 @@ class PathContainerCallSugar(ConstructedTermSugar):
             # followed source body whose effects on it are the field stores
             # it carries, a builtin's own transition of it
             # (``receiver_after_its_call``, the one projection of a callee's
-            # effects on what its caller sees).
+            # effects on what its caller sees), or a dispatched call on a
+            # formal or a cell whose class is an input, which leaves it
+            # ``python:after(<call result>, "0")``
+            # (``receiver_dispatch.receiver_after_dispatch``, #7757 step 7).
             def after(result):
                 if receiver is None or post is receiver:
                     return post
                 stated = receiver_after_its_call(receiver, result)
+                if stated is None:
+                    stated = receiver_after_dispatch(receiver, result)
                 return post if stated is None else stated
 
             def value(result):

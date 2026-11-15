@@ -252,7 +252,15 @@ def class_value(value):
       ``python:constructed(<class symbol>)``, bound at prove to the class
       and fields the class's contract states on every completed face
       (``constructed_term``).  The lift never reads what its ``__init__``
-      left.
+      left;
+    - a value of a builtin class the lifter itself decides
+      (``builtin_class_name``: a list, dict or set it constructed, a tuple,
+      a ``str``, an ``int``): ``python:builtin("<name>")``, the class object
+      the builtin namespace binds (#7757 step 7).  Its class is exact -- no
+      floor here holds an instance of a subclass -- and a builtin
+      instance's ``__class__`` cannot be stored, so the class is the one
+      the object has wherever the callee reads it.  Prove applies a
+      builtin method's law only where the input is bound to it.
 
     Anything else -- an instance that arrived by binding, a formal, a call's
     result of any other class -- is None: no class is supplied."""
@@ -276,6 +284,48 @@ def class_value(value):
         fields |= set(value.deferred_helper_fields)
         fields -= set(value.deleted_instance_fields)
         return instance_term(symbol, fields)
+    builtin = builtin_class_name(value)
+    if builtin is not None:
+        return builtin_class_term(builtin)
+    return None
+
+
+#: ``python:builtin("<name>")``: the class object the builtin namespace binds
+#: under ``<name>`` (``temporal.builtin_name_bindings``), as a caller binds
+#: a class input to it (``consistency::PYTHON_BUILTIN_CLASS``).
+BUILTIN_CLASS = "python:builtin"
+
+
+def builtin_class_term(name: str):
+    """``python:builtin("<name>")``: the builtin class ``name``."""
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    return ctor(BUILTIN_CLASS, [str_const(name)])
+
+
+def builtin_class_name(value):
+    """The name of the builtin class ``value`` is an exact instance of, where
+    the lifter itself decides it, else None: a ``list``, ``dict`` or ``set``
+    the lifter constructed (``builtin_container_method.container_kind``), a
+    ``tuple``, a ``str``, an ``int`` (never a ``bool``: ``type(True)`` is
+    ``bool``).  A value standing for a formal (``formal_coordinate``) is the
+    caller's, and its class is not decided here."""
+    from sugar_lift_py_tests.floor import builtin_container_method as law
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+    if getattr(value, "formal_coordinate", None) is not None:
+        return None
+    kind = law.container_kind(value)
+    if kind is not None:
+        return kind
+    if type(value) is TupleValue:
+        return "tuple"
+    if type(value) is StringValue:
+        return "str"
+    if type(value) is TermValue and type(value.value) is int:
+        return "int"
     return None
 
 
@@ -284,7 +334,11 @@ def class_arguments(positional, keywords, *, shift: int = 0) -> list:
     here (``class_value``): a positional actual keyed by its position (plus
     ``shift``) in decimal digits, a keyword actual by its keyword.  Prove's
     one binder binds each to the ``class:<param>`` input of the parameter
-    that argument binds, where the callee's contract takes one."""
+    that argument binds, where the callee's contract takes one.  A captured
+    cell's value is keyed by the input it supplies, ``cell:<name>``
+    (``lambda_callable.definition_edge_call``), and binds
+    ``class:cell:<name>``: the class of the formal that argument binds, the
+    one input kind."""
     from sugar_lift_py_tests.ir import ctor, str_const
 
     arguments = []
@@ -312,6 +366,11 @@ def dispatch_on_receiver(name, receiver, positional, kw_values, site, *, unit):
       Only for a method name this module never spells as anything but a
       callee (``module_attribute_names``): a field of that name stored on
       the formal in the frame would shadow the method unseen;
+    - ``receiver`` is the plain value of a captured cell of the function
+      whose own proof this is (its ``cell:<name>`` input,
+      ``ContractInputCoordinateV1``) whose class is an input too
+      (``nodes._receiver_class_cells``): its class is ``class:cell:<name>``,
+      under the same method-name guard (#7757 step 7);
     - ``receiver`` is the instance an ``__init__``'s own contract runs on
       (``self``: an ``ObjectValue`` that arrived through the initializer's
       receiver coordinate, ``initializer_receiver_formals``) and the class
@@ -347,7 +406,6 @@ def _receiver_class(name, receiver, unit):
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.floor.object_value import ObjectValue
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-    from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
     from sugar_lift_py_tests.ir import make_var
 
     if isinstance(receiver, CallSiteValue):
@@ -372,8 +430,7 @@ def _receiver_class(name, receiver, unit):
     coordinate = getattr(receiver, "formal_coordinate", None)
     if (
         type(receiver) is SymbolicValue
-        and isinstance(coordinate, FormalParameterCoordinateV1)
-        and coordinate.parameter_kind in _PARAMETER_KINDS
+        and _class_input_coordinate(coordinate)
         and coordinate.coordinate_cid in class_input_formals(unit)
     ):
         names, dynamic = module_attribute_names(unit)
@@ -383,6 +440,24 @@ def _receiver_class(name, receiver, unit):
 
         return make_var(input_formal(CLASS_INPUT, coordinate.declared_name))
     return None
+
+
+def _class_input_coordinate(coordinate) -> bool:
+    """Whether ``coordinate`` is one a class input may name: a positional or
+    keyword parameter's (``FormalParameterCoordinateV1``), or a captured
+    cell's ``cell:<name>`` input's (``ContractInputCoordinateV1``)."""
+    from sugar_lift_py_tests.contract_input import (
+        CELL_INPUT,
+        ContractInputCoordinateV1,
+    )
+    from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
+
+    if isinstance(coordinate, FormalParameterCoordinateV1):
+        return coordinate.parameter_kind in _PARAMETER_KINDS
+    return (
+        isinstance(coordinate, ContractInputCoordinateV1)
+        and coordinate.input_kind == CELL_INPUT
+    )
 
 
 # Module -> (module, coordinate CIDs), the last few typed modules read.
@@ -395,12 +470,20 @@ def class_input_formals(unit) -> frozenset:
     (``nodes._receiver_class_parameters``): the formals a method call on
     which is dispatched.  A formal with no such input keeps the path it took
     before (the ``method_call`` operation waiting for an actual), since
-    nothing would ever bind its class.  Read once per typed module."""
+    nothing would ever bind its class.  Each captured cell whose class is an
+    input (``nodes._receiver_class_cells``) is named so too, by the
+    coordinate of its ``cell:<name>`` input (#7757 step 7).  Read once per
+    typed module."""
+    from sugar_lift_py_tests.contract_input import (
+        CELL_INPUT,
+        ContractInputCoordinateV1,
+    )
     from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
     from sugar_source_tree.nodes import (
         AsyncFunctionDef,
         FunctionDef,
         Lambda,
+        _receiver_class_cells,
         _receiver_class_parameters,
     )
 
@@ -415,6 +498,19 @@ def class_input_formals(unit) -> frozenset:
         for node in statement.walk():
             if not isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda)):
                 continue
+            cells = _receiver_class_cells(node)
+            if cells:
+                # The coordinate the function's own universe reads the cell
+                # through (``nodes._contract_inputs``).
+                owner = node.fragment.seal().cid
+                for name in cells:
+                    found.add(
+                        ContractInputCoordinateV1.mint(
+                            owner_definition_cid=owner,
+                            input_kind=CELL_INPUT,
+                            name=name,
+                        ).coordinate_cid
+                    )
             inputs = set(_receiver_class_parameters(node))
             if not inputs:
                 continue
@@ -532,3 +628,44 @@ def dispatch_edge_call(
         runtime_dispatch_receiver=receiver,
     )
     return UnknownCalleeCallV1(target).faces(callsite, site)
+
+
+#: The label a dispatched call's receiver is read by after the call:
+#: ``python:after(<call result>, "0")``, the key its class rides under
+#: (``py.class("0", ...)``).  The lift does not know which function runs, so
+#: it names the operand by its argument key, never by a parameter's name
+#: (``consistency::DISPATCH_RECEIVER_LABEL``).
+DISPATCH_RECEIVER_LABEL = "0"
+
+
+def receiver_after_dispatch(receiver, result):
+    """``receiver`` as the dispatched call it was made on left it
+    (``result``, the call's completed value): ``python:after(<call result>,
+    "0")`` (``source_call_resolution.object_after_call``,
+    ``DISPATCH_RECEIVER_LABEL``), the one post-call state term, decided at
+    prove by the contract that answers the dispatched member at the class
+    its input is bound to -- a builtin ``list`` or ``dict`` method's law
+    (``consistency::builtin_dispatch_answer``) -- and undecided where
+    nothing answers it (#7757 step 7).  None where ``result`` is no
+    completed dispatched call (an attribute read through dispatch included)
+    made on ``receiver``, a formal's or a cell's plain value
+    (``SymbolicValue``): the receiver is then what the one exposure rule
+    leaves."""
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.source_call_resolution import object_after_call
+
+    if type(receiver) is not SymbolicValue:
+        return None
+    _binds, call = peel_walrus_binds(result)
+    if not isinstance(call, CallSiteValue):
+        return None
+    prefix = "python:" + DISPATCH_TARGET_PREFIX
+    symbol = getattr(call, "authenticated_target_symbol", None) or ""
+    member = symbol[len(prefix) :] if symbol.startswith(prefix) else ""
+    if not member or member.startswith(DISPATCH_READ_MARK):
+        return None
+    if call.runtime_dispatch_receiver != receiver:
+        return None
+    return SymbolicValue(object_after_call(call.term, DISPATCH_RECEIVER_LABEL))

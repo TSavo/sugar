@@ -10793,7 +10793,19 @@ class FunctionDef(Statement):
         "global:<name>")``, the term a caller reads the global by after the
         call (``container_mutation._global_targets``).  A global the body
         neither binds nor reads has nothing bound to it there and states
-        nothing."""
+        nothing.
+
+        Each parameter and each captured cell whose class is an input of
+        the contract and whose every use is a dispatched call on it
+        (``_settled_receivers``: a method call, an item store or delete) is
+        read so too, under its formal -- the parameter's name, or
+        ``cell:<name>``: the object the body left there, which the universe
+        states over ``python:after(out, <formal>)``, the term a caller reads
+        the object it handed the call by (#7757 step 7).  Its value is the
+        last dispatched call's ``python:after(<call result>, "0")``
+        (``receiver_dispatch.receiver_after_dispatch``), decided at prove
+        where the caller binds the class input to a builtin whose law
+        answers the call."""
         if type(self) is not FunctionDef or FunctionDef._owns_yield(self.body):
             return ()
         names, _coordinates = self._captured_bindings()
@@ -10806,6 +10818,7 @@ class FunctionDef(Statement):
             for symbol in table.get_symbols()
             if symbol.is_declared_global()
         )
+        settled = _settled_receivers(self)
         from sugar_lift_py_tests.contract_input import (
             CELL_INPUT,
             GLOBAL_INPUT,
@@ -10815,6 +10828,11 @@ class FunctionDef(Statement):
         found = []
         for kind, name in (
             *((CELL_INPUT, name) for name in names if name in rebound),
+            *(
+                (CELL_INPUT, name)
+                for name in names
+                if name in settled and name not in rebound
+            ),
             *((GLOBAL_INPUT, name) for name in declared),
         ):
             if not _rebound_in_branches_and_loops(self.body, name):
@@ -10823,6 +10841,14 @@ class FunctionDef(Statement):
             if read is None:
                 continue
             found.append((input_formal(kind, name), read.sugar()))
+        for parameter in self.params:
+            name = parameter.name
+            if name not in settled or name in names:
+                continue
+            read = _name_read(self, name, final)
+            if read is None:
+                continue
+            found.append((name, read.sugar()))
         return tuple(found)
 
     def substitute_in_block(self, scope):
@@ -25581,6 +25607,7 @@ class PathContainerCall(Expression):
             operator=operator,
             operator_site=getattr(self, "operator_site", None),
             frame_receiver=getattr(self, "frame_receiver", None),
+            unit=getattr(self, "unit", None),
         )
 
 
@@ -26439,7 +26466,14 @@ def _contract_inputs(definition) -> tuple:
       ``<param>.m(...)`` and does nothing else with the object that could
       change what its ``__dict__`` holds before such a call.  The function's
       own proof states no value for it; ``self.m()`` is the dispatched edge
-      over it (``receiver_dispatch.dispatch_on_receiver``).
+      over it (``receiver_dispatch.dispatch_on_receiver``).  A parameter the
+      body stores or deletes an item of (``p[k] = v``, ``del p[k]``) takes
+      it too: the store is ``type(p).__setitem__``, dispatched the same way
+      (#7757 step 7).
+    - ``class:cell:<name>`` for each captured cell whose object the body
+      mutates the same way (``_receiver_class_cells``, #7757 step 7): the
+      class of the formal ``cell:<name>``, the one input kind, supplied by
+      ``py.class("cell:<name>", <class>)``.
 
     The caller supplies each at the call (``py.closure``, ``py.default``,
     ``py.global``, ``py.class``), as it supplies an actual for a parameter."""
@@ -26449,6 +26483,7 @@ def _contract_inputs(definition) -> tuple:
         DEFAULT_INPUT,
         GLOBAL_INPUT,
         ContractInputV1,
+        input_formal,
     )
 
     owner_cid = definition.fragment.seal().cid
@@ -26487,20 +26522,31 @@ def _contract_inputs(definition) -> tuple:
         )
         for name in _receiver_class_parameters(definition)
     )
-    return cells + defaults + globals_ + classes
+    cell_classes = tuple(
+        ContractInputV1.mint(
+            owner_definition_cid=owner_cid,
+            input_kind=CLASS_INPUT,
+            name=input_formal(CELL_INPUT, name),
+        )
+        for name in _receiver_class_cells(definition)
+    )
+    return cells + defaults + globals_ + classes + cell_classes
 
 
 def _receiver_class_parameters(definition) -> tuple:
     """The parameters of ``definition`` whose class is an input of its
     contract (#7757 step 8), in parameter order: each positional or keyword
-    parameter ``p`` the body calls a method of (``p.m(...)``) and uses in no
-    other way that could change the object's ``__dict__`` before such a call
-    without the frame seeing it:
+    parameter ``p`` the body calls a method of (``p.m(...)``) or stores or
+    deletes an item of (``p[k] = v``, ``del p[k]``: ``type(p).__setitem__``
+    and ``__delitem__``, #7757 step 7) and uses in no other way that could
+    change the object's ``__dict__`` before such a call without the frame
+    seeing it:
 
     - every other read of ``p`` is ``p.<attr>``: ``p`` is never read bare (an
-      argument, an assignment's value, a callee, a container), so no code is
-      handed the object; a method call on it is itself the dispatched call,
-      after which the exposure rule holds the object as changed;
+      argument, an assignment's value, a callee, a container, an item read),
+      so no code is handed the object; a method call or an item store on it
+      is itself the dispatched call, after which the exposure rule holds the
+      object as changed;
     - no call reaches the object through a field (``p.x.f()``);
     - no nested function, lambda or class reads ``p`` at all (code that runs
       when the frame does not see it);
@@ -26525,12 +26571,6 @@ def _receiver_class_parameters(definition) -> tuple:
 
 def _read_receiver_class_parameters(definition) -> tuple:
     """``_receiver_class_parameters``, read off the definition's body."""
-    if isinstance(definition, AsyncFunctionDef):
-        return ()
-    body = definition.body
-    statements = tuple(body) if isinstance(body, (list, tuple)) else (body,)
-    if isinstance(definition, FunctionDef) and FunctionDef._owns_yield(body):
-        return ()
     parameters = tuple(
         parameter.name
         for parameter in definition.params
@@ -26539,6 +26579,93 @@ def _read_receiver_class_parameters(definition) -> tuple:
     )
     if not parameters:
         return ()
+    uses = _receiver_uses(definition)
+    if uses is None:
+        return ()
+    received, blocked, _read, zero_argument_super = uses
+    if zero_argument_super:
+        blocked = blocked | {parameters[0]}
+    return tuple(
+        name for name in parameters if name in received and name not in blocked
+    )
+
+
+def _receiver_class_cells(definition) -> tuple:
+    """The captured cells of ``definition`` whose class is an input of its
+    contract, ``class:cell:<name>`` (#7757 step 7), in the order the cells
+    are captured: each cell the body calls a method of or stores or deletes
+    an item of, under the rules a parameter's class input takes
+    (``_receiver_class_parameters``), and that the body never declares
+    ``nonlocal`` (a cell it rebinds holds another object after; its value
+    is stated as the rebinding left it, ``FunctionDef.
+    _cells_where_the_body_ends``).  Read once per definition."""
+    row = definition._coordinate()[2]
+    held = row.get("__receiver_class_cells__")
+    if held is not None:
+        return held
+    answer = ()
+    names, _coordinates = definition._captured_bindings()
+    uses = _receiver_uses(definition) if names else None
+    if uses is not None:
+        received, blocked, _read, _super = uses
+        body = definition.body
+        statements = tuple(body) if isinstance(body, (list, tuple)) else (body,)
+        declared = {
+            name
+            for statement in statements
+            for node in statement.walk()
+            if isinstance(node, Nonlocal)
+            for name in node.names
+        }
+        answer = tuple(
+            name
+            for name in names
+            if name in received and name not in blocked and name not in declared
+        )
+    row["__receiver_class_cells__"] = answer
+    return answer
+
+
+def _settled_receivers(definition) -> frozenset:
+    """The parameters and captured cells of ``definition`` whose class is an
+    input of its contract and whose every use is a dispatched call on it --
+    a method call or an item store or delete -- never an attribute read: the
+    object such a name holds where the body ends is the one those calls
+    left (``receiver_dispatch.receiver_after_dispatch``), which the contract
+    states over ``python:after(out, <formal>)``
+    (``FunctionDef._cells_where_the_body_ends``, #7757 step 7).  An
+    attribute read runs ``type(p).__getattribute__`` and whatever descriptor
+    it finds, which no state here records."""
+    uses = _receiver_uses(definition)
+    if uses is None:
+        return frozenset()
+    _received, _blocked, read, _super = uses
+    parameters = _receiver_class_parameters(definition)
+    cells = _receiver_class_cells(definition)
+    return frozenset(parameters + cells) - frozenset(read)
+
+
+def _receiver_uses(definition):
+    """``(received, blocked, read, zero_argument_super)`` for the body of
+    ``definition``, or None for a generator function or an ``async def``
+    (its body runs after its call returned):
+
+    - ``received``: each name the body calls a method of (``n.m(...)``) or
+      stores or deletes an item of as a whole target (``n[k] = v``,
+      ``del n[k]``);
+    - ``blocked``: each name read any other way -- bare, as an item read,
+      through a field's method (``n.x.f()``), or by a nested function,
+      lambda or class;
+    - ``read``: each name read as an attribute other than a method call's
+      callee (``n.x``);
+    - ``zero_argument_super``: the body calls ``super()`` with no
+      argument."""
+    if isinstance(definition, AsyncFunctionDef):
+        return None
+    body = definition.body
+    statements = tuple(body) if isinstance(body, (list, tuple)) else (body,)
+    if isinstance(definition, FunctionDef) and FunctionDef._owns_yield(body):
+        return None
     nodes = []
     for statement in statements:
         nodes.extend(statement.walk())
@@ -26547,8 +26674,23 @@ def _read_receiver_class_parameters(definition) -> tuple:
         for node in nodes
         if isinstance(node, Attribute) and isinstance(node.value, Name)
     }
+    callees = {
+        id(node.func)
+        for node in nodes
+        if isinstance(node, Call) and isinstance(node.func, Attribute)
+    }
+    # ``n[k] = v`` and ``del n[k]``: an item store or delete of a name's
+    # object, each a whole target of its statement.
+    item_targets = {
+        id(target.value)
+        for node in nodes
+        if isinstance(node, (Assign, Delete))
+        for target in node.targets
+        if isinstance(target, Subscript) and isinstance(target.value, Name)
+    }
     received: set = set()
     blocked: set = set()
+    read: set = set()
     zero_argument_super = False
     for node in nodes:
         if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
@@ -26556,6 +26698,9 @@ def _read_receiver_class_parameters(definition) -> tuple:
                 inner.id for inner in node.walk() if isinstance(inner, Name)
             )
             continue
+        if isinstance(node, Attribute) and isinstance(node.value, Name):
+            if id(node) not in callees:
+                read.add(node.value.id)
         if isinstance(node, Call):
             func = node.func
             if isinstance(func, Attribute):
@@ -26575,13 +26720,12 @@ def _read_receiver_class_parameters(definition) -> tuple:
             ):
                 zero_argument_super = True
             continue
-        if isinstance(node, Name) and id(node) not in attribute_receivers:
-            blocked.add(node.id)
-    if zero_argument_super:
-        blocked.add(parameters[0])
-    return tuple(
-        name for name in parameters if name in received and name not in blocked
-    )
+        if isinstance(node, Name):
+            if id(node) in item_targets:
+                received.add(node.id)
+            elif id(node) not in attribute_receivers:
+                blocked.add(node.id)
+    return received, blocked, read, zero_argument_super
 
 
 def _global_input_names(definition) -> frozenset:

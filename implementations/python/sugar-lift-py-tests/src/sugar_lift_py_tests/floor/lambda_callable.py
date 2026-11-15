@@ -408,7 +408,9 @@ def definition_edge_call(
       signature's contract, the binding where the call runs
       (``global_value_at_call``);
     - ``py.class(<argument key>, <class>)`` for each actual whose class is
-      decided here (``receiver_dispatch.class_arguments``, step 8).
+      decided here (``receiver_dispatch.class_arguments``, step 8), and
+      ``py.class("cell:<name>", <class>)`` for each captured cell whose
+      value's class is (step 7).
 
     Sent down the path an imported call takes: the one unanswered call
     (``UnknownCalleeCallV1.faces``: completes under its ``completes`` atom,
@@ -489,6 +491,18 @@ def definition_edge_call(
         arguments += class_arguments((), tuple(zip(parameters, actuals)))
     else:
         arguments += class_arguments(tuple(positional), tuple(keywords))
+    # The class of each captured cell's value where it is decided here,
+    # keyed by the input it supplies (``cell:<name>``): what the callee's
+    # ``class:cell:<name>`` input is bound to where its contract mutates the
+    # cell's object through a method or an item store (#7757 step 7).
+    from sugar_lift_py_tests.contract_input import CELL_INPUT, input_formal
+
+    arguments += class_arguments(
+        (),
+        tuple(
+            (input_formal(CELL_INPUT, name), value) for name, _cid, value in captured
+        ),
+    )
     if signature is not None:
         module_site = current_module_execution_site()
         arguments += [
