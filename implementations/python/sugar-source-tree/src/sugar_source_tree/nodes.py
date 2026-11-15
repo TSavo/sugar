@@ -8652,13 +8652,22 @@ class Node(Typed):
         )
 
     def _make_effect_ref(self, slot_id: str) -> "Node":
-        """Synthesize EffectRef(slot) — tree coordinate, not a floor object."""
+        """Synthesize EffectRef(slot) — tree coordinate, not a floor object.
+
+        It is the value the ``as`` name is bound to in the handler, as a
+        ``with ... as`` name's ``ObservationRef`` is: one no read reaches
+        (``except (TypeError, ValueError) as _:``,
+        ``plotting/_matplotlib/core.py:1449``) is built by nothing, so it
+        answers where it is minted (``_minted_binding_reference``); a read
+        that reaches it builds it and answers again (#7757)."""
         from .backend import Leaf, materialize
         from .shadow import ShadowNode
 
         slots = (("slot_id", Leaf(slot_id)),)
-        return materialize(
-            self.unit, ShadowNode("EffectRef", self.span, slots), self.reporter
+        return _minted_binding_reference(
+            materialize(
+                self.unit, ShadowNode("EffectRef", self.span, slots), self.reporter
+            )
         )
 
     def _make_observation_ref(self, slot_id: str, projection: str) -> "Node":
