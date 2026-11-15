@@ -21,10 +21,12 @@ no silent None soft-greens.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import tempfile
 
 import pytest
 
+from sugar_lift_py_tests.floor import FloorValue
 from sugar_lift_py_tests.gap.info import ConstructionGap
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.generator_construction import (
@@ -34,7 +36,10 @@ from sugar_lift_py_tests.generator_construction import (
     ReturnStepV1,
     YieldStepV1,
 )
+from sugar_lift_py_tests.ir import ctor
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.binding_state import (
@@ -69,6 +74,51 @@ def _int(value: int) -> IntLiteralSugar:
     return IntLiteralSugar(value, site=f"literal:{value}")
 
 
+@dataclass(frozen=True)
+class _IncompleteTruthFloor(FloorValue):
+    """A decided value whose truth floor is not written: taking its truth
+    (the one truth rule, ``bool_op_sugar.truth_of``) raises
+    ``ConstructionPanic``."""
+
+    info: ConstructionGap = field(compare=False)
+
+    def denotes_value(self) -> bool:
+        return True
+
+    def runtime_type_is_decided(self) -> bool:
+        return True
+
+    def truth(self, site):
+        del site
+        raise ConstructionPanic(self.info)
+
+    def to_term(self, *, owner: str):
+        del owner
+        return ctor("python:probe_incomplete_truth_floor", [])
+
+
+@dataclass(frozen=True)
+class PanicGuard(ConstructedTermSugar):
+    """A branch guard is constructed sugar (``IfStepV1.guard`` admits only a
+    ``ConstructedTermSugar``): it completes with a value whose truth floor
+    is incomplete, so the generator's guard truth raises
+    ``ConstructionPanic``."""
+
+    info: ConstructionGap = field(compare=False)
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        del ctx
+        return ExitSet.completed(_IncompleteTruthFloor(self.info))
+
+    def to_term(self, *, owner: str):
+        del owner
+        return ctor("python:probe_panic_guard", [])
+
+
 def test_generator_guard_construction_panic_must_not_become_suspension_gap():
     """Law: ConstructionPanic from guard.truth propagates; never BaseException→None.
 
@@ -88,18 +138,13 @@ def test_generator_guard_construction_panic_must_not_become_suspension_gap():
         fix="implement the guard floor; do not catch BaseException",
     )
 
-    class PanicGuard:
-        def truth(self, site):
-            del site
-            raise ConstructionPanic(info)
-
     machine = GeneratorConstructionV1.allocate(
         allocation_coordinate="audit:guard:1",
         frame_coordinate="frame:audit",
         binding_state=(),
         steps=(
             IfStepV1(
-                PanicGuard(),
+                PanicGuard(info),
                 (YieldStepV1(_int(1)),),
                 (ReturnStepV1(_int(2)),),
                 "frag:audit-if",
@@ -135,18 +180,13 @@ def test_generator_guard_construction_panic_is_not_if_carrying_suspension():
         fix="implement the guard floor; do not catch BaseException",
     )
 
-    class PanicGuard:
-        def truth(self, site):
-            del site
-            raise ConstructionPanic(info)
-
     machine = GeneratorConstructionV1.allocate(
         allocation_coordinate="audit:guard:2",
         frame_coordinate="frame:audit",
         binding_state=(),
         steps=(
             IfStepV1(
-                PanicGuard(),
+                PanicGuard(info),
                 (YieldStepV1(_int(1)),),
                 (ReturnStepV1(_int(2)),),
                 "frag:audit-if-2",

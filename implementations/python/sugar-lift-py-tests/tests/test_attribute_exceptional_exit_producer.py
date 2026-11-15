@@ -14,7 +14,7 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.floor import CallSiteValue, NoneValue, SymbolicValue
 from sugar_lift_py_tests.ir import ctor, make_var
 from sugar_lift_py_tests.outcome import ExitSet
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.nodes import Attribute
@@ -70,7 +70,10 @@ def _call_result() -> CallSiteValue:
 
 
 @dataclass(frozen=True)
-class _ReceiverSugar(Sugar):
+class _ReceiverSugar(ConstructedTermSugar):
+    """A constructed receiver: ``AttributeSugar.receiver`` admits only a
+    ``ConstructedTermSugar`` (``require_constructed_term_sugar``)."""
+
     value: object
 
     @classmethod
@@ -80,6 +83,9 @@ class _ReceiverSugar(Sugar):
     def desugar(self, ctx=None):
         del ctx
         return ExitSet.completed(self.value)
+
+    def to_term(self, *, owner):
+        return self.value.to_term(owner=owner)
 
 
 def _assert_two_faced_read(outcome, owner: str):
