@@ -13,6 +13,8 @@ answers with it.
 
 import tempfile
 
+import pytest
+
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.reporter import CollectingReporter
@@ -41,6 +43,35 @@ def test_a_ground_range_iterable_is_built():
     assert ("Call", 2, 15) in present
     absent = {(e.kind, e.start_line, e.start_col) for e in report.minority}
     assert ("Call", 2, 15) not in absent
+
+
+@pytest.mark.parametrize(
+    "comprehension",
+    [
+        "[x + 1 for x in range(1, 3)]",
+        "{x for x in range(1, 3)}",
+        "{x: 0 for x in range(1, 3)}",
+    ],
+)
+def test_a_dissolved_comprehension_builds_its_range_iterable(comprehension):
+    # The comprehension dissolves into its display through the same step a
+    # ``for`` unrolls by (``For._iterable_evaluations``): the ``range(...)``
+    # call is evaluated before the first member, never dropped (#7757).
+    report = _report(f"def f():\n    return {comprehension}\n")
+    column = comprehension.index("range")
+    present = {(e.kind, e.start_line, e.start_col) for e in report.present}
+    assert ("Call", 2, 11 + column) in present
+    absent = {(e.kind, e.start_line, e.start_col) for e in report.minority}
+    assert ("Call", 2, 11 + column) not in absent
+
+
+def test_a_dissolved_comprehension_carries_its_iterable_into_a_loop():
+    # A loop over a dissolved display evaluates what the display carried.
+    report = _report(
+        "def f(g):\n    for k in [x for x in range(2)]:\n        g(k)\n    return g\n"
+    )
+    absent = {(e.kind, e.start_line, e.start_col) for e in report.minority}
+    assert ("Call", 2, 25) not in absent
 
 
 def test_a_display_iterable_answers_with_the_loop():
