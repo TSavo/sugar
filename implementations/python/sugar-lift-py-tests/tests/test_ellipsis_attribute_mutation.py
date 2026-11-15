@@ -19,13 +19,18 @@ def _outcomes(tmp_path):
 
 def test_ellipsis_attribute_mutations_have_exact_owner_occurrences(tmp_path):
     for outcome, owner, site in _outcomes(tmp_path):
-        assert outcome.value.effect.exception_name == "AttributeError"
-        assert outcome.value.effect.producer_node_owner == owner
-        assert outcome.value.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
+        # A raise is a halt: the whole outcome is the one halted arm.
+        assert outcome.halts() == outcome.exits
+        (halt,) = outcome.halts()
+        assert halt.effect.exception_name == "AttributeError"
+        assert halt.effect.producer_node_owner == owner
+        assert halt.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
 
 def test_ellipsis_attribute_mutations_reject_wrong_site(tmp_path):
-    store, _, store_site = _outcomes(tmp_path)[0]
-    delete, _, delete_site = _outcomes(tmp_path)[1]
-    assert store.value.effect.occurrence_id != f"{delete_site.filename}:{delete_site.line}:{delete_site.col}"
-    assert delete.value.effect.occurrence_id != f"{store_site.filename}:{store_site.line}:{store_site.col}"
+    store_outcome, _, store_site = _outcomes(tmp_path)[0]
+    delete_outcome, _, delete_site = _outcomes(tmp_path)[1]
+    (store,) = store_outcome.halts()
+    (delete,) = delete_outcome.halts()
+    assert store.effect.occurrence_id != f"{delete_site.filename}:{delete_site.line}:{delete_site.col}"
+    assert delete.effect.occurrence_id != f"{store_site.filename}:{store_site.line}:{store_site.col}"
