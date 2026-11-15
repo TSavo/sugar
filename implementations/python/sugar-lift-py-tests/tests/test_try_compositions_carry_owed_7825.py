@@ -58,10 +58,7 @@ def test_a_halt_through_an_owing_finally_owes_both() -> None:
     from sugar_lift_py_tests.sugar.try_sugar import _and_finally_with_raise_context
 
     ctx = ReduceContext.root(owner="finally_owes_7825")
-    raised = RaiseEffect(
-        exception_name="ValueError",
-        occurrence=AuthenticatedRaiseLocus.of("body:ve:7825"),
-    )
+    raised = RaiseEffect.for_builtin("ValueError", occurrence="body:ve:7825")
     pre_finally = ExitSet(
         (Halted(true_guard(), raised, halt_record(ctx), owed=("debt:body",)),)
     )
