@@ -2127,12 +2127,18 @@ def _roll_call_audit_leaf(
     for key in absent_keys:
         node = nodes_by_key[key]
         panic = gaps_by_key.get(key)
-        if panic is None:
+        if panic is None and gaps_by_key:
             # The full roll-call minority remains carried by sourceAudit.  A
-            # registered ancestor that never answered because a descendant
-            # panicked has no independent panic payload and therefore cannot
-            # be relabelled as a ConstructionPanic product terminal.
+            # registered node that never answered because a node on this roll
+            # refused by name (its descendant, its ancestor, an earlier
+            # sibling: the refusal stopped the construction that would have
+            # reached it) has no independent panic payload and therefore
+            # cannot be relabelled as a ConstructionPanic product terminal.
+            # The leaf is already loud by that refusal.
             continue
+        # With no refusal anywhere on the roll, nothing explains a node that
+        # never answered: it is its own terminal (``UnaccountedConstruction``).
+        # A file whose roll has a silent absentee is never ``clean``.
         lc = node.line_col_span()
         locus = f"{file_rel}:{lc.start_line}:{lc.start_col}"
         terminal = (
