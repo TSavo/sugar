@@ -17,6 +17,14 @@ finish, edited in place by each later one. A measure that has not reported is
 ``--final``: a measure that never reported is then unmeasured, and that is
 compared.
 
+Two workflows post rows: main-scorecard.yml (suite, twins, federation) on every
+merge, and main-scorecard-board.yml (the pandas board) in its own lane, so a
+slow board never holds the per-merge numbers back. Each names what it measures
+in SCORECARD_MEASURES. A measure outside that set is written ``-`` in the row:
+it is not this workflow's number, so it is never pending, never unmeasured and
+never compared. Each number is still compared with the newest earlier row that
+measured it, whichever workflow wrote that row.
+
 Regression alarm: each number is compared with the newest earlier row (another
 run) where that number was measured. Any number that got worse, or that was
 measured before and is unmeasured now, makes the comment start with
@@ -104,10 +112,31 @@ class Lock:
         shutil.rmtree(self.path, ignore_errors=True)
 
 
+def own_measures() -> tuple[str, ...]:
+    """The measures this workflow reports (SCORECARD_MEASURES; default: all)."""
+    raw = os.environ.get("SCORECARD_MEASURES", "").strip()
+    if not raw:
+        return MEASURES
+    named = tuple(m.strip() for m in raw.split(",") if m.strip())
+    unknown = [m for m in named if m not in MEASURES]
+    if unknown or not named:
+        sys.exit(f"::error::bad SCORECARD_MEASURES {raw!r}")
+    return tuple(m for m in MEASURES if m in named)
+
+
+def row_measured(row: dict[str, str], measure: str) -> bool:
+    value = row.get(measure, "").split("/")[0]
+    return value.isdigit() or value in ("PASS", "FAIL")
+
+
 def load_results(runs: Path, final: bool) -> tuple[dict[str, dict], list[str]]:
     results: dict[str, dict] = {}
     pending: list[str] = []
+    own = own_measures()
     for measure in MEASURES:
+        if measure not in own:
+            results[measure] = {}
+            continue
         try:
             results[measure] = json.loads((runs / f"{measure}.json").read_text())
         except (OSError, ValueError):
@@ -193,20 +222,30 @@ def main(argv: list[str] | None = None) -> int:
 def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path, final: bool) -> int:
     results, pending = load_results(runs, final)
     suite, twins, fed_r, board = (results[m] for m in MEASURES)
+    own = own_measures()
+    # Not this workflow's number: written "-", never pending, never compared.
+    outside = [m for m in MEASURES if m not in own]
 
-    def pair(result: dict, done: str, total: str) -> tuple[str, str]:
+    def pair(measure: str, done: str, total: str) -> tuple[str, str]:
+        result = results[measure]
+        if measure in outside:
+            return "-", "-"
         if not result.get("measured"):
             return "?", "?"
         return num(result.get(done)), num(result.get(total))
 
-    suite_pass, suite_total = pair(suite, "passed", "total")
-    twins_pass, twins_total = pair(twins, "passed", "total")
+    suite_pass, suite_total = pair("suite", "passed", "total")
+    twins_pass, twins_total = pair("twins", "passed", "total")
     if twins_total == "0":
         twins_pass = twins_total = "?"
     fed = fed_r.get("verdict") if fed_r.get("measured") else "?"
     fed = fed if fed in ("PASS", "FAIL") else "?"
-    board_done, board_total = pair(board, "completed", "total")
+    if "federation" in outside:
+        fed = "-"
+    board_done, board_total = pair("board", "completed", "total")
     cpanic = num(board.get("cpanic")) if board.get("measured") else "?"
+    if "board" in outside:
+        cpanic = "-"
 
     issues = num(gh("issue", "list", "--state", "open", "--limit", "10000",
                     "--json", "number", "--jq", "length"))
@@ -219,10 +258,12 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
         return 1
     if not issue:
         url = gh("issue", "create", "--title", title, "--body",
-                 "One row per run of .github/workflows/main-scorecard.yml (every "
-                 "push to main, hourly, on demand). Each measuring job edits its "
-                 "run's comment as soon as its own number lands; `?` is pending "
-                 "until then. Each comment starts with OK or REGRESSION:, then one "
+                 "One row per run of .github/workflows/main-scorecard.yml (suite, "
+                 "twins, federation) and of main-scorecard-board.yml (the pandas "
+                 "board), on every push to main, hourly, on demand. Each measuring "
+                 "job edits its run's comment as soon as its own number lands; `?` "
+                 "is pending until then and `-` is the other workflow's number. "
+                 "Each comment starts with OK or REGRESSION:, then one "
                  "machine-readable line: sha= prev= run= suite= twins= federation= "
                  "board= cpanic= issues= prs= pending= rerun= carried= wall=.")
         if url is None:
@@ -259,7 +300,10 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
         own_comment = own_comment or int(banked_id.read_text().strip())
     except (OSError, ValueError):
         pass
-    prev_sha = earlier[0]["sha"] if earlier else "none"
+    # The previous row is the newest earlier row that measured one of this
+    # workflow's numbers, so the PR range is the range those numbers moved in.
+    comparable = [row for row in earlier if any(row_measured(row, m) for m in own)]
+    prev_sha = (comparable or earlier)[0]["sha"] if earlier else "none"
 
     def last_measured(key: str, part: int | None = None) -> str | None:
         for row in earlier:
@@ -290,7 +334,7 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
     drops: list[str] = []
 
     def higher_is_better(label: str, measure: str, cur: str, key: str, part: int | None) -> None:
-        if measure in pending:
+        if measure in pending or measure in outside:
             return
         before = last_measured(key, part)
         if before is None or not before.isdigit():
@@ -303,14 +347,19 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
     higher_is_better("suite passed", "suite", suite_pass, "suite", 0)
     higher_is_better("twins passed", "twins", twins_pass, "twins", 0)
     higher_is_better("board completed", "board", board_done, "board", 0)
-    if "board" not in pending:
+    if "board" not in pending and "board" not in outside:
         before = last_measured("cpanic")
         if before is not None:
             if not cpanic.isdigit():
                 drops.append(f"board cpanic unmeasured (was {before})")
             elif int(cpanic) > int(before):
                 drops.append(f"board cpanic {before} -> {cpanic}")
-    if "federation" not in pending and last_measured("federation") == "PASS" and fed != "PASS":
+    if (
+        "federation" not in pending
+        and "federation" not in outside
+        and last_measured("federation") == "PASS"
+        and fed != "PASS"
+    ):
         drops.append(f"federation PASS -> {fed if fed != '?' else 'unmeasured'}")
 
     range_txt = f"PRs {prs_cell or 'none'} ({prev_sha[:9]}..{sha[:9]})"
@@ -328,7 +377,7 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
         parts = []
         for measure in ("suite", "twins", "board"):
             value = (results[measure].get("carry") or {}).get(field)
-            parts.append(f"{measure}:{num(value)}")
+            parts.append(f"{measure}:{'-' if measure in outside else num(value)}")
         return ",".join(parts)
 
     wall = run_wall(repo, run_id)
