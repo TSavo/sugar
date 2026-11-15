@@ -291,6 +291,48 @@ def test_a_field_a_dispatched_method_stores_on_its_receiver_is_joined_at_prove(
     assert lie.verdict == "unsat"
 
 
+_SUPER_STORE = """\
+class Base:
+    def fill(self, v):
+        self.n = v
+
+
+class Child(Base):
+    def __init__(self):
+        super().fill(5)
+        assert self.n == {expected}
+
+
+def test_child():
+    Child()
+"""
+
+
+def test_a_field_a_base_method_stores_through_super_is_read_by_the_receivers_key(
+    tmp_path: Path,
+) -> None:
+    """``super().fill(5)`` in ``Child.__init__``: in the class's constructor
+    contract the receiver is the instance the construction allocated, so the
+    call is the edge to ``Base.fill`` with the receiver passed implicitly as
+    its first positional actual (``py.class("0", python:instance(<Child>))``).
+    The constructor reads ``self`` after it as ``python:after(<call>, "0")``,
+    as after a dispatched call (``receiver_dispatch.receiver_after_dispatch``),
+    and prove pairs the key with ``fill``'s ``self`` (#7757 step 7): the
+    class row's ``assert self.n == 6`` is refuted, ``unsat``.  The truthful
+    claim is never ``unsat``; ``__init__``'s own proof (its receiver arrived
+    by binding, so its ``super().fill`` is unanswered) keeps the whole source
+    ``open``."""
+    t = run_source_through_real_solver(
+        tmp_path / "super-store-truthful", _SUPER_STORE.format(expected=5)
+    )
+    lie = run_source_through_real_solver(
+        tmp_path / "super-store-lying", _SUPER_STORE.format(expected=6)
+    )
+    print(json.dumps({"truthful": t.verdict, "lying": lie.verdict}, sort_keys=True))
+    assert t.verdict != "unsat"
+    assert lie.verdict == "unsat"
+
+
 _PROPERTY_STORE = """\
 class Box:
     @property
