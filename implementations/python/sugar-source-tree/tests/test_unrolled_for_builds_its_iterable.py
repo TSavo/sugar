@@ -74,6 +74,23 @@ def test_a_dissolved_comprehension_carries_its_iterable_into_a_loop():
     assert ("Call", 2, 25) not in absent
 
 
+@pytest.mark.parametrize(
+    "comprehension",
+    [
+        "[str(i) for i in range(200)]",
+        '{f"c{i}": 0 for i in range(3)}',
+        "[0 for i in range(3)]",
+    ],
+)
+def test_a_range_item_answers_where_it_is_minted(comprehension):
+    # Past the unroll fuel no item is minted; an item an unroll that refuses
+    # (an undecided dict key) or never reads (an unread target) minted
+    # answers where it was minted (``_minted_binding_reference``).
+    report = _report(f"def f():\n    return {comprehension}\n")
+    absent = {(e.kind, e.start_line, e.start_col) for e in report.minority}
+    assert ("Constant", 2, 11) not in absent
+
+
 def test_a_display_iterable_answers_with_the_loop():
     report = _report(
         "def f(g):\n    for key in ['tz', 'freq']:\n        g(key)\n    return g\n"
