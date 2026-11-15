@@ -19,7 +19,7 @@ from dataclasses import dataclass, field as dataclass_field, replace
 
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import _assertion_pair
 
 
 @dataclass(frozen=True)
@@ -46,19 +46,18 @@ class TrySugar(Sugar):
 
     @classmethod
     def witnesses(cls):
-        prefix = (
-            "def A(z):\n"
-            "    try:\n"
-            "        raise ValueError\n"
-            "    except ValueError:\n"
-            "        pass\n"
-            "    return z\n\n"
-        )
-        return _call_pair(
+        return _assertion_pair(
             name="try_matching_except_consumes",
             owner_sugar="TrySugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+            statements=(
+                "z = 5\n"
+                "try:\n"
+                "    raise ValueError\n"
+                "except ValueError:\n"
+                "    pass"
+            ),
+            truthful="z == 5",
+            lying="z == 6",
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:

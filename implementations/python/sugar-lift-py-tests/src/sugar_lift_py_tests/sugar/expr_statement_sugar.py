@@ -15,7 +15,7 @@ from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import inert_statement_return_witness
+from sugar_lift_py_tests.sugar.witnesses import inert_statement_witness
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,7 @@ class ExprStatementSugar(Sugar):
 
     @classmethod
     def witnesses(cls):
-        return inert_statement_return_witness(
+        return inert_statement_witness(
             name="expr_statement_inert",
             owner_sugar="ExprStatementSugar",
             statement='"""a docstring"""',

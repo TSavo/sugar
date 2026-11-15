@@ -5,7 +5,7 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
-from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
+from sugar_lift_py_tests.sugar.witnesses import _expression_pair
 
 
 @dataclass(frozen=True)
@@ -20,7 +20,7 @@ class IntLiteralSugar(ConstructedTermSugar):
 
     @classmethod
     def witnesses(cls):
-        return _call_return_pair(
+        return _expression_pair(
             name="int_literal_return",
             owner_sugar="IntLiteralSugar",
             body="5",

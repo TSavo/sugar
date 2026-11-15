@@ -4,7 +4,7 @@ from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import _assertion_pair
 
 _BUILTINS_PREFIX = "python:builtins."
 
@@ -34,15 +34,15 @@ class NameSugar(ConstructedTermSugar):
 
     @classmethod
     def witnesses(cls):
-        # A parameter flows through its name to the return: the truthful twin
+        # A local flows through its name to the assertion: the truthful twin
         # rides the identity, the lying twin asserts a different value -- the
         # pair proves the lift discriminates on what the name is bound to.
-        prefix = "def A(z):\n    return z\n\n"
-        return _call_pair(
+        return _assertion_pair(
             name="name_return",
             owner_sugar="NameSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+            statements="z = 5",
+            truthful="z == 5",
+            lying="z == 6",
         )
 
     def to_term(self, *, owner: str):

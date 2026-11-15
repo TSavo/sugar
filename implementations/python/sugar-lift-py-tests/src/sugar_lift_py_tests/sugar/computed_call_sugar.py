@@ -24,7 +24,7 @@ from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
 )
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import _assertion_pair
 
 
 @dataclass(frozen=True)
@@ -65,12 +65,12 @@ class ComputedCallSugar(ConstructedTermSugar):
     def witnesses(cls):
         # fs[0] is a real computed callee with a decidable shape: the
         # coordinate's identity against a contradicting asserted value.
-        prefix = "def A(fs, x):\n    return fs[0](x)\n\n"
-        return _call_pair(
+        return _assertion_pair(
             name="computed_call_return",
             owner_sugar="ComputedCallSugar",
-            truthful=prefix + "def test_a():\n    assert A([lambda z: z], 5) == 5\n",
-            lying=prefix + "def test_a():\n    assert A([lambda z: z], 5) == 6\n",
+            statements="fs = [lambda z: z]\nx = 5",
+            truthful="fs[0](x) == 5",
+            lying="fs[0](x) == 6",
         )
 
     def to_term(self, *, owner: str):

@@ -7,7 +7,7 @@ from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import (
     NotVerdictBearing,
-    _call_pair,
+    _assertion_pair,
     typed_red_effect_witness,
 )
 
@@ -41,14 +41,14 @@ class AssignSugar(Sugar):
 
     @classmethod
     def witnesses(cls):
-        # `x = z; return x` inlines to `return z` via substitute: the truthful
-        # twin rides the identity, the lying twin asserts another.
-        prefix = "def A(z):\n    x = z\n    return x\n\n"
-        return _call_pair(
+        # `x = z` binds `x` to what `z` holds: the truthful twin rides the
+        # identity, the lying twin asserts another.
+        return _assertion_pair(
             name="assign_return",
             owner_sugar="AssignSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+            statements="z = 5\nx = z",
+            truthful="x == 5",
+            lying="x == 6",
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
@@ -94,12 +94,12 @@ class MultiAssignSugar(Sugar):
     def witnesses(cls):
         # A destructuring bind that discriminates ON THE PAIRING: swap the
         # two names' rhs and the sum through both flips.
-        prefix = "def A(p, q):\n    a, b = p, q\n    return a + b\n\n"
-        return _call_pair(
+        return _assertion_pair(
             name="multi_assign_destructure",
             owner_sugar="MultiAssignSugar",
-            truthful=prefix + "def test_a():\n    assert A(2, 3) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(2, 3) == 6\n",
+            statements="p = 2\nq = 3\na, b = p, q",
+            truthful="a + b == 5",
+            lying="a + b == 6",
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:

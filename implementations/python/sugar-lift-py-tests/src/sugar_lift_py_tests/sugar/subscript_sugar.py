@@ -10,7 +10,7 @@ from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
 )
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import _assertion_pair
 
 
 @dataclass(frozen=True)
@@ -50,12 +50,14 @@ class SubscriptSugar(ConstructedTermSugar):
         # The ground failing bounds check contributes exact exceptional-exit
         # testimony on one path; the continuing path gives the solver a
         # verdict-bearing truthful/lying pair.
-        prefix = "def A(z):\n    if z < 0:\n        return [][0]\n    return z\n\n"
-        return _call_pair(
+        return _assertion_pair(
             name="subscript_return",
             owner_sugar="SubscriptSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+            statements=(
+                "z = 5\n" "if z < 0:\n" "    out = [][0]\n" "else:\n" "    out = z"
+            ),
+            truthful="out == 5",
+            lying="out == 6",
         )
 
     def to_term(self, *, owner: str):

@@ -18,7 +18,7 @@ from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
 )
-from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
+from sugar_lift_py_tests.sugar.witnesses import _expression_pair
 
 
 def _reduce_into(element_sugars, ctx, build, evaluated_first=()):
@@ -99,7 +99,7 @@ class ListSugar(ConstructedTermSugar):
 
     @classmethod
     def witnesses(cls):
-        return _call_return_pair(
+        return _expression_pair(
             name="list_len",
             owner_sugar="ListSugar",
             body="len([z, z, z])",
@@ -146,7 +146,7 @@ class TupleSugar(ConstructedTermSugar):
 
     @classmethod
     def witnesses(cls):
-        return _call_return_pair(
+        return _expression_pair(
             name="tuple_len",
             owner_sugar="TupleSugar",
             body="len((z, z))",
@@ -217,7 +217,7 @@ class SetSugar(ConstructedTermSugar):
 
     @classmethod
     def witnesses(cls):
-        return _call_return_pair(
+        return _expression_pair(
             name="set_len",
             owner_sugar="SetSugar",
             body="len({1, 2, 3})",
@@ -271,7 +271,7 @@ class DictSugar(ConstructedTermSugar):
 
     @classmethod
     def witnesses(cls):
-        return _call_return_pair(
+        return _expression_pair(
             name="dict_len",
             owner_sugar="DictSugar",
             body="len({1: z, 2: z})",

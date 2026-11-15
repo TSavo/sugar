@@ -9,7 +9,7 @@ from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
 )
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import _assertion_pair
 
 
 @dataclass(frozen=True)
@@ -173,12 +173,12 @@ class ComprehensionSugar(ConstructedTermSugar):
 
     @classmethod
     def witnesses(cls):
-        prefix = "def A(xs):\n    return [x for x in xs]\n\n"
-        return _call_pair(
+        return _assertion_pair(
             name="symbolic_list_comprehension",
             owner_sugar="ComprehensionSugar",
-            truthful=prefix + "def test_a():\n    assert A([1]) == [1]\n",
-            lying=prefix + "def test_a():\n    assert A([1]) == [2]\n",
+            statements="xs = [1]",
+            truthful="[x for x in xs] == [1]",
+            lying="[x for x in xs] == [2]",
         )
 
     def to_term(self, *, owner: str):

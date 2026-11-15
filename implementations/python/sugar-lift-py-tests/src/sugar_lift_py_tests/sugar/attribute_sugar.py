@@ -17,7 +17,7 @@ from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
 )
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import _assertion_pair
 
 
 @dataclass(frozen=True)
@@ -33,12 +33,12 @@ class AttributeSugar(ConstructedTermSugar):
     def witnesses(cls):
         # `z.numerator` on an int is z itself; the pair rides the coordinate's
         # identity vs a contradicting asserted value.
-        prefix = "def A(z):\n    return z.numerator\n\n"
-        return _call_pair(
+        return _assertion_pair(
             name="attribute_return",
             owner_sugar="AttributeSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+            statements="z = 5",
+            truthful="z.numerator == 5",
+            lying="z.numerator == 6",
         )
 
     def to_term(self, *, owner: str):

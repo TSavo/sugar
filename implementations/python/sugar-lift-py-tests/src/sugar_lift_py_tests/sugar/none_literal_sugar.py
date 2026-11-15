@@ -5,7 +5,7 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.floor.none_value import NoneValue
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import _assertion_pair
 
 
 @dataclass(frozen=True)
@@ -17,12 +17,14 @@ class NoneLiteralSugar(ConstructedTermSugar):
 
     @classmethod
     def witnesses(cls):
-        prefix = "def A(z):\n    if z is None:\n        return 0\n    return z\n\n"
-        return _call_pair(
+        return _assertion_pair(
             name="none_is_return",
             owner_sugar="NoneLiteralSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+            statements=(
+                "z = 5\n" "if z is None:\n" "    out = 0\n" "else:\n" "    out = z"
+            ),
+            truthful="out == 5",
+            lying="out == 0",
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:

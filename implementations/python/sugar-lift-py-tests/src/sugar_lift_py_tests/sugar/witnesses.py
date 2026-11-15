@@ -102,7 +102,37 @@ def _call_pair(
     )
 
 
-def _call_return_pair(
+def _test_source(prefix: str, statements: str, claim: str) -> str:
+    """``test_a`` running ``statements`` and asserting ``claim`` in its own
+    body.  The sugar a pair witnesses is stated here, over a local or a
+    literal, never through a same-file helper the test calls: a same-file
+    call is a coordinate joined at prove (#7757), so a pair built on a
+    helper call would witness the join instead of its sugar."""
+    body = "".join(f"    {line}\n" for line in statements.splitlines())
+    return prefix + "def test_a():\n" + body + f"    assert {claim}\n"
+
+
+def _assertion_pair(
+    *,
+    name: str,
+    owner_sugar: str,
+    statements: str,
+    truthful: str,
+    lying: str,
+    prefix: str = "",
+) -> SugarWitnessPair:
+    """A pair whose test runs ``statements`` and asserts ``truthful`` /
+    ``lying`` (``_test_source``)."""
+    return _call_pair(
+        name=name,
+        owner_sugar=owner_sugar,
+        truthful=_test_source(prefix, statements, truthful),
+        lying=_test_source(prefix, statements, lying),
+        family="assertion",
+    )
+
+
+def _expression_pair(
     *,
     name: str,
     owner_sugar: str,
@@ -111,17 +141,19 @@ def _call_return_pair(
     lying: str,
     prefix: str = "",
 ) -> SugarWitnessPair:
-    base = prefix + f"def A(z):\n    return {body}\n\n"
-    return _call_pair(
+    """``body`` asserted equal to ``truthful`` / ``lying`` in the test, over
+    the local ``z = 5``."""
+    return _assertion_pair(
         name=name,
         owner_sugar=owner_sugar,
-        truthful=base + f"def test_a():\n    assert A(5) == {truthful}\n",
-        lying=base + f"def test_a():\n    assert A(5) == {lying}\n",
-        family="literal-call",
+        statements="z = 5",
+        truthful=f"({body}) == {truthful}",
+        lying=f"({body}) == {lying}",
+        prefix=prefix,
     )
 
 
-def _unwitnessed_call_return_pair(
+def _unwitnessed_expression_pair(
     *,
     name: str,
     owner_sugar: str,
@@ -130,17 +162,16 @@ def _unwitnessed_call_return_pair(
     lying: str,
     prefix: str = "",
 ) -> SugarUnwitnessedPair:
-    base = prefix + f"def A(z):\n    return {body}\n\n"
     return SugarUnwitnessedPair(
         name=name,
         owner_sugar=owner_sugar,
         family="opaque-equality-unwitnessed",
         truthful=WitnessSource(
-            source=base + f"def test_a():\n    assert A(5) == {truthful}\n",
+            source=_test_source(prefix, "z = 5", f"({body}) == {truthful}"),
             expected="unwitnessed",
         ),
         lying=WitnessSource(
-            source=base + f"def test_a():\n    assert A(5) == {lying}\n",
+            source=_test_source(prefix, "z = 5", f"({body}) == {lying}"),
             expected="unwitnessed",
         ),
     )
@@ -154,29 +185,32 @@ def _boolop_wrapped_pair(
     lying: str,
     prefix: str = "",
 ) -> SugarWitnessPair:
-    return _call_pair(
+    return _assertion_pair(
         name=name,
         owner_sugar=owner_sugar,
-        truthful=prefix + f"def test_a():\n    assert {truthful}\n",
-        lying=prefix + f"def test_a():\n    assert {lying}\n",
-        family="assertion",
+        statements="",
+        truthful=truthful,
+        lying=lying,
+        prefix=prefix,
     )
 
 
-def inert_statement_return_witness(
+def inert_statement_witness(
     *,
     name: str,
     owner_sugar: str,
     statement: str,
     prefix: str = "",
 ) -> SugarWitnessPair:
-    body = "".join(f"    {line}\n" for line in statement.splitlines())
-    source = prefix + f"def A(z):\n{body}    return z\n\n"
-    return _call_pair(
+    """``statement`` first in the test (where a helper's body held it),
+    then ``z = 1``: the inert statement leaves ``z == 1`` standing."""
+    return _assertion_pair(
         name=name,
         owner_sugar=owner_sugar,
-        truthful=source + "def test_a():\n    assert A(1) == 1\n",
-        lying=source + "def test_a():\n    assert A(1) == 2\n",
+        statements=statement + "\nz = 1",
+        truthful="z == 1",
+        lying="z == 2",
+        prefix=prefix,
     )
 
 
@@ -215,17 +249,17 @@ def typed_red_effect_witness(
     )
 
 
-def ord_byte_return_witness(*, owner_sugar: str) -> SugarWitnessPair:
-    source = "def A(s):\n" "    return ord(s[0])\n" "\n"
-    return _call_pair(
+def ord_byte_witness(*, owner_sugar: str) -> SugarWitnessPair:
+    return _assertion_pair(
         name="ord_byte_return",
         owner_sugar=owner_sugar,
-        truthful=source + "def test_a():\n    assert A('x') == 120\n",
-        lying=source + "def test_a():\n    assert A('x') == 121\n",
+        statements="s = 'x'",
+        truthful="ord(s[0]) == 120",
+        lying="ord(s[0]) == 121",
     )
 
 
-def collection_len_return_witness(
+def collection_len_witness(
     *,
     name: str,
     owner_sugar: str,
@@ -233,10 +267,10 @@ def collection_len_return_witness(
     truthful: int,
     lying: int,
 ) -> SugarWitnessPair:
-    source = f"def A():\n    return len({expression})\n\n"
-    return _call_pair(
+    return _assertion_pair(
         name=name,
         owner_sugar=owner_sugar,
-        truthful=source + f"def test_a():\n    assert A() == {truthful}\n",
-        lying=source + f"def test_a():\n    assert A() == {lying}\n",
+        statements="",
+        truthful=f"len({expression}) == {truthful}",
+        lying=f"len({expression}) == {lying}",
     )

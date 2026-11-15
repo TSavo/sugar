@@ -6,7 +6,7 @@ from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import _assertion_pair
 
 
 @dataclass(frozen=True)
@@ -124,12 +124,12 @@ class LambdaSugar(ConstructedTermSugar):
 
     @classmethod
     def witnesses(cls):
-        prefix = "def A(v):\n    return (lambda x: x)(v)\n\n"
-        return _call_pair(
+        return _assertion_pair(
             name="lambda_identity_call",
             owner_sugar="LambdaSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 6\n",
+            statements="v = 5",
+            truthful="(lambda x: x)(v) == 5",
+            lying="(lambda x: x)(v) == 6",
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
