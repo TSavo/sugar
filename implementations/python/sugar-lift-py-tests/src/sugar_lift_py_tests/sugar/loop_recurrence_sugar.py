@@ -307,10 +307,24 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         # loop iterates the value the iterable presents, and leaves, on every
         # exit, with the writes of the names it does not carry
         # (``_iterable_writes``).
+        #
+        # A live loop runs its items on that value as every operation reads
+        # its receiver (``FloorValue.project_operation_receiver_outcome``): a
+        # source call's value is the Call retaining its body's completion, and
+        # the loop iterates the one authenticated return it projects (``for x
+        # in g()`` over ``return (1, 2)``), as a subscript, an operator or a
+        # method call on that Call does.  A Call that projects no single
+        # return stays the Call, and its ``iter`` is refused by name.  The
+        # recurrence (no live runtime) keeps the presented value's own term.
         def with_iterable(iterable):
             binds, presented = peel_walrus_binds(iterable)
             loop = replace(self, iterable_writes=self._iterable_writes(binds))
-            return loop._desugar_with_iterable(presented, written_by(iterable, ctx))
+            after = written_by(iterable, ctx)
+            if self.construction.loop_runtime is None:
+                return loop._desugar_with_iterable(presented, after)
+            return presented.project_operation_receiver_outcome(
+                after, owner="LoopRecurrenceSugar iterable"
+            ).and_then(lambda receiver: loop._desugar_with_iterable(receiver, after))
 
         # A halt of the iterable halted before any item ran: it carries the
         # record of where it halted (``halts_recorded``), onto which the block
