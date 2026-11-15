@@ -248,5 +248,9 @@ def test_corpus_pin_refuses_a_changed_corpus(tmp_path, capsys) -> None:
         extra=["--require-corpus-pin", str(pin)],
         capsys=capsys,
     )
-    assert changed.returncode == 2
+    # The corpus pin gate has its own exit code, 78, distinct from a generic
+    # instrument failure (2): a number against the wrong corpus is not a
+    # measurement, and a driver tells the two apart by the code.
+    assert changed.returncode == 78
     assert "CORPUS PIN DEFECT" in changed.stderr
+    assert "crime=corpus-pin-mismatch exit=78" in changed.stderr
