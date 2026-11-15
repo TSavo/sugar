@@ -86,7 +86,20 @@ def test_symbolic_receiver_cannot_borrow_native_string_return_type() -> None:
         _Site("call"),
     ).desugar()
 
-    assert isinstance(outcome.completed_value(), CallSiteValue)
+    # The receiver's type is not decided here, so which ``startswith`` runs is
+    # not either: the call completes with its own result (never ``str``'s
+    # bool) only under its completes atom, and may raise anything.
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+
+    assert outcome.completed_value() is None
+    (completed,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    (halted,) = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert isinstance(completed.value, CallSiteValue)
+    assert completed.guard.name == "python:unknown_callee_call.completes"
+    assert isinstance(halted.effect, UndeterminedRaiseEffect)
+    assert halted.effect.exception_name is None
+    assert halted.effect.producer_node_owner == "UnknownCallee:startswith"
 
 
 def test_string_receiver_with_undecided_prefix_stays_untyped() -> None:
