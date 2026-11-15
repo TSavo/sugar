@@ -7776,7 +7776,8 @@ def _module_uncarried_names(statement, carried, scope) -> frozenset:
     route merge joins, ``Match.substitute``) -- a nested definition's,
     import's or ``with``'s binding in its body, a name a route never bound
     -- and every name a ``try ... except*`` binds other than an ``as`` name
-    it unbinds (``_except_star_unbound_names``), which exports no binding.
+    it unbinds (``_except_star_unbound_names``): no reducer decides its
+    route slots (``TryStarSugar``), so a reader is not handed its join.
     ``carried`` is None for any other statement.  ``scope`` is the binding
     standing before the statement.  From the statement on, each is
     ``UNDECIDED_MODULE_BINDING`` for a reader, never the binding standing
@@ -19129,24 +19130,14 @@ class Try(Statement):
     _child_fields = ("body", "handlers", "orelse", "finalbody")
 
     def substitute(self, scope):
-        """Rewrite each routed completion edge and export its binding state."""
-        from .shadow import rewrite
+        """Rewrite each routed completion edge and export its binding state.
 
-        if type(self) is not Try:
-            # ``except*``: each handler is keyed as this evaluation's, as for
-            # ``except`` below, so a duplicated ``try ... except*`` observes
-            # one effect group per evaluation (temporal choice 1).
-            changed = {}
-            handlers = Try._keyed_handlers(self, scope)
-            new_handlers, d = self._substitute_field(handlers, scope)
-            if d or handlers is not self.handlers:
-                changed["handlers"] = new_handlers
-            for field_name in ("body", "orelse", "finalbody"):
-                new_value, d = self._substitute_body(getattr(self, field_name), scope)
-                if d:
-                    changed[field_name] = new_value
-            node = self if not changed else rewrite(self, **changed)
-            return self._keyed_evaluation(node, scope)
+        The one temporal rewrite of a ``try``, ``except`` and ``except*``
+        alike (``TryStar.substitute``): the body threads into ``else``, each
+        arm begins from the state its routed halts carry, ``finally`` is
+        substituted for its completion and for its halted faces, and the
+        statement exports what its completion routes bound."""
+        from .shadow import rewrite
 
         changed = {}
         site_id = getattr(self, "try_route_site_id", None)
@@ -19176,6 +19167,7 @@ class Try(Statement):
 
         handler_nets = []
         handler_halts = []
+        arm_writes = []
         new_handlers = []
         for handler_index, handler in enumerate(Try._keyed_handlers(self, scope)):
             handler_changed = {}
@@ -19187,7 +19179,12 @@ class Try(Statement):
             # a union of everything the body could have bound.  ``incoming`` is
             # what every edge that reaches THIS handler agrees on; an edge that
             # halted before an assignment simply does not carry it.
-            incoming = self._incoming_halt_state(routed.get(handler_index))
+            incoming = self._arm_entry_state(
+                self._incoming_halt_state(routed.get(handler_index)),
+                handler_index,
+                arm_writes,
+                routed,
+            )
             handler_scope = {**scope, **incoming}
             if handler.name:
                 handler_scope[handler.name] = handler._make_effect_ref(
@@ -19213,9 +19210,16 @@ class Try(Statement):
             # changed).
             handler_edge_states.append((None, {**handler_scope, **handler_net}))
             arm_edges = self._body_halt_edges(handler_edge_states, handler_scope)
-            arm_halt = None
-            if len({state.edge for _identity, _mro, state in arm_edges}) == 1:
-                arm_halt = {**incoming, **arm_edges[0][2]}
+            arm_halt = self._arm_halt_point(incoming, arm_edges)
+            # What the arm itself changed, its own ``as`` name apart (cleared
+            # below however the arm exits).
+            arm_writes.append(
+                frozenset(
+                    name
+                    for name in handler_net
+                    if isinstance(name, str) and name != handler.name
+                )
+            )
             if handler.name:
                 # Python clears the ``as`` target however the clause exits.
                 cleared = UnboundBinding(name=handler.name, cause=handler.fragment)
@@ -19369,6 +19373,27 @@ class Try(Statement):
             rewrite_with_leaves(handler, {"evaluation": evaluation})
             for handler in self.handlers
         )
+
+    def _arm_entry_state(self, incoming, handler_index, arm_writes, routed):
+        """The state arm ``handler_index`` begins from: ``incoming``, what its
+        routed halt edges carry (``_incoming_halt_state``).  A halt reaches
+        at most one ``except`` arm, so no arm begins after another ran;
+        ``arm_writes`` (what each earlier arm changed) and ``routed`` are
+        read by ``except*``, whose arms run in turn
+        (``TryStar._arm_entry_state``)."""
+        del handler_index, arm_writes, routed
+        return incoming
+
+    def _arm_halt_point(self, incoming, arm_edges):
+        """The state a halt raised inside an arm leaves from, when exactly
+        one statement of the arm can halt: the state in effect at that
+        statement (``arm_edges``: the arm's own halt edges).  None when
+        several can: which one halted is not keyed here, and every name the
+        arm changed is unknown under its halt
+        (``_HaltEdgeJoin.arm_halt_state``)."""
+        if len({state.edge for _identity, _mro, state in arm_edges}) != 1:
+            return None
+        return {**incoming, **arm_edges[0][2]}
 
     def _rewrite_with_route_site(
         self, changed, site_id, edge_keys=(), finalbody_halted=None
@@ -19972,9 +19997,98 @@ class TryStar(Statement):
     finalbody: Tuple[Statement, ...]
     _child_fields = ("body", "handlers", "orelse", "finalbody")
 
+    # The one temporal rewrite of a ``try`` (``Try.substitute``) and every
+    # step it takes: the body's halt edges, their routing, the arms' states,
+    # the completion merge and the two copies of ``finally``.  What
+    # ``except*`` does differently is stated below, by name.
+    _HALT_FREE_NODES = Try._HALT_FREE_NODES
+    _MID_STATEMENT_MUTATION_KINDS = Try._MID_STATEMENT_MUTATION_KINDS
+    _COMPOUND_KINDS = Try._COMPOUND_KINDS
+    _halt_free_classes = Try._halt_free_classes
+    _statement_cannot_halt = Try._statement_cannot_halt
+    _raise_testimony_of = Try._raise_testimony_of
+    _body_halt_edges = Try._body_halt_edges
+    _mid_statement_state = Try._mid_statement_state
+    _statement_halt_edges = Try._statement_halt_edges
+    _route_halt_edges = Try._route_halt_edges
+    _handler_surely_matches = Try._handler_surely_matches
+    _incoming_halt_state = Try._incoming_halt_state
+    _unconditional_raise_testimony = Try._unconditional_raise_testimony
+    _block_has_completed_fallthrough = Try._block_has_completed_fallthrough
+    _block_holds_return = Try._block_holds_return
+    _merge_completion_nets = Try._merge_completion_nets
+    _make_ifexp = Try._make_ifexp
+    _make_branch_result_ref = Try._make_branch_result_ref
+    _rewrite_with_route_site = Try._rewrite_with_route_site
+    _finalbody_halted_sugar = Try._finalbody_halted_sugar
+
     def substitute(self, scope):
-        """Same block-aware substitute as Try (identical fields)."""
+        """The one temporal rewrite of a ``try`` (``Try.substitute``): the
+        body threads into ``else``, each arm begins from the state its
+        routed halts carry, ``finally`` reads what the route into it bound,
+        and the statement exports what its completion routes bound."""
         return Try.substitute(self, scope)
+
+    def _handler_matches(self, handler, exception_identity, exception_mro) -> bool:
+        """Every arm may receive every body halt.  ``except*`` matches the
+        leaves of a raised group, so the raised class being another class
+        than the arm's is not a miss: a group of any class may hold a leaf
+        of the arm's type.  Only a decided match stops an edge
+        (``_handler_surely_matches``: a plain exception of the arm's type is
+        matched whole, and a group whose class is under the arm's type holds
+        only leaves under it)."""
+        del handler, exception_identity, exception_mro
+        return True
+
+    def _arm_halt_point(self, incoming, arm_edges):
+        """None.  An ``except*`` arm that falls through still leaves the
+        statement by a raise where the group holds a rest no arm matched
+        (CPython raises it after the arms ran), after every store the arm
+        made.  No one statement's state is the state that raise carries: every
+        name the arm changed is unknown under it
+        (``_HaltEdgeJoin.arm_halt_state``)."""
+        del incoming, arm_edges
+        return None
+
+    def _arm_entry_state(self, incoming, handler_index, arm_writes, routed):
+        """``incoming``, where no arm before this one changed a binding.
+
+        The arms of an ``except*`` run in turn on one raised group, each on
+        the leaves it matches: an arm may begin after an earlier arm ran, in
+        the state that arm left, and the statement may complete after
+        several ran.  The rewrite states one arm per halt
+        (``Try.substitute``), which is this statement exactly where no arm
+        but the last changes a binding: every arm then begins from the
+        body's halt, and a completion carries what the last arm that ran
+        left.  An earlier arm that changes one -- a store, an object its
+        calls may have changed, an ``as`` name this arm does not bind
+        itself (the earlier arm ends by unbinding it) -- leaves a state
+        this arm's entry does not state: refused by name, never begun from
+        the body's halt as if the earlier arm had not run."""
+        name = self.handlers[handler_index].name
+        for earlier, writes in enumerate(arm_writes):
+            if earlier not in routed:
+                continue
+            cleared = self.handlers[earlier].name
+            if writes or (cleared and cleared != name):
+                raise SugarNotWritten(
+                    blame=self.handlers[earlier].fragment,
+                    owner="TryStar.substitute",
+                    observed=(
+                        "an except* arm changes a binding and a later arm "
+                        "may run after it on the same raised group"
+                    ),
+                    requested=(
+                        "the state a later except* arm begins from after an "
+                        "earlier arm ran"
+                    ),
+                    fix=(
+                        "thread each except* arm from the state the arms "
+                        "before it left; never begin it from the body's "
+                        "halt alone"
+                    ),
+                )
+        return incoming
 
     def substitution_binding(self, scope):
         """Threading a module body for its readers, a handler's ``as`` name
@@ -20062,6 +20176,7 @@ class TryStar(Statement):
             orelse=tuple(stmt.sugar() for stmt in self.orelse),
             finalbody=tuple(stmt.sugar() for stmt in self.finalbody),
             site=self.fragment,
+            finalbody_halted=self._finalbody_halted_sugar(),
         )
 
 
