@@ -33,6 +33,10 @@ def _oracle_encode_string(value: str, out: list[str]) -> None:
             out.append("\\u00")
             out.append("0123456789abcdef"[(codepoint >> 4) & 0xF])
             out.append("0123456789abcdef"[codepoint & 0xF])
+        elif 0xD800 <= codepoint <= 0xDFFF:
+            # A lone surrogate has no UTF-8 bytes: its code-point escape is
+            # its canonical spelling (#7757). No other string changed.
+            out.append(f"\\u{codepoint:04x}")
         else:
             out.append(char)
     out.append('"')
@@ -127,14 +131,33 @@ def test_zero_width_and_bidi_controls_are_verbatim():
         _assert_identical(value)
 
 
-def test_lone_surrogates_pass_the_encoder_and_fail_identically_at_the_bytes():
-    # The encoder emits lone surrogates verbatim; the UTF-8 encode is where the
-    # loud failure lives. Both halves must be unchanged.
-    for value in ["\ud800", "\udfff", "a\udc00b", "\ud83d"]:
+def test_lone_surrogates_are_written_as_their_code_point_escape():
+    # A Python str may hold a surrogate code point no UTF-8 sequence spells
+    # (``"\ud83d"`` in pandas source). It is a value like any other, so it has
+    # canonical bytes: its lowercase code-point escape, which is ASCII.
+    for value, spelled in [
+        ("\ud800", '"\\ud800"'),
+        ("\udfff", '"\\udfff"'),
+        ("a\udc00b", '"a\\udc00b"'),
+        ("\ud83d", '"\\ud83d"'),
+        ("😀", '"\\ud83d\\ude00"'),
+    ]:
         _assert_identical(value)
-        assert C.encode_jcs(C.vstr(value)) == f'"{value}"'
-        with pytest.raises(UnicodeEncodeError):
-            C.canonical_json_bytes(value)
+        assert C.encode_jcs(C.vstr(value)) == spelled
+        assert C.canonical_json_bytes(value) == spelled.encode("ascii")
+        assert C.canonical_json_bytes({"k": [value]}) == (
+            b'{"k":[' + spelled.encode("ascii") + b"]}"
+        )
+
+
+def test_a_lone_surrogate_never_shares_bytes_with_another_string():
+    # Lying twin: the escape text spelled out with a real backslash, and the
+    # astral character the pair would name, are different strings with
+    # different bytes and different CIDs.
+    lone = "😀"
+    for other in ["\\ud83d\\ude00", "\U0001f600", "ud83dude00"]:
+        assert C.canonical_json_bytes(other) != C.canonical_json_bytes(lone)
+        assert C.cid_of_json(other) != C.cid_of_json(lone)
 
 
 def test_empty_and_pure_cid_strings():
@@ -175,11 +198,21 @@ def _oracle_canonical_json_bytes(value):
         C._encode_string = saved
 
 
+def _holds_lone_surrogate(doc: dict) -> bool:
+    texts = list(doc)
+    for value in doc.values():
+        if isinstance(value, str):
+            texts.append(value)
+        elif isinstance(value, list):
+            texts.extend(value)
+    return any(0xD800 <= ord(char) <= 0xDFFF for text in texts for char in text)
+
+
 def test_differential_fuzz_whole_documents_and_cids():
     """T's gate: complete canonical DOCUMENTS and resulting CIDs, not merely
     isolated strings."""
     rng = random.Random(981_2026)
-    checked = raised = 0
+    checked = with_surrogate = 0
     for _ in range(2_000):
         doc = {}
         for _ in range(rng.randint(0, 6)):
@@ -208,16 +241,15 @@ def test_differential_fuzz_whole_documents_and_cids():
             new_bytes, new_err = C.canonical_json_bytes(doc), None
         except BaseException as exc:  # noqa: BLE001
             new_bytes, new_err = None, (type(exc), str(exc))
-        assert old_err == new_err, f"document error divergence: {old_err} {new_err}"
+        assert old_err is None and new_err is None, f"refused: {old_err} {new_err}"
         assert old_bytes == new_bytes, "document byte divergence"
-        if old_err is None:
-            assert C.cid_of_json(doc) == C.blake3_512_of(old_bytes)
-            checked += 1
-        else:
-            raised += 1
+        assert C.cid_of_json(doc) == C.blake3_512_of(old_bytes)
+        checked += 1
+        if _holds_lone_surrogate(doc):
+            with_surrogate += 1
     assert (
-        checked > 0 and raised > 0
-    ), "fuzz must cover both encodable and lone-surrogate documents"
+        checked > with_surrogate > 0
+    ), "fuzz must cover documents with and without a lone surrogate"
 
 
 def test_realistic_preimage_documents_keep_their_cids():
@@ -251,5 +283,5 @@ def test_fast_path_gate_agrees_with_the_escape_set():
     never fewer (silent corruption), never a claim of more than it handles."""
     for cp in range(0x11000):
         char = chr(cp)
-        needs_escape = char in ('"', "\\") or cp < 0x20
+        needs_escape = char in ('"', "\\") or cp < 0x20 or 0xD800 <= cp <= 0xDFFF
         assert (C._ESCAPE_SEARCH(char) is not None) == needs_escape, hex(cp)

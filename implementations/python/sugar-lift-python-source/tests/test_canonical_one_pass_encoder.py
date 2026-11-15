@@ -182,8 +182,32 @@ def test_what_the_specification_refuses_stays_refused() -> None:
     for document in ((1, 2), 1.0, {1: "a"}, {True: "a"}, {None: "a"}, {"k": {1}}):
         with pytest.raises(TypeError):
             C.canonical_json_bytes(document)
-    # A lone surrogate passes both encoders and fails at the bytes, as before.
-    with pytest.raises(UnicodeEncodeError):
-        C.canonical_json_bytes({"k": "\ud800"})
-    with pytest.raises(UnicodeEncodeError):
-        _specification({"k": "\ud800"})
+
+
+def test_a_lone_surrogate_is_written_by_the_specification(monkeypatch) -> None:
+    # A Python str may hold a lone surrogate. The interpreter's encoder writes
+    # it raw, which has no UTF-8 bytes; the one pass never writes it, and the
+    # specification spells it as its code-point escape (#7757).
+    document = {"k": "a\ud800", "\udfff": ["\U0001f600", "\ud83d\ude00"]}
+    expected = b'{"k":"a\\ud800","\\udfff":["\xf0\x9f\x98\x80","\\ud83d\\ude00"]}'
+    assert _specification(document) == expected
+    assert C.canonical_json_bytes(document) == expected
+    assert C.cid_of_json(document) == C.blake3_512_of(expected)
+
+    consulted = []
+    specification = C._json_to_value
+
+    def witness(value):
+        consulted.append(value)
+        return specification(value)
+
+    monkeypatch.setattr(C, "_json_to_value", witness)
+    C.canonical_json_bytes(document)
+    assert consulted[0] == document
+
+
+def test_fuzzed_documents_with_lone_surrogates_match_the_specification() -> None:
+    rng = random.Random(7561)
+    for _ in range(3000):
+        document = _random_document(rng, _ESCAPE_FREE + "\ud800\udbff\udc00\udfff")
+        assert C.canonical_json_bytes(document) == _specification(document)
