@@ -1751,10 +1751,13 @@ def stated_global_values(definition) -> tuple:
     its one key is read (``ModuleFinalValue``: the run asked for, its
     refusal raised here).  The row states them (``inputValues``) and prove's
     one binder binds an input no call supplies to its stated value (a call
-    after import, pytest's call of a test function).  An input whose final
-    binding reads through more than one key (a branch merge, a loop's
-    faces), or that the run leaves undecided, owing, or not one completed
-    value, is not stated: a claim that reads it is not decided.  One the
+    after import, pytest's call of a test function).  A final binding that
+    is a phi over a slot the run decided reads through the keys of the arm
+    the run took (``_keys_on_the_arm_the_run_took``).  An input whose final
+    binding reads through more than one key there (a branch merge the run
+    left undecided, a loop's faces), or that the run leaves undecided,
+    owing, or not one completed value, is not stated: a claim that reads it
+    is not decided.  One the
     module body does not decide (read through its undecided key,
     ``nodes.undecided_module_binding_key``) is never stated, and the run is
     not asked for it."""
@@ -1764,6 +1767,8 @@ def stated_global_values(definition) -> tuple:
     for item in _global_inputs(definition):
         name = item.coordinate.name
         keys = global_input_keys(definition.unit, name)
+        if len(keys) != 1:
+            keys = _keys_on_the_arm_the_run_took(definition.unit, name)
         if len(keys) != 1:
             continue
         if keys[0] == undecided_module_binding_key(definition.unit, name):
@@ -1776,6 +1781,69 @@ def stated_global_values(definition) -> tuple:
             continue
         stated.append((item.formal, value.to_term(owner="stated_global_values")))
     return tuple(stated)
+
+
+def _keys_on_the_arm_the_run_took(unit, name: str) -> tuple:
+    """The keys ``name``'s module-final binding reads through on the arm the
+    module's one run took, or ``()`` where the run did not decide it.
+
+    The final binding of a name a module ``if``, ``try`` or live loop bound
+    on more than one route is a phi over that statement's slot (``IfExp`` on
+    a ``BranchResultRef``; a live loop's write slot, ``GuardedBinding``),
+    and reads through every arm's key (``global_input_keys``).  Where the
+    run decided the slot (``ModuleFinalDecision``: a ground ``if``, a
+    concrete loop's exit, a route every completed arm took), the value the
+    run left is that arm's, so the phi is read down that arm, slot by slot,
+    to the keys it reads through.  A slot the run left undecided -- a
+    symbolic module ``if``, whose test the run reads over values a reading
+    function's proof does not decide, or arms that decided it differently --
+    gives ``()``: no value is stated, and a claim that reads the input is
+    decided for every value of it at prove (#8843), never at a value the
+    test selects by a flag (#7757)."""
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+        TrueBoolLiteralSugar,
+    )
+    from sugar_source_tree.binding_state import GuardedBinding, unwrap_binding_state
+    from sugar_source_tree.nodes import (
+        UNDECIDED_MODULE_BINDING,
+        BranchResultRef,
+        IfExp,
+    )
+
+    state = unit.module_bindings_at(None, frozenset({name})).get(
+        name, UNDECIDED_MODULE_BINDING
+    )
+    if state is UNDECIDED_MODULE_BINDING:
+        return ()
+    state = unwrap_binding_state(state)
+    while True:
+        if isinstance(state, IfExp) and isinstance(state.test, BranchResultRef):
+            slot_id, when_true, when_false = (
+                state.test.slot_id,
+                state.body,
+                state.orelse,
+            )
+        elif isinstance(state, GuardedBinding):
+            slot_id, when_true, when_false = (
+                state.slot.slot_id,
+                state.when_true,
+                state.when_false,
+            )
+        else:
+            break
+        decided = ModuleFinalDecision(unit, slot_id).read()
+        if isinstance(decided, TrueBoolLiteralSugar):
+            state = unwrap_binding_state(when_true)
+        elif isinstance(decided, FalseBoolLiteralSugar):
+            state = unwrap_binding_state(when_false)
+        else:
+            return ()
+    evaluations: list = []
+    _collect_final_evaluations(state, evaluations, [])
+    return tuple(dict.fromkeys(evaluations))
 
 
 def global_value_at_call(callee, name: str, ctx, *, module_site, call_site):
