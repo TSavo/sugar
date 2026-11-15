@@ -78,3 +78,26 @@ def test_a_guarded_cell_read_at_a_local_call_answers_where_minted():
 def test_a_binding_value_no_read_reaches_answers_where_minted(kind, source):
     report = _report(source)
     assert not any(e.kind == kind for e in report.minority), report.minority
+
+
+def test_a_discarded_round_of_a_live_loop_answers_where_minted():
+    # ``_testing/_warnings.py:181``: the first round of the live loop's
+    # substitution reads ``match`` as the formal; the call it is handed to
+    # may change it, so the next round reads it through the header and the
+    # first round's reads are discarded (``For._answer_discarded_rounds``).
+    report = _report(
+        "import re\n"
+        "\n"
+        "\n"
+        "def f(match, items):\n"
+        "    out = []\n"
+        "    for item in items:\n"
+        "        if match is not None:\n"
+        "            if re.search(match, item):\n"
+        "                out.append(item)\n"
+        "    return out\n"
+    )
+    assert not any(
+        e.kind in ("FormalRef", "BindingCoordinateRef") and e.start_line in (7, 8)
+        for e in report.minority
+    ), report.minority
