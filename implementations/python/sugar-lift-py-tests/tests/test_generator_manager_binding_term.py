@@ -8,20 +8,44 @@ generic manager DTO.
 
 from __future__ import annotations
 
+import functools
+import tempfile
+
 from sugar_lift_py_tests.generator_construction import (
     GeneratorConstructionV1,
     ReturnStepV1,
     YieldStepV1,
 )
-from sugar_lift_py_tests.ir import ctor, num, str_const
+from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.outcome.resource_bindings import ManagerBinding
+from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
+from sugar_lift_python_source.source_oracle import path_source
+from sugar_source_tree.tree import SourceFile
+
+
+@functools.cache
+def _literals() -> tuple[IntLiteralSugar, IntLiteralSugar]:
+    """The ``yield 7`` and ``return 9`` values as constructed sugar at their
+    own source occurrences: a step's value is a ``ConstructedTermSugar``
+    (``_require_constructed_term``), never a bare IR term, and its term
+    testimony seals the occurrence it was constructed at."""
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as handle:
+        handle.write("def gen():\n    yield 7\n    return 9\n")
+        path = handle.name
+    function = next(SourceFile(path_source(path)).functions())
+    seven, nine = (node for node in function.walk() if node.kind == "Constant")
+    return (
+        IntLiteralSugar(7, site=seven.fragment),
+        IntLiteralSugar(9, site=nine.fragment),
+    )
 
 
 def _machine(
     *, allocation="call:m:1", frame="frame:m", binding=("bound:x",), steps=None
 ):
     if steps is None:
-        steps = (YieldStepV1(num(7)), ReturnStepV1(num(9)))
+        yielded, returned = _literals()
+        steps = (YieldStepV1(yielded), ReturnStepV1(returned))
     return GeneratorConstructionV1.allocate(
         allocation_coordinate=allocation,
         frame_coordinate=frame,

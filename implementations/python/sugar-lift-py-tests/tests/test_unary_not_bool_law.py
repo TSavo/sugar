@@ -44,7 +44,7 @@ from sugar_lift_py_tests.ir import PrimitiveSort, ctor, make_var, str_const
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_py_tests.sugar.unary_op_sugar import UnaryOpSugar
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -80,7 +80,10 @@ class _Site:
 
 
 @dataclass(frozen=True)
-class _ValueSugar(Sugar):
+class _ValueSugar(ConstructedTermSugar):
+    """A constructed operand: every nested term slot admits only a
+    ``ConstructedTermSugar`` (``require_constructed_term_sugar``)."""
+
     value: object
 
     @classmethod
@@ -90,6 +93,9 @@ class _ValueSugar(Sugar):
     def desugar(self, ctx=None):
         del ctx
         return ExitSet.completed(self.value)
+
+    def to_term(self, *, owner):
+        return self.value.to_term(owner=owner)
 
 
 @dataclass(frozen=True)
