@@ -188,7 +188,54 @@ def test_naming_the_raising_class_without_calling_it_completes() -> None:
 # constructor, and carries the halt.
 # ---------------------------------------------------------------------------
 
-_MAY_RAISE_CALLS = ["float(S)", "os.getcwd()", "frozenset(S)"]
+def _module_run(body: str):
+    """THE module reduction (``tree_enumerate.owner_reduction`` with no owner)
+    of the prelude and ``class Box`` with ``body``: the module body's one run,
+    as an import runs it.
+
+    A class body that reads a module global (``S``, ``FLAG``) reads the
+    evaluation key the global's own statement bound, and only the block that
+    ran that statement binds it.  The class statement reduced apart from its
+    module is refused by name there (``EvaluationRefSugar._unbound``: "reduce
+    the read after the statement in the block that ran it"), so such a body is
+    read where Python runs it: in the module's run, after ``S = ...``."""
+    from sugar_lift_py_tests.tree_enumerate import owner_reduction
+
+    tree = _tree(_PRELUDE + "class Box:\n" + body + _INIT)
+    return owner_reduction(None, tree).outcome
+
+
+def _run_faces(outcome) -> tuple[int, int]:
+    """(completed arms, halted arms) of a module run."""
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+
+    assert isinstance(outcome, ExitSet), outcome
+    return (
+        sum(isinstance(face, Completed) for face in outcome.exits),
+        sum(isinstance(face, Halted) for face in outcome.exits),
+    )
+
+
+_MAY_RAISE_CALLS = ["os.getcwd()"]
+# A call over a module global that may raise: read in the module's run.
+_MAY_RAISE_OVER_A_GLOBAL = ["float(S)", "frozenset(S)"]
+
+
+@pytest.mark.parametrize("call", _MAY_RAISE_OVER_A_GLOBAL)
+def test_a_field_call_over_a_module_global_that_may_raise_is_one_more_halt_of_the_run(
+    call: str,
+) -> None:
+    """``S`` is what ``os.environ.get('S')`` returned, a value nothing here
+    decides, so ``float(S)`` may raise: the class statement completes on one
+    face and halts on one.  Twin of the same module with ``limit = 3``: the
+    run completes on as many arms, and the may-raise field is exactly one more
+    halted arm of it."""
+    plain_completed, plain_halted = _run_faces(_module_run("    limit = 3\n"))
+    completed, halted = _run_faces(_module_run(f"    limit = {call}\n"))
+
+    assert plain_completed >= 1
+    assert completed == plain_completed
+    assert halted == plain_halted + 1
 
 
 @pytest.mark.parametrize("with_context", [False, True], ids=["no-ctx", "root-ctx"])
@@ -331,14 +378,14 @@ def test_the_class_holds_each_field_value_in_source_order() -> None:
 def test_a_class_conditional_that_is_not_ground_still_refuses() -> None:
     from sugar_source_tree.panic import SugarNotWritten
 
+    # ``FLAG`` is a module global: the class body reads it in the module's
+    # run (``_module_run``), where its statement bound it.
     with pytest.raises(SugarNotWritten, match="not a ground bool literal"):
-        _class_statement("    if FLAG:\n        limit = 1\n", with_context=True)
+        _module_run("    if FLAG:\n        limit = 1\n")
     # Also when a field before it always raises: the refusal is not traded
     # for the halt.
     with pytest.raises(SugarNotWritten, match="not a ground bool literal"):
-        _class_statement(
-            "    limit = 1 // 0\n    if FLAG:\n        a = 1\n", with_context=True
-        )
+        _module_run("    limit = 1 // 0\n    if FLAG:\n        a = 1\n")
 
 
 def test_a_field_with_several_completed_values_still_refuses() -> None:
@@ -349,7 +396,7 @@ def test_a_field_with_several_completed_values_still_refuses() -> None:
     with pytest.raises(
         SugarNotWritten, match="class field limit did not construct completely"
     ):
-        _class_statement("    limit = FLAG or int(FLAG)\n", with_context=True)
+        _module_run("    limit = FLAG or int(FLAG)\n")
 
 
 def test_a_body_that_did_not_run_to_its_end_builds_no_class() -> None:
