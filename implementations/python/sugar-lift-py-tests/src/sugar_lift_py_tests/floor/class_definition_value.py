@@ -504,6 +504,68 @@ class ClassDefinitionValue(GuardStableValue):
             fix="preserve unique method resolution or keep the call loud",
         )
 
+    def attribute(self, name, site, ctx):
+        """``Cls.name``: a read off the class object itself.
+
+        CPython reads it by ``type.__getattribute__`` (``type_getattro``,
+        Objects/typeobject.c): a data descriptor the metaclass's MRO binds
+        for ``name`` wins; else the first class of ``Cls.__mro__`` whose
+        ``__dict__`` holds ``name`` answers, through that value's
+        ``__get__(None, Cls)`` when its type has one; else a metaclass
+        attribute; else ``AttributeError``.
+
+        Decided here only where every step is read:
+
+        - the metaclass is ``type`` (``_metaclass_is_type``: the order is
+          read and no class statement of it is created with a keyword), and
+          ``type`` (with ``object``) holds no data descriptor named ``name``;
+        - the one class-namespace lookup (``namespace_member``, the lookup
+          an instance's read of a class field reads, ``ObjectValue.class_member``)
+          decides a class-body field -- not a ``def``, not a builtin base's
+          member, not a name no class binds;
+        - the field's value is an immutable builtin all the way down
+          (``_immutable_builtin``: a number, ``str``, ``bytes``, ``None``,
+          ``bool``, a tuple of those), whose type has no ``__get__``, so the
+          value read is the value the class body bound.
+
+        Every other read is the one undecided attribute read
+        (``undecided_attribute``), two-faced and owed: never a value assumed
+        and never an ``AttributeError`` named."""
+        del ctx
+        if self._metaclass_is_type() and not _type_data_descriptor(name):
+            decided, _found, _holder, method, value = self.namespace_member(name)
+            if (
+                decided
+                and method is None
+                and value is not None
+                and _immutable_builtin(value)
+            ):
+                from sugar_lift_py_tests.outcome import ExitSet
+
+                return ExitSet.completed(value)
+        return self.undecided_attribute(
+            name, site, owner="ClassDefinitionValue.attribute"
+        )
+
+    def _metaclass_is_type(self) -> bool:
+        """Whether this class's metaclass is decided to be ``type``: its
+        statement and every class statement of its MRO is created with no
+        keyword (a ``metaclass=`` keyword, or one a base's metaclass reads),
+        and the order is read (an unread base may carry any metaclass).  The
+        builtin entries of a read order (``object``, ``dict``, ``type``, the
+        builtin exceptions) are each of metaclass ``type``."""
+        from sugar_source_tree.nodes import ClassDef
+
+        definition = self.class_definition
+        if definition is None:
+            return False
+        order = definition.method_resolution_order()
+        if order is None:
+            return False
+        return not any(
+            isinstance(entry, ClassDef) and entry.keywords for entry in order
+        )
+
     def test_python_type(self, value, site):
         """``isinstance(value, Cls)`` for this source class.
 
@@ -735,3 +797,51 @@ def class_definition_term(class_definition_cid: str):
         [str_const(class_definition_cid)],
         symbol_kind="coordinate",
     )
+
+
+def _type_data_descriptor(name: str) -> bool:
+    """Whether the metaclass ``type`` binds ``name`` to a data descriptor
+    along its own MRO (``type``, ``object``): ``__name__``, ``__qualname__``,
+    ``__doc__``, ``__module__``, ``__dict__``, ``__class__``, ... .  Such a
+    binding wins over the class's own ``__dict__`` in ``type_getattro``, so a
+    read of it off a class is not the class-body field
+    (``ClassDefinitionValue.attribute``)."""
+    for meta in type.__mro__:
+        held = vars(meta).get(name)
+        if held is None:
+            continue
+        kind = type(held)
+        return hasattr(kind, "__set__") or hasattr(kind, "__delete__")
+    return False
+
+
+def _immutable_builtin(value) -> bool:
+    """Whether ``value`` is an immutable builtin all the way down: a number
+    (``TermValue``), ``str``, ``bytes``, ``None``, ``True``/``False``, or a
+    tuple of those.  None of those types has a ``__get__``, and none of them
+    can be changed after the class body bound it, so the value a read of the
+    class field gets is the one the body bound."""
+    from sugar_lift_py_tests.floor.bytes_value import BytesValue
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+        TrueBoolLiteralSugar,
+    )
+
+    if type(value) in (
+        TermValue,
+        StringValue,
+        BytesValue,
+        NoneValue,
+        TrueBoolLiteralSugar,
+        FalseBoolLiteralSugar,
+    ):
+        return True
+    if type(value) is TupleValue:
+        return all(_immutable_builtin(element) for element in value.elements)
+    return False
