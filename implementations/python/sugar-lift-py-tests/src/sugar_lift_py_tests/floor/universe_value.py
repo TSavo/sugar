@@ -180,8 +180,17 @@ def function_contract_row(
     post,
     def_memento,
     panic_loci=(),
+    assertions=(),
 ):
-    """The one function-contract row: the post, the def's sealed warrant.
+    """The one contract row of a function: its post, its assertions, its halts.
+
+    A function is one contract (#7766, step 7): one row, one name. Its
+    ``post`` is the reduction's completed arms; its ``inv`` is what its
+    assertions state (``assertions``, the ``UniverseMint`` rows the record
+    entries mint, ``assertion_claims``), conjoined; its ``panicLoci`` are the
+    halted arms. Before this, each assertion was a second ``contract`` row
+    under the same name, and prove loaded two contracts for one function and
+    refused the second as a duplicate name.
 
     ``formalSorts`` states one sort per formal, the sort its authenticated
     formal coordinate carries (the same statement ``ParameterOwnedContractV1``
@@ -196,8 +205,31 @@ def function_contract_row(
     never stands beside the callee's definition under a second spelling
     (#7762).
     """
+    import dataclasses
+
     from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
 
+    inv = None
+    proofir_provenance = None
+    source_warrants = [def_memento]
+    if assertions:
+        from sugar_lift_py_tests.floor.universe_mint_projection import claim_formula
+
+        provenance = _assertions_provenance(assertions)
+        inv = claim_formula(
+            _conjoined([row.formula.ir_formula for row in assertions]),
+            formals=formals,
+            provenance=provenance,
+            role="inv",
+        )
+        proofir_provenance = provenance.to_rpc()
+        for row in assertions:
+            for stated in row.source_warrants:
+                warrant = dataclasses.replace(
+                    stated, source_function_name=name, role="assertion"
+                )
+                if warrant not in source_warrants:
+                    source_warrants.append(warrant)
     return BodyUniverseDto(
         name=name,
         post=contract_claim(
@@ -207,7 +239,9 @@ def function_contract_row(
             role="post",
             floor_chain=("UniverseValue.post",),
         ),
-        source_warrants=[def_memento],
+        inv=inv,
+        source_warrants=source_warrants,
+        proofir_provenance=proofir_provenance,
         formals=list(formals),
         formal_sorts=_stated_formal_sorts(formals, formal_coordinates),
         kind="function-contract",
@@ -216,33 +250,51 @@ def function_contract_row(
     )
 
 
-def mint_rows(name, formals, entries):
-    """The contract rows the record entries mint for themselves."""
-    import dataclasses
+def assertion_claims(name, formals, entries):
+    """What the record entries state for themselves (``mint_contribution``):
+    the ``UniverseMint`` rows a function's contract carries as its ``inv``."""
+    return [row for entry in entries for row in entry.mint_contribution(name, formals)]
 
-    from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
 
-    rows = []
-    for entry in entries:
-        for row in entry.mint_contribution(name, formals):
-            rows.append(
-                BodyUniverseDto(
-                    name=row.name,
-                    inv=row.formula,
-                    source_warrants=[
-                        dataclasses.replace(
-                            warrant,
-                            source_function_name=name,
-                            role="assertion",
-                        )
-                        for warrant in row.source_warrants
-                    ],
-                    formals=list(row.formals),
-                    kind="contract",
-                    proofir_provenance=row.provenance().to_rpc(),
-                )
-            )
-    return rows
+def _conjoined(formulas):
+    """One formula for several assertion claims: the one claim as itself, or
+    the conjunction of every distinct top-level conjunct, in order."""
+    from sugar_lift_py_tests.ir import _Connective, and_
+
+    formulas = list(formulas)
+    if len(formulas) == 1:
+        return formulas[0]
+    conjuncts = []
+    for formula in formulas:
+        parts = (
+            formula.operands
+            if isinstance(formula, _Connective) and formula.kind == "and"
+            else (formula,)
+        )
+        for part in parts:
+            if part not in conjuncts:
+                conjuncts.append(part)
+    if len(conjuncts) == 1:
+        return conjuncts[0]
+    return and_(conjuncts)
+
+
+def _assertions_provenance(assertions):
+    """The assertions' provenance, as one: every warrant any of them states,
+    once each, in order, at the first assertion's construction site."""
+    from sugar_lift_py_tests.proofir.nodes import Provenance
+
+    first = assertions[0].provenance()
+    warrants = []
+    for row in assertions:
+        for warrant in row.provenance().warrants:
+            if warrant not in warrants:
+                warrants.append(warrant)
+    return Provenance(
+        node_class=first.node_class,
+        construction_site=first.construction_site,
+        warrant=tuple(warrants),
+    )
 
 
 def assertion_site_key(site):
@@ -266,7 +318,12 @@ def exit_arms_payload_rows(
     unreached_assertion_sites,
     halted_guards,
 ):
-    """Every arm of one reduction, projected to the wire (#7766).
+    """Every arm of one reduction, projected to the wire (#7766): ONE row.
+
+    A function is one contract under one name (``function_contract_row``):
+    the post, every assertion claim below as its ``inv``, and every halted
+    arm as a ``panicLoci`` entry. No second row is ever emitted for the same
+    function.
 
     ``arms`` are the completed arms ``(guard, UniverseValue)``.
     ``halted_assertion_sites`` are the ``assert`` statements at which a halted
@@ -283,13 +340,13 @@ def exit_arms_payload_rows(
     * every halted arm: one ``panicLoci`` entry on the function-contract row,
       the existing panic-locus shape: the site it halted at, the raised type,
       and the arm's guard as its path condition. A halt is never dropped.
-    * one contract row per assertion SITE the reduction evaluated: the OR over
+    * one assertion claim per assertion SITE the reduction evaluated: the OR over
       the completed arms that hold the site of ``g_i AND fact_i``. The claim of
       an assertion is that an execution reaches it and it holds there; a guard
       that can be made false must not satisfy it, so this is never
       ``g -> fact``. A site an arm halted at and no completed arm holds states
       the OR over nothing: false.
-    * when no arm completed, one contract row per ``assert`` of the function
+    * when no arm completed, one assertion claim per ``assert`` of the function
       no arm reached: the conjunction over the halted arms of ``not g_h``.
       Every execution the reduction states halts before it, so an execution
       reaching it is one no halted arm's guard admits; the OR over completed
@@ -302,12 +359,12 @@ def exit_arms_payload_rows(
 
     Where a completed arm exists, every site comes from the reduction. An
     ``assert`` no arm evaluated there (dead code: a handler that never runs, a
-    branch the floor decided away) has no row, because the function completes
-    without it; and a fact held on an arm that later halts elsewhere is not a
-    completed arm's fact.
+    branch the floor decided away) has no claim, because the function
+    completes without it; and a fact held on an arm that later halts
+    elsewhere is not a completed arm's fact.
 
     This is the ONE projection from a reduction to rows; a single arm under
-    guard true is its one-arm case and keeps the rows it always had.
+    guard true is its one-arm case and states the claims it always had.
     """
     from sugar_lift_py_tests.floor.inv_value import InvValue
     from sugar_lift_py_tests.ir import and_, implies, or_
@@ -321,18 +378,8 @@ def exit_arms_payload_rows(
 
     if len(arms) == 1 and _is_true(arms[0][0]):
         guard, value = arms[0]
-        rows = [
-            function_contract_row(
-                name=name,
-                formals=formals,
-                bridge_source_symbol=bridge_source_symbol,
-                formal_coordinates=formal_coordinates,
-                post=value.post(),
-                def_memento=def_memento,
-                panic_loci=halt_loci,
-            )
-        ]
-        rows.extend(mint_rows(name, formals, value.record.statements))
+        post = value.post()
+        assertions = assertion_claims(name, formals, value.record.statements)
         reached = {
             assertion_site_key(entry.site)
             for entry in value.record.statements
@@ -340,17 +387,6 @@ def exit_arms_payload_rows(
         }
     else:
         post = and_([implies(guard, value.post()) for guard, value in arms])
-        rows = [
-            function_contract_row(
-                name=name,
-                formals=formals,
-                bridge_source_symbol=bridge_source_symbol,
-                formal_coordinates=formal_coordinates,
-                post=post,
-                def_memento=def_memento,
-                panic_loci=halt_loci,
-            )
-        ]
         by_site: dict = {}
         for arm_index, (guard, value) in enumerate(arms):
             for entry in value.record.statements:
@@ -411,7 +447,7 @@ def exit_arms_payload_rows(
                     ),
                 )
             )
-        rows.extend(mint_rows(name, formals, combined))
+        assertions = assertion_claims(name, formals, combined)
     never_held = []
     for site in halted_assertion_sites:
         key = assertion_site_key(site)
@@ -429,5 +465,16 @@ def exit_arms_payload_rows(
                 continue
             reached.add(key)
             never_held.append(InvValue(no_halt, site))
-    rows.extend(mint_rows(name, formals, never_held))
-    return rows
+    assertions.extend(assertion_claims(name, formals, never_held))
+    return [
+        function_contract_row(
+            name=name,
+            formals=formals,
+            bridge_source_symbol=bridge_source_symbol,
+            formal_coordinates=formal_coordinates,
+            post=post,
+            def_memento=def_memento,
+            panic_loci=halt_loci,
+            assertions=assertions,
+        )
+    ]

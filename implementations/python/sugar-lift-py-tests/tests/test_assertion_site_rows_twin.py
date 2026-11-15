@@ -111,7 +111,8 @@ def test_sibling_claims_about_unbound_calls_stay_open(
 
 
 def _wire_rows(tmp_path: Path, source: str) -> list[dict]:
-    """Every row the one function of ``source`` emits, on the wire."""
+    """Every row the one function of ``source`` emits, on the wire: exactly
+    one, its contract (a function is one contract under one name)."""
     from sugar_lift_py_tests import lift_rpc
     from sugar_lift_py_tests.ir import TermTableBuilder
     from sugar_lift_py_tests.tree_enumerate import function_contract_rows
@@ -126,16 +127,62 @@ def _wire_rows(tmp_path: Path, source: str) -> list[dict]:
     _memento, rows = function_contract_rows(function, "m.py")
     table = TermTableBuilder()
     wire = [row.to_rpc_with_term_table(table) for row in rows]
-    assert wire[0]["kind"] == "function-contract"
+    assert [row["kind"] for row in wire] == ["function-contract"], wire
     return wire
 
 
+def _assertion_lines(row: dict) -> list[int]:
+    """The lines of the assertions a contract row states: its assertion
+    warrants (every warrant after the definition's own)."""
+    return sorted(
+        {warrant["span"]["start_line"] for warrant in row["sourceWarrants"][1:]}
+    )
+
+
 def _assertion_rows(tmp_path: Path, source: str) -> list[tuple[int, dict]]:
-    """(line, inv) of every assertion row the one function of ``source`` emits."""
-    return [
-        (row["sourceWarrants"][0]["span"]["start_line"], row["inv"])
-        for row in _wire_rows(tmp_path, source)[1:]
-    ]
+    """(line, inv) of the assertions the one function of ``source`` states:
+    each assertion's line with the contract's ``inv``. Every caller here has
+    at most one assertion, so its ``inv`` is that assertion's claim."""
+    (row,) = _wire_rows(tmp_path, source)
+    if "inv" not in row:
+        assert _assertion_lines(row) == [], row
+        return []
+    return [(line, row["inv"]) for line in _assertion_lines(row)]
+
+
+def test_a_function_with_two_assertions_is_one_contract(tmp_path: Path) -> None:
+    """A function is one contract, never a function-contract beside a second
+    ``contract`` under the same name (which prove refused as a duplicate
+    contract name and then checked against the copy it dropped). Twin: one
+    assertion and two. Both are one row; the second states both assertions
+    in its one ``inv``."""
+    one = (
+        "from vend import f\n"
+        "\n"
+        "\n"
+        "def test_one():\n"
+        "    assert f(1) == 2\n"
+    )
+    two = (
+        "from vend import f, g\n"
+        "\n"
+        "\n"
+        "def test_two():\n"
+        "    assert f(1) == 2\n"
+        "    assert g(1) == 3\n"
+    )
+    (tmp_path / "one").mkdir()
+    (tmp_path / "two").mkdir()
+    (single,) = _wire_rows(tmp_path / "one", one)
+    (double,) = _wire_rows(tmp_path / "two", two)
+    assert single["name"] == "test_one"
+    assert double["name"] == "test_two"
+    assert _assertion_lines(single) == [5]
+    assert _assertion_lines(double) == [5, 6]
+    assert "post" in single and "inv" in single
+    assert "post" in double
+    assert double["inv"]["kind"] == "and"
+    assert len(double["inv"]["operands"]) >= 2
 
 
 def test_every_halted_arm_states_a_panic_locus(tmp_path: Path) -> None:
