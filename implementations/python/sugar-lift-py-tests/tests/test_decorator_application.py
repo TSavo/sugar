@@ -167,16 +167,20 @@ def _positional(term) -> tuple:
 
 
 def _lambda_defaults(term) -> list:
-    """The value term of each ``python:lambda_default`` anywhere under
-    ``term``: the defaults a function value carries
-    (``LambdaCallable.to_term``)."""
+    """The value term of each default a function value carries
+    (``LambdaCallable.to_term``) anywhere under ``term``: a
+    ``py.default(<param>, <value>)`` of a value stated as its join symbol
+    (``python:function``), a ``python:lambda_default`` of one that names
+    none."""
     found = []
-    stack = [term]
+    stack = [(term, False)]
     while stack:
-        item = stack.pop()
-        if getattr(item, "name", None) == "python:lambda_default":
+        item, in_function = stack.pop()
+        name = getattr(item, "name", None)
+        if name == "python:lambda_default" or (in_function and name == "py.default"):
             found.append(item.args[1])
-        stack.extend(getattr(item, "args", ()) or ())
+        inner = in_function or name == "python:function"
+        stack.extend((arg, inner) for arg in getattr(item, "args", ()) or ())
     return found
 
 
@@ -392,7 +396,12 @@ def test_scale():
     outcome = _rooted_outcome(tmp_path, source)
     assert "python:subject.replace" in _owed_symbols(outcome), outcome
     (actual,) = _positional(_edge_term(outcome, "subject.replace"))
-    assert getattr(actual, "name", None) == "python:lambda"
+    # The function the ``def`` built, stated as its join symbol (#7757
+    # step 9): a call of what ``replace`` returns joins at prove.
+    assert getattr(actual, "name", None) == "python:function"
+    assert actual.args[0].value.startswith(
+        "python:subject.test_scale.<locals>.scale@"
+    ), actual
     assert _raises(outcome, "ValueError") == []
 
 

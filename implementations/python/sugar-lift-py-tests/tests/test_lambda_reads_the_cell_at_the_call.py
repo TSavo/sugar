@@ -455,10 +455,14 @@ def test_a_lambda_passed_to_a_source_function_carries_the_binding_at_the_call(
     calls = [value for value in returned if isinstance(value, CallSiteValue)]
     assert calls, returned
     term = _call_term(calls[0])
+    # The lambda's value carries the cell: ``py.closure(k, <value>)`` where it
+    # is stated as its join symbol (``python:function``), the opaque
+    # ``python:lambda_captured_cell`` where it names none.
     cells = [
         sub
         for sub in _subterms(term)
-        if getattr(sub, "name", None) == "python:lambda_captured_cell"
+        if getattr(sub, "name", None)
+        in ("python:lambda_captured_cell", "py.closure")
     ]
     assert len(cells) == 1, term
     assert cells[0].args[1] == TWO.to_term(owner="test"), cells[0]
