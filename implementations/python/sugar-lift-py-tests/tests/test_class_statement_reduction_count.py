@@ -9,7 +9,17 @@ once and kept with its sugar (``ClassDefinitionSugar.desugar``); every call
 answers with it.  The count below is reductions of the statement, not reads.
 
 The solver twin differs in one literal: the field read off the constructed
-receiver is decided by the floor, truthful ``sat``, lying ``unsat``.
+receiver, truthful ``sat``, lying ``unsat``.  Since #7757 step 6 (#8738) a
+class call is its coordinate and edge and the reduction never runs
+``__init__``: the field is read through the class's contract
+(``python:after(<call result>, "out")``), joined at prove (step 7, #8746).
+``__init__``'s own row stores on a formal with no actual and may owe it, so
+the truthful half is read on the test function's claims.
+
+At the reduction each class call is the edge's two faces, so the test
+function completes on one face and halts on the others (the edge's
+undetermined raises, and the undecided field read and comparison over its
+result); the class statement is still reduced once, by the module's run.
 """
 
 from __future__ import annotations
@@ -19,7 +29,10 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
+from sugar_lift_py_tests.witness_harness import (
+    claim_verdict,
+    run_source_through_real_solver,
+)
 
 _TWIN = (
     "class Box:\n"
@@ -36,7 +49,9 @@ _TWIN = (
 def test_a_field_of_a_constructed_receiver_reaches_the_solver(tmp_path: Path) -> None:
     truthful = run_source_through_real_solver(tmp_path / "t", _TWIN.format(claim=1))
     lying = run_source_through_real_solver(tmp_path / "l", _TWIN.format(claim=2))
-    assert truthful.verdict == "sat"
+    test_line = _TWIN.splitlines().index("def test_box():") + 1
+    assert truthful.verdict != "unsat"
+    assert claim_verdict(truthful.prove_doc, claims_from_line=test_line) == "sat"
     assert lying.verdict == "unsat"
 
 
@@ -95,12 +110,17 @@ def _class_statement_reductions(source: str, monkeypatch) -> int:
         (source, "test_witness.py", blake3_512_of(source.encode())),
         construction_context=TreeConstructionContextV1.for_test_without_workspace(),
     )
+    from sugar_lift_py_tests.outcome import Completed
+
     (function,) = tuple(
         node
         for node in tree.nodes()
         if isinstance(node, FunctionDef) and node.name.startswith("test_")
     )
-    assert function_universe_outcome(function).completed_value() is not None
+    # Each class call is the edge's two faces (#7757 step 6): the function
+    # completes on one face, never as one completion alone.
+    outcome = function_universe_outcome(function)
+    assert any(isinstance(face, Completed) for face in outcome.exits), outcome
     return reductions["Box"]
 
 
@@ -135,8 +155,9 @@ def test_a_class_statement_is_reduced_once_however_often_it_is_called(
 #
 # - ``int(os.environ["LIMIT"])`` may raise.  The run completes on one arm,
 #   which bound the class; its halts are the run's, so no class call carries
-#   them and the function completes alone.  (Before, #7794 put the
-#   statement's three halts on every class call.)
+#   them.  (Before, #7794 put the statement's three halts on every class
+#   call.)  The function completed alone until #7757 step 6; each class call
+#   is now the edge's two faces.
 # - ``int("x")`` is a builtin over a ground operand, decided by the
 #   builtin's own semantics (``cpython_cited_fold``): Python raises
 #   ``ValueError``, always.  The run completes on no arm and binds no class,
@@ -215,4 +236,15 @@ def test_a_class_statement_that_is_not_one_completion_builds_no_place_state(
         ]
         assert names.count(_BODY_ALWAYS_RAISES[body]) == 1, names
         return
-    assert [type(face) for face in outcome.exits] == [Completed]
+    # The run's halts are the run's: no class call carries the field's
+    # ``KeyError``/``ValueError``.  Each class call is the edge's two faces
+    # (#7757 step 6), so the function completes on one face and halts on the
+    # edges' undetermined raises (and the undecided read and comparison over
+    # the call's result), never on a halt of the class statement.
+    assert any(isinstance(face, Completed) for face in outcome.exits), outcome
+    carried = [
+        getattr(face.effect, "exception_name", None)
+        for face in outcome.exits
+        if isinstance(face, Halted)
+    ]
+    assert not {"KeyError", "ValueError"} & set(carried), carried
