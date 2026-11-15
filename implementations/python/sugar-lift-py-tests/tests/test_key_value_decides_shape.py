@@ -82,6 +82,11 @@ def _returned(outcome) -> list:
             return
         for entry in getattr(value, "statements", ()) or ():
             visit(entry)
+        # A function's completed value is its ``UniverseValue``; what the
+        # body returned is in the record it carries.
+        record = getattr(value, "record", None)
+        if record is not None:
+            visit(record)
 
     assert isinstance(outcome, ExitSet), outcome
     for exit_ in outcome.exits:
