@@ -16,6 +16,11 @@ what a call by name of the ``def`` did:
 Before, the value's application carried no cell (refused by name) and the
 caller's threading followed only a call spelled by name (the cell was
 unknown after the call): neither half was decided.
+
+A call by name of a plain ``def`` is that same application
+(``Call._function_value_call``): no call seats a ``def``'s frame by its name
+any more.  The direct twins below (a local ``def`` reading a cell, a module
+``def`` binding its default, a ``*`` call) are decided through it.
 """
 
 from __future__ import annotations
@@ -65,10 +70,56 @@ def test_append():
     assert len(xs) == {claim}
 """
 
+_DIRECT_CELL_READ_AT_THE_CALL = """\
+def test_cell():
+    y = 1
+
+    def g():
+        return y
+
+    y = 2
+    assert g() == {claim}
+"""
+
+_DIRECT_NONLOCAL_REBOUND = """\
+def test_count():
+    n = 0
+
+    def bump():
+        nonlocal n
+        n += 1
+
+    bump()
+    assert n == {claim}
+"""
+
+_MODULE_DEF_DEFAULT = """\
+def f(a=3):
+    return a
+
+
+def test_default():
+    assert f() == {claim}
+"""
+
+_MODULE_DEF_SPREAD = """\
+def f(a, b):
+    return a + b
+
+
+def test_spread():
+    t = (1, 2)
+    assert f(*t) == {claim}
+"""
+
 _TWINS = {
     "cell-read-at-the-call": (_CELL_READ_AT_THE_CALL, "2", "1"),
     "nonlocal-rebound": (_NONLOCAL_REBOUND_THROUGH_THE_VALUE, "1", "0"),
     "append-carried": (_APPEND_THROUGH_THE_VALUE, "1", "0"),
+    "direct-cell-read-at-the-call": (_DIRECT_CELL_READ_AT_THE_CALL, "2", "1"),
+    "direct-nonlocal-rebound": (_DIRECT_NONLOCAL_REBOUND, "1", "0"),
+    "module-def-default": (_MODULE_DEF_DEFAULT, "3", "4"),
+    "module-def-spread": (_MODULE_DEF_SPREAD, "3", "4"),
 }
 
 

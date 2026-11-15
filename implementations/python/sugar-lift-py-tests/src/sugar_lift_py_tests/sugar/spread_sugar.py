@@ -287,17 +287,20 @@ class SpreadDictSugar(ConstructedTermSugar):
 class SpreadCallSugar(ConstructedTermSugar):
     """A call containing ``*``/``**``, using the reference call vocabulary.
 
-    When an authenticated source-visible callee frame is enrolled (a module
-    function's), typed ``**`` expansions project through that frame so the
-    CallSiteValue carries the factory-built body. A spread call no frame
-    projects is the one unanswered call (``UnknownCalleeCallV1``).
+    A callee whose value is a function, a source class or a bound method
+    (a plain ``def``'s value among them: ``Call._function_value_call``,
+    ``Call._named_function_value``) is applied through that value's one
+    application (``_finish``), as ``f(...)`` is.  Any other spread call --
+    a callee by name that is an import, a builtin, a generator function or
+    ``async def``, a recursion seat -- is the one unanswered call
+    (``UnknownCalleeCallV1``).  No spread call seats a definition's frame by
+    its name (#7757).
     """
 
     callee_name: str | None
     callee: Sugar | None
     arguments: tuple  # (role, optional-name, sugar), source order
     site: object = dataclass_field(compare=False)
-    source_call_frame: object | None = dataclass_field(default=None, compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -377,8 +380,8 @@ class SpreadCallSugar(ConstructedTermSugar):
                     roster.append(value)
                 elif role == "star":
                     # ``*t`` over a decided tuple is its elements, in order, at
-                    # this position of the positional roster (as
-                    # ``_framed_call`` projects it); any other operand has no
+                    # this position of the positional roster (Python's
+                    # call-time iterable unpacking); any other operand has no
                     # exact roster.
                     if type(value) is not TupleValue:
                         from sugar_source_tree.panic import SugarNotWritten
@@ -433,102 +436,19 @@ class SpreadCallSugar(ConstructedTermSugar):
             arg_terms.append(term)
         term = ctor("python:call", [callee_term, *arg_terms])
 
-        def unanswered() -> ExitSet:
-            # No frame projected the call: no body, contract or floor answered
-            # for the callee at this site, so it is the one unanswered call,
-            # two-faced and owed (#7585, #7757), never a completion.
-            from sugar_lift_py_tests.source_call_resolution import (
-                UnknownCalleeCallV1,
-            )
+        # No value this applies answered the callee: no body, contract or
+        # floor answered for it at this site, so it is the one unanswered
+        # call, two-faced and owed (#7585, #7757), never a completion.
+        from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
 
-            callsite = CallSiteValue(
-                target_name=self.callee_name or "python:call",
-                arg_values=tuple(values),
-                parameters=(),
-                term=term,
-                body=None,
-                site=self.site,
-            )
-            return UnknownCalleeCallV1(self.callee_name or "python:call").faces(
-                callsite, self.site
-            )
-
-        return self._framed_call(values, term, ctx, unanswered)
-
-    def _framed_call(self, values, term, ctx, unanswered) -> ExitSet:
-        """The call into an enrolled source frame, through the plain call's routine.
-
-        The ``*``/``**`` actuals are projected onto the positional and keyword
-        rosters, then the call enters the frame, binds through the one binder
-        (``object_value.bind_call``) and is applied by
-        ``CallSiteValue.producer_outcome``, exactly as ``f(...)`` is: the body
-        runs once, at the Call, its halts are the call's own faces and its
-        completion is retained, so a consumer never replays it.
-
-        A class call ``C(*t)`` / ``C(**kw)`` is never this routine: a class
-        seats no frame (``Call._spread_lexical_source_call_frame`` reads a
-        function definition's only), its callee is the class statement's value, and
-        ``_finish`` applies that value
-        (``ClassDefinitionValue.callable_application_with``), which binds the
-        constructor defaults the class value carries.
-
-        A star operand projects only when it is a decided ``TupleValue``; any
-        other star operand, and a call no frame is enrolled for, is the one
-        unanswered call (``unanswered``).  A double-star binds only when it is
-        a constructed DictValue (``bind_actuals``); actuals the binder does not
-        bind raise ``SugarNotWritten`` observing the binder's
-        ``SourceCallBindingGap``, as for ``f(...)``.
-        """
-        frame = self.source_call_frame
-        if frame is None:
-            return unanswered()
-        from sugar_lift_py_tests.floor import TupleValue
-        from sugar_lift_py_tests.sugar.call_site_sugar import (
-            bind_source_frame_call,
-            enter_source_frame,
-            source_frame_body,
-        )
-
-        positional: list = []
-        keywords: list = []
-        for (role, name, _), value in zip(self.arguments, values):
-            if role == "positional":
-                positional.append(value)
-            elif role == "star":
-                # ``*t`` over a decided tuple is its elements, in order, at
-                # this position of the positional roster (Python's call-time
-                # iterable unpacking).  Any other operand keeps the call
-                # bodyless rather than inventing an arity.
-                if type(value) is not TupleValue:
-                    return unanswered()
-                positional.extend(value.elements)
-            elif role == "keyword":
-                keywords.append((name, value))
-            elif role == "double-star":
-                keywords.append(("**", value))
-            else:
-                return unanswered()
-        ctx, module_halt = enter_source_frame(
-            frame, ctx, owner="SpreadCallSugar._finish", blame=self.site
-        )
-        if module_halt is not None:
-            return module_halt
-
-        body = source_frame_body(
-            frame, owner="SpreadCallSugar._finish", blame=self.site
-        )
-        # The one binder; actuals it cannot bind raise ``SugarNotWritten``
-        # by name, as they do for ``f(...)``.
-        callsite = bind_source_frame_call(
-            self.callee_name or "python:call",
-            tuple(positional),
-            tuple(keywords),
-            frame=frame,
-            ctx=ctx,
-            owner="SpreadCallSugar._finish",
-            blame=self.site,
+        callsite = CallSiteValue(
+            target_name=self.callee_name or "python:call",
+            arg_values=tuple(values),
+            parameters=(),
             term=term,
-            body=body,
-            defaults=(),
+            body=None,
+            site=self.site,
         )
-        return callsite.producer_outcome(ctx)
+        return UnknownCalleeCallV1(self.callee_name or "python:call").faces(
+            callsite, self.site
+        )
