@@ -101,6 +101,24 @@ def _call(value, arguments, site, ctx):
     )
 
 
+def _the_edge(outcome) -> None:
+    """The call of the member the lookup selected is its coordinate and edge
+    (#7757 step 6, #8738): one completion under the unanswered call's
+    ``completes`` atom, whose value is the call with no body applied, and one
+    halt no exception names here.  What the member's body raises is its
+    contract's halt, joined at prove; before step 6 the body was applied here
+    and its own exception named (the member selection itself is asserted on
+    ``read.member`` and ``class_member``)."""
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.outcome import Completed
+
+    assert _halt_names(outcome) == [None]
+    (completed,) = (face for face in outcome.exits if isinstance(face, Completed))
+    assert "python:unknown_callee_call.completes" in repr(completed.guard)
+    assert isinstance(completed.value, CallSiteValue)
+    assert completed.value.body is None
+
+
 # --- 1 and 2. one resolution, the last binding ------------------------------------
 
 
@@ -123,14 +141,14 @@ def test_a_def_after_a_property_is_the_member_every_reader_meets() -> None:
     read = receiver.attribute("m", "m-site", ctx).completed_value()
     assert isinstance(read, BoundMethodValue)
     assert read.member is method
-    assert _halt_names(_call(read, (), "m-site", ctx)) == ["ValueError"]
+    _the_edge(_call(read, (), "m-site", ctx))
 
     # The class-side call (an implicit special-method call's door) reads the
-    # same member.
+    # same member: the edge, never the property's getter run at the read.
     outcome = receiver.call_method_value(
         "m", (), owner="test", blame="call-site", ctx=ctx
     )
-    assert _halt_names(outcome) == ["ValueError"]
+    _the_edge(outcome)
 
 
 def test_an_assignment_after_a_def_is_the_member() -> None:
@@ -157,7 +175,7 @@ def test_a_def_after_an_assignment_is_the_member() -> None:
     assert decided and value is None and method is not None
     read = receiver.attribute("m", "m-site", ctx).completed_value()
     assert isinstance(read, BoundMethodValue) and read.member is method
-    assert _halt_names(_call(read, (), "m-site", ctx)) == ["ValueError"]
+    _the_edge(_call(read, (), "m-site", ctx))
 
 
 # --- 3. a function in the class namespace, read off an instance ------------------
@@ -170,10 +188,10 @@ def test_a_lambda_class_field_read_off_an_instance_binds_self() -> None:
     assert isinstance(read, BoundMethodValue)
     assert isinstance(read.member, LambdaCallable)
     assert read.receiver is receiver
-    # ``self`` is bound to the receiver, so the one written actual is ``n``.
-    assert _halt_names(_call(read, (TermValue(3),), "f-site", ctx)) == [
-        "ZeroDivisionError"
-    ]
+    # ``self`` is bound to the receiver, so the one written actual is ``n``;
+    # the lambda's call is its coordinate and edge (#7757 step 5, #8705), its
+    # ``ZeroDivisionError`` the lambda's contract's halt, joined at prove.
+    _the_edge(_call(read, (TermValue(3),), "f-site", ctx))
 
 
 def test_a_def_held_as_a_class_field_read_off_an_instance_is_bound() -> None:
