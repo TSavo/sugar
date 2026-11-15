@@ -6904,7 +6904,29 @@ def _discharge_binding_references(statement, binding) -> None:
     within = {id(node) for node in statement.walk()}
     for reference in references:
         if id(reference) not in within:
-            reference.discharge_by_substitution()
+            _minted_binding_reference(reference)
+
+
+def _minted_binding_reference(reference):
+    """``reference``, a binding the rewrite minted as a value of a scope --
+    a formal's ``FormalRef`` or a frame's ``BindingCoordinateRef`` at its
+    parameter, a walrus's or a comprehension member's ``EvaluationRef`` at
+    its target, a statement's ``EvaluationRef`` (``_discharge_binding_
+    references``), the ``ReceiverAfterCall`` a call leaves for an object it
+    may have changed -- answering the roll where it is minted.
+
+    It is no source occurrence: a read of a name bound to a reference at
+    another span is re-spanned to the read's own site (``Name.substitute``),
+    and that node answers for itself, built or refused.  A binding no read
+    reaches (``self`` a test method never reads, ``_`` in ``[f() for _ in
+    xs]``, an object after a module's last call) is constructed by nothing.
+    Minting registered it, so it answers here by the one discharge of a node
+    a rewrite made (``discharge_by_substitution``).  A read that does reach
+    it at its own coordinate (``ReceiverAfterCall``) constructs it and
+    answers again, present or refused by name: its refusal is never hidden,
+    since a refusal is on the roll as its own gap."""
+    reference.discharge_by_substitution()
+    return reference
 
 
 def _read_at_halt(state) -> "Optional[Node]":
@@ -11563,14 +11585,16 @@ class FunctionDef(Statement):
         from .backend import Leaf, materialize
         from .shadow import ShadowNode
 
-        return materialize(
-            self.unit,
-            ShadowNode(
-                "BindingCoordinateRef",
-                param.span,
-                (("coordinate", Leaf(coordinate)),),
-            ),
-            self.reporter,
+        return _minted_binding_reference(
+            materialize(
+                self.unit,
+                ShadowNode(
+                    "BindingCoordinateRef",
+                    param.span,
+                    (("coordinate", Leaf(coordinate)),),
+                ),
+                self.reporter,
+            )
         )
 
     def substitute(self, scope):
@@ -11904,10 +11928,14 @@ class FunctionDef(Statement):
         # Param's discharge is this substitution -- otherwise it registers and
         # never answers.
         parameter.discharge_by_substitution()
-        return materialize(
-            self.unit,
-            ShadowNode("FormalRef", parameter.span, (("coordinate", Leaf(formal)),)),
-            self.reporter,
+        return _minted_binding_reference(
+            materialize(
+                self.unit,
+                ShadowNode(
+                    "FormalRef", parameter.span, (("coordinate", Leaf(formal)),)
+                ),
+                self.reporter,
+            )
         )
 
     def _sugar_body_statement(self, stmt: "Node") -> object:
@@ -13944,14 +13972,16 @@ class ClassDef(Statement):
         from .backend import Leaf, materialize
         from .shadow import ShadowNode
 
-        return materialize(
-            self.unit,
-            ShadowNode(
-                "BindingCoordinateRef",
-                target.span,
-                (("coordinate", Leaf(coordinate)),),
-            ),
-            self.reporter,
+        return _minted_binding_reference(
+            materialize(
+                self.unit,
+                ShadowNode(
+                    "BindingCoordinateRef",
+                    target.span,
+                    (("coordinate", Leaf(coordinate)),),
+                ),
+                self.reporter,
+            )
         )
 
     def statement_value_ref(self):
@@ -14152,14 +14182,16 @@ class ClassDef(Statement):
         from .backend import Leaf, materialize
         from .shadow import ShadowNode
 
-        return materialize(
-            self.unit,
-            ShadowNode(
-                "BindingCoordinateRef",
-                param.span,
-                (("coordinate", Leaf(coordinate)),),
-            ),
-            self.reporter,
+        return _minted_binding_reference(
+            materialize(
+                self.unit,
+                ShadowNode(
+                    "BindingCoordinateRef",
+                    param.span,
+                    (("coordinate", Leaf(coordinate)),),
+                ),
+                self.reporter,
+            )
         )
 
     def _source_visible_body(
@@ -21164,13 +21196,15 @@ class NamedExpr(Expression):
         if not isinstance(evaluation, str):
             return {self.target.id: self.value}
         return {
-            self.target.id: _evaluation_ref(
-                self,
-                self.target.span,
-                evaluation,
-                self.target.id,
-                walrus=True,
-                deferred=getattr(self, "deferred", False) is True,
+            self.target.id: _minted_binding_reference(
+                _evaluation_ref(
+                    self,
+                    self.target.span,
+                    evaluation,
+                    self.target.id,
+                    walrus=True,
+                    deferred=getattr(self, "deferred", False) is True,
+                )
             )
         }
 
@@ -21793,14 +21827,16 @@ class Lambda(Expression):
         from .backend import Leaf, materialize
         from .shadow import ShadowNode
 
-        return materialize(
-            self.unit,
-            ShadowNode(
-                "BindingCoordinateRef",
-                param.span,
-                (("coordinate", Leaf(coordinate)),),
-            ),
-            self.reporter,
+        return _minted_binding_reference(
+            materialize(
+                self.unit,
+                ShadowNode(
+                    "BindingCoordinateRef",
+                    param.span,
+                    (("coordinate", Leaf(coordinate)),),
+                ),
+                self.reporter,
+            )
         )
 
     def _construct_sugar(self):
@@ -22380,8 +22416,10 @@ class ListComp(Expression):
         """Each name in ``recurrence`` (``_walrus_recurrence``), to a member
         reference to its running coordinate, marked ``recurrence``."""
         return {
-            name: _evaluation_ref(
-                self, self.span, coordinate, name, member=True, recurrence=True
+            name: _minted_binding_reference(
+                _evaluation_ref(
+                    self, self.span, coordinate, name, member=True, recurrence=True
+                )
             )
             for name, coordinate, _ordered in recurrence
         }
@@ -22594,18 +22632,22 @@ class ListComp(Expression):
             return {}
         if target.source_name is not None:
             return {
-                target.source_name: _evaluation_ref(
-                    self,
-                    gen.target.span,
-                    ListComp._generator_binding_coordinate(self, generator_index, gen),
-                    target.source_name,
-                    member=True,
+                target.source_name: _minted_binding_reference(
+                    _evaluation_ref(
+                        self,
+                        gen.target.span,
+                        ListComp._generator_binding_coordinate(
+                            self, generator_index, gen
+                        ),
+                        target.source_name,
+                        member=True,
+                    )
                 )
             }
         pattern = self.unit.require_target_pattern_for_target(gen.target)
         return {
-            leaf.id: _evaluation_ref(
-                self, leaf.span, coordinate.cid, leaf.id, member=True
+            leaf.id: _minted_binding_reference(
+                _evaluation_ref(self, leaf.span, coordinate.cid, leaf.id, member=True)
             )
             for leaf, coordinate in zip(
                 pattern.leaves, pattern.target_coordinates, strict=True
