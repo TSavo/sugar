@@ -186,11 +186,33 @@ def test_fixtures_are_renamed_structural_twins_without_name_or_vendor_authority(
     ids=lambda case: case["id"],
 )
 def test_positive_object_field_flow_acceptance_is_not_typed_loud(case):
+    """The truthful twin is answered, never loud.  The lying twin's assert
+    fails in Python on every run (``test_python_reference_discriminates_
+    truthful_and_lying_twins``): where the lift decides the reads it states
+    exactly that -- every arm a named ``AssertionError`` -- which is the
+    answer, not loudness; where it does not decide them it is answered as
+    the truthful twin is, with the assert's failure among its faces."""
     path = FIXTURES / case["file"]
     for names in (case["canonical"], case["renamed"]):
-        for function_name in names.values():
-            result = _outcome_or_panic(path, function_name)
-            assert not _is_typed_loud(result), result
+        truthful = _outcome_or_panic(path, names["truthful"])
+        assert not _is_typed_loud(truthful), truthful
+        lying = _outcome_or_panic(path, names["lying"])
+        assert _decided_assertion_failure(lying) or not _is_typed_loud(lying), lying
+        if isinstance(lying, ExitSet):
+            assert lying.halts(), lying
+
+
+def _decided_assertion_failure(result) -> bool:
+    """Every arm of ``result`` halts with a named ``AssertionError``."""
+    return (
+        isinstance(result, ExitSet)
+        and bool(result.exits)
+        and result.halts() == result.exits
+        and all(
+            getattr(halt.effect, "exception_name", None) == "AssertionError"
+            for halt in result.halts()
+        )
+    )
 
 
 @pytest.mark.parametrize(
