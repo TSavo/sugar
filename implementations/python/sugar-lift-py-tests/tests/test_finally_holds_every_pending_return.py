@@ -269,6 +269,9 @@ def test_an_except_star_handler_that_falls_through_leaves_the_dead_return_behind
     None
 ):
     # ``except*`` resumes its handlers from the halt's record the same way.
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome.exit_set import Halted
+
     exits = _discharged_on_symbolic_actuals(
         "def f(a, b):\n"
         "    try:\n"
@@ -280,3 +283,13 @@ def test_an_except_star_handler_that_falls_through_leaves_the_dead_return_behind
         "    return 3\n"
     )
     _assert_one_return_per_record(exits, 1, 3)
+    # The truth halt at the ``if``'s head (#8255) reaches ``except*`` as it
+    # reaches ``except``: an undetermined raise, matched as the one-member
+    # group CPython wraps a plain raise in, its match asked of the one matcher
+    # and retained (``adt.is_python_type``). So the handler runs on that path
+    # too (a second record returning 3, which the helper admits), and under
+    # the complement the raise leaves as the exception it is: never dropped,
+    # never decided unmatched, never wrapped in a group.
+    halts = [exit_.effect for exit_ in exits.exits if isinstance(exit_, Halted)]
+    assert halts, exits
+    assert all(isinstance(effect, UndeterminedRaiseEffect) for effect in halts), halts

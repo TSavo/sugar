@@ -129,14 +129,6 @@ def observed_exit_refusals() -> GeneratorExitRefusalsV1:
     )
 
 
-def is_exception_effect(effect) -> bool:
-    """A raise (leaf, group, or of an undetermined class): what ``throw`` takes."""
-    from sugar_lift_py_tests.effect import GroupedRaiseEffect, RaiseEffect
-    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-
-    return isinstance(effect, (RaiseEffect, GroupedRaiseEffect, UndeterminedRaiseEffect))
-
-
 def _is_stop_iteration(effect) -> bool:
     from sugar_lift_py_tests.effect import RaiseEffect
 
@@ -203,8 +195,10 @@ def generator_manager_exit(machine, body_face, *, site):
 
     ``site`` is the source fragment of the ``with`` whose exit runs: every
     refusal ``__exit__`` raises halts there (#7766)."""
+    from sugar_lift_py_tests.effect.grouped_raise_effect import is_exception_effect
     from sugar_lift_py_tests.outcome.exit_set import Halted
 
+    # A body exception (the one reading of one) is what ``throw`` takes.
     if isinstance(body_face, Halted) and is_exception_effect(body_face.effect):
         return _after_throw(machine.throw(body_face.effect), body_face.effect, site)
     return _after_next(machine.resume(), site)

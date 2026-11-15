@@ -102,6 +102,21 @@ class GroupedRaiseEffect:
         )
 
 
+def is_exception_effect(effect) -> bool:
+    """Whether a halt's effect is a raised exception: a leaf raise, a raise
+    of an undetermined class (a may-raise operation named none), or a group.
+
+    The one reading of "this halt is an exception", asked by everything that
+    routes one: ordinary ``except`` (``TrySugar._effect_match_verdict``),
+    ``except*`` over its body's halt and over a handler's (``TryStarSugar``),
+    and a generator manager's ``__exit__`` (what ``throw`` takes).  An
+    undetermined raise is an exception to each of them: its class is what
+    nobody decided, never whether it was raised."""
+    return isinstance(
+        effect, (RaiseEffect, UndeterminedRaiseEffect, GroupedRaiseEffect)
+    )
+
+
 def match_options(effect, expected, site, *, question: str) -> tuple:
     """Where a type test by ``expected`` puts one raise effect: ``(matched,
     residual, conditions)`` per face.

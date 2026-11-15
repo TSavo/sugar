@@ -216,6 +216,46 @@ def test_a_reraising_handler_yields_only_the_halt() -> None:
     assert "body.guard" in str(halt.guard), halt.guard
 
 
+def test_an_undetermined_raise_in_a_handler_yields_only_the_halt() -> None:
+    # The handler's only arm halts with an undetermined raise: a may-raise
+    # operation that named no class (since #8255, the truth of an undecided
+    # ``if`` test is one). It is a raised exception by the one reading
+    # ordinary ``except`` routes by (``is_exception_effect``), so the try*
+    # answers that raise alone, as it does for a handler's decided raise:
+    # never the halt beside a completion of the path it halted (#7757).
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
+    raised = UndeterminedRaiseEffect(
+        blame="handler:undetermined:7757",
+        occurrence="handler:undetermined:7757",
+        producer_node_owner="test.undetermined_handler_7757",
+        site=SimpleNamespace(
+            filename="undetermined_handler_7757.py",
+            line=5,
+            col=8,
+            unit=SimpleNamespace(source="try-star"),
+        ),
+    )
+    sugar, _leaf = _one_leaf_try_star(
+        "undetermined_handler_7757",
+        lambda _leaf: (
+            _Fixed(
+                lambda c: ExitSet((Halted(true_guard(), raised, halt_record(c)),))
+            ),
+        ),
+    )
+    result = sugar.desugar(ReduceContext.root(owner="undetermined_handler_7757"))
+
+    assert [type(arm) for arm in result.exits] == [Halted], result.exits
+    (halt,) = result.exits
+    # The handler consumed the whole group, so what leaves is the handler's
+    # raise, grouped as ``except*`` regroups any handler raise: the
+    # undetermined raise itself, kept, of no invented class.
+    assert isinstance(halt.effect, GroupedRaiseEffect), halt.effect
+    assert halt.effect.children == (raised,), halt.effect
+    assert "body.guard" in str(halt.guard), halt.guard
+
+
 def test_a_try_star_with_no_reachable_arm_yields_no_completion() -> None:
     # The handler's only arm is unsatisfiable, so no path leaves the handlers.
     # The try* answers exactly what ``sequence`` composed (nothing), never an
