@@ -158,16 +158,20 @@ class LambdaCallable(FloorValue):
                 fix="carry the lambda's source-visible frame or keep the call loud",
             )
         # Each actual is bound as the operation receiver it is
-        # (``project_operation_receiver_outcome``), as a call by name's
-        # actuals were (``CallSiteSugar._collect``): a constructed instance
-        # is the object its constructor's call retained, so the alias rule at
-        # the one bind door (``object_identity.as_bound_formals``) sees two
-        # formals given one object (``poke(box, box)``) and binds each with
-        # its state unknown, never two copies of the constructor's state.
-        return _as_operation_receivers(
+        # (``project_operation_receiver_outcome``), here and only here for
+        # every call of a function's value -- a computed call, a spread
+        # call, a call by name of a plain def or of a name bound to a lambda
+        # (``CallSiteSugar._applied`` hands its actuals over as evaluated): a
+        # constructed instance is the object its constructor's call
+        # retained, so the alias rule at the one bind door
+        # (``object_identity.as_bound_formals``) sees two formals given one
+        # object (``poke(box, box)``) and binds each with its state unknown,
+        # never two copies of the constructor's state.
+        return as_operation_receivers(
             tuple(operation.arguments),
             ctx,
             lambda arguments: self._apply_to(operation, arguments, frame, ctx),
+            owner="LambdaCallable.callable_application_with actual",
         )
 
     def _apply_to(self, operation, arguments, frame, ctx):
@@ -243,17 +247,19 @@ class LambdaCallable(FloorValue):
         ).producer_outcome(ctx)
 
 
-def _as_operation_receivers(values, ctx, then):
+def as_operation_receivers(values, ctx, then, *, owner: str):
     """``then`` over ``values``, each projected to the operation receiver it
     is (``project_operation_receiver_outcome``) in order, on every face of
-    each projection."""
+    each projection.  The one conversion of a call's actuals: the
+    application of a function's value (``LambdaCallable.
+    callable_application_with``) makes it for its actuals, and a call by
+    name of any other callee (``CallSiteSugar._applied``) for its own, each
+    actual once."""
     if not values:
         return then(())
     head, *rest = values
-    return head.project_operation_receiver_outcome(
-        ctx, owner="LambdaCallable.callable_application_with actual"
-    ).and_then(
-        lambda actual: _as_operation_receivers(
-            tuple(rest), ctx, lambda tail: then((actual, *tail))
+    return head.project_operation_receiver_outcome(ctx, owner=owner).and_then(
+        lambda actual: as_operation_receivers(
+            tuple(rest), ctx, lambda tail: then((actual, *tail)), owner=owner
         )
     )
