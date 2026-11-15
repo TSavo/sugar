@@ -113,11 +113,21 @@ def _encode(value: Value, out: list[str]) -> None:
         raise TypeError(f"unknown Value variant: {type(value)!r}")
 
 
-# The JCS string escape set for this canonicalizer: only `"`, `\`, and the C0
-# controls (as lowercase `\u00XX`) are escaped. `/` is NOT escaped, non-ASCII is
-# emitted raw (including astral characters and lone surrogates, whose encoding
-# error surfaces later at `.encode("utf-8")`).
-_ESCAPE_SEARCH = _re.compile(r'["\\\x00-\x1f]').search
+# The JCS string escape set for this canonicalizer: `"`, `\`, the C0 controls
+# (as lowercase `\u00XX`) and the lone surrogates (as lowercase `\udXXX`) are
+# escaped. `/` is NOT escaped; every other code point, astral characters
+# included, is emitted raw.
+#
+# A Python ``str`` can hold a surrogate code point (U+D800..U+DFFF) that no
+# UTF-8 byte sequence spells: ``"\ud83d"`` in source is such a string. Every
+# Python str is a value the lifter may construct, so every one has canonical
+# bytes: the surrogate is written as its JSON code-point escape, which is
+# ASCII. The encoding stays injective -- a literal backslash is itself escaped,
+# so no other string writes the same text -- and every string without a
+# surrogate is written exactly as before, so no existing CID moves.
+_ESCAPE_SEARCH = _re.compile(r'["\\\x00-\x1f\ud800-\udfff]').search
+
+_SURROGATE_SEARCH = _re.compile(r"[\ud800-\udfff]").search
 
 _ESCAPE_TABLE: dict[int, str] = {
     0x22: '\\"',
@@ -128,6 +138,7 @@ _ESCAPE_TABLE: dict[int, str] = {
         + "0123456789abcdef"[codepoint & 0xF]
         for codepoint in range(0x20)
     },
+    **{codepoint: f"\\u{codepoint:04x}" for codepoint in range(0xD800, 0xE000)},
 }
 
 
@@ -166,7 +177,11 @@ def blake3_512_of(data: bytes) -> str:
 #     (``\n`` against ``\u000a``). Every escape either one writes contains a
 #     backslash and nothing else does, so text without a backslash holds no
 #     escape, and both wrote every string raw. Text with one is encoded again
-#     by the specification.
+#     by the specification;
+#   * no string holds a lone surrogate. The interpreter's encoder writes one
+#     raw, which has no UTF-8 bytes; the specification escapes it. ASCII text
+#     holds none (``str.isascii`` reads the string's kind, not its text), so
+#     only non-ASCII text is searched.
 _ONE_PASS_ENCODE = json.JSONEncoder(
     ensure_ascii=False,
     check_circular=False,
@@ -204,7 +219,7 @@ def _is_exact_document(value: Any) -> bool:
 def canonical_json_bytes(value: Any) -> bytes:
     if _is_exact_document(value):
         text = _ONE_PASS_ENCODE(value)
-        if "\\" not in text:
+        if "\\" not in text and (text.isascii() or _SURROGATE_SEARCH(text) is None):
             return text.encode("utf-8")
     return encode_jcs(_json_to_value(value)).encode("utf-8")
 
