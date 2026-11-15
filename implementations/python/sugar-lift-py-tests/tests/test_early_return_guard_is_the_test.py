@@ -18,7 +18,10 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
+from sugar_lift_py_tests.witness_harness import (
+    claim_verdict,
+    run_source_through_real_solver,
+)
 
 
 def _outcome(source: str, name: str):
@@ -88,10 +91,16 @@ _TWINS = {
 
 @pytest.mark.parametrize("shape", sorted(_TWINS))
 def test_the_truthful_half_is_sat(shape: str, tmp_path: Path) -> None:
-    result = run_source_through_real_solver(
-        tmp_path / "t", _TWINS[shape].format(x="1")
-    )
-    assert result.verdict == "sat"
+    # ``f``'s own row owes the truth of its formal (``if c:``: ``c.__bool__``
+    # is not decided with no caller), so the whole source may read ``open``;
+    # the claim is read on the test function's own rows (``claim_verdict``),
+    # where the caller's ``True`` joined on ``c`` decides the truth at prove
+    # (``python:truth.completes(python:truth(true, ..))``).
+    source = _TWINS[shape].format(x="1")
+    result = run_source_through_real_solver(tmp_path / "t", source)
+    test_line = source.splitlines().index("def test_f():") + 1
+    assert result.verdict != "unsat"
+    assert claim_verdict(result.prove_doc, claims_from_line=test_line) == "sat"
 
 
 @pytest.mark.parametrize("shape", sorted(_TWINS))

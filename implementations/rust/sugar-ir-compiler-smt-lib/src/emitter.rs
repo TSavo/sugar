@@ -3938,6 +3938,29 @@ const PYTHON_DICT_ENTRY: &str = "python:dict_entry";
 /// kit's `UnknownCalleeCallV1.faces`).
 const PYTHON_UNKNOWN_CALLEE_COMPLETES: &str = "python:unknown_callee_call.completes";
 
+/// Python's truth of a value, `bool(x)`, as the kit states it.
+const PY_TRUTHY: &str = "py.truthy";
+
+/// The kit's one undecided truth (`bool_op_sugar._unanswered_truth`):
+/// `python:truth.completes(python:truth(<operand>, <site>))`.
+const PYTHON_TRUTH: &str = "python:truth";
+const PYTHON_TRUTH_COMPLETES: &str = "python:truth.completes";
+
+/// Python's truth of a decided builtin value, as an SMT condition over its
+/// value: an `int` (a `bool` is one) is true where it is not 0; a `str`, a
+/// list, a tuple, and a dict (its keys) where it is not empty.  `None` for an
+/// item read (`PyType::Value`), whose type is not decided.
+fn py_builtin_truth(decided: &PyDecided) -> Option<String> {
+    Some(match decided.ty {
+        PyType::Int => format!("(not (= {} 0))", decided.value),
+        PyType::Str => format!("(not (= (str.len {}) 0))", decided.value),
+        PyType::List | PyType::Tuple | PyType::Dict => {
+            format!("(not (= (seq.len {}) 0))", decided.value)
+        }
+        PyType::Value => return None,
+    })
+}
+
 /// The builtin laws prove's builtin answers state (see the section header):
 /// each decided here, and its completion atom `<law>.completes(<law>(...))`.
 fn is_py_builtin_law(name: &str) -> bool {
@@ -4801,11 +4824,42 @@ fn emit_python_value_atomic(name: &str, args: &[Term]) -> Result<Option<String>,
             None => "false".to_string(),
         }));
     }
+    // `bool(x)` of a decided builtin value is Python's own truth of it
+    // (`py_builtin_truth`), where the value holds; else the atom as it
+    // stands (#7757 step 9).
+    if name == PY_TRUTHY {
+        if let [operand] = args {
+            if let Some(decided) = py_decided(operand) {
+                if let Some(truth) = py_builtin_truth(&decided) {
+                    let atom = emit_atomic(name, args)?;
+                    return Ok(Some(smt_ite(&decided.holds(), &truth, &atom)));
+                }
+            }
+        }
+        return Ok(None);
+    }
     if let [Term::Ctor {
         name: protocol,
         args: protocol_args,
     }] = args
     {
+        // `bool(x)` of a decided builtin value always completes: an `int`'s
+        // (a `bool`'s), a `str`'s, a list's, a tuple's and a dict's truth
+        // runs no code and never raises.  The kit's one undecided truth form
+        // is `python:truth.completes(python:truth(<operand>, <site>))`
+        // (`bool_op_sugar._unanswered_truth`, and a formal's truth with no
+        // actual), so a caller's actual joined on a formal decides it here.
+        if name == PYTHON_TRUTH_COMPLETES && protocol == PYTHON_TRUTH {
+            if let [operand, _key] = protocol_args.as_slice() {
+                if let Some(decided) = py_decided(operand) {
+                    if py_builtin_truth(&decided).is_some() {
+                        let atom = emit_atomic(name, args)?;
+                        return Ok(Some(smt_ite(&decided.holds(), "true", &atom)));
+                    }
+                }
+            }
+            return Ok(None);
+        }
         // A builtin law's own completion (#7757 step 7): its range or key
         // condition over decided operands, else the atom as it stands.
         if is_py_builtin_law(protocol) && name.strip_suffix(".completes") == Some(protocol.as_str())
