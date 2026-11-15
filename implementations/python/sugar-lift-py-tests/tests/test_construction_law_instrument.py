@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
+import pytest
 
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.idd.proofir_vocab_instruments import (
-
     collect_naked_formula_boundary_crossings,
     collect_proofir_vocabulary_frontier,
     count_unknown_sort_equality_seats,
@@ -55,22 +55,45 @@ def test_s8_remaining_vocab_nodes_drain_live_scanner_vector() -> None:
     assert report.crossings == []
 
 
+def _unknown_sort_call(callee: str) -> CallTerm:
+    return CallTerm(
+        callee,
+        (),
+        sort=UnknownSort(
+            reason=f"no function-contract return sort available for call:{callee}"
+        ),
+    )
+
+
+def _provenance() -> Provenance:
+    return Provenance(
+        node_class=EqualityFact.node_class,
+        construction_site=ConstructionSite(
+            path="tests/test_construction_law_instrument.py", line=1
+        ),
+        warrant=Derived(floor_chain=("test",)),
+    )
+
+
+def test_an_unknown_sort_call_never_equals_an_int_without_a_coercion() -> None:
+    """``Eq`` takes terms of one sort: a call whose return sort is unknown is
+    never equated with an ``Int`` constant as if its sort were decided.  The
+    construction is refused by name, never built over a sort it does not
+    have."""
+    with pytest.raises(ConstructionPanic, match="matching sorts for Eq"):
+        EqualityFact(
+            call_term=_unknown_sort_call("opaque"),
+            rhs_term=ConstTerm(0, sort=IntSort()),
+            provenance=_provenance(),
+        )
+
+
 def test_unknown_sort_equality_seat_counter_names_residue() -> None:
-    site = ConstructionSite(path="tests/test_construction_law_instrument.py", line=1)
+    # An equality the sort law admits: both sides of the one unknown sort.
     fact = EqualityFact(
-        call_term=CallTerm(
-            "opaque",
-            (),
-            sort=UnknownSort(
-                reason="no function-contract return sort available for call:opaque"
-            ),
-        ),
-        rhs_term=ConstTerm(0, sort=IntSort()),
-        provenance=Provenance(
-            node_class=EqualityFact.node_class,
-            construction_site=site,
-            warrant=Derived(floor_chain=("test",)),
-        ),
+        call_term=_unknown_sort_call("opaque"),
+        rhs_term=_unknown_sort_call("other"),
+        provenance=_provenance(),
     )
 
     report = count_unknown_sort_equality_seats([fact])
