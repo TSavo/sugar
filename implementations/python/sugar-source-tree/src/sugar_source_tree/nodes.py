@@ -17371,7 +17371,12 @@ class For(Statement):
                             if controlled is not None:
                                 statements, final_bindings = controlled
                                 return _Splice(
-                                    (*hoisted, *statements), final_bindings
+                                    (
+                                        *self._iterable_evaluated(subst_iter),
+                                        *hoisted,
+                                        *statements,
+                                    ),
+                                    final_bindings,
                                 )
                             # A symbolic guard owns a jump.  It cannot be selected
                             # by concrete unrolling and must remain a real loop
@@ -17379,7 +17384,10 @@ class For(Statement):
                             elements = None
                     if elements is not None and all(b is not None for b in bindings):
                         target_names = set(target_pattern.names)
-                        unrolled: list = list(hoisted)
+                        unrolled: list = [
+                            *self._iterable_evaluated(subst_iter),
+                            *hoisted,
+                        ]
                         carried = dict(
                             scope
                         )  # carries loop variables across iterations
@@ -17780,6 +17788,36 @@ class For(Statement):
                 hoisted.extend(_iteration_copies(self, index, (evaluated,)))
                 kept.append(unpacked)
         return tuple(hoisted), tuple(kept)
+
+    def _iterable_evaluated(self, iterable) -> tuple:
+        """The statements an unrolled loop opens with for its iterable
+        (``iterable``, substituted), which Python evaluates once, before the
+        first item, and the unroll consumes by its ground value
+        (``_concrete_elements``).
+
+        A ``range(...)`` call of ground ints is evaluated there as the
+        statement it is in that position (``Expr``, the loop's own
+        occurrence, ``shadow.recast``): its value is discarded -- each item
+        is the int it yields -- and every face of it is the loop's.  Before,
+        nothing built the call: a dropped evaluation.
+
+        A list or tuple display is consumed member by member: each member is
+        evaluated once, before the first item where it calls
+        (``_evaluated_before_the_first_item``), and bound to the target as
+        its item; the display is never built as a whole.  That consumption
+        is its discharge, as an unpack's display is its statement's
+        (``Assign._unpacked_displays``); its members answer for themselves.
+
+        A read of a name bound to a ground display is read by every item
+        (``_item_of``) and needs nothing here."""
+        if iterable.kind in ("List", "Tuple"):
+            iterable.discharge_by_substitution()
+            return ()
+        if iterable.kind == "Call":
+            from .shadow import recast
+
+            return (recast(self, "Expr", value=iterable),)
+        return ()
 
     def _item_evaluated_apart(self, unpack, element):
         """``(evaluated, unpacked)``: an iteration's keyed unpack of its item
