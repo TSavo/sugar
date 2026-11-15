@@ -8536,15 +8536,18 @@ mod tests {
         let root = temp_workspace("mint_contract_has_pre");
         let out_dir = root.join("out");
         std::fs::create_dir_all(&out_dir).expect("create out dir");
+        // Since #3901 body-discharge eligibility defaults from the IR kind:
+        // a plain `contract` never body-discharges, a `function-contract`
+        // does. `body_bearing` is only reachable for the function kind.
         let ir = vec![
             json!({
-                "kind": "contract",
+                "kind": "function-contract",
                 "name": "trivial_pre",
                 "outBinding": "out",
                 "pre": {"kind": "atomic", "name": "true", "args": []}
             }),
             json!({
-                "kind": "contract",
+                "kind": "function-contract",
                 "name": "guarded_pre",
                 "outBinding": "out",
                 "pre": {"kind": "atomic", "name": "is_some", "args": []}
