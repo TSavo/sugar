@@ -2679,7 +2679,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 from sugar_lift_py_tests import tree_enumerate as _tree
                 from sugar_lift_py_tests import unanswered_calls as _unanswered
                 from sugar_lift_py_tests.ir import TermTableBuilder
-                from sugar_lift_py_tests.proofir._errors import FreeVariableRefusal
+                from sugar_source_tree.panic import BackendDefect, LifterRefusal
                 from sugar_source_tree.reporter import CollectingReporter
 
                 sf = open_source_file_for_construction(
@@ -2708,15 +2708,20 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         calls = _unanswered.owed_calls(
                             _tree.owner_reduction(fn).outcome
                         )
-                    except FreeVariableRefusal as refusal:
-                        # A row of this function, or the formula its outcome
-                        # carries, names a variable outside its declared scope
-                        # (a module-level name, an unbound global). The
-                        # function is refused by name and the rest of the file
-                        # is served (#7785). What the function sees of the name
-                        # is not decided here. One `undecided` row, which mint
-                        # writes as the function's member (step 8). The proof
-                        # never silently lacks the function's claims.
+                    except BackendDefect:
+                        # The backend or adapter is broken: not the function's
+                        # refusal, and never recorded as one.
+                        raise
+                    except LifterRefusal as refusal:
+                        # One rule (step 8, the owner 2026-11-12): every
+                        # refusal by name raised constructing or reducing this
+                        # function (either family: a free variable outside its
+                        # declared scope, sugar not written, an undecided
+                        # module global, ...) is this function's refused
+                        # member, with the refusal's name and reason, and the
+                        # rest of the file is served. One `undecided` row,
+                        # which mint writes as the function's member. The
+                        # proof never silently lacks the function's claims.
                         scan_rows.append(
                             (
                                 _tree.function_def_memento(fn, file_rel).to_rpc(),
@@ -2724,9 +2729,6 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                             )
                         )
                         continue
-                    # Any other refusal from the function is not turned into an
-                    # enumeration gap: it leaves through the typed-loud RPC
-                    # membrane by name.
                     for row in _tree.unanswered_call_rows(calls, file_rel):
                         key = json.dumps(
                             row.to_rpc_with_term_table(None), sort_keys=True

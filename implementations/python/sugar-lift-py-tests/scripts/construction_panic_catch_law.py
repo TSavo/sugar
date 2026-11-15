@@ -197,15 +197,15 @@ except LifterRefusal as refusal:
     _log_resident_profile(request_count, msg.get("method"))
     continue
 """)}),
-    # REVIEWED (#7785; the owner's one undecided member kind, 2026-11-12, in
-    # docs/path-forward.md). A function whose row names a variable outside its
-    # declared scope is refused by name: the full scan writes the
-    # refused-function `undecided` row (step 8) and serves the rest of the file.
-    # A seek packages nothing, so the refusal re-raises by name (#8081).
+    # REVIEWED (#7785, #7757; the owner's one undecided member kind,
+    # 2026-11-12, in docs/path-forward.md step 8). One rule: every refusal by
+    # name (either family, any subclass) raised constructing or reducing one
+    # function is that function's refused member; the full scan writes its
+    # `undecided` row with the refusal's name and reason and serves the rest of
+    # the file. A ``BackendDefect`` is re-raised by the handler before it
+    # (pure re-raise) and is never recorded as a function's refusal.
     ("lift_rpc.py", "_handle_enumerate"): frozenset({_canonical_handler("""
-except FreeVariableRefusal as refusal:
-    if seek:
-        raise
+except LifterRefusal as refusal:
     scan_rows.append(
         (
             _tree.function_def_memento(fn, file_rel).to_rpc(),

@@ -1,10 +1,13 @@
-"""The universe door must not downgrade a refusal to a gap.
+"""The universe scan records a function's refusal as its one refused member.
 
-The full-tree scan mint packages does not convert ``SugarNotWritten`` into
-an enumeration gap: a gap lets Rust turn it into a diagnostic and seal an
-incomplete ``ir-document``.  The refusal leaves by name.  This tooth pins
-that at the real JSON-RPC membrane.  (The targeted ``seek=true`` door had no
-driver and is deleted; #7757.)
+Step 8 (the owner, 2026-11-12): the ``.proof`` has ONE member kind for "not
+decided here, and why". Every refusal by name raised constructing or
+reducing one function (``SugarNotWritten``, a free variable outside its
+declared scope, any ``LifterRefusal`` but ``BackendDefect``) is that
+function's ``undecided`` row, with the refusal's name and reason; the file is
+served and the proof never silently lacks the function. A ``BackendDefect``
+is not a function's refusal: it leaves by name through the typed-loud
+JSON-RPC membrane. These teeth pin both at the real JSON-RPC door.
 """
 
 from __future__ import annotations
@@ -12,29 +15,15 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from sugar_lift_py_tests import lift_rpc, tree_enumerate
-from sugar_source_tree.panic import SugarNotWritten
+from sugar_source_tree.panic import BackendDefect, SugarNotWritten
 
 
-def test_universe_door_preserves_sugar_not_written_as_typed_loud(
-    tmp_path, monkeypatch
-) -> None:
-    """A catch of the refusal must recreate a successful result with a gap."""
-
+def _serve_universe(tmp_path, monkeypatch, refusal) -> dict:
     subject = tmp_path / "subject.py"
     subject.write_text("def subject():\n    return 1\n", encoding="utf-8")
-    panic = SugarNotWritten(
-        blame=SimpleNamespace(filename="subject.py", line=2, col=4),
-        owner="CallSiteValue.attribute",
-        observed="undecided receiver runtime type or member semantics: CallSiteValue.bytes",
-        requested="a source-authenticated attribute success or exceptional exit",
-        fix=(
-            "carry receiver-type and member testimony to the attribute floor; "
-            "do not guess AttributeError or invent a completed projection"
-        ),
-    )
 
     def refuse_contract_rows(_fn, _file_rel):
-        raise panic
+        raise refusal
 
     request = {
         "jsonrpc": "2.0",
@@ -57,19 +46,66 @@ def test_universe_door_preserves_sugar_not_written_as_typed_loud(
     lift_rpc._serve()
 
     assert len(sent) == 1, sent
-    response = sent[0]
+    return sent[0]
+
+
+def test_sugar_not_written_is_the_functions_refused_member(
+    tmp_path, monkeypatch
+) -> None:
+    """A by-name refusal of one function is its `undecided` row, not the file's error."""
+
+    panic = SugarNotWritten(
+        blame=SimpleNamespace(filename="subject.py", line=2, col=4),
+        owner="CallSiteValue.attribute",
+        observed="undecided receiver runtime type or member semantics: CallSiteValue.bytes",
+        requested="a source-authenticated attribute success or exceptional exit",
+        fix=(
+            "carry receiver-type and member testimony to the attribute floor; "
+            "do not guess AttributeError or invent a completed projection"
+        ),
+    )
+
+    response = _serve_universe(tmp_path, monkeypatch, panic)
+
+    assert "error" not in response, response
+    nodes = response["result"]["nodes"]
+    assert response["result"]["gaps"] == []
+    assert len(nodes) == 1, nodes
+    node = nodes[0]
+    assert node["memento"]["source_function_name"] == "subject"
+    audit = node["audit"]
+    assert audit["kind"] == "undecided"
+    assert audit["symbol"] == "python:subject.subject"
+    assert audit["site"]["file"] == "subject.py"
+    assert audit["reason"] == {
+        "refused": {"owner": panic.owner, "observed": panic.observed}
+    }
+
+
+def test_backend_defect_leaves_by_name_as_typed_loud(tmp_path, monkeypatch) -> None:
+    """A broken backend is never recorded as a function's refusal."""
+
+    defect = BackendDefect(
+        blame=SimpleNamespace(filename="subject.py", line=1, col=0),
+        owner="test.backend",
+        observed="a degenerate span",
+        requested="a span inside the source",
+        fix="repair the adapter",
+    )
+
+    response = _serve_universe(tmp_path, monkeypatch, defect)
+
     assert "result" not in response, response
     assert response["error"]["code"] == -32001
     assert response["error"]["data"] == {
         "kind": "typed-loud",
-        "exception_type": "SugarNotWritten",
+        "exception_type": "BackendDefect",
         "stage": "dispatch",
         "diagnostic": {
-            "owner": panic.owner,
-            "blame": "subject.py:2:4",
-            "observed": panic.observed,
-            "requested": panic.requested,
-            "fix": panic.fix,
+            "owner": defect.owner,
+            "blame": "subject.py:1:0",
+            "observed": defect.observed,
+            "requested": defect.requested,
+            "fix": defect.fix,
         },
     }
-    assert "subject.py:2:4" in response["error"]["message"]

@@ -51,6 +51,7 @@ from .operators import (
 from .panic import (
     BackendDefect,
     backend_defect,
+    LifterRefusal,
     RuntimeSelectedContextManager,
     SourceTreePanic,
     SubstituteNotWritten,
@@ -2852,13 +2853,16 @@ class SourceUnit:
 
         A head whose binding is undecided reaches no provider Call: the Name
         stays (``Name.substitute``), so its use site has no index entry and
-        the ``With`` reduces the manager as undecided.  A function whose body
-        cannot be substituted at all -- it reads a module global the module
-        body leaves undecided (``_bound_module_references``), or any other
-        named refusal -- is that function's refusal alone: it is testified on
-        the function by name (``report_gap``), its heads have no index entry,
-        and the projection goes on to the next function.  One function never
-        takes down the file's open.  No provider is invented for it.
+        the ``With`` reduces the manager as undecided.  Each function's frame
+        is that function's one rewrite under no outer binding
+        (``FunctionDef.rewrite_under_no_binding``), read here, never caught
+        here.  A rewrite that refused (it reads a module global the module
+        body leaves undecided, ``_bound_module_references``, or any other
+        named refusal) is the function's refusal: its heads have no index
+        entry and the projection reads the next function.  The function's own
+        construction refuses by name where the universe scan records it as
+        the function's refused member (step 8).  One function never takes
+        down the file's open.  No provider is invented for it.
         """
         module = self._require_typed_module(
             "SourceUnit.projected_manager_heads", blame=self.filename
@@ -2886,12 +2890,9 @@ class SourceUnit:
                     for node in function.walk()
                 ):
                     continue
-                try:
-                    projected_list.append(function.substitute({}))
-                except SugarNotWritten as refusal:
-                    # The function's own refusal, by name: its heads reach
-                    # no provider, and the rest of the file is projected.
-                    testify(function.reporter, "report_gap", function, refusal)
+                rewrite = function.rewrite_under_no_binding()
+                if rewrite.panic is None:
+                    projected_list.append(rewrite.value)
             projected = tuple(projected_list)
             providers: dict = {}
             for root in projected:
@@ -10852,6 +10853,86 @@ class FunctionDef(Statement):
             self, reads, owner="FunctionDef._module_global_references"
         )
 
+    def rewrite_under_no_binding(self):
+        """This function's body rewritten by temporal substitution under no
+        outer binding (``substitute({})``): the frame the file's bare-Name
+        manager heads are projected off (``SourceUnit.projected_manager_heads``).
+
+        The function's one answer, asked once per resident function and
+        ambient state through the one door for memo rows
+        (``construction_cache``): the row holds the rewritten function, or the
+        refusal the rewrite raised, remembered as loudly as an answer.  The
+        row is returned; a reader that reads past this function reads
+        ``row.panic`` and never catches.  The refusal is the function's: its
+        own construction (``_construct_sugar``) substitutes the same body and
+        refuses by name, where the universe scan records it as the function's
+        refused member (step 8).  A ``BackendDefect`` is not the function's
+        refusal: it is not remembered, and it propagates.
+        """
+        cache = self._construction_cache()
+        key = (id(self.ref), "rewrite-under-no-binding")
+        row = serve(cache.substitutions, key, self.reporter)
+        if row is not None:
+            return row
+        computation = open_row()
+        try:
+            rewritten = self.substitute({})
+        except BackendDefect:
+            abandon_row(computation)
+            raise
+        except LifterRefusal as refusal:
+            cache._pinned[key] = self.ref
+            return close_row(
+                cache.substitutions, key, computation, self.reporter, panic=refusal
+            )
+        except BaseException:
+            abandon_row(computation)
+            raise
+        cache._pinned[key] = self.ref
+        return close_row(
+            cache.substitutions, key, computation, self.reporter, value=rewritten
+        )
+
+    def bridge_source_symbol(self) -> Optional[str]:
+        """This definition's ``bridgeSourceSymbol``: the target symbol a
+        consumer's import of it reaches, for a module-level function under a
+        workspace root; ``None`` otherwise.
+
+        Read off the definition and its seat, never off its construction: the
+        function's universe carries it (``_construct_sugar``) and a function
+        refused by name is cited by it (``refused_function_row``), the same
+        string either way.
+        """
+        context = self._require_construction_context(
+            owner="FunctionDef.bridge_source_symbol"
+        )
+        workspace_root = getattr(context, "workspace_root", None)
+        if workspace_root is None or not self.unit.is_module_level_function(
+            self.name, self.line_col_span().start_line
+        ):
+            return None
+        from pathlib import Path
+
+        # The construction door already mints the locus workspace-relative
+        # (`workspace_path_source`). Re-deriving it here would be a second
+        # answer to a question already resolved; an absolute filename means
+        # the unit did NOT come through that door, and that stays LOUD.
+        relative = Path(self.unit.filename)
+        if relative.is_absolute():
+            raise SugarNotWritten(
+                blame=self.fragment,
+                owner="FunctionDef.bridge_source_symbol",
+                observed=f"absolute source locus `{self.unit.filename}`",
+                requested="workspace-relative source locus",
+                fix=(
+                    "route the source through the workspace-relative "
+                    "lift door (`workspace_path_source`)"
+                ),
+            )
+        # The one speller of a module's own definition symbol: the class
+        # ancestry rows read it too.
+        return self.unit.module_member_target_symbol(self.name)
+
     def _make_parameter_entry(self, parameter: Param, ordinal: int, scope):
         owner = self._active_initializer_owner()
         if owner is not None and ordinal == 0:
@@ -11106,44 +11187,12 @@ class FunctionDef(Statement):
                             site=where,
                         ):
                             substitution_trace = trace_builder.freeze()
-                    bridge_source_symbol = None
-                    context = self._require_construction_context(
-                        owner="FunctionDef._construct_sugar"
-                    )
-                    workspace_root = getattr(context, "workspace_root", None)
-                    if workspace_root is not None and self.unit.is_module_level_function(
-                        self.name, self.line_col_span().start_line
-                    ):
-                        from pathlib import Path
-
-                        # The construction door already mints the locus
-                        # workspace-relative (`workspace_path_source`). Re-deriving
-                        # it here would be a second answer to a question already
-                        # resolved; an absolute filename means the unit did NOT come
-                        # through that door, and that stays LOUD.
-                        relative = Path(self.unit.filename)
-                        if relative.is_absolute():
-                            raise SugarNotWritten(
-                                blame=self.fragment,
-                                owner="FunctionDef.bridge_source_symbol",
-                                observed=f"absolute source locus `{self.unit.filename}`",
-                                requested="workspace-relative source locus",
-                                fix=(
-                                    "route the source through the workspace-relative "
-                                    "lift door (`workspace_path_source`)"
-                                ),
-                            )
-                        # The one speller of a module's own definition
-                        # symbol: the class ancestry rows read it too.
-                        bridge_source_symbol = self.unit.module_member_target_symbol(
-                            self.name
-                        )
                     return FunctionUniverseSugar(
                         name=self.name,
                         formals=tuple(p.name for p in self.params),
                         statements=statements,
                         site=self.fragment,
-                        bridge_source_symbol=bridge_source_symbol,
+                        bridge_source_symbol=self.bridge_source_symbol(),
                         substitution_trace=substitution_trace,
                         formal_coordinates=self.formal_coordinates(),
                     )
@@ -11188,6 +11237,14 @@ class AsyncFunctionDef(Statement):
 
     def _module_global_references(self) -> dict:
         return FunctionDef._module_global_references(self)
+
+    def rewrite_under_no_binding(self):
+        """Same one rewrite under no outer binding as FunctionDef."""
+        return FunctionDef.rewrite_under_no_binding(self)
+
+    def bridge_source_symbol(self) -> Optional[str]:
+        """Same definition symbol as FunctionDef."""
+        return FunctionDef.bridge_source_symbol(self)
 
     def _make_parameter_entry(self, parameter: Param, ordinal: int, scope):
         return FunctionDef._make_parameter_entry(self, parameter, ordinal, scope)

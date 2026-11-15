@@ -376,11 +376,14 @@ def _undecided_site(file_rel: str, coordinate) -> dict:
 
 
 def refused_function_row(fn, file_rel: str, refusal) -> UndecidedRow:
-    """The ``undecided`` row for a function refused by the scope law (#7785).
+    """The ``undecided`` row for a function the lifter refuses by name.
 
-    One rule: a row of the function, or the formula its outcome carries,
-    names a variable outside its declared scope (formals plus ``out``). What
-    the function sees of that name is not decided here.
+    One rule (step 8): any ``LifterRefusal`` (either family, every subclass
+    but ``BackendDefect``) raised constructing or reducing the function. The
+    reason is the refusal's own testimony (``diagnostic``): its name
+    (``owner``) and what it observed. The symbol is read off the definition
+    (``FunctionDef.bridge_source_symbol``), never off its construction, which
+    is what refused.
     """
     from sugar_lift_py_tests.context_manager_resolution import (
         SourceFragmentCoordinateV1,
@@ -394,13 +397,14 @@ def refused_function_row(fn, file_rel: str, refusal) -> UndecidedRow:
         memento.span.end_line,
         memento.span.end_col,
     )
+    testimony = refusal.diagnostic()
     return UndecidedRow(
-        symbol=fn.sugar().bridge_source_symbol,
+        symbol=fn.bridge_source_symbol(),
         site=_undecided_site(file_rel, coordinate),
         reason={
             "refused": {
-                "owner": refusal.info.owner,
-                "observed": refusal.info.observed,
+                "owner": testimony["owner"],
+                "observed": testimony["observed"],
             }
         },
     )
