@@ -124,12 +124,18 @@ def test_ground_exit_blame_is_workspace_relative(corpus: Path) -> None:
     for name, effect in effects.items():
         blame = effect.blame
         assert blame is not None, f"{name} exit carries no blame locus"
-        # The blame renders the fragment, which names the file it cites. That
-        # name must be the workspace-relative one -- an absolute spelling is
-        # the address no other checkout can resolve.
+        # The blame is the one locus spelling, ``file:line:col`` (#7808),
+        # never the fragment's repr. Its file must be the workspace-relative
+        # name, whole -- an absolute spelling is the address no other
+        # checkout can resolve.
+        file_name, _, position = blame.partition(":")
+        line, _, col = position.partition(":")
         assert (
-            "'ground_exits.py'" in blame
+            file_name == "ground_exits.py"
         ), f"{name} blame `{blame}` does not name the workspace-relative locus"
+        assert (
+            line.isdigit() and col.isdigit()
+        ), f"{name} blame `{blame}` is not file:line:col"
         assert (
             str(corpus) not in blame
         ), f"{name} blame `{blame}` leaks the absolute workspace path"
