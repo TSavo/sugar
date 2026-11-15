@@ -65,8 +65,13 @@ class Box:
         ("        f = lambda: self.check()\n        return self.check()", ()),
         # A base's method runs on the object.
         ("        super().check()\n        return self.check()", ()),
-        # No method call on the parameter: no input.
-        ("        return self.n", ()),
+        # A field read alone: the class is an input, the field's reads are
+        # the ``field:`` input under the plain-read guard (#7757).
+        ("        return self.n", ("self",)),
+        # A field stored and read: the ``__dict__`` changes in the frame.
+        ("        self.n = 1\n        return self.n", ()),
+        # Neither a method call nor a field read: no input.
+        ("        return other", ()),
         # An item store or delete is ``type(other).__setitem__`` /
         # ``__delitem__``, dispatched as a method call is (#7757 step 7).
         ("        other[0] = 1\n        return self.check()", ("self", "other")),
@@ -175,6 +180,69 @@ def test_a_method_call_on_a_receiver_whose_class_is_an_input_is_dispatched() -> 
     outcome = function_universe_outcome(_function(tree, "run"))
     owners = {halt.effect.producer_node_owner for halt in outcome.halts()}
     assert "UnknownCallee:dispatch:check" in owners
+
+
+@pytest.mark.parametrize(
+    ("body", "fields"),
+    [
+        # Fields read of the receiver where its ``__dict__`` is the one it
+        # arrived with: each is an input, in field order; a dunder never is,
+        # nor a field of another parameter (no call binds its class).
+        (
+            "        return self.n + other.m + self.k + self.__class__",
+            (("self", "k"), ("self", "n")),
+        ),
+        # A method call on the object may store any field: no field input.
+        ("        self.check()\n        return self.n", ()),
+        # A store or a delete on the object changes its ``__dict__``.
+        ("        self.k = 1\n        return self.n", ()),
+        ("        del self.k\n        return self.n", ()),
+        # The object handed to code: no class input, so no field input.
+        ("        helper(self)\n        return self.n", ()),
+    ],
+)
+def test_a_field_read_of_a_parameter_is_an_input_where_its_dict_is_as_it_arrived(
+    body: str, fields: tuple
+) -> None:
+    from sugar_source_tree.nodes import _receiver_field_inputs
+
+    tree = _tree(_CLASS.format(body=body))
+    assert _receiver_field_inputs(_function(tree, "run")) == fields
+
+
+def test_a_field_read_of_an_arrived_receiver_is_its_input_under_the_plain_read_guard() -> (
+    None
+):
+    """``return self.n`` in ``read``'s own proof: one completed face returns
+    the ``field:self.n`` input under ``python:plain_read(class:self, "n")``,
+    and the undecided read stands under its complement (owed, its halt
+    kept).  Before, the read was the formal's waiting operation, owed on
+    every face."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, Halted
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    tree = _tree(
+        "class Gauge:\n"
+        "    def __init__(self, n):\n"
+        "        self.n = n\n"
+        "\n"
+        "    def read(self):\n"
+        "        return self.n\n"
+    )
+    function = _function(tree, "read")
+    assert "field:self.n" in tuple(
+        item.formal for item in function.contract_inputs()
+    )
+    outcome = function_universe_outcome(function)
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    halted = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert len(completed) >= 2, outcome
+    assert "field:self.n" in str(outcome), outcome
+    assert "python:plain_read" in str(outcome), outcome
+    assert halted and all(
+        isinstance(face.effect, UndeterminedRaiseEffect) for face in halted
+    ), outcome
 
 
 def test_a_field_stored_under_the_method_s_name_keeps_the_call_undispatched() -> None:

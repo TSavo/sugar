@@ -64,7 +64,9 @@ class AttributeSugar(ConstructedTermSugar):
 
         The law shared by ordinary AttributeSugar and Attribute AugAssign:
 
-        1. Formal receiver → undischarged ``attribute_named`` carrier
+        1. Formal receiver → its ``field:`` input where the field is one
+           (``receiver_dispatch.receiver_field_read``), else the
+           undischarged ``attribute_named`` carrier
         2. Authenticated CallSiteValue body → ``force_floor`` then attribute
         3. Else Floor ``receiver.attribute(name, site, ctx)`` (a property
            getter applies under the reading caller's ``ctx``)
@@ -75,6 +77,15 @@ class AttributeSugar(ConstructedTermSugar):
 
         formal_coordinate = getattr(receiver, "formal_coordinate", None)
         if formal_coordinate is not None:
+            # A field of a parameter whose class and fields are inputs of
+            # the contract (#7757): the ``field:<param>.<name>`` input under
+            # the plain-read guard prove decides, the undecided read under
+            # its complement.
+            from sugar_lift_py_tests.receiver_dispatch import receiver_field_read
+
+            field_read = receiver_field_read(receiver, name, site)
+            if field_read is not None:
+                return field_read
             from sugar_lift_py_tests.caller_parameter_contract import (
                 NativeOperationExitCarrierV1,
             )

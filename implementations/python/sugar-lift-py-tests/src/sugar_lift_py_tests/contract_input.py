@@ -37,6 +37,18 @@ supplies the binding standing there (``py.global``). A class or a decorated
   ``receiver_dispatch.class_arguments``), and prove's one binder binds it and
   resolves the method on that class's order
   (``consistency::dispatched_symbol``).
+- ``field:<param>.<name>`` (#7757): the value of the field ``<name>`` in
+  the ``__dict__`` the object ``<param>`` binds arrived with, read by the
+  body where nothing in the frame may have changed that ``__dict__``
+  (``nodes._receiver_field_inputs``). The body's read is the input only
+  under ``python:plain_read(class:<param>, "<name>")`` (prove decides it on
+  the class's namespace row: no ``__getattribute__``/``__getattr__`` and no
+  binding of the name in the order), and the one undecided read otherwise
+  (``AttributeSugar.project_attribute``). Prove's one binder binds it where
+  the receiver is a class call's result whose class's constructor contract
+  states the field's value on every completed face
+  (``consistency::constructed_field_inputs``); otherwise it is free, and a
+  call that reads it is owed.
 """
 
 from __future__ import annotations
@@ -49,8 +61,9 @@ CELL_INPUT = "cell"
 GLOBAL_INPUT = "global"
 DEFAULT_INPUT = "default"
 CLASS_INPUT = "class"
+FIELD_INPUT = "field"
 
-_INPUT_KINDS = (CELL_INPUT, GLOBAL_INPUT, DEFAULT_INPUT, CLASS_INPUT)
+_INPUT_KINDS = (CELL_INPUT, GLOBAL_INPUT, DEFAULT_INPUT, CLASS_INPUT, FIELD_INPUT)
 
 
 def input_formal(kind: str, name: str) -> str:
