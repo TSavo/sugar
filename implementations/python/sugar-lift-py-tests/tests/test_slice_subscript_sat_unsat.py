@@ -40,14 +40,39 @@ def _enumerate(level: str, project: Path, at=None) -> dict:
     return response["result"]
 
 
-def _rows(project: Path, body: str) -> list[dict]:
-    """Every row the universe scan states for a one-file project."""
+def _scan(project: Path, body: str) -> dict:
+    """The universe scan of a one-file project: its rows and its term table."""
     project.mkdir()
     (project / "test_slice_subscript.py").write_text(body, encoding="utf-8")
     (file_node,) = _enumerate("source_files", project)["nodes"]
     result = _enumerate("universe", project, at=file_node["memento"])
     assert result["gaps"] == []
-    return [node["audit"] for node in result["nodes"]]
+    return result
+
+
+def _rows(project: Path, body: str) -> list[dict]:
+    """Every row the universe scan states for a one-file project."""
+    return [node["audit"] for node in _scan(project, body)["nodes"]]
+
+
+def _string_constants(formula: dict, table: dict) -> set[str]:
+    """Every string constant a wire formula reaches through the term table."""
+    found: set[str] = set()
+    formulas = [formula]
+    terms: list[dict] = []
+    while formulas:
+        current = formulas.pop()
+        terms.extend(current.get("args", ()))
+        formulas.extend(current.get("operands", ()))
+        if "body" in current:
+            formulas.append(current["body"])
+    while terms:
+        term = terms.pop()
+        node = table[term["cid"]] if term.get("kind") == "term-ref" else term
+        if node.get("kind") == "const" and isinstance(node.get("value"), str):
+            found.add(node["value"])
+        terms.extend(node.get("args", ()))
+    return found
 
 
 def _contract(rows: list[dict]) -> dict:
@@ -56,26 +81,43 @@ def _contract(rows: list[dict]) -> dict:
 
 
 def test_concrete_string_slice_is_decided_at_the_one_door(tmp_path: Path) -> None:
-    """``'abcdef'[1:3]`` is ``'bc'``.  Truthful: the function's one row states
-    the assertion's claim, nothing halts and nothing is left undecided.
-    Lying (``== 'bd'``): the assertion halts, as its one panic locus."""
-    truthful = _rows(
+    """``'abcdef'[1:3]`` is ``'bc'``: the slice is decided at the lift, and it
+    cannot raise, so it has no halted arm.
+
+    The comparison is not folded at the lift: a string equality is a fact the
+    assertion states (``ff8cd13b0``, the ruling that deleted the
+    ``StringValue.equals`` fold), and an assert whose test is a predicate states
+    its claim and has no failing arm (``AssertSugar``).  So neither twin has a
+    ``panicLoci`` entry: no halted arm exists to carry.  The truthful twin's
+    claim is ``'bc' == 'bc'``.  The lying twin's claim is ``'bc' == 'bd'``, an
+    equality of two distinct string constants that no model satisfies, so prove
+    refutes it and it is never ``sat``."""
+    truthful = _scan(
         tmp_path / "good",
         "def test_concrete_string_slice():\n    assert 'abcdef'[1:3] == 'bc'\n",
     )
-    lying = _rows(
+    lying = _scan(
         tmp_path / "bad",
         "def test_concrete_string_slice():\n    assert 'abcdef'[1:3] == 'bd'\n",
     )
 
-    (good,) = truthful
+    (good,) = [node["audit"] for node in truthful["nodes"]]
     assert good["kind"] == "function-contract"
     assert good["name"] == "test_concrete_string_slice"
     assert "inv" in good
     assert "panicLoci" not in good
+    good_strings = _string_constants(good["inv"], truthful["termTable"])
+    assert "bc" in good_strings
+    assert "bd" not in good_strings
+    assert "abcdef" not in good_strings
 
-    bad = _contract(lying)
-    assert len(bad["panicLoci"]) == 1
+    (bad,) = [node["audit"] for node in lying["nodes"]]
+    assert bad["kind"] == "function-contract"
+    assert "panicLoci" not in bad
+    bad_strings = _string_constants(bad["inv"], lying["termTable"])
+    assert {"bc", "bd"} <= bad_strings
+    assert "abcdef" not in bad_strings
+    assert bad["inv"] != good["inv"]
 
 
 def test_symbolic_slice_is_not_decided_in_the_functions_own_proof(
