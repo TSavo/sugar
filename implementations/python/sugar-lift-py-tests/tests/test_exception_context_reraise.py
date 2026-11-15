@@ -21,6 +21,9 @@ from types import SimpleNamespace
 import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.effect.authenticated_raise_locus import (
+    AuthenticatedRaiseLocus,
+)
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor import CallSiteValue, NoneValue, StringValue
 from sugar_lift_py_tests.ir import ctor
@@ -47,6 +50,16 @@ def _halt_effect(outcome) -> RaiseEffect:
         assert isinstance(halted[0].effect, RaiseEffect), type(halted[0].effect)
         return halted[0].effect
     raise AssertionError(f"expected a halted ExitSet, got {type(outcome)}")
+
+
+def _locus(effect) -> str:
+    """The effect's authenticated ``file:line:col`` locus, through its one type."""
+    occurrence = effect.occurrence
+    assert isinstance(occurrence, AuthenticatedRaiseLocus) and ":" in occurrence.value, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {occurrence!r}"
+    )
+    return occurrence.value
 
 
 def _halt_face(outcome) -> Halted:
@@ -111,10 +124,8 @@ def test_implicit_context_second_outgoing_first_authenticated_context():
     effect = _halt_effect(_desugar(source))
 
     assert effect.exception_name == "RuntimeError"
-    assert isinstance(effect.occurrence, str) and ":" in effect.occurrence, (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {effect.occurrence!r}"
-    )
+    # ``raise RuntimeError`` stands at line 5, column 8.
+    assert _locus(effect) == "context_reraise.py:5:8"
     assert isinstance(effect.raised_value, CallSiteValue)
     assert effect.raised_value.target_name == "RuntimeError"
 
@@ -122,13 +133,8 @@ def test_implicit_context_second_outgoing_first_authenticated_context():
     assert effect.cause_value is None
     assert isinstance(effect.context_effect, RaiseEffect)
     assert effect.context_effect.exception_name == "ValueError"
-    assert (
-        isinstance(effect.context_effect.occurrence, str)
-        and ":" in effect.context_effect.occurrence
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {effect.context_effect.occurrence!r}"
-    )
+    # ``raise ValueError`` stands at line 3.
+    assert int(_locus(effect.context_effect).split(":")[1]) == 3
 
     # Distinct type + occurrence pairs.
     assert effect.exception_name != effect.context_effect.exception_name
@@ -188,15 +194,12 @@ def test_bare_reraise_preserves_identical_incoming_effect_occurrence():
     effect = _halt_effect(_desugar(source, name="bare.py"))
     assert effect.exception_name == "ValueError"
     # Occurrence is the body raise site (line of raise ValueError), not bare raise.
-    assert isinstance(effect.occurrence, str) and ":" in effect.occurrence, (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {effect.occurrence!r}"
-    )
-    body_line = int(effect.occurrence.split(":")[1])
+    locus = _locus(effect)
+    body_line = int(locus.split(":")[1])
     # bare.py: raise ValueError on line 3, bare raise on line 5.
-    assert body_line == 3, effect.occurrence
-    assert not effect.occurrence.endswith(":5:8")
-    assert not effect.occurrence.endswith(":5:9")
+    assert body_line == 3, locus
+    assert not locus.endswith(":5:8")
+    assert not locus.endswith(":5:9")
 
 
 def test_bare_reraise_is_exact_inflight_effect_identity():
@@ -230,9 +233,9 @@ def test_bare_reraise_is_exact_inflight_effect_identity():
     assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
     (halt,) = outcome.halts()
     assert halt.effect is incoming
-    assert halt.effect.occurrence == "body.py:1:0"
+    assert halt.effect.occurrence == AuthenticatedRaiseLocus("body.py:1:0")
     # Handler site is NOT written onto the effect.
-    assert "handler.py" not in (halt.effect.occurrence or "")
+    assert "handler.py" not in _locus(halt.effect)
 
 
 def test_bare_reraise_without_active_exception_is_loud():
@@ -295,13 +298,10 @@ def test_terminal_finally_raise_supersedes_incoming_body_exit():
     )
     effect = _halt_effect(_desugar(source, name="fin.py"))
     assert effect.exception_name == "RuntimeError"
-    assert isinstance(effect.occurrence, str) and ":" in effect.occurrence, (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {effect.occurrence!r}"
-    )
     # Primary is the finally raise site, not the body raise.
-    fin_line = int(effect.occurrence.split(":")[1])
-    assert fin_line == 5, effect.occurrence  # raise RuntimeError in fixture
+    locus = _locus(effect)
+    fin_line = int(locus.split(":")[1])
+    assert fin_line == 5, locus  # raise RuntimeError in fixture
     assert effect.exception_name != "ValueError"
 
 
