@@ -23,13 +23,15 @@ with their truthful halves:
   the refusal families listed on #7821; through the solver the refused
   function is owed and the file reads ``open``.
 
-The five shapes #7820's probe surfaced (#7821) are pinned as expected red.
-None of them reaches the producer as a value: the call they make is a
-``CallSiteValue`` that is never reduced (a lambda's ``py.call``, ``h(g)``
-with ``g`` symbolic, ``Box()`` with no body), so the raise is never
-evaluated at all.  That is a different defect from the two representations,
-and this change does not reach it.  The lambda call is reduced since: at the
-reduction level its lying half halts, and is pinned green.
+The five shapes #7820's probe surfaced (#7821) are pinned beside them.
+None of them reached the producer as a value: the call they make was a
+``CallSiteValue`` that was never reduced (a lambda's ``py.call``, ``h(g)``
+with ``g`` symbolic, ``Box()`` with no body), so the raise was never
+evaluated at all.  That is a different defect from the two representations.
+The lambda call and the returned ``__new__`` are reduced since: at the
+reduction level their lying halves halt, and are pinned green; the others are
+expected red there.  Through the solver no lying half of the five is ``sat``:
+a call that is not reduced is the unanswered call, which owes its member.
 """
 
 from __future__ import annotations
@@ -212,12 +214,15 @@ _NOT_REDUCED = (
 
 
 # A truthful half Python decides and the reduction does not: ``h(g)`` hands
-# ``h`` a ``def`` as a value, and ``f()`` inside ``h`` calls it.  The floor
-# applies a lambda reached as a value (``LambdaCallable``), a class and a
-# bound method; a ``def`` reached as a value has no value that applies it, so
-# ``f()`` is the unanswered call in ``test_f``'s frame too: one completion
-# under the call's own guard beside its undetermined raise, which names no
-# exception.  It is not a completion alone, and it is pinned as what it is.
+# ``h`` an undecorated ``def`` as a value, and ``f()`` inside ``h`` calls it.
+# A read of an undecorated ``def``'s name is the ordinary name
+# (``Name.substitute``): no function value stands for it, where a lambda is
+# one (``LambdaCallable``) and a decorated ``def``'s name is bound to one
+# (``decorator_application_sugar._function_value``).  So ``f()`` has nothing
+# to apply and is the unanswered call in ``test_f``'s frame too: one
+# completion under the call's own guard beside its undetermined raise, which
+# names no exception.  It is not a completion alone, and it is pinned as what
+# it is.
 _FIVE_UNDECIDED = {"function-passed-as-argument"}
 
 
