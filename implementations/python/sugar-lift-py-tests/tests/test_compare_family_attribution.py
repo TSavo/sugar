@@ -44,9 +44,23 @@ def test_call_operand_raise_is_owned_by_call_not_compare_root() -> None:
         )
     )
 
-    assert attributed.outcome is AttributionOutcome.AUTHENTICATED_EXIT
-    assert attributed.detail == "Call"
+    # #7757 step 5 (#8705, "Edge, join at prove"): ``fail()`` is its
+    # coordinate and edge, never ``fail``'s body applied at the call, so its
+    # halt names no exception here (``fail``'s contract states the
+    # ``ValueError``; prove types it, #8749).  Before #8705 this read the
+    # ``ValueError`` off the applied body (``AUTHENTICATED_EXIT``, owner
+    # ``Call``).  The root still never steals the call's halt: no face of the
+    # comparison names the ``ValueError`` as its own.
+    assert attributed.outcome is AttributionOutcome.UNDISCHARGED
     assert attributed.body_id == "compare_call_owner.py:5:Compare"
+    from sugar_lift_py_tests.temporal.temporal_context import TemporalContext
+
+    value_error = (
+        TemporalContext.empty().value_for("ValueError").exception_type_identity()
+    )
+    coordinates = attributed.exceptional_exit_coordinates
+    assert coordinates
+    assert all(coordinate != value_error for coordinate, _occurrence in coordinates)
 
 
 def test_authenticated_compare_population_has_a_closed_exit_split() -> None:

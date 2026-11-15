@@ -23,14 +23,6 @@ def _tree(source: str) -> SourceFile:
     )
 
 
-def _only(outcome, kind):
-    assert isinstance(outcome, ExitSet)
-    assert len(outcome.exits) == 1
-    exit_ = outcome.exits[0]
-    assert isinstance(exit_, kind)
-    return exit_
-
-
 def test_concrete_if_elif_else_constructs_and_selects_each_reachable_slot() -> None:
     source = ""
     for name, first, second in (
@@ -133,16 +125,29 @@ def test_condition_halt_bypasses_every_if_elif_else_body() -> None:
         "    else:\n"
         "        return 30\n"
     )
+    """#7757 step 5 (#8705, "Edge, join at prove"): ``choose(None)`` is its
+    coordinate and edge, never ``choose``'s body applied to ``None`` (which
+    used to name the condition's ``TypeError`` here).  ``choose``'s own
+    reduction is the condition's carrier, pending on ``flag < 1`` before any
+    body is entered; its contract states the condition's halt over the
+    formal, and prove decides it for ``None`` at the join."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
     tree = _tree(f"{source}\nchoose(None)\n")
     (outcome,) = tuple(
         node.sugar().desugar(None) for node in tree.nodes() if isinstance(node, Call)
     )
 
-    halted = _only(outcome, Halted)
-    from sugar_lift_py_tests.temporal.temporal_context import TemporalContext
-
-    expected = TemporalContext.empty().value_for("TypeError")
-    assert halted.effect.exception_type_coordinate == expected.exception_type_identity()
+    assert isinstance(outcome, ExitSet)
+    assert len(outcome.exits) == 2
+    (halted,) = outcome.halts()
+    assert isinstance(halted, Halted)
+    assert type(halted.effect) is UndeterminedRaiseEffect
+    assert halted.effect.exception_name is None
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    pending = function.sugar().desugar(None)
+    assert isinstance(pending, NativeOperationExitCarrierV1)
+    assert pending.demand.operator == "less_than"
 
 
 def _two_source_ifs() -> tuple[If, If]:

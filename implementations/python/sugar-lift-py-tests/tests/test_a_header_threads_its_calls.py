@@ -125,7 +125,14 @@ def test_a_caller_sees_what_a_returned_call_did_to_its_actual() -> None:
             "    a.append(1)\n"
         )
     )
-    universe = outcome.completed_value()
+    # ``h(acc)`` is the one unanswered call: ``f`` completes on the face
+    # where it completed, and halts on the other (``completed_value()`` reads
+    # a sole completion, so the completed face is taken by itself).
+    from sugar_lift_py_tests.outcome import Completed
+
+    (completed,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert outcome.halts()
+    universe = completed.value
     assert isinstance(universe, UniverseValue), outcome
     (returned,) = [
         entry for entry in universe.record.statements if isinstance(entry, ReturnValue)

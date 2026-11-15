@@ -6,15 +6,8 @@ import ast
 
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
-from sugar_lift_py_tests.context_manager_contract import (
-    AuthenticatedRaiseMatcher,
-    EffectBoundaryDisposition,
-)
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.effect.expectation_not_met_effect import (
-    ExpectationNotMetEffect,
-)
-from sugar_lift_py_tests.ir import ctor, str_const
+from sugar_lift_py_tests.ir import str_const
 from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
@@ -42,21 +35,6 @@ def _tree(source: str) -> SourceFile:
         (source, "compare-keyword-default.py", blake3_512_of(source.encode())),
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )
-
-
-def _exception_identity(name: str):
-    return ctor(
-        "python:exception_type_identity",
-        [str_const("builtins"), str_const(name)],
-    )
-
-
-class _Expected:
-    def __init__(self, name: str):
-        self.identity = _exception_identity(name)
-
-    def exception_type_identity(self):
-        return self.identity
 
 
 def _program_outcomes():
@@ -91,20 +69,32 @@ def _program_outcomes():
     )
 
 
-def _named_type_error(outcome: object) -> Halted:
+def _call_term(outcome: object):
+    """The call's coordinate, ``call:<target>(<arguments>)``.
+
+    #7757 step 5 (#8705, "Edge, join at prove"): a call of a same-file def is
+    its coordinate and edge, never the callee's body applied to its actuals.
+    It is the one unanswered call: it completes under its
+    ``python:unknown_callee_call.completes`` atom with ``python:call_result(
+    <call term>, <occurrence>)`` and halts under the complement naming no
+    exception (``helper``'s contract states the ``TypeError``; prove types it
+    where the join binds ``None``).  The call term carries the binding exactly
+    as prove's one binder binds the contract: a positional actual as written,
+    a keyword as ``py.kwarg``, an omitted defaulted formal as ``py.default``
+    with the value its ``def`` statement bound."""
     assert isinstance(outcome, ExitSet)
-    assert len(outcome.exits) == 1
-    halted = outcome.exits[0]
+    assert len(outcome.exits) == 2
+    (halted,) = outcome.halts()
     assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate == _exception_identity("TypeError")
-    assert (
-        isinstance(halted.effect.occurrence_id, str)
-        and ":" in halted.effect.occurrence_id
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {halted.effect.occurrence_id!r}"
-    )
-    return halted
+    assert halted.effect.exception_name is None
+    assert halted.effect.exception_type_coordinate is None
+    (completed,) = (face for face in outcome.exits if face is not halted)
+    assert completed.guard.name == "python:unknown_callee_call.completes"
+    result = completed.value.term
+    assert result.name == "python:call_result"
+    call = result.args[0]
+    assert call.name.startswith("call:")
+    return call
 
 
 def test_real_pandas_ordering_helper_and_positional_caller_are_content_pinned() -> None:
@@ -168,53 +158,35 @@ def test_real_pandas_ordering_helper_and_positional_caller_are_content_pinned() 
 
 
 def test_helper_alone_is_undischarged_and_all_three_bindings_reach_one_demand() -> None:
+    """``helper`` alone is its one carrier over its formals (its contract).
+    Each call is its coordinate, carrying the binding prove's binder binds
+    the carrier's operands with: ``right`` by position, by keyword and by
+    its default all reach the one ``left < right`` demand at the join.
+
+    Before #8705 each call applied ``helper``'s body here and named the
+    ``TypeError`` of ``None < 2`` at the call; that body-following is
+    deleted.  Also covers the former ``test_wrong_boundary_type_does_not_
+    consume_or_create_the_exception_identity``: the call's halt creates no
+    exception identity at all (``_call_term``)."""
     pending, (positional, keyword, default, normal) = _program_outcomes()
     assert isinstance(pending, NativeOperationExitCarrierV1)
     assert pending.demand.operator == "less_than"
 
-    halted = tuple(
-        _named_type_error(outcome) for outcome in (positional, keyword, default)
+    positional_call, keyword_call, default_call, normal_call = (
+        _call_term(outcome) for outcome in (positional, keyword, default, normal)
     )
-    # One raise locus: the helper's ``left < right`` (line 2, col 11), however
-    # the formal was bound.  A raise crossing a call is stamped with the call
-    # that raised it (``call_site_value.call_owned``: ``<locus>@<call path>``),
-    # so each of the three calls is its own occurrence of that one locus.
-    occurrences = [face.effect.occurrence_id for face in halted]
-    assert {occurrence.split("@", 1)[0] for occurrence in occurrences} == {
-        "compare-keyword-default.py:2:11"
-    }
-    assert all("@" in occurrence for occurrence in occurrences)
-    assert len(set(occurrences)) == 3
-    assert isinstance(normal, ExitSet)
-    assert len(normal.exits) == 1
-    assert not any(isinstance(face, Halted) for face in normal.exits)
-
-
-def test_wrong_boundary_type_does_not_consume_or_create_the_exception_identity() -> (
-    None
-):
-    _, (_, keyword, _, _) = _program_outcomes()
-    producer_halt = _named_type_error(keyword)
-    separately_minted_expected = _Expected("TypeError")
-    assert (
-        producer_halt.effect.exception_type_coordinate
-        == separately_minted_expected.identity
-    )
-    assert (
-        producer_halt.effect.exception_type_coordinate
-        is not separately_minted_expected.identity
-    )
-
-    projected = keyword.and_exit(
-        ExitSet.completed(object()),
-        disposition=EffectBoundaryDisposition(
-            matcher=AuthenticatedRaiseMatcher(expected=_Expected("ValueError")),
-            unmet=ExpectationNotMetEffect("raise", "assertion-site"),
-        ),
-    )
-    assert len(projected.exits) == 1
-    assert isinstance(projected.exits[0], Halted)
-    assert projected.exits[0].effect is producer_halt.effect
+    assert len({positional_call.name, keyword_call.name, default_call.name}) == 1
+    none_actual, two_actual = positional_call.args
+    for call, form in ((keyword_call, "py.kwarg"), (default_call, "py.default")):
+        actual, bound = call.args
+        assert actual == none_actual
+        assert bound.name == form
+        assert bound.args[0] == str_const("right")
+    assert keyword_call.args[1].args[1] == two_actual
+    one_actual, keyword_two = normal_call.args
+    assert one_actual != none_actual
+    assert keyword_two.name == "py.kwarg"
+    assert keyword_two.args[1] == two_actual
 
 
 def test_swapped_ordering_retains_distinct_ordered_coordinates() -> None:

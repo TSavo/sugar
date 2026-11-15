@@ -353,14 +353,14 @@ def test_the_listcomp_retention_control_still_projects_finite_elements():
         "def build():\n"
         "    return [(left, right) for left, right in [(1, 2), (3, 4)]]\n"
     )
-    call_source = source + "build()\n"
-    call = tuple(
-        node
-        for node in _source_file(call_source).nodes()
-        if node.kind == "Call" and node.func.kind == "Name" and node.func.id == "build"
-    )[-1]
+    # ``build``'s own reduction, the one its contract states.  Before #8705
+    # this reduced ``build()``, the body applied at the call; a same-file call
+    # is now its coordinate and edge (#7757 step 5, "Edge, join at prove"),
+    # two-faced, so it has no sole completion to read.
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
-    outcome = call.sugar().desugar(None)
+    build = next(_source_file(source).functions())
+    outcome = function_universe_outcome(build)
 
     assert outcome.completed_value() is not None
 

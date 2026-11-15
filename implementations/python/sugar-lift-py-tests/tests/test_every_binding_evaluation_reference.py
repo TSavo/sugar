@@ -393,9 +393,28 @@ def test_a_nonlocal_closure_carries_its_cell_at_the_call() -> None:
 
 
 def test_a_nested_call_reads_the_binding_at_the_call(tmp_path: Path) -> None:
+    """``g()`` is its coordinate and edge (#7757 step 5, #8705, "Edge, join
+    at prove"): the call carries the cell ``g`` reads as ``py.closure(y,
+    <value>)``, the binding ``y`` holds at the call, and prove binds ``g``'s
+    ``cell:y`` input with it.  Before #8705 ``g``'s body was applied here and
+    returned ``2``; the binding at the call is now read off the call term."""
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.ir import str_const
+
     returned = _returned(_outcome(tmp_path, NESTED, "nested"))
-    assert TWO in returned, returned
-    assert ONE not in returned, returned
+    (call,) = [value for value in returned if isinstance(value, CallSiteValue)]
+    call_term = call.term
+    if call_term.name == "python:call_result":
+        call_term = call_term.args[0]
+    assert call_term.name.startswith("call:"), call_term
+    (cell,) = [
+        arg
+        for arg in call_term.args
+        if getattr(arg, "name", None) == "py.closure"
+        and arg.args[0] == str_const("y")
+    ]
+    assert cell.args[1] == TWO.to_term(owner="test"), cell
+    assert cell.args[1] != ONE.to_term(owner="test"), cell
 
 
 # ---------------------------------------------------------------------------
