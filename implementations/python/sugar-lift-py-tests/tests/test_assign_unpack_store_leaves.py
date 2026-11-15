@@ -683,9 +683,14 @@ def test_dual_attribute_display_unpack_constructs(tmp_path: Path) -> None:
     store body reduces to one exit or to guarded exits; the outcome shape is
     owned there, so it is not restated here.
     """
+    from sugar_lift_py_tests.sugar.assign_sugar import KeyedStoreSugar
+
     unpack = _unpack(tmp_path, TWO_ATTRIBUTE, stem="dual")
     assert len(unpack.stores) == 2
-    assert [store.attr for store in unpack.stores] == ["x", "y"]
+    # Each store target is its own keyed statement around the one field
+    # store, as a chained assignment's store target is.
+    assert all(isinstance(store, KeyedStoreSugar) for store in unpack.stores)
+    assert [store.store.attr for store in unpack.stores] == ["x", "y"]
     assert unpack.bindings == ()
 
 
