@@ -64,22 +64,6 @@ class WitnessPipelineResult:
     prove_doc: dict
 
     @property
-    def selected_sugars(self) -> tuple[str, ...]:
-        walk = self.lift_doc.get("factoryAuditSummary", {}).get("factoryWalk", [])
-        audits = self.lift_doc.get("factoryAudits", [])
-        selected: list[str] = []
-        seen: set[str] = set()
-        for row in [*walk, *audits]:
-            if not isinstance(row, dict) or not isinstance(row.get("selected"), str):
-                continue
-            name = row["selected"]
-            if name in seen:
-                continue
-            seen.add(name)
-            selected.append(name)
-        return tuple(selected)
-
-    @property
     def proofir_emitted(self) -> bool:
         return bool(self.lift_doc.get("ir"))
 
