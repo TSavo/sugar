@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from frame_fresh import fresh
 
-from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import GuardedValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import atomic, make_var
 from sugar_lift_py_tests.outcome import ExitSet
@@ -27,7 +27,6 @@ from sugar_source_tree.panic import SugarNotWritten
 def test_guarded_arithmetic_preserves_undecided_arms_as_dual_edge_partitions(
     method, operator
 ) -> None:
-    del operator
     guard = atomic("choose", [])
     value = GuardedValue(
         guard,
@@ -42,9 +41,12 @@ def test_guarded_arithmetic_preserves_undecided_arms_as_dual_edge_partitions(
     # faces across arms under a disjoined guard.
     assert halted
     assert completed
+    # An operand whose type is not decided names no exception: each arm's halt
+    # is the undetermined raise of the one two-faced binary operation
+    # (``undecided_binary_faces``), owned by its operator.
     assert all(
-        isinstance(face.effect, RaiseEffect)
-        and face.effect.producer_node_owner == "BinOp"
+        type(face.effect) is UndeterminedRaiseEffect
+        and face.effect.producer_node_owner == f"UndecidedBinary:{operator}"
         for face in halted
     )
 
