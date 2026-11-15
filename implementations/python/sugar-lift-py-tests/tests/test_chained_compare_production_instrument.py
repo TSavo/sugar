@@ -9,7 +9,7 @@ from sugar_lift_py_tests.caller_parameter_contract import (
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
-from sugar_lift_py_tests.ir import and_, atomic, make_var, not_
+from sugar_lift_py_tests.ir import and_, atomic, ctor, make_var, not_, str_const
 from sugar_lift_py_tests.occurrence import call_frame_path, occurrence_key
 from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -130,17 +130,38 @@ def test_undecidable_ordering_legs_keep_exact_guards_and_occurrences() -> None:
     outcome = sugar.desugar(None)
     assert isinstance(outcome, ExitSet)
 
-    a, b, c = make_var("a"), make_var("b"), make_var("c")
-    first_raises = atomic("python.lt_dispatch_raises", [a, b])
+    # Each undecided leg is the one two-faced outcome: it completes under its
+    # own site-keyed ``python:compare.completes`` atom and halts, with an
+    # undetermined raise, under that atom's complement
+    # (``comparison_op_sugar.undecided_dispatch_faces``). The second leg runs
+    # only where the first completed and was true.
+    def completes(site):
+        return atomic(
+            "python:compare.completes",
+            [
+                ctor(
+                    "python:compare",
+                    (str_const("Lt"), str_const(_undecided_occurrence(site))),
+                )
+            ],
+        )
+
+    a, b = make_var("a"), make_var("b")
+    first_site, second_site = (value.site for value in sugar.values)
+    first_completes = completes(first_site)
+    second_completes = completes(second_site)
     first_true = atomic("py.lt", [a, b])
-    second_raises = atomic("python.lt_dispatch_raises", [b, c])
     halted = tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
     assert {exit_.guard for exit_ in halted} == {
-        first_raises,
-        and_([not_(first_raises), and_([first_true, second_raises])]),
+        not_(first_completes),
+        and_([first_completes, and_([first_true, not_(second_completes)])]),
     }
     assert {exit_.effect.occurrence_id for exit_ in halted} == {
-        _occurrence(value.site) for value in sugar.values
+        _undecided_occurrence(first_site),
+        _undecided_occurrence(second_site),
+    }
+    assert {exit_.effect.producer_node_owner for exit_ in halted} == {
+        "UndecidedCompare:Lt"
     }
 
 
