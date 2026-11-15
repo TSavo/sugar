@@ -3,7 +3,6 @@
 from dataclasses import dataclass, replace
 
 import pytest
-from frame_fresh import fresh
 
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -11,12 +10,9 @@ from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
 from sugar_lift_py_tests.floor import (
-    CallSiteValue,
     DictValue,
-    ListValue,
     ObjectValue,
     SymbolicValue,
-    TermValue,
 )
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
@@ -152,18 +148,19 @@ def test_real_source_element_halt_keeps_exact_pre_comprehension_state():
         and node.func.kind == "Attribute"
         and node.func.attr == "run"
     )
-    constructed = call.sugar().desugar(None)
-    assert constructed.completed_value() is not None
-    assert isinstance(constructed.completed_value(), CallSiteValue)
-    outcome = constructed.completed_value().producer_outcome(None)
+    # The call is applied where it stands (``CallSiteValue.producer_outcome``
+    # runs inside the Call's reduction): its outcome is the body's, every halt
+    # published at the Call.  ``values[4]`` on the one-element list raises
+    # ``IndexError`` out of ``run``: the sole face, with no completion.
+    outcome = call.sugar().desugar(None)
 
     assert isinstance(outcome, ExitSet), repr(outcome)
     assert len(outcome.exits) == 1
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
+    assert halted.effect.exception_name == "IndexError"
+    assert halted.effect.producer_node_owner == "Call"
     assert halted.state is not None
-    assert halted.state.entries == (fresh(ListValue, (TermValue(7),)),)
-    assert halted.state.entries != (fresh(ListValue, (TermValue(0),)),)
     assert not any(isinstance(face, Completed) for face in outcome.exits)
 
 

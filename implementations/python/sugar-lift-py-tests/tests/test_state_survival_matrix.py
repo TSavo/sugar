@@ -62,7 +62,6 @@ from sugar_lift_py_tests.effect.expectation_not_met_effect import (
 )
 from sugar_lift_py_tests.floor import ListValue, TermValue
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor, str_const
@@ -366,6 +365,16 @@ _SOURCE_TRY_SETITEM = (
 )
 
 
+def _returned(value, *, owner: str):
+    """What an applied source call returns: the call's sole authenticated
+    return (``CallSiteValue.project_operation_receiver``), never a block
+    walked for a ``ReturnValue`` -- the call is applied where it stands and
+    its completed face is the value it returned."""
+    if isinstance(value, CallSiteValue):
+        return value.project_operation_receiver(None, owner=owner)
+    return value
+
+
 def test_r2_source_try_helper_alone_still_defers_as_setitem_carrier() -> None:
     """#6685: helper desugar remains one undischarged setitem carrier (correct)."""
     tree = _tree(_SOURCE_TRY_SETITEM, "r2_try_helper.py")
@@ -385,16 +394,7 @@ def test_r2_source_try_indexerror_routes_to_handler_on_authenticated_call() -> N
     assert len(outcome.exits) == 1
     face = outcome.exits[0]
     assert isinstance(face, Completed)
-    value = face.value
-    if isinstance(value, CallSiteValue):
-        value = value._dig_floor_or_none(None, owner="r2-try-handler")
-    returns = [
-        entry
-        for entry in getattr(value, "statements", ())
-        if isinstance(entry, ReturnValue)
-    ]
-    assert len(returns) == 1
-    assert returns[0].value == TermValue(1)
+    assert _returned(face.value, owner="r2-try-handler") == TermValue(1)
 
 
 def test_r2_source_try_success_bypasses_handler() -> None:
@@ -403,18 +403,10 @@ def test_r2_source_try_success_bypasses_handler() -> None:
     call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
     outcome = call.sugar().desugar(None)
     assert isinstance(outcome, ExitSet)
+    assert len(outcome.exits) == 1
     face = outcome.exits[0]
     assert isinstance(face, Completed)
-    value = face.value
-    if isinstance(value, CallSiteValue):
-        value = value._dig_floor_or_none(None, owner="r2-try-success")
-    returns = [
-        entry
-        for entry in getattr(value, "statements", ())
-        if isinstance(entry, ReturnValue)
-    ]
-    assert len(returns) == 1
-    assert returns[0].value == TermValue(0)
+    assert _returned(face.value, owner="r2-try-success") == TermValue(0)
 
 
 # ===========================================================================
