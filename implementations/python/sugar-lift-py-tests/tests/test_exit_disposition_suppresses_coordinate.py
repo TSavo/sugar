@@ -93,10 +93,24 @@ def test_name_less_effect_with_coordinate_does_not_equal_name_less_matcher() -> 
 
 
 def test_missing_effect_coordinate_throws() -> None:
-    effect = RaiseEffect.for_builtin("KeyError", occurrence="suppress.py:3:0")
-    with pytest.raises(SugarNotWritten) as caught:
-        exit_disposition_effect(
-            Suppresses(EffectMatcher(kind="raise", name="KeyError")),
-            Halted(_guard(), effect, halt_record(None)),
+    """A raise effect with no type coordinate is refused where it is built
+    (``RaiseEffect``'s constructor law), so the suppress arm never receives
+    one: there is no such halt to suppress by spelling."""
+    with pytest.raises(TypeError) as caught:
+        RaiseEffect(
+            exception_type_coordinate=None,  # type: ignore[arg-type]
+            occurrence=AuthenticatedRaiseLocus.of("suppress.py:3:0"),
+            exception_name="KeyError",
         )
-    assert "exception_type_coordinate" in caught.value.observed
+    assert "exception_type_coordinate" in str(caught.value)
+
+
+def test_builtin_door_effect_is_suppressed_by_its_coordinate() -> None:
+    """The effect ``RaiseEffect.for_builtin`` mints carries the builtin's own
+    coordinate, so the arm suppresses it by that coordinate."""
+    effect = RaiseEffect.for_builtin("KeyError", occurrence="suppress.py:3:0")
+    verdict = exit_disposition_effect(
+        Suppresses(EffectMatcher(kind="raise", name="KeyError")),
+        Halted(_guard(), effect, halt_record(None)),
+    )
+    assert verdict is None  # consumed
