@@ -306,6 +306,24 @@ def test_delattr_and_the_helper_rebuild_keep_the_class() -> None:
     assert receiver.with_deferred_helper_fields().defining_class is box
 
 
+def test_deleting_the_class_is_the_type_error_halt() -> None:
+    """``del o.__class__`` is ``object.__class__``'s setter with no value
+    (``object_set_class``): ``TypeError``, never the instance-field delete
+    and never ``AttributeError`` (#7757, surfaced in #8803)."""
+    box = _bare_class_value(_classes("class Box:\n    pass\n")["Box"])
+    receiver = ObjectValue(
+        "Box",
+        (ObjectField("x", TermValue(1)),),
+        identity="receiver",
+        defining_class=box,
+        allocation=FRAME_FRESH,
+    )
+
+    outcome = receiver.delattr("__class__", "del-site", None)
+    assert _halt_names(outcome) == ["TypeError"]
+    assert len(outcome.exits) == 1
+
+
 def test_delattr_keeps_a_mapping_receiver_a_mapping() -> None:
     box = _bare_class_value(_classes("class Box(dict):\n    pass\n")["Box"])
     receiver = MappingObjectValue(
