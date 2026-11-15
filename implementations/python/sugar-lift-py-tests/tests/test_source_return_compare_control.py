@@ -1,4 +1,17 @@
-"""Source-return operands flow through Compare and guarded control."""
+"""Same-file call results in a Compare that steers control.
+
+A call of a same-file function is its coordinate and edge, joined at prove
+(#7757 steps 5 and 6, the owner's ruling "Edge, join at prove", #8705; the
+application of a callee body at lift is deleted, #8751).  ``lower() <
+value`` therefore compares a call's result whose value the lift does not
+have: which branch runs, and whether ``absent() < value`` raises
+``TypeError``, is decided at prove, where each callee's contract joins its
+edge.  What the lift states is each call's edge, with its own actuals, and
+each callee's row with its own return.
+
+This suite used to read the branch a call took, and the ``TypeError`` of
+``None < 2``, off the callees' bodies followed at the call (``codex-3``).
+"""
 
 from __future__ import annotations
 
@@ -8,11 +21,10 @@ from sugar_lift_py_tests.context_manager_resolution import (
 )
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
-    GuardedReturn,
     ReturnValue,
     TermValue,
 )
-from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
 from sugar_source_tree.tree import SourceFile
@@ -60,127 +72,67 @@ def _calls(tree, name: str):
     )
 
 
-def _only_exit(outcome, kind):
-    assert isinstance(outcome, ExitSet)
-    assert len(outcome.exits) == 1, (
-        "codex-3 source-return Compare projection left multiple control faces: "
-        f"{outcome.exits!r}"
+def _edge(outcome) -> CallSiteValue:
+    """A same-file call's value: its coordinate and edge, completing under
+    its ``completes`` atom and halting under the complement."""
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert outcome.halts(), outcome
+    (completed,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert isinstance(completed.value, CallSiteValue), type(completed.value)
+    return completed.value
+
+
+def _row_return(function):
+    """The one value ``function``'s own contract row returns."""
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    universe = function_universe_outcome(function).completed_value()
+    assert universe is not None
+    (returned,) = [
+        entry for entry in universe.record.statements if isinstance(entry, ReturnValue)
+    ]
+    return returned.value
+
+
+def test_two_calls_of_one_function_are_two_edges_with_their_own_actuals() -> None:
+    """``choose(2)`` is 3 and ``choose(0)`` is 1: decided at prove, by
+    joining ``choose``'s contract and, inside it, ``lower``'s and
+    ``upper``'s.  The lift states the two edges and the callees' returns."""
+    tree, _, functions = _tree("choose(2)\nchoose(0)\n")
+    truthful, lying = (
+        _edge(call.sugar().desugar(None)) for call in _calls(tree, "choose")
     )
-    exit_ = outcome.exits[0]
-    assert isinstance(exit_, kind)
-    return exit_
+    assert truthful.arg_values == (TermValue(2),)
+    assert lying.arg_values == (TermValue(0),)
+    assert _row_return(functions["lower"]) == TermValue(1)
+    assert _row_return(functions["upper"]) == TermValue(3)
 
 
-def _return_value(outcome) -> TermValue:
-    value = _only_exit(outcome, Completed).value
-    if isinstance(value, CallSiteValue):
-        value = value._dig_floor_or_none(None, owner="source-return-compare-control")
-        assert value is not None
-        entries = tuple(
-            entry
-            for entry in getattr(value, "statements", ())
-            if isinstance(entry, (ReturnValue, GuardedReturn))
-        )
-        if entries:
-            assert len(entries) == 1
-            value = entries[0]
-    while True:
-        if isinstance(value, GuardedReturn):
-            value = value.value
-            continue
-        if isinstance(value, ReturnValue):
-            value = value.value
-            continue
-        if isinstance(value, CallSiteValue):
-            projected = value._dig_floor_or_none(
-                None, owner="source-return-compare-control nested return"
-            )
-            assert projected is not None
-            value = projected
-            continue
-        break
-    assert isinstance(value, TermValue)
-    return value
-
-
-def _type_error_identity():
-    from sugar_lift_py_tests.temporal.temporal_context import TemporalContext
-
-    return TemporalContext.empty().value_for("TypeError").exception_type_identity()
-
-
-def test_unrelated_source_returns_select_both_compare_branches() -> None:
-    tree, _, _ = _tree("choose(2)\nchoose(0)\n")
-    truthful, lying = (call.sugar().desugar(None) for call in _calls(tree, "choose"))
-
-    assert _return_value(truthful) == TermValue(3)
-    assert _return_value(lying) == TermValue(1)
-
-
-def test_named_exceptional_source_return_bypasses_both_bodies_with_state() -> None:
+def test_a_call_that_raises_in_its_callee_names_no_type_at_lift() -> None:
+    """``exceptional(2)`` raises ``TypeError`` (``None < 2``).  The call is
+    its edge: its halt is the unanswered call's complement face, whose
+    exception type nothing at the lift decides.  The type is decided at
+    prove from the callee's contract (step 7, #8749); this used to read the
+    callee body's ``TypeError`` at the call."""
     tree, _, _ = _tree("exceptional(2)\n")
     (call,) = _calls(tree, "exceptional")
-
-    halted = _only_exit(call.sugar().desugar(None), Halted)
-    assert halted.effect.exception_type_coordinate == _type_error_identity()
-    assert (
-        isinstance(halted.effect.occurrence_id, str)
-        and ":" in halted.effect.occurrence_id
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {halted.effect.occurrence_id!r}"
-    )
-    assert halted.state is not None
+    outcome = call.sugar().desugar(None)
+    _edge(outcome)
+    assert [halt.effect.exception_name for halt in outcome.halts()] == [None]
 
 
-def test_symbolic_source_return_control_preserves_complementary_guards() -> None:
-    tree, _, functions = _tree()
-    pending = functions["choose"].sugar().desugar(None)
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-
-    left, right = pending.coordinates
-    assert left is None
-    assert right is not None
-    from sugar_lift_py_tests.floor import SymbolicValue
-    from sugar_lift_py_tests.ir import make_var
-
-    exits = pending.discharge(
-        None,
-        {
-            right.coordinate_cid: SymbolicValue(make_var("actual_value")),
-        },
-    )
-    # ``lower() < actual_value`` over an undecided actual is two-faced
-    # (#7585): the comparison's rich method is code nobody looked at, so the
-    # control completes only under ``python:compare.completes`` and halts,
-    # undetermined, under the complement.  Neither face is dropped.
-    from sugar_lift_py_tests.outcome.exit_set import complement_guard
-
-    assert isinstance(exits, ExitSet)
-    (completed,) = [exit_ for exit_ in exits.exits if isinstance(exit_, Completed)]
-    (halted,) = exits.halts()
-    assert len(exits.exits) == 2
-    assert completed.guard.name == "python:compare.completes"
-    assert halted.guard == complement_guard(completed.guard)
-    assert halted.effect.producer_node_owner == "UndecidedCompare:Lt"
-    assert halted.effect.exception_name is None
-    returns = tuple(
-        entry
-        for entry in completed.value.record.statements
-        if isinstance(entry, GuardedReturn)
-    )
-    assert len(returns) == 2
-    assert returns[0].guards[0] == returns[1].guards[0].operands[0]
-
-
-def test_identity_over_source_return_remains_carrier_free_and_total() -> None:
+def test_identity_over_a_call_result_owes_only_the_calls_own_halts() -> None:
+    """``absent() is value`` never raises: ``is`` adds no halt and no
+    deferred operation.  The only halts are the calls' own (each same-file
+    call halts under the complement of its ``completes`` atom, decided at
+    prove)."""
     _, _, functions = _tree()
     outcome = functions["identity_control"].sugar().desugar(None)
 
     assert not isinstance(outcome, NativeOperationExitCarrierV1)
-    assert not (
-        isinstance(outcome, ExitSet)
-        and any(isinstance(exit_, Halted) for exit_ in outcome.exits)
-    )
-
-
+    assert isinstance(outcome, ExitSet)
+    assert any(isinstance(face, Completed) for face in outcome.exits)
+    for halt in outcome.halts():
+        owner = str(getattr(halt.effect, "producer_node_owner", "") or "")
+        assert not owner.startswith("UndecidedCompare"), halt.effect
+        assert halt.effect.exception_name is None, halt.effect
