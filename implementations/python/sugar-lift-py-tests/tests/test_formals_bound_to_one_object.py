@@ -216,3 +216,90 @@ def test_an_append_through_a_formal_is_seen_through_the_cell(tmp_path: Path):
         true="1",
         false="0",
     )
+
+
+def test_a_dispatched_call_asks_the_alias_rule_of_its_receiver():
+    """``receiver_dispatch.dispatch_edge_call`` asks the same test of its
+    receiver with its actuals.  A field input ``field:p.items`` is the field
+    of ``p``: it is held by ``p``, never by another field of ``p``.  A value
+    that arrived names its object by its arrival."""
+    from sugar_lift_py_tests.contract_input import ContractInputV1
+    from sugar_lift_py_tests.floor.object_identity import (
+        _reaches,
+        actuals_share_an_object,
+    )
+
+    def field(name):
+        return ContractInputV1.mint(
+            owner_definition_cid="m", input_kind="field", name=name
+        ).value()
+
+    assert actuals_share_an_object((field("self.items"), field("self.items")))
+    assert not actuals_share_an_object((field("self.items"), field("self.other")))
+    assert _reaches({(("formal", "self"),)}, {(("formal", "self"), "items")})
+    assert not _reaches({(("formal", "self"),)}, {(("formal", "other"), "items")})
+    xs = ListValue((), allocation=None, arrival="read-xs")
+    ys = ListValue((), allocation=None, arrival="read-ys")
+    assert actuals_share_an_object((xs, TupleValue((xs,))))
+    assert not actuals_share_an_object((xs, ys))
+
+
+_RECEIVER_PASSED_TO_ITS_OWN_METHOD = """\
+class Box:
+    def __init__(self):
+        self.items = []
+
+    def grow(self, other):
+        self.items.append(1)
+        return len(other.items)
+
+
+def test_grow():
+    box = Box()
+    n = box.grow(box)
+    assert n == {claim}
+"""
+
+
+def test_a_store_through_the_receiver_is_seen_through_the_actual(tmp_path: Path):
+    """``box.grow(box)``: ``len(other.items)`` after ``self.items.append(1)``
+    is 1, never the 0 ``__init__`` stored."""
+    _never_lies(
+        tmp_path,
+        "receiver",
+        _RECEIVER_PASSED_TO_ITS_OWN_METHOD,
+        true="1",
+        false="0",
+    )
+
+
+_RECEIVER_FIELD_PASSED_TO_ITS_OWN_METHOD = """\
+class Box:
+    def __init__(self):
+        self.items = []
+
+    def grow(self, items):
+        self.items.append(1)
+        return len(items)
+
+
+def via(box):
+    return box.grow(box.items)
+
+
+def test_grow():
+    n = via(Box())
+    assert n == {claim}
+"""
+
+
+def test_a_store_through_the_receiver_is_seen_through_its_field(tmp_path: Path):
+    """``box.grow(box.items)`` on a parameter: ``len(items)`` after
+    ``self.items.append(1)`` is 1, never the 0 ``__init__`` stored."""
+    _never_lies(
+        tmp_path,
+        "receiver-field",
+        _RECEIVER_FIELD_PASSED_TO_ITS_OWN_METHOD,
+        true="1",
+        false="0",
+    )

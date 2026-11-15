@@ -476,24 +476,26 @@ def as_bound_formals(actuals, arrivals) -> tuple:
 
 def actuals_share_an_object(actuals) -> bool:
     """Whether another of ``actuals`` may be, or hold, one of the objects
-    some actual is or holds (``_current_objects``: ``f(xs, xs)``,
-    ``f(xs, [xs])``, ``o.m(o.items)``): the alias rule's own test
-    (``as_bound_formals``), for a call joined at prove
-    (``lambda_callable.definition_edge_call``).  ``actuals`` are every value
-    the call binds a formal or an input of the callee's contract to: its
-    actuals, its captured cells and the module globals the callee reads
-    (``g(G)`` where ``g`` reads ``G``: the contract states the global and
-    the formal as two objects)."""
+    some actual is or holds (``_objects``: ``f(xs, xs)``, ``f(xs, [xs])``,
+    ``o.m(o)``, ``o.m(o.items)``): the alias rule's own test
+    (``as_bound_formals``), for a call joined at prove.  ``actuals`` are
+    every value the call binds a formal or an input of the callee's contract
+    to: a same-file definition's actuals, captured cells and the module
+    globals the callee reads (``lambda_callable.definition_edge_call``:
+    ``g(G)`` where ``g`` reads ``G``), and a dispatched method call's
+    receiver with its actuals (``receiver_dispatch.dispatch_edge_call``).
+    The callee's contract states them as distinct objects."""
     return any(_shared(tuple(actuals)))
 
 
 def _shared(actuals) -> tuple:
     """For each of ``actuals``, whether another of them may be, or hold, one
-    of the objects it is or holds (``_current_objects``)."""
-    reached = tuple(_current_objects(actual) for actual in actuals)
+    of the objects it is or holds (``_objects``): two objects one of which
+    is the other, or a field of it (``_reaches``)."""
+    reached = tuple(_objects(actual) for actual in actuals)
     return tuple(
         any(
-            not reached[index].isdisjoint(other)
+            _reaches(reached[index], other)
             for position, other in enumerate(reached)
             if position != index
         )
@@ -501,18 +503,43 @@ def _shared(actuals) -> tuple:
     )
 
 
-def _current_objects(value, depth=0) -> frozenset:
-    """The objects ``value`` is or holds at any depth, through containers, a
-    tuple's elements, an instance's fields and the faces of a guarded value:
-    each current mutable object (a ``list``/``dict``/``set`` and an instance
-    of a source class) by its construction (``allocation``), and each module
-    global or captured cell the frame reads as its free contract input
-    (``ContractInputV1.value``: a function's own proof reads ``G`` as
-    ``global:G``) by that input's coordinate -- one input, one binding, one
-    object, whatever its type.  A stale object (``contents_current``) is
-    already read in its undecided form."""
-    from sugar_lift_py_tests.contract_input import CELL_INPUT, GLOBAL_INPUT
+def _reaches(left, right) -> bool:
+    """Whether an object of ``left`` is one of ``right``'s, or a field of one
+    (its path extends the other's: ``(p,)`` and ``(p, "items")``)."""
+    return any(
+        one[: len(other)] == other or other[: len(one)] == one
+        for one in left
+        for other in right
+    )
 
+
+def _objects(value, depth=0) -> frozenset:
+    """The objects ``value`` is or holds at any depth, through containers, a
+    tuple's elements, an instance's fields and the faces of a guarded value,
+    each as a path (a tuple) naming it:
+
+    - a current mutable object (a ``list``/``dict``/``set`` and an instance
+      of a source class) by its construction (``allocation``);
+    - one that arrived by binding by the binding it arrived through
+      (``arrival``): one arrival, one object;
+    - a free formal of the frame's own proof (``SymbolicValue`` with its
+      ``formal_coordinate``): a parameter by its name, a ``field:<p>.<f>``
+      input as the field ``<f>`` of the parameter ``<p>`` (a path one
+      longer: ``p.m(p.items)``), any other contract input -- a module global
+      read as ``global:G``, a captured cell -- by its coordinate.  One
+      binding, one object, whatever its type;
+    - a call's result (``CallSiteValue``: ``o = Box()``) by the call: two
+      reads of one result are one object.
+
+    A value of any other kind (a ground value, an undecided read) names no
+    object here."""
+    from sugar_lift_py_tests.contract_input import (
+        FIELD_INPUT,
+        ContractInputCoordinateV1,
+    )
+    from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
+
+    from .call_site_value import CallSiteValue
     from .dict_value import DictValue
     from .guarded_value import GuardedValue
     from .list_value import ListValue
@@ -526,12 +553,23 @@ def _current_objects(value, depth=0) -> frozenset:
     kind = type(value)
     found = set()
     container = kind in (ListValue, DictValue, SetValue)
-    if (container or isinstance(value, ObjectValue)) and contents_current(value):
-        found.add(value.allocation)
+    if container or isinstance(value, ObjectValue):
+        if contents_current(value):
+            found.add((("made", value.allocation),))
+        elif getattr(value, "arrival", None) is not None:
+            found.add((("arrived", value.arrival),))
     if isinstance(value, SymbolicValue):
         coordinate = value.formal_coordinate
-        if getattr(coordinate, "input_kind", None) in (GLOBAL_INPUT, CELL_INPUT):
-            found.add(("input", coordinate.coordinate_cid))
+        if isinstance(coordinate, FormalParameterCoordinateV1):
+            found.add((("formal", coordinate.declared_name),))
+        elif isinstance(coordinate, ContractInputCoordinateV1):
+            if coordinate.input_kind == FIELD_INPUT:
+                parameter, _dot, field = coordinate.name.partition(".")
+                found.add((("formal", parameter), field))
+            else:
+                found.add((("input", coordinate.coordinate_cid),))
+    if isinstance(value, CallSiteValue):
+        found.add((("call", value),))
     if kind in (ListValue, SetValue, TupleValue):
         members = value.elements
     elif kind is DictValue:
@@ -543,7 +581,7 @@ def _current_objects(value, depth=0) -> frozenset:
     else:
         members = ()
     for member in members:
-        found |= _current_objects(member, depth + 1)
+        found |= _objects(member, depth + 1)
     return frozenset(found)
 
 
