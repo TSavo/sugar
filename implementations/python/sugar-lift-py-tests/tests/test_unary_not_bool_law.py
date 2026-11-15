@@ -19,6 +19,7 @@ Corpus coordinates (pandas 3.0.3, verified by line content, not by path alone):
 
   - ``tests/scalar/test_na_scalar.py:48`` — ``not NA`` under ``pytest.raises(TypeError)``
   - ``tests/generic/test_generic.py:156`` — ``not obj1`` under ``pytest.raises(ValueError)``
+    (two-faced: ``bool(obj1)`` is taken by the one truth rule)
 """
 
 from __future__ import annotations
@@ -218,21 +219,19 @@ def test_verified_pandas_303_not_reproducers_are_content_pinned() -> None:
 
 
 def test_corpus_not_sites_remain_named_refusals_without_operand_type() -> None:
-    """No admissible Floor for NAType/Series at the bare name yet — stay loud.
+    """No admissible Floor for NAType at the import member yet — stay loud.
 
-    Missing Floor law: authenticated ``NAType.__bool__`` / ``NDFrame.__bool__``
-    that mints TypeError / ValueError from the real raise body, not from the
-    surrounding ``pytest.raises``.  Until that Floor exists, the enrolled pair
-    is undischarged (named refusal), which is the honest third value.
+    Missing Floor law: authenticated ``NAType.__bool__`` that mints TypeError
+    from the real raise body, not from the surrounding ``pytest.raises``.
+    Until that Floor exists, the enrolled pair is undischarged (named
+    refusal), which is the honest third value.  ``not obj1`` over a bare
+    symbolic local is the one truth rule's two faces instead
+    (``test_corpus_not_over_a_symbolic_local_is_the_two_faced_truth``).
     """
     corpus = authenticated_pandas_corpus()
     # ``NA`` is ``from pandas import NA``: an import member, so its operand is
     # the closed reference ``ref:pandas.NA`` (#7837), not a free symbol.
-    # ``obj1`` is a local. Either way no Floor answers ``__bool__``.
-    cases = (
-        ("tests/scalar/test_na_scalar.py", 48, "not", "ImportMemberValue"),
-        ("tests/generic/test_generic.py", 156, "not", "SymbolicValue"),
-    )
+    cases = (("tests/scalar/test_na_scalar.py", 48, "not", "ImportMemberValue"),)
     for rel, line, operator, operand in cases:
         path = corpus.root / rel
         source = path.read_text(encoding="utf-8")
@@ -254,6 +253,42 @@ def test_corpus_not_sites_remain_named_refusals_without_operand_type() -> None:
         assert refusal.observed == f"{operand} {operator}"
         assert "TypeError" not in str(refusal)
         assert "ValueError" not in str(refusal)
+
+
+def test_corpus_not_over_a_symbolic_local_is_the_two_faced_truth() -> None:
+    """``not obj1``: ``bool(obj1)`` may run code, so it is the two faces.
+
+    The truth completes only under ``python:truth.completes`` and only that
+    completed truth is negated; the complement halts with an
+    UndeterminedRaiseEffect.  ValueError is not minted from the surrounding
+    ``pytest.raises``.
+    """
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.ir import not_, py_truthy
+
+    corpus = authenticated_pandas_corpus()
+    path = corpus.root / "tests/generic/test_generic.py"
+    source = path.read_text(encoding="utf-8")
+    tree = SourceFile(
+        (source, str(path), blake3_512_of(source.encode("utf-8"))),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    (node,) = tuple(
+        node
+        for node in tree.nodes()
+        if isinstance(node, UnaryOp) and node.line_col_span().start_line == 156
+    )
+    outcome = node.sugar().desugar(None)
+    halted = [face for face in outcome.exits if isinstance(face, Halted)]
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert len(halted) == 1 and len(completed) == 1
+    assert type(halted[0].effect) is UndeterminedRaiseEffect
+    assert halted[0].effect.producer_node_owner == "UnaryOpSugar.not"
+    assert "ValueError" not in repr(halted[0])
+    assert "python:truth.completes" in repr(completed[0].guard)
+    assert isinstance(completed[0].value, PredicateValue)
+    assert completed[0].value.formula == not_(py_truthy(make_var("obj1")))
 
 
 # ---------------------------------------------------------------------------

@@ -24,15 +24,15 @@ _BOOL_OPERATOR_COORDINATE = {
 }
 
 
-def refuse_undecided_boolean_truth(value, site, op_kind: str) -> None:
-    """Keep undecided ``bool(operand)`` dispatch loud at the BoolOp producer.
+def _refuse_undecided_truth(value, site, *, operator: str, floor: str) -> None:
+    """Keep an undecided ``bool(operand)`` with no two-faced form loud.
 
-    Python evaluates ``a and b`` / ``a or b`` by first taking the truth of an
-    operand.  When that operand denotes a value but its runtime type is
-    undecided, native ``__bool__`` / ``__len__`` may complete or raise
-    (``Series`` raises ``ValueError``).  Emitting ``py.truthy`` invents a total
-    completion; inventing ``ValueError`` invents an exception identity.  Both
-    stay refused until source-visible type testimony decides.
+    The one truth rule (:func:`truth_of`) answers an undecided call result or
+    bare symbolic operand with its two faces.  Any other value that denotes a
+    runtime value of undecided type has no truth floor that could state those
+    faces: emitting ``py.truthy`` invents a total completion, and naming an
+    exception invents its identity.  It is refused by name at the producer
+    that asked (``floor``), until source-visible type testimony decides.
     """
     denotes = getattr(value, "denotes_value", None)
     decided = getattr(value, "runtime_type_is_decided", None)
@@ -43,22 +43,72 @@ def refuse_undecided_boolean_truth(value, site, op_kind: str) -> None:
 
     from sugar_source_tree.panic import SugarNotWritten
 
-    operator = _BOOL_OPERATOR_COORDINATE[op_kind]
     raise SugarNotWritten(
         blame=site,
-        owner="boolean_operation_exception_floor",
+        owner=floor,
         observed=f"{type(value).__name__} {operator}",
         requested=(
             "source-visible native truth testimony selecting completion "
             "or an authenticated exceptional exit"
         ),
         fix=(
-            "preserve the undecided third value at the BoolOp producer; "
+            "preserve the undecided third value at the truth producer; "
             "resolve native operand types and their __bool__/__len__ bodies "
             "from source, or retain this named refusal without inventing an "
             "exception identity"
         ),
     )
+
+
+def truth_of(value, site, *, operator: str, owner: str, floor: str):
+    """``bool(value)`` taken once at ``site``: the one truth rule.
+
+    ``a and b`` / ``a or b`` (on each non-final operand), ``not x`` and the
+    negation in ``a != b`` all take the operand's truth through here.
+
+    - An opaque call result or a bare symbolic operand (no formal coordinate)
+      of undecided runtime type has undecided ``__bool__`` / ``__len__``, and
+      taking its truth may run code (#7585 / #7681): its truth completes with
+      the undecided ``py.truthy`` only under ``python:truth.completes(
+      python:truth(<operand term>, <site>))``, keyed on the exact source site,
+      and halts with an ``UndeterminedRaiseEffect`` (producer ``owner``) under
+      the complement.  No exception type is named and no truth is decided;
+      both faces owe the one ``undecided`` member (reason ``unanswered``) at
+      the site (``ExitSet.two_faced``).
+    - Any other undecided-type value is refused by name (``floor``).
+    - A decided value answers through its own truth floor.
+
+    A formal's truth is not taken here: its producer defers it to the
+    caller's actual on the native operation carrier.
+    """
+    if _is_undecided_call_result(value) or _is_undecided_symbolic_operand(value):
+        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+        from sugar_lift_py_tests.ir import atomic, ctor, str_const
+        from sugar_lift_py_tests.occurrence import occurrence_key
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            plain_completed_value,
+        )
+
+        truth = value.truth(site)
+        truth_value = plain_completed_value(truth)
+        if truth_value is None:
+            # A truth that did not complete plainly is left as produced.
+            return truth
+        key = occurrence_key(site)
+        term = ctor("python:truth", (value.to_term(owner=owner), str_const(key)))
+        return ExitSet.two_faced(
+            truth_value,
+            UndeterminedRaiseEffect(
+                blame=str(site),
+                occurrence=key,
+                producer_node_owner=owner,
+                site=site,
+            ),
+            guard=atomic("python:truth.completes", [term]),
+            site=site,
+        )
+    _refuse_undecided_truth(value, site, operator=operator, floor=floor)
+    return value.truth(site)
 
 
 def _is_undecided_call_result(value) -> bool:
@@ -90,25 +140,6 @@ def _is_undecided_symbolic_operand(value) -> bool:
         and value.formal_coordinate is None
         and value.denotes_value()
         and not value.runtime_type_is_decided()
-    )
-
-
-def _symbolic_boolop_selection(value, site):
-    """Truth-test a symbolic operand once, retaining it as the BoolOp result.
-
-    ``SymbolicValue.truth`` emits the undecided Python truth relation
-    (``py.truthy``); the operand itself is what the stopping face returns.
-    ``boolop_truth`` is not used: it keeps its named refusal for a discharged
-    caller actual, which has no two-faced wrapper around it.
-    """
-    from sugar_lift_py_tests.floor.boolop_truth_selection import (
-        BoolOpTruthSelection,
-    )
-
-    return value.truth(site).and_then(
-        lambda truth_value: ExitSet.completed(
-            BoolOpTruthSelection(value, truth_value)
-        )
     )
 
 
@@ -206,49 +237,24 @@ def select_boolop_operand(
             operands=(value,),
             coordinates=(formal_coordinate,),
         )
-    elif _is_undecided_call_result(value) or _is_undecided_symbolic_operand(value):
-        # ``bool(operand)`` may raise: the #7585 two-faced law at the BoolOp
-        # truth producer.  An opaque call result (no projected body) or a bare
-        # symbolic operand has undecided ``__bool__`` / ``__len__``, so the
-        # truth selection stands only under ``python:truth.completes(
-        # python:truth(<operand term>, <site>))``, keyed on the exact source
-        # site; the complement halts with an ``UndeterminedRaiseEffect``.  No
-        # exception type is named and no truth is decided: the completed face
-        # still carries the undecided ``py.truthy``.  A selection that did not
-        # complete plainly is left as produced.
-        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-        from sugar_lift_py_tests.ir import atomic, ctor, str_const
-        from sugar_lift_py_tests.occurrence import occurrence_key
-        from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            plain_completed_value,
+    else:
+        # The operand's truth is taken once through the one truth rule; the
+        # operand itself is what the stopping face returns.
+        from sugar_lift_py_tests.floor.boolop_truth_selection import (
+            BoolOpTruthSelection,
         )
 
-        tested = (
-            value.boolop_truth(site)
-            if _is_undecided_call_result(value)
-            else _symbolic_boolop_selection(value, site)
+        tested = truth_of(
+            value,
+            site,
+            operator=_BOOL_OPERATOR_COORDINATE[op_kind],
+            owner="BoolOpSugar.truth",
+            floor="boolean_operation_exception_floor",
+        ).and_then(
+            lambda truth_value: ExitSet.completed(
+                BoolOpTruthSelection(value, truth_value)
+            )
         )
-        selection = plain_completed_value(tested)
-        if selection is not None:
-            key = occurrence_key(site)
-            truth = ctor(
-                "python:truth",
-                (value.to_term(owner="BoolOpSugar.truth"), str_const(key)),
-            )
-            tested = ExitSet.two_faced(
-                selection,
-                UndeterminedRaiseEffect(
-                    blame=str(site),
-                    occurrence=key,
-                    producer_node_owner="BoolOpSugar.truth",
-                    site=site,
-                ),
-                guard=atomic("python:truth.completes", [truth]),
-                site=site,
-            )
-    else:
-        refuse_undecided_boolean_truth(value, site, op_kind)
-        tested = value.boolop_truth(site)
 
     return tested.and_then(
         lambda selection: continue_from(
