@@ -184,11 +184,16 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
-        if self.refusal is not None:
-            _refuse(self.site, self.refusal)
+        # The read of the name is the key's wherever the statement bound it:
+        # an application constructed while its own statement was under
+        # construction (a method of a class reading the class's name) reads
+        # the class the statement built, and refuses only where nothing
+        # bound the key.
         bound = self._bound_by_statement(ctx)
         if bound is not None:
             return ExitSet.completed(bound)
+        if self.refusal is not None:
+            _refuse(self.site, self.refusal)
         return self._evaluate(self.decorators, (), ctx)
 
     def as_statement(self):

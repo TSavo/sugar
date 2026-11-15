@@ -5217,12 +5217,14 @@ class SourceUnit:
     def decorated_definition_for_call(
         self, call: "Call"
     ) -> "FunctionDef | AsyncFunctionDef | ClassDef | None":
-        """The decorated module ``def``/``class`` a ``Name`` call reaches, or
-        None.
+        """The decorated module ``def``, or the module ``class`` (decorated or
+        not), a ``Name`` call reaches, or None.
 
-        Its name is bound to the decorators' result, so the call is a call of
-        that value (``DecoratedDefinitionRef``), never of the definition's
-        own frame (#7757).  A ``contextlib.contextmanager`` generator function
+        Its name is bound to the statement's value under its evaluation key
+        (the decorators' result; for a class, the class its run built), so
+        the call is a call of that value (``DecoratedDefinitionRef``), never
+        of the definition's own frame or the class statement read again at
+        the call (#7757).  A ``contextlib.contextmanager`` generator function
         is the one decorated definition whose call keeps its frame
         (``call_applies_own_frame``).
         """
@@ -7699,10 +7701,12 @@ def _module_reference_state(state):
     sits in an arm of an ``if`` or a ``try`` route; an import's row in the
     one import table (``ImportBindingRef``), alone or as such an arm.  The
     other statements that bind a module name decide it too: an undecorated
-    ``def`` or ``class`` binds its definition and ``type X = ...`` its alias
+    ``def`` binds its definition and ``type X = ...`` its alias
     (the read is the statement's own binding, as a local definition's is),
-    a decorated ``def`` or ``class`` the decorators' result
-    (``DecoratedDefinitionRef``, the one decorator application),
+    a decorated ``def`` the decorators' result and a ``class``, decorated
+    or not, the class its run built with its decorators applied
+    (``DecoratedDefinitionRef``, the one decorator application, read
+    through the statement's evaluation key),
     an ``except ... as`` or ``except* ... as`` handler its effect slot
     (``EffectRef``), and ``del`` (each name of ``del (a, b)``, or the end of
     that handler) unbinds it -- the read is a ``NameError`` halt
@@ -7728,7 +7732,6 @@ def _module_reference_state(state):
         (
             FunctionDef,
             AsyncFunctionDef,
-            ClassDef,
             TypeAlias,
             EffectRef,
             DecoratedDefinitionRef,
@@ -11850,14 +11853,14 @@ class ClassDef(Statement):
         if name is not None:
             bindings = (self.unit.module_direct_bindings or {}).get(name, ())
             if len(bindings) == 1 and isinstance(bindings[0], ClassDef):
-                if not call_applies_own_frame(bindings[0]):
-                    # A decorated base is the decorators' result (#7757).
-                    return _decorated_definition_ref(
-                        bindings[0],
-                        base.span,
-                        evaluation=_definition_evaluation_key(bindings[0], {}),
-                    ).sugar()
-                return bindings[0].sugar()
+                # A base is a read of the class's name: the class statement's
+                # value under its evaluation key, decorated or not (#7757,
+                # ``call_applies_own_frame``), never the statement itself.
+                return _decorated_definition_ref(
+                    bindings[0],
+                    base.span,
+                    evaluation=_definition_evaluation_key(bindings[0], {}),
+                ).sugar()
         return base.sugar()
 
     def _module_name_references(self) -> dict:
@@ -11886,9 +11889,7 @@ class ClassDef(Statement):
         for statement in self.body:
             if isinstance(statement, (FunctionDef, AsyncFunctionDef, ClassDef)):
                 bound_here.add(statement.name)
-                if isinstance(statement, ClassDef) or not call_applies_own_frame(
-                    statement
-                ):
+                if not call_applies_own_frame(statement):
                     continue
                 # A method's defaults are evaluated when the class body runs
                 # (``_class_method_defaults``); its body is not.
@@ -22849,16 +22850,6 @@ class Call(Expression):
         if snapshot is not None:
             return snapshot
         rewritten = self._substitute_children(scope)
-        receiver_class = _local_class_receiver(self.func, scope)
-        if receiver_class is not None and isinstance(rewritten, Call):
-            # ``C.m(...)`` where the function's own ``class C`` statement
-            # binds ``C`` here: the receiver is that statement's value
-            # (``_local_class_receiver``), read where the call constructs.
-            from .shadow import rewrite_with_leaves
-
-            rewritten = rewrite_with_leaves(
-                rewritten, {"receiver_class": receiver_class}
-            )
         cells = self._closure_cells(scope, rewritten)
         if cells:
             from .shadow import rewrite_with_leaves
@@ -23323,7 +23314,8 @@ class Call(Expression):
                 else self._spread_callee_name(self.func)
             )
             # A decorated definition's name is bound to its decorators'
-            # result: ``g(*a, **k)`` calls that value, through the one call
+            # result, and a class's name to its statement's value, decorated
+            # or not: ``g(*a, **k)`` calls that value, through the one call
             # routine (``SpreadCallSugar._finish``), as ``g(...)`` does
             # (``_decorated_definition_call``).  A decorated module name, and
             # a local one substitution bound to its ``DecoratedDefinitionRef``,
@@ -23620,42 +23612,16 @@ class Call(Expression):
                                 f"call-graph-cycle:{cycle.definition.name}"
                                 f"@{cycle.definition.line_col_span().start_line}"
                             )
-            definition = self.unit.source_allocation_definition_for_call(self)
-            if (
-                definition is not None
-                and self.unit.source_class_admits_source_constructor_frame(
-                    definition
-                )
-            ):
-                from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
-
-                if any(keyword.arg is None for keyword in self.keywords):
-                    raise SourceCallBindingGap(
-                        "spread keyword requires typed variadic projection"
-                    )
-                source_call_frame = (
-                    definition.source_visible_constructor_frame().bind_node_actuals(
-                        self.args,
-                        tuple(
-                            (keyword.arg, keyword.value)
-                            for keyword in self.keywords
-                            if keyword.arg is not None
-                        ),
-                    )
-                )
-
-            definition_occurrence = (
-                function_definition
-                if function_definition is not None
-                else definition
-            )
-            if definition_occurrence is None:
+            # A source class the name reaches is never this path: its call is
+            # the call of the class statement's value, read through its key
+            # (``decorated_definition_for_call``, ``call_applies_own_frame``).
+            if function_definition is None:
                 expected_definition = DefinitionOccurrenceAbsentV1(
                     DefinitionOccurrenceAbsenceReasonV1.NOT_SOURCE_RESOLVED
                 )
             else:
                 expected_definition = self._project_call_definition_occurrence(
-                    definition_occurrence,
+                    function_definition,
                     coordinate="CallSiteSugar.expected_definition_ref",
                 )
                 if source_call_frame is not None:
@@ -23717,23 +23683,14 @@ class Call(Expression):
                 )
             from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
 
-            receiver_class = getattr(self, "receiver_class", None)
-            if isinstance(receiver_class, ClassDef):
-                # ``C.m(...)`` on the function's own ``class C``: ``C`` is the
-                # class its statement builds, read as every read of a class
-                # statement's value is (a class call, ``@C``): the statement's
-                # own sugar.  ``m`` is then the one class-namespace lookup
-                # (``ClassDefinitionValue.call_method_value``) and the call
-                # the one method door.  The name's spelling is absorbed here.
-                self.func.value.discharge_by_substitution()
-                receiver = receiver_class.sugar()
-            else:
-                receiver = self.func.value.sugar()
+            # ``C.m(...)`` on a source class reads ``C`` as every read of the
+            # name is read: the class statement's evaluation key
+            # (``DecoratedDefinitionRef``), never the statement itself.
             # Whether the receiver's contents are current at this call is its
             # value's (``object_identity.contents_current``), never the spelling
             # of what it was given.
             return MethodCallSugar(
-                receiver=receiver,
+                receiver=self.func.value.sugar(),
                 name=self.func.attr,
                 args=tuple(a.sugar() for a in self.args),
                 site=self.fragment,
@@ -23931,15 +23888,9 @@ class Call(Expression):
             source_call_frame = context.source_call_frames.get(
                 self.source_occurrence()
             )
-        if source_call_frame is None and isinstance(self.func, Name):
-            definition = self.unit.source_allocation_definition_for_call(self)
-            if (
-                definition is not None
-                and self.unit.source_class_admits_source_constructor_frame(
-                    definition
-                )
-            ):
-                source_call_frame = definition.source_visible_constructor_frame()
+        # A source class the name reaches seats no frame here: ``C(*a)`` is
+        # the call of the class statement's value, read through its key
+        # (``Call._construct_sugar``, ``decorated_definition_for_call``).
         lexical = False
         if source_call_frame is None:
             # ``g(*t)`` and ``g(**k)`` alike name a module function the
@@ -24769,11 +24720,13 @@ class Name(Expression):
             # module read keeps the name, as with no binding at all; a
             # reader outside the module block is cited undecided instead.
             return self
-        if isinstance(bound, (FunctionDef, AsyncFunctionDef, ClassDef, TypeAlias)):
-            # A local definition (or a module ``type`` alias) bound this
-            # name: the read is the ordinary name, resolved by the
+        if isinstance(bound, (FunctionDef, AsyncFunctionDef, TypeAlias)):
+            # A local undecorated ``def`` (or a module ``type`` alias) bound
+            # this name: the read is the ordinary name, resolved by the
             # definition's own runtime binding, never the definition
-            # statement spliced into expression position.
+            # statement spliced into expression position.  A ``class``
+            # statement binds its name to its value's key
+            # (``DecoratedDefinitionRef``), which the read is (below).
             return self
         if isinstance(bound, ImportBindingRef):
             # An import bound this name: a read the one import table rows
@@ -25177,7 +25130,10 @@ class DecoratedDefinitionRef(Expression):
     that value, the one decorator application (#7757,
     ``DecoratorApplicationSugar``): the statement reduces it, every read of
     the name is it, and every call of the name calls it.  The bare
-    definition never stands for the name.
+    definition never stands for the name.  A ``class`` statement binds its
+    name through this node decorated or not (``call_applies_own_frame``):
+    with no decorator the application applies none, and the value is the
+    class the statement's run built.
 
     ``definition`` is the statement (a leaf); ``decorator_bindings`` holds,
     for each decorator, the ``def``/``class`` a bare-name decorator is bound
@@ -25213,15 +25169,25 @@ def call_applies_own_frame(definition) -> bool:
     """Whether a call of the name ``definition`` binds applies the
     definition's own frame.
 
-    An undecorated ``def`` or ``class`` does; so does a generator function
-    whose one decorator is ``contextlib.contextmanager`` (read through the one
-    builtin door, ``SourceUnit.language_callee_of``): calling it builds
+    An undecorated ``def`` does; so does a generator function whose one
+    decorator is ``contextlib.contextmanager`` (read through the one builtin
+    door, ``SourceUnit.language_callee_of``): calling it builds
     ``_GeneratorContextManager(f, args, kwds)``, whose ``gen`` is the
     generator the frame allocates (``WithSourceResourceSugar``).  Every other
     decorated definition binds its name to the decorators' result
     (``DecoratedDefinitionRef``), and a call of it calls that value.
+
+    A ``class`` statement never does, decorated or not: it binds its name to
+    the class its run builds, under its evaluation key, as an assignment
+    binds its value (``_decorated_statement_sugar``), and every read of the
+    name -- a call, a method receiver, an attribute, a base, a decorator, an
+    argument -- is the one read of that key (``DecoratedDefinitionRef``; with
+    no decorator the application applies none).  The class statement is
+    never read in the name's place (#7757).
     Anything that is not a definition applies no decoration.
     """
+    if isinstance(definition, ClassDef):
+        return False
     decorators = getattr(definition, "decorators", None)
     if not decorators:
         return True
@@ -25259,35 +25225,6 @@ def _class_method_lookup_call(call, frame) -> bool:
         class_owner is not None
         and class_owner._method_descriptor_kind(owner) == "classmethod"
     )
-
-
-def _local_class_receiver(func, scope) -> "Optional[ClassDef]":
-    """The function-local ``class`` statement the receiver of the method
-    callee ``func`` (``C.m``) reads, or None.
-
-    A local ``class C`` binds ``C`` for the statements after it
-    (``_local_definition_binding``) to the statement itself; a read of the
-    name stays the name (``Name.substitute``), and no reduction binds a
-    plain name, so ``C`` read as a receiver was a free name and ``C.m()``
-    the unanswered call of ``m``.  The receiver is the statement's value
-    when ``C`` is a lexical local of the enclosing function and the binding
-    standing here is that one undecorated ``class`` statement.  A decorated
-    one binds its decorators' result, which the read already is
-    (``DecoratedDefinitionRef``); a rebinding, a phi or any other binding is
-    not this statement."""
-    if not isinstance(func, Attribute) or not isinstance(func.value, Name):
-        return None
-    name = func.value.id
-    lexical = scope.get(_LEXICALLY_BOUND_NAMES)
-    if not (isinstance(lexical, frozenset) and name in lexical):
-        return None
-    bound = scope.get(name, _MISSING)
-    if bound is _MISSING:
-        return None
-    bound = unwrap_binding_state(bound)
-    if not isinstance(bound, ClassDef) or not call_applies_own_frame(bound):
-        return None
-    return bound
 
 
 def _default_evaluation_key(definition, index: int) -> str:
@@ -25400,10 +25337,12 @@ def module_final_default_keys(reader, site) -> tuple:
 
 
 def _decorated_definition_ref(definition, span, scope=None, *, evaluation=None):
-    """The ``DecoratedDefinitionRef`` for the decorated ``definition`` at
-    ``span``, with each bare-name decorator's ``def``/``class`` binding in
-    ``scope`` (the scope the statement runs in), when there is one, reading
-    the statement's evaluation key ``evaluation``
+    """The ``DecoratedDefinitionRef`` for the ``definition`` at ``span`` (a
+    decorated ``def``, or a ``class`` statement, decorated or not), with each
+    bare-name decorator's binding in ``scope`` (the scope the statement runs
+    in), when it is a ``def`` or a definition's value (a
+    ``DecoratedDefinitionRef``: a local class, a decorated local ``def``),
+    reading the statement's evaluation key ``evaluation``
     (``_definition_evaluation_key``)."""
     from .backend import Leaf, materialize
     from .shadow import ShadowNode
@@ -25415,7 +25354,9 @@ def _decorated_definition_ref(definition, span, scope=None, *, evaluation=None):
             state = scope.get(decorator.id, _MISSING)
             if state is not _MISSING:
                 state = unwrap_binding_state(state)
-                if isinstance(state, (FunctionDef, AsyncFunctionDef, ClassDef)):
+                if isinstance(
+                    state, (FunctionDef, AsyncFunctionDef, DecoratedDefinitionRef)
+                ):
                     bound = state
         bindings.append(bound)
     return materialize(
@@ -25435,7 +25376,7 @@ def _decorated_definition_ref(definition, span, scope=None, *, evaluation=None):
 
 
 def _decorated_statement_binding(statement, binding):
-    """``statement`` (a decorated ``def``/``class``) carrying, as its
+    """``statement`` (a decorated ``def``, or any ``class``) carrying, as its
     ``decorated_value`` leaf, the ``DecoratedDefinitionRef`` its substitution
     bound its name to (``_local_definition_binding``): the statement's own
     reduction is that application (``FunctionDef._sugar_body_statement``)."""
@@ -25481,11 +25422,13 @@ def _def_statement_sugar(statement, *, read=None):
 
 def _body_statement_sugar(statement):
     """One statement of a module or function body: a ``def`` through the one
-    def-statement rule (``_def_statement_sugar``), a decorated ``class``
-    through the one decorator application (``_decorated_statement_sugar``),
-    anything else its own sugar.  The module body and every function body
-    construct their statements here, so a decorated class applies its
-    decorators wherever its statement runs (#7757)."""
+    def-statement rule (``_def_statement_sugar``), a ``class``, decorated or
+    not, through the one decorator application (``_decorated_statement_sugar``:
+    the statement runs its body once, applies its decorators, none or more,
+    and binds the name under its evaluation key), anything else its own
+    sugar.  The module body and every function body construct their
+    statements here, so a class binds its name the same way wherever its
+    statement runs (#7757)."""
     if isinstance(statement, (FunctionDef, AsyncFunctionDef)):
         return _def_statement_sugar(statement)
     if not call_applies_own_frame(statement):
@@ -25494,8 +25437,9 @@ def _body_statement_sugar(statement):
 
 
 def _decorated_statement_sugar(statement):
-    """A decorated ``def``/``class`` ``statement`` in a body: it runs its
-    decorators once and binds the name to their result.
+    """A decorated ``def``, or a ``class`` decorated or not, ``statement`` in
+    a body: it runs its decorators (a class: none or more) once and binds
+    the name to their result.
 
     The statement reduces the one application (``DecoratedDefinitionRef``),
     with every face of it the statement's (#7757), and binds the completed
@@ -25591,9 +25535,12 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
     key = "decorator-application:" + definition.fragment.seal().cid
     if _frame_is_under_construction(key):
         # A decorator (or the definition's own body, constructed for its
-        # value) that reads the name this statement binds: the application
-        # is under construction up the stack.  Refused by name where it
-        # reduces, never unfolded again.
+        # value: a method of a class that reads the class's name) that reads
+        # the name this statement binds: the application is under
+        # construction up the stack, never unfolded again.  The read is the
+        # key's where the statement bound it (a method called after the
+        # class statement ran reads the class it built), and is refused by
+        # name where nothing bound it (``DecoratorApplicationSugar.desugar``).
         return DecoratorApplicationSugar(
             definition_name=definition.name,
             decorators=(),
@@ -25752,6 +25699,12 @@ def _decorator_step(definition, decorator, bound):
             return DecoratorStepV1.unanswered(site, spelling, symbol)
     if isinstance(decorator, Name):
         target = bound
+        if isinstance(target, DecoratedDefinitionRef):
+            # ``@C`` where the statement's scope binds ``C`` to a
+            # definition's value: the decorator is the one read of the name,
+            # that value's key, never the statement read again.
+            _discharge_absorbed(decorator)
+            return DecoratorStepV1.apply(site, spelling, callee=target.sugar())
         if target is None:
             target = unit.module_definition_at(decorator.id, decorator.line_col_span())
         if target is not None:
@@ -25834,7 +25787,9 @@ def builtin_decorator_step(definition, decorator):
 
 def _definition_decorator_step(target, site, spelling):
     """A decorator bound to the source ``def``/``class`` ``target``: its value,
-    applied through the one call routine."""
+    applied through the one call routine.  A ``class`` (decorated or not)
+    and a decorated ``def`` are read through their statement's evaluation
+    key (``DecoratedDefinitionRef``), as every read of the name is."""
     from sugar_lift_py_tests.sugar.decorator_application_sugar import (
         DecoratorStepV1,
     )
@@ -25849,8 +25804,6 @@ def _definition_decorator_step(target, site, spelling):
                 evaluation=_definition_evaluation_key(target, {}),
             ).sugar(),
         )
-    if isinstance(target, ClassDef):
-        return DecoratorStepV1.apply(site, spelling, callee=target.sugar())
     if isinstance(target, AsyncFunctionDef):
         return DecoratorStepV1.refused(
             site, spelling, f"`async def {target.name}` returns a coroutine"
@@ -25899,11 +25852,15 @@ def _local_definition_binding(definition, scope):
 
     Only a name the enclosing function holds as a lexical local is threaded,
     and, while a module body is threaded for its readers, a module name one
-    of them reads (``_module_threads``); an undecorated definition binds
-    itself, a decorated one the decorators' result
-    (``DecoratedDefinitionRef``), its decorators read where the statement
-    runs (``scope``), and the result read through the statement's evaluation
-    key (``_definition_evaluation_key``), which the statement binds it under.
+    of them reads (``_module_threads``); an undecorated ``def`` binds
+    itself, a decorated one the decorators' result, and a ``class``,
+    decorated or not, the class its run builds with its decorators (none or
+    more) applied (``DecoratedDefinitionRef``, ``call_applies_own_frame``):
+    its decorators read where the statement runs (``scope``), and the value
+    read through the statement's evaluation key
+    (``_definition_evaluation_key``), which the statement binds it under as
+    an assignment binds its value.  Every read of a class's name is that
+    key's read; the class statement never stands for the name.
     """
     lexical = scope.get(_LEXICALLY_BOUND_NAMES)
     local = isinstance(lexical, frozenset) and definition.name in lexical

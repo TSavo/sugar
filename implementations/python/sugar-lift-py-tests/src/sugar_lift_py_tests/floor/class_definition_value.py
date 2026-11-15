@@ -102,17 +102,19 @@ class ClassDefinitionValue(GuardStableValue):
             )
 
     def callable_application_with(self, operation, ctx):
-        """``Cls(*args, **kw)`` reached as a value: the same call as by name.
+        """``Cls(*args, **kw)``: the one call of a source class.
 
-        A class call applies the class statement's constructor frame
+        Every call of a source class is a call of its value (a read of the
+        class's name is its statement's evaluation key).  It applies the
+        class statement's constructor frame
         (``ClassDef.source_visible_constructor_frame``: initializer, source
         ``__new__``, dataclass and inherited-exception arms) through the one
-        application routine, ``CallSiteValue.producer_outcome``, exactly as
-        ``CallSiteSugar`` applies it for a lexically named class.  Every face of
-        the constructor, halts included, is this call's.  The call is bound
-        where the class call reads the class statement
-        (``ClassConstructorBodySugar.bind_class_call``), with the constructor
-        defaults the class value carries (``constructor_defaults``).
+        application routine, ``CallSiteValue.producer_outcome``.  Every face of the
+        constructor, halts included, is this call's.  The call is bound on
+        this value (``ClassConstructorBodySugar.bind_class_call``, entered
+        with ``class_value``), with the constructor defaults it carries
+        (``constructor_defaults``); the class statement already ran where
+        the value was built and is never reduced again here.
 
         A class whose constructor its own statement does not decide (no
         source ``__new__`` shape, no ``dataclass``-written ``__init__``) and
@@ -173,6 +175,14 @@ class ClassDefinitionValue(GuardStableValue):
                 self.class_name, positional, keywords, operation.site
             )
         frame = definition.source_visible_constructor_frame()
+        # The call reads the class it was given: this value, the class the
+        # statement's run built and the name's read (its evaluation key)
+        # answered.  The constructor is entered on it (``class_value``), at
+        # this call (``call_site``); the class statement is never reduced
+        # again at the call (#7757).
+        from dataclasses import replace
+
+        body = replace(frame.body, class_value=self, call_site=operation.site)
 
         def refuse(*, owner, blame, observed, requested, fix):
             raise SugarNotWritten(
@@ -183,7 +193,7 @@ class ClassDefinitionValue(GuardStableValue):
                 fix=fix,
             )
 
-        return frame.body.bind_class_call(
+        return body.bind_class_call(
             ctx,
             lambda defaults, body: bind_call(
                 self.class_name,
