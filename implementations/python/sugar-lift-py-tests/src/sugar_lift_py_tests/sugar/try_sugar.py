@@ -596,19 +596,6 @@ def _handled_beneath(reached, handled):
     return reached.sequence(ExitSet.completed, consume=lambda _in_flight: handled)
 
 
-def _beneath_type_read(exits, owed: tuple):
-    """``exits`` continued beneath an arm type's read that owes ``owed``.
-
-    The one composition of a continuation beneath an arm
-    (``ExitSet.sequence``): the read's debt rides onto every exit, halts
-    included.  A read that owes nothing leaves ``exits`` as they are."""
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
-
-    if not owed:
-        return exits
-    return ExitSet.completed(None, owed=owed).sequence(lambda _read: exits)
-
-
 def _binding_facts_for(slot_id, effect, site) -> tuple:
     if slot_id is None:
         return ()

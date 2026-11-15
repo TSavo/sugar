@@ -52,21 +52,65 @@ class _StarFace:
         return arm.value
 
 
-def _matcher_value(matcher, ctx):
-    """One ``except*`` type operand's completed value (or None), and what
-    its read owes.
+def _matcher_read(matcher, ctx):
+    """One ``except*`` type operand's read: every face of it.
 
     The operand is read here, never retained for a caller: a deferred
-    native-operation carrier is refused by name.  A read that owes (the
-    undecided read of a class only a star import may bind owes the
-    ``undecided`` member) hands its debt back, so the router carries it
-    beneath every face that passed the arm, as ordinary ``except`` does
-    (``TrySugar._effect_match_verdict``).
+    native-operation carrier is refused by name.  Each face keeps its guard,
+    faces and ``owed`` (the undecided read of a class only a star import may
+    bind owes the ``undecided`` member; a read that may raise has a halted
+    face), so the router continues beneath every face, as ordinary
+    ``except`` does (``TrySugar._effect_match_verdict``).
     """
     from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 
-    read = _require_exit_set(matcher.desugar(ctx), owner="TryStarSugar.handler-matcher")
-    return read.completed_value(), read.owed_items()
+    return _require_exit_set(
+        matcher.desugar(ctx), owner="TryStarSugar.handler-matcher"
+    )
+
+
+def _beneath_read_faces(path, read):
+    """``path`` -- one routing face's completed arm -- continued beneath
+    every face of one arm type's ``read`` (``ExitSet.sequence``).
+
+    Answers ``(halts, reads)``.  A halted face is the ``try*``'s halt right
+    there, as for ordinary ``except`` (``try_sugar._beneath_read_face``):
+    Python raises it while reading the handler's types, no later handler
+    sees it and the ``finally`` does; it is recorded where the face stood
+    (its temporal state) when the read offers none.  It leaves alone: CPython
+    evaluates an ``except*`` type under the handler block's cleanup, which
+    re-raises the new exception (``POP_EXCEPT_AND_RERAISE``), not under
+    ``PREP_RERAISE_STAR``, so neither the residual nor what an earlier
+    handler on this path raised is regrouped with it.  Each completed face
+    gives the path under that face's guard, faces and ``owed``, still the
+    one arm holding the face's state, paired with the type value it read.
+    A face whose guard cannot hold beneath the path is dropped by
+    ``sequence``, never invented.
+    """
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+
+    halts = []
+    reads = []
+    for face in read.exits:
+        if isinstance(face, Halted):
+
+            def raised(state, face=face):
+                return ExitSet(
+                    (face if face.state is not None else replace(face, state=state),)
+                )
+
+            halts.append(path.sequence(raised))
+            continue
+
+        def continued(state, face=face):
+            return ExitSet((face,)).sequence(
+                lambda _type, state=state: ExitSet.completed(state)
+            )
+
+        beneath = path.sequence(continued)
+        if beneath.exits:
+            reads.append((beneath, face.value))
+    return halts, reads
 
 
 def _wrapped(effect):
@@ -149,7 +193,6 @@ class TryStarSugar(Sugar):
         )
         from sugar_lift_py_tests.sugar.try_sugar import (
             _and_finally_with_raise_context,
-            _beneath_type_read,
             _try_outcome,
         )
         from sugar_source_tree.panic import SugarNotWritten
@@ -211,7 +254,8 @@ class TryStarSugar(Sugar):
                     exceptional=(),
                 )
             ]
-            # Faces that leave the residual walk (non-raise halts).
+            # Faces that leave the residual walk (non-raise halts, and the
+            # halt of a handler type's read).
             retained: list = []
 
             for matchers, handler_body, slot_id in self.handlers:
@@ -219,108 +263,34 @@ class TryStarSugar(Sugar):
                     matchers = (matchers,)
                 next_frontier: list[_StarFace] = []
                 for face in frontier:
-                    # One alternative per split of this face by the handler's
-                    # types: ``(path, residual, matched parts)``.  A leaf whose
-                    # match the one matcher retained splits the face two ways
-                    # (``GroupedRaiseEffect.partition``), each path guarded by
-                    # its obligation or complement and carrying its face, as
-                    # ordinary ``except`` routes an undecided match.
-                    alternatives = [(face.path, face.residual, ())]
+                    # Python reads the handler's types (a tuple, left to
+                    # right) whenever the group reaches the handler, matched
+                    # or not, and only then matches.  Every face of every read
+                    # is carried (``_beneath_read_faces``): a halted face is
+                    # the try*'s halt here, which no later handler sees;
+                    # beneath each completed face the path keeps the read's
+                    # guard, faces and ``owed`` (every path that passed the
+                    # handler owes what its read owes), and routing goes on
+                    # over the types that face read.
+                    read_paths = [(face.path, ())]
                     for matcher in matchers:
-                        expected, read_owes = _matcher_value(
-                            matcher, face.state.context
-                        )
-                        if expected is None:
-                            raise SugarNotWritten(
-                                blame=self.site,
-                                owner="TryStarSugar.desugar",
-                                observed="symbolic except* type",
-                                requested="authenticated subtype partition operand",
-                                fix="keep symbolic subtype partition typed loud",
+                        read = _matcher_read(matcher, face.state.context)
+                        next_reads = []
+                        for read_path, expecteds in read_paths:
+                            halts, reads = _beneath_read_faces(read_path, read)
+                            retained.extend(halts)
+                            next_reads.extend(
+                                (beneath, (*expecteds, expected))
+                                for beneath, expected in reads
                             )
-                        split_alternatives = []
-                        for path, residual, parts in alternatives:
-                            # Python reads the type whenever the group reaches
-                            # the arm, matched or not: what the read owes rides
-                            # beneath every path that passed it.
-                            path = _beneath_type_read(path, read_owes)
-                            routed = route_except_star(
-                                residual,
-                                expected,
-                                slot_id=slot_id,
-                                site=self.site,
-                            )
-                            if routed is None:
-                                split_alternatives.append((path, residual, parts))
-                                continue
-                            for outcome in routed:
-                                split_path = path
-                                for formula, split_face in outcome.conditions:
-                                    split_path = split_path.guarded(formula, split_face)
-                                if not split_path.exits:
-                                    continue
-                                split_alternatives.append(
-                                    (
-                                        split_path,
-                                        outcome.residual,
-                                        (
-                                            (*parts, outcome.matched)
-                                            if outcome.matched.children
-                                            else parts
-                                        ),
-                                    )
-                                )
-                        alternatives = split_alternatives
-                    for path, handler_residual, matched_parts in alternatives:
-                        if not matched_parts:
-                            # This path does not match this handler — residual
-                            # continues.
-                            next_frontier.append(
-                                _StarFace(
-                                    path=path,
-                                    residual=handler_residual,
-                                    exceptional=face.exceptional,
-                                )
-                            )
-                            continue
-                        matched = regroup_except_star(face.residual, matched_parts)
-                        # The handler resumes from the face's record: the
-                        # halt's, then what every earlier handler on this
-                        # path left.
-                        record = resumed(
-                            face.state,
-                            ctx,
-                            owner="TryStarSugar.handler",
-                            blame=self.site,
-                        )
-                        handler_ctx = bind_in_flight_effect(
-                            record.context, slot_id, matched, blame=self.site
-                        )
-                        if slot_id is not None:
-                            # Shared typed ReduceContext surface.
-                            handler_ctx = handler_ctx.with_observed_effect(
-                                slot_id, matched
-                            )
-                        handler_exits = reduce_block_to_exitset(
-                            handler_body,
-                            handler_ctx,
-                            after=replace(record, context=handler_ctx),
-                        )
-                        # The handler runs beneath this split's path:
-                        # ``sequence`` conjoins the path's guard, faces and
-                        # ``owed`` onto every handler arm. One next face per
-                        # composed arm.  The frontier is built from the
-                        # handler's arms now: a handler still waiting on its
-                        # caller's actuals, whose carrier ``sequence``
-                        # composed, is refused by name here.
-                        composed = _require_exit_set(
-                            path.sequence(lambda _state, exits=handler_exits: exits),
-                            owner="TryStarSugar.handler",
-                        )
-                        _walk_handler_arms(
-                            composed,
+                        read_paths = next_reads
+                    for read_path, expecteds in read_paths:
+                        _route_read_types(
                             face,
-                            handler_residual,
+                            read_path,
+                            expecteds,
+                            handler_body,
+                            slot_id,
                             next_frontier,
                             retained,
                         )
@@ -370,6 +340,105 @@ class TryStarSugar(Sugar):
             # is exactly the empty set ``sequence`` composed. A raise is never
             # a completion (#7825). The leaving faces are siblings: one join.
             return ExitSet(()).union(*retained)
+
+        def _route_read_types(
+            face,
+            read_path,
+            expecteds,
+            handler_body,
+            slot_id,
+            next_frontier,
+            retained,
+        ):
+            """Route ``face``'s residual through one handler over the types
+            one completed face of its read holds, beneath ``read_path``.
+
+            One alternative per split of the residual by those types:
+            ``(path, residual, matched parts)``.  A leaf whose match the one
+            matcher retained splits the path two ways
+            (``GroupedRaiseEffect.partition``), each guarded by its
+            obligation or complement and carrying its face, as ordinary
+            ``except`` routes an undecided match."""
+            alternatives = [(read_path, face.residual, ())]
+            for expected in expecteds:
+                split_alternatives = []
+                for path, residual, parts in alternatives:
+                    routed = route_except_star(
+                        residual,
+                        expected,
+                        slot_id=slot_id,
+                        site=self.site,
+                    )
+                    if routed is None:
+                        split_alternatives.append((path, residual, parts))
+                        continue
+                    for outcome in routed:
+                        split_path = path
+                        for formula, split_face in outcome.conditions:
+                            split_path = split_path.guarded(formula, split_face)
+                        if not split_path.exits:
+                            continue
+                        split_alternatives.append(
+                            (
+                                split_path,
+                                outcome.residual,
+                                (
+                                    (*parts, outcome.matched)
+                                    if outcome.matched.children
+                                    else parts
+                                ),
+                            )
+                        )
+                alternatives = split_alternatives
+            for path, handler_residual, matched_parts in alternatives:
+                if not matched_parts:
+                    # This path does not match this handler — residual
+                    # continues.
+                    next_frontier.append(
+                        _StarFace(
+                            path=path,
+                            residual=handler_residual,
+                            exceptional=face.exceptional,
+                        )
+                    )
+                    continue
+                matched = regroup_except_star(face.residual, matched_parts)
+                # The handler resumes from the face's record: the halt's,
+                # then what every earlier handler on this path left.
+                record = resumed(
+                    face.state,
+                    ctx,
+                    owner="TryStarSugar.handler",
+                    blame=self.site,
+                )
+                handler_ctx = bind_in_flight_effect(
+                    record.context, slot_id, matched, blame=self.site
+                )
+                if slot_id is not None:
+                    # Shared typed ReduceContext surface.
+                    handler_ctx = handler_ctx.with_observed_effect(slot_id, matched)
+                handler_exits = reduce_block_to_exitset(
+                    handler_body,
+                    handler_ctx,
+                    after=replace(record, context=handler_ctx),
+                )
+                # The handler runs beneath this split's path: ``sequence``
+                # conjoins the path's guard, faces and ``owed`` onto every
+                # handler arm. One next face per composed arm.  The frontier
+                # is built from the handler's arms now: a handler still
+                # waiting on its caller's actuals, whose carrier ``sequence``
+                # composed, is refused by name here.
+                composed = _require_exit_set(
+                    path.sequence(lambda _state, exits=handler_exits: exits),
+                    owner="TryStarSugar.handler",
+                )
+                _walk_handler_arms(
+                    composed,
+                    face,
+                    handler_residual,
+                    next_frontier,
+                    retained,
+                )
 
         def _walk_handler_arms(
             composed, face, handler_residual, next_frontier, retained
