@@ -1200,8 +1200,12 @@ def test_a_def_statement_is_stamped_with_no_site() -> None:
 
 
 def test_a_for_statements_own_call_runs_after_its_body() -> None:
+    # ``r`` reads ``x`` as a global, so the module threading records ``x``
+    # (``module_threaded_names``); a name no reader reads is never threaded
+    # and is undecided at every site.
     tree = _source(
-        "x = 1\nx += 1\ndef g():\n    return (1, 2)\nfor v in g():\n    x += 1\n"
+        "x = 1\nx += 1\ndef r():\n    return x\n"
+        "def g():\n    return (1, 2)\nfor v in g():\n    x += 1\n"
     )
     first = _module_evaluations(tree)[0]
     loop = _only(tree, For)
