@@ -98,13 +98,23 @@ def _step(guard) -> IfStepV1:
     )
 
 
+# Each tagged halt raises its own language-owned class: ``for_builtin`` mints
+# only a class the interpreter owns, and distinct tags stay distinct effects.
+_HALT_EXCEPTIONS = {
+    "left": "LookupError",
+    "right": "ArithmeticError",
+    "carrier": "RuntimeError",
+    "projected-truth": "ValueError",
+}
+
+
 def _halt(name: str):
     from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
     left, _ = partition(("if-guard-halt", name))
     return Halted(
         atomic(f"guard:halted:{name}", []),
-        RaiseEffect.for_builtin(f"{name}Error", occurrence=f"guard:{name}"),
+        RaiseEffect.for_builtin(_HALT_EXCEPTIONS[name], occurrence=f"guard:{name}"),
         # A record of its own (the one shape a halt's state takes), so the
         # halt is seen to pass through by identity.
         state=_ReducedBlock((TermValue(name),), True, ()),
@@ -220,7 +230,7 @@ def test_four_face_guard_projects_completed_operands_once_then_transitions(
 
 def test_guarded_incomplete_arm_becomes_halted_without_running_branch() -> None:
     calls: list[object] = []
-    inner_effect = RaiseEffect.for_builtin("InnerError", occurrence="guard:inner")
+    inner_effect = RaiseEffect.for_builtin("TypeError", occurrence="guard:inner")
     incomplete = ExitSet.halted(inner_effect)
     operand = _TruthOperand(incomplete, calls)
     outer = atomic("guard:outer-incomplete", [])

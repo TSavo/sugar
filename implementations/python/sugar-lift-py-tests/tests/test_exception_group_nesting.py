@@ -64,11 +64,13 @@ def _leaf_occurrence_map(effect) -> dict[str, list[str]]:
     """Map exception_name -> ordered occurrence list for all leaves."""
     by_name: dict[str, list[str]] = {}
     for leaf in _leaves(effect):
-        assert isinstance(leaf.occurrence, str) and ":" in leaf.occurrence, (
+        # ``occurrence`` is the AuthenticatedRaiseLocus; its id is the string.
+        occurrence = leaf.occurrence_id
+        assert isinstance(occurrence, str) and ":" in occurrence, (
             "authenticated raise locus must be a file:line:col occurrence id, "
             f"not presence-only; got {leaf.occurrence!r}"
         )
-        by_name.setdefault(leaf.exception_name, []).append(leaf.occurrence)
+        by_name.setdefault(leaf.exception_name, []).append(occurrence)
     return by_name
 
 
@@ -289,11 +291,11 @@ def test_occurrence_identities_survive_two_level_partition():
     # Extracted TypeErrors are gone; their original occurrences are not on residual.
     orig_te = _leaf_occurrence_map(original)["TypeError"]
     assert len(orig_te) == 2
-    res_occs = {leaf.occurrence for leaf in leaves}
+    res_occs = {leaf.occurrence_id for leaf in leaves}
     assert not any(occ in res_occs for occ in orig_te), (orig_te, res_occs)
     # Twin: residual KeyError is not a new site at the except* line.
-    assert "except*" not in (leaves[1].occurrence or "")
-    assert leaves[1].occurrence == _leaf_occurrence_map(original)["KeyError"][0]
+    assert "except*" not in leaves[1].occurrence_id
+    assert leaves[1].occurrence_id == _leaf_occurrence_map(original)["KeyError"][0]
 
 
 def test_bare_reraise_at_inner_level_preserves_inner_occurrences_with_outer_residual():
@@ -341,19 +343,20 @@ def test_bare_reraise_at_inner_level_preserves_inner_occurrences_with_outer_resi
     by_name = {leaf.exception_name: leaf for leaf in leaves}
     for ctor_name, line in lines_by_ctor.items():
         leaf = by_name[ctor_name]
-        assert isinstance(leaf.occurrence, str) and ":" in leaf.occurrence, (
+        occurrence = leaf.occurrence_id
+        assert isinstance(occurrence, str) and ":" in occurrence, (
             "authenticated raise locus must be a file:line:col occurrence id, "
             f"not presence-only; got {leaf.occurrence!r}"
         )
-        assert leaf.occurrence.startswith(f"{name}:{line}:"), (
-            f"{ctor_name} occurrence {leaf.occurrence!r} must be the sealed "
+        assert occurrence.startswith(f"{name}:{line}:"), (
+            f"{ctor_name} occurrence {occurrence!r} must be the sealed "
             f"raise site at {name}:{line}, not a reminted residual site"
         )
 
     # Outer residual TypeError equals construction-only outer original.
     outer_te = _leaf_occurrence_map(outer_original)["TypeError"][0]
-    assert by_name["TypeError"].occurrence == outer_te
-    assert len({leaf.occurrence for leaf in leaves}) == 3
+    assert by_name["TypeError"].occurrence_id == outer_te
+    assert len({leaf.occurrence_id for leaf in leaves}) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -436,7 +439,7 @@ def test_twin_never_selects_only_first_nested_leaf_of_repeated_type():
     )
     # Both TypeError original sites are gone from residual.
     orig_te = set(_leaf_occurrence_map(original)["TypeError"])
-    res_occs = {leaf.occurrence for leaf in _leaves(effect)}
+    res_occs = {leaf.occurrence_id for leaf in _leaves(effect)}
     assert orig_te.isdisjoint(res_occs), (orig_te, res_occs)
 
 

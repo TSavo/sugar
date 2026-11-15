@@ -437,7 +437,7 @@ def test_guard_halt_retains_exact_pre_halt_formal_floors() -> None:
     floor = TrueBoolLiteralSugar(site=param.fragment)
     machine = _machine(entry=entry, floor=floor)
     halted = machine.throw(
-        RaiseEffect.for_builtin("HaltProbe", occurrence="guard:halt")
+        RaiseEffect.for_builtin("RuntimeError", occurrence="guard:halt")
     )
     assert isinstance(halted, ExitSet)
     from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock

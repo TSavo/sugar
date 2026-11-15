@@ -33,7 +33,7 @@ def test_complex_attribute_mutations_have_exact_owner_occurrences(tmp_path):
     for outcome, owner, site in _outcomes(tmp_path):
         assert outcome.value.effect.exception_name == "AttributeError"
         assert outcome.value.effect.producer_node_owner == owner
-        assert outcome.value.effect.occurrence_id == str(site)
+        assert outcome.value.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
 
 def test_complex_attribute_mutations_reject_completion_and_wrong_site(tmp_path):
@@ -41,5 +41,5 @@ def test_complex_attribute_mutations_reject_completion_and_wrong_site(tmp_path):
     store, _, store_site = outcomes[0]
     delete, _, delete_site = outcomes[1]
     assert store_site != delete_site
-    assert store.value.effect.occurrence_id != str(delete_site)
-    assert delete.value.effect.occurrence_id != str(store_site)
+    assert store.value.effect.occurrence_id != f"{delete_site.filename}:{delete_site.line}:{delete_site.col}"
+    assert delete.value.effect.occurrence_id != f"{store_site.filename}:{store_site.line}:{store_site.col}"

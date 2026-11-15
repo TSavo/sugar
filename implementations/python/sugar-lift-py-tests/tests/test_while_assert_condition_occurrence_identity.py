@@ -85,7 +85,9 @@ def test_assert_condition_halt_keeps_its_condition_occurrence() -> None:
     assert outcome.halts() == outcome.exits
     (halt,) = outcome.halts()
     assert isinstance(halt.effect, RaiseEffect)
-    assert halt.effect.occurrence_id == str(condition_site)
+    assert halt.effect.occurrence_id == (
+        f"{condition_site.filename}:{condition_site.line}:{condition_site.col}"
+    )
 
 
 def test_identical_condition_and_body_operands_do_not_collapse_occurrences() -> None:

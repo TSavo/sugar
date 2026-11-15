@@ -51,7 +51,7 @@ def test_dict_attribute_mutations_have_exact_owner_occurrences(tmp_path):
         (halt,) = outcome.halts()
         assert halt.effect.exception_name == "AttributeError"
         assert halt.effect.producer_node_owner == owner
-        assert halt.effect.occurrence_id == str(site)
+        assert halt.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
 
 def test_dict_attribute_mutations_cannot_fabricate_completion(tmp_path):
@@ -67,7 +67,9 @@ def test_dict_attribute_mutations_reject_wrong_site_substitution(tmp_path):
     (delete_halt,) = delete_outcome.exits
 
     assert store_site != delete_site
-    assert store_halt.effect.occurrence_id == str(store_site)
-    assert store_halt.effect.occurrence_id != str(delete_site)
-    assert delete_halt.effect.occurrence_id == str(delete_site)
-    assert delete_halt.effect.occurrence_id != str(store_site)
+    store_locus = f"{store_site.filename}:{store_site.line}:{store_site.col}"
+    delete_locus = f"{delete_site.filename}:{delete_site.line}:{delete_site.col}"
+    assert store_halt.effect.occurrence_id == store_locus
+    assert store_halt.effect.occurrence_id != delete_locus
+    assert delete_halt.effect.occurrence_id == delete_locus
+    assert delete_halt.effect.occurrence_id != store_locus

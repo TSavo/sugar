@@ -2442,16 +2442,18 @@ class GeneratorConstructionV1:
         if outcome.exits and outcome.halts() == outcome.exits:
             halts = outcome.halts()
             effect = halts[0].effect
-            stop_identity = ground_raise_effect(
+            # The exhaustion this step's ``next`` mints, read through the same
+            # door: its type and its locus (the site's file:line:col).
+            stop = ground_raise_effect(
                 exception_name="StopIteration",
                 site=step.occurrence,
                 owner="GeneratorConstructionV1.YieldFromStepV1.next",
-            ).exception_type_coordinate
+            )
             if (
                 len(halts) == 1
                 and isinstance(effect, RaiseEffect)
-                and effect.exception_type_coordinate == stop_identity
-                and effect.occurrence_id == str(step.occurrence)
+                and effect.exception_type_coordinate == stop.exception_type_coordinate
+                and effect.occurrence == stop.occurrence
             ):
                 # The sub-iterator is exhausted: the delegation completes with
                 # its ``StopIteration.value``.  A list's or tuple's iterator
@@ -2589,16 +2591,18 @@ class GeneratorConstructionV1:
         if outcome.exits and outcome.halts() == outcome.exits:
             halts = outcome.halts()
             effect = halts[0].effect
-            stop_identity = ground_raise_effect(
+            # The exhaustion this step's ``next`` mints, read through the same
+            # door: its type and its locus (the site's file:line:col).
+            stop = ground_raise_effect(
                 exception_name="StopIteration",
                 site=step.occurrence,
                 owner="GeneratorConstructionV1.ForStepV1.next",
-            ).exception_type_coordinate
+            )
             if (
                 len(halts) == 1
                 and isinstance(effect, RaiseEffect)
-                and effect.exception_type_coordinate == stop_identity
-                and effect.occurrence_id == str(step.occurrence)
+                and effect.exception_type_coordinate == stop.exception_type_coordinate
+                and effect.occurrence == stop.occurrence
             ):
                 machine = replace(self, cursor=self.cursor + 1)
                 return machine._transition(requested)

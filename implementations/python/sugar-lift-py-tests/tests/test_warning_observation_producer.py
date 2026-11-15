@@ -316,7 +316,9 @@ def _boundary(expected_category: str, entries):
         semantics=SEMANTICS,
         contract_ref=SimpleNamespace(import_signature=signature),
         context_manager_edge=None,
-        site=None,
+        # The boundary's own site: what each refusal of it blames (a refusal
+        # names a coordinate, never None).
+        site=f"assert_produces_warning({expected_category})",
     )
 
 

@@ -209,7 +209,9 @@ def _no_warning_boundary(entries):
         semantics=SEMANTICS,
         contract_ref=SimpleNamespace(import_signature=signature),
         context_manager_edge=None,
-        site=None,
+        # The boundary's own site: what each refusal of it blames (a refusal
+        # names a coordinate, never None).
+        site="assert_produces_warning(None)",
     )
 
 

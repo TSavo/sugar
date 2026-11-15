@@ -36,7 +36,7 @@ def test_complex_subscript_mutations_have_exact_owner_occurrences(tmp_path):
         effect = halt.effect
         assert effect.exception_name == "TypeError"
         assert effect.producer_node_owner == owner
-        assert effect.occurrence_id == str(site)
+        assert effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
 
 def test_complex_subscript_mutations_cannot_fabricate_completion(tmp_path):

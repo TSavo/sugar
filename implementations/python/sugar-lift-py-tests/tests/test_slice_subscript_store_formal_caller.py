@@ -614,7 +614,7 @@ def test_step_zero_setitem_is_named_valueerror_with_occurrence() -> None:
     effect = halt.effect
     assert effect.exception_name == "ValueError"
     assert effect.producer_node_owner == "ListValue.setitem"
-    assert effect.occurrence == str(site) or effect.occurrence_id == str(site)
+    assert effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
 
 def test_step_zero_delitem_is_named_valueerror_with_occurrence() -> None:
@@ -632,7 +632,7 @@ def test_step_zero_delitem_is_named_valueerror_with_occurrence() -> None:
     effect = halt.effect
     assert effect.exception_name == "ValueError"
     assert effect.producer_node_owner == "ListValue.delitem"
-    assert effect.occurrence_id == str(site)
+    assert effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
 
 def test_per_phase_occurrence_identity_setitem_vs_delitem() -> None:

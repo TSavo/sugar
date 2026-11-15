@@ -235,7 +235,7 @@ def test_source_defined_property_without_setter_named_attribute_error() -> None:
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _identity("AttributeError")
     assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
-    assert halted.effect.occurrence_id == str(site)
+    assert halted.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
 
 def test_source_defined_property_without_setter_discrimination() -> None:

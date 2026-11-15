@@ -2069,15 +2069,20 @@ def test_a_halt_leaving_an_else_that_writes_is_read_where_it_halted() -> None:
     halted_in = bind_temporal(
         began, ELSE_WRITE, TermValue(2), owner="test", blame="test"
     )
+    # The loop's site: what the refusal below blames (a refusal names a
+    # coordinate, never None).
+    site = "live-else-halt"
     halt = _outer_break(_ReducedBlock((), False, (), context=halted_in))
-    assert _else_left_from(runtime, began, witnesses, halt, site=None) is halted_in
+    assert _else_left_from(runtime, began, witnesses, halt, site=site) is halted_in
     callee = ReduceContext.root(owner="live-else-callee")
     foreign = _outer_break(_ReducedBlock((), False, (), context=callee))
-    with pytest.raises(SugarNotWritten):
-        _else_left_from(runtime, began, witnesses, foreign, site=None)
+    with pytest.raises(SugarNotWritten) as raised:
+        _else_left_from(runtime, began, witnesses, foreign, site=site)
+    assert raised.value.owner == "LoopRecurrenceSugar.else-halt"
+    assert raised.value.blame == site
     # A suite that writes nothing leaves every name as it began.
     quiet = SimpleNamespace(carried_evaluations=((HEADER, (), ()),))
-    assert _else_left_from(quiet, began, witnesses, foreign, site=None) is began
+    assert _else_left_from(quiet, began, witnesses, foreign, site=site) is began
 
 
 def test_a_halt_leaving_the_symbolic_item_carries_what_the_items_did() -> None:

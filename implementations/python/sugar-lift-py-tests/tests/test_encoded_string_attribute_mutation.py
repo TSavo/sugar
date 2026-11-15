@@ -35,7 +35,7 @@ def test_encoded_string_attribute_mutations_have_exact_owner_occurrences(
     )
     assert outcome.value.effect.exception_name == "AttributeError"
     assert outcome.value.effect.producer_node_owner == owner
-    assert outcome.value.effect.occurrence_id == str(site)
+    assert outcome.value.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
     identity = lambda name: ctor(
         "python:exception_type_identity", [str_const("builtins"), str_const(name)]
     )
@@ -50,5 +50,5 @@ def test_encoded_string_attribute_mutations_reject_wrong_site(tmp_path, monkeypa
     value = EncodedStringValue((), ())
     store = value.setattr("attr", TermValue(7), store_site, None)
     delete = value.delattr("attr", delete_site, None)
-    assert store.value.effect.occurrence_id != str(delete_site)
-    assert delete.value.effect.occurrence_id != str(store_site)
+    assert store.value.effect.occurrence_id != f"{delete_site.filename}:{delete_site.line}:{delete_site.col}"
+    assert delete.value.effect.occurrence_id != f"{store_site.filename}:{store_site.line}:{store_site.col}"

@@ -61,9 +61,13 @@ class AuthenticatedRaiseLocus:
     def of(cls, source: object) -> "AuthenticatedRaiseLocus":
         """ONE door for authenticated loci.
 
-        Accepts an existing locus, a non-empty str, or any object whose
-        ``str(...)`` is a non-empty locus (e.g. SourceFragment). Refuses None,
-        empty strings, and UndeterminedRaiseLocus (cannot impersonate).
+        Accepts an existing locus, a non-empty str, a source site, or any
+        object whose ``str(...)`` is a non-empty locus. A source site (a
+        ``SourceFragment``: ``filename``, ``line``, ``col``) is spelled by the
+        one coordinate every raise locus uses, ``file:line:col`` -- never its
+        ``repr`` (``<SourceFragment 'f.py' [s, e) node=...>``), which is a
+        print format, not an address (#7808). Refuses None, empty strings,
+        and UndeterminedRaiseLocus (cannot impersonate).
         """
         if isinstance(source, AuthenticatedRaiseLocus):
             return source
@@ -79,6 +83,11 @@ class AuthenticatedRaiseLocus:
                 "unfinished producer) or construct UndeterminedRaiseLocus — "
                 "never pass None."
             )
+        filename = getattr(source, "filename", None)
+        line = getattr(source, "line", None)
+        col = getattr(source, "col", None)
+        if isinstance(filename, str) and isinstance(line, int) and isinstance(col, int):
+            return cls(f"{filename}:{line}:{col}")
         text = str(source).strip()
         if not text:
             raise TypeError(

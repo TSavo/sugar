@@ -404,7 +404,7 @@ def test_wrong_exception_observation_is_not_the_delete_effect() -> None:
     with pytest.raises(AssertionError):
         assert halted.effect is foreign
     with pytest.raises(AssertionError):
-        assert str(halted.effect.occurrence) == foreign.occurrence
+        assert halted.effect.occurrence == foreign.occurrence
 
 
 def test_with_does_not_fabricate_completed_on_delete_halt_twin() -> None:
