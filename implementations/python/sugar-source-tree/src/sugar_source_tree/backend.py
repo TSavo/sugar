@@ -904,8 +904,6 @@ class Backend:
         lexical_call_rows = tuple(lexical_rows)
         lexical_call_enrollments = tuple(lexical_enrollments)
 
-        from .construction_cache import abandon_row, close_row, open_row, testify
-
         provider_rows = []
         for node in constructed_nodes:
             if not isinstance(node, Assign) or len(node.targets) != 1:
@@ -917,22 +915,15 @@ class Backend:
             value = node.value.value
             if type(value) not in (int, float, str):
                 continue
-            value_cache, value_key, _ = node.value._coordinate()
-            computation = open_row()
-            try:
-                value_sugar = node.value._construct_sugar()
-            except BaseException:
-                abandon_row(computation)
-                raise
-            testify(node.value.reporter, "present_fact", node.value)
-            close_row(
-                value_cache.sugar_rows,
-                value_cache.memo_key(value_key),
-                computation,
-                node.value.reporter,
-                value=value_sugar,
-            )
-            assert node.value.sugar() is value_sugar
+            # The provider value's sugar is the node's own answer, through
+            # the one door (``Node.sugar``): constructed once at its
+            # coordinate, with the testimony every construction gives
+            # (``present_construction``, then ``present_fact``) stored in its
+            # row, so a reporter that asks later hears all of it.  A row
+            # seated here by hand gave ``present_fact`` alone: a testimony
+            # reporter served that row never saw the constructed value, and
+            # a value it could not content-address stayed green.
+            value_sugar = node.value.sugar()
             constructed_value = object.__new__(_ConstructedProviderValueV1)
             value_identity = (
                 unit.source_cid,
