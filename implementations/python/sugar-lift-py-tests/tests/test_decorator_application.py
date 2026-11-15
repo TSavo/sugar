@@ -1794,68 +1794,6 @@ def test_a_lambda_value_carries_its_defaults_under_the_frames_keys() -> None:
 
 
 # ---------------------------------------------------------------------------
-# A generator's nested ``def`` with defaults is a step: it evaluates them.
-# ---------------------------------------------------------------------------
-
-
-_GENERATOR_DEFAULTS = """\
-def gen():
-    def inner(a={default}):
-        return a
-
-    yield 5
-"""
-
-
-def _generator_machine(default: str):
-    from sugar_lift_py_tests.generator_construction import GeneratorConstructionV1
-
-    tree = _tree(_GENERATOR_DEFAULTS.format(default=default))
-    frame = _function_named(tree, "gen").source_visible_call_frame()
-    return frame, GeneratorConstructionV1.allocate(
-        allocation_coordinate="test:generator-defaults",
-        frame_coordinate=frame.frame_cid,
-        binding_state=(),
-        steps=frame.generator_steps,
-    )
-
-
-def test_a_generator_nested_def_with_defaults_is_a_named_step() -> None:
-    from sugar_lift_py_tests.generator_construction import (
-        DefinitionDefaultsStepV1,
-        OpaqueStepV1,
-        _generator_step_testimony,
-    )
-
-    frame, _machine = _generator_machine("1")
-    steps = frame.generator_steps
-    assert steps is not None
-    assert not any(isinstance(step, OpaqueStepV1) for step in steps), steps
-    (defaults,) = (
-        step for step in steps if isinstance(step, DefinitionDefaultsStepV1)
-    )
-    assert len(defaults.values) == len(defaults.evaluations) == 1
-    assert _generator_step_testimony(defaults, owner="test")["kind"] == (
-        "definition-defaults"
-    )
-
-
-def test_a_generator_steps_through_its_nested_def_with_defaults() -> None:
-    """The step evaluates the default and the machine reaches the yield; a
-    default that raises halts the step, its face an arm of the machine."""
-    from sugar_lift_py_tests.generator_construction import GeneratorTransitionGapV1
-
-    _frame, machine = _generator_machine("1")
-    resumed = machine.resume()
-    assert not isinstance(resumed, GeneratorTransitionGapV1), resumed
-    assert _raises(resumed, "ZeroDivisionError") == []
-    _frame, raising = _generator_machine("1 // 0")
-    halted = raising.resume()
-    assert not isinstance(halted, GeneratorTransitionGapV1), halted
-    assert _raises(halted, "ZeroDivisionError") != []
-
-
-# ---------------------------------------------------------------------------
 # A specialised body never carries a default expression.
 # ---------------------------------------------------------------------------
 

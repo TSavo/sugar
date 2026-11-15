@@ -1,45 +1,23 @@
 """Doctrine laws for fleet-agy-1 lane: broad catches must not swallow panics.
 
 Audit (manager_summary_derivation / manager_protocol_construction /
-binding_state / generator_construction) found two live offenders:
+binding_state) found a live offender:
 
-1. ``GeneratorConstructionV1._guard_truth`` / ``_guard_formula`` catch
-   ``BaseException`` and return ``None``, reclassifying ``ConstructionPanic``
-   as ``GeneratorTransitionGapV1(observed='If carrying a suspension')``.
-   ``ConstructionPanic`` is deliberately a BaseException so ordinary
-   ``except Exception`` cannot silence it — catching BaseException undoes that.
+``binding_state._semantic_value_cid_for_bound_node`` catches ``Exception``
+(including ``SugarNotWritten``) and soft-succeeds with the node shape CID,
+so ``seal_bound_binding_entry_v1`` can mint sealed testimony after sugar
+refused. Seal must stay loud when value construction refused.
 
-2. ``binding_state._semantic_value_cid_for_bound_node`` catches ``Exception``
-   (including ``SugarNotWritten``) and soft-succeeds with the node shape CID,
-   so ``seal_bound_binding_entry_v1`` can mint sealed testimony after sugar
-   refused. Seal must stay loud when value construction refused.
-
-These instruments stay green when production refuses soft-seals: ConstructionPanic
-propagates from guard truth; SugarNotWritten refuses seal. No carrier/ExitSet,
-no silent None soft-greens.
+These instruments stay green when production refuses soft-seals:
+SugarNotWritten refuses seal. No carrier/ExitSet, no silent None soft-greens.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import tempfile
 
 import pytest
 
-from sugar_lift_py_tests.floor import FloorValue
-from sugar_lift_py_tests.gap.info import ConstructionGap
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_py_tests.generator_construction import (
-    GeneratorConstructionV1,
-    GeneratorTransitionGapV1,
-    IfStepV1,
-    ReturnStepV1,
-    YieldStepV1,
-)
-from sugar_lift_py_tests.ir import ctor
-from sugar_lift_py_tests.outcome import ExitSet
-from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
-from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.binding_state import (
@@ -66,147 +44,6 @@ def _constant_entry():
         state=value,
     )
     return value, entry
-
-
-def _int(value: int) -> IntLiteralSugar:
-    """A step's value is constructed sugar (``require_constructed_term_sugar``),
-    never a bare IR term."""
-    return IntLiteralSugar(value, site=f"literal:{value}")
-
-
-@dataclass(frozen=True)
-class _IncompleteTruthFloor(FloorValue):
-    """A decided value whose truth floor is not written: taking its truth
-    (the one truth rule, ``bool_op_sugar.truth_of``) raises
-    ``ConstructionPanic``."""
-
-    info: ConstructionGap = field(compare=False)
-
-    def denotes_value(self) -> bool:
-        return True
-
-    def runtime_type_is_decided(self) -> bool:
-        return True
-
-    def truth(self, site):
-        del site
-        raise ConstructionPanic(self.info)
-
-    def to_term(self, *, owner: str):
-        del owner
-        return ctor("python:probe_incomplete_truth_floor", [])
-
-
-@dataclass(frozen=True)
-class PanicGuard(ConstructedTermSugar):
-    """A branch guard is constructed sugar (``IfStepV1.guard`` admits only a
-    ``ConstructedTermSugar``): it completes with a value whose truth floor
-    is incomplete, so the generator's guard truth raises
-    ``ConstructionPanic``."""
-
-    info: ConstructionGap = field(compare=False)
-
-    @classmethod
-    def witnesses(cls):
-        return ()
-
-    def desugar(self, ctx=None):
-        del ctx
-        return ExitSet.completed(_IncompleteTruthFloor(self.info))
-
-    def to_term(self, *, owner: str):
-        del owner
-        return ctor("python:probe_panic_guard", [])
-
-
-def test_generator_guard_construction_panic_must_not_become_suspension_gap():
-    """Law: ConstructionPanic from guard.truth propagates; never BaseException→None.
-
-    Illegal shape (live offender):
-        try: truth(...); except BaseException: return None
-        → GeneratorTransitionGapV1(observed='If carrying a suspension')
-
-    Replacement: let ConstructionPanic propagate (it is BaseException by design),
-    or map only non-panic undecided outcomes to the suspension gap. Never catch
-    BaseException around floor truth.
-    """
-    info = ConstructionGap(
-        owner="doctrine.guard-truth",
-        blame="guard-site",
-        observed="incomplete guard floor",
-        requested="guard truth value",
-        fix="implement the guard floor; do not catch BaseException",
-    )
-
-    machine = GeneratorConstructionV1.allocate(
-        allocation_coordinate="audit:guard:1",
-        frame_coordinate="frame:audit",
-        binding_state=(),
-        steps=(
-            IfStepV1(
-                PanicGuard(info),
-                (YieldStepV1(_int(1)),),
-                (ReturnStepV1(_int(2)),),
-                "frag:audit-if",
-                "guard:audit-if",
-            ),
-        ),
-    )
-
-    with pytest.raises(ConstructionPanic) as raised:
-        machine.resume()
-    assert raised.value.info.owner == "doctrine.guard-truth"
-    # Twin: must not reclassify as the weaker suspension gap.
-    try:
-        machine.resume()
-    except ConstructionPanic:
-        return
-    except Exception as other:  # pragma: no cover - failure mode documentation
-        pytest.fail(
-            f"reclassified ConstructionPanic as {type(other).__name__}: {other}"
-        )
-    else:  # pragma: no cover
-        pytest.fail(
-            "ConstructionPanic was swallowed; expected raise, got a non-raising result"
-        )
-
-
-def test_generator_guard_construction_panic_is_not_if_carrying_suspension():
-    """Lying twin of the BaseException swallow: suspension gap must not impersonate panic."""
-    info = ConstructionGap(
-        owner="doctrine.guard-truth",
-        blame="guard-site",
-        observed="incomplete guard floor",
-        requested="guard truth value",
-        fix="implement the guard floor; do not catch BaseException",
-    )
-
-    machine = GeneratorConstructionV1.allocate(
-        allocation_coordinate="audit:guard:2",
-        frame_coordinate="frame:audit",
-        binding_state=(),
-        steps=(
-            IfStepV1(
-                PanicGuard(info),
-                (YieldStepV1(_int(1)),),
-                (ReturnStepV1(_int(2)),),
-                "frag:audit-if-2",
-                "guard:audit-if-2",
-            ),
-        ),
-    )
-    # Document the live offender class for the fix-forward PR: today this returns
-    # GeneratorTransitionGapV1 instead of raising. The law forbids that outcome.
-    result = None
-    try:
-        result = machine.resume()
-    except ConstructionPanic:
-        return  # green when production is fixed
-    assert not isinstance(result, GeneratorTransitionGapV1), (
-        "ConstructionPanic was reclassified as GeneratorTransitionGapV1 "
-        f"(observed={getattr(result, 'observed', None)!r}); "
-        "fix=stop catching BaseException in _guard_truth/_guard_formula"
-    )
 
 
 def test_seal_refuses_when_node_sugar_raises_sugar_not_written():

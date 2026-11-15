@@ -29,9 +29,7 @@ followed call is the caller's actual, with the caller's currency: nothing
 ran between the caller's read and the body's entry, and the body's stores
 and calls update it by the same rules as anywhere.  A formal is arrived
 only where its state is unknown at the body's entry: in its function's own
-proof it has no actual at all (a symbolic formal), a generator's body,
-which runs after its call returned, holds its formals arrived
-(``GeneratorConstructionV1._guard_evaluation_context``), and an actual
+proof it has no actual at all (a symbolic formal), and an actual
 another actual of the same call may reach (``f(xs, xs)``) is bound arrived
 (``as_bound_formals``): the body holds two formals as two objects, so a
 store through one would leave the other's contents read as current.
@@ -314,10 +312,8 @@ def arrived(value, site):
 
 def arrived_as(value, arrival: str):
     """``value`` as it reaches a frame by a binding no source read names:
-    ``arrived``, with ``arrival`` naming that binding.  A generator's frame
-    holds its bindings across a yield (``generator_construction.YieldEffect``):
-    each container in one is released at the yield, named by the yield's
-    occurrence and the binding (``<yield occurrence>/<binding>``)."""
+    ``arrived``, with ``arrival`` naming that binding (``as_bound_formals``:
+    a formal another actual of the same call may reach)."""
     return _arrived(value, lambda: arrival)
 
 

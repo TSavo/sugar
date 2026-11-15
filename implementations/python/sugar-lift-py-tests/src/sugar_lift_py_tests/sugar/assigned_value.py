@@ -24,8 +24,7 @@ The law has two halves, and this module owns both:
   store's key read folded over it.  A path's root after a path mutation is
   read through the name's key, never the display it was given.  An
   unpack's names read their projections of the statement's key
-  (``Assign._unpack_projection_binding``); a generator's assignment step
-  binds the key it was constructed with (``AssignStepV1.evaluation``); the
+  (``Assign._unpack_projection_binding``); the
   ordinary call a mutating method takes reads its receiver through the key
   the one door binds it under (``PathContainerCall.receiver_evaluation``).
 

@@ -62,7 +62,6 @@ EXPECTED_RAW_BY_FILE = {
     "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/object_method_value.py": 1,
     "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/object_value.py": 25,
     "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/string_value.py": 2,
-    "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/generator_construction.py": 1,
     "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/in_flight_effect.py": 1,
     "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar/try_star_sugar.py": 1,
     "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/sugar_body/sugar_body.py": 2,
@@ -2191,7 +2190,7 @@ def test_independent_exact_span_audits_reconcile_every_live_row(ontology_snapsho
     )
 
     assert discovered_by_file == EXPECTED_RAW_BY_FILE
-    assert len(raw) == 116 and len(discovered_by_file) == 14
+    assert len(raw) == 115 and len(discovered_by_file) == 13
     assert len(annotations) == 99 and len({row.raw.path for row in annotations}) == 8
     assert categories["annotation_leaf"] == 98
     assert categories["type_alias_site"] == 1

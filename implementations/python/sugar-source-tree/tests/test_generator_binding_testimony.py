@@ -1,6 +1,6 @@
 """Generator bound entries seal with mandatory ConstructedValueTestimonyV1.
 
-Producer (seal_bound_binding_entry_v1 / seal_generator_binding_state_v1) mints
+Producer (seal_bound_binding_entry_v1) mints
 testimony from the bound Node's source fragment and actual value content.
 Successfully sealed entries wire without delayed BindingStateWireGap.
 """
@@ -19,11 +19,9 @@ from sugar_source_tree.binding_provenance import (
     ConstructedValueTestimonyV1,
 )
 from sugar_source_tree.binding_state import (
-    BindingEntryV1,
     BindingStateWireGap,
     RuntimeBindingEntryFactoryV1,
     seal_bound_binding_entry_v1,
-    seal_generator_binding_state_v1,
 )
 from sugar_source_tree.tree import SourceFile
 
@@ -151,18 +149,6 @@ def test_stale_coordinate_refuses_at_seal():
     )
     with pytest.raises(BindingStateWireGap, match="coordinate CID mismatch"):
         seal_bound_binding_entry_v1(stale)
-
-
-def test_seal_generator_binding_state_seals_entries_only():
-    _fn, _value, entry = _bound_entry("def gen():\n    bound = 7\n    yield bound\n")
-    resume = ("resume-stub",)
-    sealed = seal_generator_binding_state_v1((entry, "bound:x", *resume))
-    assert len(sealed) == 3
-    assert isinstance(sealed[0], BindingEntryV1)
-    assert sealed[0].require_constructed_value_testimony() is not None
-    assert sealed[0].wire()["state"]["kind"] == "bound"
-    assert sealed[1] == "bound:x"
-    assert sealed[2] == "resume-stub"
 
 
 def test_successfully_sealed_entry_never_delays_wire_gap():

@@ -1004,41 +1004,6 @@ _DYNAMIC_GLOBAL_WRITERS = frozenset(
 
 
 @dataclass(frozen=True)
-class _GeneratorNamedStepV1:
-    step: object
-
-
-@dataclass(frozen=True)
-class _GeneratorTryFinallyStepsV1:
-    steps: tuple[object, ...]
-
-
-@dataclass(frozen=True)
-class _GeneratorTryFinallyExpansionV1:
-    statement: object
-    # The suite's FinallyStepV1, or None when the cleanup is unnameable.
-    cleanup: object
-
-
-@dataclass(frozen=True)
-class _GeneratorStepAbsentV1:
-    # What the step vocabulary refuses, by name, where a statement's order
-    # of evaluation cannot be expressed as a step (``xs[(yield)] = yield v``);
-    # None names the statement by its kind.
-    observed: Optional[str] = None
-
-
-@dataclass(frozen=True)
-class _GeneratorCleanupTermsV1:
-    terms: tuple[object, ...]
-
-
-@dataclass(frozen=True)
-class _GeneratorCleanupAbsentV1:
-    pass
-
-
-@dataclass(frozen=True)
 class ControlConstructionContextV1:
     loop_targets: tuple[object, ...] = ()
     exception_slots: tuple[str, ...] = ()
@@ -10137,49 +10102,6 @@ class Module(Node):
                 )
 
 
-
-def generator_for_module_cid(statement):
-    """Authenticate module identity separately from content/span CID."""
-    from sugar_lift_python_source.canonical import cid_of_json
-
-    return cid_of_json(
-        {
-            "kind": "generator-for-module",
-            "schemaVersion": "1",
-            "filename": statement.unit.filename,
-            "sourceCid": statement.unit.source_cid,
-        }
-    )
-
-
-def generator_for_target_coordinates(statement):
-    """Mint one authenticated coordinate per lexical target leaf."""
-    from .binding_state import mint_binding_coordinate_v1
-
-    scope_owner_cid = generator_for_module_cid(statement)
-
-    def collect(target, path):
-        if isinstance(target, Name):
-            return (
-                mint_binding_coordinate_v1(
-                    scope_owner_cid=scope_owner_cid,
-                    binding_site=target.fragment,
-                    projection_path=("target", *path),
-                ),
-            )
-        if isinstance(target, (Tuple_, List)):
-            coordinates = []
-            for index, child in enumerate(target.elts):
-                nested = collect(child, (*path, index))
-                if nested is None:
-                    return None
-                coordinates.extend(nested)
-            return tuple(coordinates) if coordinates else None
-        return None
-
-    return collect(statement.target, ())
-
-
 def _definition_bridge_source_symbol(definition: "Node", *, owner: str) -> Optional[str]:
     """The ``bridgeSourceSymbol`` of a ``def``, ``class`` or ``lambda``: its
     one join symbol (``SourceUnit.definition_symbol``) when its unit is seated
@@ -10373,15 +10295,12 @@ class FunctionDef(Statement):
         substituted_body, _changed, final = FunctionDef._substitute_body_to_end(
             self, self.body, formal_scope
         )
-        generator_steps = self._source_visible_generator_steps_from(substituted_body)
+        # A generator function's body is constructed as every function
+        # body is: its call is the definition's coordinate and edge, joined
+        # at prove (#7757 step 6), so no call runs it here.
         body = SourceVisibleFunctionBodySugar(
-            (
-                ()
-                if generator_steps is not None
-                else tuple(
-                    self._sugar_body_statement(statement)
-                    for statement in substituted_body
-                )
+            tuple(
+                self._sugar_body_statement(statement) for statement in substituted_body
             ),
             self.fragment,
         )
@@ -10412,14 +10331,6 @@ class FunctionDef(Statement):
             ),
             body=body,
             owner=self,
-            generator_steps=generator_steps,
-            generator_step_fragment_cids=(
-                ()
-                if generator_steps is None
-                else tuple(
-                    statement.fragment.seal().cid for statement in substituted_body
-                )
-            ),
             captured_names=captured_names,
             captured_coordinates=captured_coordinates,
         )
@@ -10511,7 +10422,9 @@ class FunctionDef(Statement):
         substituted_body, _changed, final = FunctionDef._substitute_body_to_end(
             self, self.body, scope, edge_states=edges
         )
-        if self._source_visible_generator_steps_from(substituted_body) is not None:
+        if FunctionDef._owns_yield(substituted_body):
+            # A generator initializer runs nothing at the call; its body is
+            # constructed by its own universe (``_construct_sugar``).
             return SourceVisibleFunctionBodySugar((), self.fragment), None
         body = SourceVisibleFunctionBodySugar(
             tuple(
@@ -10520,927 +10433,6 @@ class FunctionDef(Statement):
             self.fragment,
         )
         return body, _read_where_the_body_ends(self, held, final, edges)
-
-    def _source_visible_generator_steps(self, scope):
-        substituted_body, _ = self._substitute_body(self.body, scope)
-        return self._source_visible_generator_steps_from(substituted_body)
-
-    def _source_visible_generator_steps_from(self, body):
-        if not FunctionDef._owns_yield(body):
-            return None
-        name_statement, _branch_steps = FunctionDef._generator_step_producer()
-        return FunctionDef._generator_top_level_steps(body, name_statement)
-
-    @staticmethod
-    def _generator_step_producer():
-        """The one generator step producer: ``(name_statement, branch_steps)``.
-
-        ``name_statement`` names one statement as a generator step (or says
-        it cannot); ``branch_steps`` names a suite (a branch, a ``try`` body,
-        a cleanup suite), or None when any statement in it is unnameable.  A
-        top-level generator body (``_generator_top_level_steps``) is named
-        here.  A ``with`` is unnameable here: a top-level body keeps it
-        opaque.
-        """
-        from sugar_lift_py_tests.generator_construction import (
-            AssignStepV1,
-            AttributeAssignStepV1,
-            AssertStepV1,
-            DefinitionDefaultsStepV1,
-            ImportFromStepV1,
-            ImportStepV1,
-            WhileStepV1,
-            FinallyStepV1,
-            ForStepV1,
-            IfStepV1,
-            InertStepV1,
-            RaiseStepV1,
-            ReturnStepV1,
-            TermStepV1,
-            YieldAssignStepV1,
-            YieldAssignUnpackV1,
-            YieldFromStepV1,
-            YieldStepV1,
-        )
-        from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
-        from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
-
-        absent_step = _GeneratorStepAbsentV1()
-        # ``xs[(yield)] = yield v``: Python evaluates the value, then each
-        # target's receiver and key, so the frame suspends at the value,
-        # resumes, evaluates the receiver, and suspends again inside the key
-        # before the store.  The one yield-assign step suspends once and then
-        # stores; a second suspension between the receiver and the store has
-        # no step to stand in, so the statement is refused by name.
-        store_target_suspends = _GeneratorStepAbsentV1(
-            "Assign whose store target suspends after its value"
-        )
-        absent_cleanup = _GeneratorCleanupAbsentV1()
-
-        def suspension_step(value):
-            """The suspension a ``yield`` / ``yield from`` expression performs
-            as a step, or None when a delegated iterable is not a constructed
-            term (``YieldFromStepV1`` requires one)."""
-            if isinstance(value, Yield):
-                operand = value.value
-                return YieldStepV1(None if operand is None else operand.sugar())
-            iterable = value.value.sugar()
-            if not isinstance(iterable, ConstructedTermSugar):
-                return None
-            occurrence = value.fragment
-            return YieldFromStepV1(iterable, occurrence, occurrence.seal().cid)
-
-        def projected_names(names, evaluation):
-            """``(name, key)`` per unpacked Name: its projection of the
-            statement's evaluation (``Assign._unpack_projection_binding``),
-            None for a statement never substituted."""
-            if not isinstance(evaluation, str):
-                return tuple((name, None) for name in names)
-            from sugar_lift_py_tests.temporal.temporal_context import projection_key
-
-            return tuple((name, projection_key(evaluation, name)) for name in names)
-
-        def statement_store_step(statement, suspension, store_of, bound):
-            """A yield assignment whose targets are the statement's own
-            sugar (``store_of``), built with its value read through the
-            statement's evaluation key; ``bound`` are the Names it binds,
-            which the resume reads out of what it bound, beside the keys its
-            store targets' own statements bind (``Assign._store_keeps``)."""
-            store_evaluation = statement._evaluation_key({})
-            store = store_of(
-                _place_read_sugar(store_evaluation, "yield", statement.fragment)
-            )
-            if store is None:
-                return None
-            return YieldAssignStepV1(
-                suspension,
-                bound,
-                statement.fragment.seal().cid,
-                occurrence=statement.fragment,
-                store=store,
-                store_evaluation=store_evaluation,
-                store_keeps=statement._store_keeps(),
-            )
-
-        def container_store_step(statement):
-            """``xs[i] = yield v`` on a name: substitution made it a
-            ``ContainerMutationStatement`` whose call stores the yield
-            (``value_first``: Python evaluates it before the receiver and
-            the key).  The resume runs the statement's mutation with the
-            resumed value read through the yield's projection of the
-            statement's key; the pair the mutation binds under that key
-            (``store_keeps``) is what every later read of the receiver reads
-            (``PathAfterCall``).  Refused by name when the receiver or key
-            suspends (``store_target_suspends``); None when the stored
-            value's own operand suspends."""
-            call = statement.evaluated[0] if statement.evaluated else None
-            if (
-                not isinstance(call, PathContainerCall)
-                or getattr(call, "value_first", False) is not True
-                or not call.args
-                or not isinstance(call.args[-1], (Yield, YieldFrom))
-            ):
-                return None
-            value = call.args[-1]
-            # The reads after the call (``evaluated[1:]``: the receiver after
-            # it, every holder's value) reach the call, and through it the
-            # stored yield itself; that is the value's suspension, not the
-            # target's (``besides``).
-            if FunctionDef._owns_yield(
-                (call.receiver, *call.args[:-1], *statement.evaluated[1:]),
-                besides=value,
-            ):
-                # ``xs[(yield)] = yield v``: the target suspends again after
-                # the value's resume (``store_target_suspends``).
-                return store_target_suspends
-            if value.value is not None and FunctionDef._owns_yield((value.value,)):
-                return None
-            evaluation = getattr(statement, "evaluation", None)
-            if not isinstance(evaluation, str):
-                return None
-            suspension = suspension_step(value)
-            if suspension is None:
-                return None
-            from sugar_lift_py_tests.temporal.temporal_context import projection_key
-
-            store_evaluation = projection_key(evaluation, "yield")
-            store = statement.storing_sugar(
-                _place_read_sugar(store_evaluation, "yield", statement.fragment)
-            )
-            if store is None:
-                return None
-            return YieldAssignStepV1(
-                suspension,
-                (),
-                statement.fragment.seal().cid,
-                occurrence=statement.fragment,
-                store=store,
-                store_evaluation=store_evaluation,
-                store_keeps=(evaluation,),
-            )
-
-        def read_modify_store_steps(statement, suspension):
-            """``o.x OP= yield v``: the one field store's read-modify-store
-            (``ReceiverFieldStoreStatement.read_modifies``) of a yield.
-            Python evaluates the receiver, reads the field, and only then
-            evaluates ``yield v``; the in-place operation and the store run
-            at the resume.  So the statement is two steps: the receiver and
-            the field's read, each evaluated where the statement stands and
-            bound under its key before the suspension
-            (``DefinitionDefaultsStepV1``: values bound under keys, no
-            name), then the suspension whose resume binds the sent value
-            under its key and runs the statement's keyed store over the
-            field's key (``keyed_store``'s ``current``), which binds the
-            result under the statement's key (``store_keeps``) that every
-            later read of the field reads.  A receiver that suspends itself
-            is refused by name (``store_target_suspends``)."""
-            from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
-            from sugar_lift_py_tests.temporal.temporal_context import projection_key
-
-            if FunctionDef._owns_yield((statement.receiver_value,)):
-                return store_target_suspends
-            evaluation = statement.evaluation
-            receiver = statement.receiver_value.sugar()
-            held = statement.post_state.receiver.sugar()
-            if not isinstance(receiver, ConstructedTermSugar) or not isinstance(
-                held, ConstructedTermSugar
-            ):
-                return None
-            attr = statement.post_state.attr
-            read_evaluation = projection_key(evaluation, f".{attr}")
-            sent_evaluation = projection_key(evaluation, "<sent>")
-            read = AttributeSugar(receiver=held, name=attr, site=statement.get_site)
-            before = DefinitionDefaultsStepV1(
-                (receiver, read),
-                (statement.receiver_evaluation, read_evaluation),
-                statement.fragment.seal().cid,
-            )
-            store = statement.keyed_store(
-                _place_read_sugar(sent_evaluation, "yield", statement.fragment),
-                current=_place_read_sugar(
-                    read_evaluation, f".{attr}", statement.get_site
-                ),
-            )
-            return _GeneratorTryFinallyStepsV1(
-                (
-                    before,
-                    YieldAssignStepV1(
-                        suspension,
-                        (),
-                        statement.fragment.seal().cid,
-                        occurrence=statement.fragment,
-                        store=store,
-                        store_evaluation=sent_evaluation,
-                        store_keeps=(evaluation,),
-                    ),
-                )
-            )
-
-        def yield_assign_step(statement):
-            """``<targets> = yield v`` / ``<targets> = yield from xs`` as
-            ``YieldAssignStepV1``, or None.
-
-            The targets an ordinary assignment binds by value: one Name
-            (``y = ...``, ``y: T = ...``), a chain of Names (``a = b =
-            ...``), or an unpack of Names, flat with at most one ``*Name``
-            (``a, b = ...``, ``a, *b = ...``) or a nested Name-only tree
-            with at most one ``*Name`` per level (``(a, (b, c)) = ...``,
-            ``(a, (b, *c)) = ...``).  Each Name carries the key substitution
-            bound its later reads to: ``target_evaluations`` for a Name or a
-            chain, the Name's projection of the statement's evaluation for
-            an unpack (``Assign._unpack_projection_binding``).
-
-            One store target (``o.x = ...``, ``o.x: T = ...``, ``d[k] =
-            ...``) is the store the statement's own sugar is, built by the
-            one store ladder (``_valued_store_target_sugar``; a substituted
-            field store is its ``ReceiverFieldStoreStatement.keyed_store``)
-            with its value read through the statement's evaluation key: the
-            resume binds the resumed value there and runs the store.
-
-            Targets that hold a store beside Names (``a = o.x = ...``,
-            ``a, o.x = ...``, ``a, (b, o.x) = ...``) are the statement's own
-            sugar the same way (``Assign.chained_store_sugar``,
-            ``Assign.unpack_store_sugar``), its Names read out of what it
-            bound.  A store on a decided local list/dict/set (``xs[i] =
-            ...``, which substitution made a ``ContainerMutationStatement``)
-            is that statement's mutation (``container_store_step``).  A
-            target that suspends itself (``xs[(yield)] = ...``) is refused by
-            name (``store_target_suspends``).
-            """
-            if isinstance(statement, ContainerMutationStatement):
-                return container_store_step(statement)
-            if isinstance(statement, ReceiverFieldStoreStatement):
-                targets = ()
-            elif isinstance(statement, Assign):
-                targets = statement.targets
-            elif isinstance(statement, AnnAssign) and statement.value is not None:
-                targets = (statement.target,)
-            else:
-                return None
-            operand = statement.value.value
-            if operand is not None and FunctionDef._owns_yield((operand,)):
-                # ``y = yield (yield v)``: the operand suspends first.
-                return None
-            if FunctionDef._owns_yield(tuple(targets), besides=statement.value):
-                # ``xs[(yield)] = yield v``: a target suspends again after the
-                # value (``store_target_suspends``).  A substituted place
-                # target reaching the statement's own yield is that value's
-                # suspension (``besides``), not a second one.
-                return store_target_suspends
-            suspension = suspension_step(statement.value)
-            if suspension is None:
-                return None
-            if (
-                isinstance(statement, ReceiverFieldStoreStatement)
-                and statement.read_modifies()
-            ):
-                return read_modify_store_steps(statement, suspension)
-            if isinstance(statement, ReceiverFieldStoreStatement) or (
-                len(targets) == 1 and isinstance(targets[0], (Attribute, Subscript))
-            ):
-                store_evaluation = statement._evaluation_key({})
-                resumed = _place_read_sugar(
-                    store_evaluation, "yield", statement.fragment
-                )
-                if isinstance(statement, ReceiverFieldStoreStatement):
-                    store = statement.keyed_store(resumed)
-                else:
-                    store = _valued_store_target_sugar(
-                        targets[0], resumed, statement.fragment
-                    )
-                if store is None:
-                    return None
-                return YieldAssignStepV1(
-                    suspension,
-                    (),
-                    statement.fragment.seal().cid,
-                    occurrence=statement.fragment,
-                    store=store,
-                    store_evaluation=store_evaluation,
-                )
-            unpack = None
-            evaluation = getattr(statement, "evaluation", None)
-            if all(isinstance(target, Name) for target in targets):
-                keys = dict(statement.target_evaluations())
-                bound = tuple((target.id, keys.get(target.id)) for target in targets)
-            elif len(targets) > 1 and all(
-                isinstance(target, (Name, Attribute, Subscript)) for target in targets
-            ):
-                # ``a = o.x = yield v``: the chain is the statement's own
-                # sugar; each Name is read out of what it bound.
-                keys = dict(statement.target_evaluations())
-                return statement_store_step(
-                    statement,
-                    suspension,
-                    statement.chained_store_sugar,
-                    tuple(
-                        (target.id, keys.get(target.id))
-                        for target in targets
-                        if isinstance(target, Name)
-                    ),
-                )
-            elif (
-                len(targets) == 1
-                and isinstance(targets[0], (Tuple_, List))
-                and targets[0].elts
-            ):
-                target = targets[0]
-                if all(isinstance(item, Name) for item in target.elts):
-                    unpack = YieldAssignUnpackV1(
-                        tuple(item.id for item in target.elts)
-                    )
-                elif statement._flat_starred_name_parts(target) is not None:
-                    prefix, star_name, suffix = statement._flat_starred_name_parts(
-                        target
-                    )
-                    unpack = YieldAssignUnpackV1(prefix, star_name, suffix)
-                else:
-                    pattern = statement._name_only_nested_unpack_pattern(target)
-                    if pattern is None:
-                        # ``a, o.x = yield v``: the unpack is the statement's
-                        # own sugar; each Name is read out of what it bound.
-                        return statement_store_step(
-                            statement,
-                            suspension,
-                            statement.unpack_store_sugar,
-                            projected_names(
-                                tuple(_unpack_target_names(target)), evaluation
-                            ),
-                        )
-                    from sugar_lift_py_tests.sugar.nested_dynamic_unpack_assign_sugar import (
-                        flatten_pattern_names,
-                    )
-
-                    unpack = YieldAssignUnpackV1(
-                        flatten_pattern_names(pattern), pattern=pattern
-                    )
-                names = (
-                    *unpack.prefix_names,
-                    *(() if unpack.star_name is None else (unpack.star_name,)),
-                    *unpack.suffix_names,
-                )
-                bound = projected_names(names, evaluation)
-            else:
-                return None
-            return YieldAssignStepV1(
-                suspension,
-                bound,
-                statement.fragment.seal().cid,
-                unpack=unpack,
-                occurrence=statement.fragment,
-            )
-
-        def name_statement(statement):
-            """One nameable step, or None when the vocabulary cannot perform it.
-
-            None is not a skip: the caller either keeps a containing `If`
-            opaque or appends an honest `OpaqueStepV1`. Unhandled kinds stay
-            loud SUGAR NOT WRITTEN at transition — never silently advanced.
-
-            Recurses into suspension-owning ``If`` and nested ``try/finally``
-            so real/renamed generator managers advance through source-visible
-            control to their first yield without consumer reconstruction.
-            """
-            if isinstance(statement, Expr) and isinstance(
-                statement.value, (Yield, YieldFrom)
-            ):
-                step = suspension_step(statement.value)
-                if step is None:
-                    return absent_step
-                return _GeneratorNamedStepV1(step)
-            if isinstance(
-                statement, (Assign, AnnAssign, ReceiverFieldStoreStatement)
-            ) and isinstance(statement.value, (Yield, YieldFrom)):
-                # The suspension, then the assignment of the value its resume
-                # brings, bound to (or stored through) each target as an
-                # ordinary assignment binds it (``YieldAssignStepV1``).
-                # ``o.x OP= yield v`` reads the field first: its read step,
-                # then that suspension (``read_modify_store_steps``).
-                step = yield_assign_step(statement)
-                if step is None:
-                    return absent_step
-                if isinstance(
-                    step, (_GeneratorStepAbsentV1, _GeneratorTryFinallyStepsV1)
-                ):
-                    return step
-                return _GeneratorNamedStepV1(step)
-            if isinstance(
-                statement, ContainerMutationStatement
-            ) and FunctionDef._owns_yield((statement,)):
-                # ``xs[i] = yield v`` on a decided local container: the
-                # suspension, then the statement's mutation storing the
-                # resumed value (``YieldAssignStepV1``).
-                step = yield_assign_step(statement)
-                if step is None:
-                    return absent_step
-                if isinstance(step, _GeneratorStepAbsentV1):
-                    return step
-                return _GeneratorNamedStepV1(step)
-            if isinstance(statement, Return):
-                return _GeneratorNamedStepV1(
-                    ReturnStepV1(
-                        None if statement.value is None else statement.value.sugar()
-                    )
-                )
-            if isinstance(statement, Raise) and not FunctionDef._owns_yield((statement,)):
-                # Validation arms (``if bad: raise …``) and cleanup raises —
-                # RaiseSugar rides the step; transition halts with the effect.
-                # A grouped raise (``GroupedRaiseSugar``) is not a RaiseStepV1:
-                # its testimony is a RaiseSugar's.
-                raise_sugar = statement.sugar()
-                if not isinstance(raise_sugar, RaiseSugar):
-                    return absent_step
-                return _GeneratorNamedStepV1(
-                    RaiseStepV1(
-                        raise_sugar,
-                        statement.fragment.seal().cid,
-                    )
-                )
-            if (
-                isinstance(statement, Expr)
-                and isinstance(statement.value, Constant)
-                and not FunctionDef._owns_yield((statement,))
-            ):
-                # EVALUATED AND DISCARDED IS NOTHING. A bare `Constant`
-                # expression -- the docstring case -- owes no effect, no
-                # binding and no suspension, so calling it opaque made the
-                # machine refuse at a statement that asks for nothing and name
-                # the WRONG blocker. It is stepped, not performed.
-                return _GeneratorNamedStepV1(InertStepV1(statement.kind))
-            if isinstance(statement, Pass) and not FunctionDef._owns_yield((statement,)):
-                return _GeneratorNamedStepV1(InertStepV1(statement.kind))
-            if (
-                isinstance(statement, (FunctionDef, AsyncFunctionDef))
-                and not statement.decorators
-            ):
-                # A ``def`` statement binds its name (substitution bound every
-                # later read of it to the definition); its body runs at a
-                # call, as ``_sugar_body_statement`` reduces it.  Without
-                # defaults it runs nothing.  With defaults it evaluates each,
-                # once, here, and binds it under its key
-                # (``_definition_defaults_sugar``), as the plain body's
-                # statement does; a default that suspends is refused by name.
-                # An annotation Python evaluates here
-                # (``_evaluated_annotations``) is an evaluation the machine
-                # has no step for: refused by name, never dropped.
-                if _evaluated_annotations(statement):
-                    return _GeneratorStepAbsentV1("def whose annotations are evaluated")
-                defaults = tuple(
-                    param.default
-                    for param in statement.params
-                    if param.default is not None
-                )
-                if not defaults:
-                    statement.discharge_by_substitution()
-                    return _GeneratorNamedStepV1(InertStepV1(statement.kind))
-                if FunctionDef._owns_yield(defaults):
-                    return _GeneratorStepAbsentV1("def whose default suspends")
-                defaults_sugar = _definition_defaults_sugar(statement)
-                if not all(
-                    isinstance(value, ConstructedTermSugar)
-                    for value in defaults_sugar.values
-                ):
-                    return absent_step
-                statement.discharge_by_substitution()
-                return _GeneratorNamedStepV1(
-                    DefinitionDefaultsStepV1(
-                        defaults_sugar.values,
-                        tuple(key for key, _index in defaults_sugar.evaluations),
-                        statement.fragment.seal().cid,
-                    )
-                )
-            if (
-                isinstance(statement, Expr)
-                and not FunctionDef._owns_yield((statement,))
-                and not isinstance(statement.value, (Yield, YieldFrom))
-            ):
-                # Bare expression statements (cleanup / setup calls): admit the
-                # *value* as ConstructedTermSugar — never ExprStatementSugar.
-                value_sugar = statement.value.sugar()
-                if isinstance(value_sugar, ConstructedTermSugar):
-                    return _GeneratorNamedStepV1(
-                        TermStepV1(value_sugar, statement.fragment.seal().cid)
-                    )
-                return absent_step
-            if (
-                isinstance(statement, Assign)
-                and not FunctionDef._owns_yield((statement,))
-                and len(statement.targets) == 1
-                and isinstance(statement.targets[0], Name)
-            ):
-                return _GeneratorNamedStepV1(
-                    AssignStepV1(
-                        statement.targets[0].id,
-                        statement.value.sugar(),
-                        statement.fragment.seal().cid,
-                        evaluation=dict(statement.target_evaluations()).get(
-                            statement.targets[0].id
-                        ),
-                    )
-                )
-            if (
-                isinstance(statement, Assign)
-                and not FunctionDef._owns_yield((statement,))
-                and len(statement.targets) == 1
-                and isinstance(statement.targets[0], Attribute)
-            ):
-                target = statement.targets[0]
-                return _GeneratorNamedStepV1(
-                    AttributeAssignStepV1(
-                        receiver=target.value.sugar(),
-                        attr=target.attr,
-                        value=statement.value.sugar(),
-                        fragment_cid=statement.fragment.seal().cid,
-                        target_cid=target.fragment.seal().cid,
-                        occurrence=target.fragment,
-                    )
-                )
-            if (
-                isinstance(statement, ReceiverFieldStoreStatement)
-                and not statement.read_modifies()
-                and not FunctionDef._owns_yield((statement,))
-            ):
-                # The one field store, substituted: the same step over the
-                # receiver it stores into.
-                site = statement.target_site
-                return _GeneratorNamedStepV1(
-                    AttributeAssignStepV1(
-                        receiver=statement.post_state.receiver.sugar(),
-                        attr=statement.post_state.attr,
-                        value=statement.value.sugar(),
-                        fragment_cid=statement.fragment.seal().cid,
-                        target_cid=site.seal().cid,
-                        occurrence=site,
-                    )
-                )
-            if (
-                isinstance(statement, AnnAssign)
-                and not FunctionDef._owns_yield((statement,))
-                and isinstance(statement.target, Name)
-                and statement.value is not None
-            ):
-                return _GeneratorNamedStepV1(
-                    AssignStepV1(
-                        statement.target.id,
-                        statement.value.sugar(),
-                        statement.fragment.seal().cid,
-                        evaluation=dict(statement.target_evaluations()).get(
-                            statement.target.id
-                        ),
-                    )
-                )
-            if isinstance(statement, Assert) and not FunctionDef._owns_yield((statement,)):
-                from sugar_lift_py_tests.context_manager_resolution import (
-                    SourceFragmentCoordinateV1,
-                )
-
-                span = statement.line_col_span()
-                return _GeneratorNamedStepV1(
-                    AssertStepV1(
-                        assert_sugar=statement.sugar(),
-                        assert_cid=statement.fragment.seal().cid,
-                        assert_coordinate=SourceFragmentCoordinateV1(
-                            statement.unit.source_cid,
-                            span.start_line,
-                            span.start_col,
-                            span.end_line,
-                            span.end_col,
-                        ),
-                        occurrence=statement.fragment,
-                    )
-                )
-            if isinstance(statement, ImportFrom) and not FunctionDef._owns_yield((statement,)):
-                from sugar_lift_py_tests.context_manager_resolution import (
-                    SourceFragmentCoordinateV1,
-                )
-
-                span = statement.line_col_span()
-                return _GeneratorNamedStepV1(
-                    ImportFromStepV1(
-                        import_sugar=statement.sugar(),
-                        coordinate=SourceFragmentCoordinateV1(
-                            statement.unit.source_cid,
-                            span.start_line,
-                            span.start_col,
-                            span.end_line,
-                            span.end_col,
-                        ),
-                        occurrence=statement.fragment,
-                    )
-                )
-            if isinstance(statement, Import) and not FunctionDef._owns_yield((statement,)):
-                from sugar_lift_py_tests.context_manager_resolution import (
-                    SourceFragmentCoordinateV1,
-                )
-
-                span = statement.line_col_span()
-                return _GeneratorNamedStepV1(
-                    ImportStepV1(
-                        import_sugar=statement.sugar(),
-                        coordinate=SourceFragmentCoordinateV1(
-                            statement.unit.source_cid,
-                            span.start_line,
-                            span.start_col,
-                            span.end_line,
-                            span.end_col,
-                        ),
-                        occurrence=statement.fragment,
-                    )
-                )
-            if isinstance(statement, While) and not statement.orelse:
-                from sugar_lift_py_tests.context_manager_resolution import (
-                    SourceFragmentCoordinateV1,
-                )
-
-                body_steps = branch_steps(statement.body)
-                guard = statement.test.sugar()
-                if body_steps is None or not isinstance(guard, ConstructedTermSugar):
-                    return absent_step
-                span = statement.line_col_span()
-                return _GeneratorNamedStepV1(
-                    WhileStepV1(
-                        guard=guard,
-                        body_steps=body_steps,
-                        fragment_cid=statement.fragment.seal().cid,
-                        coordinate=SourceFragmentCoordinateV1(
-                            statement.unit.source_cid,
-                            span.start_line,
-                            span.start_col,
-                            span.end_line,
-                            span.end_col,
-                        ),
-                        occurrence=statement.fragment,
-                        guard_site=statement.test.fragment,
-                    )
-                )
-            if isinstance(statement, If):
-                # Suspension-owning and pre-yield guarded If: both sides fully
-                # constructed (recursive), guard + If occurrence CID. Partial
-                # branches refuse the whole If as Opaque (never skip inside).
-                then_body = branch_steps(statement.body)
-                else_body = branch_steps(statement.orelse)
-                if then_body is None or else_body is None:
-                    return absent_step
-                return _GeneratorNamedStepV1(
-                    IfStepV1(
-                        statement.test.sugar(),
-                        then_body,
-                        else_body,
-                        statement.fragment.seal().cid,
-                        statement.test.fragment,
-                    )
-                )
-            if (
-                isinstance(statement, For)
-                and not statement.orelse
-                and not FunctionDef._owns_yield((statement,))
-            ):
-                body_steps = branch_steps(statement.body)
-                target_coordinates = generator_for_target_coordinates(statement)
-                iterable = statement.iter.sugar()
-                if (
-                    body_steps is None
-                    or target_coordinates is None
-                    or not isinstance(iterable, ConstructedTermSugar)
-                ):
-                    return absent_step
-                return _GeneratorNamedStepV1(
-                    ForStepV1(
-                        iterable=iterable,
-                        target_coordinates=target_coordinates,
-                        body_steps=body_steps,
-                        module_cid=generator_for_module_cid(statement),
-                        fragment_cid=statement.fragment.seal().cid,
-                        occurrence=statement.fragment,
-                    )
-                )
-            if (
-                isinstance(statement, Try)
-                and statement.handlers
-                and not statement.orelse
-                and not statement.finalbody
-                and len(statement.body) == 1
-                and isinstance(statement.body[0], Expr)
-                and isinstance(statement.body[0].value, Yield)
-                and (
-                    statement.body[0].value.value is None
-                    or isinstance(statement.body[0].value.value, (Name, Constant))
-                )
-                and all(
-                    not FunctionDef._owns_yield(handler.body)
-                    and all(
-                        isinstance(item, (Pass, Raise, Return))
-                        or (
-                            isinstance(item, Expr)
-                            and not isinstance(item.value, (Yield, YieldFrom))
-                        )
-                        for item in handler.body
-                    )
-                    for handler in statement.handlers
-                )
-            ):
-                # ``try: yield v`` / ``except ...``: the arms a generator
-                # manager suppresses with. Arms that bind nothing keep the
-                # frame's binding state exact after an arm completes.
-                from sugar_lift_py_tests.generator_construction import (
-                    YieldExceptStepV1,
-                )
-
-                handlers = statement._authenticated_handler_specs()
-                if handlers is None:
-                    return absent_step
-                value = statement.body[0].value.value
-                return _GeneratorNamedStepV1(
-                    YieldExceptStepV1(
-                        YieldStepV1(None if value is None else value.sugar()),
-                        handlers,
-                        statement.fragment.seal().cid,
-                        statement.fragment,
-                    )
-                )
-            if (
-                isinstance(statement, Try)
-                and not statement.handlers
-                and not statement.orelse
-                and statement.finalbody
-            ):
-                # try/finally without handlers: fully nameable body+cleanup is
-                # one atomic producer unit; partial nameability expands body
-                # statement-by-statement so a yield is never swallowed by a
-                # single Opaque Try when only a peer loop is unnameable.
-                body_steps = branch_steps(statement.body)
-                cleanup_step = finally_step(statement.finalbody)
-                if body_steps is not None and cleanup_step is not None:
-                    return _GeneratorTryFinallyStepsV1(
-                        compose_finally(body_steps, cleanup_step)
-                    )
-                if body_steps is None and FunctionDef._owns_yield(statement.body):
-                    return _GeneratorTryFinallyExpansionV1(statement, cleanup_step)
-                return absent_step
-            return absent_step
-
-        def finally_step(finalbody):
-            """A handler-free ``finally`` suite as one ``FinallyStepV1``, or None.
-
-            Cleanup the steps name runs through the cleanup sub-machine
-            (``cleanup_steps``), a term-only call included: the statements
-            path (``reduce_block_to_exitset``) can complete a call without
-            reducing a source-visible body (#7530).  ``pass`` is skipped, so a
-            pass-only suite is empty cleanup.  A suite the steps cannot name
-            whose statements are all constructed terms is the statements
-            path's.
-            """
-            cleanup_steps = branch_steps(
-                tuple(item for item in finalbody if not isinstance(item, Pass))
-            )
-            if cleanup_steps is not None:
-                return FinallyStepV1((), cleanup_steps=cleanup_steps)
-            cleanup = cleanup_terms(finalbody)
-            if isinstance(cleanup, _GeneratorCleanupTermsV1):
-                return FinallyStepV1(cleanup.terms)
-            return None
-
-        def branch_steps(body):
-            """Steps for one branch/suite, or None if any shape is unnameable.
-
-            None keeps the containing If/try opaque. A partially-nameable
-            branch is not provable: never skip unsupported shapes inside.
-            """
-            collected = []
-            for nested in body:
-                produced = name_statement(nested)
-                if isinstance(produced, _GeneratorStepAbsentV1):
-                    return None
-                if isinstance(produced, _GeneratorTryFinallyStepsV1):
-                    collected.extend(produced.steps)
-                    continue
-                if isinstance(produced, _GeneratorNamedStepV1):
-                    collected.append(produced.step)
-                    continue
-                return None
-            return tuple(collected)
-
-        def compose_finally(body_steps, cleanup_step):
-            """Seat cleanup before every terminal face and on fall-through."""
-            composed = []
-            for step in body_steps:
-                if isinstance(step, IfStepV1):
-                    step = IfStepV1(
-                        step.guard,
-                        compose_finally_exits(step.then_steps, cleanup_step),
-                        compose_finally_exits(step.else_steps, cleanup_step),
-                        step.fragment_cid,
-                        step.guard_site,
-                    )
-                if isinstance(step, (ReturnStepV1, RaiseStepV1)):
-                    composed.append(cleanup_step)
-                composed.append(step)
-            composed.append(cleanup_step)
-            return tuple(composed)
-
-        def compose_finally_exits(branch, cleanup_step):
-            """Compose only exits in a branch; branch fall-through stays in try."""
-            composed = []
-            for step in branch:
-                if isinstance(step, IfStepV1):
-                    step = IfStepV1(
-                        step.guard,
-                        compose_finally_exits(step.then_steps, cleanup_step),
-                        compose_finally_exits(step.else_steps, cleanup_step),
-                        step.fragment_cid,
-                        step.guard_site,
-                    )
-                if isinstance(step, (ReturnStepV1, RaiseStepV1)):
-                    composed.append(cleanup_step)
-                composed.append(step)
-            return tuple(composed)
-
-        def cleanup_terms(finalbody):
-            """Finally payloads: ConstructedTermSugar only (no ExprStatementSugar)."""
-            terms = []
-            for item in finalbody:
-                if isinstance(item, Pass):
-                    continue
-                if isinstance(item, For):
-                    # A structured cleanup step is not a term. Let the typed
-                    # step path below own it without probing ``For.sugar``.
-                    return absent_cleanup
-                if isinstance(item, Expr) and not FunctionDef._owns_yield((item,)):
-                    value_sugar = item.value.sugar()
-                    if isinstance(value_sugar, ConstructedTermSugar):
-                        terms.append(value_sugar)
-                        continue
-                    return absent_cleanup
-                if isinstance(item, Raise) and not FunctionDef._owns_yield((item,)):
-                    # Raise is a step, not a Finally term; refuse pure-term suite.
-                    return absent_cleanup
-                sugar = item.sugar()
-                if isinstance(sugar, ConstructedTermSugar):
-                    terms.append(sugar)
-                    continue
-                return absent_cleanup
-            return _GeneratorCleanupTermsV1(tuple(terms))
-
-        return name_statement, branch_steps
-
-    @staticmethod
-    def _generator_top_level_steps(body, name_statement):
-        """A generator body's steps: each statement ``name_statement`` names,
-        an honest ``OpaqueStepV1`` for each it cannot, and a closing
-        ``ReturnStepV1`` (falling off the end returns None)."""
-        from sugar_lift_py_tests.generator_construction import (
-            OpaqueStepV1,
-            ReturnStepV1,
-        )
-
-        steps = []
-
-        def append_statement(statement):
-            produced = name_statement(statement)
-            if isinstance(produced, _GeneratorTryFinallyStepsV1):
-                steps.extend(produced.steps)
-                return
-            if isinstance(produced, _GeneratorTryFinallyExpansionV1):
-                for nested in produced.statement.body:
-                    append_statement(nested)
-                if produced.cleanup is not None:
-                    steps.append(produced.cleanup)
-                else:
-                    steps.append(
-                        OpaqueStepV1(
-                            "Finally",
-                            carries_suspension=False,
-                        )
-                    )
-                return
-            if isinstance(produced, _GeneratorNamedStepV1):
-                steps.append(produced.step)
-                return
-            if isinstance(statement, If):
-                # Branch held an unnameable shape. Keep the whole If opaque,
-                # never skip unsupported shapes inside the arms.
-                steps.append(
-                    OpaqueStepV1(
-                        statement.kind,
-                        carries_suspension=FunctionDef._owns_yield((statement,)),
-                    )
-                )
-                return
-            # A refusal by name (``_GeneratorStepAbsentV1.observed``) names
-            # what the vocabulary cannot perform; otherwise the kind does.
-            observed = getattr(produced, "observed", None)
-            steps.append(
-                OpaqueStepV1(
-                    observed if isinstance(observed, str) else statement.kind,
-                    carries_suspension=FunctionDef._owns_yield((statement,)),
-                )
-            )
-
-        for statement in body:
-            append_statement(statement)
-        if not steps or not isinstance(steps[-1], ReturnStepV1):
-            steps.append(ReturnStepV1())
-        return tuple(steps)
 
     @staticmethod
     def _owns_yield(body, besides=None) -> bool:
@@ -11608,8 +10600,8 @@ class FunctionDef(Statement):
 
     def _substitute_body(self, statements: tuple, scope: BindingMap):
         """Every door that substitutes this function's body (its own sugar,
-        its call frame, a constructor's initializer, a generator's steps)
-        substitutes it here, so each one reads a module global the same way:
+        its call frame, a constructor's initializer) substitutes it here, so
+        each one reads a module global the same way:
         as the module binds it where the function is called
         (``_module_global_references``), not as the name."""
         new_items, changed, _final = FunctionDef._substitute_body_to_end(
@@ -12102,14 +11094,6 @@ class AsyncFunctionDef(Statement):
     def _make_coordinate_ref(self, *args, **kwargs):
         """Frame-door helper shared with FunctionDef (see source_visible_call_frame)."""
         return FunctionDef._make_coordinate_ref(self, *args, **kwargs)
-
-    def _source_visible_generator_steps_from(self, *args, **kwargs):
-        """Frame-door helper shared with FunctionDef (see source_visible_call_frame)."""
-        return FunctionDef._source_visible_generator_steps_from(self, *args, **kwargs)
-
-    def _source_visible_generator_steps(self, *args, **kwargs):
-        """Frame-door helper shared with FunctionDef (see source_visible_call_frame)."""
-        return FunctionDef._source_visible_generator_steps(self, *args, **kwargs)
 
     def lacks_captured_binding_testimony(self, covered=frozenset()) -> bool:
         """Frame-door helper shared with FunctionDef (see source_visible_call_frame)."""
@@ -15434,22 +14418,6 @@ class Assign(Statement):
             for ordinal, target in enumerate(_store_leaves(self.targets))
         )
 
-    def _store_keeps(self) -> tuple:
-        """The keys this statement's store statements bind that a later read
-        reads (``ContainerMutationStatement``'s pair, a field store's
-        value): what a yield assignment's step keeps past the store
-        (``YieldAssignStepV1.store_keeps``)."""
-        keeps = []
-        for store in self._store_statements():
-            evaluation = getattr(store, "evaluation", None)
-            if not isinstance(evaluation, str):
-                continue
-            if isinstance(
-                store, (ContainerMutationStatement, ReceiverFieldStoreStatement)
-            ):
-                keeps.append(evaluation)
-        return tuple(keeps)
-
     def _dynamic_unpack_target(self):
         """The Tuple/List target of an unpack whose right-hand side is not a
         display, or None.  Substitution cannot pair such a target with
@@ -15691,9 +14659,9 @@ class Assign(Statement):
         # the receiver's post-state, which every later read of the object
         # reads, holds a reference to that key, never ``value`` itself
         # (``KeyedStoreSugar``).  ``o.x = yield v`` puts the value the resume
-        # brings there (``YieldAssignStepV1``), read through the same key:
-        # never the yield node, which would ride every later read of ``o`` as
-        # a suspension this statement does not own.
+        # brings there, read through the same key: never the yield node,
+        # which would ride every later read of ``o`` as a suspension this
+        # statement does not own.
         evaluation = self._evaluation_key(scope)
         stored = _evaluation_ref(
             self,
@@ -20859,8 +19827,6 @@ class Try(Statement):
         The one roster ``TrySugar`` routes through. ``None`` is an empty
         ``except ()``, which has no honest matcher; an arm type without an
         authenticated exception identity stays a loud ``SugarNotWritten``.
-        Shared with the generator step producer so a generator manager's
-        ``try: yield / except`` arms match exactly like an ordinary try.
         """
         handler_specs = []
         for handler in self.handlers:
@@ -21528,10 +20494,9 @@ class ReceiverFieldStoreStatement(Statement):
     def _construct_sugar(self):
         return self.keyed_store(self.value.sugar())
 
-    def keyed_store(self, value_sugar, current=None):
+    def keyed_store(self, value_sugar):
         """The statement's keyed store evaluating ``value_sugar``: its own
-        right-hand side, or, for ``o.x = yield v``, the read of the value the
-        resume binds under the statement's key (``YieldAssignStepV1``).
+        right-hand side.
 
         The store is the one field store (``ReceiverFieldStoreSugar``): the
         receiver's value decides it at reduce, and its value is the read of
@@ -21539,12 +20504,8 @@ class ReceiverFieldStoreStatement(Statement):
         receiver first and binds it under ``receiver_evaluation``; its value
         is the field's in-place result (``AttributeAugAssignSugar``) of the
         field's read off that receiver (the one attribute lookup) and
-        ``value_sugar``.  With ``current`` (``o.x OP= yield v`` in a
-        generator) the receiver was evaluated and the field read before the
-        suspension, as Python does them, each bound under its key: the store
-        evaluates neither again and ``current`` is the read of the field's
-        key.  After the store, each name the store rebinds is written to its
-        state under its key (``writes``)."""
+        ``value_sugar``.  After the store, each name the store rebinds is
+        written to its state under its key (``writes``)."""
         from sugar_lift_py_tests.sugar.assign_sugar import KeyedStoreSugar
         from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
             ReceiverFieldStoreSugar,
@@ -21586,11 +20547,9 @@ class ReceiverFieldStoreStatement(Statement):
         from sugar_lift_py_tests.sugar.augassign_sugar import AttributeAugAssignSugar
 
         op = self.op
-        read_before = current is not None
-        if not read_before:
-            current = AttributeSugar(
-                receiver=receiver, name=post_state.attr, site=self.get_site
-            )
+        current = AttributeSugar(
+            receiver=receiver, name=post_state.attr, site=self.get_site
+        )
         return KeyedStoreSugar(
             value=AttributeAugAssignSugar(
                 current=current,
@@ -21603,8 +20562,8 @@ class ReceiverFieldStoreStatement(Statement):
             store=store,
             evaluation=self.evaluation,
             site=self.fragment,
-            receiver=None if read_before else self.receiver_value.sugar(),
-            receiver_evaluation=None if read_before else self.receiver_evaluation,
+            receiver=self.receiver_value.sugar(),
+            receiver_evaluation=self.receiver_evaluation,
             writes=writes,
         )
 
@@ -27565,7 +26524,7 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
             uncarried = True
         else:
             frame, refusal = _definition_call_frame(definition)
-            if frame is not None and frame.generator_steps is not None:
+            if frame is not None and FunctionDef._owns_yield(definition.body):
                 # A generator function, likewise.
                 frame, uncarried = None, True
     finally:

@@ -5,7 +5,6 @@ from dataclasses import dataclass, replace
 import pytest
 
 from sugar_lift_py_tests.ir import ctor, str_const
-from sugar_lift_py_tests.generator_construction import YieldStepV1
 from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
 from sugar_lift_py_tests.sugar.binop_sugar import BinOpSugar
 from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
@@ -107,20 +106,6 @@ def _call(*, site=None, args=("a", "b"), keywords=(), definition="d"):
 def test_missing_constructed_term_obligation_refuses_at_instantiation():
     with pytest.raises(TypeError, match="abstract method 'to_term'"):
         _MissingTerm()
-
-
-def test_generator_payload_admission_refuses_arbitrary_sugar():
-    """A step's payload is a nested term slot, closed by the one door: the
-    refusal names the slot and what it was handed, never a bare TypeError."""
-    from sugar_source_tree.panic import SugarNotWritten
-
-    assert YieldStepV1(_Operand("good")).value == _Operand("good")
-    with pytest.raises(SugarNotWritten) as refused:
-        YieldStepV1(_ArbitrarySugar())
-    assert refused.value.owner == "YieldStepV1.value"
-    assert refused.value.observed == (
-        "YieldStepV1.value is _ArbitrarySugar, not ConstructedTermSugar"
-    )
 
 
 def test_if_expression_arm_is_refused_by_the_one_door_at_its_site():

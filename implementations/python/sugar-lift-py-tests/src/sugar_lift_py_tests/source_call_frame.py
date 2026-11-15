@@ -322,8 +322,6 @@ class SourceVisibleCallFrameV1:
     runtime_entries: tuple[BindingEntryV1, ...] = field(
         default=(), compare=False, repr=False
     )
-    generator_steps: tuple | None = field(default=None, compare=False, repr=False)
-    generator_step_fragment_cids: tuple[str, ...] = ()
     #: ``X = 1 // 0`` at module level: the module never finishes importing,
     #: so a call into any frame of it is that halt.  The one ``Halted`` arm
     #: of the first such constant in source order, reduced once per module.
@@ -414,7 +412,10 @@ class SourceVisibleCallFrameV1:
             ],
             "parameterKinds": list(self.parameter_kinds),
             "defaultFragmentCids": list(self.default_fragment_cids),
-            "generatorStepFragmentCids": list(self.generator_step_fragment_cids),
+            # A generator function's body is constructed as every body is
+            # (#7757 step 6); the preimage keeps the slot its steps' CIDs
+            # held, constant, so no other frame CID moves.
+            "generatorStepFragmentCids": [],
             # A decorated module name is bound by the one decorator
             # application (``DecoratedDefinitionRef``), never by a frame; the
             # preimage keeps its constant slot so no frame CID moves.
@@ -790,12 +791,6 @@ class SourceVisibleCallFrameV1:
                 self.formal_coordinates, bound, supplied_testimonies, strict=True
             )
         )
-        scope = dict(zip(self.parameters, entries, strict=True))
-        generator_steps = (
-            None
-            if self.generator_steps is None
-            else self.owner._source_visible_generator_steps(scope)
-        )
         # Specialize the body by inlining the exact typed actual Nodes for each
         # formal. A source-visible callback (a formal invoked as ``fn(value)``)
         # then reduces through the actual callable's own construction, rather
@@ -824,7 +819,6 @@ class SourceVisibleCallFrameV1:
         return replace(
             self,
             runtime_entries=entries,
-            generator_steps=generator_steps,
             body=body,
         )
 

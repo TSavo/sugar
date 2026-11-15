@@ -30,8 +30,7 @@ def truth_of(value, site, *, owner: str):
     Every truth question takes the operand's truth through here: ``a and b``
     / ``a or b`` (on each non-final operand), ``not x``, the negation in
     ``a != b`` and ``a not in b``, an ``if`` / ``while`` / ``assert`` /
-    conditional-expression test, a generator body's branch guard
-    (``GeneratorConstructionV1._guard_truth``), each arm of a guarded value
+    conditional-expression test, each arm of a guarded value
     (``GuardedValue.truth``), a ground call
     result's dug body (``CallSiteValue._construct_decidable_truth``), and the
     native operation carrier's ``truth`` / ``boolop_truth`` / ``unary_truth``

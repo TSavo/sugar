@@ -1282,24 +1282,6 @@ def seal_bound_binding_entry_v1(
     return sealed
 
 
-def seal_generator_binding_state_v1(
-    binding_state: tuple[object, ...],
-) -> tuple[object, ...]:
-    """Seal every bound BindingEntryV1 in a generator binding-state tuple.
-
-    Non-entry items (resume bindings, primitive test stubs) pass through.
-    Each bound entry exits with mandatory ConstructedValueTestimonyV1, or the
-    producer gaps loud before the generator instance is allocated.
-    """
-    sealed: list[object] = []
-    for item in binding_state:
-        if isinstance(item, BindingEntryV1):
-            sealed.append(seal_bound_binding_entry_v1(item))
-        else:
-            sealed.append(item)
-    return tuple(sealed)
-
-
 def node_construction_shape_cid(node: Node) -> str:
     # The shape CID is a CATEGORY of content-addressed work: a pure function of
     # the backend ref (fragment + subtree preimage), which the ref determines
