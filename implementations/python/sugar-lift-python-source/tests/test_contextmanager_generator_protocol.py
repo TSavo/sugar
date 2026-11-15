@@ -1,25 +1,24 @@
-"""A ``@contextlib.contextmanager`` generator constructs under contextlib's protocol.
+"""A same-file ``@contextlib.contextmanager`` generator's call is its edge.
 
-A same-module ``@contextmanager`` generator used as a With head has no import
-receipt.  Its call keeps its own frame (the one decorated definition that does,
-``call_applies_own_frame``, #7757): the frame is seated at the head and every
-body exit runs ``_GeneratorContextManager.__exit__`` (``generator_manager_exit``):
-a raise is thrown in at the yield and split by the generator's own ``except``
-arms; completion resumes it and it must stop.
+A same-module ``@contextmanager`` generator used as a With head still has its
+frame seated by the call's name (``call_applies_own_frame``, #7757), but the
+call is the definition's coordinate and edge, joined at prove (#7757 step 6,
+the owner's ruling of 2026-11-15, "Edge, join at prove"): the generator body
+is never run to its first yield at lift.  The With enters the value the head
+reduced to (``WithReducedManagerSugar``): a call result whose type nothing
+here decides, so ``__enter__`` and ``__exit__`` are each undecided and owed.
+
+The helpers below are shared by the with-head tests of this package.
 """
 
 from __future__ import annotations
 
-import contextlib
 from pathlib import Path
 
-import pytest
-
-from sugar_lift_py_tests.effect import RaiseEffect
-from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-from sugar_lift_py_tests.generator_manager_exit import observed_exit_refusals
-from sugar_lift_py_tests.outcome import Completed, Halted
-from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+from sugar_lift_py_tests.outcome import Halted
+from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+    WithReducedManagerSugar,
+)
 from sugar_source_tree.nodes import With
 
 import test_contextlib_suppress_source_exit_faces as opener
@@ -47,8 +46,8 @@ def _imported(tmp_path: Path, implementation: str, body: str, *, contextlib_enro
 
     No dependency body is ever read (#7757): an imported call answers from
     the import table and the imported proofs only.  So the manager's source
-    stands in the consumer's own file, and its call is followed at reduce like
-    any same-file call.  The consumer is constructed under the step-3 table
+    stands in the consumer's own file, and its call is its coordinate and
+    edge like any same-file call (#7757 steps 5 and 6).  The consumer is constructed under the step-3 table
     its own ``with`` items enroll (the undecided row: the manager is what the
     head reduces to).  ``contextlib_enrolled`` changes nothing it constructs."""
     from sugar_lift_py_tests.context_manager_resolution import (
@@ -77,73 +76,8 @@ def _imported(tmp_path: Path, implementation: str, body: str, *, contextlib_enro
     )
 
 
-def _exits(tmp_path: Path, source: str):
-    _source_file, with_node = _with(tmp_path, source)
-    return _faces(with_node.sugar())
-
-
-def _faces(sugar):
-    # GeneratorWithSugar hands back its own faces (#7826).
-    return sugar.desugar()
-
-
-def _halts(exits):
-    return [face for face in exits.exits if isinstance(face, Halted)]
-
-
-def _leaves_normally(exits):
-    return [
-        face
-        for face in exits.exits
-        if isinstance(face, Completed) and face.value.can_fall_through
-    ]
-
-
-def _raised(exits):
-    """(class, message) per raise; a source raise's message is its own value."""
-    return sorted(
-        (
-            face.effect.exception_name,
-            face.effect.raised_value
-            if isinstance(face.effect.raised_value, str)
-            else None,
-        )
-        for face in _halts(exits)
-        if isinstance(face.effect, RaiseEffect)
-    )
-
-
 def _manager(header: str, body: str) -> str:
     return f"{header}def f():\n    with cm():\n        {body}\n    return 7\n"
-
-
-def test_local_contextmanager_seats_its_own_frame(tmp_path):
-    """``contextlib.contextmanager`` over a generator is the one decorated
-    definition whose call keeps its frame (``call_applies_own_frame``,
-    #7757): the frame is seated at the head and the With applies contextlib's
-    law to it.  No decorator body is read to name enter/exit definitions."""
-    _source_file, with_node = _with(
-        tmp_path, _manager(_SUPPRESSES_VALUE_ERROR, "pass")
-    )
-    assert type(with_node.sugar()) is GeneratorWithSugar
-
-
-def test_try_finally_runs_and_the_body_raise_propagates(tmp_path):
-    exits = _exits(
-        tmp_path,
-        _manager(
-            "import contextlib\n"
-            "@contextlib.contextmanager\n"
-            "def cm(a=1):\n"
-            "    try:\n"
-            "        yield a\n"
-            "    finally:\n"
-            "        pass\n",
-            "raise KeyError('k')",
-        ),
-    )
-    assert _raised(exits) == [("KeyError", None)]
-    assert _leaves_normally(exits) == []
 
 
 def _function_rows(source_file, with_node):
@@ -171,176 +105,29 @@ def _function_rows(source_file, with_node):
     return type(with_node.sugar()), sorted(rows, key=lambda row: (row[0], str(row[1])))
 
 
-@pytest.mark.parametrize(
-    ("body", "rows"),
-    (
-        ("raise ValueError('v')", [("return", 7)]),
-        ("raise TypeError('t')", [("halt", "TypeError")]),
-        ("pass", [("return", 7)]),
-    ),
-)
-def test_except_arm_suppresses_only_its_exception(tmp_path, body, rows):
-    # the kept frame of a local ``@contextmanager`` generator, under
-    # contextlib's law (#7757).
-    opened = _with(tmp_path, _manager(_SUPPRESSES_VALUE_ERROR, body))
-    assert _function_rows(*opened) == (GeneratorWithSugar, rows)
+def test_a_local_contextmanager_call_is_its_edge(tmp_path):
+    """Verdict moved (#7757 step 6): the With over a same-file
+    ``@contextmanager`` generator was ``GeneratorWithSugar``, which ran the
+    generator to its first yield and split the body's raise on its ``except``
+    arms.  The head's call is now the definition's edge, and the With enters
+    the value it reduced to: an undecided manager, owed."""
+    opened = _with(tmp_path, _manager(_SUPPRESSES_VALUE_ERROR, "pass"))
+    sugar, rows = _function_rows(*opened)
+    assert sugar is WithReducedManagerSugar
+    assert ("halt", None) in rows
 
 
-def test_undetermined_c_call_raise_splits_on_the_generator_except_arm(tmp_path):
-    exits = _exits(
+def test_an_undecorated_local_generator_head_is_the_undecided_manager(tmp_path):
+    """Verdict moved (#7757 step 6): ``cm()`` of an undecorated generator
+    function was decided to return a generator object, so the With raised
+    TypeError before enter and body (``GeneratorObjectWithSugar``).  What the
+    call returns is now what ``cm``'s contract states, joined at prove: here
+    the With enters an undecided manager, and no TypeError is decided."""
+    source_file, with_node = _with(
         tmp_path,
-        _manager("import decimal\n" + _SUPPRESSES_VALUE_ERROR, "decimal.getcontext()"),
+        "def cm():\n    yield 1\ndef f():\n    with cm():\n        pass\n    return 7\n",
     )
-    (halt,) = _halts(exits)
-    assert isinstance(halt.effect, UndeterminedRaiseEffect)
-    normal = _leaves_normally(exits)
-    # Completed call, and the raise the arm caught: never decided either way.
-    assert len(normal) == 2
-    caught = [face for face in normal if "adt.is_python_type" in repr(face.guard)]
-    assert len(caught) == 1
-    assert "adt.is_python_type" in repr(halt.guard)
-    assert "'not'" in repr(halt.guard)
-
-
-def test_a_second_yield_after_completion_raises_generator_didnt_stop(tmp_path):
-    exits = _exits(
-        tmp_path,
-        _manager(
-            "from contextlib import contextmanager\n"
-            "@contextmanager\n"
-            "def cm():\n"
-            "    yield 1\n"
-            "    yield 2\n",
-            "pass",
-        ),
-    )
-    refusals = observed_exit_refusals()
-    assert _raised(exits) == [("RuntimeError", refusals.did_not_stop)]
-    assert _leaves_normally(exits) == []
-
-
-def test_a_generator_exit_halt_carries_the_body_record(tmp_path):
-    """``__exit__`` runs after the body face it closes: the halt it raises
-    (here contextlib's "generator didn't stop") carries the record that face
-    left, never the generator's machine or no record at all (#7757). The
-    generator's frame rides inside that record."""
-    from sugar_lift_py_tests.sugar.function_universe_sugar import (
-        _ReducedBlock,
-        reduce_block_to_exitset,
-    )
-
-    _source_file, with_node = _with(
-        tmp_path,
-        _manager(
-            "from contextlib import contextmanager\n"
-            "@contextmanager\n"
-            "def cm():\n"
-            "    yield 1\n"
-            "    yield 2\n",
-            "acc = []\n        acc.append(1)",
-        ),
-    )
-    sugar = with_node.sugar()
-    assert type(sugar) is GeneratorWithSugar
-    body = reduce_block_to_exitset(sugar.body, None).completed_value()
-    assert isinstance(body, _ReducedBlock) and body.entries
-
-    exits = _faces(sugar)
-
-    refusals = observed_exit_refusals()
-    assert _raised(exits) == [("RuntimeError", refusals.did_not_stop)]
-    for halt in _halts(exits):
-        assert isinstance(halt.state, _ReducedBlock), halt
-        assert halt.state.entries == body.entries
-
-
-def test_a_yield_after_the_caught_throw_raises_didnt_stop_after_throw(tmp_path):
-    exits = _exits(
-        tmp_path,
-        _manager(
-            _SUPPRESSES_VALUE_ERROR + "    yield 2\n", "raise ValueError('v')"
-        ),
-    )
-    refusals = observed_exit_refusals()
-    assert _raised(exits) == [("RuntimeError", refusals.did_not_stop_after_throw)]
-    assert _leaves_normally(exits) == []
-
-
-def test_reraising_the_thrown_exception_propagates_it(tmp_path):
-    exits = _exits(
-        tmp_path,
-        _manager(
-            "from contextlib import contextmanager\n"
-            "@contextmanager\n"
-            "def cm():\n"
-            "    try:\n"
-            "        yield 1\n"
-            "    except ValueError:\n"
-            "        raise\n",
-            "raise ValueError('v')",
-        ),
-    )
-    assert _raised(exits) == [("ValueError", None)]
-    assert _leaves_normally(exits) == []
-
-
-def test_stop_iteration_from_the_generator_becomes_runtime_error(tmp_path):
-    exits = _exits(
-        tmp_path,
-        _manager(
-            "from contextlib import contextmanager\n"
-            "@contextmanager\n"
-            "def cm():\n"
-            "    yield 1\n"
-            "    raise StopIteration\n",
-            "pass",
-        ),
-    )
-    refusals = observed_exit_refusals()
-    assert _raised(exits) == [("RuntimeError", refusals.stop_iteration_conversion)]
-
-
-def test_a_body_stop_iteration_propagates_as_itself(tmp_path):
-    exits = _exits(
-        tmp_path,
-        _manager(
-            "from contextlib import contextmanager\n"
-            "@contextmanager\n"
-            "def cm():\n"
-            "    yield 1\n",
-            "raise StopIteration",
-        ),
-    )
-    assert [name for name, _ in _raised(exits)] == ["StopIteration"]
-    assert _leaves_normally(exits) == []
-
-
-def test_an_undecorated_local_generator_never_constructs_a_manager(tmp_path):
-    _source_file, with_node = _with(
-        tmp_path, "def cm():\n    yield 1\ndef f():\n    with cm():\n        pass\n"
-    )
-    # ``cm()`` returns a generator object, which has no ``__enter__``: the
-    # With raises the interpreter's own TypeError before enter and body
-    # (#7595), never a manager and never a runtime-selected gap.
-    from sugar_lift_py_tests.sugar.generator_with_sugar import (
-        GeneratorObjectWithSugar,
-    )
-
-    sugar = with_node.sugar()
-    assert isinstance(sugar, GeneratorObjectWithSugar)
-    assert sugar.object_kind == "generator"
-
-
-def test_exit_refusal_texts_are_contextlibs_own():
-    refusals = observed_exit_refusals()
-
-    @contextlib.contextmanager
-    def twice():
-        yield
-        yield
-
-    with pytest.raises(RuntimeError) as raised:
-        with twice():
-            pass
-    assert str(raised.value) == refusals.did_not_stop
-    assert refusals.exception_name == "RuntimeError"
+    sugar, rows = _function_rows(source_file, with_node)
+    assert sugar is WithReducedManagerSugar
+    assert ("halt", "TypeError") not in rows
+    assert ("halt", None) in rows

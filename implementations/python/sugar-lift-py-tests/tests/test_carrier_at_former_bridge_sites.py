@@ -1135,48 +1135,6 @@ def test_source_resource_body_carrier_is_refused_by_name(_carrier_body):
     _refused(excinfo, "WithReducedManagerSugar.body")
 
 
-# --- the other with sugars (former ``sugar_outcome_to_exitset`` sites) ------
-
-
-def test_generator_with_manager_carrier_is_refused_by_name():
-    from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
-
-    carrier, _, _ = _carrier()
-    sugar = _bare(
-        GeneratorWithSugar,
-        manager=_Answer(carrier),
-        body=(),
-        enter_slot_id=None,
-        site=None,
-    )
-    with pytest.raises(ConstructionPanic) as excinfo:
-        sugar.desugar(None)
-    _refused(excinfo, "GeneratorWithSugar.manager")
-
-
-def test_generator_object_with_manager_carrier_is_refused_by_name(monkeypatch):
-    from sugar_lift_py_tests import generator_object_with_refusal
-    from sugar_lift_py_tests.sugar.generator_with_sugar import (
-        GeneratorObjectWithSugar,
-    )
-
-    carrier, _, _ = _carrier()
-    monkeypatch.setattr(
-        generator_object_with_refusal,
-        "observed_generator_object_with_refusal",
-        lambda kind: None,
-    )
-    sugar = _bare(
-        GeneratorObjectWithSugar,
-        manager=_Answer(carrier),
-        site=None,
-        object_kind="generator",
-    )
-    with pytest.raises(ConstructionPanic) as excinfo:
-        sugar.desugar(None)
-    _refused(excinfo, "GeneratorObjectWithSugar.manager")
-
-
 # --- manager_protocol_construction -----------------------------------------
 
 

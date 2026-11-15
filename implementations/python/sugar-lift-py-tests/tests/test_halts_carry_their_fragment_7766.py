@@ -28,21 +28,6 @@ class _Fragment:
         return "pkg/mod.py:3:4"
 
 
-def test_a_generator_manager_exit_refusal_halts_at_the_with() -> None:
-    from sugar_lift_py_tests.generator_manager_exit import (
-        _pep479,
-        _refusal,
-        observed_exit_refusals,
-    )
-
-    fragment = _Fragment()
-    refusal = _refusal(observed_exit_refusals().did_not_stop, site=fragment)
-    assert refusal.site is fragment
-    assert refusal.blame == str(fragment)
-    converted = _pep479(refusal, site=fragment)
-    assert converted.site is fragment
-
-
 def test_a_loop_control_halt_states_its_statement() -> None:
     from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
 

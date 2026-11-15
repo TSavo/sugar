@@ -5,8 +5,8 @@
   ``core/_numba/extensions.py:362``): no frame knows the passed object's type,
   so nothing decides the manager.
 * A same-module ``@contextmanager`` whose body runs ``with open(...)``
-  (``io/formats/format.py:1052``): the call keeps its own frame, and the
-  ``with`` is built over it.
+  (``io/formats/format.py:1052``): the call is its coordinate and edge
+  (#7757 step 6), and the ``with`` is built over what the head reduces to.
 
 A ``with``'s manager is what its head reduces to (#7757); nothing is seated
 for it before construction.
@@ -36,10 +36,13 @@ _GENERATOR_OPENS = (
 
 
 def test_generator_opening_a_file_is_constructed_from_source(tmp_path):
-    from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+    from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+        WithReducedManagerSugar,
+    )
 
     source_file = _open(_corpus(tmp_path, _GENERATOR_OPENS.format(opener="open")))
-    # The local ``@contextmanager`` call keeps its own frame
-    # (``call_applies_own_frame``, #7757): the With is built over that frame.
+    # The local ``@contextmanager`` call is its coordinate and edge (#7757
+    # step 6): the With is built over the value the head reduces to.  Verdict
+    # moved: it was built over the generator's frame (``GeneratorWithSugar``).
     outer = next(n for n in source_file.nodes() if isinstance(n, With) and n.lineno == 3)
-    assert type(outer.sugar()) is GeneratorWithSugar
+    assert type(outer.sugar()) is WithReducedManagerSugar
