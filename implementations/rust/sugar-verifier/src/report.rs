@@ -751,7 +751,14 @@ fn quantified_vendor_post(post: &Json, vendor_post: &Json) -> Option<Json> {
         .iter()
         .map(|f| f.as_str().map(str::to_string))
         .collect::<Option<Vec<_>>>()?;
-    if formals.is_empty() {
+    // A `*args`/`**kwargs` formal takes several arguments, or none: no
+    // argument is its own formal's value, so the call is not read as the
+    // callee applied to its formals (plain rendering).
+    if formals.is_empty()
+        || formals
+            .iter()
+            .any(|formal| crate::consistency::is_variadic_formal(formal))
+    {
         return None;
     }
     let out_binding = post.get("outBinding")?.as_str()?;

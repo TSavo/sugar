@@ -3778,16 +3778,9 @@ fn bridge_answer(
             return Err((raw_target, DroppedAmbientPostReason::WrongProvider));
         }
     }
-    let Some(formals) = body
-        .get("formals")
-        .and_then(|v| v.as_array())
-        .and_then(|formals| {
-            formals
-                .iter()
-                .map(|v| v.as_str().map(str::to_string))
-                .collect::<Option<Vec<_>>>()
-        })
-    else {
+    // Its formals as the one binder reads them: a `*args`/`**kwargs`
+    // parameter marked (`contract_binder_formals`).
+    let Some(formals) = contract_binder_formals(&body) else {
         return Err((raw_target, DroppedAmbientPostReason::WrongContractKind));
     };
     let Some(post) = body
@@ -3863,6 +3856,191 @@ const PYTHON_CLASS: &str = "py.class";
 /// parameter reads (`dispatched_target`). The function's own proof states no
 /// value for it; a caller that knows the class supplies it (`py.class`).
 const CLASS_INPUT_PREFIX: &str = "class:";
+
+/// The contract header field naming a function's variadic parameters
+/// (#7757): `[{"kind": "positional" | "keyword", "formal": <name>}]`, the
+/// `*args` and `**kwargs` of its `def`. Each names one of `formals`.
+const VARIADIC_FORMALS_FIELD: &str = "variadicFormals";
+/// The mark of a `*args` formal among the formals the one binder reads
+/// (`contract_binder_formals`): `*<name>`. No Python identifier starts with
+/// `*`, and no contract input does.
+const VARIADIC_POSITIONAL_MARK: &str = "*";
+/// The mark of a `**kwargs` formal among them: `**<name>`.
+const VARIADIC_KEYWORD_MARK: &str = "**";
+
+/// The two variadic parameters a Python signature may take.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Variadic {
+    /// `*args`: the tuple of the positional arguments no parameter takes.
+    Positional,
+    /// `**kwargs`: the dict of the keyword arguments no parameter takes.
+    Keyword,
+}
+
+/// A binder formal's variadic kind and the name its contract's formulas
+/// spell it by; `None` for any other formal.
+fn variadic_formal(formal: &str) -> Option<(Variadic, &str)> {
+    if let Some(name) = formal.strip_prefix(VARIADIC_KEYWORD_MARK) {
+        return Some((Variadic::Keyword, name));
+    }
+    formal
+        .strip_prefix(VARIADIC_POSITIONAL_MARK)
+        .map(|name| (Variadic::Positional, name))
+}
+
+/// True for a `*args` or `**kwargs` formal of the one binder's reading.
+pub(crate) fn is_variadic_formal(formal: &str) -> bool {
+    variadic_formal(formal).is_some()
+}
+
+/// The name a formal binds in its contract's formulas: a variadic formal's
+/// own name, any other formal itself.
+fn bound_name(formal: &str) -> &str {
+    variadic_formal(formal).map_or(formal, |(_, name)| name)
+}
+
+/// A contract's formals as the one binder reads them (#7757): its
+/// `formals`, each one its `variadicFormals` names marked `*<name>`
+/// (`*args`) or `**<name>` (`**kwargs`). `None` when the contract states no
+/// `formals`, or states a variadic entry that is malformed or names no
+/// parameter of them.
+///
+/// Every reader that binds a call to a contract reads its formals through
+/// here (the join's `bridge_answer`, the callsite-scoped bridge match), so
+/// a `*args` parameter takes the positional arguments no other parameter
+/// takes, never one argument by position.
+pub(crate) fn contract_binder_formals(body: &Json) -> Option<Vec<String>> {
+    let mut formals: Vec<String> = body
+        .get("formals")?
+        .as_array()?
+        .iter()
+        .map(|formal| formal.as_str().map(str::to_string))
+        .collect::<Option<Vec<_>>>()?;
+    let Some(entries) = body.get(VARIADIC_FORMALS_FIELD) else {
+        return Some(formals);
+    };
+    for entry in entries.as_array()? {
+        let name = entry.get("formal")?.as_str()?;
+        let mark = match entry.get("kind")?.as_str()? {
+            "positional" => VARIADIC_POSITIONAL_MARK,
+            "keyword" => VARIADIC_KEYWORD_MARK,
+            _ => return None,
+        };
+        let slot = formals
+            .iter_mut()
+            .find(|formal| formal.as_str() == name && !is_contract_input(formal.as_str()))?;
+        *slot = format!("{mark}{name}");
+    }
+    Some(formals)
+}
+
+/// What one argument of a call term spreads (`f(*xs)`, `f(**d)`), read off
+/// its term (`python:starred_arg(<xs>)`, `python:double_starred_kwarg(<d>)`):
+/// the positional arguments of a `tuple` display, the keyword arguments of a
+/// `python:dict` display whose every key is a string constant, or
+/// `Undecided` for any other operand (its length or its keys are not
+/// stated). `None` for an argument that spreads nothing.
+enum Spread {
+    Positional(Vec<Json>),
+    Keyword(Vec<(String, Json)>),
+    Undecided,
+}
+
+/// The ctors a spread argument is spelled by in a call term (the kit's
+/// `SpreadCallSugar`).
+const PYTHON_STARRED_ARG: &str = "python:starred_arg";
+const PYTHON_DOUBLE_STARRED_KWARG: &str = "python:double_starred_kwarg";
+/// A tuple display's term (the kit's `TupleLiteralValue.to_term`): what a
+/// `*args` formal binds.
+const PYTHON_TUPLE_DISPLAY: &str = "tuple";
+/// A dict display's term and its entries (the kit's
+/// `DictLiteralValue.to_term`): what a `**kwargs` formal binds.
+const PYTHON_DICT_DISPLAY: &str = "python:dict";
+const PYTHON_DICT_ENTRY: &str = "python:dict_entry";
+
+/// A ctor term's name and arguments.
+fn ctor_parts(term: &Json) -> Option<(&str, &Vec<Json>)> {
+    if term.get("kind")?.as_str()? != "ctor" {
+        return None;
+    }
+    Some((term.get("name")?.as_str()?, term.get("args")?.as_array()?))
+}
+
+fn spread_argument(arg: &Json) -> Option<Spread> {
+    let (name, parts) = ctor_parts(arg)?;
+    if name != PYTHON_STARRED_ARG && name != PYTHON_DOUBLE_STARRED_KWARG {
+        return None;
+    }
+    let operand = match parts.as_slice() {
+        [operand] => ctor_parts(operand),
+        _ => None,
+    };
+    let spread = if name == PYTHON_STARRED_ARG {
+        match operand {
+            Some((PYTHON_TUPLE_DISPLAY, items)) => Some(Spread::Positional(items.clone())),
+            _ => None,
+        }
+    } else {
+        match operand {
+            Some((PYTHON_DICT_DISPLAY, entries)) => entries
+                .iter()
+                .map(|entry| {
+                    let (name, parts) = ctor_parts(entry)?;
+                    match parts.as_slice() {
+                        [key, value] if name == PYTHON_DICT_ENTRY => {
+                            Some((str_const_value(key)?.to_string(), value.clone()))
+                        }
+                        _ => None,
+                    }
+                })
+                .collect::<Option<Vec<_>>>()
+                .map(Spread::Keyword),
+            _ => None,
+        }
+    };
+    Some(spread.unwrap_or(Spread::Undecided))
+}
+
+/// Whether a call spreads an operand whose length or keys are not stated
+/// (`spread_argument`): the binding of every parameter from it on is not
+/// decided, so the call is not bound (undecided by name, never a wrong
+/// answer).
+pub(crate) fn spreads_undecided(args: &[Json]) -> bool {
+    args.iter()
+        .any(|arg| matches!(spread_argument(arg), Some(Spread::Undecided)))
+}
+
+/// A string constant term.
+fn string_const_term(value: &str) -> Json {
+    json!({"kind": "const", "value": value, "sort": {"kind": "primitive", "name": "String"}})
+}
+
+/// One entry of a dict display: `python:dict_entry(<key>, <value>)`.
+fn dict_entry(key: &str, value: &Json) -> Json {
+    json!({"kind": "ctor", "name": PYTHON_DICT_ENTRY, "args": [string_const_term(key), value]})
+}
+
+/// Supply the variadic formal `name` (`*args` or `**kwargs`, by the name its
+/// formulas spell it) with `display`, what it takes (`call_argument_formals`).
+/// Where the call supplied it packed (a `py.kwarg` naming it), that value
+/// stands, and nothing else may be packed into it (`takes_any`): `None`.
+fn supply_variadic(
+    name: Option<&str>,
+    display: Json,
+    takes_any: bool,
+    seen: &mut std::collections::BTreeSet<String>,
+    supplied: &mut Vec<(String, Json)>,
+) -> Option<()> {
+    let Some(name) = name else {
+        return Some(());
+    };
+    if seen.contains(name) {
+        return (!takes_any).then_some(());
+    }
+    seen.insert(name.to_string());
+    supplied.push((name.to_string(), display));
+    Some(())
+}
 
 /// True for a contract input (`cell:`, `global:`, `default:`, `class:`),
 /// never a parameter.
@@ -3952,6 +4130,28 @@ fn named_argument(arg: &Json) -> Option<Result<(&str, String, Json), ()>> {
 /// It names an argument the call passes or it fits nothing; a contract that
 /// takes no such input reads no method of that parameter, and the class is
 /// supplied to nothing.
+///
+/// Variadic parameters (#7757), as Python binds them
+/// (`contract_binder_formals` marks them):
+///
+/// - a `*<name>` formal is bound to the tuple display (`tuple(...)`, the term
+///   a tuple display is spelled by) of the positional arguments no parameter
+///   before it takes, in order; a parameter after it takes no positional
+///   argument (it is keyword-only);
+/// - a `**<name>` formal is bound to the dict display (`python:dict(
+///   python:dict_entry(<key>, <value>)...)`) of the keyword arguments no
+///   parameter takes, keyed by their keyword, in order;
+/// - a `py.kwarg` naming the variadic formal itself binds it to its value
+///   as it stands: a same-file definition's call supplies a packed formal so
+///   (`lambda_callable.definition_edge_call`), the tuple or dict its own
+///   binding packed. A packed value beside arguments the formal would also
+///   take fits nothing;
+/// - an argument that spreads a tuple display (`python:starred_arg`) or a
+///   dict display of string keys (`python:double_starred_kwarg`) is its
+///   elements; one that spreads anything else is not decided
+///   (`spreads_undecided`): the call fits nothing here, and the join leaves
+///   it unanswered by name. A positional `py.class` key beside a spread fits
+///   nothing (the spread moves the positions it counts).
 pub(crate) fn call_argument_formals(
     formals: &[String],
     args: &[Json],
@@ -3961,11 +4161,59 @@ pub(crate) fn call_argument_formals(
         .map(String::as_str)
         .filter(|formal| !is_contract_input(formal))
         .collect();
-    let mut supplied: Vec<(String, Json)> = Vec::with_capacity(args.len());
+    // `*args` and `**kwargs`, by the name the formulas spell them.
+    let star = parameters.iter().position(|parameter| {
+        matches!(variadic_formal(parameter), Some((Variadic::Positional, _)))
+    });
+    let star_name = star.map(|index| bound_name(parameters[index]));
+    let double_name = parameters.iter().find_map(|parameter| match variadic_formal(parameter) {
+        Some((Variadic::Keyword, name)) => Some(name),
+        _ => None,
+    });
+    // The parameters a positional argument binds: each before `*args` (a
+    // parameter after it is keyword-only), never a variadic one.
+    let by_position: Vec<&str> = parameters[..star.unwrap_or(parameters.len())]
+        .iter()
+        .copied()
+        .filter(|parameter| variadic_formal(parameter).is_none())
+        .collect();
+    // The parameters a keyword argument binds by its name.
+    let by_name: Vec<&str> = parameters
+        .iter()
+        .copied()
+        .filter(|parameter| variadic_formal(parameter).is_none())
+        .collect();
+    // Each spread argument as the arguments it spreads.
+    let mut spread = false;
+    let mut expanded: Vec<Json> = Vec::with_capacity(args.len());
+    for arg in args {
+        match spread_argument(arg) {
+            None => expanded.push(arg.clone()),
+            Some(Spread::Positional(items)) => {
+                spread = true;
+                expanded.extend(items);
+            }
+            Some(Spread::Keyword(entries)) => {
+                spread = true;
+                expanded.extend(entries.into_iter().map(|(name, value)| {
+                    json!({
+                        "kind": "ctor",
+                        "name": PYTHON_KWARG,
+                        "args": [string_const_term(&name), value],
+                    })
+                }));
+            }
+            Some(Spread::Undecided) => return None,
+        }
+    }
+    let mut supplied: Vec<(String, Json)> = Vec::with_capacity(expanded.len());
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut classes: Vec<(ClassKey, Json)> = Vec::new();
     let mut positional = 0usize;
-    for arg in args {
+    // What `*args` and `**kwargs` take: the arguments no parameter takes.
+    let mut packed_positional: Vec<Json> = Vec::new();
+    let mut packed_keyword: Vec<(String, Json)> = Vec::new();
+    for arg in &expanded {
         match class_argument(arg) {
             Some(Ok(class)) => {
                 classes.push(class);
@@ -3976,22 +4224,38 @@ pub(crate) fn call_argument_formals(
         }
         let (formal, value) = match named_argument(arg) {
             None => {
-                let parameter = parameters.get(positional)?;
                 positional += 1;
-                ((*parameter).to_string(), arg.clone())
+                match by_position.get(positional - 1) {
+                    Some(parameter) => ((*parameter).to_string(), arg.clone()),
+                    None if star_name.is_some() => {
+                        packed_positional.push(arg.clone());
+                        continue;
+                    }
+                    None => return None,
+                }
             }
             Some(Err(())) => return None,
-            Some(Ok((ctor, name, value))) => {
-                let formal = if ctor == PYTHON_KWARG {
-                    name
-                } else {
-                    let (_, prefix) = CONTRACT_INPUTS.iter().find(|(named, _)| *named == ctor)?;
-                    format!("{prefix}{name}")
-                };
-                if !formals.contains(&formal) {
+            Some(Ok((ctor, name, value))) if ctor == PYTHON_KWARG => {
+                if is_contract_input(&name) {
+                    // An input is never bound as a keyword.
                     return None;
                 }
-                if ctor == PYTHON_KWARG && is_contract_input(&formal) {
+                if by_name.contains(&name.as_str()) {
+                    (name, value)
+                } else if Some(name.as_str()) == star_name || Some(name.as_str()) == double_name {
+                    // A packed variadic formal, supplied as it stands.
+                    (name, value)
+                } else if double_name.is_some() {
+                    packed_keyword.push((name, value));
+                    continue;
+                } else {
+                    return None;
+                }
+            }
+            Some(Ok((ctor, name, value))) => {
+                let (_, prefix) = CONTRACT_INPUTS.iter().find(|(named, _)| *named == ctor)?;
+                let formal = format!("{prefix}{name}");
+                if !formals.contains(&formal) {
                     return None;
                 }
                 (formal, value)
@@ -4002,12 +4266,33 @@ pub(crate) fn call_argument_formals(
         }
         supplied.push((formal, value));
     }
+    // `*args`: the tuple display of what it takes; `**kwargs`: the dict
+    // display, keyed by keyword.
+    let tuple = json!({"kind": "ctor", "name": PYTHON_TUPLE_DISPLAY, "args": packed_positional});
+    let takes_positional = !packed_positional.is_empty();
+    supply_variadic(star_name, tuple, takes_positional, &mut seen, &mut supplied)?;
+    let entries: Vec<Json> = packed_keyword
+        .iter()
+        .map(|(key, value)| dict_entry(key, value))
+        .collect();
+    let dict = json!({"kind": "ctor", "name": PYTHON_DICT_DISPLAY, "args": entries});
+    let takes_keyword = !packed_keyword.is_empty();
+    supply_variadic(double_name, dict, takes_keyword, &mut seen, &mut supplied)?;
     for (key, class) in classes {
         let parameter = match key {
+            ClassKey::Position(_) if spread => return None,
             ClassKey::Position(position) if position < positional => {
-                (*parameters.get(position)?).to_string()
+                match by_position.get(position) {
+                    Some(parameter) => (*parameter).to_string(),
+                    // An argument `*args` takes: no parameter's class.
+                    None => continue,
+                }
             }
             ClassKey::Position(_) => return None,
+            ClassKey::Keyword(name) if packed_keyword.iter().any(|(key, _)| *key == name) => {
+                // An argument `**kwargs` takes: no parameter's class.
+                continue;
+            }
             ClassKey::Keyword(name) if seen.contains(&name) => name,
             ClassKey::Keyword(_) => return None,
         };
@@ -4089,6 +4374,10 @@ pub(crate) fn bind_call_arguments(
     }
     let mut bindings = Vec::with_capacity(formals.len());
     for parameter in &parameters {
+        // A variadic formal binds the name its formulas spell it by; the
+        // reading always supplies it (the empty display when the call passes
+        // nothing it takes).
+        let parameter = &bound_name(parameter);
         if let Some(actual) = bound.remove(*parameter) {
             bindings.push(((*parameter).to_string(), actual));
             continue;
@@ -5663,7 +5952,15 @@ fn linked_ambient_post_instances_for_inv(
                     source_symbol: post.binding.source_symbol.clone(),
                     target_cid: post.binding.target_cid.clone(),
                     member_cid: post.member_cid.clone(),
-                    reason: DroppedAmbientPostReason::ImportSignatureMismatch,
+                    // A call that spreads an operand whose length or keys
+                    // are not stated binds nothing decided: not answered,
+                    // by name, never a wrong answer. Any other misfit is
+                    // the contract answering the call wrongly.
+                    reason: if spreads_undecided(args) {
+                        DroppedAmbientPostReason::OpenAfterSpecialization
+                    } else {
+                        DroppedAmbientPostReason::ImportSignatureMismatch
+                    },
                     spelling: compact_json(call),
                 });
                 continue;
@@ -12081,6 +12378,136 @@ mod tests {
             &[int(1), named_arg("py.kwarg", "cell:k", int(2))]
         )
         .is_none());
+    }
+
+    // ── Variadic parameters (#7757): `*args` and `**kwargs` ──────────────
+
+    fn tuple_display(items: Vec<Json>) -> Json {
+        json!({"kind": "ctor", "name": "tuple", "args": items})
+    }
+
+    #[test]
+    fn a_contract_s_variadic_formals_are_marked_for_the_binder() {
+        let body = json!({
+            "formals": ["self", "exc", "kw", "global:G"],
+            "variadicFormals": [
+                {"kind": "positional", "formal": "exc"},
+                {"kind": "keyword", "formal": "kw"},
+            ],
+        });
+        assert_eq!(
+            contract_binder_formals(&body).unwrap(),
+            formals(&["self", "*exc", "**kw", "global:G"])
+        );
+        // No variadic: the formals as they stand.
+        assert_eq!(
+            contract_binder_formals(&json!({"formals": ["x"]})).unwrap(),
+            formals(&["x"])
+        );
+        // A variadic entry naming no parameter is malformed.
+        assert!(contract_binder_formals(&json!({
+            "formals": ["x"],
+            "variadicFormals": [{"kind": "positional", "formal": "y"}],
+        }))
+        .is_none());
+    }
+
+    #[test]
+    fn a_star_formal_binds_the_tuple_of_the_positionals_no_parameter_takes() {
+        // `def __exit__(self, *exc)`, called as a `with` calls it:
+        // `__exit__(m, t, v, tb)`.
+        let contract = formals(&["self", "*exc"]);
+        let bound =
+            bind_call_arguments(&contract, &[], &[var("m"), int(1), int(2), int(3)]).unwrap();
+        assert_eq!(
+            bound,
+            vec![
+                ("self".to_string(), var("m")),
+                ("exc".to_string(), tuple_display(vec![int(1), int(2), int(3)])),
+            ]
+        );
+        // Nothing left over: the empty tuple.
+        let bound = bind_call_arguments(&contract, &[], &[var("m")]).unwrap();
+        assert_eq!(bound[1], ("exc".to_string(), tuple_display(vec![])));
+        // A parameter after `*args` is keyword-only.
+        let contract = formals(&["a", "*rest", "b"]);
+        assert!(bind_call_arguments(&contract, &[], &[int(1), int(2), int(3)]).is_none());
+        let bound = bind_call_arguments(
+            &contract,
+            &[],
+            &[int(1), int(2), named_arg("py.kwarg", "b", int(3))],
+        )
+        .unwrap();
+        assert_eq!(
+            bound,
+            vec![
+                ("a".to_string(), int(1)),
+                ("rest".to_string(), tuple_display(vec![int(2)])),
+                ("b".to_string(), int(3)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_double_star_formal_binds_the_dict_of_the_keywords_no_parameter_takes() {
+        let contract = formals(&["x", "**kw"]);
+        let bound = bind_call_arguments(
+            &contract,
+            &[],
+            &[int(1), named_arg("py.kwarg", "a", int(2))],
+        )
+        .unwrap();
+        assert_eq!(
+            bound,
+            vec![
+                ("x".to_string(), int(1)),
+                (
+                    "kw".to_string(),
+                    json!({"kind": "ctor", "name": "python:dict", "args": [
+                        {"kind": "ctor", "name": "python:dict_entry", "args": [
+                            string_const("a"), int(2)
+                        ]}
+                    ]})
+                ),
+            ]
+        );
+        // With no `**kwargs`, an unknown keyword still fits nothing.
+        assert!(bind_call_arguments(
+            &formals(&["x"]),
+            &[],
+            &[int(1), named_arg("py.kwarg", "a", int(2))]
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn a_packed_variadic_stands_and_an_undecided_spread_binds_nothing() {
+        let contract = formals(&["*args"]);
+        let packed = tuple_display(vec![int(1)]);
+        // A same-file definition's call supplies a packed formal by name.
+        assert_eq!(
+            bind_call_arguments(&contract, &[], &[named_arg("py.kwarg", "args", packed.clone())])
+                .unwrap(),
+            vec![("args".to_string(), packed.clone())]
+        );
+        // A packed value beside an argument it would also take fits nothing.
+        assert!(bind_call_arguments(
+            &contract,
+            &[],
+            &[int(2), named_arg("py.kwarg", "args", packed.clone())]
+        )
+        .is_none());
+        // `f(*(1,))`: the spread tuple display is its elements.
+        let spread = json!({"kind": "ctor", "name": "python:starred_arg", "args": [packed.clone()]});
+        assert_eq!(
+            bind_call_arguments(&contract, &[], &[spread]).unwrap(),
+            vec![("args".to_string(), packed)]
+        );
+        // `f(*xs)`, `xs` of no stated length: nothing is bound.
+        let undecided = json!({"kind": "ctor", "name": "python:starred_arg", "args": [var("xs")]});
+        assert!(bind_call_arguments(&formals(&["a"]), &[], &[undecided.clone()]).is_none());
+        assert!(spreads_undecided(&[undecided]));
+        assert!(!spreads_undecided(&[int(1)]));
     }
 
     #[test]

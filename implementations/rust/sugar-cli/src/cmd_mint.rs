@@ -4147,6 +4147,18 @@ fn mint_ir_document_with_source_and_plan_mementos(
             }
             None => Vec::new(),
         };
+        // The `*args`/`**kwargs` among the formals (#7757): carried through
+        // so prove's one binder binds each as Python does.
+        let variadic_formals: Vec<Arc<CValue>> = match decl.get("variadicFormals") {
+            Some(Value::Array(arr)) => arr.iter().map(json_to_cvalue).collect(),
+            Some(value) => {
+                return Err(format!(
+                    "contract `{name}`: variadicFormals must be an array, got {}",
+                    json_type_name(value)
+                ));
+            }
+            None => Vec::new(),
+        };
         let class_shapes_value = decl.get("classShapes").or_else(|| decl.get("class_shapes"));
         let class_shapes: Vec<Arc<CValue>> = match class_shapes_value {
             Some(Value::Array(arr)) => arr
@@ -4330,6 +4342,7 @@ fn mint_ir_document_with_source_and_plan_mementos(
                 body_discharge_refusal_reason: body_discharge_refusal_reason.clone(),
                 panic_loci: panic_loci.clone(),
                 input_values: input_values.clone(),
+                variadic_formals: variadic_formals.clone(),
                 class_shapes: class_shapes.clone(),
                 source_warrants: source_warrants.clone(),
                 proofir_provenance,
