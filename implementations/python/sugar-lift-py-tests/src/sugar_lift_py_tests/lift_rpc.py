@@ -192,9 +192,9 @@ class _PerSourceDemandRows:
 
     What still reads a row (#7757 item 46): ``With``'s require door reads its
     item's row on every construction (``With._seated_manager_resolution``),
-    and the board door's with-item census projects one row per item
-    (``effective_context_manager_resolutions_for_source``). Every row is the
-    ``undecided`` gap: the manager is what the head reduces to.
+    and the no-call body probe reads the joined rows. The board door's
+    with-item census no longer does: it reads the construction roll. Every
+    row is the ``undecided`` gap: the manager is what the head reduces to.
     """
 
     def __init__(self, root: Path) -> None:
@@ -2431,48 +2431,64 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     )
                     return
                 # The opener above already opened this tree under the walk
-                # session for this root (step 2's file list). Construction
-                # terminals stay loud here. The recensus consumer preserves the
-                # already-authenticated provisional key manifest alongside the
-                # panic; this producer never converts panic into a completed
-                # resolution response.
+                # session for this root (step 2's file list).
                 if level == "context-manager-resolutions":
-                    from sugar_lift_py_tests.context_manager_resolution import (
-                        context_manager_resolution_outcome,
-                        effective_context_manager_resolutions_for_source,
-                    )
+                    # One node per ``with`` item, read off the tree: the
+                    # item's coordinate and the roll identity (kind, line,
+                    # col) of the statement that owns it. Nothing is
+                    # constructed here and no table is read (#7757): what
+                    # that statement built is its answer on the construction
+                    # roll, which the audit leaf carries (``sourceAudit``)
+                    # and the consumer joins by this identity.
+                    from sugar_source_tree.nodes import AsyncWith, With
 
-                    resolution_nodes = []
-                    for coordinate, resolution in sorted(
-                        effective_context_manager_resolutions_for_source(
-                            tree_file.unit.construction_context, source_cid=file_cid
-                        ).items()
-                    ):
-                        resolution_nodes.append(
-                            {
-                                "memento": {
-                                    "kind": "context-manager-resolution",
-                                    "file": file_rel,
-                                    "source_cid": file_cid,
-                                    "coordinate": coordinate.wire(),
+                    # Keyed by the item's coordinate: one node per item, in
+                    # coordinate order, however many times the walk yields
+                    # its statement.
+                    keyed_nodes: Dict[tuple, Dict[str, Any]] = {}
+                    for statement in tree_file.nodes():
+                        if not isinstance(statement, (With, AsyncWith)):
+                            continue
+                        owner = statement.line_col_span()
+                        for item in statement.items:
+                            span = item.context_expr.line_col_span()
+                            keyed_nodes.setdefault(
+                                (
+                                    span.start_line,
+                                    span.start_col,
+                                    span.end_line,
+                                    span.end_col,
+                                ),
+                                {
+                                    "memento": {
+                                        "kind": "context-manager-resolution",
+                                        "file": file_rel,
+                                        "source_cid": file_cid,
+                                        "coordinate": {
+                                            "sourceCid": file_cid,
+                                            "startLine": span.start_line,
+                                            "startCol": span.start_col,
+                                            "endLine": span.end_line,
+                                            "endCol": span.end_col,
+                                        },
+                                    },
+                                    "audit": {
+                                        "observedEventType": (
+                                            f"{type(statement).__module__}."
+                                            f"{type(statement).__qualname__}"
+                                        ),
+                                        "statement": {
+                                            "kind": statement.kind,
+                                            "line": owner.start_line,
+                                            "col": owner.start_col,
+                                        },
+                                    },
+                                    "payload": None,
                                 },
-                                "audit": {
-                                    "observedEventType": (
-                                        f"{type(resolution).__module__}."
-                                        f"{type(resolution).__qualname__}"
-                                    ),
-                                    "outcome": context_manager_resolution_outcome(
-                                        resolution
-                                    ),
-                                    "kind": getattr(resolution, "kind", None),
-                                    "targetSymbol": (
-                                        getattr(resolution, "target_symbol", None)
-                                        or getattr(resolution, "target_name", None)
-                                    ),
-                                },
-                                "payload": None,
-                            }
-                        )
+                            )
+                    resolution_nodes = [
+                        keyed_nodes[key] for key in sorted(keyed_nodes)
+                    ]
                     # This level answers here and nowhere else. Falling out of
                     # this branch reaches the generic function-memento tail,
                     # which would answer a With question with function rows and

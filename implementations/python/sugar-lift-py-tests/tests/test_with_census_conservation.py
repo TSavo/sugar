@@ -2,7 +2,7 @@
 
 Conservation identity (binding):
   site:with-item == constructed + cited-opaque + unconstructed
-  over the effective use-site set With construction sees.
+  over the ``with`` items of the file.
 
 THREE columns because there are three facts (#7384). A cited-opaque With
 constructed, so it is not unconstructed; sugar holds no enter/exit contract
@@ -13,6 +13,10 @@ The tally owns canonical coordinate-keyed rows. The partition consumes those
 same keys exactly once while splitting the closed constructed/unconstructed
 outcomes; deleted resolution kinds and gap buckets never re-enter through a
 compatibility decoder.
+
+An item's outcome is what its ``with`` statement built, read off the
+construction roll (``with_item_events_off_the_roll``). No table is read
+(#7757).
 """
 
 from __future__ import annotations
@@ -180,149 +184,148 @@ def test_seal_board_additive_legacy_reads_remain_reconciled() -> None:
     assert 'str(k).startswith("gap:")' in source
 
 
-def test_known_constructed_with_item_shows_constructed_gt_zero(tmp_path: Path):
-    """Planted constructed testimony at a real with-item must tally constructed>0.
+def _with_item(line: int, *, kind: str = "With") -> dict[str, object]:
+    """One keyed ``with`` item as the enumerate level states it."""
+    return {
+        "inputKey": {
+            "sourceCid": "sha256:" + ("a" * 64),
+            "startLine": line,
+            "startCol": 9,
+            "endLine": line,
+            "endCol": 12,
+        },
+        "observedEventType": f"sugar_source_tree.nodes.{kind}",
+        "statement": {"kind": kind, "line": line, "col": 4},
+    }
 
-    Without this tooth, constructed=0 on a corpus could be an off-by-everything
-    counter and still look like product residual. Plants a constructed row at
-    the live use-site in the table With reads, after opening a real with-item
-    file.
+
+def _roll(*loci: tuple[str, str, int, int]) -> dict[str, object]:
+    """An audit leaf whose roll holds exactly these (status, kind, line, col)."""
+    return {
+        "auxiliaryRows": {
+            "sourceAudit": {
+                "loci": [
+                    {
+                        "status": status,
+                        "kind": kind,
+                        "name": kind,
+                        "source_cid": "sha256:" + ("b" * 64),
+                        "locus": {"file": "planted.py", "line": line, "col": col},
+                    }
+                    for status, kind, line, col in loci
+                ]
+            }
+        }
+    }
+
+
+def test_an_item_is_constructed_when_its_with_answered_present_on_the_roll():
+    """Truthful: the statement answered present, so its item is constructed."""
+    _load()
+    from recensus_enumerate_consumer import with_item_events_off_the_roll
+
+    (event,) = with_item_events_off_the_roll(
+        [_with_item(2)], _roll(("warranted", "With", 2, 4))
+    )
+    assert event["outcome"] == "constructed"
+    assert event["inputKey"]["startLine"] == 2
+    assert event["observedEventType"] == "sugar_source_tree.nodes.With"
+
+
+def test_an_item_is_unconstructed_when_its_with_did_not_answer_present():
+    """Lying: nothing on the roll says this statement was built."""
+    _load()
+    from recensus_enumerate_consumer import with_item_events_off_the_roll
+
+    item = _with_item(2)
+    # The statement is on the roll, unanswered.
+    (refused,) = with_item_events_off_the_roll(
+        [item], _roll(("unresolved", "With", 2, 4))
+    )
+    assert refused["outcome"] == "unconstructed"
+    # Some other node answered present at the same place: not this statement.
+    (other_kind,) = with_item_events_off_the_roll(
+        [item], _roll(("warranted", "Name", 2, 4))
+    )
+    assert other_kind["outcome"] == "unconstructed"
+    # Another ``with`` answered present elsewhere: not this statement.
+    (other_place,) = with_item_events_off_the_roll(
+        [item], _roll(("warranted", "With", 7, 4))
+    )
+    assert other_place["outcome"] == "unconstructed"
+    # The roll never came back (the audit leaf failed).
+    (no_roll,) = with_item_events_off_the_roll([item], None)
+    assert no_roll["outcome"] == "unconstructed"
+
+
+def test_every_item_of_one_statement_shares_its_statements_answer():
+    """``with a, b:`` is one statement: both items read the same roll answer."""
+    _load()
+    from recensus_enumerate_consumer import with_item_events_off_the_roll
+
+    first = _with_item(3)
+    second = _with_item(3)
+    second["inputKey"] = {**first["inputKey"], "startCol": 14, "endCol": 17}
+    events = with_item_events_off_the_roll(
+        [first, second], _roll(("warranted", "With", 3, 4))
+    )
+    assert [event["outcome"] for event in events] == ["constructed", "constructed"]
+    assert events[0]["inputKey"] != events[1]["inputKey"]
+
+
+def test_a_with_that_constructs_is_counted_constructed(tmp_path: Path):
+    """Truthful, through the real door: the census counts what was built.
+
+    ``with mgr:`` over a formal constructs from its head alone (the manager
+    is what the head reduces to), so its item is ``constructed`` and the file
+    ends constructed with no ``with`` left unconstructed.
     """
     module = _load()
-    from sugar_lift_py_tests.context_manager_contract import (
-        EnterResultContractV1,
-        ExitContractV1,
-        ImportSignatureV2,
-        ProtocolResourceSemanticsV1,
-        ReturnTruthinessDispositionV1,
-    )
-    from sugar_lift_py_tests.context_manager_resolution import (
-        ContextManagerContractRefV1,
-    )
-    from sugar_lift_py_tests.ir import PrimitiveSort
-    from sugar_lift_py_tests.lift_rpc import (
-        open_source_file_for_construction,
-        provisional_contract_refs_from_demands,
-        tree_construction_context_for_workspace,
-    )
+    from recensus_enumerate_consumer import measure_file_via_enumerate
 
     path = tmp_path / "consumer.py"
     path.write_text(
         "def consume(mgr):\n" "    with mgr:\n" "        pass\n",
         encoding="utf-8",
     )
-    refs = provisional_contract_refs_from_demands(tmp_path)
-    ctx = tree_construction_context_for_workspace(tmp_path, contract_refs=refs)
-    source_file = open_source_file_for_construction(
-        path, root=tmp_path, construction_context=ctx
+    row = measure_file_via_enumerate(workspace_root=tmp_path, file_rel="consumer.py")
+
+    assert row["terminalKind"] == "constructed", row
+    (event,) = row["contextManagerResolutionEvents"]
+    assert event["outcome"] == "constructed"
+    assert event["observedEventType"] == "sugar_source_tree.nodes.With"
+
+    source_cid = row["inputKey"]["sourceCid"]
+    rows = module._tally_cm_resolutions(
+        source_cid=source_cid,
+        resolution_events=list(row["contextManagerResolutionEvents"]),
     )
-    # Use-site coordinate from the provisional demand (same seat With uses).
-    assert len(refs.by_use_site) == 1
-    use_site = next(iter(refs.by_use_site))
-
-    from types import MappingProxyType
-
-    from sugar_lift_py_tests.context_manager_resolution import ResolvedContractRefsV1
-
-    cid = "blake3-512:" + ("a" * 128)
-    planted = ResolvedContractRefsV1(
-        refs.catalog_cid,
-        refs.table_cid,
-        MappingProxyType(
-            {
-                use_site: ContextManagerContractRefV1(
-                    resolution_cid=cid,
-                    demand_cid=cid,
-                    use_site=use_site,
-                    use_site_cid=cid,
-                    authenticated_import_use_cid=cid,
-                    import_binding_cid=cid,
-                    construction_context_generation_cid=cid,
-                    contract_cid=cid,
-                    payload_cid=cid,
-                    provenance_cid=cid,
-                    distribution_artifact_cid=cid,
-                    dependency_artifact_graph_cid=cid,
-                    module_source_cid=cid,
-                    resolved_definition_cid=cid,
-                    manager_construction_cid=cid,
-                    enter_testimony_cid=cid,
-                    exit_testimony_cid=cid,
-                    import_signature=ImportSignatureV2(()),
-                    semantics=ProtocolResourceSemanticsV1(
-                        enter=EnterResultContractV1(sort=PrimitiveSort("Value")),
-                        exit=ExitContractV1(
-                            disposition=ReturnTruthinessDispositionV1()
-                        ),
-                    ),
-                )
-            }
-        ),
-    )
-    ctx = tree_construction_context_for_workspace(tmp_path, contract_refs=planted)
-    rows = module._tally_cm_resolutions(ctx, source_cid=source_file.unit.source_cid)
     sites = module._ast_site_prevalence(path)
     assert sites.get("site:with-item", 0) == 1
-    assert sum(row["outcome"] == "constructed" for row in rows) >= 1, rows
     partition = module._with_census_partition(rows, sites)
-    assert partition["constructed"] >= 1
+    assert partition["constructed"] == 1
+    assert partition["unconstructed"] == 0
     assert partition["conserves"] is True
 
 
-def test_unconstructed_with_item_is_counted_not_silently_dropped(tmp_path: Path):
-    """Planted opaque With must remain present as unconstructed, never vanish."""
-    module = _load()
-    from sugar_lift_py_tests.lift_rpc import (
-        open_source_file_for_construction,
-        provisional_contract_refs_from_demands,
-        tree_construction_context_for_workspace,
-    )
+def test_a_with_that_refuses_is_counted_unconstructed(tmp_path: Path):
+    """Lying, through the real door: ``async with`` refuses by name, so its
+    item is counted, and counted ``unconstructed`` -- never dropped, never
+    reported as built."""
+    _load()
+    from recensus_enumerate_consumer import measure_file_via_enumerate
 
-    path = tmp_path / "opaque.py"
+    path = tmp_path / "refused.py"
     path.write_text(
-        "def run():\n" "    with mystery():\n" "        pass\n",
+        "async def consume(mgr):\n" "    async with mgr:\n" "        pass\n",
         encoding="utf-8",
     )
-    refs = provisional_contract_refs_from_demands(tmp_path)
-    ctx = tree_construction_context_for_workspace(tmp_path, contract_refs=refs)
-    source_file = open_source_file_for_construction(
-        path, root=tmp_path, construction_context=ctx
-    )
-    rows = module._tally_cm_resolutions(ctx, source_cid=source_file.unit.source_cid)
-    sites = module._ast_site_prevalence(path)
-    assert sites.get("site:with-item", 0) == 1
-    assert sum(row["outcome"] == "unconstructed" for row in rows) == 1, rows
-    assert sum(row["outcome"] == "constructed" for row in rows) == 0
-    partition = module._with_census_partition(rows, sites)
-    assert partition["constructed"] == 0
-    assert partition["unconstructed"] == 1
-    assert partition["conserves"] is True
+    row = measure_file_via_enumerate(workspace_root=tmp_path, file_rel="refused.py")
 
-
-def test_effective_tally_includes_contract_refs(
-    tmp_path: Path,
-):
-    """The tally reads the provisional table With reads."""
-    module = _load()
-    from sugar_lift_py_tests.lift_rpc import (
-        open_source_file_for_construction,
-        provisional_contract_refs_from_demands,
-        tree_construction_context_for_workspace,
-    )
-
-    path = tmp_path / "opaque.py"
-    path.write_text(
-        "def run():\n" "    with mystery():\n" "        pass\n",
-        encoding="utf-8",
-    )
-    refs = provisional_contract_refs_from_demands(tmp_path)
-    ctx = tree_construction_context_for_workspace(tmp_path, contract_refs=refs)
-    source_file = open_source_file_for_construction(
-        path, root=tmp_path, construction_context=ctx
-    )
-    assert len(refs.by_use_site) == 1
-    rows = module._tally_cm_resolutions(ctx, source_cid=source_file.unit.source_cid)
-    assert len(rows) == 1, rows
+    assert row["terminalKind"] == "construction-panic", row
+    (event,) = row["contextManagerResolutionEvents"]
+    assert event["outcome"] == "unconstructed"
+    assert event["observedEventType"] == "sugar_source_tree.nodes.AsyncWith"
 
 
 def test_enumerate_with_rows_reach_partition_with_identical_keys(
@@ -330,7 +333,10 @@ def test_enumerate_with_rows_reach_partition_with_identical_keys(
 ) -> None:
     """The production enumerate door and partition conserve the same members."""
     module = _load()
-    from recensus_enumerate_consumer import demand_context_manager_resolution_events
+    from recensus_enumerate_consumer import (
+        demand_context_manager_resolution_events,
+        with_item_events_off_the_roll,
+    )
     from sugar_lift_python_source.source_oracle import path_source
 
     path = tmp_path / "opaque.py"
@@ -340,16 +346,19 @@ def test_enumerate_with_rows_reach_partition_with_identical_keys(
     )
     source_cid = path_source(str(path))[2]
 
-    events, gaps = demand_context_manager_resolution_events(
+    items, gaps = demand_context_manager_resolution_events(
         workspace_root=tmp_path,
         file_rel="opaque.py",
         source_cid=source_cid,
     )
     assert gaps == []
-    assert len(events) == 1
-    assert events[0]["outcome"] == "unconstructed"
-    assert "." in str(events[0]["observedEventType"])
+    assert len(items) == 1
+    # The level keys the item and names its statement; it states no outcome.
+    assert "outcome" not in items[0]
+    assert items[0]["statement"] == {"kind": "With", "line": 2, "col": 4}
+    assert "." in str(items[0]["observedEventType"])
 
+    events = with_item_events_off_the_roll(items, None)
     rows = module._tally_cm_resolutions(
         source_cid=source_cid,
         resolution_events=events,
@@ -369,16 +378,15 @@ def test_enumerate_with_rows_reach_partition_with_identical_keys(
     assert edge["duplicateKeys"] == []
 
 
-def test_resolution_enumeration_keeps_rows_when_provider_projection_reaches_gap(
+def test_the_level_keys_every_with_item_and_constructs_nothing(
     tmp_path: Path,
 ) -> None:
-    """The raw producer keeps the row of a ``with`` whose head is a name bound
-    to a call nobody answers.
+    """The level keeps the row of a ``with`` whose head is a name bound to a
+    call nobody answers.
 
-    It enumerates the table ``With`` reads, coordinate by coordinate; it does
-    not construct, so it has no construction terminal to raise.  The item is
-    one row, keyed on its own coordinate, with the ``unconstructed`` outcome:
-    never dropped, never reported as constructed.
+    It reads the tree, item by item; it does not construct, so it has no
+    construction terminal to raise and no outcome to state. The item is one
+    row, keyed on its own coordinate, naming the statement that owns it.
     """
     _load()
     from recensus_enumerate_consumer import demand_context_manager_resolution_events
@@ -394,24 +402,26 @@ def test_resolution_enumeration_keeps_rows_when_provider_projection_reaches_gap(
     )
     source_cid = path_source(str(path))[2]
 
-    events, gaps = demand_context_manager_resolution_events(
+    items, gaps = demand_context_manager_resolution_events(
         workspace_root=tmp_path,
         file_rel="provider.py",
         source_cid=source_cid,
     )
     assert gaps == []
-    assert len(events) == 1, events
-    (event,) = events
-    assert event["outcome"] == "unconstructed"
-    assert event["outcome"] != "constructed"
+    assert len(items) == 1, items
+    (item,) = items
+    assert "outcome" not in item
     # The row is keyed on a coordinate, as every row the partition reads is.
-    assert isinstance(event["inputKey"], dict) and event["inputKey"]
+    assert isinstance(item["inputKey"], dict) and item["inputKey"]
+    assert item["inputKey"]["sourceCid"] == source_cid
+    assert item["statement"] == {"kind": "With", "line": 3, "col": 4}
 
 
-def test_provider_resolution_gap_is_enrolled_once_without_losing_with_key(
+def test_a_constructed_file_leaves_no_with_unconstructed(
     tmp_path: Path,
 ) -> None:
-    """A logged provider gap is one panic terminal, never completed testimony."""
+    """The board's two readings agree: a file that ends constructed has every
+    ``with`` item counted constructed (#7699), and the item is never lost."""
     _load()
     from recensus_enumerate_consumer import measure_file_via_enumerate
 
@@ -429,11 +439,7 @@ def test_provider_resolution_gap_is_enrolled_once_without_losing_with_key(
         file_rel="provider.py",
     )
 
-    assert row["category"] == "panic", row
-    assert row["terminalKind"] == "construction-panic", row
-    assert row["panic"]["observedEventType"] == (
-        "sugar_source_tree.panic.ContextManagerResolutionConstructionGap"
-    )
-    assert row["constructionPanics"] == [row["panic"]]
     assert len(row["contextManagerResolutionEvents"]) == 1
-    assert row["contextManagerResolutionEvents"][0]["outcome"] == "unconstructed"
+    (event,) = row["contextManagerResolutionEvents"]
+    built = row["terminalKind"] == "constructed"
+    assert event["outcome"] == ("constructed" if built else "unconstructed"), row

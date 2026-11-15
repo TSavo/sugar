@@ -4,8 +4,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-import pytest
-
 from sugar_lift_py_tests.gap.info import ConstructionGap
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
@@ -66,45 +64,6 @@ def test_recensus_projects_construction_panic_as_a_loud_counted_terminal(
     assert row["blocking_terminal_count"] == 1
     assert row["panic"]["observedEventType"].endswith(".ConstructionPanic")
     assert len(row["constructionPanics"]) == 1
-
-
-def test_contract_ref_fallback_panic_stays_loud_after_roster_bank(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """Fallback derivation follows roster banking and never absorbs its panic."""
-    path = tmp_path / "fixture.py"
-    path.write_text("def a():\n    return 1\n", encoding="utf-8")
-    calls: list[str] = []
-
-    def roster(**_kwargs):
-        calls.append("roster")
-        return ([{"kind": "function-memento"}], [])
-
-    def fallback(_root):
-        calls.append("fallback")
-        raise ConstructionPanic(
-            ConstructionGap(
-                owner="fallback-demand-table-panic",
-                blame="fixture.py:1:0",
-                observed="fallback demand-table construction",
-                requested="authenticated contract refs",
-                fix="keep fallback failure loud after the per-file roster bank",
-            )
-        )
-
-    import sugar_lift_py_tests.lift_rpc as lift_rpc
-
-    monkeypatch.setattr(CONSUMER, "demand_function_roster", roster)
-    monkeypatch.setattr(lift_rpc, "provisional_contract_refs_from_demands", fallback)
-
-    with pytest.raises(ConstructionPanic) as raised:
-        CONSUMER.measure_file_via_enumerate(
-            workspace_root=tmp_path,
-            file_rel="fixture.py",
-        )
-
-    assert raised.value.info.owner == "fallback-demand-table-panic"
-    assert calls == ["roster", "fallback"]
 
 
 def test_mid_file_construction_panic_does_not_shrink_function_denominator(
@@ -177,7 +136,7 @@ def test_control_effect_recensus_enumerates_one_file(tmp_path: Path) -> None:
     assert row["functionsClean"] == 1
 
 
-def test_unresolved_with_is_typed_gap_on_enum_path(tmp_path: Path) -> None:
+def test_with_over_a_formal_is_counted_as_built_on_enum_path(tmp_path: Path) -> None:
     path = tmp_path / "consumer.py"
     path.write_text(
         "def use_resource(manager):\n" "    with manager:\n" "        pass\n",
@@ -188,22 +147,21 @@ def test_unresolved_with_is_typed_gap_on_enum_path(tmp_path: Path) -> None:
         file_rel="consumer.py",
     )
 
-    # The current door carries both the preconstruction resolution and its loud
-    # construction terminal; neither is reconstructed from a family label.
-    assert row["category"] == "panic"
-    assert row["terminalKind"] == "construction-panic"
+    # The ``with`` constructs from its head alone (the manager is what the
+    # head reduces to); the census reads that off the construction roll.
+    assert row["category"] == "completed"
+    assert row["terminalKind"] == "constructed"
     assert row["functionsTotal"] == 1
     events = row["contextManagerResolutionEvents"]
     assert len(events) == 1
-    assert events[0]["outcome"] == "unconstructed"
-    assert events[0]["observedEventType"].endswith(".ContextManagerResolutionGapV1")
-    assert row["panic"]["observedEventType"].endswith(
-        ".ContextManagerResolutionConstructionGap"
-    )
+    assert events[0]["outcome"] == "constructed"
+    assert events[0]["observedEventType"].endswith(".With")
 
 
-def test_with_census_injects_construction_context(tmp_path: Path) -> None:
-    """Instrument law: census must not call bare SourceFile without context."""
+def test_with_census_keys_every_item_off_the_tree(tmp_path: Path) -> None:
+    """The census states one event per ``with`` item, and its outcome is the
+    roll's answer for the statement: built exactly when the file's terminal
+    says everything was built."""
     path = tmp_path / "with_open.py"
     path.write_text(
         "def use():\n" "    with open('x') as f:\n" "        pass\n",
@@ -214,16 +172,11 @@ def test_with_census_injects_construction_context(tmp_path: Path) -> None:
         file_rel="with_open.py",
     )
 
-    # open is not authenticated by the provisional table. The injected context
-    # therefore carries one explicit unconstructed resolution into the terminal;
-    # a bare SourceFile would have no resolution event at all.
     events = row["contextManagerResolutionEvents"]
     assert len(events) == 1
-    assert events[0]["outcome"] == "unconstructed"
-    assert events[0]["observedEventType"].endswith(".ContextManagerResolutionGapV1")
-    assert row["panic"]["observedEventType"].endswith(
-        ".ContextManagerResolutionConstructionGap"
-    )
+    assert events[0]["observedEventType"].endswith(".With")
+    built = row["terminalKind"] == "constructed"
+    assert events[0]["outcome"] == ("constructed" if built else "unconstructed")
 
 
 def test_construction_gap_occurrence_counted_once(tmp_path: Path) -> None:

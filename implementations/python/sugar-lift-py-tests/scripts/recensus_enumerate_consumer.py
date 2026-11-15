@@ -482,7 +482,14 @@ def demand_context_manager_resolution_events(
     source_cid: str,
     source_workspace_root: Path | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Enumerate the raw, coordinate-keyed table With construction consumed."""
+    """Enumerate the file's ``with`` items, one keyed row per item.
+
+    Each row carries the item's coordinate (``inputKey``) and the roll
+    identity of the statement that owns it (``statement``: kind, line, col).
+    It carries no outcome: what the statement built is its answer on the
+    construction roll (``with_item_events_off_the_roll``), not a table row
+    (#7757).
+    """
     result = enumerate_rpc(
         level="context-manager-resolutions",
         workspace_root=workspace_root,
@@ -518,14 +525,70 @@ def demand_context_manager_resolution_events(
         coordinate = memento.get("coordinate") if isinstance(memento, dict) else None
         if not isinstance(coordinate, dict) or not isinstance(audit, dict):
             continue
+        statement = audit.get("statement")
+        if (
+            not isinstance(statement, dict)
+            or not isinstance(statement.get("kind"), str)
+            or not isinstance(statement.get("line"), int)
+            or not isinstance(statement.get("col"), int)
+        ):
+            # An item whose owning statement is not named cannot be read off
+            # the roll. Dropping it would shrink the census; reporting it
+            # unconstructed would be a guess. Name it instead.
+            raise TypeError(
+                "context-manager-resolutions answered a with item without its "
+                f"statement's roll identity: file={file_rel} node={node!r}"
+            )
         events.append(
             {
                 "inputKey": dict(coordinate),
                 "observedEventType": audit.get("observedEventType"),
-                "outcome": audit.get("outcome"),
+                "statement": {
+                    "kind": statement["kind"],
+                    "line": statement["line"],
+                    "col": statement["col"],
+                },
             }
         )
     return events, list(result.get("gaps") or [])
+
+
+def with_item_events_off_the_roll(
+    items: list[dict[str, Any]], audit: dict[str, Any] | None
+) -> list[dict[str, Any]]:
+    """One With census event per item, read off the construction roll.
+
+    An item is ``constructed`` when the statement that owns it answered
+    present on the roll the audit leaf carries (``sourceAudit``: a
+    ``warranted`` locus of the statement's kind at its line and column), and
+    ``unconstructed`` otherwise: the statement refused by name, was never
+    reached, or the roll never came back (``audit`` is None). The census
+    counts what construction built; no table is read (#7757).
+    """
+    built: set[tuple[str, int, int]] = set()
+    if isinstance(audit, dict):
+        aux = audit.get("auxiliaryRows")
+        source_audit = aux.get("sourceAudit") if isinstance(aux, dict) else None
+        loci = source_audit.get("loci") if isinstance(source_audit, dict) else None
+        for locus in loci if isinstance(loci, list) else ():
+            if not isinstance(locus, dict) or locus.get("status") != "warranted":
+                continue
+            where = locus.get("locus")
+            if not isinstance(where, dict):
+                continue
+            built.add((locus.get("kind"), where.get("line"), where.get("col")))
+    events: list[dict[str, Any]] = []
+    for item in items:
+        statement = item["statement"]
+        answered = (statement["kind"], statement["line"], statement["col"]) in built
+        events.append(
+            {
+                "inputKey": dict(item["inputKey"]),
+                "observedEventType": item.get("observedEventType"),
+                "outcome": "constructed" if answered else "unconstructed",
+            }
+        )
+    return events
 
 
 def relation_member_cid(*, relation: str, occurrence: Mapping[str, Any]) -> str:
@@ -743,41 +806,6 @@ def shard_relation_membership_attestation(
         },
         None,
     )
-
-
-def _provisional_resolution_events(
-    *, contract_refs: object, source_cid: str
-) -> list[dict[str, Any]]:
-    """Project the exact canonical fallback keys after enrichment panics.
-
-    ``contract_refs`` is the same installed table the enumerate request used.
-    This projects its coordinate-keyed rows directly; it never reconstructs
-    membership from counters or deleted resolution-kind names.
-    """
-    from sugar_lift_py_tests.context_manager_resolution import (
-        context_manager_resolution_outcome,
-        resolutions_for_source,
-    )
-
-    events: list[dict[str, Any]] = []
-    for coordinate, resolution in sorted(
-        resolutions_for_source(
-            getattr(contract_refs, "by_use_site", None), source_cid
-        ).items()
-    ):
-        events.append(
-            {
-                "inputKey": coordinate.wire(),
-                "observedEventType": _qualified_type(resolution),
-                "outcome": context_manager_resolution_outcome(resolution),
-                "kind": getattr(resolution, "kind", None),
-                "targetSymbol": (
-                    getattr(resolution, "target_symbol", None)
-                    or getattr(resolution, "target_name", None)
-                ),
-            }
-        )
-    return events
 
 
 def demand_construction_residual(
@@ -1088,9 +1116,9 @@ def measure_file_via_enumerate(
 ) -> dict[str, Any]:
     """One terminal, plus the attendance the walk that produced it can testify to.
 
-    The With demand table is the root's one per-source door
-    (``provisional_contract_refs_from_demands``), the table every
-    ``sugar.enumerate`` level reads; no caller hands one in (#7757 item 46).
+    The With census is read off the construction roll: one row per ``with``
+    item, ``constructed`` when its statement answered present on the audit
+    leaf's roll (``with_item_events_off_the_roll``). No table is read (#7757).
 
     Attendance travels WITH the terminal, in the row, so it survives a
     checkpoint resume exactly as the terminal does. A shard that resumed could
@@ -1310,17 +1338,11 @@ def _terminal_via_enumerate(
             source_cid=source_cid,
         )
 
-    from sugar_lift_py_tests.lift_rpc import provisional_contract_refs_from_demands
-
-    # The root's one With demand table: the same per-source door the enumerate
-    # request reads. The per-file roster is the sanctioned ConstructionPanic
-    # membrane; it is banked above, before this door is opened. A panic from
-    # opening it remains loud: it is not a terminal for this one file and must
-    # never be absorbed or misattributed as one.
-    contract_refs = provisional_contract_refs_from_demands(Path(workspace_root))
-
+    # The file's ``with`` items, keyed, read off the tree. The level
+    # constructs nothing; what each item's statement built is read off the
+    # construction roll once the audit leaf (D3) answers.
     try:
-        cm_events, cm_gaps = demand_context_manager_resolution_events(
+        cm_items, cm_gaps = demand_context_manager_resolution_events(
             workspace_root=workspace_root,
             file_rel=file_rel,
             source_cid=source_cid,
@@ -1356,10 +1378,6 @@ def _terminal_via_enumerate(
         )
         row["constructionPanics"] = [panic]
         row["enumerateConstructionPanics"] = [panic]
-        row["contextManagerResolutionEvents"] = _provisional_resolution_events(
-            contract_refs=contract_refs,
-            source_cid=source_cid,
-        )
         return _attest_terminal_row(
             row,
             file_rel=file_rel,
@@ -1387,6 +1405,9 @@ def _terminal_via_enumerate(
 
     _clear_d3_audit_open_observation(source_cid)
     d3_present_before_demand = False
+    # Until the roll comes back nothing is known to have been built: every
+    # item stands unconstructed. A residual failure below keeps exactly that.
+    cm_events = with_item_events_off_the_roll(cm_items, None)
     try:
         # Residency is keyed by the seat the one opener reads, never the path
         # spelling. A seat the opener would refuse fails here as it would there.
@@ -1430,7 +1451,9 @@ def _terminal_via_enumerate(
         residual_phase_failed=False,
         ast_fn=ast_fn,
         source_cid=source_cid,
-        context_manager_resolution_events=cm_events,
+        context_manager_resolution_events=with_item_events_off_the_roll(
+            cm_items, audit
+        ),
     )
     row["d3Residency"] = _complete_d3_residency_observation(
         source_cid=source_cid,
