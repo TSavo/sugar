@@ -2011,8 +2011,31 @@ def _object_key(node):
     return ref if isinstance(ref, tuple) else id(ref)
 
 
+def _class_object(node) -> bool:
+    """Whether ``node`` reads a ``class`` statement's class: the
+    ``ClassDef`` binding, or the read of its key the rewrite leaves in its
+    place (``DecoratedDefinitionRef``, #7757 item 21) -- both forms, as
+    ``_never_havoc`` reads them."""
+    kind = getattr(node, "kind", None)
+    if kind == "ClassDef":
+        return True
+    if kind != "DecoratedDefinitionRef":
+        return False
+    return getattr(getattr(node, "definition", None), "kind", None) == "ClassDef"
+
+
 def _graph(node):
-    """Keys of every object ``node``'s value may be, hold, or be read from."""
+    """Keys of every object ``node``'s value may be, hold, or be read from.
+
+    A class is one of them where ``node`` reads it -- an instance built by a
+    call of it holds it as ``type(instance)``.  Its binding is never rebound
+    (``_never_havoc``: the readers that rebind skip it), but the class object
+    is shared by every instance: code that reaches one instance reaches
+    ``type(instance)`` and may bind a data descriptor or ``__setattr__`` on
+    it, which every other instance's attribute access then runs
+    (``object.__getattribute__``).  So two instances of one class share it,
+    and an operation that may change one may change what the other's reads
+    answer."""
     from .nodes import Node
 
     if not isinstance(node, Node):
@@ -2020,7 +2043,7 @@ def _graph(node):
     return {
         _object_key(member)
         for member in _walk_values(node, kept_only=False)
-        if not _never_havoc(member)
+        if not _never_havoc(member) or _class_object(member)
     }
 
 
