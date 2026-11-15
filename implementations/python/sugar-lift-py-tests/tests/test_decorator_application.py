@@ -747,8 +747,11 @@ def test_an_instance_lookup_binds_by_descriptor_kind(tmp_path) -> None:
             "pick", (TermValue(3),), owner="test", blame="pick-site", ctx=ctx
         )
         term = _edge_term(outcome, "dispatch:pick")
-        _instance, written = _positional(term)
-        assert written == num(3), decorator
+        # The receiver is the first positional argument, its identity term
+        # (``py.object.identity``, which ``_positional`` sets aside with the
+        # ``py.*`` inputs), then the written actual (``dispatch_edge_call``).
+        assert term.args[0] == receiver.to_term(owner="pick-site"), decorator
+        assert _positional(term) == (num(3),), decorator
         assert any(
             getattr(arg, "name", None) == "py.class" for arg in term.args
         ), decorator
@@ -1745,9 +1748,12 @@ def test_a_descriptor_read_off_an_instance_is_a_callable_value(tmp_path) -> None
         outcome = read.callable_application_with(
             CallableApplication((TermValue(3),), (), "pick-site", owner="test"), ctx
         )
-        actuals = _positional(_edge_term(outcome, "dispatch:pick"))
-        assert actuals[-1] == num(3), decorator
-        assert len(actuals) == 2, decorator
+        term = _edge_term(outcome, "dispatch:pick")
+        # The instance the read bound rides first, as its identity term
+        # (``py.object.identity``, set aside by ``_positional`` with the
+        # ``py.*`` inputs), then the written actual (``dispatch_edge_call``).
+        assert term.args[0] == receiver.to_term(owner="pick-site"), decorator
+        assert _positional(term) == (num(3),), decorator
         assert "ValueError" not in _halt_names(outcome), decorator
 
 
