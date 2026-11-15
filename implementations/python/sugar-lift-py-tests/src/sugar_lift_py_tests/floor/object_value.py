@@ -1023,10 +1023,9 @@ class ObjectValue(FloorValue):
         the member the read selected -- called
         (``method_call_sugar._source_instance_method_call``).
 
-        The application is the one a plain call ``f(...)`` uses
-        (``CallSiteValue.producer_outcome``, as ``CallSiteSugar`` applies it):
-        the body runs here and every face it has, raises included, is this
-        call's.
+        The call is the one a plain call ``f(...)`` of a same-file function
+        is: its coordinate and an edge to the method's join symbol, joined at
+        prove (``call_member``, ``method_edge_call``, #7757 step 6).
 
         The member is the one the one class-namespace lookup selects
         (``class_member``), read once and called (``call_member``); a lookup
@@ -1066,10 +1065,13 @@ class ObjectValue(FloorValue):
         and the one application routine applies it.  Nothing selects it
         again by name.
 
+        - On an instance that arrived by binding (``receiver_class_decided``
+          False) which function runs is not decided: the unanswered call
+          (``unanswered_method_call``).
         - A function the class wrote (``ObjectMethodValue``) is bound with
           the implicit first actual its descriptor kind binds
-          (``bind_method_call``, ``implicit_arguments``) and applied
-          (``CallSiteValue.producer_outcome``).
+          (``bind_method_call``, ``implicit_arguments``) and stands as its
+          coordinate and edge (``method_edge_call``).
         - A function the class namespace holds as a field (``LambdaCallable``:
           ``f = lambda self: 1``, ``m = some_def``) is a method bound to this
           receiver (``function.__get__``): the receiver is its first actual,
@@ -1080,17 +1082,38 @@ class ObjectValue(FloorValue):
         A frame the caller requires must be the selected method's own."""
         from sugar_lift_py_tests.floor.lambda_callable import LambdaCallable
 
+        if isinstance(member, (ObjectMethodValue, LambdaCallable)) and (
+            not receiver_class_decided(self)
+        ):
+            # An instance that arrived by binding (``self`` in a method, a
+            # formal) may be of a subclass that overrides ``name``: which
+            # function runs is not decided here (#7757 step 6; dispatch at
+            # prove waits on the owner's ruling).
+            return self.unanswered_method_call(name, arguments, keywords, blame)
         if isinstance(member, ObjectMethodValue):
-            return self._bind_member(
-                name,
+            if (
+                required_frame is not None
+                and member.source_call_frame_cid != required_frame.frame_cid
+            ):
+                return self._floor_gap(
+                    owner=owner,
+                    blame=blame,
+                    observed=f"{self.class_name}.{name}",
+                    requested="constructor-bound method",
+                    fix=f"construct a diggable body for `{self.class_name}.{name}`",
+                )
+            return method_edge_call(
+                self,
                 member,
                 arguments,
+                keywords,
+                class_name=self.class_name,
+                ctx=ctx,
                 owner=owner,
                 blame=blame,
-                ctx=ctx,
-                keywords=keywords,
+                refuse=self._floor_gap,
                 required_frame=required_frame,
-            ).producer_outcome(ctx)
+            )
         if isinstance(member, LambdaCallable) and required_frame is None:
             from sugar_lift_py_tests.callable_application import (
                 CallableApplication,
@@ -1506,6 +1529,99 @@ def bind_method_call(
         # that defines it (``ClassDefinitionValue.method_defaults``), as a
         # lambda value carries its own.
         defaults=getattr(method.defining_class, "method_defaults", ()),
+    )
+
+
+def receiver_class_decided(receiver) -> bool:
+    """Whether the class whose namespace a method call on ``receiver`` reads
+    is decided here: a source class value itself (``Cls.m``, ``super()`` in a
+    ``classmethod`` given the class), or an instance a construction in the
+    frame reading it made (``allocation``: its class is the class the call
+    made it of).  An instance that arrived by binding (``self`` in a method,
+    any formal) may be of a subclass that overrides the method: not decided
+    (#7757 step 6; dispatch at prove waits on the owner's ruling)."""
+    from sugar_lift_py_tests.floor.class_definition_value import (
+        ClassDefinitionValue,
+    )
+
+    if isinstance(receiver, ClassDefinitionValue):
+        return True
+    return isinstance(receiver, ObjectValue) and receiver.allocation is not None
+
+
+def method_edge_call(
+    receiver,
+    method,
+    arguments,
+    keywords,
+    *,
+    class_name: str,
+    ctx,
+    owner: str,
+    blame: object,
+    refuse,
+    required_frame=None,
+    call_occurrence=None,
+):
+    """``receiver.m(*arguments, **keywords)`` whose function the one
+    class-namespace lookup selected (``method``) on a receiver whose class
+    is decided (``receiver_class_decided``): its coordinate and an edge to
+    the method's join symbol (``python:<module>.<Class>.<m>``,
+    ``lambda_callable.definition_edge_call``), joined at prove to the
+    method's contract as a call of a ``def`` is (#7757 step 6).  The method's
+    body is never applied here.
+
+    The call is bound by the one method door (``bind_method_call``: the
+    implicit first actual its descriptor kind binds, the defaults its class
+    carries) only to read what the edge supplies; the implicit actual is the
+    edge's first positional actual.  A generator method or an ``async def``
+    builds its generator or coroutine through its frame's own application
+    (``lambda_callable._applies_its_own_frame``), as a function's does."""
+    from sugar_lift_py_tests.floor.lambda_callable import (
+        _applies_its_own_frame,
+        definition_edge_call,
+    )
+
+    bound = bind_method_call(
+        receiver,
+        method,
+        arguments,
+        keywords,
+        class_name=class_name,
+        ctx=ctx,
+        owner=owner,
+        blame=blame,
+        refuse=refuse,
+        required_frame=required_frame,
+    )
+    frame = required_frame or method.source_call_frame
+    if frame is None or _applies_its_own_frame(frame):
+        return bound.producer_outcome(ctx)
+    implicit = implicit_arguments(
+        receiver,
+        method,
+        target_name=bound.target_name,
+        owner=owner,
+        blame=blame,
+        refuse=refuse,
+    )
+    definition = frame.owner
+    return definition_edge_call(
+        symbol_definition=definition,
+        signature=definition,
+        parameters=tuple(method.parameters),
+        packed=any(
+            kind in ("vararg", "kwarg")
+            for kind in getattr(frame, "parameter_kinds", ())
+        ),
+        positional=(*implicit, *arguments),
+        keywords=tuple(keywords),
+        captured=(),
+        actuals=tuple(bound.arg_values),
+        site=blame,
+        call_occurrence=call_occurrence,
+        caller_ctx=ctx,
+        fallback_target=bound.target_name,
     )
 
 

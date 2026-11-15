@@ -1,27 +1,22 @@
-"""A class call carries its constructor's halts (#7756).
+"""A class call carries its constructor's halts to its caller at prove
+(#7756, #7757 step 6).
 
-``Cls(x)`` is a call.  Its constructor frame applies through the one
-application routine (``CallSiteValue.producer_outcome``), so a halt of the
-initializer -- including one from a method the initializer calls -- is a halt
-of the call, never packed inside a completed value.
+``Cls(x)`` is a call: its coordinate and an edge to the class's join symbol
+(``python:<module>.<Class>``), joined at prove to the class's constructor
+contract (``tree_enumerate.class_universe_outcome``) as a call of a ``def``
+is (the owner's ruling of 2026-11-15, "Edge, join at prove").  The reduction
+never applies the constructor's body: a class call is the two faces of the
+one unanswered call, and a halt of the initializer -- including one from a
+method the initializer calls, itself an edge joined in turn -- reaches the
+caller through the join (#8690).
 
-Solver twins: the truthful source's claim holds; the lying source makes the
-constructor raise, so the assertion after the class call is never reached
-(``unsat``).
-
-``test_box`` makes the receiver at its own call (``Box(3)``), so the
-initializer's ``self.check(n)`` selects ``Box.check`` and applies it: the
-test function's claim is decided.  ``__init__``'s own proof has no call: its
-receiver arrived (``ClassConstructorBodySugar._made``: no allocation, only
-the coordinate it reached ``__init__`` through), so ``self.check(n)`` there is
-a method selected through an arrived ``self``, decided in neither half
-(#8151, #8153), and the proof owes it as an ``undecided`` member; ``check``'s
-own ``n > 5`` is an operation on a formal with no actual and is owed the same
-way.  A source that owes anything is never ``sat`` as a whole (step 8), so
-the truthful half is read on the test function's own claims
-(``witness_harness.claim_verdict``), as the method-call twins are
-(``test_method_call_application_twins``): every member a method's own proof
-owes sits above the test function and is set aside.
+Solver twins: the lying source makes the constructor raise, so the assertion
+after the class call is never reached (``unsat``: a certain halt in a callee
+refutes the lie).  The truthful source's claim reads ``box.n``, a field of a
+call's result, which no contract decides until the post-call object state is
+stated (#7757 step 7): ``open``, never ``sat`` for the lie.  Before step 6
+the truthful claim was decided ``sat`` at the reduction by following
+``Box.__init__``'s body.
 """
 
 from __future__ import annotations
@@ -48,8 +43,7 @@ def _pair(tmp_path: Path, name: str, truthful: str, lying: str) -> None:
         if line.startswith("def test_")
     )
     assert t.verdict == "open"
-    assert t.prove_doc["owed"] >= 1
-    assert claim_verdict(t.prove_doc, claims_from_line=test_line) == "sat"
+    assert claim_verdict(t.prove_doc, claims_from_line=test_line) == "open"
     assert lie.verdict == "unsat"
 
 
@@ -96,9 +90,9 @@ def test_constructor_halt_on_one_face_reaches_the_class_call(tmp_path: Path) -> 
 
 
 # ---------------------------------------------------------------------------
-# The same sources in process (a unit check, not a twin).  Before #7756 the
-# raising constructors gave a completed ``ReceiverStatePartitionValue`` and the
-# ``box.n`` read refused on it.
+# The same sources in process (a unit check, not a twin).  The class call is
+# the edge's two faces whatever the constructor does: its halt is decided at
+# prove, never at the reduction.
 # ---------------------------------------------------------------------------
 
 
@@ -123,26 +117,33 @@ def _test_function_outcome(source: str):
     return function_universe_outcome(function)
 
 
+def _decided_raises(outcome) -> list:
+    """The exception names of the halted faces the reduction decided (every
+    halt but the one unanswered call's undetermined raise)."""
+    from sugar_lift_py_tests.outcome import Halted
+
+    return [
+        getattr(face.effect, "exception_name", None)
+        for face in getattr(outcome, "exits", ())
+        if isinstance(face, Halted)
+        and type(face.effect).__name__ != "UndeterminedRaiseEffect"
+    ]
+
+
 @pytest.mark.parametrize(
-    ("body", "actual", "raises"),
-    [
-        (_PLAIN, 3, False),
-        (_ALWAYS, 3, True),
-        (_ONE_FACE, 3, False),
-        (_ONE_FACE, 9, True),
-    ],
+    ("body", "actual"),
+    [(_PLAIN, 3), (_ALWAYS, 3), (_ONE_FACE, 3), (_ONE_FACE, 9)],
     ids=["plain", "always-raises", "one-face-not-taken", "one-face-taken"],
 )
-def test_constructor_halt_in_process(body: str, actual: int, raises: bool) -> None:
-    from sugar_lift_py_tests.outcome import ExitSet, Halted
+def test_constructor_halt_is_decided_at_prove(body: str, actual: int) -> None:
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
     outcome = _test_function_outcome(_CONSTRUCTOR.format(body=body, actual=actual))
-    if not raises:
-        assert outcome.completed_value() is not None, outcome
-        return
     assert isinstance(outcome, ExitSet), outcome
-    assert [type(face) for face in outcome.exits] == [Halted]
-    assert outcome.exits[0].effect.exception_name == "ValueError"
+    kinds = {type(face) for face in outcome.exits}
+    # The edge's two faces: it may complete, it may halt.
+    assert Completed in kinds and Halted in kinds, outcome
+    assert "ValueError" not in _decided_raises(outcome), outcome
 
 
 _FACTORY = """\
@@ -158,13 +159,11 @@ class Box:
 """
 
 
-@pytest.mark.parametrize(("actual", "raises"), [(3, False), (9, True)])
-def test_class_method_call_carries_the_constructor_halt(actual: int, raises: bool) -> None:
-    """``cls.m(x)`` binds ``cls`` first through the one binder (unit check).
-
-    ``Box.make(n)`` returns ``cls(n)``: the class call inside the classmethod
-    is the one constructor, so ``__init__``'s raise is a face of ``make``.
-    """
+@pytest.mark.parametrize("actual", [3, 9])
+def test_class_method_call_is_its_edge(actual: int) -> None:
+    """``Box.make(n)``: the classmethod the lookup selected on the class is
+    its coordinate and edge (#7757 step 6), whatever ``make``'s body does;
+    ``__init__``'s raise reaches the caller at prove (unit check)."""
     from sugar_lift_python_source.canonical import blake3_512_of
     from sugar_lift_py_tests.context.reduce_context import ReduceContext
     from sugar_lift_py_tests.context_manager_resolution import (
@@ -185,13 +184,6 @@ def test_class_method_call_carries_the_constructor_halt(actual: int, raises: boo
     outcome = box.call_method_value(
         "make", (TermValue(actual),), owner="test", blame="make-site", ctx=ctx
     )
-    halts = [
-        face
-        for face in getattr(outcome, "exits", ())
-        if isinstance(face, Halted)
-    ]
-    if raises:
-        assert isinstance(outcome, ExitSet), outcome
-        assert [face.effect.exception_name for face in halts] == ["ValueError"]
-    else:
-        assert halts == []
+    assert isinstance(outcome, ExitSet), outcome
+    halts = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert [type(face.effect).__name__ for face in halts] == ["UndeterminedRaiseEffect"]

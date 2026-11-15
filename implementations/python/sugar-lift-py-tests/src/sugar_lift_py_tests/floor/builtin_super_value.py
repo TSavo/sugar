@@ -158,9 +158,20 @@ class BuiltinSuperValue(FloorValue):
             )
 
         if method is not None:
-            from sugar_lift_py_tests.floor.object_value import bind_method_call
+            from sugar_lift_py_tests.floor.object_value import (
+                method_edge_call,
+                receiver_class_decided,
+            )
 
-            return bind_method_call(
+            if not receiver_class_decided(self.receiver):
+                # The MRO ``super()`` searches is the receiver's type's: an
+                # instance that arrived by binding may be of a subclass whose
+                # order puts another class after ``__class__``.  Which
+                # function runs is not decided here (#7757 step 6).
+                return self._unanswered(name, arguments, keywords, blame)
+            # The function the lookup selected, on a receiver whose class is
+            # decided: its coordinate and edge (#7757 step 6).
+            return method_edge_call(
                 self.receiver,
                 holder.object_method(method),
                 arguments,
@@ -170,7 +181,7 @@ class BuiltinSuperValue(FloorValue):
                 owner=_OWNER,
                 blame=blame,
                 refuse=refuse,
-            ).producer_outcome(ctx)
+            )
         if isinstance(value, LambdaCallable):
             from sugar_lift_py_tests.callable_application import CallableApplication
 
