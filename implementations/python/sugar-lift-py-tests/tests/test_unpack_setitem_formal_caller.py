@@ -169,20 +169,31 @@ def test_mutable_receiver_completes_with_x_and_correct_store() -> None:
     assert "out" in post and "p" in post
 
 
-def test_source_caller_mutable_receiver_completes() -> None:
-    outcome = _call("[0], 0, 1, 9")
-    assert isinstance(outcome, ExitSet)
-    assert len(outcome.exits) == 1
-    face = outcome.exits[0]
-    assert isinstance(face, Completed)
-    # The callee stored into the caller's list: that write rides the call's
-    # completed value to the caller's statement, as a walrus's rides its
-    # value (``consume_operands``).  The call is the value presented beneath.
-    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+def _the_call(actuals: str):
+    """The source call's value on its completed face.  A same-file call is
+    its coordinate and edge, joined at prove (#7757 steps 5 and 6, #8705):
+    it completes under its ``completes`` atom and owes its halt under the
+    complement; the helper's store on the caller's list is no longer carried
+    out of its frame (``caller_visible_values``, deleted by #8739) and is
+    joined at prove (#7757 step 7)."""
+    from sugar_lift_py_tests.floor import CallSiteValue
 
-    binds, presented = peel_walrus_binds(face.value)
-    assert binds, "the callee's store on the caller's list must reach the caller"
-    # Call presentation carries authenticated actuals for a, i, p, q.
+    outcome = _call(actuals)
+    assert isinstance(outcome, ExitSet)
+    assert [face for face in outcome.exits if isinstance(face, Halted)], outcome
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert len(completed) == 1, outcome
+    assert isinstance(completed[0].value, CallSiteValue), completed[0].value
+    return completed[0].value
+
+
+def test_source_caller_mutable_receiver_completes() -> None:
+    # Expected verdict changed (#8705, #8739): the call is the edge, two-faced
+    # and owed; it no longer carries the callee's store on the caller's list.
+    # The store itself is the row discharged with these actuals
+    # (``test_mutable_receiver_completes_with_x_and_correct_store``).
+    presented = _the_call("[0], 0, 1, 9")
+    # The edge carries the actuals for a, i, p, q as written.
     assert presented.arg_values == (
         fresh(ListValue, (TermValue(0),)),
         TermValue(0),
@@ -259,20 +270,21 @@ def test_invalid_index_named_indexerror_no_statement_completion() -> None:
 
 
 def test_source_caller_invalid_index_named_indexerror() -> None:
-    outcome = _call("[0], 5, 1, 9")
-    assert isinstance(outcome, ExitSet)
-    halted = outcome.exits[0]
-    assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate == _identity("IndexError")
-    assert (
-        isinstance(halted.effect.occurrence_id, str)
-        and ":" in halted.effect.occurrence_id
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {halted.effect.occurrence_id!r}"
+    # Expected verdict changed (#7757 steps 5 and 6, #8705): the source call
+    # no longer is the followed body's one IndexError halt.  It is the edge,
+    # which owes its halt and completes with the call value, never a
+    # completed return of ``x``; the named IndexError with the earlier
+    # binding's state is the row discharged with these actuals
+    # (``test_invalid_index_named_indexerror_no_statement_completion``),
+    # joined at the call by prove (#8690, #8749).
+    presented = _the_call("[0], 5, 1, 9")
+    assert not isinstance(presented, UniverseValue)
+    assert presented.arg_values == (
+        fresh(ListValue, (TermValue(0),)),
+        TermValue(5),
+        TermValue(1),
+        TermValue(9),
     )
-    # Caller path also preserves pre-effect state on the halt face.
-    assert halted.state is not None
 
 
 def test_invalid_index_discrimination_is_not_completed() -> None:
