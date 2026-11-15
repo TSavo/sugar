@@ -265,6 +265,41 @@ def test_a_global_unbound_at_the_module_call_is_undecided() -> None:
         _returned_at(call, _function(tree))
 
 
+EXPOSED_BY_A_MODULE_CALL = (
+    "X = []\ndef add():\n    X.append(1)\nadd()\ndef f():\n    return X\n"
+)
+
+
+def test_a_global_a_module_call_may_change_is_undecided_after_it() -> None:
+    # ``add()`` changes the list ``X = []`` built: the readers' threading
+    # takes the one exposure rule, so after the call ``X`` is the list as the
+    # call left it, which no key decides.  ``f`` reads it undecided by name,
+    # never the list before the call (#7757).
+    tree = _source(EXPOSED_BY_A_MODULE_CALL)
+    function = _function(tree)
+    unit = function.unit
+    assert unit.module_bindings_at(None, {"X"})["X"] is UNDECIDED_MODULE_BINDING
+    with pytest.raises(SugarNotWritten, match="undecided module binding of `X`"):
+        _returned(function)
+    # Where ``add()`` runs, before it changed anything, ``X`` is still the
+    # assignment's key: the call reads its global there.
+    (call,) = _calls(tree, "add")
+    at_call = unit.module_bindings_at(unit.module_execution_site(call), {"X"})["X"]
+    assert isinstance(at_call, EvaluationRef)
+    assert at_call.name == "X"
+
+
+def test_a_module_call_that_changes_a_global_leaves_the_module_run_whole() -> None:
+    # The module body's own run is not refused by ``add``'s read of ``X``:
+    # ``def add`` binds the function and leaves its body as written, and the
+    # call reads ``X`` where it runs, where the module body decides it.
+    from sugar_lift_py_tests.tree_enumerate import owner_reduction
+
+    tree = _source(EXPOSED_BY_A_MODULE_CALL)
+    exits = owner_reduction(None, tree).outcome.exits
+    assert len([exit_ for exit_ in exits if isinstance(exit_, Completed)]) == 1
+
+
 TRY_IMPORT_FALLBACK = (
     "try:\n    import json\nexcept ImportError:\n    json = None\n"
     "def f():\n    return json\n"
