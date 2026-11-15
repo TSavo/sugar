@@ -3783,6 +3783,17 @@ class SourceUnit:
         binding its own statements gave it."""
         return self._module_global_rows()[1]
 
+    def module_rebindable_names(self) -> frozenset:
+        """The module globals code a call runs may rebind: those a function
+        or class body writes through a ``global`` declaration (CPython's
+        symtable, ``_nested_scope_global_rows``), threaded or not, and every
+        ``module_unthreaded_names`` (all the threaded ones when the module
+        reaches a dynamic global writer).  A function's read of one after an
+        operation that may run such code is another evaluation
+        (``container_mutation._frame_globals``).  Memoized with the rows."""
+        self._module_global_rows()
+        return self._module_global_rows_memo[3]
+
     def _module_global_rows(self) -> Tuple[frozenset, frozenset]:
         module = self._require_typed_module(
             "SourceUnit._module_global_rows", blame=self.filename
@@ -3825,7 +3836,9 @@ class SourceUnit:
         else:
             unthreaded = threaded & writes
         object.__setattr__(
-            self, "_module_global_rows_memo", (module, threaded, unthreaded)
+            self,
+            "_module_global_rows_memo",
+            (module, threaded, unthreaded, frozenset(unthreaded | writes)),
         )
         return threaded, unthreaded
 

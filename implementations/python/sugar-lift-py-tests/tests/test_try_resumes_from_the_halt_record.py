@@ -959,10 +959,12 @@ def test_a_global_the_callee_stored_before_its_raise_is_read_as_on_completion() 
     None
 ):
     # ``g`` stores the module global ``G`` and raises.  The handler's read of
-    # ``G`` is what a read after ``g`` completing is -- the module binding a
-    # nested scope writes is undecided, so ``f`` reads it through its
-    # undecided key: its free ``global:G`` input, for which its row states
-    # no value (#8704) -- never the ``0`` the module bound before the call.
+    # ``G`` is what a read after ``g`` completing is: ``g`` writes ``G``
+    # through a ``global`` declaration, so the call rebinds it, and the read
+    # after it is the unknown the call left (``container_mutation.
+    # _frame_globals``) -- never the ``0`` the module bound before the call,
+    # and never ``f``'s free ``global:G`` input, the value before the call
+    # (#8802's known limit).
     halted = _returns(
         function_universe_outcome(
             _function(
@@ -995,8 +997,10 @@ def test_a_global_the_callee_stored_before_its_raise_is_read_as_on_completion() 
     assert halted and completed, (halted, completed)
     assert TermValue(0) not in halted, halted
     assert TermValue(0) not in completed, completed
-    assert "global:G" in repr(halted), halted
-    assert "global:G" in repr(completed), completed
+    assert "global:G" not in repr(halted), halted
+    assert "global:G" not in repr(completed), completed
+    assert "receiver_after_call" in repr(halted), halted
+    assert "receiver_after_call" in repr(completed), completed
 
 
 def test_a_call_halt_keeps_what_the_caller_did_before_the_call() -> None:
