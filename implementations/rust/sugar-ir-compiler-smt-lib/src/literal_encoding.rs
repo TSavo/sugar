@@ -91,6 +91,9 @@ pub struct LiteralConstants {
     /// Distinct opaque-literal SMT symbols (string-literal names + `None`),
     /// in stable sorted order.
     opaque_symbols: BTreeSet<String>,
+    /// The text of each string literal behind an `opaque_symbols` name, so the
+    /// Python-value encoding can state the literal's own type and content.
+    opaque_strings: BTreeSet<String>,
     /// Distinct concrete Int values present (from Int consts AND bool consts,
     /// the latter mapped True->1 / False->0). Used as the right-hand side of
     /// the distinctness axiom so opaque constants are kept off these values.
@@ -226,6 +229,7 @@ impl LiteralConstants {
                     // OPAQUE: hash-named uninterpreted Int const (see emit).
                     // (A wide Int-sorted string was already taken above.)
                     self.opaque_symbols.insert(string_lit_name(s));
+                    self.opaque_strings.insert(s.clone());
                 }
             }
             Term::Ctor { name, args } => {
@@ -277,10 +281,21 @@ impl LiteralConstants {
                     self.concrete_ints.insert(i);
                 } else if let serde_json::Value::String(s) = value {
                     self.opaque_symbols.insert(string_lit_name(s));
+                    self.opaque_strings.insert(s.clone());
                 }
             }
             Term::Var { .. } => {}
         }
+    }
+
+    /// Each concrete Int value present, ascending.
+    pub fn concrete_int_values(&self) -> impl Iterator<Item = i128> + '_ {
+        self.concrete_ints.iter().copied()
+    }
+
+    /// The text of each string literal declared as a `strlit_*` constant.
+    pub fn string_literal_texts(&self) -> impl Iterator<Item = &str> + '_ {
+        self.opaque_strings.iter().map(String::as_str)
     }
 
     /// Emit the preamble lines that declare string-literal constants and the

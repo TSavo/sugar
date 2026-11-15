@@ -2266,6 +2266,21 @@ fn check_inv_consistency_with_vacuity_reason(
         );
     }
     let (verdict, reason, effect) = consistency_verdict(raw, property_name, &raw_reason);
+    // A satisfiable claim is green only when it is satisfiable as Python reads
+    // `==`: never on a model that answered a free `py.eq` (#8416).
+    let (verdict, reason, effect) = if verdict == ObligationVerdict::Discharged
+        && !py_eq_reading_confirms(&inv, plan, registry, compilers)
+    {
+        (
+            ObligationVerdict::Undecidable,
+            format!(
+                "consistency check undecidable: `{property_name}` is satisfiable only through a `py.eq` over an operand whose builtin type is not stated [{raw_reason}]"
+            ),
+            None,
+        )
+    } else {
+        (verdict, reason, effect)
+    };
     if matches!(
         verdict,
         ObligationVerdict::Undecidable | ObligationVerdict::SolverTimeout
@@ -2295,6 +2310,126 @@ fn check_inv_consistency_with_vacuity_reason(
             &invs,
         )),
         dropped_ambient_posts: Vec::new(),
+    }
+}
+
+/// Does `node` hold a `py.eq` atom anywhere?
+fn reads_py_eq(node: &Json) -> bool {
+    if node.get("kind").and_then(Json::as_str) == Some("atomic") {
+        return node.get("name").and_then(Json::as_str) == Some("py.eq");
+    }
+    node.get("body").is_some_and(reads_py_eq)
+        || node
+            .get("operands")
+            .and_then(Json::as_array)
+            .is_some_and(|operands| operands.iter().any(reads_py_eq))
+}
+
+/// `node` with each `py.eq` atom read only over `str` / `int` operands
+/// (`python:value.builtin`, one atom per operand that is not a literal). At a
+/// positive position `py.eq(a, b)` becomes `and(py.eq(a, b), builtin(a),
+/// builtin(b))`; at a negative one `implies(and(builtin(a), builtin(b)),
+/// py.eq(a, b))`. The result implies `node`, and in each of its models every
+/// `py.eq` that decides it reads typed operands, never the free branch.
+/// `changed` is set when an atom was rewritten. `None` when a `py.eq` sits
+/// under a connective whose polarity is not read here.
+fn py_eq_over_builtins(node: &Json, positive: bool, changed: &mut bool) -> Option<Json> {
+    let rebuild = |node: &Json,
+                   polarities: &dyn Fn(usize) -> bool,
+                   changed: &mut bool|
+     -> Option<Json> {
+        let mut out = node.clone();
+        if let Some(operands) = node.get("operands").and_then(Json::as_array) {
+            let rewritten = operands
+                .iter()
+                .enumerate()
+                .map(|(index, operand)| py_eq_over_builtins(operand, polarities(index), changed))
+                .collect::<Option<Vec<Json>>>()?;
+            out["operands"] = Json::Array(rewritten);
+        }
+        if let Some(body) = node.get("body") {
+            out["body"] = py_eq_over_builtins(body, polarities(0), changed)?;
+        }
+        Some(out)
+    };
+    match node.get("kind").and_then(Json::as_str) {
+        Some("atomic") => {
+            if node.get("name").and_then(Json::as_str) != Some("py.eq") {
+                return Some(node.clone());
+            }
+            let builtins: Vec<Json> = node
+                .get("args")
+                .and_then(Json::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|arg| arg.get("kind").and_then(Json::as_str) != Some("const"))
+                .map(|arg| {
+                    json!({
+                        "kind": "atomic",
+                        "name": sugar_ir_compiler_smt_lib::PYTHON_VALUE_BUILTIN,
+                        "args": [arg]
+                    })
+                })
+                .collect();
+            if builtins.is_empty() {
+                return Some(node.clone());
+            }
+            *changed = true;
+            Some(if positive {
+                let mut operands = vec![node.clone()];
+                operands.extend(builtins);
+                json!({"kind": "and", "operands": operands})
+            } else {
+                json!({"kind": "implies", "operands": [
+                    {"kind": "and", "operands": builtins},
+                    node.clone()
+                ]})
+            })
+        }
+        Some("and") | Some("or") | Some("forall") | Some("exists") => {
+            rebuild(node, &|_: usize| positive, changed)
+        }
+        Some("not") => rebuild(node, &|_: usize| !positive, changed),
+        // The antecedent is read negatively, the consequent as the whole.
+        Some("implies") => rebuild(node, &|index: usize| (index != 0) == positive, changed),
+        _ if reads_py_eq(node) => None,
+        _ => Some(node.clone()),
+    }
+}
+
+/// Is a satisfiable `inv` satisfiable as Python reads `==` (#8416)?
+///
+/// The claim is decided by satisfiability: `discharged` is "the negation of
+/// `inv` is not valid", not "the negation of the claim is refuted". The
+/// SMT-LIB backend reads `py.eq` over an operand whose builtin type is not
+/// stated as the free application on its last branch, and a model may answer
+/// that application either way: sound for a refutation (unsatisfiable under
+/// every reading), never for satisfiability. So the claim is confirmed with
+/// every `py.eq` read over `str` / `int` operands (`py_eq_over_builtins`),
+/// which implies `inv` and never reaches the free branch: satisfiable then is
+/// satisfiable as Python reads it. `true` when `inv` reads no `py.eq` over
+/// anything but literals; `false` when the confirmation is not satisfiable or
+/// a `py.eq` sits where its polarity is not read.
+fn py_eq_reading_confirms(
+    inv: &Json,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+) -> bool {
+    let mut changed = false;
+    let Some(strict) = py_eq_over_builtins(inv, true, &mut changed) else {
+        return false;
+    };
+    if !changed {
+        return true;
+    }
+    let goal = IrFormula::Not(strict).to_value();
+    match CompilerInput::decode_json(goal) {
+        Ok(input) => {
+            run_plan_with_compilers(plan, registry, compilers, &input).0
+                == ObligationVerdict::Unsatisfied
+        }
+        Err(_) => false,
     }
 }
 
@@ -9812,6 +9947,125 @@ mod tests {
             canonicalize_formula_json(&eqf(call_result(call, JOIN_SITE), int(3))),
             "out := the call_result at the occurrence, x := the actual"
         );
+    }
+
+    fn solve_claim(inv: Json) -> ConsistencyResult {
+        let (plan, registry) = z3_plan_and_registry();
+        check_inv_consistency(
+            "py-eq-claim".to_string(),
+            "consistency:test_py_eq",
+            inv,
+            Vec::new(),
+            &plan,
+            &registry,
+            &test_compilers(),
+        )
+    }
+
+    fn py_eq_atom(left: Json, right: Json) -> Json {
+        json!({"kind": "atomic", "name": "py.eq", "args": [left, right]})
+    }
+
+    // ── #8416: `py.eq` over a value bound to a literal ──────────────────
+    // vendor `def twice(n): return n + n`, joined at `twice(3)` as
+    // `completes -> out = 6`: a plain `=` to an int literal. The consumer
+    // claims `twice(3) == rhs`. The literal states its own type, so `py.eq`
+    // over the value is SMT equality and the lying claim is refuted.
+
+    fn twice_claim(rhs: i64) -> Json {
+        let call = json!({"kind": "ctor", "name": "call:twice", "args": [int(3)]});
+        let result = call_result(call, JOIN_SITE);
+        let completes = json!({
+            "kind": "atomic",
+            "name": "python:unknown_callee_call.completes",
+            "args": [result.clone()]
+        });
+        json!({"kind": "and", "operands": [
+            completes.clone(),
+            {"kind": "implies", "operands": [completes, eqf(result.clone(), int(6))]},
+            py_eq_atom(result, int(rhs))
+        ]})
+    }
+
+    #[test]
+    fn py_eq_over_a_value_bound_to_a_literal_decides_both_ways() {
+        let truthful = solve_claim(twice_claim(6));
+        assert_eq!(truthful.verdict, ObligationVerdict::Discharged, "{}", truthful.reason);
+        let lying = solve_claim(twice_claim(7));
+        assert_eq!(
+            lying.verdict,
+            ObligationVerdict::Unsatisfied,
+            "twice(3) == 7 under `out = 6` is refuted, never satisfied by a free `py.eq`: {}",
+            lying.reason
+        );
+    }
+
+    #[test]
+    fn a_free_py_eq_never_discharges_a_claim() {
+        // Nothing states `x`'s type. Read as Python reads `==` over a `str`
+        // or an `int`, `x == 7 and x != 8` is satisfiable: discharged.
+        let x = var("x");
+        let truthful = solve_claim(json!({"kind": "and", "operands": [
+            py_eq_atom(x.clone(), int(7)),
+            {"kind": "not", "operands": [py_eq_atom(x.clone(), int(8))]}
+        ]}));
+        assert_eq!(truthful.verdict, ObligationVerdict::Discharged, "{}", truthful.reason);
+        // `x == 7 and x == 8` is satisfiable only by a model that answers the
+        // free `py.eq` application: never discharged, and never refuted
+        // either (a value of another type may answer `==` either way).
+        let lying = solve_claim(json!({"kind": "and", "operands": [
+            py_eq_atom(x.clone(), int(7)),
+            py_eq_atom(x, int(8))
+        ]}));
+        assert_eq!(
+            lying.verdict,
+            ObligationVerdict::Undecidable,
+            "a claim satisfiable only through a free `py.eq` is open: {}",
+            lying.reason
+        );
+        assert!(lying.reason.contains("builtin type is not stated"), "{}", lying.reason);
+    }
+
+    #[test]
+    fn a_py_eq_is_read_over_builtins_by_its_polarity() {
+        let x = var("x");
+        let builtin = |operand: Json| {
+            json!({
+                "kind": "atomic",
+                "name": sugar_ir_compiler_smt_lib::PYTHON_VALUE_BUILTIN,
+                "args": [operand]
+            })
+        };
+        let atom = py_eq_atom(x.clone(), int(7));
+        let negated = json!({"kind": "not", "operands": [atom.clone()]});
+        let mut changed = false;
+        assert_eq!(
+            py_eq_over_builtins(&negated, true, &mut changed),
+            Some(json!({"kind": "not", "operands": [
+                {"kind": "implies", "operands": [
+                    {"kind": "and", "operands": [builtin(x.clone())]},
+                    atom.clone()
+                ]}
+            ]}))
+        );
+        assert!(changed);
+        let quantified = json!({
+            "kind": "forall",
+            "name": "x",
+            "sort": {"kind": "primitive", "name": "Int"},
+            "body": atom.clone()
+        });
+        let mut changed = false;
+        assert_eq!(
+            py_eq_over_builtins(&quantified, true, &mut changed).map(|q| q["body"].clone()),
+            Some(json!({"kind": "and", "operands": [atom, builtin(x)]})),
+            "a bound operand is read in its own scope"
+        );
+        // A literal-only `py.eq` reads no free branch: nothing to confirm.
+        let mut changed = false;
+        let ground = py_eq_atom(int(6), int(6));
+        assert_eq!(py_eq_over_builtins(&ground, true, &mut changed), Some(ground));
+        assert!(!changed);
     }
 
     #[test]
