@@ -65,6 +65,24 @@ def _grouped_halt(outcome) -> GroupedRaiseEffect:
     return effect
 
 
+def _group_halt_beside_the_class_call(outcome) -> GroupedRaiseEffect:
+    """The one halt raising the group when its member list calls a
+    same-file class (``Renamed()``).  The class call is its coordinate and
+    edge (#7757 step 6, #8738): it completes under its ``completes`` atom,
+    where the group is built and raised, and halts under the complement,
+    where what the constructor raises is joined from the class's contract
+    at prove.  So the statement leaves by the group's halt and the call's
+    own; neither is dropped."""
+    assert isinstance(outcome, ExitSet), type(outcome)
+    halted = [face for face in outcome.exits if isinstance(face, Halted)]
+    groups = [
+        face.effect for face in halted if isinstance(face.effect, GroupedRaiseEffect)
+    ]
+    assert len(groups) == 1, outcome.exits
+    assert len(halted) == 2, outcome.exits
+    return groups[0]
+
+
 # ---------------------------------------------------------------------------
 # Partition: authenticated type, residual continues, topology preserved
 # ---------------------------------------------------------------------------
@@ -346,7 +364,7 @@ def test_leaf_occurrence_identities_survive_partition_and_reraise():
 
 def test_renamed_subclass_matches_by_mro_identity():
     """Subclass constructed in source matches except* base via authenticated MRO."""
-    effect = _grouped_halt(
+    effect = _group_halt_beside_the_class_call(
         _desugar(
             "class Renamed(ValueError):\n"
             "    pass\n"
@@ -370,7 +388,7 @@ def test_a_source_class_member_is_its_instance_never_the_class():
     dropping the ``TypeError`` beside it)."""
     from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
 
-    effect = _grouped_halt(
+    effect = _group_halt_beside_the_class_call(
         _desugar(
             "class Renamed(ValueError):\n"
             "    pass\n"
@@ -410,7 +428,7 @@ def test_lying_twin_an_unmatched_remainder_is_never_dropped():
             name=f"renamed_remainder_{base}.py",
         )
         assert outcome.completed_value() is None, (base, outcome)
-        effect = _grouped_halt(outcome)
+        effect = _group_halt_beside_the_class_call(outcome)
         assert [leaf.exception_name for leaf in _leaves(effect)] == remainder, base
 
 
