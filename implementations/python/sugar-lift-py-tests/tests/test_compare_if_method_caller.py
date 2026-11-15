@@ -356,8 +356,15 @@ def test_incompatible_ordering_method_call_halts_with_named_typeerror() -> None:
 
     Pre-effect state on producer_outcome may stay red until codex-1 lossless
     reduce_body; identity is asserted either way when the halt surfaces.
+
+    The call stands in a function called after import: at module level it
+    would make the module's one run halt on every arm, so no import completes
+    and the read of ``Chooser`` is that run's halts, never the class
+    (``DecoratorApplicationSugar._module_run_halts``).
     """
-    site = _method_callsite(METHOD_BODY + "\nChooser().choose(None, 2)\n")
+    site = _method_callsite(
+        METHOD_BODY + "\ndef caller():\n    Chooser().choose(None, 2)\n"
+    )
     _assert_bound_self_first(site)
     assert site.arg_values[1] is not None
     # None may floor as NoneValue / TermValue-like; right is 2.

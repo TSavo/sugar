@@ -390,14 +390,19 @@ def test_method_returning_raise_propagates_named_exceptional_edge() -> None:
     The raise is located at its own statement (``file:line:col``, the one
     locus door) and, crossing the call, stamped with the frame the body ran
     in -- the call's path and the call (``call_site_value.call_owned``) -- so
-    the caller reads which call raised it."""
+    the caller reads which call raised it.
+
+    The call stands in a function called after import: at module level it
+    would make the module's one run halt on every arm, so no import completes
+    and the read of ``Factory`` is that run's halts, never the class
+    (``DecoratorApplicationSugar._module_run_halts``)."""
     from sugar_lift_py_tests.effect.authenticated_raise_locus import (
         AuthenticatedRaiseLocus,
     )
     from sugar_lift_py_tests.occurrence import call_frame_path
     from sugar_source_tree.nodes import Raise
 
-    source = RAISING_FACTORY + "\nFactory().make()\n"
+    source = RAISING_FACTORY + "\ndef caller():\n    Factory().make()\n"
     site = _attr_callsite(source, "make")
     assert isinstance(site.arg_values[0], ObjectValue)
     assert site.arg_values[0].class_name == "Factory"

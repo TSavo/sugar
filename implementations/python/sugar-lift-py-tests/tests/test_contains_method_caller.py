@@ -378,8 +378,15 @@ def test_non_container_method_call_binds_and_floor_refuses_contains() -> None:
     ``NoneValue.contains`` is the membership store path.  Formal discharge
     (sibling test) owns pre-effect identity; producer_outcome over a ground
     None that dual-edges may not surface a sole Halted until #6659.
+
+    The call stands in a function called after import: at module level it
+    would make the module's one run halt on every arm, so no import completes
+    and the read of ``Checker`` is that run's halts, never the class
+    (``DecoratorApplicationSugar._module_run_halts``).
     """
-    site = _method_callsite(METHOD_BODY + "\nChecker().has(None, 1)\n")
+    site = _method_callsite(
+        METHOD_BODY + "\ndef caller():\n    Checker().has(None, 1)\n"
+    )
     _assert_bound_self_first(site)
     assert site.arg_values[2] == TermValue(1)
     _, method, _pending = _method_definition()
