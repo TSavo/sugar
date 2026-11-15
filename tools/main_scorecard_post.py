@@ -344,8 +344,30 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
         elif int(cur) < int(before):
             drops.append(f"{label} {before} -> {cur}")
 
-    higher_is_better("suite passed", "suite", suite_pass, "suite", 0)
-    higher_is_better("twins passed", "twins", twins_pass, "twins", 0)
+    def last_failing(key: str) -> int | None:
+        """Failing count (total - passed) in the newest earlier row that measured `key`."""
+        for row in earlier:
+            pieces = row.get(key, "").split("/")
+            if len(pieces) == 2 and pieces[0].isdigit() and pieces[1].isdigit():
+                return int(pieces[1]) - int(pieces[0])
+        return None
+
+    def fewer_failing_is_better(label: str, measure: str, cur_pass: str, cur_total: str, key: str) -> None:
+        # A suite or twin set gains and loses tests as code is deleted, so the
+        # passed count alone drops when a passing test is deleted. What must not
+        # rise is the number of tests that do not pass.
+        if measure in pending or measure in outside:
+            return
+        before = last_failing(key)
+        if before is None:
+            return
+        if not (cur_pass.isdigit() and cur_total.isdigit()):
+            drops.append(f"{label} unmeasured (was {before} failing)")
+        elif int(cur_total) - int(cur_pass) > before:
+            drops.append(f"{label} failing {before} -> {int(cur_total) - int(cur_pass)}")
+
+    fewer_failing_is_better("suite", "suite", suite_pass, suite_total, "suite")
+    fewer_failing_is_better("twins", "twins", twins_pass, twins_total, "twins")
     higher_is_better("board completed", "board", board_done, "board", 0)
     if "board" not in pending and "board" not in outside:
         before = last_measured("cpanic")
