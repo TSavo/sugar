@@ -1100,17 +1100,22 @@ def block_values(exits):
     )
 
     def block_value(state):
-        return ExitSet.completed(
-            BlockValue(
-                state.entries,
-                fall_through=state.fall_through,
-                can_fall_through=state.can_fall_through,
-            )
-        )
+        return ExitSet.completed(block_record(state))
 
     if isinstance(exits, NativeOperationExitCarrierV1):
         return exits.and_then(block_value)
     return exits.and_then(block_value)
+
+
+def block_record(state) -> BlockValue:
+    """The ``BlockValue`` a completed suite's ``_ReducedBlock`` is: its
+    entries and its follow (the context it left is a lookup aid, never
+    part of the record)."""
+    return BlockValue(
+        state.entries,
+        fall_through=state.fall_through,
+        can_fall_through=state.can_fall_through,
+    )
 
 
 @dataclass(frozen=True)
@@ -1134,6 +1139,13 @@ class FunctionUniverseSugar(Sugar):
     #: default, a module global), each a formal of the contract after the
     #: parameters (#7757 step 4).
     inputs: tuple = ()
+    #: ``((formal, read), ...)``: for each closure cell the body rebinds,
+    #: its contract input ``cell:<name>`` and the sugar of the cell's read
+    #: where the body ends (``FunctionDef._cells_where_the_body_ends``).
+    #: Each completed arm reads it in the context it left, and the universe
+    #: states it over ``python:after(out, "cell:<name>")``
+    #: (``UniverseValue.after``, #7757 step 7).
+    cells_after: tuple = dataclass_field(default=(), compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -1170,14 +1182,30 @@ class FunctionUniverseSugar(Sugar):
         formal_coordinates = self.formal_coordinates + tuple(
             item.coordinate for item in self.inputs
         )
-        return reduce_body(self.statements, ctx).and_then(
-            lambda record: ExitSet.completed(
+
+        def universe(state):
+            # Each completed arm's record, and what it left in each cell the
+            # body rebinds, read in the context it left (#7757 step 7).
+            return ExitSet.completed(
                 UniverseValue(
                     name=self.name,
                     formals=formals,
-                    record=record,
+                    record=block_record(state),
                     bridge_source_symbol=self.bridge_source_symbol,
                     formal_coordinates=formal_coordinates,
+                    after=self._after(state.context),
                 )
             )
-        )
+
+        return reduce_block_to_exitset(self.statements, ctx).and_then(universe)
+
+    def _after(self, ctx) -> tuple:
+        """``((formal, value), ...)``: each cell the body rebinds
+        (``cells_after``) as the arm that left ``ctx`` left it; a read that
+        does not complete with one value states nothing."""
+        found = []
+        for formal, read in self.cells_after:
+            value = plain_completed_value(read.desugar(ctx))
+            if value is not None:
+                found.append((formal, value))
+        return tuple(found)
