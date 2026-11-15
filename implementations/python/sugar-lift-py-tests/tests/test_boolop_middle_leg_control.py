@@ -52,11 +52,10 @@ def _caller_outcomes(calls: str):
     )
     tree = _tree(source)
     comparisons = tuple(node for node in tree.nodes() if isinstance(node, Compare))
-    outcomes = tuple(
-        node.sugar().desugar(None) for node in tree.nodes() if isinstance(node, Call)
-    )
+    calls = tuple(node for node in tree.nodes() if isinstance(node, Call))
+    outcomes = tuple(node.sugar().desugar(None) for node in calls)
     assert len(comparisons) == 3
-    return outcomes, comparisons
+    return outcomes, comparisons, calls
 
 
 def _only_halted(outcome) -> Halted:
@@ -69,6 +68,23 @@ def _only_halted(outcome) -> Halted:
 
 def _occurrence(compare: Compare) -> str:
     return str(compare.sugar().site)
+
+
+def _raise_locus_in_call(compare: Compare, call: Call) -> str:
+    """The occurrence a raise at ``compare`` carries out of ``call``'s frame.
+
+    A raise locus is the site's ``file:line:col`` (the one locus door, never
+    a fragment's repr), and a halt that crosses a call is stamped with the
+    path its callee reduced under, so each call is its own evaluation of the
+    comparison (``call_site_value.call_owned``).
+    """
+    from sugar_lift_py_tests.effect.authenticated_raise_locus import (
+        AuthenticatedRaiseLocus,
+    )
+    from sugar_lift_py_tests.occurrence import call_frame_path
+
+    locus = AuthenticatedRaiseLocus.of(compare.sugar().site).value
+    return f"{locus}@{'/'.join(call_frame_path(call.fragment, ()))}"
 
 
 def test_first_false_returns_exact_operand_and_skips_both_later_legs() -> None:
@@ -101,34 +117,38 @@ def test_successful_three_leg_chain_returns_exact_last_operand() -> None:
 
 
 def test_middle_typeerror_blocks_toxic_and_safe_membership_with_exact_state() -> None:
-    (toxic, safe), comparisons = _caller_outcomes(
+    (toxic, safe), comparisons, (toxic_call, safe_call) = _caller_outcomes(
         "choose(1, 2, None, 1, None, 3)\n" "choose(1, 2, None, 1, 1, [1])\n"
     )
     toxic_halt = _only_halted(toxic)
     safe_halt = _only_halted(safe)
 
-    middle_occurrence = _occurrence(comparisons[1])
-    assert toxic_halt.effect.occurrence_id == middle_occurrence
-    assert safe_halt.effect.occurrence_id == middle_occurrence
-    assert toxic_halt.effect.occurrence_id != _occurrence(comparisons[2])
+    # Both calls halt at the middle comparison, each as its own evaluation.
+    middle = comparisons[1]
+    assert toxic_halt.effect.occurrence_id == _raise_locus_in_call(middle, toxic_call)
+    assert safe_halt.effect.occurrence_id == _raise_locus_in_call(middle, safe_call)
+    assert toxic_halt.effect.occurrence_id != _raise_locus_in_call(
+        comparisons[2], toxic_call
+    )
     assert toxic_halt.state is not None
     assert safe_halt.state is not None
     assert toxic_halt.state == safe_halt.state
 
 
 def test_first_typeerror_blocks_distinct_middle_and_membership_twins() -> None:
-    (toxic, safe), comparisons = _caller_outcomes(
+    (toxic, safe), comparisons, (toxic_call, safe_call) = _caller_outcomes(
         "choose(None, 2, None, 1, None, 3)\n" "choose(None, 2, 1, 2, 1, [1])\n"
     )
     toxic_halt = _only_halted(toxic)
     safe_halt = _only_halted(safe)
 
-    first_occurrence = _occurrence(comparisons[0])
-    assert toxic_halt.effect.occurrence_id == first_occurrence
-    assert safe_halt.effect.occurrence_id == first_occurrence
+    # Both calls halt at the first comparison, each as its own evaluation.
+    first = comparisons[0]
+    assert toxic_halt.effect.occurrence_id == _raise_locus_in_call(first, toxic_call)
+    assert safe_halt.effect.occurrence_id == _raise_locus_in_call(first, safe_call)
     assert toxic_halt.effect.occurrence_id not in {
-        _occurrence(comparisons[1]),
-        _occurrence(comparisons[2]),
+        _raise_locus_in_call(comparisons[1], toxic_call),
+        _raise_locus_in_call(comparisons[2], toxic_call),
     }
     assert toxic_halt.state is not None
     assert safe_halt.state is not None
@@ -136,12 +156,14 @@ def test_first_typeerror_blocks_distinct_middle_and_membership_twins() -> None:
 
 
 def test_third_leg_membership_halt_retains_its_occurrence_and_state() -> None:
-    (outcome,), comparisons = _caller_outcomes("choose(1, 2, 2, 3, None, 3)\n")
+    (outcome,), comparisons, (call,) = _caller_outcomes(
+        "choose(1, 2, 2, 3, None, 3)\n"
+    )
     halted = _only_halted(outcome)
 
-    assert halted.effect.occurrence_id == _occurrence(comparisons[2])
+    assert halted.effect.occurrence_id == _raise_locus_in_call(comparisons[2], call)
     assert halted.effect.occurrence_id not in {
-        _occurrence(comparisons[0]),
-        _occurrence(comparisons[1]),
+        _raise_locus_in_call(comparisons[0], call),
+        _raise_locus_in_call(comparisons[1], call),
     }
     assert halted.state is not None
