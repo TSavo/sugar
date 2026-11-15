@@ -548,8 +548,12 @@ def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
     read = _require_exit_set(matcher.desugar(ctx), owner="TrySugar.handler-matcher")
     expected = read.completed_value()
     if expected is None:
+        from sugar_lift_py_tests.authenticated_exception_matching import (
+            halt_locus,
+        )
+
         raise SugarNotWritten(
-            blame=effect.occurrence_id,
+            blame=halt_locus(effect),
             owner="TrySugar._effect_matches",
             observed="except type did not construct a completed type operand",
             requested="an authenticated exception-type value",
