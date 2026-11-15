@@ -25745,15 +25745,17 @@ class Name(Expression):
             # reader outside the module block is cited undecided instead.
             return self
         if isinstance(bound, (FunctionDef, AsyncFunctionDef, TypeAlias)):
-            # A local undecorated ``def`` (or a module ``type`` alias) bound
-            # this name: the read is the ordinary name, resolved by the
+            # A ``def`` whose statement binds itself (an ``async def``, a
+            # generator function, a ``contextmanager`` generator, a module
+            # ``def`` a reader threads) or a module ``type`` alias bound this
+            # name: the read is the ordinary name, resolved by the
             # definition's own runtime binding, never the definition
             # statement spliced into expression position.  A ``class``
-            # statement binds its name to its value's key
-            # (``DecoratedDefinitionRef``), which the read is (below).  A
+            # statement, a decorated ``def`` and a local plain ``def``
+            # (``_binds_function_value``) bind their name to their value's
+            # key (``DecoratedDefinitionRef``), which the read is (below).  A
             # function-body read of an undecorated module ``def``'s name is
-            # the function (``Name._construct_sugar``); a local ``def``'s
-            # value read is still this bare name (#7757, not yet collapsed).
+            # the function (``Name._construct_sugar``).
             return self
         if isinstance(bound, ImportBindingRef):
             # An import bound this name: a read the one import table rows
@@ -26252,9 +26254,12 @@ def call_applies_own_frame(definition) -> bool:
     This answers the call by name only.  A value read of an undecorated
     module ``def``'s name from a function body is the function
     (``SourceUnit.function_definition_for_read``), and a call through that
-    value applies it by the one call door; the call by name still seats the
-    definition's frame itself (``Call._construct_sugar``), the second way
-    #7757 has left to delete.
+    value applies it by the one call door; the call by name of a module
+    ``def`` still seats the definition's frame itself
+    (``Call._construct_sugar``), the second way #7757 has left to delete.
+    A local plain ``def`` binds its name to its value
+    (``_binds_function_value``), so a call of the name is the call of that
+    value, as for a class.
     Anything that is not a definition applies no decoration.
     """
     if isinstance(definition, ClassDef):
@@ -26468,12 +26473,12 @@ def _decorated_definition_ref(definition, span, scope=None, *, evaluation=None):
 
 
 def _decorated_statement_binding(statement, binding):
-    """``statement`` (a decorated ``def``, or any ``class``) carrying, as its
-    ``decorated_value`` leaf, the ``DecoratedDefinitionRef`` its substitution
-    bound its name to (``_local_definition_binding``): the statement's own
-    reduction is that application (``FunctionDef._sugar_body_statement``)."""
-    if call_applies_own_frame(statement):
-        return statement
+    """``statement`` (a decorated ``def``, any ``class``, a local plain
+    ``def``: ``_binds_function_value``) carrying, as its ``decorated_value``
+    leaf, the ``DecoratedDefinitionRef`` its substitution bound its name to
+    (``_local_definition_binding``): the statement's own reduction is that
+    application (``_def_statement_sugar``).  A statement substitution bound
+    to itself is left as it is."""
     bound = (binding or {}).get(statement.name)
     if bound is None:
         return statement
@@ -26504,12 +26509,18 @@ def _def_statement_sugar(statement):
     one evaluates its decorator expressions, then its defaults (the same
     per-parameter keys), builds the function value carrying them, applies
     its decorators to that value once and binds the name to their result
-    (``_decorated_statement_sugar``).  The function's own reduction is its
-    own entry's (``tree_enumerate.function_universe_outcome``, a call's
-    frame)."""
+    (``_decorated_statement_sugar``).  A local plain ``def`` substitution
+    bound to its value (``_binds_function_value``, the statement carrying
+    that ``decorated_value``) is that one application with no decorator: it
+    evaluates its defaults, builds the function value carrying them and
+    binds the name to it under its evaluation key, as a class statement
+    binds its class.  The function's own reduction is its own entry's
+    (``tree_enumerate.function_universe_outcome``, a call's frame)."""
     if not call_applies_own_frame(statement):
         return _decorated_statement_sugar(statement)
     statement.discharge_by_substitution()
+    if isinstance(getattr(statement, "decorated_value", None), DecoratedDefinitionRef):
+        return _decorated_statement_sugar(statement)
     return _definition_defaults_sugar(statement)
 
 
@@ -26708,27 +26719,31 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
             _decorator_step(definition, decorator, bound)
             for decorator, bound in zip(definition.decorators, padded, strict=True)
         )
-        # An undecorated ``def`` read as a value evaluates no default here:
-        # its statement bound each one under its per-parameter key where it
-        # ran (``_definition_defaults_sugar``), and every call of the
-        # function reads those keys (``DefaultValueSugar``), as a call by
-        # name does.  A default is never evaluated again where the name is
-        # read.
+        # An undecorated module ``def`` read as a value (no key) evaluates
+        # no default here: its statement bound each one under its
+        # per-parameter key where it ran (``_definition_defaults_sugar``),
+        # and every call of the function reads those keys
+        # (``DefaultValueSugar``), as a call by name does.  A default is
+        # never evaluated again where the name is read.  A local plain
+        # ``def`` bound to its value under its key (``_binds_function_value``)
+        # is its statement's application, which evaluates them once, as a
+        # decorated ``def``'s does; every read of it reads the key.
+        statement_evaluates = isinstance(definition, (FunctionDef, AsyncFunctionDef)) and (
+            bool(definition.decorators) or evaluation is not None
+        )
         defaults = (
-            ()
-            if isinstance(definition, ClassDef) or not definition.decorators
-            else _definition_default_evaluations(definition)
+            _definition_default_evaluations(definition) if statement_evaluates else ()
         )
         # Then the annotations Python evaluates where the statement runs
         # (``_evaluated_annotations``), likewise only the statement's own:
-        # an undecorated ``def`` read as a value evaluates none.
+        # an undecorated module ``def`` read as a value evaluates none.
         annotations = (
-            ()
-            if isinstance(definition, ClassDef) or not definition.decorators
-            else tuple(
+            tuple(
                 annotation.sugar()
                 for annotation in _evaluated_annotations(definition)
             )
+            if statement_evaluates
+            else ()
         )
         return decorators, defaults, annotations
 
@@ -27013,26 +27028,48 @@ class ImportBindingRef(Expression):
         return _name_read_sugar(self, self.name)
 
 
+def _binds_function_value(definition) -> bool:
+    """Whether the local ``def`` statement ``definition`` binds its name to
+    the function value it builds, under its evaluation key: a plain
+    undecorated ``def`` (not ``async``, not a generator function, whose
+    values this does not carry; ``SourceUnit.function_definition_for_read``
+    answers the same shapes for a module ``def``).  Its decorators are none,
+    so the application applies none: the value is the function, its own
+    frame, carrying the defaults the statement evaluated
+    (``_decorator_application_sugar``)."""
+    return (
+        isinstance(definition, FunctionDef)
+        and not definition.decorators
+        and not FunctionDef._owns_yield(definition.body)
+    )
+
+
 def _local_definition_binding(definition, scope):
     """A local ``def``/``class`` binds its name for the statements after it.
 
     Only a name the enclosing function holds as a lexical local is threaded,
     and, while a module body is threaded for its readers, a module name one
-    of them reads (``_module_threads``); an undecorated ``def`` binds
-    itself, a decorated one the decorators' result, and a ``class``,
+    of them reads (``_module_threads``).  A local plain undecorated ``def``
+    (``_binds_function_value``) binds the function value its statement
+    builds, a decorated one the decorators' result, and a ``class``,
     decorated or not, the class its run builds with its decorators (none or
-    more) applied (``DecoratedDefinitionRef``, ``call_applies_own_frame``):
-    its decorators read where the statement runs (``scope``), and the value
-    read through the statement's evaluation key
-    (``_definition_evaluation_key``), which the statement binds it under as
-    an assignment binds its value.  Every read of a class's name is that
-    key's read; the class statement never stands for the name.
+    more) applied (``DecoratedDefinitionRef``): its decorators read where
+    the statement runs (``scope``), and the value read through the
+    statement's evaluation key (``_definition_evaluation_key``), which the
+    statement binds it under as an assignment binds its value.  Every read
+    of the name -- a call, an argument, an ``if``'s or a ``try``'s join --
+    is that key's read; the statement never stands for the name.  Any other
+    ``def`` whose call applies its own frame (``call_applies_own_frame``: a
+    module ``def`` a reader threads, an ``async def``, a generator function,
+    a ``contextmanager`` generator) still binds itself.
     """
     lexical = scope.get(_LEXICALLY_BOUND_NAMES)
     local = isinstance(lexical, frozenset) and definition.name in lexical
     if not (local or _module_threads(scope, definition.name)):
         return None
-    if call_applies_own_frame(definition):
+    if call_applies_own_frame(definition) and not (
+        local and _binds_function_value(definition)
+    ):
         return {definition.name: definition}
     return {
         definition.name: _decorated_definition_ref(
