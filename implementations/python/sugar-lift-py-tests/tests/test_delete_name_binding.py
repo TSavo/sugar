@@ -12,8 +12,9 @@ Acceptance:
   - earlier effects remain (values captured before del)
   - later reads are loudly unbound (NameErrorEffect)
   - branch-conditional deletion retains complementary binding states
-  - deleting an absent local produces authenticated NameError (UnboundLocal
-    only when source authority distinguishes it — today NameErrorEffect)
+  - deleting an absent local produces an authenticated NameErrorEffect; a
+    function local's is UnboundLocalError (a NameError subclass), decided by
+    the function's symbol table (#7586), as Python raises it
   - attribute / subscript deletion not admitted here
 
 Owner path: ``DeleteNameSugar`` / ``delete_binding`` over ``BindingProjection``
@@ -30,6 +31,9 @@ import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect import NameErrorEffect
+from sugar_lift_py_tests.effect.authenticated_raise_locus import (
+    AuthenticatedRaiseLocus,
+)
 from sugar_lift_py_tests.floor import ReturnValue, TermValue
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.binding_projection import (
@@ -104,21 +108,32 @@ def _universe_statements(function):
 # ===========================================================================
 
 
+def _assert_located(effect) -> None:
+    occurrence = effect.occurrence
+    assert isinstance(occurrence, AuthenticatedRaiseLocus) and ":" in occurrence.value, (
+        "authenticated raise locus must be a file:line:col occurrence id, "
+        f"not presence-only; got {occurrence!r}"
+    )
+
+
+def _mro_names(effect) -> list[str]:
+    return [identity.args[1].value for identity in effect.exception_type_mro]
+
+
 def test_del_removes_binding_later_read_is_nameerror() -> None:
-    """``x = 1; del x; return x`` → sole NameError on the later read."""
+    """``x = 1; del x; return x`` → sole UnboundLocalError on the later read.
+
+    ``x`` is ``f``'s local (it is assigned and deleted in ``f``), so Python
+    raises ``UnboundLocalError``, a ``NameError`` subclass.
+    """
     _, outcome = _function_outcome(
         "def f():\n" "    x = 1\n" "    del x\n" "    return x\n"
     )
     halted = _sole_halt(outcome)
     assert isinstance(halted.effect, NameErrorEffect)
-    assert halted.effect.exception_name == "NameError"
+    assert halted.effect.exception_name == "UnboundLocalError"
     assert halted.effect.name == "x"
-    assert (
-        isinstance(halted.effect.occurrence, str) and ":" in halted.effect.occurrence
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {halted.effect.occurrence!r}"
-    )
+    _assert_located(halted.effect)
     assert (
         "unbound name 'x'"
         in str(
@@ -304,18 +319,17 @@ def test_false_branch_del_retains_binding_on_completed_arm() -> None:
 
 
 def test_del_absent_local_is_nameerror() -> None:
-    """``del x`` with no prior binding → NameErrorEffect at the delete site."""
+    """``del x`` with no prior binding → UnboundLocalError at the delete site.
+
+    ``del x`` makes ``x`` a local of ``f``; deleting it unbound raises
+    ``UnboundLocalError`` in Python.
+    """
     _, outcome = _function_outcome("def f():\n" "    del x\n")
     halted = _sole_halt(outcome)
     assert isinstance(halted.effect, NameErrorEffect)
-    assert halted.effect.exception_name == "NameError"
+    assert halted.effect.exception_name == "UnboundLocalError"
     assert halted.effect.name == "x"
-    assert (
-        isinstance(halted.effect.occurrence, str) and ":" in halted.effect.occurrence
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {halted.effect.occurrence!r}"
-    )
+    _assert_located(halted.effect)
 
 
 def test_del_absent_is_not_silent_completion_twin() -> None:
@@ -330,20 +344,20 @@ def test_del_absent_is_not_silent_completion_twin() -> None:
 
 
 def test_unboundlocal_only_when_source_authority_distinguishes() -> None:
-    """Today source authority mints NameErrorEffect for unbound locals.
+    """The read's scope, by its function's symbol table, decides the builtin.
 
-    Python's UnboundLocalError is a NameError subclass; the kit publishes
-    NameErrorEffect unless a stronger sealed distinction appears. Pin current
-    authority — do not invent UnboundLocal from spelling.
+    ``x`` is in ``f``'s symbol table as a local, so the unbound read is
+    ``UnboundLocalError`` (#7586, ``NameErrorEffect.at``), not a spelling
+    guess. It is still a ``NameError``: its MRO carries ``NameError``, so an
+    ``except NameError`` catches it as Python's does.
     """
     _, outcome = _function_outcome(
         "def f():\n" "    x = 1\n" "    del x\n" "    return x\n"
     )
     halted = _sole_halt(outcome)
     assert isinstance(halted.effect, NameErrorEffect)
-    assert halted.effect.exception_name == "NameError"
-    # Not a fabricated UnboundLocal without source distinction.
-    assert halted.effect.exception_name != "UnboundLocalError"
+    assert halted.effect.exception_name == "UnboundLocalError"
+    assert _mro_names(halted.effect)[:2] == ["UnboundLocalError", "NameError"]
 
 
 # ===========================================================================
