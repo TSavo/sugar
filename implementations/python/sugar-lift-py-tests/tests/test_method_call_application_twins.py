@@ -21,7 +21,13 @@ decided (``sat``).
 
 Only a method's own proof -- no caller, no actual -- reads ``self`` with its
 state unknown at entry: there a raise selected through ``self`` is decided in
-neither half (#8151, #8153), asserted in process below.
+neither half (#8151, #8153), asserted in process below.  What such a proof
+owes (``return self.n`` in ``read``'s own proof) is an ``undecided`` member of
+the source, and a source that owes anything is never ``sat`` as a whole
+(step 8).  So the truthful half is read on the test function's own claims
+(``witness_harness.claim_verdict``): every member a method's own proof owes
+sits above the test function and is set aside; the test function's claim, and
+anything the test function itself owed, is read as ``prove_verdict`` reads it.
 """
 
 from __future__ import annotations
@@ -31,7 +37,10 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
+from sugar_lift_py_tests.witness_harness import (
+    claim_verdict,
+    run_source_through_real_solver,
+)
 
 
 def bound_method_call_at(call_node, ctx=None):
@@ -65,7 +74,13 @@ def _pair(tmp_path: Path, name: str, truthful: str, lying: str) -> None:
     t = run_source_through_real_solver(tmp_path / f"{name}-truthful", truthful)
     lie = run_source_through_real_solver(tmp_path / f"{name}-lying", lying)
     print(json.dumps({"truthful": t.verdict, "lying": lie.verdict}, sort_keys=True))
-    assert t.verdict == "sat"
+    # The test function is the one ``def test_`` line; every method above it.
+    (test_line,) = (
+        number
+        for number, line in enumerate(truthful.splitlines(), start=1)
+        if line.startswith("def test_")
+    )
+    assert claim_verdict(t.prove_doc, claims_from_line=test_line) == "sat"
     assert lie.verdict == "unsat"
 
 
