@@ -2849,6 +2849,16 @@ class SourceUnit:
         The index is keyed by use site: it holds a Call borrowed from another
         locus at every use site it was projected to, so ``m = make(); with m:
         ...; with m: ...`` gives both ``with`` sites the one provider Call.
+
+        A head whose binding is undecided reaches no provider Call: the Name
+        stays (``Name.substitute``), so its use site has no index entry and
+        the ``With`` reduces the manager as undecided.  A function whose body
+        cannot be substituted at all -- it reads a module global the module
+        body leaves undecided (``_bound_module_references``), or any other
+        named refusal -- is that function's refusal alone: it is testified on
+        the function by name (``report_gap``), its heads have no index entry,
+        and the projection goes on to the next function.  One function never
+        takes down the file's open.  No provider is invented for it.
         """
         module = self._require_typed_module(
             "SourceUnit.projected_manager_heads", blame=self.filename
@@ -2868,15 +2878,21 @@ class SourceUnit:
             self, "_projected_manager_heads_memo", _PROJECTING_MANAGER_HEADS
         )
         try:
-            projected = tuple(
-                function.substitute({})
-                for function in self.constructed_module.function_nodes
-                if any(
+            projected_list = []
+            for function in self.constructed_module.function_nodes:
+                if not any(
                     isinstance(node, With)
                     and any(item.context_expr.kind == "Name" for item in node.items)
                     for node in function.walk()
-                )
-            )
+                ):
+                    continue
+                try:
+                    projected_list.append(function.substitute({}))
+                except SugarNotWritten as refusal:
+                    # The function's own refusal, by name: its heads reach
+                    # no provider, and the rest of the file is projected.
+                    testify(function.reporter, "report_gap", function, refusal)
+            projected = tuple(projected_list)
             providers: dict = {}
             for root in projected:
                 for node in root.walk():
