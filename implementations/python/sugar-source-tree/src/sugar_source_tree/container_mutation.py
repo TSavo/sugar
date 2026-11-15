@@ -2802,11 +2802,12 @@ def source_helper_actual_states(call, bound_refs, scope):
             continue
         node_scope[cell.name] = cell.node
         followed.append((cell.name, cell.node, f"cell:{cell.name}", cell.nonlocal_))
-    havoc_targets.extend(
-        _unfollowed_reach(
-            call, scope, reach, {_object_key(node) for _n, node, _l, _r in followed}
-        )
-    )
+    # Every holder the helper follows -- an actual, a module object, a cell --
+    # is one object key: its state after the body (below) is what the caller
+    # reads on both arms, and no havoc of what the helper may reach unfollowed
+    # takes it, whichever way the caller hands it over.
+    followed_keys = {_object_key(node) for _n, node, _l, _r in followed}
+    havoc_targets.extend(_unfollowed_reach(call, scope, reach, followed_keys))
     edges: list = []
     _HELPERS_IN_PROGRESS.add(key)
     try:
@@ -2821,12 +2822,17 @@ def source_helper_actual_states(call, bound_refs, scope):
         _closed_operand(arg, kinds=_HALT_FREE_OPERAND_KINDS) for arg in call.args
     )
     states = []
-    claimed = {id(arg) for _index, arg in actuals}
-    for index, arg in enumerate(call.args):
+    # What an operand reaches that the helper does not follow takes the
+    # exposure an operand handed to a call takes.  A followed holder is
+    # excluded by its object key, never by the node that spelled it: the
+    # walk reaches an actual's object through its read too (``_walk_values``
+    # follows a read to the object it denotes), and that object is the
+    # actual.
+    for arg in call.args:
         havoc_targets.extend(
             (node, _OPERAND_RULES, None)
             for node in _exposed(arg, bound_refs)
-            if id(node) not in claimed
+            if _object_key(node) not in followed_keys
         )
     for name, actual, label, rebinds in followed:
         state = _state(net[name]) if name in net else actual
