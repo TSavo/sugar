@@ -1255,11 +1255,14 @@ def _binds_name(body, name: str) -> bool:
     site of it (``names_bound_here``; a star import may bind any name) in a
     statement of the body, not one inside a function, lambda or class
     nested in it, whose names are their own."""
+    # Each node once: a body is a DAG of shared nodes (``Node.walk``).
+    seen: set[int] = set()
     stack: list = list(body)
     while stack:
         node = stack.pop()
-        if not isinstance(node, Node):
+        if not isinstance(node, Node) or id(node) in seen:
             continue
+        seen.add(id(node))
         bound = node.names_bound_here()
         if name in bound or "*" in bound:
             return True
@@ -1579,11 +1582,14 @@ def _in_a_comprehension(frame, node) -> bool:
 def _calls_super(node) -> bool:
     """Whether ``node`` holds a call of the builtin ``super`` (by its
     binding), not inside a function, lambda or class nested in it."""
+    # Each node once: an expression is a DAG of shared nodes (``Node.walk``).
+    seen: set[int] = set()
     stack = [node]
     while stack:
         current = stack.pop()
-        if not isinstance(current, Node):
+        if not isinstance(current, Node) or id(current) in seen:
             continue
+        seen.add(id(current))
         if isinstance(current, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
             continue
         if (
@@ -6896,9 +6902,16 @@ def _runs_reaching_code(reads, scope, target=None) -> bool:
                     names.add(node.id)
     names = frozenset(names)
 
+    # Each node once per way it is reached (as a store target or not): the
+    # reads are a DAG of shared nodes (``Node.walk``), and what a node
+    # answers, and hands its children, is decided by the node and that flag.
+    asked: set = set()
     stack = [(root, False) for root in roots]
     while stack:
         node, store = stack.pop()
+        if (id(node), store) in asked:
+            continue
+        asked.add((id(node), store))
         if isinstance(node, Call) and (
             runs_operand_code(node, scope)
             or (isinstance(node.func, Name) and node.func.id in rebound)
@@ -7687,8 +7700,13 @@ def _walrus_targets(statement) -> frozenset:
         for _field, _index, child in statement._child_edges()
         if not isinstance(child, Statement)
     ]
+    # Each node once: an expression is a DAG of shared nodes (``Node.walk``).
+    seen: set[int] = set()
     while pending:
         node = pending.pop()
+        if id(node) in seen:
+            continue
+        seen.add(id(node))
         if isinstance(node, NamedExpr) and isinstance(node.target, Name):
             names.add(node.target.id)
         for field_name, _index, child in node._child_edges():
@@ -18906,9 +18924,15 @@ def _statement_occurrence_keys(statement):
     keys = set()
     for node in statement.walk():
         keys.update(_occurrence_keys_of(node.fragment))
+    # Each node once: the statement is a DAG of shared nodes (``Node.walk``),
+    # and a node adds the same key by whichever path reaches it.
+    seen: set[int] = set()
     stack = [statement]
     while stack:
         node = stack.pop()
+        if id(node) in seen:
+            continue
+        seen.add(id(node))
         fragment = node.fragment
         if hasattr(fragment, "line_col_span") and hasattr(fragment, "source_cid"):
             keys.add(site_coordinate_cid(fragment))
