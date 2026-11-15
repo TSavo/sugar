@@ -55,17 +55,33 @@ class AuthenticatedExceptionTypeSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx=None):
-        """Project the sealed exception-type identity without member floors.
+        """Read the operand; its completing face is the sealed identity.
+
+        An import-bound operand (``mod.Err``, or ``Err`` under ``from m import
+        Err``) is read through the one import-member read
+        (``ImportMemberSugar.desugar``).  A dotted read runs ``getattr`` where
+        it is read and may raise, which the lifter cannot decide: it is the
+        two-faced read (``ImportMemberValue.read_faces``), owing the
+        ``undecided`` member under the import's target symbol on both faces.
+        Its halting face is the operand's halt where the reader reads it (an
+        ``except`` arm: the ``try``'s halt at that arm; ``raise mod.Err``: the
+        raise's operand halt; a warning category: the call's argument halt).
+        Its completing face holds the identity value below in place of the
+        reference, so matching and raising read the same identity as before.
+        A name a ``from`` import bound is read by name and cannot raise there:
+        one completed arm, exactly the identity value.
 
         Import-bound dotted operands already carry a closed
         ``python:exception_type_identity(import, …)`` coordinate from the
         lexical import pass.  That coordinate *is* the source-visible floor.
 
         Provider-gated heads (``importorskip`` / optional try-import) seal the
-        identity term itself as the carrier — Attribute chains on module heads
-        must not invent ``SymbolicValue.attribute`` success or AttributeError.
-        MRO is only whatever was supplied at construction; this door never
-        fabricates it.
+        identity term itself as the carrier: the import provider is not
+        resolved again here.  An operand that is not an import-member read
+        (an Attribute chain on a module head the table does not bind on every
+        path) is not reduced: it must not invent ``SymbolicValue.attribute``
+        success or AttributeError.  MRO is only whatever was supplied at
+        construction; this door never fabricates it.
 
         The undecided citation (``UndecidedExceptionClassV1``: a class a star
         import the lifter cannot read may bind) names no class and is never
@@ -74,6 +90,15 @@ class AuthenticatedExceptionTypeSugar(ConstructedTermSugar):
         against an import coordinate), and owes the ``undecided`` member
         (reason ``unanswered``) on that arm.
         """
+        from sugar_lift_py_tests.sugar.import_member_sugar import ImportMemberSugar
+
+        identified = self._identity_value()
+        if not isinstance(self.value, ImportMemberSugar):
+            return identified
+        return self.value.desugar(ctx).and_then(lambda _reference: identified)
+
+    def _identity_value(self):
+        """The one completed arm holding the sealed identity's value."""
         from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
             AuthenticatedExceptionTypeValue,
         )
