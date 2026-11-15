@@ -122,6 +122,45 @@ _TWINS = {
     "module-def-spread": (_MODULE_DEF_SPREAD, "3", "4"),
 }
 
+# The called function's own contract (its body lifted alone, never the
+# call's reduction) owes these rows (step 8): a nested ``def`` reading a cell
+# of its enclosing function has that cell free (``return y``, ``nonlocal
+# n``), and an operation on a formal nothing decides is unanswered
+# (``xs.append(1)`` on the cell, ``a + b``).  A source that owes anything is
+# never ``sat`` (``witness_harness.prove_verdict``), so the truthful half
+# whose callee owes is ``open`` -- its claim decided all the same: the test's
+# consistency row is discharged while the lying half's is refuted.
+_OWED_BY_THE_CALLEE = {
+    "cell-read-at-the-call": ("undecided:test_witness.py:4",),
+    "nonlocal-rebound": ("undecided:test_witness.py:4",),
+    "append-carried": ("undecided:test_witness.py:5",),
+    "direct-cell-read-at-the-call": ("undecided:test_witness.py:4",),
+    "direct-nonlocal-rebound": ("undecided:test_witness.py:4",),
+    "module-def-default": (),
+    "module-def-spread": ("undecided:test_witness.py:2",),
+}
+
+
+def _claim_statuses(prove_doc: dict) -> list:
+    """The status of each consistency row: the solver's verdict on the
+    test's stated claim."""
+    return [
+        row.get("status")
+        for row in prove_doc.get("rows", [])
+        if str(row.get("property") or "").startswith("consistency:")
+    ]
+
+
+def _owed(prove_doc: dict) -> tuple:
+    """Every ``undecided:`` row the source owes, by its property."""
+    return tuple(
+        sorted(
+            str(row.get("property"))
+            for row in prove_doc.get("rows", [])
+            if str(row.get("property") or "").startswith("undecided:")
+        )
+    )
+
 
 @pytest.mark.parametrize("shape", sorted(_TWINS))
 def test_a_call_through_the_value_is_decided(shape: str, tmp_path: Path) -> None:
@@ -135,5 +174,11 @@ def test_a_call_through_the_value_is_decided(shape: str, tmp_path: Path) -> None
             {"truthful": truthful.verdict, "lying": lying.verdict}, sort_keys=True
         )
     )
-    assert truthful.verdict == "sat", truthful.prove_doc
+    # The truthful claim is decided consistent, the lying one refuted.
+    assert _claim_statuses(truthful.prove_doc) == ["discharged"], truthful.prove_doc
     assert lying.verdict == "unsat", lying.prove_doc
+    # Nothing but the callee's own body is owed, and only that keeps the
+    # truthful half from ``sat``.
+    owed = _OWED_BY_THE_CALLEE[shape]
+    assert _owed(truthful.prove_doc) == owed, truthful.prove_doc
+    assert truthful.verdict == ("open" if owed else "sat"), truthful.prove_doc
