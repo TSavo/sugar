@@ -41,8 +41,13 @@ class MethodCallSugar(ConstructedTermSugar):
     native_definition_coordinate: object = dataclass_field(default=None, compare=False)
     # The module the call stands in: what a dispatched call on a parameter
     # reads the names its fields may be stored under off
-    # (``receiver_dispatch.dispatch_on_receiver``, #7757 step 8).
-    unit: object = dataclass_field(default=None, compare=False, repr=False)
+    # (``receiver_dispatch.dispatch_on_receiver``, #7757 step 8).  A lookup
+    # aid, never testimony: the call is testified by its receiver, name,
+    # arguments and site.  Walking it would walk the unit's memos (a
+    # ``PosixPath`` in ``_lexical_import_pass_key_memo``) and refuse.
+    unit: object = dataclass_field(
+        default=None, compare=False, repr=False, metadata={"testimony": "lookup"}
+    )
 
     def __post_init__(self) -> None:
         require_constructed_term_sugar(self.receiver, owner="MethodCallSugar.receiver")
