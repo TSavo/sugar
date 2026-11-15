@@ -54,8 +54,6 @@ class LambdaCallable(FloorValue):
     defaults: tuple[tuple[str, Any], ...] = ()
     keyword_only_parameters: tuple[str, ...] = ()
     keyword_only_default_values: tuple[Any | None, ...] = ()
-    vararg_parameter: str | None = None
-    kwarg_parameter: str | None = None
     closure: tuple[tuple[str, Any], ...] = ()
     captured: tuple[tuple[str, str, Any], ...] = ()
 
@@ -84,8 +82,6 @@ class LambdaCallable(FloorValue):
                     [str_const(key), default.to_term(owner="LambdaCallable")],
                 )
             )
-        if self.vararg_parameter is not None:
-            encoded_parameters.append(str_const(f"*{self.vararg_parameter}"))
         for parameter, default in zip(
             self.keyword_only_parameters,
             self.keyword_only_default_values,
@@ -105,8 +101,6 @@ class LambdaCallable(FloorValue):
                         ],
                     )
                 )
-        if self.kwarg_parameter is not None:
-            encoded_parameters.append(str_const(f"**{self.kwarg_parameter}"))
         for coordinate, value in self.closure:
             encoded_parameters.append(
                 ctor(
