@@ -96,7 +96,6 @@ from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.nodes import (
     AnnAssign,
     Assign,
-    BuiltinContainerProjection,
     ContainerMutationStatement,
     FunctionDef,
     Name,
@@ -366,6 +365,11 @@ def test_a_coordinate_receiver_field_store_binds_its_key() -> None:
 
 
 def test_a_subscript_store_projection_reads_the_statements_key() -> None:
+    # ``d['k'] = x`` on a name is the one mutation door's statement since
+    # #8096, whatever ``d`` was given: ``d`` after it is the object after the
+    # ``__setitem__`` call (``PathAfterCall``), read through the statement's
+    # key, as a path mutation's root is (``test_a_path_mutation_reads_the_
+    # statements_key``) and as the item stores below read it.
     body = _function(SUBSCRIPT).substitute({}).body
     mutation = next(
         node for node in body if isinstance(node, ContainerMutationStatement)
@@ -373,15 +377,11 @@ def test_a_subscript_store_projection_reads_the_statements_key() -> None:
     assert isinstance(mutation.evaluation, str)
     ret = body[-1]
     assert isinstance(ret, Return)
-    projections = [
-        node
-        for node in ret.value.walk()
-        if isinstance(node, BuiltinContainerProjection)
-    ]
-    assert projections
-    for projection in projections:
-        assert projection.evaluation == mutation.evaluation
-        pair = projection.sugar().call
+    afters = [node for node in ret.value.walk() if isinstance(node, PathAfterCall)]
+    assert afters
+    for after in afters:
+        assert after.evaluation == mutation.evaluation
+        pair = after.sugar().call
         # The pair is read through the key, never the call evaluated again.
         assert isinstance(pair, EvaluationRefSugar)
         assert pair.place
