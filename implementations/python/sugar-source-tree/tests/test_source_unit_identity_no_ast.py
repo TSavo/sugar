@@ -1,9 +1,9 @@
-"""SourceUnit module-level / exception-type identity without a second parser.
+"""SourceUnit definition names / exception-type identity without a second parser.
 
-``is_module_level_function`` and ``exception_type_identity`` must read the
+``definition_name`` and ``exception_type_identity`` must read the
 already-materialized typed Module + unit symtable — never a second standard
 library parse of the source text. Truthful arms pin the closed lexical
-coordinates; lying arms stay loud (``None`` / ``False``).
+coordinates; lying arms stay loud (``None``).
 """
 
 from __future__ import annotations
@@ -56,45 +56,88 @@ def test_nodes_py_has_no_ast_import_or_parse():
                 assert node.attr not in ("parse", "walk")
 
 
-def test_module_level_function_truthful_and_lying():
-    sf = _file(
+def _definition_names(source: str) -> dict:
+    """``{(kind, line, col): definition_name}`` for every def, class and
+    lambda of ``source``."""
+    sf = _file(source)
+    out = {}
+    for node in sf.root.walk():
+        if node.kind not in ("FunctionDef", "AsyncFunctionDef", "ClassDef", "Lambda"):
+            continue
+        start = node.line_col_span()
+        out[(node.kind, start.start_line, start.start_col)] = sf.unit.definition_name(
+            node
+        )
+    return out
+
+
+def test_every_definition_is_named_by_its_qualname():
+    """CPython's own ``__qualname__``, read off the module walk (#7757): a
+    method is named by the class that defines it, a local ``def`` and a lambda
+    by their function's ``<locals>`` and their own coordinate."""
+    names = _definition_names(
         "def f():\n"
         "    def nested():\n"
         "        pass\n"
-        "    pass\n"
+        "    return lambda x: x\n"
         "async def g():\n"
         "    pass\n"
         "class C:\n"
         "    def f(self):\n"
         "        pass\n"
+        "    key = lambda self: 0\n"
         "if True:\n"
         "    def conditional():\n"
         "        pass\n"
+        "h = lambda y: y\n"
+        "def k(d=lambda: 0):\n"
+        "    return (lambda: z for z in (lambda: [1])())\n"
     )
-    unit = sf.unit
-    by_name_line = {
-        (fn.name, fn.line_col_span().start_line): fn for fn in sf.functions()
+    assert names == {
+        ("FunctionDef", 1, 0): "f",
+        ("FunctionDef", 2, 4): "f.<locals>.nested@2:4",
+        ("Lambda", 4, 11): "f.<locals>.<lambda>@4:11",
+        ("AsyncFunctionDef", 5, 0): "g",
+        ("ClassDef", 7, 0): "C",
+        ("FunctionDef", 8, 4): "C.f",
+        ("Lambda", 10, 10): "C.<lambda>@10:10",
+        # A def under a module ``if`` is a module member: what an import of
+        # ``conditional`` reaches.
+        ("FunctionDef", 12, 4): "conditional",
+        ("Lambda", 14, 4): "<lambda>@14:4",
+        ("FunctionDef", 15, 0): "k",
+        # A default is evaluated in the scope around the ``def``.
+        ("Lambda", 15, 8): "<lambda>@15:8",
+        # A generator expression is a scope, except for its first iterable.
+        ("Lambda", 16, 12): "k.<locals>.<genexpr>.<lambda>@16:12",
+        ("Lambda", 16, 32): "k.<locals>.<lambda>@16:32",
     }
 
-    # Truthful: direct module-body defs occupy importable slots.
-    f_line = next(line for (name, line) in by_name_line if name == "f" and line < 5)
-    g_line = next(line for (name, line) in by_name_line if name == "g")
-    assert unit.is_module_level_function("f", f_line) is True
-    assert unit.is_module_level_function("g", g_line) is True
 
-    # Lying: nested, class method, and conditional-body defs do not.
-    nested_line = next(line for (name, line) in by_name_line if name == "nested")
-    method_line = next(
-        line for (name, line) in by_name_line if name == "f" and line > 5
+def test_a_qualname_two_definitions_share_names_neither_bare():
+    """Two definitions of one qualname in one file (a redefined module
+    ``def``, a redefined method) are each named by their coordinate: which one
+    a reader reaches is the binding at run time, never the bare name."""
+    names = _definition_names(
+        "def f():\n"
+        "    pass\n"
+        "def f():\n"
+        "    pass\n"
+        "class A:\n"
+        "    def __init__(self):\n"
+        "        pass\n"
+        "class B:\n"
+        "    def __init__(self):\n"
+        "        pass\n"
     )
-    conditional_line = next(
-        line for (name, line) in by_name_line if name == "conditional"
-    )
-    assert unit.is_module_level_function("nested", nested_line) is False
-    assert unit.is_module_level_function("f", method_line) is False
-    assert unit.is_module_level_function("conditional", conditional_line) is False
-    # Wrong line for a real module def is also false.
-    assert unit.is_module_level_function("f", f_line + 1) is False
+    assert names == {
+        ("FunctionDef", 1, 0): "f@1:0",
+        ("FunctionDef", 3, 0): "f@3:0",
+        ("ClassDef", 5, 0): "A",
+        ("FunctionDef", 6, 4): "A.__init__",
+        ("ClassDef", 8, 0): "B",
+        ("FunctionDef", 9, 4): "B.__init__",
+    }
 
 
 def test_exception_type_identity_truthful_arms():
@@ -176,7 +219,8 @@ def test_exception_type_identity_lying_arms_stay_loud():
 
 if __name__ == "__main__":
     test_nodes_py_has_no_ast_import_or_parse()
-    test_module_level_function_truthful_and_lying()
+    test_every_definition_is_named_by_its_qualname()
+    test_a_qualname_two_definitions_share_names_neither_bare()
     test_exception_type_identity_truthful_arms()
     test_exception_type_identity_lying_arms_stay_loud()
     print("ok: source-unit identity without second-parser authority")

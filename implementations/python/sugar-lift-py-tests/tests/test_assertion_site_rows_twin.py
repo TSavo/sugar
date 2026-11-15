@@ -236,8 +236,8 @@ def test_a_function_with_two_assertions_is_one_contract(tmp_path: Path) -> None:
     (tmp_path / "two").mkdir()
     (single,) = _wire_rows(tmp_path / "one", one)
     (double,) = _wire_rows(tmp_path / "two", two)
-    assert single["name"] == "test_one"
-    assert double["name"] == "test_two"
+    assert single["name"] == "python:m.test_one"
+    assert double["name"] == "python:m.test_two"
     assert _assertion_lines(single) == [5]
     assert _assertion_lines(double) == [5, 6]
     assert "post" in single and "inv" in single

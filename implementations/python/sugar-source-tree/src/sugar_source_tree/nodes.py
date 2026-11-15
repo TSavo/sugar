@@ -2675,6 +2675,12 @@ class SourceUnit:
     _lexical_import_pass_key_memo: object = field(
         init=False, default=None, repr=False, compare=False
     )
+    # ``(constructed module, {occurrence: definition name})``: each
+    # definition's unique name in this file (``definition_name``), built once
+    # from the module walk's qualnames.
+    _definition_names_memo: object = field(
+        init=False, default=None, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
@@ -2714,6 +2720,7 @@ class SourceUnit:
         object.__setattr__(self, "_class_namespace_stores_memo", None)
         object.__setattr__(self, "_lexical_import_seat_memo", None)
         object.__setattr__(self, "_lexical_import_pass_key_memo", None)
+        object.__setattr__(self, "_definition_names_memo", None)
 
     def _published_enrollment_decisions(
         self, occurrence: SourceOccurrenceIdentityV1
@@ -3134,17 +3141,19 @@ class SourceUnit:
         )
         return root, path
 
-    def module_member_target_symbol(self, name: str) -> Optional[str]:
-        """The target symbol of this module's top-level ``name`` (#7757).
+    def module_member_target_symbol(self, *names: str) -> Optional[str]:
+        """The target symbol of this module's member ``names`` (#7757).
 
-        ``python:<module>.<name>``, with the module name the one import table
-        spells for this unit's seat (``module_name_for_path``, src layout
-        included): the symbol a consumer's ``from <module> import <name>``
-        reaches. The one speller of a module's own definition symbol: a
-        function's ``bridgeSourceSymbol`` (the join, #7862) and a class's
-        ancestry row (``exception_class_ancestry``) both read it, so the two
-        joins name a definition once. ``None`` when the seat names no module
-        (a path outside the root, or the root's own ``__init__``).
+        ``python:<module>.<name>[.<name>...]``, with the module name the one
+        import table spells for this unit's seat (``module_name_for_path``,
+        src layout included), joined by the import table's own speller
+        (``member_target_symbol``): the symbol a consumer's ``from <module>
+        import <name>`` (and ``<name>.<member>``) reaches. The one speller of
+        a module's own definition symbol: every definition's join symbol
+        (``definition_symbol``, a function's ``bridgeSourceSymbol``, #7862)
+        and a class's ancestry row (``exception_class_ancestry``) read it, so
+        the joins name a definition once. ``None`` when the seat names no
+        module (a path outside the root, or the root's own ``__init__``).
         """
         from sugar_lift_py_tests.import_binding import (
             member_target_symbol,
@@ -3158,7 +3167,88 @@ class SourceUnit:
             return None
         if not module_name:
             return None
-        return member_target_symbol(f"python:{module_name}", (name,))
+        return member_target_symbol(f"python:{module_name}", names)
+
+    def definition_name(self, definition: "Node") -> str:
+        """The name a definition is joined by, unique in this file (#7757).
+
+        ``definition`` is a ``def``, ``async def``, ``class`` or ``lambda``
+        occurrence. The name is CPython's own ``__qualname__`` for it (the
+        module walk's ``definition_qualnames``): ``f``, ``B.m`` for a method
+        of the class that defines it, ``outer.<locals>.g`` for a local
+        ``def``, ``outer.<locals>.<lambda>`` for a lambda in ``outer`` (and
+        ``<lambda>`` for one at module level). Where the qualname
+        alone does not name one definition, ``@<line>:<col>`` of the
+        occurrence follows it:
+
+        - every definition inside a function scope or a lambda (a qualname
+          holding a ``<...>`` part: ``<locals>``, ``<lambda>``,
+          ``<genexpr>``). Such a name is never an import's target, and the
+          statements of one function may bind it more than once
+          (``if: def g`` / ``else: def g``);
+        - every definition whose qualname another definition of this file
+          also has (a module ``def f`` written twice, two methods of one
+          name). Which one an import reaches is the binding at run time, not
+          the name, so none of them is the bare name.
+
+        Every other definition (a module-level ``def`` or ``class``, a
+        method) is its bare qualname: exactly what a consumer's import
+        spells (``from m import B`` then ``B.m``). The coordinate is the
+        occurrence's own ``line_col_span`` start, the line and column its
+        ``def`` memento states. A definition the walk does not hold is the
+        loud ``BackendDefect``: no fallback to its spelling.
+        """
+        module = self.constructed_module
+        memo = self._definition_names_memo
+        if memo is None or memo[0] is not module:
+            counts: dict = {}
+            for _occurrence, qualname in module.definition_qualnames:
+                counts[qualname] = counts.get(qualname, 0) + 1
+            memo = (
+                module,
+                {
+                    occurrence: (
+                        qualname,
+                        counts[qualname] > 1
+                        or any(part.startswith("<") for part in qualname.split(".")),
+                    )
+                    for occurrence, qualname in module.definition_qualnames
+                },
+            )
+            object.__setattr__(self, "_definition_names_memo", memo)
+        row = memo[1].get(SourceOccurrenceIdentityV1.of(definition))
+        if row is None:
+            from .panic import BackendDefect
+
+            raise BackendDefect(
+                blame=definition.fragment,
+                owner="SourceUnit.definition_name",
+                observed=f"no qualname row for this {definition.kind} occurrence",
+                requested="the module walk's row for this exact definition",
+                fix="enroll every definition in the walk's definition_qualnames",
+            )
+        qualname, located = row
+        if not located:
+            return qualname
+        start = definition.line_col_span()
+        return f"{qualname}@{start.start_line}:{start.start_col}"
+
+    def definition_symbol(self, definition: "Node") -> Optional[str]:
+        """The one join symbol of a definition: ``python:<module>.`` and its
+        name in this file (``definition_name``), through the one speller of
+        this module's members (``module_member_target_symbol``).
+        ``python:m.f``, ``python:m.B.m``, ``python:m.C``,
+        ``python:m.outer.<locals>.g@L:C``,
+        ``python:m.outer.<locals>.<lambda>@L:C``.
+        A module-level definition's symbol is exactly what an import of it
+        spells (``CallSiteValue.edge_contribution``'s ``targetSymbol``).
+        ``None`` when the seat names no module."""
+        name = self.definition_name(definition)
+        qualname, at, location = name.partition("@")
+        symbol = self.module_member_target_symbol(*qualname.split("."))
+        if symbol is None:
+            return None
+        return f"{symbol}{at}{location}"
 
     def _lexical_import_pass(self):
         """The ONE lexical import pass over this unit (#7837). Process-resident:
@@ -5216,27 +5306,6 @@ class SourceUnit:
             )
         return matches[0]
 
-    def is_module_level_function(self, name: str, lineno: int) -> bool:
-        """Whether this exact definition occupies an importable module slot.
-
-        Authority is the already-materialized typed Module body (direct
-        ``FunctionDef`` / ``AsyncFunctionDef`` children only) — never a second
-        parse of the source text as semantic authority.
-        """
-        module = self._require_typed_module(
-            "SourceUnit.is_module_level_function",
-            blame=f"{self.filename}:{lineno}:0",
-        )
-        for statement in module.body:
-            if statement.kind not in ("FunctionDef", "AsyncFunctionDef"):
-                continue
-            if (
-                statement.name == name
-                and statement.line_col_span().start_line == lineno
-            ):
-                return True
-        return False
-
     def source_allocation_definition_for_call(self, call: "Call") -> "ClassDef | None":
         """Resolve one source allocation definition at an exact call use-site.
 
@@ -5973,9 +6042,10 @@ class SourceUnit:
 
         - ``statement`` is the ``class`` (or the re-exporting ``from ...
           import``) that binds ``name`` at module level;
-        - ``symbol`` is the name's target symbol, ``python:<module>.<name>``
-          (``module_member_target_symbol``: the one speller the function join
-          reads too);
+        - ``symbol`` is the name's target symbol, ``python:<module>.<name>``:
+          a class's own join symbol (``definition_symbol``, the one speller
+          every definition's join reads), a re-exported name's
+          ``module_member_target_symbol``;
         - ``identity`` is the coordinate a consumer's import door mints for
           that symbol (``exception_type_identity_of_symbol``);
         - ``ancestors`` are the coordinates of the classes it is a subclass
@@ -6064,7 +6134,7 @@ class SourceUnit:
                     sibling_ancestors, sibling_exceptional = ancestry(sibling, visiting)
                     if not sibling_exceptional:
                         continue
-                    sibling_symbol = self.module_member_target_symbol(sibling.name)
+                    sibling_symbol = self.definition_symbol(sibling)
                     if sibling_symbol is None:
                         continue
                     add(exception_type_identity_of_symbol(sibling_symbol))
@@ -6095,7 +6165,7 @@ class SourceUnit:
             ancestors, exceptional = ancestry(definition, frozenset())
             if not exceptional or not ancestors:
                 continue
-            symbol = self.module_member_target_symbol(definition.name)
+            symbol = self.definition_symbol(definition)
             if symbol is None:
                 continue
             stated.append(
@@ -10444,6 +10514,47 @@ def generator_for_target_coordinates(statement):
     return collect(statement.target, ())
 
 
+def _definition_bridge_source_symbol(definition: "Node", *, owner: str) -> Optional[str]:
+    """The ``bridgeSourceSymbol`` of a ``def``, ``class`` or ``lambda``: its
+    one join symbol (``SourceUnit.definition_symbol``) when its unit is seated
+    under a workspace root, ``None`` without one.
+
+    The construction door already mints the locus workspace-relative
+    (``workspace_path_source``). Re-deriving it here would be a second answer
+    to a question already resolved; an absolute filename means the unit did
+    NOT come through that door, and that stays LOUD.
+    """
+    context = definition._require_construction_context(owner=owner)
+    if getattr(context, "workspace_root", None) is None:
+        return None
+    from pathlib import Path
+
+    if Path(definition.unit.filename).is_absolute():
+        raise SugarNotWritten(
+            blame=definition.fragment,
+            owner=owner,
+            observed=f"absolute source locus `{definition.unit.filename}`",
+            requested="workspace-relative source locus",
+            fix=(
+                "route the source through the workspace-relative "
+                "lift door (`workspace_path_source`)"
+            ),
+        )
+    return definition.unit.definition_symbol(definition)
+
+
+def _definition_contract_name(definition: "Node", *, owner: str) -> str:
+    """The name a definition's contract row is stated under: its join symbol
+    (``_definition_bridge_source_symbol``), so the row's ``name`` and its
+    ``bridgeSourceSymbol`` are one string; where no workspace root seats the
+    unit (no symbol), its unique name in the file
+    (``SourceUnit.definition_name``)."""
+    symbol = _definition_bridge_source_symbol(definition, owner=owner)
+    if symbol is not None:
+        return symbol
+    return definition.unit.definition_name(definition)
+
+
 class FunctionDef(Statement):
     _bound_name_fields = ("name",)
     name: str
@@ -11938,44 +12049,27 @@ class FunctionDef(Statement):
         )
 
     def bridge_source_symbol(self) -> Optional[str]:
-        """This definition's ``bridgeSourceSymbol``: the target symbol a
-        consumer's import of it reaches, for a module-level function under a
-        workspace root; ``None`` otherwise.
+        """This definition's ``bridgeSourceSymbol``: its one join symbol
+        (``SourceUnit.definition_symbol``) under a workspace root, for every
+        ``def`` -- module-level, method or local; ``None`` without a root.
 
         Read off the definition and its seat, never off its construction: the
         function's universe carries it (``_construct_sugar``) and a function
         refused by name is cited by it (``refused_function_row``), the same
         string either way.
         """
-        context = self._require_construction_context(
-            owner="FunctionDef.bridge_source_symbol"
+        return _definition_bridge_source_symbol(
+            self, owner="FunctionDef.bridge_source_symbol"
         )
-        workspace_root = getattr(context, "workspace_root", None)
-        if workspace_root is None or not self.unit.is_module_level_function(
-            self.name, self.line_col_span().start_line
-        ):
-            return None
-        from pathlib import Path
 
-        # The construction door already mints the locus workspace-relative
-        # (`workspace_path_source`). Re-deriving it here would be a second
-        # answer to a question already resolved; an absolute filename means
-        # the unit did NOT come through that door, and that stays LOUD.
-        relative = Path(self.unit.filename)
-        if relative.is_absolute():
-            raise SugarNotWritten(
-                blame=self.fragment,
-                owner="FunctionDef.bridge_source_symbol",
-                observed=f"absolute source locus `{self.unit.filename}`",
-                requested="workspace-relative source locus",
-                fix=(
-                    "route the source through the workspace-relative "
-                    "lift door (`workspace_path_source`)"
-                ),
-            )
-        # The one speller of a module's own definition symbol: the class
-        # ancestry rows read it too.
-        return self.unit.module_member_target_symbol(self.name)
+    def contract_name(self) -> str:
+        """The name this definition's contract row is stated under: its join
+        symbol (``bridge_source_symbol``), unique in the file; with no
+        workspace root (no symbol), its name in the file
+        (``SourceUnit.definition_name``), unique the same way."""
+        return _definition_contract_name(
+            self, owner="FunctionDef.contract_name"
+        )
 
     def _make_parameter_entry(self, parameter: Param, ordinal: int, scope):
         owner = self._active_initializer_owner()
@@ -12235,8 +12329,11 @@ class FunctionDef(Statement):
                             site=where,
                         ):
                             substitution_trace = trace_builder.freeze()
+                    # The contract is named by the definition's join symbol
+                    # (#7757): ``python:m.B.m`` for a method, never the bare
+                    # ``m`` two classes of one file share.
                     return FunctionUniverseSugar(
-                        name=self.name,
+                        name=self.contract_name(),
                         formals=tuple(p.name for p in self.params),
                         statements=statements,
                         site=self.fragment,
@@ -12306,6 +12403,10 @@ class AsyncFunctionDef(Statement):
     def bridge_source_symbol(self) -> Optional[str]:
         """Same definition symbol as FunctionDef."""
         return FunctionDef.bridge_source_symbol(self)
+
+    def contract_name(self) -> str:
+        """Same contract name as FunctionDef."""
+        return FunctionDef.contract_name(self)
 
     def _make_parameter_entry(self, parameter: Param, ordinal: int, scope):
         return FunctionDef._make_parameter_entry(self, parameter, ordinal, scope)
@@ -12394,6 +12495,17 @@ class ClassDef(Statement):
         """The class statement binds its name through the parser-owned name
         occurrence (``binding_target``) and constructs nothing of it."""
         return (self.binding_target,)
+
+    def bridge_source_symbol(self) -> Optional[str]:
+        """This class's one join symbol (``SourceUnit.definition_symbol``):
+        ``python:m.C`` for a module-level class, the symbol a consumer's
+        ``from m import C`` and a call ``C(...)`` will be joined by. The
+        constructor contract stated under it is a later step (#7757); the
+        symbol is the definition's now, by the rule every ``def`` follows
+        (``FunctionDef.bridge_source_symbol``)."""
+        return _definition_bridge_source_symbol(
+            self, owner="ClassDef.bridge_source_symbol"
+        )
 
     def __post_init__(self):
         # A NODE OFF THE ROLL. `Node.__post_init__` is where registration

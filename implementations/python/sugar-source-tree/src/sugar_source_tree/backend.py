@@ -511,6 +511,11 @@ class _ConstructedModuleV1(_SealedBackendRelation):
     # Keyed by SourceOccurrenceIdentityV1, never by the producer's Node shell:
     # a rewritten shell over the same occurrence must join this row (#7346-A).
     function_class_owners: tuple[tuple[object, object | None], ...]
+    # Every ``def``, ``async def``, ``class`` and ``lambda`` occurrence with
+    # CPython's own ``__qualname__`` for it, keyed by
+    # SourceOccurrenceIdentityV1: the one answer to which definition a join
+    # symbol names (``SourceUnit.definition_name``).
+    definition_qualnames: tuple[tuple[object, str], ...]
     lexical_call_rows: tuple[object, ...]
     # Closed producer decision for EVERY call occurrence, keyed by
     # SourceOccurrenceIdentityV1 (#7346-A/#7348). A rewritten shell over the
@@ -556,6 +561,81 @@ def _seat_private(instance: object, **fields: object) -> object:
     for name, value in fields.items():
         object.__setattr__(instance, name, value)
     return instance
+
+
+def _definition_qualnames(
+    constructed_nodes,
+    parent_positions,
+    parent_edges,
+    *,
+    function_kinds,
+    lambda_kind,
+    class_kind,
+    generator_kind,
+) -> tuple:
+    """CPython's ``__qualname__`` of every definition the module holds.
+
+    ``((SourceOccurrenceIdentityV1, qualname), ...)`` for each ``def``,
+    ``async def``, ``class`` and ``lambda``, in pre-order, read off the
+    construction walk's own parent relation (``parent_positions``) and the
+    field each node hangs off its parent by (``parent_edges``). The rule is
+    the compiler's (``compiler_set_qualname``):
+
+    - a definition's scope is the nearest enclosing ``def``, ``lambda`` or
+      ``class`` whose BODY holds it, or a generator expression holding it
+      anywhere but its first iterable. A ``def``'s decorators, defaults and
+      annotations, a class's bases and keywords, a lambda's defaults and a
+      generator's first iterable are evaluated in the scope around it. A
+      list, set or dict comprehension is no scope (PEP 709 inlines it);
+    - in no scope (the module) the qualname is the name;
+    - under a ``def`` or ``lambda`` it is ``<scope>.<locals>.<name>``;
+    - under a ``class`` or a generator expression it is ``<scope>.<name>``.
+
+    A lambda's name is ``<lambda>``, a generator expression's ``<genexpr>``.
+    """
+    function_like = (*function_kinds, lambda_kind)
+    scope_kinds = (*function_like, class_kind)
+    qualname_at: dict[int, str] = {}
+    rows = []
+
+    def enclosing_scope(position: int) -> int | None:
+        below: str | None = None
+        child = position
+        ancestor = parent_positions[position]
+        while ancestor is not None:
+            field_name, index = parent_edges[child]
+            node = constructed_nodes[ancestor]
+            if isinstance(node, scope_kinds) and field_name == "body":
+                return ancestor
+            if isinstance(node, generator_kind) and not (
+                field_name == "generators" and index == 0 and below == "iter"
+            ):
+                return ancestor
+            below = field_name
+            child = ancestor
+            ancestor = parent_positions[ancestor]
+        return None
+
+    for position, node in enumerate(constructed_nodes):
+        if isinstance(node, generator_kind):
+            name = "<genexpr>"
+        elif isinstance(node, lambda_kind):
+            name = "<lambda>"
+        elif isinstance(node, (*function_kinds, class_kind)):
+            name = node.name
+        else:
+            continue
+        scope = enclosing_scope(position)
+        if scope is None:
+            qualname = name
+        elif isinstance(constructed_nodes[scope], function_like):
+            qualname = f"{qualname_at[scope]}.<locals>.{name}"
+        else:
+            qualname = f"{qualname_at[scope]}.{name}"
+        qualname_at[position] = qualname
+        if not isinstance(node, generator_kind):
+            rows.append((SourceOccurrenceIdentityV1.of(node), qualname))
+    return tuple(rows)
 
 
 class BackendCouldNotParse(Exception):
@@ -704,6 +784,8 @@ class Backend:
             Constant,
             Delete,
             FunctionDef,
+            GeneratorExp,
+            Lambda,
             Module,
             Name,
         )
@@ -727,21 +809,28 @@ class Backend:
         # The tree is immutable; parent is a fact of that walk, not a second pass.
         constructed_nodes_list: list[Node] = []
         parent_positions: list[int | None] = []
+        # The field (and index) each node hangs off its parent by: the same
+        # walk's edge, kept so a scope question reads which part of its
+        # parent a node is (a ``def``'s body, or its defaults).
+        parent_edges: list[tuple[str, int | None] | None] = []
         function_nodes_list: list[Node] = []
-        # (node, parent_position) — same pre-order as Node.walk().
-        walk_stack: list[tuple[Node, int | None]] = [(root, None)]
+        # (node, parent_position, edge) — same pre-order as Node.walk().
+        walk_stack: list[tuple[Node, int | None, tuple[str, int | None] | None]] = [
+            (root, None, None)
+        ]
         while walk_stack:
-            node, parent_position = walk_stack.pop()
+            node, parent_position, edge = walk_stack.pop()
             position = len(constructed_nodes_list)
             constructed_nodes_list.append(node)
             parent_positions.append(parent_position)
+            parent_edges.append(edge)
             if isinstance(node, (FunctionDef, AsyncFunctionDef)):
                 function_nodes_list.append(node)
             # _child_edges: one getattr of fields + memo for later walk/children.
-            child_nodes = [child for _n, _i, child in node._child_edges()]
+            child_edges = node._child_edges()
             # Parent of each child is this position; reverse for left-first order.
-            for child in reversed(child_nodes):
-                walk_stack.append((child, position))
+            for field_name, index, child in reversed(child_edges):
+                walk_stack.append((child, position, (field_name, index)))
         constructed_nodes = tuple(constructed_nodes_list)
         function_nodes = tuple(function_nodes_list)
         positions = {
@@ -766,6 +855,15 @@ class Backend:
                 (SourceOccurrenceIdentityV1.of(function), class_owner)
             )
         function_class_owners = tuple(function_class_owners_list)
+        definition_qualnames = _definition_qualnames(
+            constructed_nodes,
+            parent_positions,
+            parent_edges,
+            function_kinds=(FunctionDef, AsyncFunctionDef),
+            lambda_kind=Lambda,
+            class_kind=ClassDef,
+            generator_kind=GeneratorExp,
+        )
         unit.bind_typed_module(
             root,
             constructed_nodes=constructed_nodes,
@@ -1047,6 +1145,7 @@ class Backend:
             closed_roll_call=closed_roll_call,
             function_nodes=function_nodes,
             function_class_owners=function_class_owners,
+            definition_qualnames=definition_qualnames,
             lexical_call_rows=lexical_call_rows,
             lexical_call_enrollments=lexical_call_enrollments,
             provider_member_rows=provider_member_rows,

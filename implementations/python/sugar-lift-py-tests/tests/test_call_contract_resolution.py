@@ -330,9 +330,15 @@ def test_producer_contract_exports_the_same_module_qualified_symbol(tmp_path):
 
     assert rows is not None
     assert rows[0].bridge_source_symbol == "python:producer.pair"
+    # The contract is named by the same symbol: one string, not two.
+    assert rows[0].name == "python:producer.pair"
 
 
-def test_only_module_level_function_publishes_import_export_symbol(tmp_path):
+def test_every_definition_publishes_its_one_join_symbol(tmp_path):
+    """Every ``def`` states one join symbol, its contract's name too (#7757):
+    a module ``def`` the symbol an import of it spells, a method the class
+    that defines it, a local ``def`` its function's ``<locals>`` and its own
+    coordinate. Two definitions of one bare name in one file never share it."""
     from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 
     producer = tmp_path / "producer.py"
@@ -343,8 +349,34 @@ def test_only_module_level_function_publishes_import_export_symbol(tmp_path):
     )
     tree = open_source_file_for_construction(producer, root=tmp_path)
     functions = list(tree.functions())
+    universes = [function.sugar() for function in functions]
 
-    assert functions[0].sugar().bridge_source_symbol == "python:producer.pair"
-    assert functions[1].sugar().bridge_source_symbol is None
-    assert functions[2].sugar().bridge_source_symbol == "python:producer.outer"
-    assert functions[3].sugar().bridge_source_symbol is None
+    assert [universe.bridge_source_symbol for universe in universes] == [
+        "python:producer.pair",
+        "python:producer.C.pair",
+        "python:producer.outer",
+        "python:producer.outer.<locals>.pair@7:4",
+    ]
+    assert [universe.name for universe in universes] == [
+        universe.bridge_source_symbol for universe in universes
+    ]
+
+
+def test_a_class_states_its_join_symbol(tmp_path):
+    """A class's symbol is the one an import of it spells, read by the speller
+    every definition's join reads (``SourceUnit.definition_symbol``)."""
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+    from sugar_source_tree.nodes import ClassDef
+
+    producer = tmp_path / "producer.py"
+    producer.write_text(
+        "class Box:\n    def __init__(self, n):\n        self.n = n\n"
+        "def make():\n    class Local:\n        pass\n    return Local\n"
+    )
+    tree = open_source_file_for_construction(producer, root=tmp_path)
+    classes = [node for node in tree.root.walk() if isinstance(node, ClassDef)]
+
+    assert [node.bridge_source_symbol() for node in classes] == [
+        "python:producer.Box",
+        "python:producer.make.<locals>.Local@5:4",
+    ]

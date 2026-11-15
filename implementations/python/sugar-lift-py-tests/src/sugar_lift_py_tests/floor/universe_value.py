@@ -200,7 +200,10 @@ def function_contract_row(
     existing ``panicLoci`` shape (#7766), each with its arm's guard.
 
     ``bridge_source_symbol`` is stated only by a row that has one: a
-    definition's ``python:<module>.<name>``. A contract dug at a call site has
+    definition's one join symbol (``SourceUnit.definition_symbol``:
+    ``python:<module>.<qualname>``, ``@<line>:<col>`` where the qualname alone
+    is not unique), which is the row's ``name`` too, so two methods of one
+    name never share a contract name. A contract dug at a call site has
     none and states none, so it is not an entry of the linker's catalog and
     never stands beside the callee's definition under a second spelling
     (#7762).
@@ -225,8 +228,13 @@ def function_contract_row(
         proofir_provenance = provenance.to_rpc()
         for row in assertions:
             for stated in row.source_warrants:
+                # A warrant names the source function as its ``def`` spells it
+                # (the memento the source oracle reads back), never the
+                # contract's join symbol.
                 warrant = dataclasses.replace(
-                    stated, source_function_name=name, role="assertion"
+                    stated,
+                    source_function_name=def_memento.source_function_name,
+                    role="assertion",
                 )
                 if warrant not in source_warrants:
                     source_warrants.append(warrant)
