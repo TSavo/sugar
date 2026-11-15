@@ -84,38 +84,52 @@ def _atom_names(formula) -> set[str]:
     return found
 
 
-def test_symbolic_mixed_boolop_retains_each_family_law_and_occurrence() -> None:
-    outcome, comparisons = _expression("a < b and c in d")
+def _family_halts(outcome, comparisons, owners: tuple[str, str]) -> None:
+    """Each leg's undecided dispatch is its own two-faced operation (#7585):
+    one undetermined halt per leg, owned by that leg's operator, keyed on that
+    leg's occurrence, under the complement of that leg's own
+    ``python:compare.completes``.  No leg lends its halt or its occurrence to
+    the other, and there is no second spelling of the halt's condition (the
+    per-family ``python.<op>_dispatch_raises`` atoms are deleted)."""
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.occurrence import occurrence_key
 
     assert isinstance(outcome, ExitSet)
     halted = tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
     assert len(halted) == 2
-    assert {
-        name
-        for exit_ in halted
-        for name in _atom_names(exit_.guard)
-        if name.endswith("dispatch_raises")
-    } == {"python.lt_dispatch_raises", "python.contains_dispatch_raises"}
-    assert {exit_.effect.occurrence_id for exit_ in halted} == {
-        str(compare.sugar().site) for compare in comparisons
-    }
+    by_owner = {exit_.effect.producer_node_owner: exit_ for exit_ in halted}
+    assert set(by_owner) == set(owners)
+    for owner, compare in zip(owners, comparisons, strict=True):
+        halt = by_owner[owner]
+        site = compare.sugar().site
+        assert isinstance(halt.effect, UndeterminedRaiseEffect)
+        assert halt.effect.exception_name is None
+        assert halt.effect.occurrence_id == occurrence_key(site)
+        assert halt.effect.blame == str(site)
+        names = _atom_names(halt.guard)
+        assert "python:compare.completes" in names
+        assert not [name for name in names if name.endswith("dispatch_raises")]
+    first, second = (by_owner[owner] for owner in owners)
+    assert first.effect.occurrence_id != second.effect.occurrence_id
+    # The second leg runs only past the first: its halt holds the first leg's
+    # completion as well as its own complement, so the two guards differ.
+    assert first.guard != second.guard
+
+
+def test_symbolic_mixed_boolop_retains_each_family_law_and_occurrence() -> None:
+    outcome, comparisons = _expression("a < b and c in d")
+
+    _family_halts(
+        outcome, comparisons, ("UndecidedCompare:Lt", "UndecidedCompare:In")
+    )
 
 
 def test_swapping_families_swaps_laws_without_collapsing_occurrences() -> None:
     outcome, comparisons = _expression("a in b and c < d")
 
-    assert isinstance(outcome, ExitSet)
-    halted = tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
-    assert len(halted) == 2
-    assert {
-        name
-        for exit_ in halted
-        for name in _atom_names(exit_.guard)
-        if name.endswith("dispatch_raises")
-    } == {"python.contains_dispatch_raises", "python.lt_dispatch_raises"}
-    assert {exit_.effect.occurrence_id for exit_ in halted} == {
-        str(compare.sugar().site) for compare in comparisons
-    }
+    _family_halts(
+        outcome, comparisons, ("UndecidedCompare:In", "UndecidedCompare:Lt")
+    )
 
 
 def _caller_tree(calls: str) -> SourceFile:
@@ -148,10 +162,6 @@ def _only_halted(outcome) -> Halted:
     return halted
 
 
-def _formal_occurrence(compare: Compare) -> str:
-    return str(compare.sugar().site)
-
-
 def test_first_leg_halt_blocks_toxic_and_safe_membership_with_exact_state() -> None:
     source_calls = "mixed(None, 1, None, 3)\n" "mixed(None, 1, 1, [1])\n"
     (toxic, safe), comparisons = _caller_outcomes(source_calls)
@@ -171,9 +181,15 @@ def test_first_leg_halt_blocks_toxic_and_safe_membership_with_exact_state() -> N
 def test_truthful_first_leg_routes_membership_halt_to_second_occurrence_and_state() -> (
     None
 ):
-    (outcome,), comparisons = _caller_outcomes("mixed(1, 2, None, 3)\n")
+    source_calls = "mixed(1, 2, None, 3)\n"
+    (outcome,), comparisons = _caller_outcomes(source_calls)
+    (call,) = _calls_of(source_calls)
     halted = _only_halted(outcome)
 
-    assert halted.effect.occurrence_id == _formal_occurrence(comparisons[1])
-    assert halted.effect.occurrence_id != _formal_occurrence(comparisons[0])
+    # ``None in 3`` raises at the second leg, stamped with the call's frame:
+    # the one locus spelling (``file:line:col``, #7808), never the fragment's
+    # repr.
+    assert halted.effect.exception_name == "TypeError"
+    assert halted.effect.occurrence_id == _locus(comparisons[1], call)
+    assert halted.effect.occurrence_id != _locus(comparisons[0], call)
     assert halted.state is not None
