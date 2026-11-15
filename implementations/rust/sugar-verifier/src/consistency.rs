@@ -3849,8 +3849,18 @@ const CONTRACT_INPUTS: [(&str, &str); 3] = [
     ("py.default", "default:"),
 ];
 
-/// The named-argument ctor that binds a parameter by name.
+/// The named-argument ctor of a keyword argument as Python reads one: it
+/// binds a named (non-variadic) parameter by name, or goes into
+/// `**kwargs`, never a `*args` or `**kwargs` formal by its name.
 const PYTHON_KWARG: &str = "py.kwarg";
+
+/// The named-argument ctor of a variadic formal supplied packed (#7757):
+/// `py.packed(<formal>, <tuple|dict>)`, the `*args` tuple or `**kwargs`
+/// dict the caller's own binding made, bound to that formal as it stands.
+/// A same-file definition's edge supplies its variadic formals so
+/// (`lambda_callable.definition_edge_call`). It is the one spelling of a
+/// packed variadic: no keyword argument (`py.kwarg`) ever binds one.
+const PYTHON_PACKED: &str = "py.packed";
 
 /// The named argument that states the class of one of the call's own
 /// arguments (step 8, #7757): `py.class(<key>, <class>)`. `<key>` names the
@@ -4032,7 +4042,7 @@ fn dict_entry(key: &str, value: &Json) -> Json {
 
 /// Supply the variadic formal `name` (`*args` or `**kwargs`, by the name its
 /// formulas spell it) with `display`, what it takes (`call_argument_formals`).
-/// Where the call supplied it packed (a `py.kwarg` naming it), that value
+/// Where the call supplied it packed (`py.packed` naming it), that value
 /// stands, and nothing else may be packed into it (`takes_any`): `None`.
 fn supply_variadic(
     name: Option<&str>,
@@ -4097,15 +4107,19 @@ fn class_argument(arg: &Json) -> Option<Result<(ClassKey, Json), ()>> {
 }
 
 /// A named argument of a call term: `(ctor, name, value)` for `py.kwarg`,
-/// `py.closure`, `py.global` or `py.default` applied to a string name and a
-/// value. `None` for a positional argument. `Some(Err(()))` for a named
-/// ctor whose name is not a string constant or whose arity is not two.
+/// `py.packed`, `py.closure`, `py.global` or `py.default` applied to a
+/// string name and a value. `None` for a positional argument.
+/// `Some(Err(()))` for a named ctor whose name is not a string constant or
+/// whose arity is not two.
 fn named_argument(arg: &Json) -> Option<Result<(&str, String, Json), ()>> {
     if arg.get("kind").and_then(|v| v.as_str()) != Some("ctor") {
         return None;
     }
     let ctor = arg.get("name").and_then(|v| v.as_str())?;
-    if ctor != PYTHON_KWARG && !CONTRACT_INPUTS.iter().any(|(named, _)| *named == ctor) {
+    if ctor != PYTHON_KWARG
+        && ctor != PYTHON_PACKED
+        && !CONTRACT_INPUTS.iter().any(|(named, _)| *named == ctor)
+    {
         return None;
     }
     let parts = arg.get("args").and_then(|v| v.as_array());
@@ -4151,10 +4165,17 @@ fn named_argument(arg: &Json) -> Option<Result<(&str, String, Json), ()>> {
 /// - a `**<name>` formal is bound to the dict display (`python:dict(
 ///   python:dict_entry(<key>, <value>)...)`) of the keyword arguments no
 ///   parameter takes, keyed by their keyword, in order;
-/// - a `py.kwarg` naming the variadic formal itself binds it to its value
-///   as it stands: a same-file definition's call supplies a packed formal so
-///   (`lambda_callable.definition_edge_call`), the tuple or dict its own
-///   binding packed. A packed value beside arguments the formal would also
+/// - a `py.kwarg` is a keyword argument as Python reads one: it binds the
+///   named (non-variadic) parameter of its name, otherwise it goes into
+///   `**kwargs`, otherwise the call does not fit (`None`: Python's
+///   `TypeError`). A keyword never binds a `*args` or `**kwargs` formal by
+///   its name (`f(rest=1)` against `def f(*rest, **kw)` puts `rest` in
+///   `kw`);
+/// - `py.packed(<formal>, <value>)` binds the variadic formal it names to
+///   its value as it stands: a same-file definition's call supplies a packed
+///   formal so (`lambda_callable.definition_edge_call`), the tuple or dict
+///   its own binding packed. It names a variadic formal of the contract or
+///   fits nothing; a packed value beside arguments the formal would also
 ///   take fits nothing;
 /// - an argument that spreads a tuple display (`python:starred_arg`) or a
 ///   dict display of string keys (`python:double_starred_kwarg`) is its
@@ -4252,15 +4273,24 @@ pub(crate) fn call_argument_formals(
                 }
                 if by_name.contains(&name.as_str()) {
                     (name, value)
-                } else if Some(name.as_str()) == star_name || Some(name.as_str()) == double_name {
-                    // A packed variadic formal, supplied as it stands.
-                    (name, value)
                 } else if double_name.is_some() {
+                    // Any other keyword, the name of a variadic formal
+                    // included, is what `**kwargs` collects.
                     packed_keyword.push((name, value));
                     continue;
                 } else {
+                    // No parameter takes it and nothing collects it:
+                    // Python's `TypeError`.
                     return None;
                 }
+            }
+            Some(Ok((ctor, name, value))) if ctor == PYTHON_PACKED => {
+                // A packed variadic formal, supplied as it stands; it names
+                // one of the contract's variadic formals or fits nothing.
+                if Some(name.as_str()) != star_name && Some(name.as_str()) != double_name {
+                    return None;
+                }
+                (name, value)
             }
             Some(Ok((ctor, name, value))) => {
                 let (_, prefix) = CONTRACT_INPUTS.iter().find(|(named, _)| *named == ctor)?;
@@ -13026,7 +13056,7 @@ mod tests {
         let packed = tuple_display(vec![int(1)]);
         // A same-file definition's call supplies a packed formal by name.
         assert_eq!(
-            bind_call_arguments(&contract, &[], &[named_arg("py.kwarg", "args", packed.clone())])
+            bind_call_arguments(&contract, &[], &[named_arg("py.packed", "args", packed.clone())])
                 .unwrap(),
             vec![("args".to_string(), packed.clone())]
         );
@@ -13034,7 +13064,15 @@ mod tests {
         assert!(bind_call_arguments(
             &contract,
             &[],
-            &[int(2), named_arg("py.kwarg", "args", packed.clone())]
+            &[int(2), named_arg("py.packed", "args", packed.clone())]
+        )
+        .is_none());
+        // A packed value names a variadic formal of the contract, or fits
+        // nothing.
+        assert!(bind_call_arguments(
+            &formals(&["x"]),
+            &[],
+            &[named_arg("py.packed", "x", packed.clone())]
         )
         .is_none());
         // `f(*(1,))`: the spread tuple display is its elements.
@@ -13048,6 +13086,61 @@ mod tests {
         assert!(bind_call_arguments(&formals(&["a"]), &[], &[undecided.clone()]).is_none());
         assert!(spreads_undecided(&[undecided]));
         assert!(!spreads_undecided(&[int(1)]));
+    }
+
+    #[test]
+    fn a_keyword_naming_a_variadic_formal_goes_into_kwargs_or_fits_nothing() {
+        // `obj.m(rest=1)` against `def m(self, *rest, **kw)`: Python binds
+        // `rest` to `()` and `kw` to `{"rest": 1}`; the keyword never binds
+        // the `*args` formal by its name.
+        let contract = formals(&["self", "*rest", "**kw"]);
+        let bound = bind_call_arguments(
+            &contract,
+            &[],
+            &[var("obj"), named_arg("py.kwarg", "rest", int(1))],
+        )
+        .unwrap();
+        assert_eq!(
+            bound,
+            vec![
+                ("self".to_string(), var("obj")),
+                ("rest".to_string(), tuple_display(vec![])),
+                (
+                    "kw".to_string(),
+                    json!({"kind": "ctor", "name": "python:dict", "args": [
+                        {"kind": "ctor", "name": "python:dict_entry", "args": [
+                            string_const("rest"), int(1)
+                        ]}
+                    ]})
+                ),
+            ]
+        );
+        // `obj.m(kw=1)`: the `**kwargs` formal's own name is a key of it.
+        let bound = bind_call_arguments(
+            &contract,
+            &[],
+            &[var("obj"), named_arg("py.kwarg", "kw", int(1))],
+        )
+        .unwrap();
+        assert_eq!(
+            bound[2],
+            (
+                "kw".to_string(),
+                json!({"kind": "ctor", "name": "python:dict", "args": [
+                    {"kind": "ctor", "name": "python:dict_entry", "args": [
+                        string_const("kw"), int(1)
+                    ]}
+                ]})
+            )
+        );
+        // `obj.m(rest=1)` against `def m(self, *rest)`: nothing collects the
+        // keyword (Python's `TypeError`): the call fits nothing.
+        assert!(bind_call_arguments(
+            &formals(&["self", "*rest"]),
+            &[],
+            &[var("obj"), named_arg("py.kwarg", "rest", int(1))]
+        )
+        .is_none());
     }
 
     #[test]

@@ -275,6 +275,56 @@ def test_a_star_args_method_on_a_bare_instance_binds_its_actuals(
     )
 
 
+# A keyword naming the ``*args`` formal never binds it: Python puts it in
+# ``**kwargs``, or raises ``TypeError`` where nothing collects it.  The edge
+# of a same-file definition supplies a packed variadic as ``py.packed``, so
+# prove's one binder reads every ``py.kwarg`` as the keyword it is (#7757).
+# Before, a ``py.kwarg`` naming the variadic bound it as it stood:
+# ``limit.check(rest=3)`` against ``def check(self, *rest)`` fit, ``check``
+# completed with 3, and the claim after a call Python refuses read ``sat``;
+# against ``def check(self, *rest, **kw)`` returning ``rest``, ``rest`` was
+# ``3`` where Python makes it ``()``.
+_KEYWORD_NAMING_STAR = """\
+class Limit:
+    def check(self, *rest{kw}):
+        return {returned}
+
+
+def test_limit():
+    limit = Limit()
+    value = limit.check({actuals})
+    assert value == 3
+"""
+
+
+def test_a_keyword_naming_the_star_formal_never_binds_it(tmp_path: Path) -> None:
+    """Truthful: ``limit.check(3)`` with ``def check(self, *rest)`` returning
+    3: ``sat``.  Lying: ``limit.check(rest=3)``, which Python refuses
+    (``TypeError``: no ``**kwargs`` collects ``rest``), and
+    ``limit.check(rest=3)`` against ``def check(self, *rest, **kw)``
+    returning ``rest`` (Python binds ``rest`` to ``()``): neither is
+    ``sat``.  The refused call stays owed at prove (the binder states the
+    misfit; the ``TypeError`` halt face is kept, never dropped)."""
+    truthful = _KEYWORD_NAMING_STAR.format(kw="", returned="3", actuals="3")
+    refused = _KEYWORD_NAMING_STAR.format(kw="", returned="3", actuals="rest=3")
+    collected = _KEYWORD_NAMING_STAR.format(
+        kw=", **kw", returned="rest", actuals="rest=3"
+    )
+    t = run_source_through_real_solver(tmp_path / "keyword-star-truthful", truthful)
+    lie = run_source_through_real_solver(tmp_path / "keyword-star-refused", refused)
+    kept = run_source_through_real_solver(tmp_path / "keyword-star-kwargs", collected)
+    print(
+        json.dumps(
+            {"truthful": t.verdict, "refused": lie.verdict, "kwargs": kept.verdict},
+            sort_keys=True,
+        )
+    )
+    test_line = truthful.splitlines().index("def test_limit():") + 1
+    assert claim_verdict(t.prove_doc, claims_from_line=test_line) == "sat"
+    assert lie.verdict != "sat"
+    assert kept.verdict != "sat"
+
+
 # The test function spreads a dict it made into the method applied on a
 # receiver it made.
 _SPREAD_CALL = """\

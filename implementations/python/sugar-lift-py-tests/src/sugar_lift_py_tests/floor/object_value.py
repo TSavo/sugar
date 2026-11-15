@@ -1656,7 +1656,10 @@ def method_edge_call(
     coroutine) is what the method's contract states, never its body here.
     A method with no source frame names no definition to join: the one
     unanswered call of its name, owed."""
-    from sugar_lift_py_tests.floor.lambda_callable import definition_edge_call
+    from sugar_lift_py_tests.floor.lambda_callable import (
+        definition_edge_call,
+        variadic_formals,
+    )
 
     bound = bind_method_call(
         receiver,
@@ -1686,10 +1689,7 @@ def method_edge_call(
         symbol_definition=definition,
         signature=definition,
         parameters=tuple(method.parameters),
-        packed=any(
-            kind in ("vararg", "kwarg")
-            for kind in getattr(frame, "parameter_kinds", ())
-        ),
+        packed=variadic_formals(frame),
         positional=(*implicit, *arguments),
         keywords=tuple(keywords),
         captured=(),

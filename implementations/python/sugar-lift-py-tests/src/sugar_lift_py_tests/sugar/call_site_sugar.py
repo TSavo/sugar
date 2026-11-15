@@ -892,7 +892,10 @@ class CallSiteSugar(ConstructedTermSugar):
         generator, a coroutine, a manager) and what iterating, awaiting or
         entering it does are what the callee's contract states, joined at
         prove, and otherwise undecided and owed."""
-        from sugar_lift_py_tests.floor.lambda_callable import definition_edge_call
+        from sugar_lift_py_tests.floor.lambda_callable import (
+            definition_edge_call,
+            variadic_formals,
+        )
         from sugar_lift_py_tests.floor.object_value import bind_call
 
         caller_ctx = ctx
@@ -926,10 +929,7 @@ class CallSiteSugar(ConstructedTermSugar):
             symbol_definition=frame.owner,
             signature=frame.owner,
             parameters=tuple(frame.parameters),
-            packed=any(
-                kind in ("vararg", "kwarg")
-                for kind in getattr(frame, "parameter_kinds", ())
-            ),
+            packed=variadic_formals(frame),
             positional=positional,
             keywords=kw_values,
             captured=captured_values,
