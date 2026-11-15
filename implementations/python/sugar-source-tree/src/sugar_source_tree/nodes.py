@@ -17545,15 +17545,35 @@ class While(Statement):
 
         ``halt_names`` collects the names a halt inside an item (or the
         ``else``) may carry changed (``_loop_item_halt_names``); an item
-        holding a jump of the loop's own is not read for them."""
+        holding a jump of the loop's own is not read for them.
+
+        An attempt given up (a test no ground value decides, a guard of the
+        loop's own jump, the fuel spent) leaves the loop live, substituted
+        afresh by ``substitute``.  What the attempt made -- each test as an
+        item's state substituted it (a formal the loop carries, re-spanned
+        to its read in ``while lo < hi``, ``core/_numba/kernels/
+        min_max_.py:29``) and each item it substituted -- is built by
+        nothing, so it answers where it was made, as an abandoned unroll of
+        a ``for`` does (``For._answer_abandoned_unroll``)."""
+        from .container_mutation import _answered_where_minted
+
         controlled = For._body_has_owned_loop_control(self)
         carried = dict(scope)
         unrolled: list = []
+        made: list = []
+
+        def abandoned():
+            _answered_where_minted(
+                (self.test, *self.body, *self.orelse), (*made, *unrolled)
+            )
+            return None
+
         for index in range(self._FUEL):
             test, _d = self._substitute_field(self.test, carried)
+            made.append(test)
             verdict = self._ground_truth(test)
             if verdict is None:
-                return None  # not decidable -- not a concrete loop
+                return abandoned()  # not decidable -- not a concrete loop
             if verdict is False:
                 # Exit via the condition: with no break (jump-guard), the
                 # `else` always runs -- spliced after the iterations.
@@ -17570,11 +17590,15 @@ class While(Statement):
                 return tuple(unrolled)
             if controlled:
                 reduced = For._substitute_controlled_suite(
-                    self, self.body, _iteration_scope(self, index, carried, scope)
+                    self,
+                    self.body,
+                    _iteration_scope(self, index, carried, scope),
+                    made,
                 )
                 if reduced is None:
-                    return None
+                    return abandoned()
                 new_body, carried, action = reduced
+                made.extend(new_body)
                 unrolled.extend(_iteration_copies(self, index, new_body))
                 if action == "break":
                     return tuple(unrolled)
@@ -17588,13 +17612,14 @@ class While(Statement):
                 halt_names |= _loop_item_halt_names(
                     self, scope, carried, item_edges, item_net
                 )
+            made.extend(new_body)
             new_body = _iteration_copies(self, index, new_body)
             unrolled.extend(new_body)
             for stmt in new_body:
                 b = stmt.substitution_binding(carried)
                 if b:
                     carried = {**carried, **b}
-        return None  # fuel exhausted: an infinite/huge loop is not an unroll
+        return abandoned()  # fuel exhausted: an infinite/huge loop is not an unroll
 
     def _ground_truth(self, test):
         """Decide a GROUND condition structurally, or None. Constants only --
