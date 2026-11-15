@@ -332,28 +332,16 @@ def test_leaf_occurrence_identities_survive_partition_and_reraise():
     type_errors = [leaf for leaf in leaves if leaf.exception_name == "TypeError"]
     assert len(value_errors) == 2
     assert len(type_errors) == 1
-    assert (
-        isinstance(value_errors[0].occurrence, str)
-        and ":" in value_errors[0].occurrence
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {value_errors[0].occurrence!r}"
-    )
-    assert (
-        isinstance(value_errors[1].occurrence, str)
-        and ":" in value_errors[1].occurrence
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {value_errors[1].occurrence!r}"
-    )
-    assert value_errors[0].occurrence != value_errors[1].occurrence
-    assert (
-        isinstance(type_errors[0].occurrence, str) and ":" in type_errors[0].occurrence
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {type_errors[0].occurrence!r}"
-    )
-    assert type_errors[0].occurrence != value_errors[0].occurrence
+    # Each leaf's locus is its own constructor call in the group's list, read
+    # through the authenticated locus's one id (``RaiseEffect.occurrence_id``):
+    # ``ValueError('a')`` and ``ValueError('b')`` on line 4 at columns 18 and
+    # 35, ``TypeError()`` at column 52.  Exact, so two same-type leaves cannot
+    # share one and none is merely present.
+    assert sorted(leaf.occurrence_id for leaf in value_errors) == [
+        "occurrence_survive.py:4:18",
+        "occurrence_survive.py:4:35",
+    ]
+    assert type_errors[0].occurrence_id == "occurrence_survive.py:4:52"
 
 
 def test_renamed_subclass_matches_by_mro_identity():
