@@ -530,6 +530,29 @@ def _two_arm_method_callsite():
     )
 
 
+def _negated_truth_standing_on_the_call(outcome):
+    """The negated truth ``not <call>`` states, read off its completed arm.
+
+    The call's body is not dug to one value, so the truth of its result is
+    not decided here: taking it is two-faced (``bool_op_sugar.truth_of``).  It
+    completes under its own ``python:truth.completes`` atom with the negation
+    of the undecided ``py.truthy(<call>)``, or the truth test itself raises
+    something undetermined (the result's ``__bool__`` may be user code).
+    Exactly those two arms; never an unconditional completion."""
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+    from sugar_lift_py_tests.outcome import Completed
+
+    assert outcome.completed_value() is None
+    (completed,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    (halted,) = outcome.halts()
+    assert completed.guard.name == "python:truth.completes"
+    assert isinstance(halted.effect, UndeterminedRaiseEffect)
+    assert halted.effect.producer_node_owner == "UnaryOpSugar.not"
+    assert isinstance(completed.value, PredicateValue)
+    return completed.value.formula
+
+
 def test_dig_leaves_a_two_arm_method_body_absent() -> None:
     callsite = _two_arm_method_callsite()
     dug = callsite._dig_floor_or_none(None, owner="UnaryOpSugar.not method body")
@@ -563,9 +586,7 @@ def test_not_of_a_two_arm_method_body_stands_on_the_call() -> None:
             return self.value.to_term(owner=owner)
 
     outcome = UnaryOpSugar("Not", _Yield(callsite), "not-two-arm").desugar(None)
-    assert outcome.completed_value() is not None
-    assert isinstance(outcome.completed_value(), PredicateValue)
-    negated = outcome.completed_value().formula
+    negated = _negated_truth_standing_on_the_call(outcome)
     assert "truthy" in str(negated)
     assert "call:RaisesExc.matches" in str(negated)
 
@@ -660,9 +681,7 @@ def test_not_of_a_deferred_lookup_method_body_stands_on_the_call() -> None:
             return self.value.to_term(owner=owner)
 
     outcome = UnaryOpSugar("Not", _Yield(callsite), "not-deferred-lookup").desugar(None)
-    assert outcome.completed_value() is not None
-    assert isinstance(outcome.completed_value(), PredicateValue)
-    negated = outcome.completed_value().formula
+    negated = _negated_truth_standing_on_the_call(outcome)
     assert "truthy" in str(negated)
     assert "call:stringify" in str(negated)
 
@@ -767,9 +786,7 @@ def test_not_of_a_multi_return_block_stands_on_the_call() -> None:
             return self.value.to_term(owner=owner)
 
     outcome = UnaryOpSugar("Not", _Yield(callsite), "not-multi-return").desugar(None)
-    assert outcome.completed_value() is not None
-    assert isinstance(outcome.completed_value(), PredicateValue)
-    negated = outcome.completed_value().formula
+    negated = _negated_truth_standing_on_the_call(outcome)
     assert "truthy" in str(negated)
     assert "call:RaisesExc.matches" in str(negated)
 
