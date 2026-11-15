@@ -34,13 +34,17 @@ class ComputedCallSugar(ConstructedTermSugar):
     site: object = dataclass_field(compare=False)
     keywords: tuple[tuple[str, ConstructedTermSugar], ...] = ()
     source_call_frame: object | None = dataclass_field(default=None, compare=False)
-    # ``((name, coordinate cid, sugar), ...)``: a call of a lambda carries,
-    # for each enclosing local its body reads, the binding the calling scope
-    # holds at the call (``Call._closure_cells``), as a call of a local
-    # ``def`` does (``CallSiteSugar.captured``).  Read here, at the call, and
-    # bound under the frame's captured coordinate before the body runs
-    # (``with_captured_values``); never the binding the lambda was made in.
+    # ``((name, coordinate cid, sugar), ...)``: a call of a lambda, or of a
+    # local ``def``'s function value, carries, for each enclosing local its
+    # body reads, the binding the calling scope holds at the call
+    # (``Call._closure_cells``).  Read here, at the call, and bound under the
+    # frame's captured coordinate before the body runs (``with_captured_values``,
+    # ``LambdaCallable.callable_application_with``); never the binding the
+    # function was made in.
     captured: tuple = dataclass_field(default=(), compare=False)
+    # Where the call is (``Node.source_occurrence``): stamped on the call the
+    # applied function value binds (``CallableApplication.call_occurrence``).
+    call_occurrence: object = dataclass_field(default=None, compare=False)
     # Exception construction only: the class a ``raise`` (or an exception
     # group's member) authenticated for this call's callee
     # (``Raise._raised_operand_sugar``), as ``CallSiteSugar`` and
@@ -274,6 +278,8 @@ class ComputedCallSugar(ConstructedTermSugar):
             unanswered,
             exception_type_coordinate=self.exception_type_coordinate,
             exception_type_mro=self.exception_type_mro,
+            captured=captured_values,
+            call_occurrence=self.call_occurrence,
         )
 
 
@@ -287,6 +293,8 @@ def apply_callee(
     *,
     exception_type_coordinate=None,
     exception_type_mro=None,
+    captured=(),
+    call_occurrence=None,
 ) -> ExitSet:
     """``callee(*positional, **kw_values)`` for a callee already reduced to a
     value: the one routine a called value is applied by.
@@ -306,6 +314,12 @@ def apply_callee(
     authenticated for the callee (``ComputedCallSugar``), handed to the
     application so the instance a source class's constructor builds carries
     it (``ClassDefinitionValue.callable_application_with``).
+
+    ``captured``: what the call read at the call for each enclosing local
+    the called function's body reads (``read_captured_values``), and
+    ``call_occurrence``: where the call is.  A function value binds the
+    first under its frame's captured coordinates and stamps the second on
+    the call it binds (``LambdaCallable.callable_application_with``).
     """
     from sugar_lift_py_tests.floor import (
         BoundMethodValue,
@@ -323,8 +337,10 @@ def apply_callee(
             tuple(positional) + tuple(value for _, value in kw_values),
             tuple(name for name, _ in kw_values),
             site,
+            call_occurrence=call_occurrence,
             exception_type_coordinate=exception_type_coordinate,
             exception_type_mro=exception_type_mro,
+            captured=tuple(captured),
         ),
         ctx,
     )

@@ -134,7 +134,16 @@ class LambdaCallable(FloorValue):
         ``CallSiteValue.producer_outcome``, so every face of the body --
         its raises among them -- is this call's.  The closure the value
         carries is bound before the body reduces, and so is each enclosing
-        binding it carries from the call it was passed to (``captured``).
+        binding Python reads from a cell when the body runs: the one the
+        call read at the call (``operation.captured``: a call where the
+        function's enclosing scope stands, ``Call._closure_cells``), else
+        the one the value carries from the call it was passed to
+        (``captured``).  The call's occurrence is stamped on the bound call
+        (``call_occurrence``), and what the body did to objects the caller
+        sees reaches the caller through the one projection
+        (``CallSiteValue.project_producer_outcome``,
+        ``caller_visible_values``): the application a call by name of a
+        ``def`` made, through the function's value.
         """
         from sugar_lift_py_tests.ir import ctor, str_const
         from sugar_lift_py_tests.sugar.call_site_sugar import (
@@ -166,6 +175,9 @@ class LambdaCallable(FloorValue):
             else ()
         )
         site = str(operation.site)
+        # What the body reads from its enclosing scope is an input of this
+        # call as its actuals are: two calls that read different values are
+        # two coordinates (``ComputedCallSugar``'s ``py.closure`` operands).
         term = ctor(
             "py.call",
             [self.to_term(owner=site)]
@@ -173,25 +185,32 @@ class LambdaCallable(FloorValue):
             + [
                 ctor("py.kwarg", [str_const(name), value.to_term(owner=site)])
                 for name, value in keywords
+            ]
+            + [
+                ctor("py.closure", [str_const(name), value.to_term(owner=site)])
+                for name, _cid, value in operation.captured
             ],
             symbol_kind="coordinate",
         )
+        # The function reads enclosing locals (``FunctionDef._captured_bindings``,
+        # ``Lambda._captured_bindings``): Python reads their cells when the
+        # body runs.  A call standing where the enclosing scope does read
+        # each there (``operation.captured``); a callback the caller handed
+        # to a callee that runs it during that call carries them on its value
+        # (``captured``).  Each is bound under the frame's captured
+        # coordinate.  A call that carries not every one is refused by name
+        # (``with_captured_values``), never read at the bindings the function
+        # was made under.
+        captured = operation.captured or self.captured
         ctx, module_halt = enter_source_frame(
             frame,
             ctx,
             owner=owner,
             blame=operation.site,
-            covered=frozenset(name for name, _cid, _value in self.captured),
+            covered=frozenset(name for name, _cid, _value in captured),
         )
-        # The lambda reads enclosing locals (``Lambda._captured_bindings``):
-        # Python reads their cells when the callback runs.  The value carries
-        # the caller's binding of each from the call it was passed to, whose
-        # callee runs it during that call (``captured``); it is bound under
-        # the frame's captured coordinate.  A value that does not carry every
-        # one is refused by name (``with_captured_values``), never read at
-        # the bindings it was made under.
         ctx = with_captured_values(
-            ctx, frame, self.captured, site=operation.site, blame="py.call"
+            ctx, frame, captured, site=operation.site, blame="py.call"
         )
         if module_halt is not None:
             return module_halt
@@ -206,4 +225,5 @@ class LambdaCallable(FloorValue):
             term=term,
             closure=self.closure,
             defaults=self.defaults,
+            call_occurrence=operation.call_occurrence,
         ).producer_outcome(ctx)

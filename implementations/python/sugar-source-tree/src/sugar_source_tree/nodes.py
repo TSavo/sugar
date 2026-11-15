@@ -23895,12 +23895,17 @@ def _carrying_its_evaluation(scope, call):
     substitutes a copy of it -- a loop iteration's, a ``finally``'s on one
     exit path -- whose key its source occurrence alone does not name: each
     copy is its own evaluation, as each copy of a statement is.  A call by
-    name with positional actuals only, the one a caller's threading follows
+    name, or through a local ``def``'s function value
+    (``_function_value_definition``), with positional actuals only, the one a
+    caller's threading follows
     (``container_mutation.source_helper_actual_states``); ``call`` itself
     otherwise."""
     if not (
         isinstance(call, Call)
-        and isinstance(call.func, Name)
+        and (
+            isinstance(call.func, Name)
+            or _function_value_definition(call.func) is not None
+        )
         and not call.keywords
         and not any(isinstance(arg, Starred) for arg in call.args)
         and (scope.get(_EVALUATION_OCCURRENCE) or scope.get(_EVALUATION_EXIT_PATH))
@@ -24224,9 +24229,11 @@ class Call(Expression):
         """The function this call runs whose captured names it binds: the
         local ``def`` the callee name is bound to here (the definition itself,
         or the function value a local plain ``def`` binds its name to,
-        ``_binds_function_value``), or the lambda the substituted callee
-        denotes (the lambda itself, or the object a name's reference denotes,
-        ``of``, as ``_construct_sugar`` follows it); otherwise None."""
+        ``_binds_function_value``), the local ``def`` whose function value
+        the substituted callee is (``_function_value_definition``: ``x = g;
+        x()``), or the lambda the substituted callee denotes (the lambda
+        itself, or the object a name's reference denotes, ``of``, as
+        ``_construct_sugar`` follows it); otherwise None."""
         from .binding_state import unwrap_binding_state
 
         func = self.func
@@ -24235,6 +24242,9 @@ class Call(Expression):
             if isinstance(definition, FunctionDef):
                 return definition
         callee = rewritten.func if isinstance(rewritten, Call) else None
+        definition = _function_value_definition(callee)
+        if definition is not None:
+            return definition
         while isinstance(callee, EvaluationRef) and isinstance(
             getattr(callee, "of", None), Node
         ):
@@ -24836,6 +24846,17 @@ class Call(Expression):
                     if keyword.arg is not None
                 ),
             )
+        captured = self._captured_cells(source_call_frame)
+        definition = _function_value_definition(self.func)
+        if source_call_frame is None and definition is not None:
+            # A local ``def``'s function value (``x = g; x()``): the value's
+            # application reads each closure cell where this call stands
+            # (``_closure_cells``), under the coordinate the function's frame
+            # reads it through (``FunctionDef._captured_bindings``), as a call
+            # by name of the ``def`` does.
+            captured = _cell_sugars(
+                getattr(self, "closure_cells", None), *definition._captured_bindings()
+            )
 
         return ComputedCallSugar(
             callee=self.func.sugar(),
@@ -24843,7 +24864,8 @@ class Call(Expression):
             site=self.fragment,
             keywords=keyword_sugars,
             source_call_frame=source_call_frame,
-            captured=self._captured_cells(source_call_frame),
+            captured=captured,
+            call_occurrence=coordinate,
         )
 
     def _decorated_definition_call(self, definition):
@@ -27130,6 +27152,29 @@ def _local_function_bound(binding):
         if _binds_function_value(definition):
             return definition
     return binding
+
+
+def _function_value_definition(callee) -> "FunctionDef | None":
+    """The plain ``def`` (``_binds_function_value``) whose function value a
+    call's substituted callee ``callee`` is: the value a local plain ``def``
+    binds its name to (``DecoratedDefinitionRef``), read directly or through
+    a reference to an evaluation that denotes it (``x = g; x()``: ``of``, as
+    ``Call._construct_sugar`` follows a name bound to a lambda).  None for
+    any other callee.
+
+    The one reader of which function a call through a value runs, for the
+    application's closure cells (``Call._closure_definition``,
+    ``Call._construct_sugar``) and the caller's threading of what the body
+    changes (``container_mutation.source_helper_actual_states``,
+    ``_carrying_its_evaluation``)."""
+    while isinstance(callee, EvaluationRef) and isinstance(
+        getattr(callee, "of", None), Node
+    ):
+        callee = callee.of
+    if not isinstance(callee, DecoratedDefinitionRef):
+        return None
+    definition = _local_function_bound(callee)
+    return definition if isinstance(definition, FunctionDef) else None
 
 
 def _local_definition_binding(definition, scope):

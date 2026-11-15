@@ -3003,6 +3003,12 @@ def source_helper_actual_states(call, bound_refs, scope):
     helper declares ``nonlocal`` and rebinds, whose name alone reads it; None
     for an object every alias of which does.
 
+    The helper is the function the call runs, however its callee is spelled
+    (``_source_callee``): a name, or a local ``def``'s function value
+    (``nodes._function_value_definition``, ``x = g; x()``), whose
+    application carries what the body left of each object out of its frame
+    through the same projection.
+
     The objects the helper reaches that its caller holds are followed alike:
     every actual that is a bound object a call may change
     (``_may_be_changed``, the exposure candidates), whatever it was given,
@@ -3019,11 +3025,14 @@ def source_helper_actual_states(call, bound_refs, scope):
     object only a source function the helper calls reads (the helper's frame
     does not read it) and what it may reach and does not follow
     (``_unfollowed_reach``)."""
-    from .nodes import Call, Name, Starred
+    from .nodes import Call, Name, Starred, _function_value_definition
 
     if (
         not isinstance(call, Call)
-        or not isinstance(call.func, Name)
+        or not (
+            isinstance(call.func, Name)
+            or _function_value_definition(call.func) is not None
+        )
         or call.keywords
         or any(isinstance(arg, Starred) for arg in call.args)
     ):
@@ -3298,15 +3307,29 @@ class _Reach(NamedTuple):
 
 
 def _source_callee(call, scope):
-    """The source ``def`` a call by name runs: the one the unit's lexical
-    rows (or the module) resolve it to, or the local ``def`` ``scope`` binds
-    the name to, itself or its function value (``nodes._local_function_bound``,
-    as ``Call._closure_definition`` reads it); None otherwise.  A unit whose
-    resolution of the call raises ``SugarNotWritten`` raises it here."""
+    """The source ``def`` a call runs: the local ``def`` whose function value
+    its callee is (``nodes._function_value_definition``); for a call by name,
+    the one the unit's lexical rows (or the module) resolve it to, or the
+    local ``def`` ``scope`` binds the name to, itself or its function value
+    (``nodes._local_function_bound``, as ``Call._closure_definition`` reads
+    it); None otherwise.  A unit whose resolution of the call raises
+    ``SugarNotWritten`` raises it here."""
     from .binding_state import unwrap_binding_state
-    from .nodes import AsyncFunctionDef, Call, FunctionDef, Name, _local_function_bound
+    from .nodes import (
+        AsyncFunctionDef,
+        Call,
+        FunctionDef,
+        Name,
+        _function_value_definition,
+        _local_function_bound,
+    )
 
-    if not isinstance(call, Call) or not isinstance(call.func, Name):
+    if not isinstance(call, Call):
+        return None
+    value = _function_value_definition(call.func)
+    if value is not None:
+        return value
+    if not isinstance(call.func, Name):
         return None
     definition = call.unit.source_function_definition_for_call(call)
     if definition is not None:
