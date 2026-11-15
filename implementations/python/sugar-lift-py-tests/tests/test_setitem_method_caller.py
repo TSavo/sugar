@@ -158,14 +158,33 @@ def _assert_named_halt(outcome) -> Halted:
 
 
 def _assert_completed_call(outcome) -> CallSiteValue:
-    """Successful method body publishes as ExitSet.completed(CallSiteValue).
+    """The method body's store publishes the Call coordinate on its completed
+    face, and no named ``IndexError``.
 
-    ``CallSiteValue.project_producer_outcome`` replaces a completed body
-    record with the Call coordinate itself (ExitSet.completed(self)), while
-    halted bodies remain ExitSet(Halted(...)).
+    ``obj`` is a formal: the list reaches the body by binding
+    (``object_identity.arrived``), so its contents are not current and the
+    container law does not read the index's bound
+    (``builtin_container_method.apply``).  The store is two-faced, as every
+    undecided container call is (``builtin_container_call_sugar._opaque_pair``):
+    it completes under ``python:builtin_method.completes`` and halts with an
+    ``UndeterminedRaiseEffect`` under the complement.  The completed face
+    carries the Call coordinate itself
+    (``CallSiteValue.project_producer_outcome``).
     """
-    value = outcome.completed_value()
-    assert value is not None, outcome
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
+    completed = [exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)]
+    halted = [exit_ for exit_ in outcome.exits if isinstance(exit_, Halted)]
+    assert len(completed) == 1, outcome
+    assert len(completed) + len(halted) == len(outcome.exits), outcome
+    (face,) = completed
+    assert getattr(face.guard, "name", None) == "python:builtin_method.completes", (
+        face.guard
+    )
+    for halt in halted:
+        assert isinstance(halt.effect, UndeterminedRaiseEffect), halt.effect
+        assert halt.effect.exception_name is None, halt.effect
+    value = face.value
     assert isinstance(value, CallSiteValue), value
     return value
 
@@ -266,11 +285,12 @@ def test_discrimination_keyword_swap_is_not_positional_store() -> None:
     s_out = swapped.producer_outcome(None)
     _assert_completed_call(t_out)
     # Swapped either completes (different binding already proven) or halts.
-    if s_out.completed_value() is not None:
+    assert isinstance(s_out, ExitSet)
+    if any(isinstance(exit_, Completed) for exit_ in s_out.exits):
         _assert_completed_call(s_out)
     else:
-        assert isinstance(s_out, ExitSet)
-        assert isinstance(s_out.exits[0], Halted)
+        assert s_out.exits
+        assert all(isinstance(exit_, Halted) for exit_ in s_out.exits)
 
 
 # ---------------------------------------------------------------------------
@@ -301,7 +321,12 @@ def test_mutable_method_store_completes() -> None:
 def test_discrimination_mutable_completion_is_not_indexerror() -> None:
     outcome = _method_call_outcome(METHOD_BODY + "\nHolder().store([0], 0, 9)\n")
     _assert_completed_call(outcome)
-    assert not isinstance(outcome, ExitSet)
+    assert not any(
+        isinstance(exit_, Halted)
+        and getattr(exit_.effect, "exception_type_coordinate", None)
+        == _identity("IndexError")
+        for exit_ in outcome.exits
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -391,8 +416,13 @@ def test_invalid_index_discharge_shares_reducer_pre_effect_state() -> None:
 def test_discrimination_in_range_index_is_not_indexerror() -> None:
     outcome = _method_call_outcome(METHOD_BODY + "\nHolder().store([0], 0, 9)\n")
     _assert_completed_call(outcome)
-    # Discrimination: completion is not a Halted face with pre-effect state.
-    assert not isinstance(outcome, ExitSet)
+    # Discrimination: no face is a named IndexError halt.
+    assert not any(
+        isinstance(exit_, Halted)
+        and getattr(exit_.effect, "exception_type_coordinate", None)
+        == _identity("IndexError")
+        for exit_ in outcome.exits
+    )
 
 
 # ---------------------------------------------------------------------------

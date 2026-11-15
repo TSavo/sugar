@@ -199,6 +199,11 @@ class EvaluationRefSugar(ConstructedTermSugar):
     # comprehension: the member coordinate; ``evaluation`` is its final
     # coordinate.
     current: str | None = None
+    # The read, at a halt inside the statement that binds it, of a name
+    # unbound before that statement (``nodes._read_at_halt``): the halt's
+    # record holds the key exactly when the name was bound before the halt,
+    # so an unbound key is the name unbound -- ``UnboundLocalError``.
+    at_halt: bool = False
 
     @classmethod
     def witnesses(cls):
@@ -228,7 +233,9 @@ class EvaluationRefSugar(ConstructedTermSugar):
         """The value bound under the key, read where the reduction runs
         (``evaluation_read_here``).  The key only: a write of the name is
         never read in its place, and a key this temporal never received is
-        refused by name (``_unbound``)."""
+        refused by name (``_unbound``).  A read ``at_halt`` whose key is
+        unbound is the name unbound where the statement halted before binding
+        it: ``UnboundLocalError`` (``nodes._read_at_halt``)."""
         temporal = getattr(ctx, "temporal", None) if ctx is not None else None
         if self.member:
             return self._member(temporal)
@@ -244,6 +251,11 @@ class EvaluationRefSugar(ConstructedTermSugar):
             from sugar_lift_py_tests.outcome import ExitSet
 
             return ExitSet.completed(bound)
+        if self.at_halt and temporal is not None:
+            from sugar_lift_py_tests.effect import NameErrorEffect
+            from sugar_lift_py_tests.outcome import ExitSet
+
+            return ExitSet.halted(NameErrorEffect.at(name=self.name, site=self.site))
         if self.walrus:
             return self._unreached_walrus()
         self._unbound(key)

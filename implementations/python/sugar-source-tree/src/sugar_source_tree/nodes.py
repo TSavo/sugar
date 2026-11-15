@@ -6316,6 +6316,7 @@ def _evaluation_ref(
     of: "Optional[Node]" = None,
     recurrence: bool = False,
     current: "Optional[str]" = None,
+    at_halt: bool = False,
 ) -> "Node":
     """``EvaluationRef(evaluation, name)`` at ``span``: a read of ``name``
     rewritten to a reference to the evaluation bound under ``evaluation``
@@ -6365,7 +6366,14 @@ def _evaluation_ref(
     is a leaf, not a child: nothing walks into it and its sugar is never
     built from it.  Where ``of`` is ground, substitution asks the reference
     for that value to decide a shape (``EvaluationRef.ground_value``), and
-    for nothing else."""
+    for nothing else.
+
+    ``at_halt`` marks the read, at a halt inside the statement that binds
+    it, of a name unbound before that statement (``Try._mid_statement_state``):
+    the halt's record holds the key exactly when the statement bound the name
+    before it halted, so where the key is unbound the name is unbound and the
+    read halts with ``UnboundLocalError`` (``EvaluationRefSugar``), never a
+    refusal."""
     from .backend import Leaf, materialize
     from .shadow import ShadowNode
 
@@ -6386,10 +6394,47 @@ def _evaluation_ref(
         slots = (*slots, ("recurrence", Leaf(True)))
     if current is not None:
         slots = (*slots, ("current", Leaf(current)))
+    if at_halt:
+        slots = (*slots, ("at_halt", Leaf(True)))
     return materialize(
         owner.unit,
         ShadowNode("EvaluationRef", span, slots),
         owner.reporter,
+    )
+
+
+def _read_at_halt(state) -> "Optional[Node]":
+    """The read, at a halt inside a simple statement, of a name unbound before
+    it that the statement binds to ``state``: the same reference to the
+    statement's key, marked ``at_halt`` (``_evaluation_ref``), or None.
+
+    CPython binds a nested unpack's earlier leaves before a later level
+    raises, and a walrus before a later operand (or the raise, or the failing
+    assert) halts; it never unbinds them.  The halt's record holds the
+    statement's key exactly when the name was bound before the halt
+    (``halt_record``: ``NestedDynamicUnpackAssignSugar._bound_record``, the
+    walrus binds every operand door carries), so the read is the key there
+    and ``UnboundLocalError`` where it is not bound -- never the name unbound
+    at every halt.  None for any state that is not a plain or walrus key
+    reference (a comprehension member, a place, a cell, a generator's
+    deferred walrus): the name stays unbound at the halt, as before."""
+    if not isinstance(state, EvaluationRef):
+        return None
+    if any(
+        getattr(state, mark, False) is True
+        for mark in ("member", "place", "cell", "deferred", "recurrence")
+    ) or getattr(state, "current", None) is not None:
+        return None
+    if getattr(state, "at_halt", False) is True:
+        return state
+    return _evaluation_ref(
+        state,
+        state.span,
+        state.evaluation,
+        state.name,
+        walrus=getattr(state, "walrus", False) is True,
+        of=getattr(state, "of", None),
+        at_halt=True,
     )
 
 
@@ -19022,11 +19067,15 @@ class Try(Statement):
     def _mid_statement_state(self, statement, pre, post, net):
         """The state a halt INSIDE ``statement`` carries.
 
-        A simple statement binds its own targets only once it completes, so a
-        halt in it carries the state it began with -- except an object code it
-        ran may have changed before raising.  A compound statement may halt
-        after any of its inner stores: every name it changes is unknown at its
-        halt, never the state it began with."""
+        A simple statement's halt carries the state it began with -- except an
+        object code it ran may have changed before raising, and a name it
+        binds before a later part of it halts (a nested unpack's earlier
+        leaves, a walrus before a later operand, a raise's or an assert's
+        walrus): a name unbound before the statement is read at the halt
+        through the statement's key, which the halt's record holds exactly
+        when the name was bound before it halted (``_read_at_halt``).  A
+        compound statement may halt after any of its inner stores: every name
+        it changes is unknown at its halt, never the state it began with."""
         if post is None:
             return net
         from .container_mutation import _havoc, _read_of
@@ -19040,6 +19089,9 @@ class Try(Statement):
             if after is _MISSING or after is before:
                 continue
             if isinstance(unwrap_binding_state(before), UnboundBinding):
+                read = None if compound else _read_at_halt(unwrap_binding_state(after))
+                if read is not None:
+                    binding[name] = read
                 continue
             state = unwrap_binding_state(after)
             kind = getattr(state, "kind", None)
@@ -24724,6 +24776,7 @@ class Name(Expression):
                     of=getattr(bound, "of", None),
                     recurrence=getattr(bound, "recurrence", False) is True,
                     current=getattr(bound, "current", None),
+                    at_halt=getattr(bound, "at_halt", False) is True,
                 )
             return bound
         span = self.line_col_span()
@@ -24941,6 +24994,7 @@ class EvaluationRef(Expression):
             place=getattr(self, "place", False) is True,
             captured=self._carried_captures(),
             current=getattr(self, "current", None),
+            at_halt=getattr(self, "at_halt", False) is True,
         )
 
     def _carried_captures(self) -> tuple:
