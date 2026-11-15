@@ -260,8 +260,9 @@ _PROGRAMS = {
 # (#7757 step 5): the reduction never applies the callee's body, so the value
 # of a program over such calls is not decided at the reduction.  Decided here
 # before step 5, by following the body; each is now a value the reduction
-# does not decide (``_UNDECIDED``'s test).  The join decides the ones the
-# solver tests read (``_SOLVER_PROGRAMS``).
+# does not decide (``_UNDECIDED``'s test).  Through the solver the
+# programs over such calls (``_SOLVER_PROGRAMS``) read ``open`` today: see
+# ``test_the_solver_holds_the_value_python_computes``.
 _JOINED_AT_PROVE = {
     name: _PROGRAMS.pop(name)
     for name in (
@@ -497,6 +498,22 @@ def test_a_value_the_lifter_does_not_decide_today_has_the_same_faces_for_both_cl
 
 @pytest.mark.parametrize("name", sorted(_SOLVER_PROGRAMS))
 def test_the_solver_holds_the_value_python_computes(name: str, tmp_path: Path) -> None:
+    """Verdict moved (#7757 steps 5 and 6, #8705): truthful ``sat`` ->
+    ``open``; the lying half is never ``sat``.
+
+    Each ``inc(i)`` / ``tri(i)`` is its coordinate and edge, joined at prove
+    to the helper's contract (``out == binary_result(+, a, 1)`` under
+    ``binary_op.completes(+, a, 1)`` for ``inc``).  The value is then read
+    through the test function's own operations over the call results
+    (``total + x``, ``acc * 10 + x``, ``a * 100 + b``): operations on
+    ``python:call_result(call:test_witness.inc(i), ...)``, which the test
+    function owes, and which prove answers only where the joined post decides
+    them.  Before step 5 the reduction followed the callee's body and these
+    were decided ``sat``/``unsat``.  Measured ``open`` on the truthful half
+    on main scorecards 43738710481 (``38c87e62a``) and 43742056075
+    (``d6eb4f3ff``).  Listed on #7661; the truthful half goes back to
+    ``sat`` (and the lie to ``unsat``) when prove decides an operation over a
+    joined call's result, and this pin goes red then."""
     body, truthful, lying = _SOLVER_PROGRAMS[name]
     head = _HELPERS + "def test_it():\n"
 
@@ -510,8 +527,11 @@ def test_the_solver_holds_the_value_python_computes(name: str, tmp_path: Path) -
     # ``head`` ends with the test function's ``def`` line; every helper is
     # above it.
     test_line = head.count("\n")
-    assert claim_verdict(truthful_run.prove_doc, claims_from_line=test_line) == "sat"
-    assert lying_run.verdict == "unsat"
+    assert claim_verdict(truthful_run.prove_doc, claims_from_line=test_line) == "open"
+    assert lying_run.verdict != "sat"
+    assert (
+        claim_verdict(lying_run.prove_doc, claims_from_line=test_line) != "sat"
+    )
 
 
 # Decided through the solver before #7757 step 6, by following ``Box``'s
