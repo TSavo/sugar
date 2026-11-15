@@ -1878,6 +1878,35 @@ _NEVER_HAVOC_KINDS = frozenset(
 )
 
 
+def _never_havoc(node) -> bool:
+    """Whether no mutation can change the binding ``node``: a kind of
+    ``_NEVER_HAVOC_KINDS`` -- and the read of an undecorated ``class`` or
+    ``def`` statement's key (``DecoratedDefinitionRef`` with no decorator),
+    whose value is the class or function the statement built, the very value
+    a ``ClassDef``/``FunctionDef`` binding is.  The rewrite leaves that read
+    where the definition stood (#7757 item 21: a module class's name, read
+    from a function body, is its statement's key), and a reader that gates
+    on the definition's shape gates on both forms, never on one alone.  A
+    decorated definition's value is the decorators' result, any value: it is
+    no such binding.
+
+    Without the key's form, a class's binding shared a node with every
+    instance built by a call of it (the call's callee, in the instance's
+    graph, ``_graph``), so a method call on the instance rebound the class's
+    name to its value after the call; with an object place as the receiver
+    (``_reads_again``) that value was unknown, and the next call of the
+    class -- the next iteration's ``b = Box(i)`` -- went unanswered."""
+    kind = getattr(node, "kind", None)
+    if kind in _NEVER_HAVOC_KINDS:
+        return True
+    if kind != "DecoratedDefinitionRef":
+        return False
+    definition = getattr(node, "definition", None)
+    return definition is not None and not tuple(
+        getattr(definition, "decorators", None) or ()
+    )
+
+
 def path_steps(receiver):
     """``(root, steps)`` of an attribute/subscript chain, or ``(None, ())``.
 
@@ -1991,7 +2020,7 @@ def _graph(node):
     return {
         _object_key(member)
         for member in _walk_values(node, kept_only=False)
-        if getattr(member, "kind", None) not in _NEVER_HAVOC_KINDS
+        if not _never_havoc(member)
     }
 
 
@@ -2005,7 +2034,7 @@ def _sharing_states(scope, root):
         state = _state(value)
         if not isinstance(name, str) or not isinstance(state, Node):
             continue
-        if getattr(state, "kind", None) in _NEVER_HAVOC_KINDS:
+        if _never_havoc(state):
             continue
         if _graph(state) & graph:
             found.append(state)
@@ -2440,7 +2469,7 @@ def holder_states(
         state = _state(value)
         if not isinstance(state, Node):
             continue
-        if getattr(state, "kind", None) in _NEVER_HAVOC_KINDS:
+        if _never_havoc(state):
             continue
         shares = bool(graph) and bool(_graph(state) & graph)
         holds = alias in containing or (undecided and shares)
@@ -2819,7 +2848,7 @@ def _mutation_through(
         state = _state(value)
         if not isinstance(state, Node):
             continue
-        if getattr(state, "kind", None) in _NEVER_HAVOC_KINDS:
+        if _never_havoc(state):
             continue
         bound_root, bound_steps = path_steps(state)
         if (
