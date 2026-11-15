@@ -24516,13 +24516,25 @@ class Call(Expression):
         the substituted callee is (``_function_value_definition``: ``x = g;
         x()``), or the lambda the substituted callee denotes (the lambda
         itself, or the object a name's reference denotes, ``of``, as
-        ``_construct_sugar`` follows it); otherwise None."""
+        ``_construct_sugar`` follows it); otherwise None.
+
+        A callee name ``scope`` does not bind is the call by name of the
+        plain ``def`` the call applies (``_named_function_value``: the
+        lexical row, ``SourceUnit.source_function_definition_for_call``).  A
+        call frame's body (``_source_visible_call_frame_unguarded``) is
+        threaded without the function's lexical locals, so a local ``def``
+        in it binds no name there; its call still applies that ``def``'s
+        value, and reads its cells here, at the call."""
         from .binding_state import unwrap_binding_state
 
         func = self.func
         if isinstance(func, Name) and func.id in scope:
             definition = _local_function_bound(unwrap_binding_state(scope[func.id]))
             if isinstance(definition, FunctionDef):
+                return definition
+        if isinstance(func, Name) and func.id not in scope:
+            definition = self.unit.source_function_definition_for_call(self)
+            if _binds_function_value(definition):
                 return definition
         callee = rewritten.func if isinstance(rewritten, Call) else None
         definition = _function_value_definition(callee)
