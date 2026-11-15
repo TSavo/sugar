@@ -69,8 +69,9 @@ from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
     PathContainerCallSugar,
 )
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
-from sugar_lift_py_tests.sugar.expr_statement_sugar import ExprStatementSugar
-from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
+from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
+    ReceiverFieldStoreSugar,
+)
 from sugar_lift_py_tests.temporal.temporal_context import (
     EVALUATION_PREFIX,
     projection_key,
@@ -399,7 +400,9 @@ def test_an_attribute_store_of_a_yield_is_a_named_store_step() -> None:
     step = steps[0]
     assert isinstance(step, YieldAssignStepV1)
     assert step.targets == ()
-    assert isinstance(step.store, (AttributeStoreEffectSugar, KeyedStoreSugar))
+    # The one field store, keyed: the resume binds the value, then the store.
+    assert isinstance(step.store, KeyedStoreSugar)
+    assert isinstance(step.store.store, ReceiverFieldStoreSugar)
     assert step.store_evaluation.startswith(EVALUATION_PREFIX)
     assert not any(isinstance(item, OpaqueStepV1) for item in steps)
 
@@ -778,6 +781,6 @@ def test_an_object_place_yield_store_is_the_keyed_field_store() -> None:
     step = steps[1]
     assert isinstance(step, YieldAssignStepV1)
     assert isinstance(step.store, KeyedStoreSugar)
-    # ``ReceiverFieldStoreStatement.keyed_store``: the object's post-state.
-    assert isinstance(step.store.store, ExprStatementSugar)
+    # ``ReceiverFieldStoreStatement.keyed_store``: the one field store.
+    assert isinstance(step.store.store, ReceiverFieldStoreSugar)
     assert step.store.evaluation == step.store_evaluation

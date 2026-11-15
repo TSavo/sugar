@@ -4,9 +4,9 @@
 #7958 keyed every Name an assignment binds.  Three reads still evaluated
 the right-hand side again where they were read:
 
-1. ``o.x = v`` threaded ``v`` into later reads of the place: ``o.x`` on a
-   coordinate receiver (``_ReceiverFieldProjection``) and every read of
-   ``o`` after a receiver field store (``ReceiverFieldStoreState``).  The
+1. ``o.x = v`` threaded ``v`` into later reads of the place: every read of
+   ``o``, or of ``o.x``, after the one field store, whatever the receiver
+   (``ReceiverFieldStoreState``).  The
    store now evaluates ``v`` once and binds it under its statement's key
    (``KeyedStoreSugar``); the read is a reference to that key (``place``).
 2. ``d[k] = v`` on a decided dict rebound ``d`` to a projection of the
@@ -95,7 +95,6 @@ from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.nodes import (
     AnnAssign,
     Assign,
-    Attribute,
     ContainerMutationStatement,
     FunctionDef,
     Name,
@@ -317,7 +316,9 @@ def test_a_field_store_sugar_binds_its_key() -> None:
     keyed = [sugar for sugar in statements if isinstance(sugar, KeyedStoreSugar)]
     assert len(keyed) == 1
     (store,) = keyed
-    stored = store.store.value.value
+    # The one field store stores the value read through the statement's key.
+    assert isinstance(store.store, ReceiverFieldStoreSugar)
+    stored = store.store.value
     assert isinstance(stored, EvaluationRefSugar)
     assert stored.place
     assert stored.evaluation == store.evaluation
@@ -335,22 +336,30 @@ def test_a_coordinate_receiver_field_read_is_the_stores_key() -> None:
         context=TreeConstructionContextV1.for_test_without_workspace(),
     )
     body = initializer.substitute({}).body
-    # ``self.x: int = x`` is the store ``self.x = x`` (#7757): the
-    # single-target ``Assign`` its substitution makes.
+    # ``self.x: int = x`` is the store ``self.x = x`` (#7757): the one field
+    # store its substitution makes, whatever the receiver is.
     annotated = next(
         node
         for node in body
-        if isinstance(node, Assign)
-        and isinstance(node.targets[0], Attribute)
-        and node.targets[0].attr == "x"
+        if isinstance(node, ReceiverFieldStoreStatement)
+        and node.post_state.attr == "x"
     )
     assert isinstance(annotated.evaluation, str)
-    # ``self.y = self.x``: its right-hand side reads what ``self.x: int = x``
-    # stored, through that statement's key, never ``x`` (rebound since).
+    # ``self.y = self.x``: its right-hand side reads ``self`` after
+    # ``self.x: int = x``, whose field holds that statement's key, never ``x``
+    # (rebound since).
     read = body[-1].value
-    assert read.kind == "EvaluationRef"
-    assert read.place is True
-    assert read.evaluation == annotated.evaluation
+    assert read.kind == "Attribute"
+    states = [
+        node for node in read.walk() if isinstance(node, ReceiverFieldStoreState)
+    ]
+    assert any(
+        state.attr == "x"
+        and state.value.kind == "EvaluationRef"
+        and state.value.place is True
+        and state.value.evaluation == annotated.evaluation
+        for state in states
+    )
 
 
 def test_a_coordinate_receiver_field_store_binds_its_key() -> None:
@@ -541,7 +550,8 @@ def test_an_object_place_store_binds_its_key() -> None:
     keyed = [sugar for sugar in statements if isinstance(sugar, KeyedStoreSugar)]
     assert len(keyed) == 1
     (store,) = keyed
-    stored = store.store.value.value
+    assert isinstance(store.store, ReceiverFieldStoreSugar)
+    stored = store.store.value
     assert isinstance(stored, EvaluationRefSugar)
     assert stored.place
     assert stored.evaluation == store.evaluation

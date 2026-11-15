@@ -50,11 +50,6 @@ class ExprStatementSugar(Sugar):
         # would be a value, and this record entry is not one. An occurrence
         # that does not authenticate keeps its ordinary call coordinate and the
         # boundary names it unresolved; it is never read as "no warning".
-        #
-        # A receiver field store's post-state (``o.x = v``,
-        # ``ReceiverFieldStoreState``) reads its stored value through the
-        # store statement's key (``KeyedStoreSugar``), so a later read of
-        # ``o`` never evaluates ``v`` again: it needs no record of its own.
         return self.value.desugar(ctx).and_then(
             lambda value: record_statement_value(value, ctx)
         )

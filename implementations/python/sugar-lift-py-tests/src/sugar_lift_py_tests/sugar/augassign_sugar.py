@@ -143,16 +143,20 @@ def project_augmented(
 
 @dataclass(frozen=True)
 class AttributeAugAssignSugar(Sugar):
-    """``receiver.attr OP= rhs`` — get once, operate, setattr last.
+    """The value ``receiver.attr OP= rhs`` stores: the field's in-place
+    result.  The store itself is the one field store
+    (``ReceiverFieldStoreStatement``, ``ReceiverFieldStoreSugar``), which
+    stores this value once it completes.
 
     (An item target, ``receiver[index] OP= rhs``, is the one mutation door's
     read-modify-store: ``PathContainerCallSugar._read_modify_store``.)
 
-      1. Evaluate ``receiver`` once
-      2. ``current = attribute_named / attribute`` **before** RHS
+      1. ``receiver`` is the read of the receiver the statement evaluated
+         once, first, and bound under its key (``KeyedStoreSugar``)
+      2. ``current`` is the field's read, the one attribute lookup
+         (``AttributeSugar.project_attribute``), **before** the RHS
       3. Evaluate ``rhs``
       4. ``result = current OP rhs`` via ``project_augmented`` / inplace edge
-      5. ``setattr`` last (formal ``setattr_named`` mint or Floor setattr)
 
     Composition is outcome/carrier ``and_then`` only — no control-kind ladder.
     """
@@ -164,10 +168,9 @@ class AttributeAugAssignSugar(Sugar):
     operation: Callable
     get_site: object = dataclass_field(compare=False)
     op_site: object = dataclass_field(compare=False)
-    set_site: object = dataclass_field(compare=False)
     site: object = dataclass_field(compare=False)
-    # The store's halted face reached nothing inside this statement: the
-    # reducer gives it the prefix (``store_faces``).
+    # Every halt (the read, the RHS, the inplace operation) is before the
+    # store: its pre-halt record is the block's prefix.
     halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
@@ -175,12 +178,8 @@ class AttributeAugAssignSugar(Sugar):
         return ()
 
     def desugar(self, ctx: object = None) -> ExitSet:
-        # Ordering: receiver → producer-owned get → RHS → inplace → producer-owned setattr.
-        # Get/store are AttributeSugar / AttributeStoreEffectSugar doors only.
+        # Ordering: receiver (its key) → producer-owned get → RHS → inplace.
         from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
-        from sugar_lift_py_tests.sugar.store_effect_sugar import (
-            AttributeStoreEffectSugar,
-        )
 
         return self.receiver.desugar(ctx).and_then(
             lambda receiver: AttributeSugar.project_attribute(
@@ -194,10 +193,6 @@ class AttributeAugAssignSugar(Sugar):
                         projector=self.operation,
                         site=self.op_site,
                         ctx=ctx,
-                    ).and_then(
-                        lambda result: AttributeStoreEffectSugar.project_setattr(
-                            receiver, self.attr, result, self.set_site, ctx
-                        )
                     )
                 )
             )

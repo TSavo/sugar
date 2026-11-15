@@ -18,11 +18,12 @@ from sugar_lift_py_tests.sugar.receiver_field_store_state_sugar import (
 )
 from sugar_lift_py_tests.sugar.assign_sugar import KeyedStoreSugar
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
-from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
+from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
+    ReceiverFieldStoreSugar,
+)
 from sugar_lift_py_tests.sugar.constructed_receiver_ref_sugar import (
     ConstructedReceiverRefSugar,
 )
-from sugar_lift_py_tests.sugar.expr_statement_sugar import ExprStatementSugar
 from sugar_lift_py_tests.sugar.formal_ref_sugar import FormalRefSugar
 from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 from sugar_source_tree.nodes import (
@@ -110,24 +111,21 @@ def test_class_initializer_reaches_the_authenticated_receiver_store_entrance() -
     statement = universe.statements[0]
     frame = definition.source_visible_constructor_frame()
 
-    # The statement evaluates its value once under its key; the store reads
-    # the value through that key (``KeyedStoreSugar``).
+    # The statement evaluates its value once under its key; the one field
+    # store reads the value through that key (``KeyedStoreSugar``).
     assert isinstance(statement, KeyedStoreSugar)
     store = statement.store
-    assert isinstance(store, ExprStatementSugar)
-    assert isinstance(store.value, ReceiverFieldStoreStateSugar)
-    assert isinstance(store.value.value, EvaluationRefSugar)
-    assert store.value.value.place
-    assert store.value.value.evaluation == statement.evaluation
-    assert isinstance(store.value.receiver, ConstructedReceiverRefSugar)
-    assert (
-        store.value.receiver.binding_coordinate_cid
-        == frame.body.receiver_coordinate_cid
-    )
+    assert isinstance(store, ReceiverFieldStoreSugar)
+    assert isinstance(store.value, EvaluationRefSugar)
+    assert store.value.place
+    assert store.value.evaluation == statement.evaluation
+    assert isinstance(store.receiver, ConstructedReceiverRefSugar)
+    assert store.receiver.binding_coordinate_cid == frame.body.receiver_coordinate_cid
 
 
-def test_genuine_formal_receiver_keeps_the_formal_store_entrance() -> None:
-    """A module-level formal carries no constructed receiver authority."""
+def test_genuine_formal_receiver_takes_the_one_field_store() -> None:
+    """A module-level formal carries no constructed receiver authority; its
+    store is still the one field store, the formal's value deciding it."""
     source = "def mutate(target):\n" "    target.value = 1\n"
     tree = SourceFile(
         (source, "formal_receiver.py", blake3_512_of(source.encode())),
@@ -142,8 +140,9 @@ def test_genuine_formal_receiver_keeps_the_formal_store_entrance() -> None:
     universe = function.sugar()
     statement = universe.statements[0]
 
-    assert isinstance(statement, AttributeStoreEffectSugar)
-    assert isinstance(statement.receiver, FormalRefSugar)
+    assert isinstance(statement, KeyedStoreSugar)
+    assert isinstance(statement.store, ReceiverFieldStoreSugar)
+    assert isinstance(statement.store.receiver, FormalRefSugar)
 
 
 def test_class_initializer_universe_seats_its_constructed_receiver() -> None:

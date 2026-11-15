@@ -70,10 +70,8 @@ from sugar_lift_py_tests.sugar.delete_effect_sugar import (
     AttributeDeleteEffectSugar,
     SubscriptDeleteEffectSugar,
 )
-from sugar_lift_py_tests.sugar.store_effect_sugar import (
-    AttributeStoreEffectSugar,
-    SubscriptStoreEffectSugar,
-)
+from sugar_lift_py_tests.sugar import store_effect_sugar
+from sugar_lift_py_tests.sugar.store_effect_sugar import SubscriptStoreEffectSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import FunctionDef
@@ -94,7 +92,7 @@ MISSING_DELITEM_PRODUCER = (
 MISSING_DELATTR_PRODUCER = (
     "AttributeDeleteEffectSugar.mint_delattr_named_carrier"
     " — formal delattr_named producer mirroring "
-    "AttributeStoreEffectSugar.mint_setattr_named_carrier; "
+    "store_effect_sugar.mint_setattr_named_carrier; "
     "operator='delattr_named', operands=(receiver, StringValue(name)), "
     "projector receiver.delattr(name.value, site)"
 )
@@ -220,7 +218,7 @@ def test_delitem_producer_method_is_enrolled_or_named_missing() -> None:
 
 
 def test_delattr_producer_method_is_enrolled_or_named_missing() -> None:
-    assert hasattr(AttributeStoreEffectSugar, "mint_setattr_named_carrier")
+    assert hasattr(store_effect_sugar, "mint_setattr_named_carrier")
     if not hasattr(AttributeDeleteEffectSugar, "mint_delattr_named_carrier"):
         raise AssertionError(f"missing producer method {MISSING_DELATTR_PRODUCER}")
 

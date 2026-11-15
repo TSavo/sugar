@@ -197,24 +197,31 @@ class ChainedAssignSugar(Sugar):
 class KeyedStoreSugar(Sugar):
     """``o.x = v`` whose stored value a later read of the place reads.
 
-    Substitution threads the store into later reads of the place (``o.x``
-    on a coordinate receiver, ``_ReceiverFieldProjection``; every read of
-    ``o`` after a receiver field store, ``ReceiverFieldStoreState``).  Each
-    such read is a reference to this statement's evaluation (``place``),
-    never ``v`` inlined at the read and evaluated again against whatever was
-    rebound since (``o.x = x; x += 1; return o.x``).
+    Substitution threads the store into later reads of the place (every
+    read of ``o``, or of one of its fields, after the one field store reads
+    the receiver's post-state, ``ReceiverFieldStoreState``).  Each such read
+    is a reference to this statement's evaluation (``place``), never ``v``
+    inlined at the read and evaluated again against whatever was rebound
+    since (``o.x = x; x += 1; return o.x``).
 
     ``value`` is the right-hand side, evaluated HERE, once: its halts are the
     statement's, and its completed value is bound under ``evaluation``.
     ``store`` is the store itself, built with its value read through that
     key, and runs after the value is bound (Python evaluates the right-hand
     side before the target).
+
+    ``o.x OP= v`` evaluates its receiver first (``receiver``) and binds it
+    under ``receiver_evaluation`` as soon as it completes: the field's read
+    in ``value``, the store and every later read of the object read it
+    there, never the receiver evaluated again.
     """
 
     value: Sugar
     store: Sugar
     evaluation: str
     site: object = dataclass_field(compare=False)
+    receiver: Sugar | None = None
+    receiver_evaluation: str | None = None
     halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
@@ -239,8 +246,16 @@ class KeyedStoreSugar(Sugar):
             del completed
             return _reduce_targets((self.store,), active, ctx)
 
+        if self.receiver is None:
+            return evaluate_assignment_values(
+                (self.value,), ctx, tail=store, evaluations=((self.evaluation, 0),)
+            )
         return evaluate_assignment_values(
-            (self.value,), ctx, tail=store, evaluations=((self.evaluation, 0),)
+            (self.receiver, self.value),
+            ctx,
+            tail=store,
+            evaluations=((self.evaluation, 1),),
+            as_completed=((self.receiver_evaluation, 0),),
         )
 
 

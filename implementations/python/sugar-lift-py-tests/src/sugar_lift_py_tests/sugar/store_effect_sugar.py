@@ -5,144 +5,88 @@ from typing import ClassVar
 
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import typed_red_effect_witness
 
 
-@dataclass(frozen=True)
-class AttributeStoreEffectSugar(Sugar):
-    """`receiver.attr = value` — evaluate once, then project the store face.
+def project_setattr(receiver, attr: str, value, site, ctx) -> ExitSet:
+    """``receiver.attr = value`` on a receiver that is no instance of a
+    source class: the ordinary store, already-evaluated receiver and value.
+    The one field store (``ReceiverFieldStoreSugar``) takes it for every
+    such receiver its value gives.  Dispatch is ``__setattr__`` / descriptor
+    ``__set__`` via Floor ``setattr`` — a different method and obligation
+    from the read path ``attribute`` / ``__getattr__`` /
+    ``__getattribute__``.
 
-    Python order: RHS first, then the receiver, each exactly once.  Dispatch is
-    ``__setattr__`` / descriptor ``__set__`` via Floor ``setattr`` — a different
-    method and obligation from the read path ``attribute`` /
-    ``__getattr__`` / ``__getattribute__``.
-
-    Projection arms:
-
-    1. **Formal receiver** → ``NativeOperationExitCarrierV1`` demand
-       ``setattr_named`` with operands
-       ``(receiver, StringValue(name), value)`` and coordinates
-       ``(receiver.formal_coordinate, None, value_coordinate)``.
-       The n-ary projector (#6614) unwraps the name and calls
-       ``receiver.setattr(name.value, value, site, ctx)``.  Helper alone stays
-       undischarged; an ordinary source caller supplies actuals.
-    2. **Decided runtime type** → ``receiver.setattr(attr, value, site, ctx)``
-       projecting its completed or halted faces through the store path
-       (never the read path).
-    3. **Undecided non-formal** → ``AttributeStoreRuntimeEffect`` dual faces
-       under complementary store-outcome guards (composition instrument for
-       free undecided receivers — never a consumer ``SugarNotWritten``).
+    1. Formal receiver → undischarged ``setattr_named`` carrier
+       (``mint_setattr_named_carrier``): the n-ary projector (#6614) unwraps
+       the name and calls ``receiver.setattr(name.value, value, site, ctx)``;
+       an ordinary source caller supplies actuals.
+    2. Decided runtime type → Floor ``setattr``; a raise is its halted arm
+       (halted store, not statement green)
+    3. Undecided non-formal → the two faces of the store (``store_faces``:
+       completes with ``AttributeStoreRuntimeEffect`` testimony or raises
+       something undetermined; never consumer ``SugarNotWritten``)
     """
-
-    receiver: Sugar
-    value: Sugar
-    attr: str
-    site: object = dataclass_field(compare=False)
-    # Nothing binds before the store's halt (the RHS's, the receiver's, the
-    # store's own face): its pre-halt record is the block's prefix.
-    halts_at_statement_head: ClassVar[bool] = True
-
-    @classmethod
-    def witnesses(cls):
-        return typed_red_effect_witness(
-            name="attribute_store_undetermined_raise",
-            owner_sugar="AttributeStoreEffectSugar",
-            source="def A(o, v):\n    o.a = v\n    return v\n",
-            effect_class="UndeterminedRaiseEffect",
-            reason_needle="undetermined exception identity",
-            blame_needle="SourceFragment",
-            wrong_reason_needle="raise AttributeError",
-        )
-
-    def desugar(self, ctx: object = None) -> ExitSet:
-        # Python constructs the RHS before evaluating an assignment target.
-        return self.value.desugar(ctx).and_then(
-            lambda value: self.receiver.desugar(ctx).and_then(
-                lambda receiver: self._store(receiver, value, ctx)
-            )
-        )
-
-    def _store(self, receiver, value, ctx) -> ExitSet:
-        return self.project_setattr(receiver, self.attr, value, self.site, ctx)
-
-    @staticmethod
-    def project_setattr(receiver, attr: str, value, site, ctx) -> ExitSet:
-        """Producer-owned attribute **store** projection (one door).
-
-        The law shared by ordinary AttributeStoreEffectSugar and
-        Attribute AugAssign (already-evaluated receiver and value):
-
-        1. Formal receiver → undischarged ``setattr_named`` carrier
-        2. Decided runtime type → Floor ``setattr``; a raise is its
-           halted arm (halted store, not statement green)
-        3. Undecided non-formal → the two faces of the store
-           (``store_faces``: completes with ``AttributeStoreRuntimeEffect``
-           testimony or raises something undetermined; never consumer
-           ``SugarNotWritten``)
-        """
-        formal_coordinate = getattr(receiver, "formal_coordinate", None)
-        if formal_coordinate is not None:
-            return AttributeStoreEffectSugar.mint_setattr_named_carrier(
-                site=site,
-                receiver=receiver,
-                attr=attr,
-                value=value,
-            )
-
-        if receiver.runtime_type_is_decided():
-            return receiver.setattr(attr, value, site, ctx)
-
-        from sugar_lift_py_tests.effect import (
-            AttributeStoreRuntimeEffect,
-            runtime_effect_evidence_from_terms,
-        )
-        from sugar_lift_py_tests.floor.store_outcome_coordinate import store_faces
-        from sugar_lift_py_tests.ir import ctor, str_const
-
-        operation = ctor(
-            "python:attribute_store",
-            [
-                receiver.to_term(owner="AttributeStoreEffectSugar.receiver"),
-                str_const(attr),
-                value.to_term(owner="AttributeStoreEffectSugar.value"),
-            ],
-        )
-        return store_faces(
-            AttributeStoreRuntimeEffect(
-                "attribute assignment runtime boundary: attribute store "
-                f"target `.{attr}` -- receiver identity belongs to "
-                "Python's runtime __setattr__/descriptor dispatch; "
-                f"attr={attr} site={site}",
-                **runtime_effect_evidence_from_terms(operation, operation, site),
-            )
-        )
-
-    @staticmethod
-    def mint_setattr_named_carrier(*, site, receiver, attr: str, value):
-        """Producer-side contract for n-ary ``setattr_named`` discharge.
-
-        Operand order matches the projector table (#6614):
-        ``receiver.setattr(name.value, value, site, ctx)`` after unwrap.
-        Coordinates: ``(receiver.formal, None, value.formal)`` — lengths and
-        order are load-bearing (#6613 ``__post_init__``).
-        """
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
-        from sugar_lift_py_tests.floor import StringValue
-
-        formal_coordinate = getattr(receiver, "formal_coordinate", None)
-        if formal_coordinate is None:
-            raise ValueError(
-                "setattr_named carrier requires a receiver formal_coordinate"
-            )
-        value_coordinate = getattr(value, "formal_coordinate", None)
-        return NativeOperationExitCarrierV1.mint(
+    formal_coordinate = getattr(receiver, "formal_coordinate", None)
+    if formal_coordinate is not None:
+        return mint_setattr_named_carrier(
             site=site,
-            operator="setattr_named",
-            operands=(receiver, StringValue(attr), value),
-            coordinates=(formal_coordinate, None, value_coordinate),
+            receiver=receiver,
+            attr=attr,
+            value=value,
         )
+
+    if receiver.runtime_type_is_decided():
+        return receiver.setattr(attr, value, site, ctx)
+
+    from sugar_lift_py_tests.effect import (
+        AttributeStoreRuntimeEffect,
+        runtime_effect_evidence_from_terms,
+    )
+    from sugar_lift_py_tests.floor.store_outcome_coordinate import store_faces
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    operation = ctor(
+        "python:attribute_store",
+        [
+            receiver.to_term(owner="project_setattr.receiver"),
+            str_const(attr),
+            value.to_term(owner="project_setattr.value"),
+        ],
+    )
+    return store_faces(
+        AttributeStoreRuntimeEffect(
+            "attribute assignment runtime boundary: attribute store "
+            f"target `.{attr}` -- receiver identity belongs to "
+            "Python's runtime __setattr__/descriptor dispatch; "
+            f"attr={attr} site={site}",
+            **runtime_effect_evidence_from_terms(operation, operation, site),
+        )
+    )
+
+
+def mint_setattr_named_carrier(*, site, receiver, attr: str, value):
+    """Producer-side contract for n-ary ``setattr_named`` discharge.
+
+    Operand order matches the projector table (#6614):
+    ``receiver.setattr(name.value, value, site, ctx)`` after unwrap.
+    Coordinates: ``(receiver.formal, None, value.formal)`` — lengths and
+    order are load-bearing (#6613 ``__post_init__``).
+    """
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.floor import StringValue
+
+    formal_coordinate = getattr(receiver, "formal_coordinate", None)
+    if formal_coordinate is None:
+        raise ValueError("setattr_named carrier requires a receiver formal_coordinate")
+    value_coordinate = getattr(value, "formal_coordinate", None)
+    return NativeOperationExitCarrierV1.mint(
+        site=site,
+        operator="setattr_named",
+        operands=(receiver, StringValue(attr), value),
+        coordinates=(formal_coordinate, None, value_coordinate),
+    )
 
 
 @dataclass(frozen=True)

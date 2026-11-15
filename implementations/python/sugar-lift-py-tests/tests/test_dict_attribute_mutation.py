@@ -4,7 +4,9 @@ from frame_fresh import fresh
 from sugar_lift_py_tests.floor import DictValue, TermValue
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.delete_effect_sugar import AttributeDeleteEffectSugar
-from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
+from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
+    ReceiverFieldStoreSugar,
+)
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.tree import SourceFile
@@ -35,7 +37,7 @@ class _Value(Sugar):
 def _outcomes(tmp_path):
     store_site, delete_site = _sites(tmp_path)
     receiver = fresh(DictValue, ())
-    store = AttributeStoreEffectSugar(
+    store = ReceiverFieldStoreSugar(
         _Value(receiver), _Value(TermValue(7)), "attr", store_site
     ).desugar()
     delete = AttributeDeleteEffectSugar(_Value(receiver), "attr", delete_site).desugar()

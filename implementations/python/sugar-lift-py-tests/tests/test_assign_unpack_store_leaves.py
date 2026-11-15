@@ -735,10 +735,11 @@ def _statement(tmp_path: Path, source: str, stem: str, kind: str):
 def test_a_chained_attribute_store_reads_a_formal_receiver_through_its_key(
     tmp_path: Path,
 ) -> None:
+    from sugar_lift_py_tests.sugar.assign_sugar import KeyedStoreSugar
     from sugar_lift_py_tests.sugar.formal_ref_sugar import FormalRefSugar
     from sugar_lift_py_tests.sugar.name_sugar import NameSugar
-    from sugar_lift_py_tests.sugar.store_effect_sugar import (
-        AttributeStoreEffectSugar,
+    from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
+        ReceiverFieldStoreSugar,
     )
 
     chained = _statement(
@@ -748,16 +749,20 @@ def test_a_chained_attribute_store_reads_a_formal_receiver_through_its_key(
         "ChainedAssignSugar",
     )
     (store,) = chained.stores
-    assert isinstance(store, AttributeStoreEffectSugar)
+    # The store target's own statement: the one field store, keyed.
+    assert isinstance(store, KeyedStoreSugar)
+    assert isinstance(store.store, ReceiverFieldStoreSugar)
     # The formal's coordinate, as ``o.x = 5`` alone reads it; the name
     # ``o`` is never looked up at reduce.
-    assert isinstance(store.receiver, FormalRefSugar)
-    assert not isinstance(store.receiver, NameSugar)
+    assert isinstance(store.store.receiver, FormalRefSugar)
+    assert not isinstance(store.store.receiver, NameSugar)
 
     # Discrimination arm: the single store reads the same receiver.
     single = _function_sugar(tmp_path, "def f(o):\n    o.x = 5\n    return o\n", "one")
     assert any(
-        isinstance(getattr(stmt, "receiver", None), FormalRefSugar)
+        isinstance(
+            getattr(getattr(stmt, "store", None), "receiver", None), FormalRefSugar
+        )
         for stmt in single.statements
     )
 
@@ -826,10 +831,13 @@ def test_a_nested_unpack_store_leaf_is_one_unpack_with_its_receiver_substituted(
     same positional unpack, then stores on the formal ``o`` read through its
     coordinate.  It used to be refused (``Assign.sugar``) with ``o`` never
     substituted."""
-    from sugar_lift_py_tests.sugar.assign_sugar import DynamicUnpackStoreAssignSugar
+    from sugar_lift_py_tests.sugar.assign_sugar import (
+        DynamicUnpackStoreAssignSugar,
+        KeyedStoreSugar,
+    )
     from sugar_lift_py_tests.sugar.formal_ref_sugar import FormalRefSugar
-    from sugar_lift_py_tests.sugar.store_effect_sugar import (
-        AttributeStoreEffectSugar,
+    from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
+        ReceiverFieldStoreSugar,
     )
     from sugar_lift_py_tests.sugar.unpack_projection_targets import (
         NameUnpackTarget,
@@ -851,9 +859,10 @@ def test_a_nested_unpack_store_leaf_is_one_unpack_with_its_receiver_substituted(
     assert isinstance(inner_name, NameUnpackTarget) and inner_name.name == "b"
     # The leaf is ``o.x = <member>``'s own store, as ``o.x = v`` alone is.
     assert isinstance(leaf, StoreUnpackTarget)
-    assert isinstance(leaf.store, AttributeStoreEffectSugar)
-    assert leaf.store.attr == "x"
-    assert isinstance(leaf.store.receiver, FormalRefSugar)
+    assert isinstance(leaf.store, KeyedStoreSugar)
+    assert isinstance(leaf.store.store, ReceiverFieldStoreSugar)
+    assert leaf.store.store.attr == "x"
+    assert isinstance(leaf.store.store.receiver, FormalRefSugar)
     assert leaf.store.value.evaluation == leaf.evaluation
     # Every Name leaf binds under its projection of the one evaluation.
     assert first.evaluation is not None

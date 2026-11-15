@@ -407,4 +407,5 @@ class MappingObjectValue(ObjectValue):
             self,
             fields=updated.fields,
             deleted_instance_fields=updated.deleted_instance_fields,
+            stored_fields=updated.stored_fields,
         )

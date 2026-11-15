@@ -14,10 +14,19 @@ class ReceiverFieldStoreStateSugar(ConstructedTermSugar):
     ``value``.  ``value`` is the store's key read (``place``): the value the
     store statement completed with, never the stored expression evaluated
     again.  A read of a whole object after its field stores is these folded
-    over the object's own read (``ReceiverFieldStoreState``, the one
-    receiver field store's post-state, whatever the receiver was given: an
-    object a constructor call built, ``ObjectPlaceStateV1``, is read through
-    its assignment's key underneath)."""
+    over the object's own read (``ReceiverFieldStoreState``, the one field
+    store's post-state, whatever the receiver was given: an object a
+    constructor call built, ``ObjectPlaceStateV1``, is read through its
+    assignment's key underneath).
+
+    The store itself ran at its statement (``ReceiverFieldStoreSugar``); this
+    read of the object after it runs nothing, and the receiver's value
+    decides what it reads: an instance of a source class (``ObjectValue``)
+    with the field stored -- known on it whether it was made here or arrived
+    (``ObjectValue.stored_fields``), the rest of it as its currency says; a
+    value of another decided runtime type as its own floor's store leaves it;
+    and a formal with no actual or an undecided value the object it is, whose
+    fields no read here decides."""
 
     receiver: ConstructedTermSugar
     value: ConstructedTermSugar
@@ -51,34 +60,27 @@ class ReceiverFieldStoreStateSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx=None):
-        from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.floor.object_value import ObjectValue
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
         from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
+            floored_receiver,
+        )
 
         def update(receiver, value):
+            receiver = floored_receiver(receiver, ctx)
+            if isinstance(receiver, ObjectValue):
+                return ExitSet.completed(receiver.with_field_store(self.attr, value))
             if (
-                isinstance(receiver, CallSiteValue)
-                and receiver.body is not None
-                and receiver.source_call_frame_cid is not None
+                getattr(receiver, "formal_coordinate", None) is None
+                and receiver.runtime_type_is_decided()
             ):
-                # An object read through its constructor call's key
-                # (``ObjectPlaceStateV1``): the authenticated call's floor, as
-                # an attribute read takes it (``AttributeSugar``).
-                receiver = receiver.force_floor(
-                    ctx,
-                    owner="authenticated receiver field store",
-                    project_callsite=False,
-                )
-            if not isinstance(receiver, ObjectValue):
-                construction_panic_gap(
-                    owner="ReceiverFieldStoreStateSugar",
-                    blame=self.site,
-                    observed=type(receiver).__name__,
-                    requested="authenticated source receiver",
-                    fix="retain field mutation as typed loud until its receiver floors",
-                )
-            return ExitSet.completed(receiver.with_field_store(self.attr, value))
+                # A decided runtime type answers its own store: the object
+                # after it is its floor's, as the store statement had it (a
+                # floor that does not answer stays loud).
+                return receiver.setattr(self.attr, value, self.site, ctx)
+            # A formal with no actual, or an undecided value: the object it
+            # is, every field read undecided.
+            return ExitSet.completed(receiver)
 
         return self.receiver.desugar(ctx).and_then(
             lambda receiver: self.value.desugar(ctx).and_then(

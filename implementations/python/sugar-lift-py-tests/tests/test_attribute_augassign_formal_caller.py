@@ -1,9 +1,12 @@
 """Formal attribute augmented assignment: ``obj.field += rhs``.
 
 Same substrate as subscript AugAssign (#6712): once-eval, get before RHS,
-``project_augmented`` / ``InplaceBinaryOperatorOperation`` edge, setattr last,
-halt blocking, distinct get/op/set sites, NotImplemented fallback via production
-projector.  No second dispatch table or control ladder.
+``project_augmented`` / ``InplaceBinaryOperatorOperation`` edge, the one field
+store last (``ReceiverFieldStoreStatement``: the receiver evaluated once and
+bound under its key, the value ``AttributeAugAssignSugar``, the store
+``ReceiverFieldStoreSugar``), halt blocking, distinct get/op/set sites,
+NotImplemented fallback via production projector.  No second dispatch table
+or control ladder.
 """
 
 from __future__ import annotations
@@ -22,10 +25,17 @@ from sugar_lift_py_tests.floor import (
     ObjectValue,
     TermValue,
 )
+from sugar_lift_py_tests.floor.receiver_field_store_value import (
+    ReceiverFieldStoreValue,
+)
 from sugar_lift_py_tests.outcome import Completed, ExitSet
+from sugar_lift_py_tests.sugar.assign_sugar import KeyedStoreSugar
 from sugar_lift_py_tests.sugar.augassign_sugar import (
     AttributeAugAssignSugar,
     project_augmented,
+)
+from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
+    ReceiverFieldStoreSugar,
 )
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -52,18 +62,50 @@ def _helper_definition(
     return function, function.sugar().desugar(None)
 
 
-def _aug_sugar(source: str = "def helper(obj, rhs):\n    obj.field += rhs\n"):
+def _aug_statement(source: str = "def helper(obj, rhs):\n    obj.field += rhs\n"):
+    """The statement's sugar: the one field store, keyed, whose value is the
+    field's in-place result."""
     tree = _tree(source)
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     aug = next(node for node in function.body if isinstance(node, AugAssign))
-    sugar = aug.sugar()
-    assert isinstance(sugar, AttributeAugAssignSugar), type(sugar)
-    return function, sugar
+    keyed = aug.sugar()
+    assert isinstance(keyed, KeyedStoreSugar), type(keyed)
+    assert isinstance(keyed.value, AttributeAugAssignSugar), type(keyed.value)
+    assert isinstance(keyed.store, ReceiverFieldStoreSugar), type(keyed.store)
+    return function, keyed
+
+
+def _aug_sugar(source: str = "def helper(obj, rhs):\n    obj.field += rhs\n"):
+    function, keyed = _aug_statement(source)
+    return function, keyed.value
 
 
 def _production_sites():
-    _, sugar = _aug_sugar()
-    return sugar.get_site, sugar.op_site, sugar.set_site, sugar.site
+    _, keyed = _aug_statement()
+    value = keyed.value
+    return value.get_site, value.op_site, keyed.store.site, value.site
+
+
+def _read_modify_store(receiver, rhs, *, operation=project_iadd, attr="field"):
+    """``receiver.attr OP= rhs`` as the statement runs it: the field's
+    in-place result (``AttributeAugAssignSugar``), then the one field store of
+    it on the same receiver (``ReceiverFieldStoreSugar``)."""
+    get_site, op_site, set_site, site = _production_sites()
+    value = AttributeAugAssignSugar(
+        receiver=receiver,
+        attr=attr,
+        rhs=rhs,
+        operator="iadd",
+        operation=operation,
+        get_site=get_site,
+        op_site=op_site,
+        site=site,
+    )
+    return value.desugar(None).and_then(
+        lambda result: ReceiverFieldStoreSugar(
+            receiver=receiver, value=_FloorSugar(result), attr=attr, site=set_site
+        ).desugar(None)
+    )
 
 
 @dataclass(frozen=True)
@@ -91,19 +133,13 @@ def _obj_with_field(n: int = 1) -> ObjectValue:
 
 
 def _production_desugar(receiver, rhs, *, attr="field"):
-    get_site, op_site, set_site, site = _production_sites()
-    sugar = AttributeAugAssignSugar(
-        receiver=_FloorSugar(receiver),
-        attr=attr,
-        rhs=_FloorSugar(rhs),
-        operator="iadd",
-        operation=project_iadd,
-        get_site=get_site,
-        op_site=op_site,
-        set_site=set_site,
-        site=site,
-    )
-    return sugar.desugar(None)
+    return _read_modify_store(_FloorSugar(receiver), _FloorSugar(rhs), attr=attr)
+
+
+def _stored(out):
+    stored = out.completed_value()
+    assert isinstance(stored, ReceiverFieldStoreValue), out
+    return stored
 
 
 # ---------------------------------------------------------------------------
@@ -112,14 +148,21 @@ def _production_desugar(receiver, rhs, *, attr="field"):
 
 
 def test_attribute_augassign_constructs_attribute_augassign_sugar() -> None:
-    _, sugar = _aug_sugar()
+    _, keyed = _aug_statement()
+    sugar = keyed.value
     assert isinstance(sugar, AttributeAugAssignSugar)
     assert sugar.attr == "field"
     assert sugar.operator == "iadd"
     assert sugar.operation.__func__ is BinaryOperator.project_inplace
-    assert sugar.get_site is not sugar.op_site
-    assert sugar.op_site is not sugar.set_site
-    assert sugar.get_site is not sugar.set_site
+    # The receiver is evaluated once, first, and bound under its key: the
+    # read and the store read it there.
+    assert keyed.receiver is not None
+    assert isinstance(keyed.receiver_evaluation, str)
+    assert sugar.receiver == keyed.store.receiver
+    get_site, op_site, set_site, _site = _production_sites()
+    assert get_site is not op_site
+    assert op_site is not set_site
+    assert get_site is not set_site
 
 
 def test_op_site_is_structural_gap_not_rhs() -> None:
@@ -130,12 +173,14 @@ def test_op_site_is_structural_gap_not_rhs() -> None:
     assert "+=" in text
 
 
-def test_discrimination_not_plain_attribute_store_effect() -> None:
-    """AugAssign attribute is AttributeAugAssignSugar, not bare store-of-RHS."""
-    from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
-
-    _, sugar = _aug_sugar()
-    assert not isinstance(sugar, AttributeStoreEffectSugar)
+def test_discrimination_not_plain_store_of_the_rhs() -> None:
+    """AugAssign attribute stores the field's in-place result, never the
+    bare RHS."""
+    function, keyed = _aug_statement()
+    aug = next(node for node in function.body if isinstance(node, AugAssign))
+    assert isinstance(keyed.value, AttributeAugAssignSugar)
+    assert keyed.value.rhs == aug.value.sugar()
+    assert keyed.value != aug.value.sugar()
 
 
 # ---------------------------------------------------------------------------
@@ -146,9 +191,11 @@ def test_discrimination_not_plain_attribute_store_effect() -> None:
 def test_production_desugar_object_field_augassign_completes() -> None:
     """``obj.field += 10`` on field=1 → field=11."""
     out = _production_desugar(_obj_with_field(1), TermValue(10))
-    assert out.completed_value() is not None, out
-    assert isinstance(out.completed_value(), ObjectValue)
-    fields = {f.name: f.value for f in out.completed_value().fields}
+    stored = _stored(out)
+    assert stored.attr == "field"
+    assert stored.value == TermValue(11)
+    after = stored.receiver.with_field_store(stored.attr, stored.value)
+    fields = {f.name: f.value for f in after.fields}
     assert fields["field"] == TermValue(11)
 
 
@@ -173,11 +220,10 @@ def test_production_receiver_evaluated_once_for_get_and_set() -> None:
         allocation=FRAME_FRESH,
     )
     out = _production_desugar(receiver, TermValue(3))
-    assert out.completed_value() is not None
+    stored = _stored(out)
     assert box["get"] == 1
     assert box["set"] == 1
-    fields = {f.name: f.value for f in out.completed_value().fields}
-    assert fields["field"] == TermValue(5)
+    assert stored.value == TermValue(5)
 
 
 def test_discrimination_duplicated_get_is_detected() -> None:
@@ -205,7 +251,6 @@ def test_discrimination_duplicated_get_is_detected() -> None:
 
 def test_production_getattr_before_rhs_order() -> None:
     order: list[str] = []
-    get_site, op_site, set_site, site = _production_sites()
 
     class _OrderObject(ObjectValue):
         def attribute(self, name, site_, ctx):
@@ -231,8 +276,8 @@ def test_production_getattr_before_rhs_order() -> None:
         order.append("op")
         return project_iadd(left, right, site_, ctx)
 
-    sugar = AttributeAugAssignSugar(
-        receiver=_FloorSugar(
+    out = _read_modify_store(
+        _FloorSugar(
             _OrderObject(
                 "Widget",
                 (ObjectField("field", TermValue(3)),),
@@ -242,18 +287,11 @@ def test_production_getattr_before_rhs_order() -> None:
                 allocation=FRAME_FRESH,
             )
         ),
-        attr="field",
-        rhs=_RhsOrder(),
-        operator="iadd",
+        _RhsOrder(),
         operation=_project_order,
-        get_site=get_site,
-        op_site=op_site,
-        set_site=set_site,
-        site=site,
     )
-    out = sugar.desugar(None)
     assert out.completed_value() is not None
-    assert order ==["get", "rhs", "op", "set"]
+    assert order == ["get", "rhs", "op", "set"]
 
 
 def test_discrimination_wrong_order_rhs_before_get() -> None:
@@ -304,7 +342,6 @@ def test_production_get_halt_blocks_rhs_arithmetic_and_store() -> None:
     (Python's absence rule), and that halt blocks the RHS, the arithmetic
     and the store."""
     box = {"rhs": 0, "set": 0}
-    get_site, op_site, set_site, site = _production_sites()
 
     @dataclass(frozen=True)
     class _RhsProbe(Sugar):
@@ -332,18 +369,7 @@ def test_production_get_halt_blocks_rhs_arithmetic_and_store() -> None:
         defining_class=_widget_class_value(),
         allocation=FRAME_FRESH,
     )
-    sugar = AttributeAugAssignSugar(
-        receiver=_FloorSugar(receiver),
-        attr="field",
-        rhs=_RhsProbe(),
-        operator="iadd",
-        operation=project_iadd,
-        get_site=get_site,
-        op_site=op_site,
-        set_site=set_site,
-        site=site,
-    )
-    out = sugar.desugar(None)
+    out = _read_modify_store(_FloorSugar(receiver), _RhsProbe())
     assert out.completed_value() is None, out
     names = [
         halt.effect.exception_name
@@ -403,7 +429,7 @@ def test_production_store_halt_is_incomplete_not_complete_raisevalue() -> None:
         allocation=FRAME_FRESH,
     )
     out = _production_desugar(receiver, TermValue(1))
-    # Shared AttributeStoreEffectSugar.project_setattr hands the floor's halt on.
+    # The one field store hands the floor's halt on.
     assert (
         len(out.exits) == 1 and out.halts() == out.exits
     ), f"store halt must be one halted arm (halted store face), not {out}"
@@ -452,17 +478,18 @@ def test_authenticated_discharge_get_iadd_setattr_updates_field() -> None:
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
     value = exits.exits[0].value
-    # Universe or ObjectValue post-state
-    if isinstance(value, ObjectValue):
-        fields = {f.name: f.value for f in value.fields}
-        assert fields["field"] == TermValue(11)
+    # The one field store's record: the store on the receiver.
+    if isinstance(value, ReceiverFieldStoreValue):
+        assert value.value == TermValue(11)
     else:
         record = getattr(value, "record", None)
         assert record is not None
-        objs = [s for s in record.statements if isinstance(s, ObjectValue)]
-        assert objs, record.statements
-        fields = {f.name: f.value for f in objs[-1].fields}
-        assert fields["field"] == TermValue(11)
+        stores = [
+            s for s in record.statements if isinstance(s, ReceiverFieldStoreValue)
+        ]
+        assert stores, record.statements
+        assert stores[-1].attr == "field"
+        assert stores[-1].value == TermValue(11)
 
 
 def test_enum_attribute_augassign_uses_one_authenticated_read_op_store(
@@ -471,8 +498,8 @@ def test_enum_attribute_augassign_uses_one_authenticated_read_op_store(
     """Production path: CPython ``enum.py:292`` retains the exact operation chain."""
     from sugar_lift_python_source.dependency_artifact import DependencyArtifactGraph
     from sugar_lift_py_tests.sugar import augassign_sugar as aug_module
+    from sugar_lift_py_tests.sugar import store_effect_sugar as store_module
     from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
-    from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
 
     graph = DependencyArtifactGraph.authenticate_stdlib_module("enum")
     module = graph.modules["enum"]
@@ -494,7 +521,7 @@ def test_enum_attribute_augassign_uses_one_authenticated_read_op_store(
     events = []
     original_read = AttributeSugar.project_attribute
     original_op = aug_module.project_augmented
-    original_store = AttributeStoreEffectSugar.project_setattr
+    original_store = store_module.project_setattr
 
     def at_target(site) -> bool:
         return site.line_col_span().start_line == 292
@@ -523,9 +550,7 @@ def test_enum_attribute_augassign_uses_one_authenticated_read_op_store(
 
     monkeypatch.setattr(AttributeSugar, "project_attribute", staticmethod(read))
     monkeypatch.setattr(aug_module, "project_augmented", operate)
-    monkeypatch.setattr(
-        AttributeStoreEffectSugar, "project_setattr", staticmethod(store)
-    )
+    monkeypatch.setattr(store_module, "project_setattr", store)
 
     owner.sugar().desugar(None)
 
