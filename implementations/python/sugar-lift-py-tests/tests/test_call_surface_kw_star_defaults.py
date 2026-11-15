@@ -4,7 +4,8 @@ Scope (black door): CallSite / MethodCall / SpreadCall + signature defaults.
 Not value floors, not undecided attribution.
 
 Triage: constructs already existed —
-  - CallSiteSugar.keywords / MethodCallSugar.keywords (CTS pin L2a)
+  - ComputedCallSugar.keywords (a call of a source ``def`` is its value's,
+    #7757) / MethodCallSugar.keywords (CTS pin L2a)
   - SpreadCallSugar for *args / **kwargs
   - ParamSugar for bare formals
 Wrong entrance was Param with a default (or annotation) falling through to
@@ -13,7 +14,7 @@ Wrong entrance was Param with a default (or annotation) falling through to
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
 from sugar_lift_py_tests.sugar.param_sugar import ParamSugar
@@ -67,20 +68,18 @@ def _module_run_completes(tree: SourceFile) -> bool:
 
 
 def test_named_keyword_actual_constructs_on_call_site() -> None:
-    """f(a=1) — keywords ride CallSiteSugar, values are ConstructedTermSugar."""
-    call = next(
-        n
-        for n in _sf("def f(a):\n    return a\nf(a=1)\n", "kw.py").nodes()
-        if isinstance(n, Call)
-    )
+    """f(a=1) — a call of a source ``def`` is the call of its value (#7757);
+    its keywords ride the call, values are ConstructedTermSugar."""
+    tree = _sf("def f(a):\n    return a\nf(a=1)\n", "kw.py")
+    call = next(n for n in tree.nodes() if isinstance(n, Call))
     sugar = call.sugar()
-    assert isinstance(sugar, CallSiteSugar)
+    assert isinstance(sugar, ComputedCallSugar)
     assert len(sugar.keywords) == 1
     name, value = sugar.keywords[0]
     assert name == "a"
     assert isinstance(value, ConstructedTermSugar)
     assert isinstance(value, IntLiteralSugar)
-    assert sugar.desugar(None).completed_value() is not None
+    assert _module_run_completes(tree)
 
 
 def test_method_keyword_actual_constructs() -> None:

@@ -241,9 +241,18 @@ def test_frame_native_operation_is_applied_by_producer_outcome(
         for node in tree.nodes()
         if isinstance(node, Call) and getattr(node.func, "id", None) == "helper"
     )
-    sugar = call.sugar()
-    assert isinstance(sugar, CallSiteSugar)
-    assert sugar.source_call_frame is not None
+    # A call of a plain ``def`` is its value's (#7757): no call by name seats
+    # its frame any more.  The frame a call seats (a generator's, an ``async
+    # def``'s) is applied the same way; it is seated here by hand.
+    frame = function.source_visible_call_frame()
+    assert frame is not None
+    sugar = CallSiteSugar(
+        target_name="helper",
+        args=tuple(argument.sugar() for argument in call.args),
+        site=call.fragment,
+        source_call_frame=frame,
+        expected_definition_ref=function,
+    )
     native_frame = sugar.source_call_frame.with_native_operation_projection(
         function.formal_coordinates(), function.sugar().desugar(None)
     )
