@@ -466,8 +466,12 @@ def test_nested_handler_preserves_temporal_bindings_across_inner_try_star():
     """Outer except* binding remains visible after nested TryStar fully consumes.
 
     Pins temporal state through two handler levels: ``y`` assigned before the
-    nested TryStar is still returned from the outer except* after the inner
-    except* completes (and outer TypeError residual is drained).
+    nested TryStar is still bound after the inner except* completes and the
+    outer TypeError residual is drained, and is what the function returns.
+
+    The ``return`` stands after the ``try``: Python compiles no ``return``,
+    ``break`` or ``continue`` inside an ``except*`` block (a SyntaxError), so
+    a source with one there is not a Python program.
     """
     from sugar_lift_py_tests.floor.return_value import ReturnValue
 
@@ -481,9 +485,9 @@ def test_nested_handler_preserves_temporal_bindings_across_inner_try_star():
         "            raise ExceptionGroup('inner', [KeyError('k')])\n"
         "        except* KeyError:\n"
         "            z = 2\n"
-        "        return y\n"
         "    except* TypeError:\n"
-        "        pass\n",
+        "        pass\n"
+        "    return y\n",
         name="nested_temporal_y.py",
     )
     completed = outcome.completed_value()
@@ -492,7 +496,8 @@ def test_nested_handler_preserves_temporal_bindings_across_inner_try_star():
     assert returns, completed.record.statements
     assert returns[0].value.value == 1
 
-    # Inner-handler binding used inside the nested except* (same arm).
+    # Inner-handler binding made inside the nested except* (same arm), read
+    # after both statements.
     outcome_z = _desugar(
         "def f():\n"
         "    try:\n"
@@ -502,9 +507,9 @@ def test_nested_handler_preserves_temporal_bindings_across_inner_try_star():
         "            raise ExceptionGroup('inner', [KeyError('k')])\n"
         "        except* KeyError:\n"
         "            z = 2\n"
-        "            return z\n"
         "    except* TypeError:\n"
-        "        pass\n",
+        "        pass\n"
+        "    return z\n",
         name="nested_temporal_z.py",
     )
     completed_z = outcome_z.completed_value()
