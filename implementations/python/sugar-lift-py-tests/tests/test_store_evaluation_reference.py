@@ -284,6 +284,42 @@ def _returned(outcome) -> list:
     return found
 
 
+def _object_after_a_store_on_a_class_call(value) -> None:
+    """``value`` is the object a field store on a same-file class call's
+    result left: the unknown receiver after code this read does not see
+    (``python:receiver_after_call``), never the instance as its construction
+    left it and never an object holding a field invented here.
+
+    ``o = C()`` is the class's coordinate and edge (#7757 step 6, #8738), so
+    ``o`` names the instance as the class's contract states it.  A store on
+    it is not that state (#8746): which store the class's namespace runs
+    (a data descriptor, a ``__setattr__``) and what the instance holds after
+    it are decided where the class's contract is joined at prove -- the
+    post-call object state (step 7) and dispatch on a class call's result
+    (step 8), neither merged.  Until then the store's value is not read back
+    at lift."""
+    from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue
+
+    assert isinstance(value, SymbolicValue), value
+    assert not isinstance(value, (ObjectValue, CallSiteValue)), value
+
+
+def _field_read_after_a_store_on_a_class_call(returned, attr: str) -> None:
+    """The one value ``return o.<attr>`` gives after a store on ``o = C()``:
+    the undecided read ``attr:<attr>`` of the object after the store
+    (``_object_after_a_store_on_a_class_call``), never the stored value
+    decided at lift and never the field of the instance as its construction
+    left it (the read that dropped the store before #8746)."""
+    from sugar_lift_py_tests.floor import CallSiteValue
+
+    assert len(returned) == 1, returned
+    (read,) = returned
+    assert isinstance(read, CallSiteValue), read
+    assert read.target_name == attr, read
+    (receiver,) = read.arg_values
+    _object_after_a_store_on_a_class_call(receiver)
+
+
 # ---------------------------------------------------------------------------
 # 1. ``o.x = x``: a later read of the place reads the store's key.
 # ---------------------------------------------------------------------------
@@ -323,8 +359,12 @@ def test_a_field_store_sugar_binds_its_key() -> None:
 
 
 def test_a_field_read_after_a_rebind_is_the_old_value(tmp_path: Path) -> None:
+    # Was ``[ONE]`` while ``C()`` was applied at lift.  ``o`` is now a class
+    # call's result: the read is undecided until steps 7 and 8, and never
+    # ``x`` read again after its rebind (2).
     returned = _returned(_outcome(tmp_path, FIELD, "field"))
-    assert returned == [ONE], returned
+    _field_read_after_a_store_on_a_class_call(returned, "x")
+    assert TermValue(2) not in returned
 
 
 def test_a_coordinate_receiver_field_read_is_the_stores_key() -> None:
@@ -586,8 +626,11 @@ def test_an_object_place_store_binds_its_key() -> None:
 def test_an_object_place_read_after_a_rebind_is_the_old_value(
     tmp_path: Path,
 ) -> None:
+    # Was ``[ONE]`` while ``Box()`` was applied at lift: undecided until
+    # steps 7 and 8 (``_object_after_a_store_on_a_class_call``).
     returned = _returned(_outcome(tmp_path, PLACE, "place"))
-    assert returned == [ONE], returned
+    _field_read_after_a_store_on_a_class_call(returned, "size")
+    assert TermValue(2) not in returned
 
 
 # ---------------------------------------------------------------------------
@@ -630,10 +673,11 @@ def test_an_object_read_after_a_field_store_carries_the_field(
     returned = _returned(_outcome(tmp_path, PLACE_OBJECT, "place_object"))
     assert len(returned) == 1, returned
     (value,) = returned
-    assert isinstance(value, ObjectValue), value
-    # The value the store completed with (1), never the object without it
-    # and never ``x`` read again after its rebind.
-    assert [field.value for field in value.fields if field.name == "size"] == [ONE]
+    # Was an ``ObjectValue`` holding ``size == 1`` while ``Box()`` was
+    # applied at lift.  ``box`` is now a class call's result: the object
+    # after the store is the unknown receiver until steps 7 and 8, never the
+    # object without the store.
+    _object_after_a_store_on_a_class_call(value)
 
 
 # ---------------------------------------------------------------------------
@@ -874,8 +918,10 @@ UNPACK_FIELD = (
 
 
 def test_a_chained_field_store_is_read_after_it(tmp_path: Path) -> None:
+    # Was ``[5]`` while ``C()`` was applied at lift: the read sees the
+    # store (the object after it), undecided until steps 7 and 8.
     returned = _returned(_outcome(tmp_path, CHAIN_FIELD, "chain_field"))
-    assert returned == [TermValue(5)], returned
+    _field_read_after_a_store_on_a_class_call(returned, "x")
 
 
 def test_a_chained_item_store_is_read_after_it(tmp_path: Path) -> None:
@@ -889,8 +935,10 @@ def test_a_chained_list_store_is_in_the_list_read_after_it(tmp_path: Path) -> No
 
 
 def test_an_unpack_field_store_is_read_after_it(tmp_path: Path) -> None:
+    # Was ``[2]`` while ``C()`` was applied at lift: the read sees the
+    # unpack's store (the object after it), undecided until steps 7 and 8.
     returned = _returned(_outcome(tmp_path, UNPACK_FIELD, "unpack_field"))
-    assert returned == [TermValue(2)], returned
+    _field_read_after_a_store_on_a_class_call(returned, "x")
 
 
 def test_a_chained_store_is_the_single_store_statement() -> None:
@@ -1013,6 +1061,10 @@ def test_an_annotated_field_store_is_the_field_store(tmp_path: Path) -> None:
     body = _same_statements(FIELD_ANNOTATED, FIELD)
     store = next(node for node in body if isinstance(node, ReceiverFieldStoreStatement))
     assert isinstance(store.evaluation, str)
+    # Was ``[ONE]`` for both while ``C()`` was applied at lift: both are
+    # the same undecided read of the object after the store until steps 7
+    # and 8.
     annotated = _returned(_outcome(tmp_path, FIELD_ANNOTATED, "field_ann"))
     plain = _returned(_outcome(tmp_path, FIELD, "field_plain"))
-    assert annotated == plain == [ONE], (annotated, plain)
+    for returned in (annotated, plain):
+        _field_read_after_a_store_on_a_class_call(returned, "x")
