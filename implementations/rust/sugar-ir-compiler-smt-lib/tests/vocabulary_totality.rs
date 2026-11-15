@@ -23,21 +23,25 @@ use sugar_ir_compiler_smt_lib::{SmtLibCompiler, DIALECT};
 // scanned tree; the Python lifter's step-6/7 terms (`py.*`, `python:*`,
 // `call:<name>` coordinates) and their test fixtures entered it. A red pin
 // records a symbol; it does not encode or allow one.
+// Re-pinned to the rust lane's measurement at 0fb69a18c (run 43752693483):
+// six rows retired with their fixtures (`caller_post`, `demo_true`,
+// `path_config_true`, `producer_pre`, ctor `answer`, `call:encode_len`). Two
+// rows entered after it, read from the literal JSON fixtures the verifier's
+// consistency tests carry: atom `g`/0 and ctor `call:m.other`/0.
 const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("atom", "<predicate>", 1),
     ("atom", "CategoryTheory.Functor.map_id", 0),
     ("atom", "adt.is_python_type", 2),
     ("atom", "bvadd", 0),
     ("atom", "bvadd", 2),
-    ("atom", "caller_post", 0),
     ("atom", "checked_add_u8.postcondition", 0),
     ("atom", "concept:eq", 2),
     ("atom", "consumer", 0),
-    ("atom", "demo_true", 0),
     ("atom", "domain.opaque", 1),
     ("atom", "done", 1),
     ("atom", "equational_theory", 0),
     ("atom", "fallback", 1),
+    ("atom", "g", 0),
     ("atom", "is_err", 1),
     ("atom", "is_ok", 1),
     ("atom", "is_some", 0),
@@ -51,10 +55,8 @@ const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("atom", "p", 1),
     ("atom", "panic", 1),
     ("atom", "panic-free", 1),
-    ("atom", "path_config_true", 0),
     ("atom", "producer", 0),
     ("atom", "producer_post", 0),
-    ("atom", "producer_pre", 0),
     ("atom", "py.le", 2),
     ("atom", "py.truthy", 1),
     ("atom", "python:indexable", 1),
@@ -88,7 +90,6 @@ const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("ctor", "Vec", 1),
     ("ctor", "a", 0),
     ("ctor", "a", 1),
-    ("ctor", "answer", 0),
     ("ctor", "atoi", 0),
     ("ctor", "await", 1),
     ("ctor", "b", 0),
@@ -119,7 +120,6 @@ const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("ctor", "call:encodeBase64", 0),
     ("ctor", "call:encodeBase64", 1),
     ("ctor", "call:encodeBase64String", 1),
-    ("ctor", "call:encode_len", 1),
     ("ctor", "call:encoded_len", 2),
     ("ctor", "call:encoded_len#panic_callsite", 2),
     ("ctor", "call:external_open_name", 0),
@@ -131,6 +131,7 @@ const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("ctor", "call:leaf_pad_with_extended_identity_marker_and_more_padding_0", 1),
     ("ctor", "call:leaf_pad_with_extended_identity_marker_and_more_padding_1", 1),
     ("ctor", "call:leaf_pad_with_extended_identity_marker_and_more_padding_2", 1),
+    ("ctor", "call:m.other", 0),
     ("ctor", "call:make_value", 0),
     ("ctor", "call:missing_target", 0),
     ("ctor", "call:new", 2),
