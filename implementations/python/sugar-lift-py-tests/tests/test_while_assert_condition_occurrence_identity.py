@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.occurrence import occurrence_key
 from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Assert, Compare, While
@@ -28,14 +29,16 @@ def _halt_occurrence(compare: Compare) -> str:
     assert isinstance(outcome, ExitSet)
     halted = tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
     assert len(halted) == 1
-    assert (
-        isinstance(halted[0].effect.occurrence_id, str)
-        and ":" in halted[0].effect.occurrence_id
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {halted[0].effect.occurrence_id!r}"
-    )
+    assert isinstance(halted[0].effect.occurrence_id, str), halted[0].effect
     return halted[0].effect.occurrence_id
+
+
+def _undecided_occurrence(compare: Compare) -> str:
+    """The occurrence an undecided comparison's halt names: its site's
+    coordinate key (``comparison_op_sugar.undecided_dispatch_faces``,
+    ``occurrence_key``), never the fragment's repr, which is a print format
+    and not an address (#7808)."""
+    return occurrence_key(compare.sugar().site, ())
 
 
 def _comparisons() -> tuple[Compare, Compare]:
@@ -52,7 +55,7 @@ def test_while_condition_mints_one_stable_authenticated_occurrence() -> None:
     first = _halt_occurrence(condition)
     repeated = _halt_occurrence(condition)
 
-    expected = str(condition.sugar().site)
+    expected = _undecided_occurrence(condition)
     assert first == expected
     assert repeated == expected
 
@@ -70,7 +73,7 @@ def test_assert_condition_mints_one_stable_authenticated_occurrence() -> None:
     first = _halt_occurrence(assertion)
     repeated = _halt_occurrence(assertion)
 
-    expected = str(assertion.sugar().site)
+    expected = _undecided_occurrence(assertion)
     assert first == expected
     assert repeated == expected
 
