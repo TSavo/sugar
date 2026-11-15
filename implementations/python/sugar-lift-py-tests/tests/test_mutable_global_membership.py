@@ -8,10 +8,9 @@ import pytest
 
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.floor import MutableGlobalValue, PredicateValue, StringValue
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import atomic
 from sugar_lift_py_tests.outcome import ExitSet
-from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+from sugar_lift_py_tests.outcome.exit_set import Completed, Halted, complement_guard
 from sugar_source_tree.nodes import Compare, Name
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_lift_py_tests.lift_rpc import _open_at_seat
@@ -95,12 +94,22 @@ def test_non_dict_mutable_global_does_not_borrow_dict_membership(
     item = StringValue("key")
     site = compare.fragment
 
-    with pytest.raises(ConstructionPanic) as raised:
-        value.contains(item, site)
+    outcome = value.contains(item, site)
 
-    assert raised.value.info.owner == "contains"
-    assert raised.value.info.observed == "MutableGlobalValue"
-    assert raised.value.info.requested == "stand on the membership floor"
+    # A pin that is not a dict decides no membership structure: which
+    # ``__contains__`` runs is not decided here.  That is the two-faced
+    # undecided membership -- never the dict pin's sole predicate, and never
+    # a lifter panic over a test Python runs.
+    assert outcome.completed_value() is None
+    (completed,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    (halted,) = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert completed.guard.name == "python:compare.completes"
+    assert isinstance(completed.value, PredicateValue)
+    assert completed.value.formula.name == "py.in"
+    assert halted.guard == complement_guard(completed.guard)
+    assert halted.effect.exception_name is None
+    assert halted.effect.producer_node_owner == "UndecidedCompare:In"
+    assert halted.owed and halted.owed == completed.owed
 
 
 def test_symbolic_source_membership_keeps_complementary_dispatch_faces(
@@ -118,12 +127,14 @@ def test_symbolic_source_membership_keeps_complementary_dispatch_faces(
     halted = next(face for face in outcome.exits if isinstance(face, Halted))
     completed = next(face for face in outcome.exits if isinstance(face, Completed))
     assert halted.effect.exception_name is None
-    assert halted.effect.producer_node_owner == "Compare"
+    # The one two-faced outcome (``ExitSet.two_faced``): the undecided
+    # dispatch's own owner, complementary guards, and both arms owing the
+    # one undecided member.
+    assert halted.effect.producer_node_owner == "UndecidedCompare:In"
     assert halted.effect.blame == str(site)
     assert isinstance(completed.value, PredicateValue)
     assert completed.value.site is site
-    from sugar_lift_py_tests.outcome.exit_set import complement_guard
-
+    assert completed.guard.name == "python:compare.completes"
     assert completed.guard == complement_guard(halted.guard)
     assert completed.value.formula.name == "py.in"
-    assert next(iter(halted.faces)).partition == next(iter(completed.faces)).partition
+    assert halted.owed and halted.owed == completed.owed
