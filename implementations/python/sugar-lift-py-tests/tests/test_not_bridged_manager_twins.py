@@ -25,7 +25,6 @@ on the completing face.
 
 from __future__ import annotations
 
-import json
 import shutil
 from pathlib import Path
 
@@ -33,10 +32,10 @@ import pytest
 
 from sugar_lift_py_tests.witness_harness import (
     _stage_cli_project,
+    mint_and_prove,
     mint_project,
     prove_verdict,
     run_source_through_real_solver,
-    run_sugar_cli,
 )
 
 _VENDOR = (
@@ -67,11 +66,6 @@ def _mint(project: Path, source: str, extra: dict[str, str]) -> None:
     assert mint.returncode == 0, mint.stderr
 
 
-def _prove(project: Path) -> str:
-    prove = run_sugar_cli(project, ["prove", ".", "--json", "--z3", "z3"])
-    return prove_verdict(json.loads(prove.stdout))
-
-
 def _consumer_verdict(root: Path, claim: int, vendor_proof: Path | None) -> str:
     consumer = root / f"consumer-{claim}-{'import' if vendor_proof else 'none'}"
     _stage_cli_project(consumer, _consumer(claim))
@@ -80,9 +74,8 @@ def _consumer_verdict(root: Path, claim: int, vendor_proof: Path | None) -> str:
         imports = consumer / ".sugar" / "imports"
         imports.mkdir(parents=True, exist_ok=True)
         shutil.copy(vendor_proof, imports / vendor_proof.name)
-    mint = mint_project(consumer)
-    assert mint.returncode == 0, mint.stderr
-    return _prove(consumer)
+    # Mint and prove through the harness's one door (``mint_and_prove``).
+    return prove_verdict(mint_and_prove(consumer).prove_doc)
 
 
 def test_not_bridged_call_binds_to_an_imported_proof(tmp_path: Path) -> None:

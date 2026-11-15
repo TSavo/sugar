@@ -27,9 +27,9 @@ import cbor2
 from sugar_lift_py_tests.witness_harness import (
     _stage_cli_project,
     _ensure_sugar_bin,
+    mint_project,
     prove_verdict,
     run_source_through_real_solver,
-    run_sugar_cli,
 )
 
 _IMPORTED = (
@@ -118,13 +118,9 @@ def test_the_member_is_the_same_staged_and_unstaged(tmp_path: Path) -> None:
     _stage_cli_project(vendor, _VENDOR)
     (vendor / "test_witness.py").rename(vendor / "idn.py")
 
-    def mint(project: Path, out: str = ".") -> None:
-        if out == ".":
-            for stale in project.glob("blake3-512_*.proof"):
-                stale.unlink()
-        result = run_sugar_cli(
-            project, ["mint", "--out", out, "--quiet"], sugar_bin=sugar
-        )
+    def mint(project: Path) -> None:
+        # The harness's one mint door: hermetic, stale proofs cleared first.
+        result = mint_project(project, sugar_bin=sugar)
         assert result.returncode == 0, result.stderr
 
     mint(consumer)
@@ -133,7 +129,9 @@ def test_the_member_is_the_same_staged_and_unstaged(tmp_path: Path) -> None:
     again = _undecided_members(consumer)
     imports = consumer / ".sugar" / "imports"
     imports.mkdir(parents=True, exist_ok=True)
-    mint(vendor, str(imports))
+    mint(vendor)
+    for vendor_proof in vendor.glob("blake3-512_*.proof"):
+        shutil.copy(vendor_proof, imports / vendor_proof.name)
     assert tuple(imports.glob("*.proof")), "the vendor proof is staged"
     mint(consumer)
     staged = _undecided_members(consumer)
