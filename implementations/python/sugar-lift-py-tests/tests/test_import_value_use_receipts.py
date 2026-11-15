@@ -137,7 +137,12 @@ def test_non_imported_name_gets_no_value_use_receipt(tmp_path: Path) -> None:
         tmp_path, path, source, source_cid, module_identities={}
     )
     assert receipts == []
-    assert set(outcomes.values()) == {"shadowed-non-import"}
+    # The value-use surface states one thing per occurrence: that it is an
+    # authenticated import value use. ``f`` here is bound by a local ``def``
+    # and no import exists to shadow, so the surface states nothing for it.
+    # (``shadowed-non-import`` is the call surface's word for a call head; this
+    # file makes no call.)
+    assert outcomes == {}
 
 
 def test_tampered_source_cid_refuses_value_use_receipts(tmp_path: Path) -> None:
@@ -439,7 +444,10 @@ def test_shadowed_multi_segment_call_head_has_no_import_receipt(tmp_path: Path) 
     )
 
     assert receipts == []
-    assert outcomes == {}
+    # The parameter ``os`` shadows the import, and the call says so: the head
+    # reaches a non-import binding only, whatever the number of segments. A
+    # shadowed head is named, never passed over in silence.
+    assert outcomes == {(3, 11, 3, 33): "shadowed-non-import"}
 
 
 def test_forged_binding_head_with_real_authority_refused(tmp_path: Path) -> None:
