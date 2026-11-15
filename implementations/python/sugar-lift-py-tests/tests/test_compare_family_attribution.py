@@ -49,7 +49,21 @@ def test_call_operand_raise_is_owned_by_call_not_compare_root() -> None:
     assert attributed.body_id == "compare_call_owner.py:5:Compare"
 
 
-def test_authenticated_compare_population_has_closed_three_outcome_split() -> None:
+def test_authenticated_compare_population_has_a_closed_exit_split() -> None:
+    """Every enrolled body ends on one arm, and no arm is a panic.
+
+    Each probe reduces its ``with`` body's comparison with no context, so its
+    operands are undecided (``left < right`` on two formals,
+    ``test_pandas_compare_caller_twins``), and a comparison of undecided
+    operands dispatches to ``__lt__``/``__gt__``/... of a type nothing here
+    decides: it may raise an exception whose type nothing here decides.  That
+    raise is never dropped and never named a type it is not: the body is
+    undischarged, and its nameless face is stated by name in the identity
+    list, as the attribute family's are
+    (``test_authenticated_attribute_family_has_a_closed_exit_split``).  No
+    count of authenticated exits is demanded."""
+    from sugar_lift_py_tests.no_call_body_attribution import AttributionOutcome
+
     repo_root = resolve_repo_root()
     report = run_authenticated_attribution(
         repo_root, families=frozenset({ProducerFamily.COMPARE})
@@ -58,11 +72,17 @@ def test_authenticated_compare_population_has_closed_three_outcome_split() -> No
 
     print(report.render())
     assert row.enrolled == 181
-    assert (
-        row.authenticated_exceptional_exits
-        + row.named_refusals
-        + row.construction_panics
-        == 181
-    )
-    assert report.discrepancies == ()
+    assert row.outcome_total == 181
     assert row.construction_panics == 0
+    assert report.discrepancies == ()
+    assert report.conservation_shortfall == 0
+    undischarged = {
+        body.body_id
+        for body in report.bodies
+        if body.outcome is AttributionOutcome.UNDISCHARGED
+    }
+    assert len(undischarged) == row.undischarged
+    assert {
+        discrepancy.body_id
+        for discrepancy in report.exceptional_exit_identity_discrepancies
+    } == undischarged
