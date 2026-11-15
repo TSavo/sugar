@@ -335,6 +335,10 @@ jobs:
         run: |
           set +e -uo pipefail
           export SUGAR_BIN="$("$GITHUB_WORKSPACE/bin/sugarbin" --profile release)"
+          # Each twin keeps its source, lift doc and prove doc here; uploaded
+          # with the logs so a failing twin is diagnosed from CI's artifact.
+          rm -rf "$GITHUB_WORKSPACE/twin-evidence"
+          export SUGAR_WITNESS_EVIDENCE_DIR="$GITHUB_WORKSPACE/twin-evidence"
           mapfile -t files < "$RUNNER_TEMP/twins-rerun.txt"
           PYTHONPATH="$GITHUB_WORKSPACE/tools:$PYTHONPATH" python -m pytest "${files[@]}" -q \
             -p no:cacheprovider -p no:randomly \
@@ -405,6 +409,7 @@ jobs:
           path: |
             twins.log
             federation.log
+            twin-evidence/**
           if-no-files-found: ignore
       - name: Job wall time
         if: ${{ !cancelled() }}
