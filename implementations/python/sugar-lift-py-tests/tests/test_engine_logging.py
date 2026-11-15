@@ -84,8 +84,15 @@ def test_one_exception_emits_one_loud_terminal_across_nested_frames(
     assert engine_log._ACTIVE == {}
 
 
-def test_engine_live_log_is_flushed_outside_log_capture(tmp_path) -> None:
+def test_engine_live_log_is_flushed_outside_log_capture(
+    tmp_path, monkeypatch
+) -> None:
     path = tmp_path / "engine.jsonl"
+    # The sink writes enter/exit spans only with tracing on.  The measurement
+    # drivers switch it off in the process environment when a test runs them
+    # in-process (``control_effect_recensus``, ``_enum_floor_runtime``), so
+    # this test states the setting it is about instead of inheriting it.
+    monkeypatch.setenv("SUGAR_ENGINE_TRACE_EVENTS", "1")
     previous = engine_log._LIVE_HANDLER
     engine_log._LIVE_HANDLER = None
     try:
