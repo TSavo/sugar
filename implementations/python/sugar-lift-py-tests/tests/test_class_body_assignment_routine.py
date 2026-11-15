@@ -348,24 +348,27 @@ def _initializer_universe(source: str):
     return function_universe_outcome(initializer)
 
 
-def test_the_initializer_universe_of_a_may_raise_class_runs_on_the_class_it_built() -> (
-    None
-):
+@pytest.mark.parametrize("call", [*_MAY_RAISE_OVER_A_GLOBAL[:1], *_MAY_RAISE_CALLS])
+def test_the_initializer_universe_of_a_may_raise_class_runs_on_the_class_it_built(
+    call: str,
+) -> None:
     """An ``__init__`` universe runs on the receiver its class call makes
     (``ClassConstructorBodySugar.enter_initializer``), on the class its
     statement bound in the module's one run.  With a field call that may
     raise (``limit = float(S)``, ``S`` a module global nothing here decides,
-    the run pinned above) that run binds the class on its completed arm,
-    and the statement's halt is the run's, not this universe's: the
-    universe is one completed face.
+    the run pinned above; ``limit = os.getcwd()``) that run binds the class
+    on its completed arm, and the statement's halt is the run's, not this
+    universe's: the universe is one completed face.
 
-    The probe was ``limit = os.getcwd()``: in the module's run its class
-    body holds the ``ContainerMutationStatement`` the module threading makes
-    of ``x = r.m()`` on the import ``os``, which the class statement refuses
-    by name (``ClassDef._require_class_members``).  That refusal is the
-    module run's, recorded on #7757, and not this universe's question."""
+    In the module's run ``limit = os.getcwd()`` is the
+    ``ContainerMutationStatement`` the module threading makes of ``x =
+    r.m()`` on the import ``os``.  The class body admits it as every simple
+    statement the block reduces (``ClassDef._require_class_members``), and
+    ``limit`` is read off the block's state under the key the statement
+    binds it under (``rebinds``); the state of ``os`` after the call is the
+    module's, not a class field."""
     completed, halts = _faces(
-        _initializer_universe("class Box:\n    limit = float(S)\n" + _INIT)
+        _initializer_universe(f"class Box:\n    limit = {call}\n" + _INIT)
     )
 
     assert (completed, halts) == (1, ())
