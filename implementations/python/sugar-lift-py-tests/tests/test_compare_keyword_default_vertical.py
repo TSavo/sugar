@@ -60,17 +60,32 @@ class _Expected:
 
 
 def _program_outcomes():
+    """``helper`` alone, then each ``helper(...)`` reduced where it runs: in
+    ``caller``'s body, so after import.
+
+    A default is evaluated once, by the ``def`` statement: a call that omits
+    the formal reads the value the module run bound under the default's key
+    (``with_module_final_globals``, ``DefaultValueSugar``). A module-level
+    call reduced alone is part of no module run -- no statement bound the key
+    -- and is refused by name, so the calls stand in a body here.
+    """
     source = (
         "def helper(left, right=2):\n"
-        "    return left < right\n\n"
-        "helper(None, 2)\n"
-        "helper(None, right=2)\n"
-        "helper(None)\n"
-        "helper(1, right=2)\n"
+        "    return left < right\n\n\n"
+        "def caller():\n"
+        "    helper(None, 2)\n"
+        "    helper(None, right=2)\n"
+        "    helper(None)\n"
+        "    helper(1, right=2)\n"
     )
     nodes = tuple(_tree(source).nodes())
-    function = next(node for node in nodes if isinstance(node, FunctionDef))
+    function = next(
+        node
+        for node in nodes
+        if isinstance(node, FunctionDef) and node.name == "helper"
+    )
     calls = tuple(node for node in nodes if isinstance(node, Call))
+    assert len(calls) == 4
     return function.sugar().desugar(None), tuple(
         call.sugar().desugar(None) for call in calls
     )
