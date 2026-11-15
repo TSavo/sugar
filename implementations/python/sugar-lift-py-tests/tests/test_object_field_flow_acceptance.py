@@ -424,10 +424,17 @@ def test_opaque_call_leaves_every_object_of_a_reachable_class_undecided(
     from sugar_source_tree.container_mutation import _identity
 
     returned = next(node for node in substituted.walk() if node.kind == "Return")
-    # The other object's read is its value after the call too: the call may
-    # have changed its class.
+    # The other object's read is not decided to be the 11 its store left:
+    # the call may have changed its class.  ``right = Vessel()`` is the
+    # class's coordinate and edge (#7757 step 6, #8738), so ``right`` is a
+    # class call's result, and a store on it leaves the object after code
+    # the read does not see (#8746): the read is undecided at reduce, until
+    # the post-call object state (step 7) and dispatch on a class call's
+    # result (step 8) decide it at prove.  (It was read through
+    # ``ReceiverAfterCall`` at substitution while ``Vessel()`` was applied at
+    # lift.)
     assert returned.value.kind == "Attribute"
-    assert _identity(returned.value.value).kind == "ReceiverAfterCall"
+    assert _claims_no_field_value(_outcome_or_panic(path, "boundary"))
     states = [node for node in substituted.walk() if node.kind == "ObjectPlaceStateV1"]
     assert len({state.object_identity_cid for state in states}) == 2
     # The exposed object's name is rebound by the one exposure rule
@@ -474,7 +481,12 @@ def test_custom_dispatch_stays_loud_without_constructed_behavior(tmp_path, membe
         "class Vessel:\n    " + member + "\n\ndef boundary():\n    item = Vessel()\n"
         "    item.payload = 7\n    return item.payload\n"
     )
-    assert _is_typed_loud(_outcome_or_panic(path, "boundary"))
+    # Was typed loud while ``Vessel()`` was applied at lift and its namespace
+    # read off the instance.  ``item`` is a class call's result (#8738): the
+    # store leaves the object after code the read does not see (#8746), so
+    # the read is undecided -- never the 7 the custom dispatch may not have
+    # stored -- until dispatch on a class call's result (step 8).
+    assert _claims_no_field_value(_outcome_or_panic(path, "boundary"))
 
 
 def test_non_admitted_class_call_keeps_ordinary_call_construction(tmp_path):
@@ -517,7 +529,10 @@ def test_custom_setitem_receiver_stays_loud(tmp_path):
         "    item[0] = 7\n"
         "    return item[0]\n"
     )
-    assert _is_typed_loud(_outcome_or_panic(path, "boundary"))
+    # Was typed loud; today undecided, never 7, until step 8 dispatches the
+    # source ``__setitem__`` on a class call's result
+    # (``_item_store_on_a_class_call_result``).
+    assert _claims_no_field_value(_outcome_or_panic(path, "boundary"))
 
 
 def test_custom_getitem_receiver_stays_loud(tmp_path):
@@ -531,28 +546,47 @@ def test_custom_getitem_receiver_stays_loud(tmp_path):
         "    item[0] = 7\n"
         "    return item[0]\n"
     )
-    assert _is_typed_loud(_outcome_or_panic(path, "boundary"))
+    # Was typed loud; today undecided until step 8 dispatches the source
+    # ``__getitem__`` on a class call's result (where Python's 7 is decided).
+    assert _claims_no_field_value(_outcome_or_panic(path, "boundary"))
+
+
+def _item_store_on_a_class_call_result(outcome) -> None:
+    """An item store on ``item = Vessel()`` as the lift states it today.
+
+    ``Vessel()`` is the class's coordinate and edge (#7757 step 6, #8738):
+    ``item`` is a class call's result, whose class namespace the lift no
+    longer reads off an instance made by applying the constructor.  Which
+    ``__setitem__`` (or none, CPython's ``TypeError``) the store runs is
+    dispatch on a class call's result, decided at prove (step 8, not
+    merged).  Until then the store is undecided: the outcome keeps a halt
+    for the raise Python takes (or waits on a formal as its own proof states
+    it), and never completes with the stored item read back."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    assert isinstance(outcome, (ExitSet, NativeOperationExitCarrierV1)), outcome
+    if isinstance(outcome, ExitSet):
+        assert outcome.halts(), outcome
+    assert _claims_no_field_value(outcome), outcome
 
 
 def _item_assignment_type_error(path: Path, source: str) -> None:
     """``item[k] = v`` on an instance of a class no class of whose MRO binds
     ``__setitem__`` (``object`` does not): CPython raises ``TypeError``
     ("'Vessel' object does not support item assignment") at the first store,
-    and nothing after it runs.  Never a completion that stores the item on the
-    instance, and never a construction panic: the type's namespace decides
-    it (``ObjectValue.setitem``)."""
+    and nothing after it runs.  The lift decided it here while ``Vessel()``
+    was applied at lift (every arm a ``TypeError``); today it is undecided
+    until step 8 (``_item_store_on_a_class_call_result``), never a
+    completion that stores the item on the instance."""
     path.write_text(source)
     native: dict = {}
     exec(compile(source, str(path), "exec"), native)
     with pytest.raises(TypeError, match="does not support item assignment"):
         native["boundary"]()
 
-    outcome = _outcome_or_panic(path, "boundary")
-    assert isinstance(outcome, ExitSet), outcome
-    assert outcome.halts() == outcome.exits, outcome
-    assert [halt.effect.exception_name for halt in outcome.halts()] == [
-        "TypeError"
-    ], outcome
+    _item_store_on_a_class_call_result(_outcome_or_panic(path, "boundary"))
 
 
 def test_plain_object_subscript_store_then_read_uses_same_field_map(tmp_path):
@@ -594,9 +628,11 @@ def test_distinct_constructed_subscript_keys_do_not_collide(tmp_path):
 
 def _formal_key_type_error(path: Path, statement: str, message: str) -> None:
     """``statement`` over ``item[key]`` on an instance whose type binds no
-    item method: CPython raises ``TypeError`` whatever ``key`` is, so the
-    lift halts with it at once, never waiting on the caller's ``key``
-    (``receiver_lacks_item_method``)."""
+    item method: CPython raises ``TypeError`` whatever ``key`` is.  The lift
+    halted with it at once while ``Vessel()`` was applied at lift
+    (``receiver_lacks_item_method``); ``item`` is now a class call's result
+    and the item method is dispatch at prove (step 8), so today the
+    operation is undecided (``_item_store_on_a_class_call_result``)."""
     source = (
         "class Vessel:\n    pass\n\n"
         "def boundary(key):\n"
@@ -612,11 +648,16 @@ def _formal_key_type_error(path: Path, statement: str, message: str) -> None:
             native["boundary"](key)
 
     outcome = _outcome_or_panic(path, "boundary")
-    assert isinstance(outcome, ExitSet), outcome
-    assert outcome.halts() == outcome.exits, outcome
-    assert [halt.effect.exception_name for halt in outcome.halts()] == [
-        "TypeError"
-    ], outcome
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    # Undecided until step 8: a halt kept for the raise, or the operation
+    # waiting on the formal ``key`` as its own proof states it; never a
+    # completion with the raise gone.
+    assert isinstance(outcome, (ExitSet, NativeOperationExitCarrierV1)), outcome
+    if isinstance(outcome, ExitSet):
+        assert outcome.halts(), outcome
 
 
 def test_symbolic_subscript_key_store_raises_type_error_at_once(tmp_path):
@@ -653,7 +694,10 @@ def test_unhashable_subscript_key_stays_typed_loud(tmp_path):
         "    item[[]] = 7\n"
         "    return item[[]]\n"
     )
-    assert _is_typed_loud(_outcome_or_panic(path, "boundary"))
+    # Was typed loud; a class call's result's ``__setitem__`` may accept a
+    # list key, so today the store is undecided until step 8, never 7 read
+    # back (``_item_store_on_a_class_call_result``).
+    _item_store_on_a_class_call_result(_outcome_or_panic(path, "boundary"))
 
 
 def test_out_of_range_list_store_stays_loud(tmp_path):
