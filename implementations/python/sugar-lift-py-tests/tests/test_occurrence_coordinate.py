@@ -1,7 +1,7 @@
 """#7808 (B′): a call's occurrence is its source coordinate, never a repr.
 
-``python:call_result`` and ``python:unknown_callee_call`` name the evaluation
-they stand for by ``python:occurrence(<site coordinate CID>, <path>…)``, and a
+``python:call_result`` (a call's value, and the term its completion atom is
+stated over) names the evaluation it stands for by ``python:occurrence(<site coordinate CID>, <path>…)``, and a
 callee frame's path segment is ``call:<site coordinate CID>``. The coordinate
 is ``SourceFragmentCoordinateV1`` (source CID plus line/col span): the same on
 every mint and every machine. A fragment's repr embedded ``unit.filename``,
@@ -103,7 +103,7 @@ def test_an_unknown_callee_row_names_its_call_by_coordinate(tmp_path: Path) -> N
     calls = [
         cid
         for cid, node in table.nodes.items()
-        if node.get("name") in ("python:call_result", "python:unknown_callee_call")
+        if node.get("name") == "python:call_result"
     ]
     assert calls, "the unknown callee's terms reached the rows"
     for cid in calls:

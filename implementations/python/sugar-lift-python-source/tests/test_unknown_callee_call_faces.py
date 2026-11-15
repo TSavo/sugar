@@ -7,10 +7,11 @@ through to the bare ``call:<name>(..)`` / ``py.call(..)`` coordinate and always
 completed: an ``except`` arm around them was unreachable, and ``(h(), h())``
 claimed both calls return the same object.  Nothing testified to what runs, so
 the call is two-faced (the #7585 law): it completes under
-``python:unknown_callee_call.completes(python:unknown_callee_call(callee,
-site))`` with ``python:call_result(<call term>, <occurrence>)``, and halts with
-an ``UndeterminedRaiseEffect`` (owner ``UnknownCallee:<callee>``) under the
-complement.
+``python:unknown_callee_call.completes(python:call_result(<call term>,
+<occurrence>))`` with that same ``python:call_result`` as its value, and halts
+with an ``UndeterminedRaiseEffect`` (owner ``UnknownCallee:<callee>``) under
+the complement.  A call whose value is discarded completes under the same atom
+over the same term (#7757 step 5): one form, whether the value is read.
 """
 
 from __future__ import annotations
@@ -38,6 +39,37 @@ def test_an_undefined_name_call_may_raise(tmp_path):
     assert term.name == "python:call_result"
     assert term.args[0].name == "call:h"
     assert _owners(halts) == ["UnknownCallee:h"]
+
+
+def _completions(guard):
+    """The term each call completion atom in ``guard`` is stated over."""
+    from test_assignment_evaluates_rhs import _atoms
+
+    return [
+        atom.args[0]
+        for atom in _atoms(guard, {})
+        if atom.name == "python:unknown_callee_call.completes"
+    ]
+
+
+def test_a_read_call_completes_over_the_term_its_value_is(tmp_path):
+    rows = _rows(_exits(tmp_path, "def f():\n    return h()\n"))
+    ((value, guard),) = [(p, g) for kind, p, g in rows if kind == "return"]
+    (term,) = _completions(guard)
+    assert term == value.to_term(owner="test")
+    assert term.name == "python:call_result"
+
+
+def test_a_discarded_call_completes_over_its_call_term(tmp_path):
+    # #7757 step 5: ``h()`` as a statement states its completion over the
+    # same ``python:call_result(call:h(), <occurrence>)`` a read of its value
+    # would, the term prove joins the callee's contract and halts at; never
+    # over the bare name and occurrence, which named no call.
+    rows = _rows(_exits(tmp_path, "def f():\n    h()\n    return 1\n"))
+    ((guard,),) = [(g,) for kind, _p, g in rows if kind == "return"]
+    (term,) = _completions(guard)
+    assert term.name == "python:call_result"
+    assert term.args[0].name == "call:h"
 
 
 def test_an_unread_assignment_keeps_its_raise(tmp_path):

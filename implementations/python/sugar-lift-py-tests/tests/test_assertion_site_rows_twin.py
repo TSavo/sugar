@@ -375,11 +375,13 @@ _CERTAIN_HALT = (
 
 
 def test_a_test_that_certainly_raises_is_refuted(tmp_path: Path) -> None:
-    """A twin's verdict answers "does the test pass". The floor decides
-    ``boom()`` (a same-file call it constructs). Truthful: it returns, the
-    ``assert`` holds on the one completed arm. Lying: it always raises, the
-    test function's every arm halts before the ``assert``, and its row states
-    the halt's guard ``true`` negated: ``false``. Twin: one statement apart."""
+    """A twin's verdict answers "does the test pass". ``boom()`` is a
+    same-file call whose value is discarded: its completion is stated over
+    its call term, as a read value's is, so prove joins ``boom``'s contract
+    there (#7757 step 5). Truthful: it returns, the ``assert`` holds on the
+    arm on which the call completed. Lying: ``boom``'s halt is certain, so no
+    arm on which the call completed exists and the claim is refuted. Twin:
+    one statement apart."""
     truthful = run_source_through_real_solver(
         tmp_path / "t", _CERTAIN_HALT.format(body="    return None")
     )

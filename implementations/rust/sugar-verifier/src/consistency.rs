@@ -3586,9 +3586,10 @@ struct AmbientPost {
     post: Json,
     /// The path conditions of the halts the answering contract states (each
     /// panic locus's `guard`, over the contract's formals). The post speaks
-    /// of completed arms only; a call whose result the claim reads completed,
-    /// so each halt's guard is false under the call's actual. A halt certain
-    /// on that path makes the join unsatisfiable: the claim is refuted.
+    /// of completed arms only; where the call completed
+    /// (`PYTHON_CALL_COMPLETES` over its result), each halt's guard is false
+    /// under the call's actual. A halt certain on that path refutes every
+    /// arm of the claim on which the call completed.
     halt_guards: Vec<Json>,
     /// The halts the answering contract states with their raised type:
     /// `(type, guard)` per panic locus whose `argTerm` names the raised
@@ -3619,6 +3620,12 @@ struct LinkedPostInstance {
 /// term>, python:occurrence(<site coordinate CID>, <path>…))`.
 const PYTHON_CALL_RESULT: &str = "python:call_result";
 const PYTHON_OCCURRENCE: &str = "python:occurrence";
+/// The one atom a Python call completes under, over its result term:
+/// `python:unknown_callee_call.completes(python:call_result(<call term>,
+/// <occurrence>))` (the kit's `UnknownCalleeCallV1.faces`). Every arm on
+/// which the call completed states it, whether the arm reads the call's
+/// value or discards it; an arm on which the call halted states its negation.
+const PYTHON_CALL_COMPLETES: &str = "python:unknown_callee_call.completes";
 
 /// One unanswered call member, as the join reads it.
 struct UnansweredEdge {
@@ -5442,22 +5449,38 @@ fn linked_ambient_post_instances_for_inv(
                 });
                 continue;
             };
-            // The result the claim reads is a completed call: every halt the
-            // contract states is off this path, `not(guard)` under the
-            // call's actual (step 9). A halt certain on the path makes the
-            // join unsatisfiable and refutes the claim; one the actual
-            // rules out conjoins `true`.
+            // Where the call completes, every halt the contract states is
+            // off its path: `completes(<result>) -> not(guard)` under the
+            // call's actual (step 9). The completion is the lifter's one
+            // completion atom over the call's result term
+            // (`PYTHON_CALL_COMPLETES`), the same for a call whose value the
+            // claim reads and one whose value is discarded (#7757 step 5).
+            // A halt certain on the path refutes every arm on which the call
+            // completed; an arm on which it halted (a handler that caught
+            // the raise) is not ruled out by it; one the actual rules out
+            // conjoins `true`. `out` stands for the result term here and is
+            // replaced with it below, after the formals are bound, so no
+            // caller term is ever rewritten by the callee's bindings.
             let mut instance = if post.halt_guards.is_empty() {
                 post.post.clone()
             } else {
-                let mut operands = Vec::with_capacity(post.halt_guards.len() + 1);
-                operands.push(post.post.clone());
-                operands.extend(
+                let off_path = IrFormula::And(
                     post.halt_guards
                         .iter()
-                        .map(|guard| IrFormula::Not(guard.clone()).to_value()),
-                );
-                IrFormula::And(operands).to_value()
+                        .map(|guard| IrFormula::Not(guard.clone()).to_value())
+                        .collect(),
+                )
+                .to_value();
+                let completes = json!({
+                    "kind": "atomic",
+                    "name": PYTHON_CALL_COMPLETES,
+                    "args": [{"kind": "var", "name": post.binding.out_binding}],
+                });
+                IrFormula::And(vec![
+                    post.post.clone(),
+                    json!({"kind": "implies", "operands": [completes, off_path]}),
+                ])
+                .to_value()
             };
             instance = substitute_call_bindings(&instance, &bindings);
             instance = crate::instantiate::substitute_formula_pub(
@@ -11456,12 +11479,32 @@ mod tests {
         post
     }
 
+    /// `ident(3)`'s one completion atom, over its result term: what every
+    /// arm on which the call completed states (`PYTHON_CALL_COMPLETES`).
+    fn ident_completes(site_cid: &str) -> Json {
+        let call = json!({"kind": "ctor", "name": "call:ident", "args": [int(3)]});
+        json!({
+            "kind": "atomic",
+            "name": PYTHON_CALL_COMPLETES,
+            "args": [call_result(call, site_cid)]
+        })
+    }
+
+    /// `assert ident(3) == rhs` as the lifter states it: the call completed,
+    /// and its result is `rhs`.
+    fn completed_ident_claim(rhs: i64, site_cid: &str) -> Json {
+        json!({"kind": "and", "operands": [
+            ident_completes(site_cid),
+            ident_claim(rhs, site_cid)
+        ]})
+    }
+
     #[test]
     fn a_halt_certain_on_the_call_path_refutes_the_claim() {
         // ident(3) certainly raises: the result `ident(3) == 3` reads never
         // exists, so the claim is refuted, although `out = x` alone says 3.
         let result = prove_joined(
-            ident_claim(3, JOIN_SITE),
+            completed_ident_claim(3, JOIN_SITE),
             &[ident_vendor_post_halting_when(eqf(var("x"), int(3)))],
         );
         assert_eq!(
@@ -11475,10 +11518,46 @@ mod tests {
     #[test]
     fn an_unconditional_halt_refutes_every_claim_on_the_call() {
         let result = prove_joined(
-            ident_claim(3, JOIN_SITE),
+            completed_ident_claim(3, JOIN_SITE),
             &[ident_vendor_post_halting_when(eqf(int(1), int(1)))],
         );
         assert_eq!(result.verdict, ObligationVerdict::Unsatisfied, "{}", result.reason);
+    }
+
+    #[test]
+    fn a_halt_certain_on_a_discarded_call_refutes_the_claim() {
+        // `ident(3)` as a statement, then `assert True`: the claim reads no
+        // value of the call, only that it completed (#7757 step 5). The same
+        // completion atom over the same result term joins the same halts.
+        let claim = ident_completes(JOIN_SITE);
+        let lying = prove_joined(
+            claim.clone(),
+            &[ident_vendor_post_halting_when(eqf(int(1), int(1)))],
+        );
+        assert_eq!(lying.verdict, ObligationVerdict::Unsatisfied, "{}", lying.reason);
+        let truthful = prove_joined(claim, &[ident_vendor_post()]);
+        assert_eq!(
+            truthful.verdict,
+            ObligationVerdict::Discharged,
+            "{}",
+            truthful.reason
+        );
+    }
+
+    #[test]
+    fn a_certain_halt_never_refutes_the_arm_that_caught_it() {
+        // `try: a = ident(3) except ValueError: a = 3`, then `assert a == 3`:
+        // ident(3) certainly raises and the handler's arm completes. The
+        // halt rules out only the arm on which the call completed.
+        let caught = json!({"kind": "or", "operands": [
+            completed_ident_claim(3, JOIN_SITE),
+            {"kind": "not", "operands": [ident_completes(JOIN_SITE)]}
+        ]});
+        let result = prove_joined(
+            caught,
+            &[ident_vendor_post_halting_when(eqf(int(1), int(1)))],
+        );
+        assert_eq!(result.verdict, ObligationVerdict::Discharged, "{}", result.reason);
     }
 
     #[test]
@@ -11486,21 +11565,21 @@ mod tests {
         // The halt is at x = 4; the call's actual is 3, so it is off the
         // path and the post decides alone.
         let halts_at_4 = ident_vendor_post_halting_when(eqf(var("x"), int(4)));
-        let truthful = prove_joined(ident_claim(3, JOIN_SITE), &[halts_at_4.clone()]);
+        let truthful = prove_joined(completed_ident_claim(3, JOIN_SITE), &[halts_at_4.clone()]);
         assert_eq!(
             truthful.verdict,
             ObligationVerdict::Discharged,
             "{}",
             truthful.reason
         );
-        let lying = prove_joined(ident_claim(4, JOIN_SITE), &[halts_at_4]);
+        let lying = prove_joined(completed_ident_claim(4, JOIN_SITE), &[halts_at_4]);
         assert_eq!(lying.verdict, ObligationVerdict::Unsatisfied, "{}", lying.reason);
     }
 
     #[test]
     fn the_halt_guard_is_instantiated_at_the_call_actual() {
         let partition = linked_ambient_post_instances_for_inv(
-            &ident_claim(3, JOIN_SITE),
+            &completed_ident_claim(3, JOIN_SITE),
             &[ident_vendor_post_halting_when(eqf(var("x"), int(3)))],
         );
         assert!(partition.dropped.is_empty(), "{:?}", partition.dropped);
@@ -11510,10 +11589,15 @@ mod tests {
             partition.kept[0].instantiated_post,
             canonicalize_formula_json(&IrFormula::And(vec![
                 eqf(call_result(call, JOIN_SITE), int(3)),
-                IrFormula::Not(eqf(int(3), int(3))).to_value(),
+                json!({"kind": "implies", "operands": [
+                    ident_completes(JOIN_SITE),
+                    IrFormula::And(vec![IrFormula::Not(eqf(int(3), int(3))).to_value()])
+                        .to_value(),
+                ]}),
             ])
             .to_value()),
-            "x := the actual in the post and in every halt guard"
+            "x := the actual in the post and in every halt guard, out := the \
+             result in the completion the halts are off the path of"
         );
     }
 
