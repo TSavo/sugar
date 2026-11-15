@@ -303,14 +303,20 @@ def _denotation(exit_set: ExitSet, atoms: tuple) -> dict:
     return table
 
 
-def _legacy_collect(sugars, ctx, done, finish):
+def _legacy_collect(sugars, ctx, done, finish, *, earlier=()):
     """The materialized Cartesian ``_collect`` this PR replaces, kept as oracle.
 
     This is the pre-#6309 body verbatim.  It is the reference denotation, and it
     is the thing that grows as ``m ** k``; it is retained ONLY so the laws below
     can prove the factored representation denotes the same outcomes on bounded
     examples.  It is never on the production path.
+
+    ``earlier`` is the production collector's keyword (a call's callee value,
+    evaluated before its arguments).  The oracle's calls have no callee
+    expression, so it is always empty here; anything else is not a shape this
+    oracle denotes.
     """
+    assert earlier == (), earlier
     if not sugars:
         return finish(done)
     head, *tail = sugars
@@ -408,7 +414,11 @@ def test_arm_population_grows_linearly_with_spread_arity(kind: str) -> None:
         populations[arity] = _arm_population(_spread(elements, kind))
 
     # One completed face plus one halted arm per element: strictly linear.
-    assert populations == {arity: arity + 1 for arity in _ARITIES}, populations
+    # The unprojected call ``f(*a, ...)`` is itself the one unanswered call
+    # (#7585, #7757): it may raise, so it adds exactly one halted arm of its
+    # own, whatever the arity.
+    own = 1 if kind == "call" else 0
+    assert populations == {arity: arity + 1 + own for arity in _ARITIES}, populations
 
 
 @pytest.mark.parametrize("kind", _KINDS)
@@ -470,7 +480,15 @@ def test_neither_outcome_face_disappears(kind: str) -> None:
     exits = _spread(elements, kind)
     assert any(isinstance(e, Completed) for e in exits.exits)
     halted_effects = {e.effect for e in exits.exits if isinstance(e, Halted)}
-    assert halted_effects == {element.effect for element in elements}
+    element_effects = {element.effect for element in elements}
+    if kind == "call":
+        # Every element's halt, and exactly one more: the unanswered call's
+        # own undetermined raise.
+        (own,) = halted_effects - element_effects
+        assert own.exception_name is None
+        assert own.producer_node_owner == "UnknownCallee:f"
+        halted_effects = halted_effects - {own}
+    assert halted_effects == element_effects
 
 
 @pytest.mark.parametrize("kind", _KINDS)
@@ -511,5 +529,11 @@ def test_distinct_occurrences_stay_distinct_when_content_matches(kind: str) -> N
     # occurrence identity — merging the twins would silently drop an element.
     for arm in completed:
         term = arm.value.to_term(owner="occurrence")
+        if kind == "call":
+            # A call's result is its call term at its occurrence
+            # (``python:call_result(<call>, <occurrence>)``): the operand
+            # positions are the call term's.
+            assert isinstance(term, _Ctor) and term.name == "python:call_result", term
+            term = term.args[0]
         assert isinstance(term, _Ctor) and term.name == name, term
         assert len(term.args) - leading == 2, term
