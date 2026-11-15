@@ -17668,113 +17668,13 @@ def selected_manager_calls(expr):
     return (*body, *orelse)
 
 
-# What ``With._seated_manager_resolution`` answers for an occurrence nobody
-# seated a row for.  A sentinel, not None: a seated row is read as it is.
-_UNSEATED_MANAGER_ROW = object()
-
-
 class With(Statement):
+    """A ``with`` constructs from its head alone (#7757): its manager is what
+    the head reduces to.  No table is read and no row is required."""
+
     items: Tuple[WithItem, ...]
     body: Tuple[Statement, ...]
     _child_fields = ("items", "body")
-
-    def _prebound_manager_resolution(self, item: WithItem):
-        """Read the sole preconstruction contract resolution for this occurrence.
-
-        The require door: a row nobody seated refuses by name, here.
-        """
-        coordinate, resolution = self._seated_manager_resolution(item)
-        if resolution is not _UNSEATED_MANAGER_ROW:
-            return resolution
-        # Construct or panic: no contract ref means construction is unwritten.
-        from .panic import ContextManagerResolutionConstructionGap
-
-        panic = ContextManagerResolutionConstructionGap(
-            blame=self.fragment,
-            owner="With._construct_sugar",
-            observed=(
-                "no context-manager derivation for source coordinate "
-                f"{coordinate}"
-            ),
-            requested="one resolved authenticated ContextManagerContractRefV1",
-            fix=(
-                "publish or derive the exact typed CM contract before construction; "
-                "With constructs only through the require door"
-            ),
-            use_site=coordinate,
-        )
-        testify(self.reporter, "report_gap", self, panic)
-        raise panic
-
-    def _seated_manager_resolution(self, item: WithItem):
-        """``(coordinate, row)`` for this occurrence; ``row`` is
-        ``_UNSEATED_MANAGER_ROW`` when nobody seated one.
-
-        The one lookup the require door reads.  It never refuses for absence:
-        only the door (``_prebound_manager_resolution``) does.
-        """
-        context = self._require_construction_context(
-            owner="With._prebound_manager_resolution"
-        )
-        from sugar_lift_py_tests.context_manager_resolution import (
-            ContractRefProtocolError,
-            SourceFragmentCoordinateV1,
-            TreeConstructionContextV1,
-        )
-
-        if not isinstance(context, TreeConstructionContextV1):
-            backend_defect(
-                blame=self.fragment,
-                owner="With._construct_sugar",
-                observed="tree construction context is not TreeConstructionContextV1",
-                requested="the immutable prereq-2 contract-ref table",
-                fix="inject the decoded typed table before SourceFile construction",
-            )
-        start_line, start_col, end_line, end_col = item._manager_use_site_span()
-        coordinate = SourceFragmentCoordinateV1(
-            self.unit.source_cid,
-            start_line,
-            start_col,
-            end_line,
-            end_col,
-        )
-        seat = coordinate
-        if hasattr(item, "selected_arm_of_start_line"):
-            # One arm of a branch-selected head (``_selected_manager_sugar``):
-            # the table enrolls the ``with`` item, never an arm's call, so the
-            # arm reads its item's own row.
-            seat = SourceFragmentCoordinateV1(
-                self.unit.source_cid,
-                item.selected_arm_of_start_line,
-                item.selected_arm_of_start_col,
-                item.selected_arm_of_end_line,
-                item.selected_arm_of_end_col,
-            )
-        try:
-            return coordinate, context.contract_refs.require(seat)
-        except ContractRefProtocolError:
-            return coordinate, _UNSEATED_MANAGER_ROW
-
-    def _manager_answered_by_reduction(self, item: WithItem) -> bool:
-        """True when the item's row is the undecided gap: nothing the table
-        holds answers the manager, so the manager is what the one reduction
-        of the head gives (``_reduced_manager_sugar``).
-
-        The table answers an imported call from the import table and the
-        imported proofs; every other head -- a same-file call, a name, an
-        attribute, anything -- keeps the undecided row, and its value is read
-        at reduce like any expression's.  A row of any other kind is the
-        table's own answer, read as it is."""
-        from sugar_lift_py_tests.context_manager_resolution import (
-            UNDECIDED_GAP_KIND,
-            ContextManagerResolutionGapV1,
-        )
-
-        resolution = self._seated_manager_resolution(item)[1]
-        return (
-            isinstance(resolution, ContextManagerResolutionGapV1)
-            and resolution.kind == UNDECIDED_GAP_KIND
-        )
 
     def _reduced_manager_sugar(self, item: WithItem, binds_enter_result: bool):
         """``with <head>:`` whose manager is the value the head reduces to.
@@ -17817,37 +17717,6 @@ class With(Statement):
             exit_face_id=exit_face,
             site=self.fragment,
         )
-
-    def _raise_resolution_gap(self, resolution) -> None:
-        from .panic import ContextManagerResolutionConstructionGap
-
-        # Construct or panic. Name the With door and the contract that was needed.
-        detail = getattr(resolution, "detail", None)
-        what = getattr(resolution, "kind", None)
-        target = getattr(resolution, "target_symbol", None)
-        observed = "authenticated preconstruction resolution has no contract ref"
-        if what:
-            observed = f"{observed}: {what}"
-        if target:
-            observed = f"{observed} for manager {target!r}"
-        if detail:
-            observed = f"{observed} [{detail}]"
-        panic = ContextManagerResolutionConstructionGap(
-            blame=resolution.use_site,
-            owner="With._construct_sugar",
-            observed=observed,
-            requested="one resolved authenticated ContextManagerContractRefV1",
-            fix=(
-                "publish or resolve the exact typed CM contract before construction; "
-                "With constructs only through the require door"
-            ),
-            use_site=getattr(resolution, "use_site", None),
-            target_symbol=target if isinstance(target, str) else None,
-            resolution_kind=what if isinstance(what, str) else None,
-            demand_cid=getattr(resolution, "demand_cid", None),
-        )
-        testify(self.reporter, "report_gap", self, panic)
-        raise panic
 
     def _provider_manager_call(self, item: WithItem):
         """The Call that authenticates this manager item, by binding not spelling.
@@ -17939,81 +17808,6 @@ class With(Statement):
         # bare Name spelling at the With head.
         return call.sugar()
 
-    def _require_narrow_cm_ref(self, item: WithItem):
-        resolution = self._prebound_manager_resolution(item)
-        if resolution is None:
-            return None
-        from sugar_lift_py_tests.context_manager_contract import (
-            EffectBoundarySemanticsV1,
-            ExpectsModeV1,
-            SuppressesModeV1,
-            RaiseEffectKindV1,
-            WarningEffectKindV1,
-            NeverSuppressesDispositionV1,
-            ReturnTruthinessDispositionV1,
-            ProtocolResourceSemanticsV1,
-            TotalCompletionV1,
-        )
-        from sugar_lift_py_tests.context_manager_resolution import (
-            ContextManagerContractRefV1,
-            ContextManagerResolutionGapV1,
-        )
-        from sugar_lift_py_tests.ir import PrimitiveSort
-        from .panic import UnsupportedContextManagerSemantics
-
-        if isinstance(resolution, ContextManagerResolutionGapV1):
-            self._raise_resolution_gap(resolution)
-        if not isinstance(resolution, ContextManagerContractRefV1):
-            backend_defect(
-                blame=self.fragment,
-                owner="With._construct_sugar",
-                observed=f"unexpected resolution value {type(resolution).__name__}",
-                requested="ContextManagerContractRefV1 or ContextManagerResolutionGapV1",
-                fix="keep the injected table closed and typed",
-            )
-        semantics = resolution.semantics
-        admitted_resource = (
-            isinstance(semantics, ProtocolResourceSemanticsV1)
-            and semantics.schema_version == "1"
-            and isinstance(semantics.enter.completion, TotalCompletionV1)
-            and semantics.enter.projection == "enter-result"
-            and isinstance(semantics.enter.sort, PrimitiveSort)
-            and semantics.enter.sort.name == "Value"
-            and isinstance(semantics.exit.completion, TotalCompletionV1)
-            and isinstance(
-                semantics.exit.disposition,
-                (NeverSuppressesDispositionV1, ReturnTruthinessDispositionV1),
-            )
-        )
-        admitted_boundary = (
-            isinstance(semantics, EffectBoundarySemanticsV1)
-            and semantics.schema_version == "1"
-            and isinstance(semantics.mode, (ExpectsModeV1, SuppressesModeV1))
-            and isinstance(
-                semantics.effect_kind, (RaiseEffectKindV1, WarningEffectKindV1)
-            )
-        )
-        if not (admitted_resource or admitted_boundary):
-            panic = UnsupportedContextManagerSemantics(
-                blame=self.fragment,
-                demand_cid=resolution.demand_cid,
-                member_cid=resolution.contract_cid,
-                owner="With._construct_sugar",
-                observed=(
-                    "authenticated CM member carries unsupported enter/exit semantics "
-                    f"at {resolution.contract_cid}"
-                ),
-                requested=(
-                    "total Value resource with source-derived NeverSuppresses or "
-                    "ReturnTruthiness disposition, or typed "
-                    "Expects/Suppresses Raise/Warning boundary"
-                ),
-                fix="leave unsupported authenticated semantics loud; never upgrade testimony",
-            )
-            testify(self.reporter, "report_gap", self, panic)
-            raise panic
-        return resolution
-
     def _selected_manager_sugar(self, expr):
         """``with ctx:`` where the arms of an ``if`` each bound ``ctx = cm()``.
 
@@ -18086,56 +17880,22 @@ class With(Statement):
         Nothing about exit routing is special-cased -- the store is simply the
         first thing the body does.
 
-        Restricted to ProtocolResource semantics on purpose when a row is
-        seated. The EffectBoundary contract refuses an as-binding outright (its
-        projection is not authenticated), and that refusal stays total;
-        injecting a store there would route a binding its contract has not
-        admitted.
-
-        A row nobody seated is construction's question, not this rewrite's
-        (as for a simple name, ``substitution_binding``): the store is lowered
-        onto the enter result, and ``_construct_sugar`` asks the require door
-        and refuses by name. So substitution never demands a row.
+        Every manager binds its enter result the same way: a generator-based
+        one (the first yield, ``GeneratorWithSugar``) and the head's reduced
+        value (``WithReducedManagerSugar``) both bind the enter slot, so the
+        store is always lowered onto it: ``a``/``b`` read their projections of
+        that store, never their prior state by spelling.  No row is read.
 
         Idempotent: the rewrite only fires on a target this node did not already
         rewrite, detected structurally by the injected store's own value being
         this item's enter-result ObservationRef.
         """
-        from sugar_lift_py_tests.context_manager_contract import (
-            ENTER_RESULT,
-            ProtocolResourceSemanticsV1,
-        )
-        from sugar_lift_py_tests.context_manager_resolution import (
-            ContextManagerContractRefV1,
-        )
+        from sugar_lift_py_tests.context_manager_contract import ENTER_RESULT
         from .shadow import rewrite
 
         target = item.optional_vars
         if target is None or target.kind == "Name":
             return self
-        # A generator-based manager binds its enter result (the first yield)
-        # exactly as a class-based one does (``GeneratorWithSugar`` /
-        # ``WithReducedManagerSugar`` both bind the enter slot), so its store
-        # target is lowered the same way: ``a``/``b`` read their projections
-        # of that store, never their prior state by spelling.  Its contract
-        # is the generator frame, read before any resolution is required.
-        # A seated row is read as the door reads it; an unseated one lowers
-        # the store and leaves the refusal to construction.  The undecided
-        # row lowers it too: the manager is the head's reduced value, whose
-        # enter result the store reads (``_reduced_manager_sugar``).
-        if self._generator_manager_frame(item) is None:
-            resolution = self._seated_manager_resolution(item)[1]
-            if (
-                resolution is not _UNSEATED_MANAGER_ROW
-                and not self._manager_answered_by_reduction(item)
-                and (
-                    not isinstance(resolution, ContextManagerContractRefV1)
-                    or not isinstance(
-                        resolution.semantics, ProtocolResourceSemanticsV1
-                    )
-                )
-            ):
-                return self
 
         enter_slot = f"{item._manager_slot_id()}#enter_result"
         if self._already_bound_store(enter_slot):
@@ -18156,12 +17916,12 @@ class With(Statement):
         return value.kind == "ObservationRef" and value.slot_id == enter_slot
 
     def _construct_sugar(self):
-        """Build only from the pre-resolved authenticated CM contract ref.
+        """Build from the head alone (#7757).
 
-        There is no consumer/vendor membrane fallback. Missing provider
-        publication or resolution remains a typed construction gap. The narrow
-        resource arm admits one synchronous manager and an optional simple-name
-        binding to its real enter-result projection."""
+        ``with a, b:`` nests; a branch-selected head is the ``if`` over its
+        arms; a same-file generator head runs the frame its call applies; any
+        other head is the manager it reduces to (``_reduced_manager_sugar``).
+        No table is read, so no row is required and none can be missing."""
         if len(self.items) != 1:
             return self._nest_items()._construct_sugar()
         item = self.items[0]
@@ -18182,11 +17942,8 @@ class With(Statement):
         #   `Assign` supplies attribute/subscript/tuple/nested/starred totality.
         #
         # Either way the enter-result slot must be BOUND whenever the site names
-        # a target, which is what `binds_enter_result` (not `as_name`) decides.
-        as_name = None
+        # a target, which is what `binds_enter_result` decides.
         binds_enter_result = item.optional_vars is not None
-        if binds_enter_result and item.optional_vars.kind == "Name":
-            as_name = item.optional_vars.id
 
         generator_manager = self._generator_manager_sugar(item)
         if generator_manager is not None:
@@ -18219,265 +17976,12 @@ class With(Statement):
                 site=self.fragment,
             )
 
-        if self._manager_answered_by_reduction(item):
-            # Nothing the table holds answers this manager: it is the value
-            # the head reduces to, entered through that value's own type.
-            return self._reduced_manager_sugar(item, binds_enter_result)
-
-        # SourceTreePanic from the door propagates — no Exception swallow.
-        resolved_ref = self._require_narrow_cm_ref(item)
-        if resolved_ref is not None:
-            from sugar_lift_py_tests.context_manager_contract import (
-                EffectBoundarySemanticsV1,
-                ProtocolResourceSemanticsV1,
-            )
-            from sugar_lift_py_tests.kit_rpc import ContextManagerEdgeDtoV1
-            from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
-
-            if isinstance(resolved_ref.semantics, EffectBoundarySemanticsV1):
-                from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
-                    WithEffectBoundarySugar,
-                )
-
-                observation_slot = None
-                if as_name is not None:
-                    # The slot exists because the CONTRACT declares a binding,
-                    # never because the source spelled `as`. A manager that
-                    # binds nothing cannot acquire a slot by being written with
-                    # a name next to it.
-                    observation_slot = self._effect_boundary_observation_slot(
-                        item, resolved_ref
-                    )
-                elif binds_enter_result:
-                    # A STORE target on an EffectBoundary. #6391 authenticated an
-                    # observation slot for a NAME; it did not authenticate a
-                    # store, and `_bind_store_target` deliberately declines to
-                    # rewrite this contract. Without this arm the binding would
-                    # silently become `observation_slot = None` -- the site would
-                    # construct while dropping the binding the source wrote.
-                    # Stay loud instead; a dropped binding is the one outcome
-                    # neither contract admits.
-                    from .panic import UnsupportedWithBindingTarget
-
-                    panic = UnsupportedWithBindingTarget(
-                        blame=item.optional_vars.fragment,
-                        owner="With._construct_sugar",
-                        observed=(
-                            "EffectBoundary as-binding to a "
-                            f"{item.optional_vars.kind} store target"
-                        ),
-                        requested="an EffectBoundary manager bound to a simple Name, or no target",
-                        fix=(
-                            "authenticate a store projection for this contract, or "
-                            "keep the store target loud -- never drop the binding"
-                        ),
-                    )
-                    testify(self.reporter, "report_gap", self, panic)
-                    raise panic
-                manager_sugar = item.context_expr.sugar()
-                manager_sugar = self._authenticate_expected_exception_type(
-                    item.context_expr, manager_sugar, resolved_ref
-                )
-                return WithEffectBoundarySugar(
-                    manager=manager_sugar,
-                    body=tuple(stmt.sugar() for stmt in self.body),
-                    semantics=resolved_ref.semantics,
-                    contract_ref=resolved_ref,
-                    context_manager_edge=ContextManagerEdgeDtoV1.from_resolved(
-                        resolved_ref, resolved_ref.use_site
-                    ),
-                    observation_slot_id=observation_slot,
-                    site=self.fragment,
-                )
-
-            if not isinstance(resolved_ref.semantics, ProtocolResourceSemanticsV1):
-                backend_defect(
-                    blame=self.fragment,
-                    owner="With._construct_sugar",
-                    observed="closed CM resolver returned an unknown semantics variant",
-                    requested="ProtocolResourceSemanticsV1 or EffectBoundarySemanticsV1",
-                    fix="keep the semantics union exhaustive",
-                )
-
-            manager_slot = item._manager_slot_id()
-            enter_slot = f"{manager_slot}#enter_result" if binds_enter_result else None
-            enter_definition, exit_definition = (
-                self._require_native_resource_definitions(resolved_ref)
-            )
-            from dataclasses import replace
-
-            enter_sugar = replace(
-                item._make_enter_call().sugar(),
-                native_definition_coordinate=enter_definition,
-            )
-            exit_sugar = replace(
-                item._make_parametric_exit_call().sugar(),
-                native_definition_coordinate=exit_definition,
-            )
-            return WithResourceSugar(
-                manager=item.context_expr.sugar(),
-                manager_slot_id=manager_slot,
-                enter=enter_sugar,
-                exit=exit_sugar,
-                exit_face_id=item._exit_face_id(),
-                body=tuple(stmt.sugar() for stmt in self.body),
-                disposition=resolved_ref.semantics.exit.disposition,
-                contract_ref=resolved_ref,
-                context_manager_edge=ContextManagerEdgeDtoV1.from_resolved(
-                    resolved_ref, resolved_ref.use_site
-                ),
-                enter_slot_id=enter_slot,
-                enter_definition=enter_definition,
-                exit_definition=exit_definition,
-                site=self.fragment,
-            )
-        panic = RuntimeSelectedContextManager(
-            blame=self.fragment,
-            owner="With.sugar",
-            observed="With manager has no injected authenticated preconstruction authority",
-            requested="one resolved ContextManagerContractRefV1 at the exact use-site",
-            fix="run authenticated contract resolution before tree construction",
-        )
-        testify(self.reporter, "report_gap", self, panic)
-        raise panic
-
-    def _require_native_resource_definitions(self, resolved_ref):
-        """Require both protocol methods through the one authenticated door."""
-        from sugar_lift_py_tests.context_manager_resolution import (
-            NativeDefinitionCoordinateGapV1,
-            NativeProtocolSlot,
-        )
-        from .panic import SugarNotWritten
-
-        refs = self._require_construction_context(
-            owner="With._require_native_resource_definitions"
-        ).contract_refs
-        receiver = resolved_ref.use_site
-        enter = refs.require_native_definition(
-            receiver, NativeProtocolSlot.CONTEXT_ENTER
-        )
-        exit_ = refs.require_native_definition(
-            receiver, NativeProtocolSlot.CONTEXT_EXIT
-        )
-        for resolution in (enter, exit_):
-            if isinstance(resolution, NativeDefinitionCoordinateGapV1):
-                raise SugarNotWritten(
-                    blame=self.fragment,
-                    owner="With._require_native_resource_definitions",
-                    observed=resolution.reason,
-                    requested=(
-                        "authenticated source definition coordinates for both "
-                        "context-enter and context-exit"
-                    ),
-                    fix=(
-                        "retain this native resource as undischarged until the "
-                        "shared definition door resolves the missing slot"
-                    ),
-                )
-        return enter, exit_
-
-    def _authenticate_expected_exception_type(self, manager, manager_sugar, reference):
-        """Attach the floor-owned identity to the selected real call operand."""
-        from dataclasses import replace
-
-        from sugar_lift_py_tests.context_manager_contract import (
-            FormalArgumentProjectionV1,
-            KeywordOnlyV1,
-            PositionalOnlyV1,
-            PositionalOrKeywordV1,
-        )
-        from sugar_lift_py_tests.sugar.authenticated_exception_type_sugar import (
-            AuthenticatedExceptionTypeSugar,
-        )
-        from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
-        from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
-
-        selector = reference.semantics.expected_type_operand
-        if not isinstance(selector, FormalArgumentProjectionV1):
-            return manager_sugar
-        if not isinstance(manager, Call) or not isinstance(
-            manager_sugar, (CallSiteSugar, MethodCallSugar)
-        ):
-            return manager_sugar
-        positional = list(enumerate(manager.args))
-        keywords = {
-            keyword.arg: keyword.value for keyword in manager.keywords if keyword.arg
-        }
-        actual = None
-        actual_location = None
-        for index, parameter in enumerate(reference.import_signature.parameters):
-            if positional and isinstance(
-                parameter.passing, (PositionalOnlyV1, PositionalOrKeywordV1)
-            ):
-                position, value = positional.pop(0)
-                location = ("arg", position)
-            elif parameter.name in keywords and isinstance(
-                parameter.passing, (PositionalOrKeywordV1, KeywordOnlyV1)
-            ):
-                value = keywords[parameter.name]
-                location = ("keyword", parameter.name)
-            else:
-                continue
-            if index == selector.parameter_index:
-                actual, actual_location = value, location
-                break
-
-        def authenticate(node, sugar):
-            # The selected formal is classinfo. Preserve tuple construction and
-            # authenticate each member at its own source coordinate, rather
-            # than trying to evaluate a dotted member on a symbolic module.
-            from sugar_lift_py_tests.sugar.collection_sugar import TupleSugar
-
-            if isinstance(node, Tuple_) and isinstance(sugar, TupleSugar):
-                return replace(
-                    sugar,
-                    elements=tuple(
-                        authenticate(element, child)
-                        for element, child in zip(
-                            node.elts, sugar.elements, strict=True
-                        )
-                    ),
-                )
-            # The one lookup at the operand's position: a local class, a
-            # builtin exception class, an imported symbol (identified by its
-            # target symbol, never refused for not being local), or the
-            # undecided citation (its read owes the member and its match
-            # stays open: ``AuthenticatedExceptionTypeSugar``).
-            identity = self.unit.exception_type_identity(node)
-            if identity is None:
-                return sugar
-            return AuthenticatedExceptionTypeSugar(
-                sugar,
-                identity,
-                site=node.fragment,
-                class_value=self.unit.exception_class_value(node),
-            )
-
-        if actual_location is None:
-            return manager_sugar
-        actual_sugar = (
-            manager_sugar.args[actual_location[1]]
-            if actual_location[0] == "arg"
-            else next(
-                sugar
-                for name, sugar in manager_sugar.keywords
-                if name == actual_location[1]
-            )
-        )
-        wrapped = authenticate(actual, actual_sugar)
-        if actual_location[0] == "arg":
-            args = list(manager_sugar.args)
-            args[actual_location[1]] = wrapped
-            return replace(manager_sugar, args=tuple(args))
-        keywords_sugar = list(manager_sugar.keywords)
-        for position, (name, sugar) in enumerate(keywords_sugar):
-            if name == actual_location[1]:
-                keywords_sugar[position] = (name, wrapped)
-                break
-        return replace(manager_sugar, keywords=tuple(keywords_sugar))
+        # Every other head: the manager is the value the head reduces to,
+        # entered through that value's own type.
+        return self._reduced_manager_sugar(item, binds_enter_result)
 
     def substitute(self, scope):
-        """Rewrite a simple as-name to the resolved resource enter projection."""
+        """Rewrite a simple as-name to the manager's enter-result projection."""
         from .shadow import rewrite
         from sugar_lift_py_tests.context_manager_contract import (
             ENTER_RESULT,
@@ -18593,53 +18097,6 @@ class With(Statement):
             return node
         return _Splice((node,), body_net)
 
-    def _effect_boundary_binding(self, item, resolved_ref):
-        """(slot_id, projection) the CONTRACT declares for this ``as`` name.
-
-        The projection is read off the authenticated semantics' ``binding``
-        field -- exception-info or warning-observation -- so a manager name
-        never selects it. ``NoBindingV1`` means the contract states this
-        manager hands the body nothing, and a source that binds a name anyway
-        is a real disagreement between contract and use site: it stays loud
-        rather than acquiring a slot by syntax.
-        """
-        from sugar_lift_py_tests.context_manager_contract import (
-            EXCEPTION_INFO,
-            ExceptionInfoBindingV1,
-            WARNING_OBSERVATION,
-            WarningObservationBindingV1,
-        )
-
-        binding = resolved_ref.semantics.binding
-        if isinstance(binding, ExceptionInfoBindingV1):
-            projection = EXCEPTION_INFO
-        elif isinstance(binding, WarningObservationBindingV1):
-            projection = WARNING_OBSERVATION
-        else:
-            from .panic import UnsupportedWithBindingTarget
-
-            panic = UnsupportedWithBindingTarget(
-                blame=self.fragment,
-                owner="With._construct_sugar",
-                observed=(
-                    "source binds an EffectBoundary result the authenticated "
-                    f"contract declares no binding for ({type(binding).__name__})"
-                ),
-                requested="a contract carrying exception-info or warning-observation binding",
-                fix="never grant an observation slot from the `as` spelling alone",
-            )
-            testify(self.reporter, "report_gap", self, panic)
-            raise panic
-        # One observation per evaluation of this with: the item carries the
-        # with's evaluation key (``With.substitute``), so its manager slot is
-        # already this evaluation's.  The ``as`` name's ObservationRef and the
-        # boundary's deposit both read this slot, so a read of one
-        # iteration's ``e`` is never the next iteration's effect.
-        return f"{item._manager_slot_id()}#observation", projection
-
-    def _effect_boundary_observation_slot(self, item, resolved_ref):
-        return self._effect_boundary_binding(item, resolved_ref)[0]
-
     def _with_assignment_binding(self, item, value, scope):
         """Delegate a with-as binding to Python's ordinary Assign seam."""
         assignment = self._make_assign(item.optional_vars, value)
@@ -18672,40 +18129,9 @@ class With(Statement):
                     return None
                 return self.body[0].substitution_binding(scope)
             # The ``as`` name is the with's enter result, as it is inside the
-            # body (``With.substitute``), unless the item's seated row says
-            # otherwise: an effect boundary hands out its observation slot, a
-            # gap or an unadmitted contract refuses through the door here.  A
-            # row nobody seated is construction's question, not this
-            # binding's: ``_construct_sugar`` asks the same require door and
-            # refuses by name.  So no caller needs every row seated before it
-            # binds.
-            # The undecided row binds the enter result of the head's reduced
-            # value (``_reduced_manager_sugar``).
-            # SourceTreePanic from the door propagates — no Exception swallow.
-            resolved_ref = None
-            if (
-                self._generator_manager_frame(item) is None
-                and self._seated_manager_resolution(item)[1]
-                is not _UNSEATED_MANAGER_ROW
-                and not self._manager_answered_by_reduction(item)
-            ):
-                resolved_ref = self._require_narrow_cm_ref(item)
-            from sugar_lift_py_tests.context_manager_contract import (
-                EffectBoundarySemanticsV1,
-            )
-
-            if resolved_ref is not None and isinstance(
-                getattr(resolved_ref, "semantics", None), EffectBoundarySemanticsV1
-            ):
-                # An effect boundary hands the body its OBSERVATION slot, not
-                # an enter result. Exporting enter-result here would have made
-                # the body read a projection the contract never declared.
-                slot, projection = self._effect_boundary_binding(item, resolved_ref)
-                return self._with_assignment_binding(
-                    item,
-                    item._make_observation_ref(slot, projection),
-                    scope,
-                )
+            # body (``With.substitute``): the first yield of a generator
+            # manager, or the enter result of the head's reduced value
+            # (``_reduced_manager_sugar``).  No row is read.
             enter_slot = f"{item._manager_slot_id()}#enter_result"
             return self._with_assignment_binding(
                 item,
