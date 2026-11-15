@@ -78,10 +78,19 @@ class NameSugar(ConstructedTermSugar):
                 and binding.value is not None
                 and not is_builtin_floor_binding(binding)
             ):
+                from sugar_lift_py_tests.temporal.temporal_context import (
+                    FORMAL_ACTUAL_BLAME,
+                )
+
+                if binding.blame == FORMAL_ACTUAL_BLAME:
+                    # A formal a followed call bound to the caller's actual
+                    # (a lambda's parameter): that actual, with the caller's
+                    # currency (``object_identity.contents_current``).
+                    return ExitSet.completed(binding.value)
                 from sugar_lift_py_tests.floor.object_identity import arrived
 
-                # A formal's actual, a module global, a generator's write:
-                # the value reached this read by binding.
+                # A module global, a generator's write: the value reached
+                # this read by binding.
                 return ExitSet.completed(arrived(binding.value, self.site))
             # A builtin is read only through the binding at this read
             # (``_builtin_floor_value``): a name a star import, a module or

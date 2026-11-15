@@ -683,15 +683,17 @@ class SourceVisibleCallFrameV1:
                     )
                     for ordinal, actual in enumerate(named.values())
                 )
-                # The ``**kwargs`` dict reaches the callee by binding (a
-                # parameter's actual): it arrived, its contents not current
-                # (``object_identity.arrived``).
+                # The ``**kwargs`` dict is a new dict the call makes, at the
+                # formal that collects it, and no other frame holds: its
+                # contents are its contents (``object_identity.
+                # contents_current``).  A formal read passes it through as it
+                # is (``FormalRefSugar``), so it names its construction here.
                 bound.append(
                     DictValue(
                         tuple(
                             (StringValue(key), value) for key, value in named.items()
                         ),
-                        allocation=None,
+                        allocation=root.cid,
                     )
                 )
                 named.clear()

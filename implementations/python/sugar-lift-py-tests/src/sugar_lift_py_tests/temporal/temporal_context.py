@@ -12,6 +12,11 @@ from .temporal_binding import TemporalBinding
 # an evaluation key can never be read as a source name.
 EVALUATION_PREFIX = "evaluation:"
 
+# The blame a followed call binds each formal's name under, to the caller's
+# actual (``call_site_value._ctx_with_curried_args``).  A read of such a
+# binding is that actual, with the caller's currency (``NameSugar``).
+FORMAL_ACTUAL_BLAME = "<callsite>"
+
 
 def projection_key(evaluation: str, name: str) -> str:
     """The key of target ``name``'s projection of one statement's evaluation.

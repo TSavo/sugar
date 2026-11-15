@@ -2384,6 +2384,7 @@ def _ctx_with_curried_args(
     closure: tuple[tuple[str, FloorValue], ...] = (),
 ):
     from sugar_lift_py_tests.temporal import curry_temporal
+    from sugar_lift_py_tests.temporal.temporal_context import FORMAL_ACTUAL_BLAME
 
     if closure:
         # The callee lambda's closure cells (``CallSiteValue.closure``):
@@ -2400,7 +2401,7 @@ def _ctx_with_curried_args(
         parameters,
         arg_values,
         owner="CallSiteValue.force_floor",
-        blame="<callsite>",
+        blame=FORMAL_ACTUAL_BLAME,
     )
     if formal_coordinate_cids:
         if len(formal_coordinate_cids) != len(arg_values):
