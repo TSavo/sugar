@@ -28,8 +28,13 @@ def test_reduce_body_retains_one_unconditional_stateful_halt(monkeypatch):
 
     reduced = function_universe_sugar.reduce_body(())
 
-    assert reduced is exits
-    assert reduced.exits[0].state is pre_effect_state
+    # ``reduce_body`` answers through the one sequencing (``block_values``),
+    # so the set is rebuilt: the halt is kept arm for arm, equal, with the
+    # record it halted with and the context that record was reached in.
+    assert reduced == exits
+    (halt,) = reduced.exits
+    assert halt.state == pre_effect_state
+    assert halt.state.context is ctx
 
 
 def test_reduce_body_answers_one_unconditional_stateless_halt(monkeypatch):

@@ -303,7 +303,11 @@ def test_iadd_halt_does_not_emit_scope_rebind() -> None:
             return ExitSet.completed(TermValue(0))
 
     out = _production_name_aug(_Halt(), TermValue(1)).desugar(None)
-    assert out is face
+    # The statement's outcome is that halt and nothing else: the same effect
+    # under the same guard, and no arm completes, so nothing rebinds.  It is
+    # composed through the one sequencing, so it is equal, not the same object.
+    assert out == face
+    assert out.halts() == out.exits
     assert not isinstance(out.completed_value(), ScopeRebind)
 
 
@@ -323,7 +327,8 @@ def test_raise_value_halt_blocks_rebind() -> None:
             return ExitSet.completed(TermValue(0))
 
     out = _production_name_aug(_Raise(), TermValue(1)).desugar(None)
-    assert out is face
+    assert out == face
+    assert out.halts() == out.exits
     assert not isinstance(out.completed_value(), ScopeRebind)
 
 
