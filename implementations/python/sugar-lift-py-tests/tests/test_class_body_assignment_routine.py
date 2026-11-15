@@ -21,13 +21,13 @@ Not in this change, and pinned below as what still happens:
 - a field whose right-hand side has several completed values still refuses by
   name.  Carrying those faces would build one class per value: a completion
   where there is a refusal, which is its own change.
-- a bare-name read of a module class (``b = Box``) is the name's free
-  symbolic, not the class statement's key (#7757 item 21's residue).
 
 A class statement runs once, in the module's run; a function called after
-import reads what that run left.  Where the run completes on no arm (the
-class body always raises) the read is the run's halts, so the twin's lying
-half reads ``unsat`` (#7766).
+import reads what that run left.  Every read of the class's name -- a call,
+a bare read (``b = Box``), an argument, an attribute -- is the statement's
+key (#7757 item 21).  Where the run completes on no arm (the class body
+always raises) the read is the run's halts, so the twin's lying half reads
+``unsat`` (#7766).
 """
 
 from __future__ import annotations
@@ -187,20 +187,62 @@ def test_a_read_through_the_raising_class_call_halts_with_the_import() -> None:
     )
 
 
-def test_naming_the_raising_class_without_calling_it_completes() -> None:
-    """``b = Box`` calls nothing.  ``Box`` is bound only by its class
-    statement, so the module threading carries no binding of it to a reader
-    (``SourceUnit.module_threaded_names``) and the bare read is the name's
-    free symbolic (``NameSugar``), not the statement's key: it completes.
-    Wrong by Python (the import raises at the class statement, so the
-    function never runs) and a residue of #7757 item 21, recorded there: a
-    bare-name read of a module class is not yet the one read of its key, as
-    a call of it is.  Pinned as what happens."""
-    completed, halts = _faces(
-        _function(_ALWAYS_RAISES["only-field"], "    b = Box\n    return 3\n")
+# Reads of the class's name that call nothing.
+_READS_OF_THE_CLASS_NAME = {
+    "bare-name": "    b = Box\n    return 3\n",
+    "argument": "    return isinstance(3, Box)\n",
+    "attribute": "    return Box.limit\n",
+}
+
+
+@pytest.mark.parametrize("read", sorted(_READS_OF_THE_CLASS_NAME))
+def test_naming_the_raising_class_without_calling_it_halts_with_the_import(
+    read: str,
+) -> None:
+    """``b = Box`` calls nothing, and it is still a read of ``Box``.  A
+    class statement binds its name under its evaluation key, so the module
+    threading carries that binding to every reader
+    (``SourceUnit.module_threaded_names``), and the bare read is the same
+    read of the key a call of the class is.  The module's run completed on
+    no arm, so the read is the run's halts: the function never runs past it,
+    as in Python, where the import raised at the class statement.  It was
+    the name's free symbolic (``NameSugar``) and completed (#7757 item 21's
+    residue)."""
+    _halts_with_the_import(
+        _function(_ALWAYS_RAISES["only-field"], _READS_OF_THE_CLASS_NAME[read])
     )
 
-    assert (completed, halts) == (1, ())
+
+def _returned_value(outcome):
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.universe_value import UniverseValue
+
+    universe = outcome.completed_value()
+    assert isinstance(universe, UniverseValue), outcome
+    (returned,) = [
+        entry
+        for entry in universe.record.statements
+        if isinstance(entry, ReturnValue)
+    ]
+    return returned.value
+
+
+def test_naming_a_constructed_class_reads_the_class_its_statement_bound() -> None:
+    """``return Box`` over a class whose statement completes: the read is the
+    class the module's one run bound under the statement's key
+    (``ModuleFinalValue``), never the name's free symbolic and never the
+    class statement reduced again."""
+    from sugar_lift_py_tests.floor.class_definition_value import (
+        ClassDefinitionValue,
+    )
+
+    outcome = _function("    limit = 3\n", "    return Box\n")
+
+    assert _faces(outcome) == (1, ())
+    value = _returned_value(outcome)
+    assert isinstance(value, ClassDefinitionValue), value
+    assert value.class_name == "Box"
+    assert [field.name for field in value.class_fields] == ["limit"]
 
 
 # ---------------------------------------------------------------------------
