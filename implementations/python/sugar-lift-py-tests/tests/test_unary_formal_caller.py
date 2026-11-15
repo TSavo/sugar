@@ -130,21 +130,21 @@ def test_ground_neg_plus_invert_fold() -> None:
     site = _site_from()
     assert UnaryOpSugar("USub", _FloorSugar(TermValue(3)), site).desugar(
         None
-    ).value == TermValue(-3)
+    ).completed_value() == TermValue(-3)
     assert UnaryOpSugar("UAdd", _FloorSugar(TermValue(3)), site).desugar(
         None
-    ).value == TermValue(3)
+    ).completed_value() == TermValue(3)
     assert UnaryOpSugar("Invert", _FloorSugar(TermValue(5)), site).desugar(
         None
-    ).value == TermValue(~5)
+    ).completed_value() == TermValue(~5)
 
 
 def test_discrimination_neg_is_not_identity() -> None:
     site = _site_from()
     out = UnaryOpSugar("USub", _FloorSugar(TermValue(3)), site).desugar(None)
-    assert out.value == TermValue(-3)
+    assert out.completed_value() == TermValue(-3)
     with pytest.raises(AssertionError):
-        assert out.value == TermValue(3)
+        assert out.completed_value() == TermValue(3)
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +312,7 @@ def test_unary_projectors_call_floor_methods_not_binary_standin() -> None:
         # site, then the caller's ctx, are last; one operand.
         assert len(inspect.signature(projector).parameters) == 3
     negated = _NATIVE_OPERATION_PROJECTORS["unary_minus"](TermValue(4), "s", None)
-    assert negated.value == TermValue(-4)
+    assert negated.completed_value() == TermValue(-4)
     with pytest.raises(AssertionError):
         # Lying: unary_minus is not add-shaped (2 operands + site + ctx).
         assert (

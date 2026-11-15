@@ -70,7 +70,8 @@ def test_one_element_past_the_budget_folds_instead_of_panicking(
     assert isinstance(outcome.completed_value(), GroundSequenceRepetitionValue)
     assert outcome.completed_value().to_term(owner=SITE) == repetition_term(sequence, count, SITE)
     # Exact, not opaque: the folded value still knows its own cardinality.
-    assert outcome.completed_value().length(SITE).value.value == EAGER_MATERIALIZATION_BUDGET + 1
+    length = outcome.completed_value().length(SITE).completed_value()
+    assert length == TermValue(EAGER_MATERIALIZATION_BUDGET + 1)
 
 
 @pytest.mark.parametrize("sequence_type", SEQUENCES)
@@ -112,8 +113,12 @@ def test_folded_concrete_count_is_the_same_construction_as_an_opaque_count(
     sequence = fresh(sequence_type, (TermValue(7),))
     opaque = SymbolicValue(TermValue(3).to_term(owner=SITE))
 
-    folded = sequence.multiply(TermValue(10**9), SITE, None).value.to_term(owner=SITE)
-    opaque_folded = sequence.multiply(opaque, SITE, None).value.term
+    folded = (
+        sequence.multiply(TermValue(10**9), SITE, None)
+        .completed_value()
+        .to_term(owner=SITE)
+    )
+    opaque_folded = sequence.multiply(opaque, SITE, None).completed_value().term
 
     assert isinstance(folded, _Ctor) and isinstance(opaque_folded, _Ctor)
     assert folded.name == opaque_folded.name == "python:sequence_repeat"
@@ -167,8 +172,14 @@ def test_each_sequence_category_rebuilds_its_own_shape() -> None:
     """One shared law, but a list never materializes as a tuple."""
     element = TermValue(7)
 
-    from_list = fresh(ListValue, (element,)).multiply(TermValue(3), SITE, None).value
-    from_tuple = TupleValue((element,)).multiply(TermValue(3), SITE, None).value
+    from_list = (
+        fresh(ListValue, (element,))
+        .multiply(TermValue(3), SITE, None)
+        .completed_value()
+    )
+    from_tuple = (
+        TupleValue((element,)).multiply(TermValue(3), SITE, None).completed_value()
+    )
 
     assert type(from_list) is ListValue
     assert type(from_tuple) is TupleValue
