@@ -59,6 +59,9 @@ def test_instrument_names_forbidden_side_doors_and_replacement(tmp_path: Path) -
         "construction_side_doors": 1,
         "generic_builtin_verdicts": 1,
         "name_or_vendor_gates": 1,
+        "open_lexical_ast_id": 0,
+        "open_lexical_attr_name": 0,
+        "exception_name_fabrication_denylist": 0,
         "panic_catches": 1,
     }
     assert all("floor" in row.replacement.lower() for row in report.offenders)
@@ -82,6 +85,9 @@ def test_instrument_truthful_floor_shape_is_zero(tmp_path: Path) -> None:
         "construction_side_doors": 0,
         "generic_builtin_verdicts": 0,
         "name_or_vendor_gates": 0,
+        "open_lexical_ast_id": 0,
+        "open_lexical_attr_name": 0,
+        "exception_name_fabrication_denylist": 0,
         "panic_catches": 0,
     }
     assert report.offenders == ()
@@ -150,7 +156,14 @@ def test_instrument_structurally_sees_spelling_gates_of_cluster_five(
     assert report.r["name_or_vendor_gates"] >= 5
     assert any("exception_name" in text for text in observed)
     assert any("matcher.name" in text for text in observed)
-    assert any("importorskip" in text for text in observed)
+    # ``func.id == 'importorskip'`` is an unbound lexical id against a string:
+    # the partition counts it on its own axis, never as an identity gate
+    # (``test_partition_func_id_string_is_open_lexical_not_type_identity``).
+    lexical = {
+        row.observed for row in report.offenders if row.axis == "open_lexical_ast_id"
+    }
+    assert any("importorskip" in text for text in lexical)
+    assert not any("importorskip" in text for text in observed)
     assert any("type_name in" in text for text in observed)
     assert any("suppresses_exception" in text for text in observed)
     assert any("exception_names" in text for text in observed)
