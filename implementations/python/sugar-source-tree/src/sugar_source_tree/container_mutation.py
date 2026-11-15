@@ -311,7 +311,32 @@ def _ref(node):
     (``object_identity_cid``); the receiver an active
     ``__init__`` constructs is its binding coordinate.  A read of an
     assigned name is the object its assignment was given (``_identity``);
-    a name's object after a mutation is the object before it (``_object``)."""
+    a name's object after a mutation is the object before it (``_object``).
+
+    Which object a node denotes is a fact of the node: the tree is immutable
+    after materialize, and every field the answer reads (``of``, ``prior``,
+    ``root``, ``receiver``, a coordinate) is read off the node's
+    construction row.  The answer is kept on that row and decided once
+    (``_denoted_ref``), never again at each ask: a name ``k`` statements'
+    calls may have changed is ``k`` post-states deep, and every statement
+    asks this of every binding in its scope and of every node it walks."""
+    coordinate = getattr(type(node), "_coordinate", None)
+    if coordinate is None:
+        # Not a node (a binding state that holds none): nothing to keep it on.
+        return _denoted_ref(node)
+    row = coordinate(node)[2]
+    if _REF in row:
+        return row[_REF]
+    ref = row[_REF] = _denoted_ref(node)
+    return ref
+
+
+# The construction-row key ``_ref`` keeps a node's answer under.
+_REF = "__object_ref__"
+
+
+def _denoted_ref(node):
+    """``_ref``, decided from the node (``_object``)."""
     node = _object(node)
     kind = getattr(node, "kind", None)
     if kind in _FORMAL_KINDS and hasattr(node, "coordinate"):
