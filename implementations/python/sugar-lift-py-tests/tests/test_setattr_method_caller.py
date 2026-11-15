@@ -431,7 +431,16 @@ def test_getter_only_property_method_call_binds_and_floor_refuses_store() -> Non
     pre-effect state identity; producer_outcome over an undug constructor arg
     is not the discharge instrument.
     """
-    source = PROPERTY_TARGET + METHOD_BODY + "\nWriter().store(Target(), 7)\n"
+    # The call stands in a function called after import: in the module body
+    # the store refuses (a getter-only property), the module's one run
+    # completes on no arm, and the read of ``Writer`` -- a module class's
+    # name, read through its statement's key in that run (#7757 item 21) --
+    # would have no class to read.
+    source = (
+        PROPERTY_TARGET
+        + METHOD_BODY
+        + "\n\ndef caller():\n    Writer().store(Target(), 7)\n"
+    )
     site = _method_callsite(source)
     _assert_bound_self_first(site)
     target = _floor_target_arg(site.arg_values[1])
