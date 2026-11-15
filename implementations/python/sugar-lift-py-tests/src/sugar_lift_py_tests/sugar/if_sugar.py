@@ -276,7 +276,7 @@ class IfSugar(Sugar):
             # halted face halted before either suite ran: it carries the
             # record of where the condition halted (``halts_recorded``), onto
             # which the block composition splices what ran before the ``if``.
-            return halts_recorded(cond, halt_record(ctx)).sequence(
+            return halts_recorded(cond, halt_record(ctx)).and_then(
                 lambda value: self._select_on_face(value, ctx)
             )
         condition = plain_completed_value(cond)
@@ -338,7 +338,7 @@ class IfSugar(Sugar):
 
         truth = truth_of(condition, self.site, owner="IfSugar.test")
         if isinstance(truth, ExitSet) and plain_completed_value(truth) is None:
-            return halts_recorded(truth, halt_record(ctx)).sequence(
+            return halts_recorded(truth, halt_record(ctx)).and_then(
                 lambda truth_value: self._select_suites(
                     condition,
                     truth_formula(ExitSet.completed(truth_value), condition),
@@ -529,13 +529,13 @@ class IfSugar(Sugar):
         # goes on as it is.
         left = ExitSet(
             tuple(exit_ for exit_ in exits.exits if isinstance(exit_, Completed))
-        ).sequence(
+        ).and_then(
             lambda record: past_prior_returns(
                 record, record.context, lambda _went_on: ExitSet(()), ExitSet.completed
             )
         )
         went_on = (
-            exits.sequence(
+            exits.and_then(
                 lambda record: past_prior_returns(
                     record,
                     record.context,
@@ -635,17 +635,17 @@ class IfSugar(Sugar):
         # face; ``normalize``'s join merges those continuations into one arm
         # under the disjunction of their guards, owing every debt of the arms
         # it stands for. Each halt continues as itself over the condition's
-        # testimony. Both compose through ``ExitSet.sequence``, so no guard,
+        # testimony. Both compose through ``ExitSet.and_then``, so no guard,
         # face or ``owed`` is restated by hand. A ``return`` an arm took before
         # it fell through (``left``) leaves beside them, over the condition's
         # testimony, its record unable to fall through.
-        joined = went_on.sequence(
+        joined = went_on.and_then(
             lambda _suite: ExitSet.completed(faces), consume=halted_after_condition
         )
         if not left.exits:
             return joined
         return joined.union(
-            left.sequence(
+            left.and_then(
                 lambda record: ExitSet.completed(
                     _replace(
                         record, entries=(*unconditional_entries, *record.entries)

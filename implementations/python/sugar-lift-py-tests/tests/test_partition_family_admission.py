@@ -229,7 +229,7 @@ def test_appending_factors_grows_linearly():
     for step_count in (1, 2, 3, 4, 5, 6, 7, 8):
         exits = family
         for index in range(step_count):
-            exits = exits.sequence(
+            exits = exits.and_then(
                 lambda value, _i=index: ExitSet.completed((value, _i))
             )
         series.append(len(_completed(exits)))

@@ -1,4 +1,4 @@
-"""#7825: ``try``/``finally`` and ``except*`` compose through ``ExitSet.sequence``.
+"""#7825: ``try``/``finally`` and ``except*`` compose through ``ExitSet.and_then``.
 
 An arm owes what any path into it incurred. A ``finally`` runs beneath every
 arm that reaches it, and an ``except*`` handler runs beneath the body halt it

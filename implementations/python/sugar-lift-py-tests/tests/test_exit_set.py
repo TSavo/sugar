@@ -87,7 +87,7 @@ def test_sequencing_maps_only_completed_exits():
     )
     exits = ExitSet.conditional_halt(condition, effect, _record(1))
 
-    sequenced = exits.sequence(
+    sequenced = exits.and_then(
         lambda value: ExitSet.completed(_record(*(e.value for e in value.entries), 2))
     )
 
@@ -329,7 +329,7 @@ def test_sequence_consumes_an_owned_halt_beneath_its_guard_and_debts():
     )
     after = ExitSet((Completed(after_guard, "after", owed=("after-debt",)),))
 
-    result = prefix.sequence(
+    result = prefix.and_then(
         ExitSet.completed,
         consume=lambda halt: after if halt.effect is owned else None,
     )

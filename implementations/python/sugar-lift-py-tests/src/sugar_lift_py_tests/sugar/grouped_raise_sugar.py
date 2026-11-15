@@ -59,7 +59,7 @@ class GroupedRaiseSugar(Sugar):
         completed arm of a member's construction is the member's effect
         (``RaiseSugar.constructed``), whose class was read off the value the
         member's construction made -- undetermined where that construction
-        is unanswered, never the callee's.  ``sequence`` carries every arm's
+        is unanswered, never the callee's.  ``and_then`` carries every arm's
         guard, faces and ``owed`` onto the group built beneath it, so what a
         member's construction owes, the group owes.  The group's own class
         is then its construction's (``_group``), decided by its members as
@@ -68,7 +68,7 @@ class GroupedRaiseSugar(Sugar):
         def build(message_value):
             members = ExitSet.completed(())
             for child in self.children:
-                members = members.sequence(
+                members = members.and_then(
                     lambda effects, child=child: child.constructed(ctx).and_then(
                         lambda member, effects=effects: ExitSet.completed(
                             (*effects, member)
@@ -84,7 +84,7 @@ class GroupedRaiseSugar(Sugar):
                 f"{memento.file}:{memento.start}:{memento.end}"
                 f":{memento.source_cid}:{memento.cid}"
             )
-            return members.sequence(
+            return members.and_then(
                 lambda effects: self._group(message_value, tuple(effects), occurrence)
             )
 

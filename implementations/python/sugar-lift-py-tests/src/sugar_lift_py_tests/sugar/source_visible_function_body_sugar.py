@@ -107,7 +107,7 @@ class SourceVisibleFunctionBodySugar(Sugar):
 
         if isinstance(exits, NativeOperationExitCarrierV1):
             return exits.and_then(completed)
-        return exits.sequence(
+        return exits.and_then(
             completed,
             consume=lambda halt: ExitSet.halted(
                 halt.effect, state=self.left_in(halt.state)

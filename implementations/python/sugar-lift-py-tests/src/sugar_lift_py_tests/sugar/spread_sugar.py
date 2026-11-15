@@ -17,7 +17,7 @@ def _collect(sugars: tuple, ctx, done: tuple, finish, *, earlier: tuple = ()):
     """Sequence spread operands by COMPOSING factors, never distributing them.
 
     #6309. The previous body chained ``and_then`` once per operand, and
-    ``ExitSet.sequence`` appends every exit of the tail under every completed
+    ``ExitSet.and_then`` appends every exit of the tail under every completed
     exit of the prefix. With k operands of m arms each that is m ** k
     materialized arms — and it is the arm POPULATION, not the per-merge cost,
     that walled ``pandas/core/generic.py``: an observed 1,317-wide arm set with
@@ -50,7 +50,7 @@ def _collect(sugars: tuple, ctx, done: tuple, finish, *, earlier: tuple = ()):
     their records' entries.
 
     Every operand, and ``finish``, runs beneath the PREFIX -- the one completed
-    arm the operands so far left through -- by ``ExitSet.sequence``: what it
+    arm the operands so far left through -- by ``ExitSet.and_then``: what it
     produces takes the prefix's guard, faces and ``owed``. Its halts leave the
     fold there; its completed face is the next prefix. Only the one prefix arm
     is sequenced each step, never the halts collected so far, so the work stays
@@ -76,7 +76,7 @@ def _collect(sugars: tuple, ctx, done: tuple, finish, *, earlier: tuple = ()):
     def leave(following, *, prefix, halted):
         """The fold's exits: every collected halt, then ``following`` beneath
         the prefix, joined through the one join."""
-        return ExitSet(()).union(*halted, prefix.sequence(lambda _last: following))
+        return ExitSet(()).union(*halted, prefix.and_then(lambda _last: following))
 
     for index, sugar in enumerate(sugars):
         # A deferred native-operation operand is not an ExitSet. IfExp and
@@ -104,7 +104,7 @@ def _collect(sugars: tuple, ctx, done: tuple, finish, *, earlier: tuple = ()):
                 )
             )
         factors = desugared.factor_completed()
-        stepped = prefix.sequence(lambda _last, *, factors=factors: factors)
+        stepped = prefix.and_then(lambda _last, *, factors=factors: factors)
         halted.append(ExitSet(stepped.halts()))
         completed = tuple(
             exit_ for exit_ in stepped.exits if isinstance(exit_, Completed)

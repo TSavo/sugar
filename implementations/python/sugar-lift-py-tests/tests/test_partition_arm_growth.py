@@ -2,7 +2,7 @@
 
 #6319 taught `IfExpSugar` that an arm which halts is a PARTITION, not a missing
 recognizer. That was right, and it drained 369 desugar-defect rows. It also put
-a multi-completed-arm `ExitSet` on a path that `ExitSet.sequence` consumes.
+a multi-completed-arm `ExitSet` on a path that `ExitSet.and_then` consumes.
 
 `sequence` appends every exit of the tail under every COMPLETED exit of the
 prefix. So a receiver carrying m completed arms, followed by k operands in a
@@ -140,14 +140,14 @@ def test_operand_chains_over_a_partitioning_conditional_do_not_multiply():
     for operand_count in OPERAND_COUNTS:
         exits = joined
         for index in range(operand_count):
-            exits = exits.sequence(
+            exits = exits.and_then(
                 lambda value, _i=index: ExitSet.completed((value, _i))
             )
         series.append(sum(isinstance(e, Completed) for e in exits.exits))
 
     assert series == [1] * len(OPERAND_COUNTS), (
         f"completed arms by operand count {dict(zip(OPERAND_COUNTS, series))}: the "
-        "conditional-expression face is unfactored and `ExitSet.sequence` is "
+        "conditional-expression face is unfactored and `ExitSet.and_then` is "
         "distributing it into m ** k arms again (#6324). Factor the completed "
         "face in `IfExpSugar._join_arms` — do not cap, prune, or refuse."
     )

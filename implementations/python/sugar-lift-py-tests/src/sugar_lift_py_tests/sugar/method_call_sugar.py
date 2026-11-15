@@ -140,8 +140,8 @@ class MethodCallSugar(ConstructedTermSugar):
 
         if remaining:
             head, *rest = remaining
-            # One completed arm per argument (#6324): `and_then` is
-            # `ExitSet.sequence`, so an unfactored partitioning argument
+            # One completed arm per argument (#6324): through
+            # `ExitSet.and_then`, an unfactored partitioning argument
             # multiplies the accumulated tuple by its arm count, and k
             # arguments distribute into m ** k arms.
             # The actual is an operand: a walrus in it binds once, through

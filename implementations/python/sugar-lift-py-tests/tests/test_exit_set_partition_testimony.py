@@ -286,7 +286,7 @@ def test_conjoining_composition_accumulates_both_arms_testimony():
     tail_face, _ = partition(("tail-owner", outer))
 
     prefix = ExitSet.completed("v").guarded(condition, face)
-    result = prefix.sequence(
+    result = prefix.and_then(
         lambda value: ExitSet.completed(value + "!").guarded(outer, tail_face)
     )
 

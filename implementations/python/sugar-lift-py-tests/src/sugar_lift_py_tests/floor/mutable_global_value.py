@@ -96,7 +96,7 @@ class MutableGlobalValue(FloorValue):
         # ``undecided`` member at this site.  The pair is built beneath every
         # completed arm of the coordinate: each arm's guard, faces and
         # ``owed`` ride onto both, and a halt of the coordinate stands.
-        return coordinate.sequence(
+        return coordinate.and_then(
             lambda value: ExitSet.two_faced(
                 value, effect, guard=complement_guard(raises), site=site
             )

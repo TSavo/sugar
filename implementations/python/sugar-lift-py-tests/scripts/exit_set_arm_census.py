@@ -1,6 +1,6 @@
 """Arm census for the four ExitSet composition sites (#6309, halted face).
 
-Method-patching instrument only: it wraps ``ExitSet.sequence``,
+Method-patching instrument only: it wraps ``ExitSet.and_then``,
 ``ExitSet.and_finally``, ``ExitSet.and_exit`` and
 ``ExitSet.and_exit_truthiness`` (plus ``ExitSet.normalize``, to capture the
 pre-normalize arm list) and restores every original on exit. **No production
@@ -28,7 +28,7 @@ baseline; ``exit_set.py`` is byte-identical on this branch).  ``S`` is
 ``self.exits``, ``O`` the other operand's exits, ``c``/``h`` the completed and
 halted counts of a set.
 
-``sequence`` (:363-376) -- the CONTROL.  The halted bypass at :367-369
+``and_then`` (:363-376) -- the CONTROL.  The halted bypass at :367-369
 appends one arm per halted incoming and ``continue``s, so halted incomings
 never enter the inner loop::
 
@@ -36,7 +36,7 @@ never enter the inner loop::
     iterations           = pre_len - h(S)            # one append per iteration
 
 The inner arm count is driven by ``step()`` and is not a function of the
-inputs, so ``sequence`` reports iterations and faces but claims no product.
+inputs, so ``and_then`` reports iterations and faces but claims no product.
 That is the point of a control: it should show the halted face FLAT while the
 other three show it growing.
 
@@ -218,7 +218,7 @@ def arm_census():
     frames: list[_Frame] = []
 
     original_normalize = ExitSet.normalize
-    original_sequence = ExitSet.sequence
+    original_and_then = ExitSet.and_then
     original_and_finally = ExitSet.and_finally
     original_and_exit = ExitSet.and_exit
     original_and_exit_truthiness = ExitSet.and_exit_truthiness
@@ -251,13 +251,13 @@ def arm_census():
             frames.pop()
             rows.append(row)
 
-    def patched_sequence(self, step):
-        row = CensusRow(site="sequence")
+    def patched_and_then(self, step, *, consume=None):
+        row = CensusRow(site="and_then")
         row.n_incoming, row.n_incoming_completed, row.n_incoming_halted = _faces(
             self.exits
         )
         with _frame(row) as frame:
-            result = original_sequence(self, step)
+            result = original_and_then(self, step, consume=consume)
             _observe(frame, result)
         # The bypass at :367-369 is the ONLY source of a halted arm carried
         # from an incoming, and it fires exactly once per halted incoming.
@@ -390,7 +390,7 @@ def arm_census():
         return result
 
     ExitSet.normalize = patched_normalize
-    ExitSet.sequence = patched_sequence
+    ExitSet.and_then = patched_and_then
     ExitSet.and_finally = patched_and_finally
     ExitSet.and_exit = patched_and_exit
     ExitSet.and_exit_truthiness = patched_and_exit_truthiness
@@ -398,13 +398,13 @@ def arm_census():
         yield rows
     finally:
         ExitSet.normalize = original_normalize
-        ExitSet.sequence = original_sequence
+        ExitSet.and_then = original_and_then
         ExitSet.and_finally = original_and_finally
         ExitSet.and_exit = original_and_exit
         ExitSet.and_exit_truthiness = original_and_exit_truthiness
 
 
-SITES = ("sequence", "and_finally", "and_exit", "and_exit_truthiness")
+SITES = ("and_then", "and_finally", "and_exit", "and_exit_truthiness")
 
 
 def totals(rows):

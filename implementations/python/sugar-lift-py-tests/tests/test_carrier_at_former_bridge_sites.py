@@ -133,7 +133,7 @@ def _raise_effect(name: str) -> RaiseEffect:
 
 def test_and_then_composes_a_carrier_beneath_a_guarded_arm():
     # ``and_then`` is the one composition: a carrier beneath a guarded arm
-    # composes as ``sequence`` composes it, never refused for its shape.
+    # composes beneath it once it discharges, never refused for its shape.
     carrier, left, right = _carrier()
     prefix = ExitSet.completed(TermValue(0), guard=atomic("test.prefix", []))
     composed = prefix.and_then(lambda _value: carrier)
@@ -141,7 +141,7 @@ def test_and_then_composes_a_carrier_beneath_a_guarded_arm():
     actuals = _actuals(left, right)
     discharged = carrier.discharge(None, actuals)
     exits = composed.discharge(None, actuals)
-    assert exits == prefix.sequence(lambda _value: discharged)
+    assert exits == prefix.and_then(lambda _value: discharged)
     assert all("test.prefix" in str(exit_.guard) for exit_ in exits.exits)
 
 
@@ -164,7 +164,7 @@ def test_and_then_keeps_every_face_beside_a_carrier():
     actuals = _actuals(left, right)
     exits = composed.discharge(None, actuals)
     discharged = carrier.discharge(None, actuals)
-    eager = body.sequence(lambda value: discharged if value == TermValue(1) else tail)
+    eager = body.and_then(lambda value: discharged if value == TermValue(1) else tail)
     assert exits == eager
     assert _testimony(exits) == _testimony(eager)
     assert halt in exits.exits
@@ -175,7 +175,7 @@ def test_and_then_hands_a_carrier_on_beneath_one_plain_arm():
     assert ExitSet.completed(TermValue(0)).and_then(lambda _value: carrier) is carrier
 
 
-# --- ExitSet.sequence -------------------------------------------------------
+# --- ExitSet.and_then -------------------------------------------------------
 
 
 def _actuals(*coordinates):
@@ -201,13 +201,13 @@ def test_sequence_composes_a_loop_body_carrier_beneath_its_arm():
     body = ExitSet((first, second))
     tail = ExitSet.completed(TermValue(9))
 
-    composed = body.sequence(lambda value: carrier if value == TermValue(1) else tail)
+    composed = body.and_then(lambda value: carrier if value == TermValue(1) else tail)
 
     assert isinstance(composed, NativeOperationExitCarrierV1)
     actuals = _actuals(left, right)
     exits = composed.discharge(None, actuals)
     discharged = carrier.discharge(None, actuals)
-    eager = body.sequence(lambda value: discharged if value == TermValue(1) else tail)
+    eager = body.and_then(lambda value: discharged if value == TermValue(1) else tail)
     assert isinstance(exits, ExitSet)
     assert exits == eager
     assert [exit_.value for exit_ in exits.exits] == [TermValue(3), TermValue(9)]
@@ -228,13 +228,13 @@ def test_sequence_composes_a_consume_carrier_beneath_its_halt():
     def handler(halt):
         return carrier if halt.guard == consumed_guard else None
 
-    composed = body.sequence(ExitSet.completed, consume=handler)
+    composed = body.and_then(ExitSet.completed, consume=handler)
 
     assert isinstance(composed, NativeOperationExitCarrierV1)
     actuals = _actuals(left, right)
     exits = composed.discharge(None, actuals)
     discharged = carrier.discharge(None, actuals)
-    eager = body.sequence(
+    eager = body.and_then(
         ExitSet.completed,
         consume=lambda halt: discharged if halt.guard == consumed_guard else None,
     )
@@ -259,7 +259,7 @@ def test_sequence_composes_two_carriers_in_arm_order():
         )
     )
 
-    composed = body.sequence(lambda value: first if value == TermValue(1) else second)
+    composed = body.and_then(lambda value: first if value == TermValue(1) else second)
 
     assert isinstance(composed, NativeOperationExitCarrierV1)
     exits = composed.discharge(
@@ -272,15 +272,15 @@ def test_sequence_composes_two_carriers_in_arm_order():
 def test_sequence_refuses_an_uncomposable_step_by_name():
     body = ExitSet.completed(TermValue(0), guard=atomic("test.prefix", []))
     with pytest.raises(ConstructionPanic) as excinfo:
-        body.sequence(lambda _value: object())
-    assert excinfo.value.info.owner == "ExitSet.sequence"
+        body.and_then(lambda _value: object())
+    assert excinfo.value.info.owner == "ExitSet.and_then"
 
 
 def test_sequence_refuses_an_uncomposable_consume_by_name():
     body = ExitSet.halted(_raise_effect("uncomposable"))
     with pytest.raises(ConstructionPanic) as excinfo:
-        body.sequence(ExitSet.completed, consume=lambda _halt: object())
-    assert excinfo.value.info.owner == "ExitSet.sequence"
+        body.and_then(ExitSet.completed, consume=lambda _halt: object())
+    assert excinfo.value.info.owner == "ExitSet.and_then"
 
 
 # --- caller_parameter_contract ---------------------------------------------
@@ -293,19 +293,19 @@ def test_sequence_defers_a_carrier_arm_beside_its_resolved_arms():
     carrier, left, right = _carrier()
     halt = Halted(atomic("test.halts", []), _raise_effect("prefix"), None)
     prefix = ExitSet((Completed(atomic("test.completes", []), TermValue(0)), halt))
-    composed = prefix.sequence(lambda _value: carrier)
+    composed = prefix.and_then(lambda _value: carrier)
     assert isinstance(composed, NativeOperationExitCarrierV1)
     exits = composed.discharge(None, _actuals(left, right))
     discharged = carrier.discharge(None, _actuals(left, right))
-    assert exits == prefix.sequence(lambda _value: discharged)
+    assert exits == prefix.and_then(lambda _value: discharged)
 
 
 def test_sequence_refuses_a_non_exit_set_beside_a_carrier_by_name():
     with pytest.raises(ConstructionPanic) as excinfo:
-        ExitSet.completed(TermValue(0), guard=atomic("test.prefix", [])).sequence(
+        ExitSet.completed(TermValue(0), guard=atomic("test.prefix", [])).and_then(
             lambda _value: object()
         )
-    assert excinfo.value.info.owner == "ExitSet.sequence"
+    assert excinfo.value.info.owner == "ExitSet.and_then"
 
 
 def test_sequence_keeps_a_halt_beside_an_undischarged_carrier():
@@ -318,7 +318,7 @@ def test_sequence_keeps_a_halt_beside_an_undischarged_carrier():
     carrier, _, _ = _carrier()
     completes = atomic("test.carrier-arm", [])
     halt = Halted(atomic("test.halt-arm", []), _raise_effect("plain-halt"), None)
-    composed = ExitSet((Completed(completes, TermValue(0)), halt)).sequence(
+    composed = ExitSet((Completed(completes, TermValue(0)), halt)).and_then(
         lambda _value: carrier
     )
     assert isinstance(composed, NativeOperationExitCarrierV1)
@@ -519,7 +519,7 @@ def test_loop_iteration_continuation_carrier_composes_beneath_its_face(monkeypat
     actuals = _actuals(left, right)
     exits = composed.discharge(None, actuals)
     discharged = carrier.discharge(None, actuals)
-    eager = body.sequence(lambda _state: discharged)
+    eager = body.and_then(lambda _state: discharged)
     assert isinstance(exits, ExitSet)
     assert exits == eager
     assert _testimony(exits) == _testimony(eager)
@@ -544,7 +544,7 @@ def test_loop_control_continuation_carrier_composes_beneath_its_halt(monkeypatch
     actuals = _actuals(left, right)
     exits = composed.discharge(None, actuals)
     discharged = carrier.discharge(None, actuals)
-    eager = body.sequence(lambda _state: discharged, consume=lambda _halt: discharged)
+    eager = body.and_then(lambda _state: discharged, consume=lambda _halt: discharged)
     assert isinstance(exits, ExitSet)
     assert exits == eager
     assert _testimony(exits) == _testimony(eager)
@@ -562,7 +562,7 @@ def test_loop_single_face_continuation_carrier_keeps_its_face(monkeypatch):
     actuals = _actuals(left, right)
     exits = composed.discharge(None, actuals)
     discharged = carrier.discharge(None, actuals)
-    eager = body.sequence(lambda _state: discharged)
+    eager = body.and_then(lambda _state: discharged)
     assert isinstance(exits, ExitSet)
     assert exits == eager
     # The face's debt rides onto what follows it; it is never dropped.
@@ -587,7 +587,7 @@ def test_loop_body_carrier_continues_the_loop_once_it_discharges(monkeypatch):
     actuals = _actuals(left, right)
     exits = composed.discharge(None, actuals)
     discharged = body.discharge(None, actuals)
-    eager = discharged.sequence(lambda _state: following)
+    eager = discharged.and_then(lambda _state: following)
     assert isinstance(exits, ExitSet)
     assert exits == eager
     assert _testimony(exits) == _testimony(eager)
@@ -615,7 +615,7 @@ def test_loop_body_carrier_with_several_faces_continues_each(monkeypatch):
     assert isinstance(composed, NativeOperationExitCarrierV1)
     actuals = _actuals(left, right)
     exits = composed.discharge(None, actuals)
-    eager = body.discharge(None, actuals).sequence(lambda _state: following)
+    eager = body.discharge(None, actuals).and_then(lambda _state: following)
     assert isinstance(exits, ExitSet)
     assert exits == eager
     assert _testimony(exits) == _testimony(eager)
@@ -659,7 +659,7 @@ def test_loop_exhaustion_carrier_composes_beneath_the_stop_iteration(monkeypatch
     actuals = _actuals(left, right)
     exits = composed.discharge(None, actuals)
     discharged = carrier.discharge(None, actuals)
-    eager = ExitSet((stop,)).sequence(
+    eager = ExitSet((stop,)).and_then(
         ExitSet.completed, consume=lambda _halt: discharged
     )
     assert isinstance(exits, ExitSet)

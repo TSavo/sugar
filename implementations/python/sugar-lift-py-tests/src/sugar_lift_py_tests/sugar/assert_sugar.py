@@ -144,4 +144,4 @@ class AssertSugar(Sugar):
                 lambda value: raised(halt, value)
             )
 
-        return stated.sequence(ExitSet.completed, consume=failing)
+        return stated.and_then(ExitSet.completed, consume=failing)

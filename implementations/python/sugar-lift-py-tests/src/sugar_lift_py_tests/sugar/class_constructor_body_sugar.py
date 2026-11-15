@@ -382,7 +382,7 @@ class ClassConstructorBodySugar(Sugar):
             # call's halted faces, each completed face its own receiver, under
             # its own guard, carrying what it owes. Packing them inside one
             # completed value hid the halts from the caller (#7756).
-            return records.sequence(receiver_of)
+            return records.and_then(receiver_of)
 
         return self.enter_initializer(ctx, initialize)
 
