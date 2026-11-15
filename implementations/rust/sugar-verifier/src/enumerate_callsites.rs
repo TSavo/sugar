@@ -25,6 +25,8 @@ pub fn run(pool: &MementoPool) -> Vec<CallSite> {
         "enumerate_callsites: scanning contracts for callsites"
     );
     let mut out = Vec::with_capacity(pool.bridges_by_symbol.len());
+    // Step 9: a joined callee's halts are the caller's halts at the call.
+    let joined_halts = crate::consistency::JoinedHalts::of(pool);
     for (cid, body) in pool.contract_members_with_bodies() {
         // Shape-agnostic (matches resolve_target): v1.2-layered contracts
         // carry their kind on `header.kind` and pre/post/inv on `header`;
@@ -82,6 +84,23 @@ pub fn run(pool: &MementoPool) -> Vec<CallSite> {
                         callsite_bundle_cid.as_ref(),
                         locus,
                     );
+                    out.push(cs);
+                }
+            }
+        }
+        // Each halt of a contract the join binds to a call this contract
+        // reads is this contract's halt at that call: a panic-locus row of
+        // the caller, beside the callee's own row. Two halts at one call
+        // from distinct callee sites or under distinct guards are two rows.
+        for locus in joined_halts.loci_at_calls(pool, &body) {
+            if let Some(cs) = callsite_from_panic_locus(
+                &locus,
+                &property_name,
+                cid,
+                pool,
+                callsite_bundle_cid.as_ref(),
+            ) {
+                if !has_same_joined_halt(&out, &cs) {
                     out.push(cs);
                 }
             }
@@ -465,6 +484,23 @@ fn has_same_panic_callsite(existing: &[CallSite], candidate: &CallSite, by_guard
             && cs.line == candidate.line
             && cs.arg_term == candidate.arg_term
             && (!by_guard || cs.guard_facts == candidate.guard_facts)
+    })
+}
+
+/// A joined halt is the same row only when it is the same halt of the same
+/// callee site, under the same guard, at the same call of the same caller.
+fn has_same_joined_halt(existing: &[CallSite], candidate: &CallSite) -> bool {
+    existing.iter().any(|cs| {
+        cs.panic_site
+            && cs.property_cid == candidate.property_cid
+            && cs.bridge_ir_name == candidate.bridge_ir_name
+            && cs.file == candidate.file
+            && cs.line == candidate.line
+            && cs.arg_term == candidate.arg_term
+            && cs.guard_facts == candidate.guard_facts
+            && cs.producer_file == candidate.producer_file
+            && cs.producer_line == candidate.producer_line
+            && cs.producer_symbol == candidate.producer_symbol
     })
 }
 
