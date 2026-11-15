@@ -9993,11 +9993,20 @@ class Comprehension(Node):
 
 
 class ExceptHandler(Node):
+    """One ``except [type [as name]]:`` clause of a ``try``: a grammar piece
+    the ``try``'s construction consumes (``Try._authenticated_handler_specs``,
+    ``TryStar._construct_sugar``: the arm's matchers, its body, its slot) and
+    never constructs as a value of its own.  It answers the roll with its
+    ``try`` (``_structural_part``), an arm no halt reaches included; its type
+    and its body are ordinary nodes the ``try`` builds, and answer for
+    themselves."""
+
     _bound_name_fields = ("name",)
     type_: Optional[Expression]
     name: Optional[str]
     body: Tuple[Statement, ...]
     _child_fields = ("type_", "body")
+    _structural_part = True
 
     @property
     def type(self) -> Optional[Expression]:
