@@ -859,6 +859,90 @@ def test_default():
     )
 
 
+# ---------------------------------------------------------------------------
+# ``C.m()`` on a function-local class reads ``C`` through its class statement.
+# ---------------------------------------------------------------------------
+
+
+def test_a_local_class_descriptor_called_off_its_class_runs_its_body() -> None:
+    """``C.m()`` where ``class C`` stands in the function: ``C`` is the
+    class its statement builds, ``m`` the member the one class-namespace
+    lookup selects, and the call runs its body (a ``staticmethod`` with no
+    implicit argument, a ``classmethod`` with the class).  Before, ``C``
+    read as a free name and the call was the unanswered call of ``m``,
+    two-faced instead of the body's one raise."""
+    for decorator, formals in (("staticmethod", ""), ("classmethod", "cls")):
+        outcome = _test_function_outcome(
+            "def test_local():\n"
+            "    class C:\n"
+            f"        @{decorator}\n"
+            f"        def m({formals}):\n"
+            "            raise ValueError('ran')\n"
+            "\n"
+            "    C.m()\n"
+        )
+        _only_raise(outcome, "ValueError")
+
+
+def test_a_local_class_plain_function_takes_its_actuals() -> None:
+    """A plain function read off its local class is unbound: ``C.m(5)``
+    binds ``n`` to ``5`` and returns it."""
+    source = """\
+def test_local():
+    class C:
+        def m(n):
+            return n
+
+    assert C.m(5) == {expected}
+"""
+    truthful = _test_function_outcome(source.format(expected=5))
+    assert _raises(truthful, "AssertionError") == []
+    assert truthful.completed_value() is not None, truthful
+    lying = _test_function_outcome(source.format(expected=6))
+    assert _raises(lying, "AssertionError") != []
+
+
+def test_a_local_class_receiver_is_read_only_through_its_class_statement() -> None:
+    """The receiver is the class statement only where ``C`` is the
+    enclosing function's local and the binding standing at the call is that
+    undecorated statement (``_local_class_receiver``): a module class, a
+    rebound name and a plain receiver are not."""
+    from sugar_source_tree.nodes import (
+        _LEXICALLY_BOUND_NAMES,
+        Attribute,
+        _local_class_receiver,
+    )
+
+    tree = _tree(
+        "def test_local():\n"
+        "    class C:\n"
+        "        @staticmethod\n"
+        "        def m():\n"
+        "            return 1\n"
+        "\n"
+        "    C.m()\n"
+    )
+    (class_def,) = tuple(node for node in tree.nodes() if isinstance(node, ClassDef))
+    call = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, Call) and isinstance(node.func, Attribute)
+    )
+    local = frozenset({"C"})
+    scope = {_LEXICALLY_BOUND_NAMES: local, "C": class_def}
+    assert _local_class_receiver(call.func, scope) is class_def
+    # Not a lexical local of the function (a module name): not this read.
+    assert _local_class_receiver(call.func, {"C": class_def}) is None
+    # Rebound after the statement: the binding is no class statement.
+    assert _local_class_receiver(call.func, {_LEXICALLY_BOUND_NAMES: local}) is None
+    assert (
+        _local_class_receiver(
+            call.func, {_LEXICALLY_BOUND_NAMES: local, "C": call.func.value}
+        )
+        is None
+    )
+
+
 def test_an_init_default_is_the_binding_at_its_class_statement() -> None:
     """``x = 1; class C: def __init__(self, a=x): self.a = a; x = 2;
     C().a`` is 1: the class body runs the ``__init__`` statement, which

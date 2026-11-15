@@ -22548,6 +22548,16 @@ class Call(Expression):
         if snapshot is not None:
             return snapshot
         rewritten = self._substitute_children(scope)
+        receiver_class = _local_class_receiver(self.func, scope)
+        if receiver_class is not None and isinstance(rewritten, Call):
+            # ``C.m(...)`` where the function's own ``class C`` statement
+            # binds ``C`` here: the receiver is that statement's value
+            # (``_local_class_receiver``), read where the call constructs.
+            from .shadow import rewrite_with_leaves
+
+            rewritten = rewrite_with_leaves(
+                rewritten, {"receiver_class": receiver_class}
+            )
         cells = self._closure_cells(scope, rewritten)
         if cells:
             from .shadow import rewrite_with_leaves
@@ -23425,11 +23435,23 @@ class Call(Expression):
                 )
             from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
 
+            receiver_class = getattr(self, "receiver_class", None)
+            if isinstance(receiver_class, ClassDef):
+                # ``C.m(...)`` on the function's own ``class C``: ``C`` is the
+                # class its statement builds, read as every read of a class
+                # statement's value is (a class call, ``@C``): the statement's
+                # own sugar.  ``m`` is then the one class-namespace lookup
+                # (``ClassDefinitionValue.call_method_value``) and the call
+                # the one method door.  The name's spelling is absorbed here.
+                self.func.value.discharge_by_substitution()
+                receiver = receiver_class.sugar()
+            else:
+                receiver = self.func.value.sugar()
             # Whether the receiver's contents are current at this call is its
             # value's (``object_identity.contents_current``), never the spelling
             # of what it was given.
             return MethodCallSugar(
-                receiver=self.func.value.sugar(),
+                receiver=receiver,
                 name=self.func.attr,
                 args=tuple(a.sugar() for a in self.args),
                 site=self.fragment,
@@ -24999,6 +25021,35 @@ def _class_method_lookup_call(call, frame) -> bool:
         class_owner is not None
         and class_owner._method_descriptor_kind(owner) == "classmethod"
     )
+
+
+def _local_class_receiver(func, scope) -> "Optional[ClassDef]":
+    """The function-local ``class`` statement the receiver of the method
+    callee ``func`` (``C.m``) reads, or None.
+
+    A local ``class C`` binds ``C`` for the statements after it
+    (``_local_definition_binding``) to the statement itself; a read of the
+    name stays the name (``Name.substitute``), and no reduction binds a
+    plain name, so ``C`` read as a receiver was a free name and ``C.m()``
+    the unanswered call of ``m``.  The receiver is the statement's value
+    when ``C`` is a lexical local of the enclosing function and the binding
+    standing here is that one undecorated ``class`` statement.  A decorated
+    one binds its decorators' result, which the read already is
+    (``DecoratedDefinitionRef``); a rebinding, a phi or any other binding is
+    not this statement."""
+    if not isinstance(func, Attribute) or not isinstance(func.value, Name):
+        return None
+    name = func.value.id
+    lexical = scope.get(_LEXICALLY_BOUND_NAMES)
+    if not (isinstance(lexical, frozenset) and name in lexical):
+        return None
+    bound = scope.get(name, _MISSING)
+    if bound is _MISSING:
+        return None
+    bound = unwrap_binding_state(bound)
+    if not isinstance(bound, ClassDef) or not call_applies_own_frame(bound):
+        return None
+    return bound
 
 
 def _default_evaluation_key(definition, index: int) -> str:
