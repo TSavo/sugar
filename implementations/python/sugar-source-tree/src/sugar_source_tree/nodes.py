@@ -10249,6 +10249,63 @@ class FunctionDef(Statement):
                 store_keeps=(evaluation,),
             )
 
+        def read_modify_store_steps(statement, suspension):
+            """``o.x OP= yield v``: the one field store's read-modify-store
+            (``ReceiverFieldStoreStatement.read_modifies``) of a yield.
+            Python evaluates the receiver, reads the field, and only then
+            evaluates ``yield v``; the in-place operation and the store run
+            at the resume.  So the statement is two steps: the receiver and
+            the field's read, each evaluated where the statement stands and
+            bound under its key before the suspension
+            (``DefinitionDefaultsStepV1``: values bound under keys, no
+            name), then the suspension whose resume binds the sent value
+            under its key and runs the statement's keyed store over the
+            field's key (``keyed_store``'s ``current``), which binds the
+            result under the statement's key (``store_keeps``) that every
+            later read of the field reads.  A receiver that suspends itself
+            is refused by name (``store_target_suspends``)."""
+            from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
+            from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+            if FunctionDef._owns_yield((statement.receiver_value,)):
+                return store_target_suspends
+            evaluation = statement.evaluation
+            receiver = statement.receiver_value.sugar()
+            held = statement.post_state.receiver.sugar()
+            if not isinstance(receiver, ConstructedTermSugar) or not isinstance(
+                held, ConstructedTermSugar
+            ):
+                return None
+            attr = statement.post_state.attr
+            read_evaluation = projection_key(evaluation, f".{attr}")
+            sent_evaluation = projection_key(evaluation, "<sent>")
+            read = AttributeSugar(receiver=held, name=attr, site=statement.get_site)
+            before = DefinitionDefaultsStepV1(
+                (receiver, read),
+                (statement.receiver_evaluation, read_evaluation),
+                statement.fragment.seal().cid,
+            )
+            store = statement.keyed_store(
+                _place_read_sugar(sent_evaluation, "yield", statement.fragment),
+                current=_place_read_sugar(
+                    read_evaluation, f".{attr}", statement.get_site
+                ),
+            )
+            return _GeneratorTryFinallyStepsV1(
+                (
+                    before,
+                    YieldAssignStepV1(
+                        suspension,
+                        (),
+                        statement.fragment.seal().cid,
+                        occurrence=statement.fragment,
+                        store=store,
+                        store_evaluation=sent_evaluation,
+                        store_keeps=(evaluation,),
+                    ),
+                )
+            )
+
         def yield_assign_step(statement):
             """``<targets> = yield v`` / ``<targets> = yield from xs`` as
             ``YieldAssignStepV1``, or None.
@@ -10303,6 +10360,11 @@ class FunctionDef(Statement):
             suspension = suspension_step(statement.value)
             if suspension is None:
                 return None
+            if (
+                isinstance(statement, ReceiverFieldStoreStatement)
+                and statement.read_modifies()
+            ):
+                return read_modify_store_steps(statement, suspension)
             if isinstance(statement, ReceiverFieldStoreStatement) or (
                 len(targets) == 1 and isinstance(targets[0], (Attribute, Subscript))
             ):
@@ -10416,21 +10478,20 @@ class FunctionDef(Statement):
                 if step is None:
                     return absent_step
                 return _GeneratorNamedStepV1(step)
-            if (
-                isinstance(statement, (Assign, AnnAssign, ReceiverFieldStoreStatement))
-                and isinstance(statement.value, (Yield, YieldFrom))
-                and not (
-                    isinstance(statement, ReceiverFieldStoreStatement)
-                    and statement.read_modifies()
-                )
-            ):
+            if isinstance(
+                statement, (Assign, AnnAssign, ReceiverFieldStoreStatement)
+            ) and isinstance(statement.value, (Yield, YieldFrom)):
                 # The suspension, then the assignment of the value its resume
                 # brings, bound to (or stored through) each target as an
                 # ordinary assignment binds it (``YieldAssignStepV1``).
+                # ``o.x OP= yield v`` reads the field first: its read step,
+                # then that suspension (``read_modify_store_steps``).
                 step = yield_assign_step(statement)
                 if step is None:
                     return absent_step
-                if isinstance(step, _GeneratorStepAbsentV1):
+                if isinstance(
+                    step, (_GeneratorStepAbsentV1, _GeneratorTryFinallyStepsV1)
+                ):
                     return step
                 return _GeneratorNamedStepV1(step)
             if isinstance(
@@ -13956,12 +14017,53 @@ def _receiver_field_store(
     receiver is one, and every name bound to the same object.
     ``receiver_value`` and ``extra`` are what a read-modify-store carries
     (``AugAssign._attribute_store``): the receiver it evaluates once, and the
-    key, operator and sites it reads the field through."""
-    from .backend import Child, Leaf, MaybeChild, materialize
-    from .shadow import ShadowNode, _handle_of
+    key, operator and sites it reads the field through.
+
+    The names the store rebinds are decided here, once, in ``scope``, as the
+    one mutation door decides its statement's (``container_mutation.
+    _statement``): ``names``, bound to the object itself (the receiver name
+    and every name bound to the same object, ``aliases``), read the
+    post-state; ``holders``, whose value holds the object, read their value
+    after the store (``holder_states``).  The statement writes each of them
+    to that state under its own projection of the statement's key
+    (``writes``, ``projection_key(evaluation, name)``), evaluated once, after
+    the store: what a live loop carries from item to item
+    (``ReceiverFieldStoreStatement.written_keys``), so ``o.x = v`` in a live
+    body hands the next item the object as this one left it."""
+    from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+    from .backend import Child, Children, Leaf, MaybeChild, materialize
+    from .container_mutation import _identity, aliases, holder_states
+    from .shadow import ShadowNode, _handle_of, occurrence_tags_of
 
     held = target.value
     receiver_name = held.id if isinstance(held, Name) and held.id in scope else ""
+    names = [receiver_name] if receiver_name else []
+    holders = []
+    root = _identity(receiver)
+    if scope and isinstance(root, Node) and not isinstance(root, Name):
+        exact, containing = aliases(scope, root)
+        names.extend(name for name in exact if name not in names)
+        # A field store is the plain store of one field (``ordinary=False``):
+        # a name that merely shares something with the object keeps its
+        # binding.
+        holders = holder_states(
+            statement,
+            scope,
+            receiver=receiver,
+            root=root,
+            containing=containing,
+            method="__setattr__",
+            tags=occurrence_tags_of(statement),
+            skip=names,
+            ordinary=False,
+        )
+    writes = ()
+    if isinstance(evaluation, str):
+        writes = tuple(
+            (name, projection_key(evaluation, name))
+            for name in (*names, *(name for name, _state in holders))
+        )
     post_state = materialize(
         statement.unit,
         ShadowNode(
@@ -13993,6 +14095,13 @@ def _receiver_field_store(
                 ("evaluation", Leaf(evaluation)),
                 # The source Attribute target this store stands for.
                 ("target_site", Leaf(target.fragment)),
+                ("names", Leaf(tuple(names))),
+                ("holders", Leaf(tuple(name for name, _state in holders))),
+                (
+                    "holder_states",
+                    Children(tuple(_handle_of(state) for _name, state in holders)),
+                ),
+                ("writes", Leaf(writes)),
                 *extra,
             ),
         ),
@@ -15447,7 +15556,9 @@ class AugAssign(Statement):
         receiver = target.value.substitute(scope)
         rhs = self.value.substitute(_scope_after(scope, target.value, receiver))
         evaluation = self._evaluation_key(scope)
-        receiver_evaluation = projection_key(evaluation, "receiver")
+        # Never an identifier: the statement writes each name it rebinds
+        # under ``projection_key(evaluation, name)`` (``_receiver_field_store``).
+        receiver_evaluation = projection_key(evaluation, "<receiver>")
         held = _evaluation_ref(
             self,
             target.value.span,
@@ -16212,11 +16323,17 @@ class For(Statement):
                         bind(t)
                 elif n.kind in ("AugAssign", "AnnAssign", "NamedExpr"):
                     bind(n.target)
-                elif n.kind == "ContainerMutationStatement":
+                elif n.kind in (
+                    "ContainerMutationStatement",
+                    "ReceiverFieldStoreStatement",
+                ):
                     # The one mutation door, substituted: ``x += e`` and ``x
                     # = r.m()`` write ``x``, and every statement of the door,
                     # bare (``r.append(e)``) or assigned, writes each name
-                    # bound to the object it changes (``written_keys``).
+                    # bound to the object it changes (``written_keys``); the
+                    # one field store (``o.x = v``, ``o.x += v``) writes each
+                    # name bound to the object it stores into, and each
+                    # holder of it, the same way.
                     names.update(name for name, _key in n.written_keys())
                 elif n.kind in ("For", "AsyncFor"):
                     # A nested loop's target rebinds its names on every item:
@@ -20205,14 +20322,24 @@ class ReceiverFieldStoreStatement(Statement):
     value is the in-place result of the field's read (the one attribute
     lookup) and ``v``, and the receiver is evaluated once, before the read,
     and bound under ``receiver_evaluation`` (``receiver_value``), which the
-    read, the store and the post-state read it through."""
+    read, the store and the post-state read it through.
+
+    ``names`` (bound to the object itself) and ``holders`` (whose value
+    holds it, each read as ``holder_states[i]`` after the store) are decided
+    once, where the statement is built (``_receiver_field_store``).
+    ``writes`` are ``(name, key)``: each of them written to its state after
+    the store under its projection of the statement's key, evaluated once
+    after the store (``KeyedStoreSugar.writes``): what a live loop carries
+    (``written_keys``), as the one mutation door's statement writes every
+    alias (``ContainerMutationStatement.written_keys``)."""
 
     receiver_name: str
     receiver_value: Optional[Expression]
     value: Expression
     post_state: Expression
+    holder_states: Tuple[Expression, ...]
     evaluation: str
-    _child_fields = ("receiver_value", "value", "post_state")
+    _child_fields = ("receiver_value", "value", "post_state", "holder_states")
 
     def substitute(self, scope):
         del scope
@@ -20222,45 +20349,45 @@ class ReceiverFieldStoreStatement(Statement):
         """Whether this is ``o.x OP= v``'s store (``AugAssign``)."""
         return isinstance(getattr(self, "receiver_evaluation", None), str)
 
+    def _states(self) -> dict:
+        """Each name the store rebinds, to its state after the store: every
+        holder to its value after it, every name bound to the object itself
+        to the post-state."""
+        holders = tuple(getattr(self, "holders", None) or ())
+        states = tuple(getattr(self, "holder_states", None) or ())
+        names = tuple(getattr(self, "names", None) or ())
+        return {
+            **dict(zip(holders, states, strict=True)),
+            **{name: self.post_state for name in names},
+        }
+
+    def written_keys(self) -> tuple:
+        """Every name the store rebinds, under its key of it (``writes``)."""
+        return tuple(getattr(self, "writes", None) or ())
+
     def substitution_binding(self, scope):
         """The store reaches every holder of the object exactly as the one
         door's mutation does (``container_mutation.aliases``,
         ``holder_states``): the receiver name and every name bound to the
-        object it holds here (``same_object``, one object identity) are
-        bound to the post-state; every name whose value holds the object
-        inside another value (``lst = [o]``, ``d = {'k': o}``, ``t = (o,)``,
-        another object's field), or may be it (a member whose identity is
-        undecided), to its value after the store -- the opaque post-state,
-        never its old value.  A field store is the plain store of one field
-        (``ordinary=False``): a name that merely shares something with the
-        object keeps its binding."""
-        from .container_mutation import _identity, aliases, holder_states
-        from .shadow import occurrence_tags_of
-
-        names = [self.receiver_name] if self.receiver_name else []
-        held = []
-        receiver = self.post_state.receiver
-        root = _identity(receiver)
-        if scope and isinstance(root, Node) and not isinstance(root, Name):
-            exact, containing = aliases(scope, root)
-            names.extend(name for name in exact if name not in names)
-            held = holder_states(
-                self,
-                scope,
-                receiver=receiver,
-                root=root,
-                containing=containing,
-                method="__setattr__",
-                tags=occurrence_tags_of(self),
-                skip=names,
-                ordinary=False,
-            )
-        return {**dict(held), **{name: self.post_state for name in names}}
+        object it holds where the statement stands (``same_object``, one
+        object identity) are bound to the post-state; every name whose value
+        holds the object inside another value (``lst = [o]``, ``d = {'k':
+        o}``, ``t = (o,)``, another object's field), or may be it (a member
+        whose identity is undecided), to its value after the store -- the
+        opaque post-state, never its old value.  A field store is the plain
+        store of one field (``ordinary=False``): a name that merely shares
+        something with the object keeps its binding.  The names were decided
+        once, where the statement was built (``_receiver_field_store``); the
+        bindings are the states, so every later read in the block reads the
+        state, and a live loop reads the statement's write of it
+        (``written_keys``)."""
+        del scope
+        return self._states()
 
     def _construct_sugar(self):
         return self.keyed_store(self.value.sugar())
 
-    def keyed_store(self, value_sugar):
+    def keyed_store(self, value_sugar, current=None):
         """The statement's keyed store evaluating ``value_sugar``: its own
         right-hand side, or, for ``o.x = yield v``, the read of the value the
         resume binds under the statement's key (``YieldAssignStepV1``).
@@ -20269,8 +20396,14 @@ class ReceiverFieldStoreStatement(Statement):
         receiver's value decides it at reduce, and its value is the read of
         what this statement bound under its key.  ``o.x OP= v`` evaluates its
         receiver first and binds it under ``receiver_evaluation``; its value
-        is the field's in-place result (``AttributeAugAssignSugar``), read
-        off that receiver."""
+        is the field's in-place result (``AttributeAugAssignSugar``) of the
+        field's read off that receiver (the one attribute lookup) and
+        ``value_sugar``.  With ``current`` (``o.x OP= yield v`` in a
+        generator) the receiver was evaluated and the field read before the
+        suspension, as Python does them, each bound under its key: the store
+        evaluates neither again and ``current`` is the read of the field's
+        key.  After the store, each name the store rebinds is written to its
+        state under its key (``writes``)."""
         from sugar_lift_py_tests.sugar.assign_sugar import KeyedStoreSugar
         from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
             ReceiverFieldStoreSugar,
@@ -20284,32 +20417,51 @@ class ReceiverFieldStoreStatement(Statement):
             attr=post_state.attr,
             site=self.fragment,
         )
+        # Each distinct state once, bound under the key of every name that
+        # reads it.
+        states = self._states()
+        grouped: list = []
+        for name, key in self.written_keys():
+            state = states[name]
+            for entry in grouped:
+                if entry[0] is state:
+                    entry[1].append(key)
+                    break
+            else:
+                grouped.append((state, [key]))
+        writes = tuple((state.sugar(), tuple(keys)) for state, keys in grouped)
         if not self.read_modifies():
             return KeyedStoreSugar(
                 value=value_sugar,
                 store=store,
                 evaluation=self.evaluation,
                 site=self.fragment,
+                writes=writes,
             )
+        from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
         from sugar_lift_py_tests.sugar.augassign_sugar import AttributeAugAssignSugar
 
         op = self.op
+        read_before = current is not None
+        if not read_before:
+            current = AttributeSugar(
+                receiver=receiver, name=post_state.attr, site=self.get_site
+            )
         return KeyedStoreSugar(
             value=AttributeAugAssignSugar(
-                receiver=receiver,
-                attr=post_state.attr,
+                current=current,
                 rhs=value_sugar,
                 operator=type(op).inplace_operator,
                 operation=op.project_inplace,
-                get_site=self.get_site,
                 op_site=self.operator_site,
                 site=self.fragment,
             ),
             store=store,
             evaluation=self.evaluation,
             site=self.fragment,
-            receiver=self.receiver_value.sugar(),
-            receiver_evaluation=self.receiver_evaluation,
+            receiver=None if read_before else self.receiver_value.sugar(),
+            receiver_evaluation=None if read_before else self.receiver_evaluation,
+            writes=writes,
         )
 
 

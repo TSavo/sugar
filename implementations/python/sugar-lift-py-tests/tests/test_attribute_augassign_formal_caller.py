@@ -83,21 +83,42 @@ def _aug_sugar(source: str = "def helper(obj, rhs):\n    obj.field += rhs\n"):
 def _production_sites():
     _, keyed = _aug_statement()
     value = keyed.value
-    return value.get_site, value.op_site, keyed.store.site, value.site
+    return value.current.site, value.op_site, keyed.store.site, value.site
+
+
+@dataclass(frozen=True)
+class _FieldRead(Sugar):
+    """The field's read off ``receiver``: the one attribute lookup, as
+    ``AttributeSugar`` reads it (its receiver here a plain test sugar)."""
+
+    receiver: Sugar
+    attr: str
+    site: object
+
+    def desugar(self, ctx=None):
+        from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
+
+        return self.receiver.desugar(ctx).and_then(
+            lambda receiver: AttributeSugar.project_attribute(
+                receiver, self.attr, self.site, ctx
+            )
+        )
+
+    @classmethod
+    def witnesses(cls):
+        return ()
 
 
 def _read_modify_store(receiver, rhs, *, operation=project_iadd, attr="field"):
     """``receiver.attr OP= rhs`` as the statement runs it: the field's
-    in-place result (``AttributeAugAssignSugar``), then the one field store of
-    it on the same receiver (``ReceiverFieldStoreSugar``)."""
+    in-place result (``AttributeAugAssignSugar``) of its read, then the one
+    field store of it on the same receiver (``ReceiverFieldStoreSugar``)."""
     get_site, op_site, set_site, site = _production_sites()
     value = AttributeAugAssignSugar(
-        receiver=receiver,
-        attr=attr,
+        current=_FieldRead(receiver, attr, get_site),
         rhs=rhs,
         operator="iadd",
         operation=operation,
-        get_site=get_site,
         op_site=op_site,
         site=site,
     )
@@ -151,14 +172,14 @@ def test_attribute_augassign_constructs_attribute_augassign_sugar() -> None:
     _, keyed = _aug_statement()
     sugar = keyed.value
     assert isinstance(sugar, AttributeAugAssignSugar)
-    assert sugar.attr == "field"
+    assert sugar.current.name == "field"
     assert sugar.operator == "iadd"
     assert sugar.operation.__func__ is BinaryOperator.project_inplace
     # The receiver is evaluated once, first, and bound under its key: the
     # read and the store read it there.
     assert keyed.receiver is not None
     assert isinstance(keyed.receiver_evaluation, str)
-    assert sugar.receiver == keyed.store.receiver
+    assert sugar.current.receiver == keyed.store.receiver
     get_site, op_site, set_site, _site = _production_sites()
     assert get_site is not op_site
     assert op_site is not set_site
