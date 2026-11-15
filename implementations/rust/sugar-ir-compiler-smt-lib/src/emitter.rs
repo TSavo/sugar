@@ -331,10 +331,16 @@ pub fn emit_formula(formula: &Formula) -> Result<String, CompileError> {
             if let Some(rendered) = emit_monadic_adt_tester_atomic(name, args)? {
                 return Ok(rendered);
             }
-            let smt_name = smt_atomic_name(name);
+            // The head is spelled exactly as the predicate-decl pass declares
+            // it (`smt_ctor_head`): a lifted predicate such as
+            // `python:call_result.completes` holds a `:`, and an unquoted `:`
+            // reads as a keyword (z3: "invalid expression, unexpected
+            // keyword"). Theory predicates (`=`, `distinct`, `<`, ...) are
+            // simple symbols and come out unchanged.
             if args.is_empty() {
-                return Ok(smt_name.to_string());
+                return Ok(smt_quote(smt_atomic_name(name)));
             };
+            let smt_name = smt_ctor_head(smt_atomic_name(name), args.len());
             let expected = expected_atomic_arg_sort(name, args);
             let args_str = args.iter();
             let args_str = args_str.map(|arg| emit_term_with_expected(arg, expected.as_deref()));

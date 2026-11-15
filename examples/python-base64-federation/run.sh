@@ -91,13 +91,17 @@ for i, ch in enumerate(text):
         break
 if doc is None:
     print(f"FAIL({twin}): no JSON receipt"); raise SystemExit(1)
-rows = [r for r in doc["rows"] if "#euf#" in str(r.get("property", ""))]
+# The conjoin row is the one prove's join (step 9) wrote: its verification
+# carries the vendor's post, linked by the edge's target_symbol, on the
+# consumer's own call encodeBase64("xyz").
+SYMBOL = "python:b64vendor.encodeBase64"
+def joined(r):
+    links = ((r.get("verification") or {}).get("linkedPosts")) or []
+    return any(l.get("sourceSymbol") == SYMBOL and "xyz" in json.dumps(l.get("call")) for l in links)
+rows = [r for r in doc["rows"] if joined(r)]
 if not rows:
-    print(f"FAIL({twin}): no #euf# conjoin row"); raise SystemExit(1)
-# the CONSUMER's claim is keyed on its own input "xyz" (the vendor's own row is
-# keyed on "abc"); select the consumer row to report the conjoin verdict.
-consumer = [r for r in rows if "xyz" in str(r.get("property", ""))]
-row = consumer[0] if consumer else rows[0]
+    print(f"FAIL({twin}): no conjoin row joins {SYMBOL}"); raise SystemExit(1)
+row = rows[0]
 viol = doc.get("violations") or 0
 print(f"  consumer conjoin row: {row.get('status')}  {row.get('reason','')[:110]}")
 print(f"  totals: discharged={doc.get('discharged')} violations={viol}")
