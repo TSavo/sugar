@@ -47,6 +47,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.outcome.exit_set import (
     Completed,
     ExitSet,
@@ -220,9 +221,11 @@ def test_guarded_loop_read_is_a_constructed_term_with_exact_coordinates():
         read_site,
     )
 
-    with pytest.raises(TypeError, match="authenticated target CID"):
+    # Refused by name at the construction door (#7125): what could not be
+    # built, never a bare TypeError.
+    with pytest.raises(ConstructionPanic, match="no authenticated target CID"):
         missing_target.to_term(owner="guarded-loop-read-missing-target")
-    with pytest.raises(TypeError, match="exit-family arity"):
+    with pytest.raises(ConstructionPanic, match="no integer exit_partition_arity"):
         missing_arity.to_term(owner="guarded-loop-read-missing-arity")
 
 
