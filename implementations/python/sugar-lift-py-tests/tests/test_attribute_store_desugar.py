@@ -334,11 +334,18 @@ def test_property_without_setter_raises_attribute_error_not_completed(tmp_path):
 
 
 def test_undecided_retains_dual_face_runtime_effect(tmp_path):
-    """Dual-face instrument intact — not replaced by SugarNotWritten."""
+    """Dual-face instrument intact — not replaced by SugarNotWritten.
+
+    A store on a receiver whose type nothing decides is the store law's two
+    faces (``store_outcome_coordinate.store_faces``, #8094): it completes
+    under the store occurrence's opaque atom and halts with the undetermined
+    raise under its complement.  Neither face is dropped."""
     outcome = _store(
         SymbolicValue(make_var("obj")), TermValue(7), [], _site(tmp_path)
     ).desugar()
-    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    assert len(outcome.exits) == 2
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    assert done.value is not None
     (halt,) = outcome.halts()
     assert isinstance(halt.effect, UndeterminedRaiseEffect)
     assert halt.effect.producer_node_owner == "AttributeStoreRuntimeEffect"
