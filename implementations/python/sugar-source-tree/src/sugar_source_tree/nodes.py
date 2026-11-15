@@ -9965,8 +9965,13 @@ class FunctionDef(Statement):
             ):
                 return None
             value = call.args[-1]
+            # The reads after the call (``evaluated[1:]``: the receiver after
+            # it, every holder's value) reach the call, and through it the
+            # stored yield itself; that is the value's suspension, not the
+            # target's (``besides``).
             if FunctionDef._owns_yield(
-                (call.receiver, *call.args[:-1], *statement.evaluated[1:])
+                (call.receiver, *call.args[:-1], *statement.evaluated[1:]),
+                besides=value,
             ):
                 # ``xs[(yield)] = yield v``: the target suspends again after
                 # the value's resume (``store_target_suspends``).
@@ -10043,9 +10048,11 @@ class FunctionDef(Statement):
             if operand is not None and FunctionDef._owns_yield((operand,)):
                 # ``y = yield (yield v)``: the operand suspends first.
                 return None
-            if FunctionDef._owns_yield(tuple(targets)):
+            if FunctionDef._owns_yield(tuple(targets), besides=statement.value):
                 # ``xs[(yield)] = yield v``: a target suspends again after the
-                # value (``store_target_suspends``).
+                # value (``store_target_suspends``).  A substituted place
+                # target reaching the statement's own yield is that value's
+                # suspension (``besides``), not a second one.
                 return store_target_suspends
             suspension = suspension_step(statement.value)
             if suspension is None:
@@ -10675,8 +10682,13 @@ class FunctionDef(Statement):
         return tuple(steps)
 
     @staticmethod
-    def _owns_yield(body) -> bool:
+    def _owns_yield(body, besides=None) -> bool:
         """Does this body own a suspension boundary of its own?
+
+        ``besides`` is one suspension the caller already accounts for (a
+        yield assignment's own value): a store target's graph reaches it
+        through the store's own call or place, and reaching it there is not a
+        second suspension in the target.
 
         `Yield` and `YieldFrom` are the two constructors of that boundary, so
         ownership tests BOTH. Recognizing only `Yield` made a `yield from`-only
@@ -10693,8 +10705,16 @@ class FunctionDef(Statement):
         """
         seen: set[int] = set()
         stack: list = list(reversed(tuple(body)))
+        # A backend ref may be read through more than one view: the accounted
+        # suspension is that node, by its ref, whichever view reaches it.
+        besides_ref = getattr(besides, "ref", None)
         while stack:
             node = stack.pop()
+            if besides is not None and (
+                node is besides
+                or (besides_ref is not None and getattr(node, "ref", None) == besides_ref)
+            ):
+                continue
             if isinstance(node, (Yield, YieldFrom)):
                 return True
             if not isinstance(node, Node):

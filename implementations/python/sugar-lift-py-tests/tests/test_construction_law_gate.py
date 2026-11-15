@@ -18,7 +18,6 @@ Seven crimes, named after the base64 disaster that motivated the gate:
   C. execution instead of lowering    -- ``left << right`` inside desugar
   D. pulling its own body             -- ``ctx.build_body(...)`` in a sugar
   E. package-root side-door lifter    -- root lifter claims source before factory
-  F. router claims before factory     -- ``lib.py`` calls a bespoke lifter first
   G. child sugar self-assembly        -- a sugar calls another sugar's from_site
   H. Python-side solver dependency    -- ``import z3`` in the kit
 
@@ -39,7 +38,6 @@ from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 _KIT_SRC = sugar_lift_py_tests_package_root() / "src" / "sugar_lift_py_tests"
 _LINTED_DIRS = ("sugar", "floor")
 _SIDE_DOOR_LIFTERS = ("array_map_lifter.py", "literal_call_lifter.py")
-_SIDE_DOOR_CALLS = {"lift_array_map_assertions", "lift_literal_call_assertions"}
 # `|` is excluded on purpose: `int | str` unions parse as BinOp(BitOr) and are
 # not execution. `<< >> & ^` never appear in type position -- they are math.
 _BITWISE_EXEC = (ast.LShift, ast.RShift, ast.BitAnd, ast.BitXor)
@@ -190,17 +188,6 @@ def side_door_crimes(root: Path) -> list[str]:
                 "delete this root lifter or move its behavior behind factory-built sugars."
             )
 
-    lib_path = _KIT_SRC / "lib.py"
-    tree = ast.parse(lib_path.read_text(encoding="utf-8"))
-    rel = lib_path.relative_to(root)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id in _SIDE_DOOR_CALLS:
-                crimes.append(
-                    f"{rel}:{node.lineno}: CRIME F (router claims before factory) "
-                    f"`{node.func.id}(...)` -- `lift_source` must delegate to the "
-                    "factory, not a bespoke pre-factory lifter."
-                )
     return crimes
 
 

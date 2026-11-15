@@ -13,7 +13,6 @@ sys.path.insert(0, str(SCRIPTS))
 
 import corpus_fatal_triage  # noqa: E402
 from corpus_fatal_triage import (  # noqa: E402
-    _child_payload,
     _classify_child,
     _is_fatal_category,
 )
@@ -25,13 +24,27 @@ from sugar_lift_py_tests.idd.factory_walk_unclassified_locus import (  # noqa: E
 )
 
 
+def _payload(source: Path, rel: str):
+    """One file lifted the way the supervised worker lifts it: under the
+    construction context frozen for the file's corpus root."""
+    from sugar_lift_py_tests.lift_rpc import tree_construction_context_for_workspace
+
+    root = source.parent
+    return corpus_fatal_triage._child_payload(
+        source,
+        rel,
+        corpus_root=root,
+        construction_context=tree_construction_context_for_workspace(root),
+    )
+
+
 def test_unwritten_construction_is_counted_typed_gap_not_fatal_crash(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "unsupported.py"
     source.write_text("def broken():\n    type T = int\n", encoding="utf-8")
 
-    testimony, returncode = _child_payload(source, "demo/unsupported.py")
+    testimony, returncode = _payload(source, "demo/unsupported.py")
 
     assert returncode == 0
     assert testimony["outcome"] == "typed-gap"
@@ -56,7 +69,7 @@ def test_renamed_unwritten_manager_is_counted_typed_gap_not_bare_exception(
         encoding="utf-8",
     )
 
-    testimony, returncode = _child_payload(source, "demo/renamed.py")
+    testimony, returncode = _payload(source, "demo/renamed.py")
 
     assert returncode == 0
     assert testimony["outcome"] == "typed-gap"
@@ -102,7 +115,7 @@ def test_genuine_python_bug_remains_bare_exception(tmp_path: Path, monkeypatch) 
     import _production_lift_child as production_child
 
     monkeypatch.setattr(production_child, "production_lift_testimony", broken_lift)
-    testimony, returncode = corpus_fatal_triage._child_payload(source, "demo/bug.py")
+    testimony, returncode = _payload(source, "demo/bug.py")
 
     assert returncode == 3
     assert testimony["outcome"] == "exception"
@@ -127,7 +140,7 @@ def test_completed_child_uses_the_same_production_terminal_shape(
 ) -> None:
     source = tmp_path / "clean.py"
     source.write_text("def identity(value):\n    return value\n", encoding="utf-8")
-    testimony, returncode = _child_payload(source, "demo/clean.py")
+    testimony, returncode = _payload(source, "demo/clean.py")
 
     assert returncode == 0
     assert testimony["outcome"] == "completed"

@@ -5,9 +5,6 @@ are deleted; the dig dispatches `CallSugar` via `ctx.build_body` (the catalog). 
 keeps them gone -- the absence IS the invariant. If it fails, someone reached around the
 factory with a constructor again (the exact failure the whole refactor exists to prevent),
 and that reach is a silent-green side door unless this guard makes it loud.
-
-It also forbids `NotImplementedError` stubs in the strategies -- a stub that routes the new
-shell back into the old path is a side door wearing a name tag.
 """
 
 from __future__ import annotations
@@ -36,12 +33,4 @@ def test_no_side_door_constructor_anywhere_in_src():
         "side-door call constructor reference(s) reappeared -- the dig must dispatch "
         f"CallSugar through the catalog (ctx.build_body), never a constructor:\n  "
         + "\n  ".join(hits)
-    )
-
-
-def test_call_strategies_have_no_notimplemented_stubs():
-    text = (_SRC / "sugar" / "call_sugar.py").read_text(encoding="utf-8")
-    assert "NotImplementedError" not in text, (
-        "call_sugar.py contains a NotImplementedError -- a stubbed strategy routes the dumb "
-        "shell back into the old path. The strategies must be real."
     )

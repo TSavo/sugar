@@ -349,11 +349,16 @@ def _function(body: str):
         TreeConstructionContextV1,
     )
     from sugar_source_tree import nodes
+    from sugar_source_tree.reporter import CollectingReporter
     from sugar_source_tree.tree import SourceFile
 
     source = _HELPERS + "def test_it():\n" + body
+    # A registration channel is seated at the door that opens the tree: a
+    # loop body is rematerialized under construction testimony, and a call
+    # there retains its source definition from this channel.
     tree = SourceFile(
         (source, "test_witness.py", blake3_512_of(source.encode())),
+        reporter=CollectingReporter(),
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )
     (function,) = tuple(

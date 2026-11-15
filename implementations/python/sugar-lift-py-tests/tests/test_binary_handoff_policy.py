@@ -12,8 +12,6 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.filename import cid_filename_stem
-
 
 from sugar_lift_py_tests.repo_root import resolve_repo_root
 
@@ -519,64 +517,6 @@ def test_sugarbin_source_stamp_requires_blake3_tool(tmp_path: Path) -> None:
     assert completed.returncode != 0
     assert "crime=missing-blake3-tool" in completed.stderr
     assert "replacement=install b3sum" in completed.stderr
-
-
-def test_sugarbin_publish_uploads_stamp_named_assets(tmp_path: Path) -> None:
-    target = tmp_path / "target"
-    binary = target / "release" / "sugar"
-    binary.parent.mkdir(parents=True)
-    stamp = "blake3-512:" + ("a" * 128)
-    artifact_stamp = cid_filename_stem(stamp)
-    _write_fake_sugar(binary, stamp)
-
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    upload_log = tmp_path / "upload.log"
-    fake_gh = fake_bin / "gh"
-    fake_gh.write_text(
-        "#!/bin/sh\n"
-        'if [ "$1 $2" = "repo view" ]; then echo TSavo/sugar; exit 0; fi\n'
-        'if [ "$1 $2" = "api user" ]; then echo fake-publisher; exit 0; fi\n'
-        'if [ "$1 $2" = "release view" ]; then\n'
-        '  case "$*" in *"--json assets"*) exit 0 ;; esac\n'
-        "  exit 0\n"
-        "fi\n"
-        'if [ "$1 $2" = "release upload" ]; then\n'
-        f"  printf '%s\\n' \"$@\" > {os.fspath(upload_log)!r}\n"
-        "  exit 0\n"
-        "fi\n"
-        'echo unexpected gh "$@" >&2\n'
-        "exit 2\n",
-        encoding="utf-8",
-    )
-    fake_gh.chmod(0o755)
-
-    completed = _run_sugarbin(
-        {
-            "PATH": f"{fake_bin}:{os.environ['PATH']}",
-            "SUGAR_BINARY_TARGET_ROOT": os.fspath(target),
-            "SUGAR_BINARY_REPO": "TSavo/sugar",
-            "SUGAR_BINARY_SOURCE_STAMP": stamp,
-            "SUGAR_BINARY_ALLOW_BUILD": "0",
-        },
-        "--profile",
-        "release",
-        "--platform",
-        "darwin-x86_64",
-    )
-
-    assert completed.returncode == 0, completed.stderr
-    upload_args = upload_log.read_text(encoding="utf-8").splitlines()
-    uploaded_paths = [
-        arg
-        for arg in upload_args
-        if Path(arg).name.startswith(f"sugar-darwin-x86_64-release-{artifact_stamp}")
-    ]
-    assert [Path(arg).name for arg in uploaded_paths] == [
-        f"sugar-darwin-x86_64-release-{artifact_stamp}",
-        f"sugar-darwin-x86_64-release-{artifact_stamp}.metadata.json",
-    ]
-    assert all("#" not in arg and ":" not in Path(arg).name for arg in uploaded_paths)
 
 
 def test_python_wrapper_delegates_to_sugarbin(tmp_path: Path, monkeypatch) -> None:

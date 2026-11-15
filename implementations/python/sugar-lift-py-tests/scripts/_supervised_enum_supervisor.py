@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import signal
 import subprocess
 import sys
@@ -180,6 +181,7 @@ class SupervisedEnumSupervisor:
         self._current_file: str | None = None
         self._stderr_chunks: list[str] = []
         self._stderr_thread: threading.Thread | None = None
+        self._stdout_lines: queue.Queue[str | None] | None = None
 
     @property
     def current_file(self) -> str | None:
@@ -288,6 +290,7 @@ class SupervisedEnumSupervisor:
             env=self.env,
         )
         self._start_stderr_drain()
+        self._start_stdout_reader()
         ready = self._readline(timeout=30.0)
         if ready is None:
             stderr_tail = self._worker_stderr_tail()
@@ -463,24 +466,53 @@ class SupervisedEnumSupervisor:
         self.worker_restarts += 1
         self.start()
 
-    def _readline(self, *, timeout: float) -> dict[str, Any] | None:
+    def _start_stdout_reader(self) -> None:
+        """Read worker stdout on its own thread, one line per queue entry.
+
+        ``select`` on the pipe's file descriptor cannot see lines already
+        pulled into the text wrapper's buffer: when the worker writes two
+        lines back to back (the last progress heartbeat and ``context-ready``),
+        one ``readline`` buffers both and the second sits unseen until the
+        deadline. The queue holds every line the worker wrote; ``None`` marks
+        end of stream.
+        """
         proc = self._proc
         if proc is None or proc.stdout is None:
-            return None
-        # Prefer select when available; fall back to blocking with alarm on POSIX.
-        deadline = time.monotonic() + timeout
-        import select
+            self._stdout_lines = None
+            return
+        lines: queue.Queue[str | None] = queue.Queue()
+        self._stdout_lines = lines
 
-        while time.monotonic() < deadline:
+        def _read() -> None:
+            try:
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    lines.put(line)
+            except Exception:  # noqa: BLE001
+                pass
+            finally:
+                lines.put(None)
+
+        threading.Thread(
+            target=_read, name="supervised-enum-stdout", daemon=True
+        ).start()
+
+    def _readline(self, *, timeout: float) -> dict[str, Any] | None:
+        lines = self._stdout_lines
+        if self._proc is None or lines is None:
+            return None
+        deadline = time.monotonic() + timeout
+        while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                break
-            readable, _, _ = select.select([proc.stdout], [], [], remaining)
-            if not readable:
-                continue
-            line = proc.stdout.readline()
-            if line == "":
-                # EOF — worker died
+                return None
+            try:
+                line = lines.get(timeout=remaining)
+            except queue.Empty:
+                return None
+            if line is None:
+                # EOF — worker died. Keep the mark for the next reader.
+                lines.put(None)
                 return None
             line = line.strip()
             if not line:
@@ -489,7 +521,6 @@ class SupervisedEnumSupervisor:
                 return json.loads(line)
             except json.JSONDecodeError:
                 continue
-        return None
 
     def lift_file(self, path: Path, rel: str) -> FileTerminal:
         """Dispatch one file; may restart the worker on crash/timeout."""

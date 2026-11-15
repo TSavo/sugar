@@ -37,7 +37,10 @@ from sugar_lift_py_tests.authenticated_exception_matching import (
     matches_raise_effect,
     raise_effect_message_verdict,
 )
-from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+from sugar_lift_py_tests.effect.raise_effect import (
+    RaiseEffect,
+    UndeterminedRaiseEffect,
+)
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.string_value import StringValue
 from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
@@ -69,13 +72,17 @@ class _TermBearingHandler:
         return TermValue(99).to_term(owner="handler value")
 
 
-def _valueless_effect() -> RaiseEffect:
-    """The measured shape: a raise with no value and no authenticated type."""
-    return RaiseEffect.for_builtin(
-        "NameError",
-        blame=OCCURRENCE,
-        occurrence=OCCURRENCE,
-    )
+def _valueless_effect() -> UndeterminedRaiseEffect:
+    """The measured shape: a raise with no value and no authenticated type.
+
+    A ``RaiseEffect`` always carries its type identity (``for_builtin`` mints
+    the language's own coordinate, which the matcher may test), so the shape
+    with no type is the ``UndeterminedRaiseEffect``. It carries no raised
+    value and no occurrence key, so it has no exception object either: there
+    is no VALUE to state the test over. It still states the fragment it halted
+    at -- the raise SITE, which the matcher must not take as the subject.
+    """
+    return UndeterminedRaiseEffect(site=OCCURRENCE)
 
 
 # -- the refusal is correct output -------------------------------------------
@@ -150,6 +157,21 @@ def test_a_coordinate_as_the_raised_term_is_the_repair_this_forbids() -> None:
     # It designates a source location, not a raised object -- so an
     # `adt.is_python_type` over it asserts a runtime type of a *coordinate*.
     assert OCCURRENCE.count(":") == 2
+
+
+def test_a_typed_raise_without_a_value_is_tested_by_its_identity() -> None:
+    """Truthful twin: a language-owned raise with no value still has a subject
+    the test can be stated over -- its authenticated type identity -- and the
+    raise site is never that subject."""
+    effect = RaiseEffect.for_builtin("NameError", occurrence=OCCURRENCE)
+    handler = _AuthenticatedHandler(TermValue(1).to_term(owner="handler"))
+
+    verdict = matches_raise_effect(effect, handler)
+
+    assert isinstance(verdict, MatchRetained)
+    assert verdict.obligation.name == "adt.is_python_type"
+    assert verdict.obligation.args[0] == effect.exception_type_coordinate
+    assert str_const(OCCURRENCE) not in verdict.obligation.args
 
 
 def test_a_real_value_term_still_retains_the_question() -> None:

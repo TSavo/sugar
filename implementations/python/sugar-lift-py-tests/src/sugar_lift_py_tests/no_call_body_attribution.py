@@ -640,6 +640,7 @@ def discover_no_call_body_probes(
     """
     from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
     from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_source_tree.reporter import CollectingReporter
     from sugar_source_tree.nodes import (
         Attribute,
         BinOp,
@@ -688,10 +689,16 @@ def discover_no_call_body_probes(
             raise AttributionInvariantError(
                 f"demand table names source CID absent from authenticated corpus: {source_cid}"
             )
-        # The one opener: the same seated, populated unit the board reads.
+        # The one opener: the same seated, populated unit the board reads,
+        # with a registration channel seated as every enumerate door seats
+        # one (#7374). A tree opened on NULL_REPORTER owns no registration,
+        # and a loop body rematerialized under construction testimony cannot
+        # retain a call's source definition from it (BackendDefect at
+        # ``retain_registered_node_from``).
         tree = open_source_file_for_construction(
             path,
             root=corpus_root,
+            reporter=CollectingReporter(),
             source_workspace_root=source_workspace_root,
         )
         # Index every With by manager span — body-shape filtering happens after

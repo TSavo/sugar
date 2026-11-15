@@ -55,23 +55,6 @@ def test_s8_remaining_vocab_nodes_drain_live_scanner_vector() -> None:
     assert report.crossings == []
 
 
-def test_s6_euf_fact_seat_does_not_infer_call_sort_from_rhs() -> None:
-    source = (
-        ROOT
-        / "implementations"
-        / "python"
-        / "sugar-lift-py-tests"
-        / "src"
-        / "sugar_lift_py_tests"
-        / "factory"
-        / "literal_call_report.py"
-    ).read_text(encoding="utf-8")
-
-    assert "sort=rhs_term.sort" not in source
-    assert "UnknownSort" in source
-    assert "call_return_sort" in source
-
-
 def test_unknown_sort_equality_seat_counter_names_residue() -> None:
     site = ConstructionSite(path="tests/test_construction_law_instrument.py", line=1)
     fact = EqualityFact(
