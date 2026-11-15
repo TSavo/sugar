@@ -78,6 +78,10 @@ class Box:
         # ``__delitem__``, dispatched as a method call is (#7757 step 7).
         ("        other[0] = 1\n        return self.check()", ("self", "other")),
         ("        del other[0]\n        return self.check()", ("self", "other")),
+        # The same item store as an unpack's or a ``for`` target's leaf is the
+        # same store, through the same door (one way, #7757).
+        ("        n, other[0] = 1, 2\n        return self.check()", ("self", "other")),
+        ("        for other[0] in (1, 2):\n            pass", ("other",)),
         # An item read hands the object to code the frame does not see.
         ("        other.append(other[0])\n        return self.check()", ("self",)),
         # A field store on the parameter (#7757 step 7): the store is stated

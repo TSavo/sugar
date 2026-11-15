@@ -303,3 +303,44 @@ def test_a_store_through_the_receiver_is_seen_through_its_field(tmp_path: Path):
         true="1",
         false="0",
     )
+
+
+_ITEM_STORE_ON_A_FORMAL = """\
+def put(a):
+{store}
+
+
+def test_put():
+    xs = [0]
+    put(xs)
+    assert xs[0] == {{claim}}
+"""
+
+_ITEM_STORE_SPELLINGS = (
+    "    a[0] = 2",
+    "    n, a[0] = 1, 2",
+    "    for a[0] in [2]:\n        pass",
+)
+
+
+def test_an_item_store_on_a_formal_is_one_store_whatever_its_spelling(
+    tmp_path: Path,
+):
+    """``a[0] = 2``, ``n, a[0] = 1, 2`` and ``for a[0] in [2]`` are one
+    store on the formal's object: each makes ``a`` a ``class:`` input and
+    is the dispatched ``__setitem__`` (``nodes._receiver_uses``), so the
+    caller's claims get one verdict, and the lie is never ``sat``."""
+    verdicts = []
+    for index, store in enumerate(_ITEM_STORE_SPELLINGS):
+        source = _ITEM_STORE_ON_A_FORMAL.format(store=store)
+        t = run_source_through_real_solver(
+            tmp_path / f"store-{index}-true", source.format(claim="2")
+        )
+        f = run_source_through_real_solver(
+            tmp_path / f"store-{index}-false", source.format(claim="0")
+        )
+        print(json.dumps({"store": store, "true": t.verdict, "false": f.verdict}))
+        assert t.verdict != "unsat"
+        assert f.verdict != "sat"
+        verdicts.append((t.verdict, f.verdict))
+    assert len(set(verdicts)) == 1, verdicts
