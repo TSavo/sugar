@@ -176,6 +176,13 @@ def _assert_dual_dispatch(outcome, *, atom: str, blame: str) -> None:
 
     Equality, membership and ordering dual-edge this way (#7620; membership
     and ordering at their Floor doors).
+
+    An operand that is itself two-faced (a call nobody looked into) keeps
+    its own faces: its halt stands beside the compare's, and the compare's
+    two faces both hold the operand's ``completes`` condition.  So the
+    compare's pair is read as conjuncts: the completion holds
+    ``python:compare.completes``, the compare's halt holds its complement,
+    and every other condition of that halt is one the completion holds too.
     """
     from sugar_lift_py_tests.floor import PredicateValue
     from sugar_lift_py_tests.outcome import ExitSet
@@ -183,8 +190,22 @@ def _assert_dual_dispatch(outcome, *, atom: str, blame: str) -> None:
 
     assert isinstance(outcome, ExitSet)
     completed = next(exit_ for exit_ in outcome.exits if isinstance(exit_, Completed))
-    halted = next(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
+    compare_halts = [
+        exit_
+        for exit_ in outcome.exits
+        if isinstance(exit_, Halted)
+        and (exit_.effect.producer_node_owner or "").startswith("UndecidedCompare:")
+    ]
+    assert compare_halts, outcome
+    halted = compare_halts[0]
     assert isinstance(completed.value, PredicateValue)
+
+    def conjuncts(formula) -> tuple:
+        if getattr(formula, "kind", None) == "and":
+            return tuple(
+                nested for operand in formula.operands for nested in conjuncts(operand)
+            )
+        return (formula,)
 
     def atom_names(formula) -> set[str]:
         name = getattr(formula, "name", None)
@@ -199,9 +220,22 @@ def _assert_dual_dispatch(outcome, *, atom: str, blame: str) -> None:
     assert atom in atom_names(completed.value.formula)
     assert halted.effect.exception_name is None
     assert halted.effect.blame == blame
-    assert halted.effect.producer_node_owner.startswith("UndecidedCompare:")
-    assert completed.guard.name == "python:compare.completes"
-    assert halted.guard == complement_guard(completed.guard)
+    completed_conjuncts = conjuncts(completed.guard)
+    (completes,) = [
+        conjunct
+        for conjunct in completed_conjuncts
+        if getattr(conjunct, "name", None) == "python:compare.completes"
+    ]
+    halted_conjuncts = conjuncts(halted.guard)
+    assert complement_guard(completes) in halted_conjuncts
+    assert all(
+        conjunct in completed_conjuncts
+        for conjunct in halted_conjuncts
+        if conjunct != complement_guard(completes)
+    ), (completed.guard, halted.guard)
+    # With no two-faced operand the pair is exactly the atom and its complement.
+    if completed_conjuncts == (completes,):
+        assert halted.guard == complement_guard(completed.guard)
 
 
 def _assert_compare_dual(node, *, atom: str) -> None:
@@ -916,7 +950,8 @@ def test_chained_comparison_composes_pair_ordering_laws() -> None:
     from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.outcome.exit_set import Halted
 
-    node = _synthetic_compare("a < b < c")
+    # The operands are the function's formals: values nothing decides.
+    node = _synthetic_compare("left < container < left")
     sugar = node.sugar()
     assert type(sugar).__name__ == "ChainedCompareSugar"
     assert len(sugar.values) == 2
@@ -928,6 +963,21 @@ def test_chained_comparison_composes_pair_ordering_laws() -> None:
         if isinstance(exit_, Halted)
     ]
     assert owners.count("UndecidedCompare:Lt") == 2
+
+
+def test_chained_comparison_over_unbound_names_is_the_name_error() -> None:
+    """``a < b < c`` where the module binds none of them: Python raises
+    ``NameError`` reading ``a``, before any comparison.  A name bound nowhere
+    is no undecided operand (#7854): one halt, no leg's face, no completion."""
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import Halted
+
+    outcome = _synthetic_compare("a < b < c").sugar().desugar(None)
+    assert isinstance(outcome, ExitSet)
+    assert outcome.completed_value() is None
+    assert all(isinstance(exit_, Halted) for exit_ in outcome.exits)
+    owners = [exit_.effect.producer_node_owner for exit_ in outcome.exits]
+    assert owners == ["NameErrorEffect"]
 
 
 def test_chained_compare_leg_sites_follow_operator_occurrences_not_operands() -> None:
