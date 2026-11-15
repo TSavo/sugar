@@ -104,11 +104,20 @@ _DIAMOND = (
 
 
 def _super_m(classes, context, receiver):
-    return (
-        BuiltinSuperValue(classes["B"], receiver)
-        .call_method_value("m", (), owner="test", blame="super-m", ctx=context)
-        .completed_value()
+    """``super().m()`` in ``B.m`` on ``receiver``: on a receiver whose class
+    is decided (made in this frame), the selected method's coordinate and
+    edge (#7757 step 6, #8738), completing under its ``completes`` atom and
+    halting under the complement.  The method's body is never applied here
+    (the application was deleted by #8751), so the call names the method
+    it selected by its target, not by a frame it ran."""
+    from sugar_lift_py_tests.outcome import Completed
+
+    outcome = BuiltinSuperValue(classes["B"], receiver).call_method_value(
+        "m", (), owner="test", blame="super-m", ctx=context
     )
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    assert outcome.halts(), outcome
+    return done.value
 
 
 def test_super_in_b_on_a_d_reaches_c_not_bs_own_base() -> None:
@@ -118,8 +127,10 @@ def test_super_in_b_on_a_d_reaches_c_not_bs_own_base() -> None:
     call = _super_m(classes, context, receiver)
 
     # D's MRO is D, B, C, A, object: the class after B binding ``m`` is C.
+    # The edge targets ``C.m`` (was read off the applied frame's
+    # ``lexical_defining_class``), never B's own base ``A``.
     assert isinstance(call, CallSiteValue)
-    assert call.lexical_defining_class is classes["C"]
+    assert call.target_name.endswith("C.m"), call.target_name
     assert call.arg_values[0] is receiver
 
 
@@ -129,8 +140,9 @@ def test_super_in_b_on_a_b_reaches_a() -> None:
 
     call = _super_m(classes, context, receiver)
 
+    # B's MRO is B, A, object: the edge targets ``A.m``.
     assert isinstance(call, CallSiteValue)
-    assert call.lexical_defining_class is classes["A"]
+    assert call.target_name.endswith("A.m"), call.target_name
 
 
 def test_the_one_lookup_starts_after_the_cell_in_the_receivers_order() -> None:
