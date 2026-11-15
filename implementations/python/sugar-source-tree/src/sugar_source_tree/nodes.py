@@ -1152,11 +1152,20 @@ def _name_read(owner: "Node", name: str, scope: BindingMap):
     The ``Name`` minted to ask the scope is no source read: substitution
     replaces it by the binding, or it is dropped where nothing is bound, so
     nothing constructs it.  It answers the roll here, where it is minted, by
-    the discharge of a node the rewrite replaced, as the cell read at a call
-    does (``Call._cells_at_call``)."""
+    the discharge of a node the rewrite replaced.
+
+    A guarded binding's read (``Name._make_binding_read``) is minted by the
+    substitution itself, at ``owner``'s site: no source occurrence, and a
+    caller that only asks what is bound (the cell read at a call,
+    ``Call._cells_at_call``, which refuses a guarded binding) builds
+    nothing of it.  It answers where it is minted
+    (``_minted_binding_reference``); a caller that builds it answers
+    again, present or refused by name."""
     asked = For._make_name(owner, name)
     read = asked.substitute(scope)
     asked.discharge_by_substitution()
+    if isinstance(read, Node) and read.kind == "GuardedBindingRead":
+        _minted_binding_reference(read)
     return None if isinstance(read, Name) else read
 
 
@@ -24911,13 +24920,9 @@ class Call(Expression):
         for name in names:
             if name not in scope:
                 return ()
-            read = For._make_name(self, name)
-            binding = read.substitute(scope)
-            read.discharge_by_substitution()
-            if not isinstance(binding, Node) or binding.kind in (
-                "Name",
-                "GuardedBindingRead",
-            ):
+            # The one read of what a scope binds at a site (``_name_read``).
+            binding = _name_read(self, name, scope)
+            if not isinstance(binding, Node) or binding.kind == "GuardedBindingRead":
                 return ()
             cells.append((name, binding))
         return tuple(cells)
