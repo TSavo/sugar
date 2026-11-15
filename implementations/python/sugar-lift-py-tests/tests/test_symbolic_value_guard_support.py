@@ -329,11 +329,26 @@ def test_str_join_coordinate_is_known_by_its_callee_never_its_spelling() -> None
         StringValue,
         _fold_string_method,
     )
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
     from sugar_source_tree.nodes import LanguageCallee
+
+    # A tuple whose one member is known to be a ``str`` but is not ground
+    # (an earlier join's coordinate): iterating it cannot raise and its
+    # member passes ``join``'s ``str`` check, so the fold completes as the
+    # coordinate alone.  An opaque iterable's ``iter``, ``next`` and member
+    # check are halt faces (``string_value._joined``), read in
+    # ``test_str_join_states_its_iteration``.
+    inner = OpaqueOpCallsite(
+        callee="join",
+        arg=StringValue(","),
+        computed=None,
+        extra_args=(SymbolicValue(make_var("names")),),
+        language_callee=LanguageCallee.STR_JOIN,
+    )
 
     class _Join:
         name = "join"
-        arguments = (SymbolicValue(make_var("names")),)
+        arguments = (TupleValue((inner,)),)
         blame = "fold-join"
 
     minted = _fold_string_method(StringValue(", "), _Join()).completed_value()

@@ -28,11 +28,13 @@ class GeneratorValue(FloorValue):
     never where it is made: ``next_with`` hands it to the consumer's one
     iterator path.  ``term`` is the generator's fold.
 
-    A consumer that answers its own iteration states the pull through
-    ``pull`` (``str.join``).  A builtin that does not pull through
-    ``iter``/``next`` reads a value whose iteration is not decided here (it
-    is no builtin container, ``source_call_resolution._builtin_container``):
-    it is the one unanswered call, whose undetermined raise owes its member
+    Every consumer that iterates pulls through ``next_with``, the one
+    iterator path (``iterator_operation.stepped``): a ``for``, a
+    comprehension, ``str.join`` (``string_value._joined``).  A builtin that
+    does not pull through ``iter``/``next`` reads a value whose iteration
+    is not decided here (it is no builtin container,
+    ``source_call_resolution._builtin_container``): it is the one unanswered
+    call, whose undetermined raise owes its member
     (``builtin_dunder_call``), so no halt of the pull is dropped there
     either.
     """
@@ -59,8 +61,8 @@ class GeneratorValue(FloorValue):
         return ExitSet.completed(self)
 
     def pull(self, follow):
-        """The one door a consumer states the pull through: every face of
-        ``pulled`` is the consumer's (its halts and what it owes), and
+        """The one door the pull is stated through (``next_with``): every
+        face of ``pulled`` is the consumer's (its halts and what it owes), and
         ``follow()`` runs on each face it completes on."""
         return self.pulled.and_then(lambda _member: follow())
 
