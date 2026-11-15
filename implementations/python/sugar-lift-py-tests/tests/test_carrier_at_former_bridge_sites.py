@@ -875,11 +875,11 @@ def test_try_handler_matcher_carrier_is_refused_by_name():
 
 
 def test_try_star_handler_matcher_carrier_is_refused_by_name():
-    from sugar_lift_py_tests.sugar.try_star_sugar import _matcher_value
+    from sugar_lift_py_tests.sugar.try_star_sugar import _matcher_read
 
     carrier, _, _ = _carrier()
     with pytest.raises(ConstructionPanic) as excinfo:
-        _matcher_value(_Answer(carrier), None)
+        _matcher_read(_Answer(carrier), None)
     _refused(excinfo, "TryStarSugar.handler-matcher")
 
 
