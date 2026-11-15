@@ -799,14 +799,32 @@ def dispatch_edge_call(
 
     ``read``: the attribute read ``receiver.<name>`` a property's getter
     answers, ``call:dispatch:.<name>(<receiver>, py.class("0", ...))``
-    (``DISPATCH_READ_MARK``), with no other actual."""
+    (``DISPATCH_READ_MARK``), with no other actual.
+
+    The method's contract states its receiver and its other formals as
+    distinct objects.  A call whose receiver is, or holds, an object an
+    actual is or holds -- ``o.m(o)``, ``o.m(o.items)`` where ``m`` stores
+    through ``self.items`` -- is not that contract's call: a store through
+    one would leave the other's entry value standing at prove, a lie.  It
+    is the call no contract answers, owed and joined to nothing (no symbol),
+    by the alias rule's own test (``object_identity.
+    actuals_share_an_object``), the one a same-file definition's edge asks
+    (``lambda_callable.definition_edge_call``)."""
     from sugar_lift_py_tests.call_symbol import call_symbol
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.object_identity import actuals_share_an_object
     from sugar_lift_py_tests.ir import ctor, str_const
     from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
 
     owner = str(site)
     target = DISPATCH_TARGET_PREFIX + (DISPATCH_READ_MARK if read else "") + name
+    symbol = (
+        None
+        if actuals_share_an_object(
+            (receiver, *positional, *(value for _name, value in kw_values))
+        )
+        else "python:" + target
+    )
     arguments = (
         [receiver.to_term(owner=owner)]
         + [value.to_term(owner=owner) for value in positional]
@@ -825,7 +843,7 @@ def dispatch_edge_call(
         body=None,
         keyword_names=tuple(keyword for keyword, _value in kw_values),
         site=site,
-        authenticated_target_symbol="python:" + target,
+        authenticated_target_symbol=symbol,
         runtime_dispatch_receiver=receiver,
     )
     return UnknownCalleeCallV1(target).faces(callsite, site, halted_at=halted_at)
