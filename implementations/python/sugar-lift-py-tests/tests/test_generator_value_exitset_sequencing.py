@@ -449,7 +449,7 @@ def _carrier(tmp_path, *, mixed: bool = False):
 def test_native_exit_carrier_preserves_identity_and_appends_one_continuation(
     tmp_path, monkeypatch, consumer: str
 ) -> None:
-    carrier, existing, existing_calls, guard, halted, completed_value = _carrier(
+    carrier, _existing, existing_calls, guard, halted, completed_value = _carrier(
         tmp_path, mixed=True
     )
     reductions: list[str] = []
@@ -471,7 +471,11 @@ def test_native_exit_carrier_preserves_identity_and_appends_one_continuation(
     assert outcome.coordinates is carrier.coordinates
     assert outcome.guards == carrier.guards == (guard,)
     assert outcome.pre_effect_state is carrier.pre_effect_state
-    assert outcome.continuations[:-1] == carrier.continuations == (existing,)
+    # ``existing`` is enrolled as itself run where it was enrolled
+    # (``_at_its_occurrence``): one continuation, kept as it was, and run once
+    # on discharge (``existing_calls`` below).
+    assert outcome.continuations[:-1] == carrier.continuations
+    assert len(carrier.continuations) == 1
     assert len(outcome.continuations) == len(carrier.continuations) + 1
     assert existing_calls == []
     assert continuation_calls == []

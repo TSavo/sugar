@@ -771,6 +771,32 @@ def _conjoin_guards(guards):
 _PRE_EFFECT_STATE_UNSET = object()
 
 
+def _at_its_occurrence(step):
+    """``step``, enrolled on a carrier, as the rest of the reduction that
+    enrolled it: it runs, when the carrier discharges, under the occurrence
+    path that reduction ran under (``occurrence.current_path``).
+
+    The path is the dynamic extent of a reduction (occurrence.py): an item of
+    a live loop (``LoopRecurrenceSugar`` enters one per item), an unrolled
+    iteration, a callee frame.  A carrier is discharged later, outside that
+    extent (the function's own proof, a caller's actuals).  Work enrolled
+    inside an item -- the rest of the item's block, an ``if``'s suites on an
+    undecided test -- reads the item's keys (``evaluation_here``: the target,
+    the header, every statement evaluation of the item), so it runs inside
+    that item, exactly as it runs when nothing is deferred; never under the
+    path the discharge happens to run under, where those keys are unbound.
+    """
+    from sugar_lift_py_tests.occurrence import current_path, occurrence_path
+
+    path = current_path()
+
+    def at_its_occurrence(value):
+        with occurrence_path(path):
+            return step(value)
+
+    return at_its_occurrence
+
+
 @dataclass(frozen=True)
 class NativeOperationExitCarrierV1:
     """Deferred native operation whose discharge codomain is an ``ExitSet``.
@@ -907,11 +933,13 @@ class NativeOperationExitCarrierV1:
         return replace(self, pre_effect_state=testimony)
 
     def and_then(self, step, *, pre_effect_state=_PRE_EFFECT_STATE_UNSET):
-        """Retain work and, at the reducer seam, the exact pre-effect state."""
+        """Retain work and, at the reducer seam, the exact pre-effect state.
+
+        The work runs where it was enrolled (``_at_its_occurrence``)."""
         enrolled = self._enroll_pre_effect_state(pre_effect_state)
         return replace(
             enrolled,
-            continuations=(*enrolled.continuations, step),
+            continuations=(*enrolled.continuations, _at_its_occurrence(step)),
         )
 
     def evaluated_within(self, segment: str) -> "NativeOperationExitCarrierV1":
@@ -931,12 +959,17 @@ class NativeOperationExitCarrierV1:
         """Defer an ExitSet-wide consumer until authenticated discharge.
 
         The guards enrolled so far restrict the exits ``step`` is handed;
-        guards enrolled after it restrict what it answers."""
+        guards enrolled after it restrict what it answers.  ``step`` runs
+        where it was enrolled (``_at_its_occurrence``)."""
         return replace(
             self,
             exitset_continuations=(
                 *self.exitset_continuations,
-                (len(self.continuations), len(self.guards), step),
+                (
+                    len(self.continuations),
+                    len(self.guards),
+                    _at_its_occurrence(step),
+                ),
             ),
         )
 
