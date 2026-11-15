@@ -140,7 +140,7 @@ def test_lone_surrogates_are_written_as_their_code_point_escape():
         ("\udfff", '"\\udfff"'),
         ("a\udc00b", '"a\\udc00b"'),
         ("\ud83d", '"\\ud83d"'),
-        ("😀", '"\\ud83d\\ude00"'),
+        ("\ud83d\ude00", '"\\ud83d\\ude00"'),
     ]:
         _assert_identical(value)
         assert C.encode_jcs(C.vstr(value)) == spelled
@@ -154,7 +154,7 @@ def test_a_lone_surrogate_never_shares_bytes_with_another_string():
     # Lying twin: the escape text spelled out with a real backslash, and the
     # astral character the pair would name, are different strings with
     # different bytes and different CIDs.
-    lone = "😀"
+    lone = "\ud83d\ude00"
     for other in ["\\ud83d\\ude00", "\U0001f600", "ud83dude00"]:
         assert C.canonical_json_bytes(other) != C.canonical_json_bytes(lone)
         assert C.cid_of_json(other) != C.cid_of_json(lone)
