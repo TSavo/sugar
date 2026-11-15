@@ -24044,13 +24044,18 @@ class Call(Expression):
                 coordinate="CallSiteSugar.expected_definition_ref",
             )
             bound_frame = replace(bound_frame, owner=projected_definition)
-            if isinstance(self.func, Name):
+            if isinstance(self.func, (Name, FormalRef, BindingCoordinateRef)):
                 # The call-site coordinate absorbs the callee's spelling
                 # (``target_name``) instead of its sugar, so the callee never
                 # constructs: that absorption is its discharge, as it is for
                 # the call by name below.  Without it a call of a local
                 # generator function (``reader = _read()``) left its callee's
-                # Name registered and never answered (#7757).
+                # Name registered and never answered (#7757).  In a frame's
+                # body the callee is the frame's read of the name (a captured
+                # cell's ``BindingCoordinateRef`` re-spanned to the callee,
+                # ``Name.substitute``: ``return _check(inst)`` where ``_check``
+                # is the enclosing function's local ``def``), and the lexical
+                # row seats the same definition: that read is absorbed alike.
                 self.func.discharge_by_substitution()
             # The call is spelled by its callee, as every other call is; the
             # frame rides beside it.  It never mints a name of its own.
