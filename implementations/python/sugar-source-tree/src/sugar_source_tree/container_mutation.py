@@ -3023,9 +3023,7 @@ def source_helper_actual_states(call, bound_refs, scope):
     havoc_targets.extend(_unfollowed_reach(call, scope, reach, followed_keys))
     _HELPERS_IN_PROGRESS.add(key)
     try:
-        _body, _changed, net = definition._substitute_body_tracked(
-            definition.body, node_scope
-        )
+        net = _followed_body(definition, node_scope)
     finally:
         _HELPERS_IN_PROGRESS.discard(key)
     states = []
@@ -3066,6 +3064,49 @@ def source_helper_actual_states(call, bound_refs, scope):
             states.append((actual, call, label, None))
         # Otherwise the helper left the object as it was.
     return havoc_targets, states
+
+
+def _followed_body(definition, node_scope):
+    """What threading ``definition``'s body leaves each name of
+    ``node_scope`` bound to (``Node._substitute_body_tracked``'s ``net``),
+    with each name bound to the caller's node.
+
+    The threading is a function of the body and of the nodes it is bound
+    over, and of nothing else the caller holds.  It is asked through the one
+    memo door (``construction_cache.serve``), keyed by the definition and by
+    each name with its node, never by the scope dict, which the caller builds
+    afresh at every ask: the same call is asked by its own statement, by
+    every compound statement that holds it and by each of their headers
+    (``havoc_after`` reads every operation under the statement it is given),
+    and each ask threaded the whole body again -- and, inside it, every
+    helper the body calls, the same number of times over.  What the door
+    reads of the ambient state (which helpers are in progress, the module
+    threading) decides where a row is served, as for every row."""
+    from .construction_cache import abandon_row, close_row, open_row, serve
+
+    cache = definition._construction_cache()
+    bound = tuple((name, _handle(node)) for name, node in node_scope.items())
+    memo = (
+        "followed-body",
+        id(_handle(definition)),
+        tuple((name, id(handle)) for name, handle in bound),
+    )
+    row = serve(cache.substitutions, memo, definition.reporter)
+    if row is not None:
+        return row.value
+    computation = open_row()
+    try:
+        _body, _changed, net = definition._substitute_body_tracked(
+            definition.body, node_scope
+        )
+    except BaseException:
+        abandon_row(computation)
+        raise
+    # Pin every identity the key names for the row's lifetime, so no address
+    # in it is reused by another node (``Node._substituted_child``).
+    cache._pinned[memo] = (_handle(definition), bound)
+    close_row(cache.substitutions, memo, computation, definition.reporter, value=net)
+    return net
 
 
 def _changed_state(state, actual, depth=0):
