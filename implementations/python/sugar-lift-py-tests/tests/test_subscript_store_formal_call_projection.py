@@ -11,6 +11,8 @@ from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
 from sugar_lift_py_tests.floor import TermValue, TupleValue
+from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+from sugar_lift_py_tests.occurrence import call_frame_path
 from sugar_lift_py_tests.outcome import (
     Completed,
     ExitSet,
@@ -91,7 +93,12 @@ def test_positional_keyword_and_default_callers_complete_same_store_demand() -> 
 
     assert len(faces) == 3
     assert all(isinstance(face, Completed) for face in faces)
-    values = tuple(face.value for face in faces)
+    # The completed value is the Call, carrying what the helper did to the
+    # list its caller passed as a write the caller's statement applies
+    # (``CallSiteValue.project_producer_outcome``, ``carry_walrus_binds``).
+    peeled = tuple(peel_walrus_binds(face.value) for face in faces)
+    assert all(binds for binds, _call in peeled), peeled
+    values = tuple(call for _binds, call in peeled)
     assert values[0].arg_values == values[1].arg_values == values[2].arg_values
     assert (
         values[0].formal_coordinate_cids
@@ -112,22 +119,20 @@ def test_immutable_receiver_reads_but_formal_store_halts_with_named_type() -> No
         "helper((0,), 0, 9)\n"
     )
     readable = TupleValue((TermValue(0),)).subscript(TermValue(0), "read.py:1")
-    assert readable.value == TermValue(0)
+    assert readable.completed_value() == TermValue(0)
     assert isinstance(helper.sugar().desugar(None), NativeOperationExitCarrierV1)
 
     halted = _one_face(calls[-1].sugar().desugar(None))
 
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _identity("TypeError")
-    assert (
-        isinstance(halted.effect.occurrence_id, str)
-        and ":" in halted.effect.occurrence_id
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {halted.effect.occurrence_id!r}"
-    )
-    assert "'startLine': 2" in halted.effect.occurrence
-    assert "assertion" not in halted.effect.occurrence
+    # The locus is the store's own ``file:line:col`` (``obj[key] = value``,
+    # line 2, column 4; ``AuthenticatedRaiseLocus.of``), stamped with the call
+    # frame it was raised in where it crossed the call
+    # (``call_site_value.call_owned``). It names the store, never an
+    # enclosing assertion.
+    frame = "/".join(call_frame_path(calls[-1].fragment, ()))
+    assert halted.effect.occurrence_id == f"setitem_formal_call.py:2:4@{frame}"
 
 
 def test_wrong_expected_type_leaves_setitem_exception_unconsumed() -> None:
