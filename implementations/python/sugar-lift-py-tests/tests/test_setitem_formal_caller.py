@@ -35,6 +35,7 @@ from sugar_lift_py_tests.caller_parameter_contract import (
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import ListValue, TermValue, TupleValue
+from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.store_effect_sugar import SubscriptStoreEffectSugar
@@ -67,12 +68,13 @@ def _call_outcome(signature: str, actuals: str):
     return call.sugar().desugar(None)
 
 
-def _assert_named_halt(outcome) -> Halted:
+def _assert_named_halt(outcome, name: str) -> Halted:
+    """The call is one halt, raising the builtin ``name``."""
     assert isinstance(outcome, ExitSet)
     assert len(outcome.exits) == 1
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate == _identity("TypeError")
+    assert halted.effect.exception_type_coordinate == _identity(name)
     assert (
         isinstance(halted.effect.occurrence_id, str)
         and ":" in halted.effect.occurrence_id
@@ -279,12 +281,14 @@ def test_positional_keyword_and_default_callers_complete_same_demand() -> None:
         )
     )
     assert all(isinstance(face, Completed) for face in faces)
-    # Same post-state shape across presentation forms.
-    assert (
-        faces[0].value.arg_values
-        == faces[1].value.arg_values
-        == faces[2].value.arg_values
-    )
+    # The completed value is the Call, carrying what the helper did to the
+    # list its caller passed as a write the caller's statement applies
+    # (``CallSiteValue.project_producer_outcome``, ``carry_walrus_binds``).
+    peeled = tuple(peel_walrus_binds(face.value) for face in faces)
+    assert all(binds for binds, _call in peeled), peeled
+    calls = tuple(call for _binds, call in peeled)
+    # Same bound actuals across presentation forms.
+    assert calls[0].arg_values == calls[1].arg_values == calls[2].arg_values
 
 
 def test_discrimination_wrong_cell_is_not_the_completed_store() -> None:
@@ -354,11 +358,12 @@ def test_discrimination_valid_index_is_not_indexerror() -> None:
 def test_immutable_receiver_halts_with_named_typeerror() -> None:
     # Readable but not settable.
     readable = TupleValue((TermValue(0),)).subscript(TermValue(0), "read.py:1")
-    assert readable.value == TermValue(0)
+    assert readable.completed_value() == TermValue(0)
 
-    halted = _assert_named_halt(_call_outcome("obj, key, value", "(0,), 0, 9"))
-    assert halted.effect.exception_type_coordinate == _identity("TypeError")
-    assert "assertion" not in halted.effect.occurrence
+    halted = _assert_named_halt(
+        _call_outcome("obj, key, value", "(0,), 0, 9"), "TypeError"
+    )
+    assert "assertion" not in halted.effect.occurrence_id
 
 
 def test_discrimination_list_receiver_is_not_typeerror() -> None:
@@ -369,8 +374,9 @@ def test_discrimination_list_receiver_is_not_typeerror() -> None:
 
 
 def test_source_caller_indexerror_halts_with_named_identity() -> None:
-    halted = _assert_named_halt(_call_outcome("obj, key, value", "[0], 4, 9"))
-    assert halted.effect.exception_type_coordinate == _identity("IndexError")
+    # ``[0][4] = 9`` raises IndexError. The helper used to assert TypeError
+    # for every call, so this row contradicted itself.
+    _assert_named_halt(_call_outcome("obj, key, value", "[0], 4, 9"), "IndexError")
 
 
 # ---------------------------------------------------------------------------
