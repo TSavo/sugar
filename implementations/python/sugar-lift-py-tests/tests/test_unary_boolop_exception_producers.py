@@ -21,12 +21,13 @@ from sugar_lift_py_tests.effect.expectation_not_met_effect import (
 )
 from sugar_lift_py_tests.floor import SymbolicValue, TermValue
 from sugar_lift_py_tests.effect import RaiseEffect
-from sugar_lift_py_tests.ir import atomic, make_var, not_
+from sugar_lift_py_tests.ir import atomic, make_var, not_, str_const
 from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
 from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.name_sugar import NameSugar
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.context import ReduceContext
@@ -300,11 +301,23 @@ def test_a_guarded_value_takes_each_arms_truth_through_the_one_truth_rule() -> N
     assert len(completed) == 2
 
 
-class _EffectSugar:
+class _EffectSugar(ConstructedTermSugar):
+    """An operand whose evaluation halts.  A BoolOp's operands are constructed
+    term sugars (``require_constructed_term_sugar``), so the twin is one."""
+
     def __init__(self, effect):
         self.effect = effect
 
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def to_term(self, *, owner: str):
+        del owner
+        return str_const("halting-operand")
+
     def desugar(self, ctx=None):
+        del ctx
         return ExitSet.halted(self.effect)
 
 
@@ -351,15 +364,18 @@ def test_predicate_left_makes_rhs_effect_conditional(kind, rhs_guard) -> None:
     from dataclasses import dataclass
 
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-    from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
     positive = atomic("py.gt", [make_var("left"), make_var("zero")])
 
     @dataclass(frozen=True)
-    class _PredicateSugar(Sugar):
+    class _PredicateSugar(ConstructedTermSugar):
         @classmethod
         def witnesses(cls):
             return ()
+
+        def to_term(self, *, owner: str):
+            del owner
+            return str_const("predicate-operand")
 
         def desugar(self, ctx=None):
             del ctx
