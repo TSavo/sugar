@@ -293,11 +293,22 @@ def test_method_raise_under_guard_keeps_guard_on_halt_face() -> None:
         f"{CODEX3}: guarded method raise expected ExitSet, "
         f"got {type(outcome).__name__}"
     )
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
+
     halted = [e for e in outcome.exits if isinstance(e, Halted)]
     completed = [e for e in outcome.exits if isinstance(e, Completed)]
-    assert len(halted) == 1, f"{CODEX3}: need one halt arm, got {outcome.exits!r}"
+    # ``if flag:`` tests the truth of an undecided ``x``: ``bool(x)`` runs the
+    # value's own ``__bool__``/``__len__``, which may raise.  That face is the
+    # test's, carried beside the raise: an undetermined raise at the ``if``,
+    # under the truth test not completing, never dropped.
+    named = [e for e in halted if not isinstance(e.effect, UndeterminedRaiseEffect)]
+    truth = [e for e in halted if isinstance(e.effect, UndeterminedRaiseEffect)]
+    assert len(named) == 1, f"{CODEX3}: need one named halt arm, got {outcome.exits!r}"
+    assert len(truth) == 1, f"{CODEX3}: the truth test's own face, got {outcome.exits!r}"
+    assert truth[0].effect.producer_node_owner == "IfSugar.test"
+    assert "python:truth.completes" in str(truth[0].guard)
     assert len(completed) == 1, f"{CODEX3}: need one completed arm under not(guard)"
-    halt = halted[0]
+    halt = named[0]
     assert halt.effect.exception_name == "ValueError"
     guard_s = str(halt.guard)
     assert (
