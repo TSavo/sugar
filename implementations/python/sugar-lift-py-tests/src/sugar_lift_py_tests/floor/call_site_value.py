@@ -289,6 +289,25 @@ class CallSiteValue(FloorValue):
     def exception_type_identity(self) -> Term | None:
         return self.exception_type_coordinate
 
+    def iter_with(self, operation, ctx):
+        """``iter(<call result>)``: what the call returned is its callee's
+        contract's, joined at prove (#7757 steps 5 and 6), so its
+        ``__iter__`` is not decided here.  The one two-faced undecided read
+        (``FloorValue.undecided_iteration``), as for any symbolic receiver
+        that is no formal (``SymbolicValue.iter_with``): a ``for`` over a
+        same-file call's result (``for i in g():``) follows the completed
+        face, never a construction panic and never a value read off the
+        callee's body."""
+        del ctx
+        return self.undecided_iteration(operation.blame, owner="CallSiteValue.iter")
+
+    def next_with(self, operation, ctx):
+        """``next(<call result>)``: the one two-faced undecided read
+        (``FloorValue.undecided_next``), for the reason ``iter_with``
+        gives."""
+        del ctx
+        return self.undecided_next(operation.blame, owner="CallSiteValue.next")
+
     def attribute(self, name, site, ctx):
         """Name ``__name__`` / ``__qualname__`` as a coordinate, without inventing the string.
 
