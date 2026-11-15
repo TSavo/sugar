@@ -4028,14 +4028,18 @@ impl JoinedHalts {
                 .cloned()
                 .unwrap_or_else(|| (String::new(), 0));
             for post in answers {
-                if post.binding.formals.len() != args.len() {
+                // The call's arguments bound to the contract's parameters and
+                // inputs by the one binder the join binds the post with
+                // (step 4). A call that does not fit is refused at the join
+                // (`import-signature-mismatch`), so no halt is stated through
+                // it here either.
+                let Some(bindings) = bind_call_arguments(&post.binding.formals, args) else {
                     continue;
-                }
+                };
                 for locus in self.callee_loci(pool, &post.binding.target_cid, visiting) {
                     loci.push(halt_at_call(
                         &locus,
-                        &post.binding.formals,
-                        args,
+                        &bindings,
                         &file,
                         line,
                         &post.binding.source_symbol,
@@ -4073,22 +4077,21 @@ impl JoinedHalts {
 }
 
 /// A callee's halt locus as the caller's: its guard with the callee's formals
-/// replaced by the call's actuals, located at the call site; the callee's own
-/// site is kept as the producer.
+/// replaced by what the call binds them to (`bind_call_arguments`, the
+/// binder the post is joined with), located at the call site; the callee's
+/// own site is kept as the producer. An input the call does not supply stays
+/// free in the guard, so the halt is never ruled out on a value the caller
+/// did not give.
 fn halt_at_call(
     locus: &Json,
-    formals: &[String],
-    args: &[Json],
+    bindings: &[(String, Json)],
     file: &str,
     line: u64,
     symbol: &str,
 ) -> Json {
     let mut at_call = locus.as_object().cloned().unwrap_or_default();
     if let Some(guard) = locus.get("guard").filter(|g| g.is_object()) {
-        let mut guard = guard.clone();
-        for (formal, actual) in formals.iter().zip(args.iter()) {
-            guard = crate::instantiate::substitute_formula_pub(&guard, formal, actual);
-        }
+        let guard = substitute_call_bindings(guard, bindings);
         at_call.insert("guard".to_string(), fold_ground_applications(&guard));
     }
     let producer_file = locus
@@ -10826,6 +10829,31 @@ mod tests {
             &[int(1), named_arg("py.kwarg", "cell:k", int(2))]
         )
         .is_none());
+    }
+
+    #[test]
+    fn a_callee_halt_reaches_the_call_through_the_one_binder() {
+        // `def f(x): ...` reading the module global `G` states the contract
+        // formals `[x, global:G]`; a call `f(5)` passes one positional
+        // argument. Before, the halt locus zipped formals and arguments by
+        // position and dropped the halt when their counts differed.
+        let contract = formals(&["x", "global:G"]);
+        let bindings = bind_call_arguments(&contract, &[int(5)])
+            .expect("a positional call fits a contract with an input");
+        let locus = json!({
+            "file": "producer.py",
+            "line": 3,
+            "guard": eqf(var("x"), var("global:G")),
+        });
+        let at_call = halt_at_call(&locus, &bindings, "consumer.py", 9, "python:producer.f");
+        // The parameter is the call's actual; the input the call does not
+        // supply stays free, so the halt is never ruled out on it.
+        assert_eq!(
+            at_call["guard"],
+            fold_ground_applications(&eqf(int(5), var("global:G")))
+        );
+        assert_eq!(at_call["file"], json!("consumer.py"));
+        assert_eq!(at_call["producerFile"], json!("producer.py"));
     }
 
     #[test]

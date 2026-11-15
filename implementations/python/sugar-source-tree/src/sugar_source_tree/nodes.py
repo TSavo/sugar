@@ -12139,7 +12139,8 @@ class FunctionDef(Statement):
 
     def contract_inputs(self) -> tuple:
         """What this function's contract takes beside its parameters
-        (``_contract_inputs``): each captured cell, then each default."""
+        (``_contract_inputs``): each captured cell, then each default, then
+        each module global its body reads."""
         return _contract_inputs(self)
 
     def _make_parameter_entry(self, parameter: Param, ordinal: int, scope):
@@ -23183,7 +23184,7 @@ class Lambda(Expression):
         """What this lambda's contract takes beside its parameters, as a
         ``def``'s (``FunctionDef.contract_inputs``): each captured cell (the
         ``captured_bindings`` leaf its substitution set), then each
-        default."""
+        default, then each module global its body reads."""
         return _contract_inputs(self)
 
     def _construct_sugar(self):
@@ -27355,13 +27356,24 @@ def _contract_inputs(definition) -> tuple:
     - ``default:<param>`` for each parameter with a default: the value its
       ``def`` statement or lambda expression bound under the default's key
       (``_default_evaluation_key``).  The body reads the parameter; prove's
-      binder binds a parameter the call omits to this input.
+      binder binds a parameter the call omits to this input;
+    - ``global:<name>`` for each module global the body reads
+      (``_module_globals_read``: a global the module threading binds through
+      a key, read when the function runs), in name order.  The function's
+      own row is decided as a root is called, after import (pytest's call):
+      each ``global:<name>`` at the value the module's one run left for it,
+      the module-final binding the frame entry binds its keys to
+      (``call_site_sugar.with_module_final_globals``,
+      ``tree_enumerate.function_universe_outcome``), undecided where the run
+      leaves it undecided.  So the row reads what it read before; the
+      contract names the input.  A caller binds it at the call (step 5).
 
-    The caller supplies each at the call (``py.closure``, ``py.default``),
-    as it supplies an actual for a parameter."""
+    The caller supplies each at the call (``py.closure``, ``py.default``,
+    ``py.global``), as it supplies an actual for a parameter."""
     from sugar_lift_py_tests.contract_input import (
         CELL_INPUT,
         DEFAULT_INPUT,
+        GLOBAL_INPUT,
         ContractInputV1,
     )
 
@@ -27385,7 +27397,15 @@ def _contract_inputs(definition) -> tuple:
         for parameter in definition.params
         if parameter.default is not None
     )
-    return cells + defaults
+    globals_ = tuple(
+        ContractInputV1.mint(
+            owner_definition_cid=owner_cid,
+            input_kind=GLOBAL_INPUT,
+            name=name,
+        )
+        for name in sorted(definition._module_globals_read())
+    )
+    return cells + defaults + globals_
 
 
 def _default_value_sugar(definition, index: int):

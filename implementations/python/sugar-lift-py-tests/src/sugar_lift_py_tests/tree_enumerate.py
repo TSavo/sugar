@@ -777,7 +777,11 @@ def function_universe_outcome(fn):
     and the frame entry every call takes binds those keys, before the body
     runs, to the values the module body's run bound them to, each demanded
     only where its key is read (``call_site_sugar.
-    with_module_final_globals``, ``module_end_contexts``).
+    with_module_final_globals``, ``module_end_contexts``).  Its contract
+    names each such global as the input ``global:<name>``
+    (``nodes._contract_inputs``); this row is that contract decided as a
+    root is called, after import, at ``global:<name>`` := the module-final
+    value, which is what the entry binds.
 
     The outcome is always a set of arms: an operation on a formal that waits
     for a caller's actual is stated as its own proof states it, with none
