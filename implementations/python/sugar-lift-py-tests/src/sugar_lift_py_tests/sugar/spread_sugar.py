@@ -287,10 +287,10 @@ class SpreadDictSugar(ConstructedTermSugar):
 class SpreadCallSugar(ConstructedTermSugar):
     """A call containing ``*``/``**``, using the reference call vocabulary.
 
-    When an authenticated source-visible callee frame is enrolled (class
-    constructor / function body), typed ``**`` expansions project through that
-    frame so the CallSiteValue carries the factory-built body. A spread call
-    no frame projects is the one unanswered call (``UnknownCalleeCallV1``).
+    When an authenticated source-visible callee frame is enrolled (a module
+    function's), typed ``**`` expansions project through that frame so the
+    CallSiteValue carries the factory-built body. A spread call no frame
+    projects is the one unanswered call (``UnknownCalleeCallV1``).
     """
 
     callee_name: str | None
@@ -465,12 +465,12 @@ class SpreadCallSugar(ConstructedTermSugar):
         runs once, at the Call, its halts are the call's own faces and its
         completion is retained, so a consumer never replays it.
 
-        A class call ``C(*t)`` / ``C(**kw)`` is the class call ``C(...)`` is
-        (``ClassConstructorBodySugar.bind_class_call``): the class
-        statement's one outcome is read, and on each completed face the
-        projected actuals bind with the constructor defaults the class value
-        carries, so a formal the call omits binds what its ``def`` statement
-        evaluated, never an undecided read.
+        A class call ``C(*t)`` / ``C(**kw)`` is never this routine: a class
+        seats no frame (``Call._spread_lexical_source_call_frame`` reads a
+        function definition's only), its callee is the class statement's value, and
+        ``_finish`` applies that value
+        (``ClassDefinitionValue.callable_application_with``), which binds the
+        constructor defaults the class value carries.
 
         A star operand projects only when it is a decided ``TupleValue``; any
         other star operand, and a call no frame is enrolled for, is the one
@@ -487,9 +487,6 @@ class SpreadCallSugar(ConstructedTermSugar):
             bind_source_frame_call,
             enter_source_frame,
             source_frame_body,
-        )
-        from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
-            ClassConstructorBodySugar,
         )
 
         positional: list = []
@@ -517,27 +514,21 @@ class SpreadCallSugar(ConstructedTermSugar):
         if module_halt is not None:
             return module_halt
 
-        def apply(defaults, body) -> ExitSet:
-            # The one binder; actuals it cannot bind raise ``SugarNotWritten``
-            # by name, as they do for ``f(...)``.
-            callsite = bind_source_frame_call(
-                self.callee_name or "python:call",
-                tuple(positional),
-                tuple(keywords),
-                frame=frame,
-                ctx=ctx,
-                owner="SpreadCallSugar._finish",
-                blame=self.site,
-                term=term,
-                body=body,
-                defaults=defaults,
-            )
-            return callsite.producer_outcome(ctx)
-
         body = source_frame_body(
             frame, owner="SpreadCallSugar._finish", blame=self.site
         )
-        if isinstance(body, ClassConstructorBodySugar):
-            # ``C(*t)`` / ``C(**kw)``: THE class call (``bind_class_call``).
-            return body.bind_class_call(ctx, apply, site=self.site)
-        return apply((), body)
+        # The one binder; actuals it cannot bind raise ``SugarNotWritten``
+        # by name, as they do for ``f(...)``.
+        callsite = bind_source_frame_call(
+            self.callee_name or "python:call",
+            tuple(positional),
+            tuple(keywords),
+            frame=frame,
+            ctx=ctx,
+            owner="SpreadCallSugar._finish",
+            blame=self.site,
+            term=term,
+            body=body,
+            defaults=(),
+        )
+        return callsite.producer_outcome(ctx)

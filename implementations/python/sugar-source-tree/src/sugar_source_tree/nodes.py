@@ -23083,12 +23083,12 @@ class Call(Expression):
                     site=self.fragment,
                     source_call_frame=None,
                 )
-            # Enroll an authenticated source-visible frame when the call is a
-            # local constructor/function use-site. Typed ``**`` actuals then
-            # project onto formals at desugar (SpreadCallSugar) so the manager
-            # factory return `CM(x, **kwargs)` carries a body — the law that
-            # bare CallSiteSugar already obeys for non-spread calls.
-            source_call_frame = self._spread_source_call_frame()
+            # Enroll the authenticated source-visible frame of the module
+            # function the call names, when it names one. Typed ``**`` actuals
+            # then project onto formals at desugar (SpreadCallSugar) so the
+            # call carries a body — the law that bare CallSiteSugar already
+            # obeys for non-spread calls.
+            source_call_frame = self._spread_lexical_source_call_frame()
             return SpreadCallSugar(
                 callee_name=callee_name,
                 callee=(None if isinstance(self.func, Name) else self.func.sugar()),
@@ -23574,55 +23574,24 @@ class Call(Expression):
                 break
         return args_sugar, tuple(keywords)
 
-    def _spread_source_call_frame(self):
-        """Authenticated source frame for a ``*``/``**`` call, when enrolled.
-
-        Reads the callee's own frame (a source class's constructor frame, or
-        the lexical row's definition), then binds non-spread positionals and
-        named keywords onto the frame. Double-star keywords are *not* node-bound here — their FloorValue
-        is projected at desugar via ``bind_actuals`` once the mapping is a
-        constructed DictValue. Star operands leave the frame unbound so
-        SpreadCallSugar stays bodyless (no typed vararg projection yet).
-        Actuals the frame does not bind raise ``SourceCallBindingGap`` here,
-        by name.
-        """
-        starred = any(isinstance(arg, Starred) for arg in self.args)
-        source_call_frame = None
-        # A source class the name reaches seats no frame here: ``C(*a)`` is
-        # the call of the class statement's value, read through its key
-        # (``Call._construct_sugar``, ``decorated_definition_for_call``).
-        lexical = False
-        if source_call_frame is None:
-            # ``g(*t)`` and ``g(**k)`` alike name a module function the
-            # lexical scope resolves; its frame is the callee's own.
-            source_call_frame = self._spread_lexical_source_call_frame()
-            lexical = source_call_frame is not None
-        if source_call_frame is None:
-            return None
-        if starred or lexical:
-            # A ``*`` operand's arity is decided only when it reduces, so no
-            # actual Node is bound here.  SpreadCallSugar splats a decided
-            # tuple into the positional roster and binds the values onto this
-            # unspecialized frame at desugar; any other operand stays bodyless.
-            # The lexical frame binds every actual there too (``**`` merges a
-            # constructed DictValue onto the formals).
-            return source_call_frame
-        return source_call_frame.bind_node_actuals(
-            tuple(arg for arg in self.args if not isinstance(arg, Starred)),
-            tuple(
-                (keyword.arg, keyword.value)
-                for keyword in self.keywords
-                if keyword.arg is not None
-            ),
-        )
-
     def _spread_lexical_source_call_frame(self):
-        """The ordinary source function a spread call names, if any.
+        """The frame of the ordinary source function a ``*``/``**`` call
+        names, if any, unspecialized.
 
         The same resolution the non-spread Call path uses: the producer's
         lexical row, else the symtable-classified module binding.  A callee
         whose frame is under construction up the stack (a recursion seat)
         projects no frame.
+
+        No actual Node is bound here.  A ``*`` operand's arity is decided
+        only when it reduces, so SpreadCallSugar splats a decided tuple into
+        the positional roster and binds every value onto this frame at
+        desugar (``**`` merges a constructed DictValue onto the formals); any
+        other operand stays bodyless.
+
+        A source class the name reaches seats no frame here: ``C(*a)`` is
+        the call of the class statement's value, read through its key
+        (``Call._construct_sugar``, ``decorated_definition_for_call``).
         """
         if not isinstance(self.func, Name):
             return None
