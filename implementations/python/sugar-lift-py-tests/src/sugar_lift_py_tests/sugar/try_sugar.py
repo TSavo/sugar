@@ -489,9 +489,10 @@ def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
     This function does not decide miss. It either:
 
     - refuses with ``SugarNotWritten`` when the effect is not a raised
-      exception (not a raise, an undetermined raise or a group), or when the
-      handler type did not construct; or
-    - returns the one matcher's verdict for typed arms; or
+      exception (not a raise, an undetermined raise or a group); or
+    - returns, for a typed arm, every face of reading the arm's type, each
+      completed face holding the one matcher's verdict on the type it read;
+      or
     - returns ``MatchDecided(True)`` for bare except over a raised exception
       (written bare-except sugar — no type operand to match).
 
@@ -505,11 +506,15 @@ def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
     Minting ``MatchDecided(False)`` here would be a second mechanism: ad-hoc
     Python fabricating a miss outside the tree→sugar path.
 
-    Returns ``(verdict, owed)``: ``owed`` is what reading the arm's type owes
-    (``ExitSet.owed_items`` of its one completed arm; the undecided citation
-    of a class a star import may bind owes the ``undecided`` member).  Python
-    reads the type whenever a raise reaches the arm, matched or not, so the
-    router carries it beneath every face that passed the arm.
+    Returns an ``ExitSet``: the arm type's read, every face of it, each
+    completed face's value replaced by the verdict on the type that face
+    read (``and_then``, so each face keeps its guard, faces and ``owed``:
+    the undecided citation of a class a star import may bind owes the
+    ``undecided`` member; a dotted read off an imported module, or a computed
+    type, may also halt).  Python reads the type whenever a raise reaches
+    the arm, matched or not, so the router continues beneath every face of
+    the read (``_route_one_halt``): a halted face is the ``try``'s halt
+    there, a completed face matches on its verdict.
     """
     from sugar_lift_py_tests.effect.grouped_raise_effect import is_exception_effect
     from sugar_lift_py_tests.authenticated_exception_matching import (
@@ -536,24 +541,59 @@ def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
             fix="route only raised exceptions through except arms",
         )
     if matcher is None:
-        return MatchDecided(True), ()
+        return ExitSet.completed(MatchDecided(True))
     from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 
     # The handler's matcher is read here, not retained: a deferred carrier is
     # refused by name.
     read = _require_exit_set(matcher.desugar(ctx), owner="TrySugar.handler-matcher")
-    expected = read.completed_value()
-    if expected is None:
-        from sugar_lift_py_tests.tree_enumerate import halt_site
+    return read.and_then(
+        lambda expected: ExitSet.completed(matches_raise_effect(effect, expected))
+    )
 
-        raise SugarNotWritten(
-            blame=halt_site(effect, blame=effect),
-            owner="TrySugar._effect_matches",
-            observed="except type did not construct a completed type operand",
-            requested="an authenticated exception-type value",
-            fix="keep unresolved handler types loud",
+
+def _beneath_read_face(residual, face):
+    """``residual`` -- the halt in flight at an ``except`` arm -- continued
+    beneath one ``face`` of that arm type's read (``_effect_match_verdict``).
+
+    The one composition of a continuation beneath an arm
+    (``ExitSet.sequence``, ``consume=``: the ``try`` owns the halt in flight):
+    the halt's guard, faces and ``owed`` are conjoined with the face's.  A
+    halted face is the ``try``'s halt right there -- Python raises it while
+    matching, the arms after this one never see it, its ``finally`` does --
+    recorded where the halt in flight was (its record) when the read offers
+    none.  A completed face leaves the halt in flight as it was, under the
+    face's guard, faces and ``owed``: matching goes on, on the verdict the
+    face holds."""
+    from sugar_lift_py_tests.outcome.exit_set import Halted
+
+    def consume(in_flight):
+        if isinstance(face, Halted):
+            raised = face if face.state is not None else replace(
+                face, state=in_flight.state
+            )
+            return ExitSet((raised,))
+        return ExitSet(
+            (
+                Halted(
+                    face.guard,
+                    in_flight.effect,
+                    in_flight.state,
+                    face.faces,
+                    face.owed,
+                ),
+            )
         )
-    return matches_raise_effect(effect, expected), read.owed_items()
+
+    return residual.sequence(ExitSet.completed, consume=consume)
+
+
+def _handled_beneath(reached, handled):
+    """The handler's arms ``handled`` as the continuation beneath the halt
+    in flight that reached it (``reached``, ``_beneath_read_face``): each
+    arm keeps its own guard, faces and ``owed`` conjoined with the halt's
+    (``ExitSet.sequence``, ``consume=``)."""
+    return reached.sequence(ExitSet.completed, consume=lambda _in_flight: handled)
 
 
 def _beneath_type_read(exits, owed: tuple):
@@ -794,13 +834,23 @@ def _route_one_halt(
     residual to the complement for the arms that follow. Nothing is admitted
     and nothing is dropped: whatever residual survives every arm leaves as the
     halt it always was, still red, under the conjunction of every complement.
+
+    Each arm's type is read when the residual reaches it, and the read has
+    faces of its own (``_effect_match_verdict``): a dotted read off an
+    imported module, a computed type, the undecided citation of a class a
+    star import may bind.  The walk goes on beneath every face of that read
+    (``_beneath_read_face``, through ``ExitSet.sequence``): a halted face is
+    the try's halt there, which no later arm sees, beside each completed
+    face, under which matching proceeds on the verdict it holds.  A handler
+    runs beneath the residual that reached it (``_handled_beneath``), so it
+    keeps the residual's guard, faces and ``owed`` and the read's.
     """
     from sugar_lift_py_tests.authenticated_exception_matching import (
         MatchDecided,
         MatchRetained,
     )
     from sugar_lift_py_tests.ir import not_
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet, partition
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted, partition
 
     def handler_exits(handler_body, slot_id):
         from sugar_lift_py_tests.in_flight_effect import bind_in_flight_effect
@@ -839,57 +889,63 @@ def _route_one_halt(
         return _prepend_facts(handler_es, facts) if facts else handler_es
 
     parts: list = []
-    residual = ExitSet((exit_,))
 
-    def done():
-        return parts if with_arms else [part for _arm, part in parts]
-
-    for index, (matcher, handler_body, slot_id) in enumerate(handlers):
+    def walk(index, residual):
+        # ``residual``: the halt in flight as it reaches arm ``index``, every
+        # arm before it having declined it on this path.
         if not residual.exits:
-            return done()
-        residual_guard = residual.exits[0].guard
-        verdict, read_owes = _effect_match_verdict(
-            exit_.effect, matcher, ctx, site=site
-        )
-        if isinstance(verdict, MatchDecided):
-            if not verdict.value:
-                residual = _beneath_type_read(residual, read_owes)
+            return
+        if index == len(handlers):
+            parts.append((None, residual))
+            return
+        matcher, handler_body, slot_id = handlers[index]
+        # The arm's type is read now, and the walk goes on beneath every face
+        # of the read: a halted face leaves the try here, a completed face
+        # matches on the verdict it holds (``_beneath_read_face``).
+        verdicts = _effect_match_verdict(exit_.effect, matcher, ctx, site=site)
+        for face in verdicts.exits:
+            reached = _beneath_read_face(residual, face)
+            if isinstance(face, Halted):
+                parts.append((None, reached))
                 continue
+            verdict = face.value
+            if isinstance(verdict, MatchDecided):
+                if not verdict.value:
+                    walk(index + 1, reached)
+                    continue
+                parts.append(
+                    (
+                        index,
+                        _handled_beneath(
+                            reached, handler_exits(handler_body, slot_id)
+                        ),
+                    )
+                )
+                continue
+            if not isinstance(verdict, MatchRetained):
+                raise TypeError(
+                    "except-arm verdict must be MatchDecided or MatchRetained; "
+                    f"got {type(verdict).__name__}"
+                )
+            # This arm owns the split, so it mints the faces rather than leaving
+            # the exclusion legible only in the ``not_`` spelling of the two
+            # guards.
+            caught_face, missed_face = partition(("try.except-identity", site, index))
             parts.append(
                 (
                     index,
-                    _beneath_type_read(
-                        handler_exits(handler_body, slot_id).guarded(residual_guard),
-                        read_owes,
+                    _handled_beneath(
+                        reached,
+                        handler_exits(handler_body, slot_id).guarded(
+                            verdict.obligation, caught_face
+                        ),
                     ),
                 )
             )
-            return done()
-        if not isinstance(verdict, MatchRetained):
-            raise TypeError(
-                "except-arm verdict must be MatchDecided or MatchRetained; "
-                f"got {type(verdict).__name__}"
-            )
-        # This arm owns the split, so it mints the faces rather than leaving the
-        # exclusion legible only in the ``not_`` spelling of the two guards.
-        caught_face, missed_face = partition(("try.except-identity", site, index))
-        parts.append(
-            (
-                index,
-                _beneath_type_read(
-                    handler_exits(handler_body, slot_id)
-                    .guarded(verdict.obligation, caught_face)
-                    .guarded(residual_guard),
-                    read_owes,
-                ),
-            )
-        )
-        residual = _beneath_type_read(
-            residual.guarded(not_(verdict.obligation), missed_face), read_owes
-        )
-    if residual.exits:
-        parts.append((None, residual))
-    return done()
+            walk(index + 1, reached.guarded(not_(verdict.obligation), missed_face))
+
+    walk(0, ExitSet((exit_,)))
+    return parts if with_arms else [part for _arm, part in parts]
 
 
 def _prepend_facts(exits, facts: tuple):

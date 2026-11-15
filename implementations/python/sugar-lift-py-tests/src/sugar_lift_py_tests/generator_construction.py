@@ -1615,11 +1615,14 @@ class GeneratorConstructionV1:
             blame=step.fragment_cid,
         )
         for matcher, _body, _slot in step.handlers:
-            # A probe, not a path: what reading the arm's type owes is owed by
-            # the routed faces (``_route_one_halt``), never by this question.
-            verdict, _read_owes = _effect_match_verdict(
+            # A probe, not a path: what reading the arm's type owes, and every
+            # face of the read, are the routed faces' (``_route_one_halt``),
+            # never this question's.  A miss is decided only where the read
+            # is one completion under truth holding a decided miss; a read
+            # that may halt decides no miss.
+            verdict = _effect_match_verdict(
                 probe, matcher, self._guard_evaluation_context(), site=step.site
-            )
+            ).completed_value()
             if not (isinstance(verdict, MatchDecided) and verdict.value is False):
                 return False
         return True
