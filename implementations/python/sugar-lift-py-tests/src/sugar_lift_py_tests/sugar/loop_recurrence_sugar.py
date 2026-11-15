@@ -123,6 +123,54 @@ def _else_left_from(runtime, else_ctx, witnesses, halt, *, site):
     )
 
 
+# The recurrence's value of a name a live loop writes
+# (``LoopRecurrenceSugar._recurrence_head``).
+RECURRENCE_HEAD = "python:loop.recurrence"
+
+
+def holds_recurrence_value(value) -> bool:
+    """Whether ``value`` is, on some face, a live loop's recurrence value of
+    a name (``RECURRENCE_HEAD``): a guarded value is opened into its arms.
+
+    The recurrence states that value only as the fixed point of the loop's
+    step (``head = python:loop.step(head, ...)``), and the step is
+    uninterpreted: nothing at prove constrains it, no input decides it, and
+    no closed form or loop invariant is stated for it on this path.  Read as
+    it stands it is a free term the solver may choose, so a claim over it --
+    a lie included -- could read ``sat`` (#7757, step 6)."""
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.ir import _Ctor
+
+    pending = [value]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, GuardedValue):
+            pending.extend((current.when_true, current.when_false))
+        elif isinstance(current, SymbolicValue):
+            term = current.term
+            if isinstance(term, _Ctor) and term.name == RECURRENCE_HEAD:
+                return True
+    return False
+
+
+def read_of_bound_value(value, site):
+    """A read, at ``site``, of the value a key holds: the value itself, or,
+    where it holds a live loop's recurrence value (``holds_recurrence_value``)
+    -- the name the loop carries read after it (``LoopBindingRefSugar``), in
+    its ``else`` suite or inside its symbolic item through the header
+    (``EvaluationRefSugar``) -- the undecided member, as a slot nothing
+    decided is (``branch_result_coordinate.undecided_slot_debt``): the value
+    still stands, and every claim that reads it owes, never decided by a
+    value the solver selects (#7757)."""
+    if not holds_recurrence_value(value):
+        return value
+    from sugar_lift_py_tests.floor.branch_result_coordinate import (
+        undecided_slot_debt,
+    )
+
+    return ExitSet.completed(value, owed=undecided_slot_debt(site))
+
+
 @dataclass(frozen=True)
 class LoopBindingRefSugar(ConstructedTermSugar):
     """A read after a live loop of ``name``, which the loop carries under
@@ -179,7 +227,10 @@ class LoopBindingRefSugar(ConstructedTermSugar):
             bound = temporal.key_read(key)
         if bound is None:
             self._unbound()
-        return bound
+        # The loop ran as its recurrence: the name is the recurrence's value
+        # of it, which nothing decides, so the read owes the undecided member
+        # (``read_of_bound_value``).  A concrete loop's value reads as it is.
+        return read_of_bound_value(bound, self.site)
 
     def _unbound(self):
         """A read whose key the loop's publication never reached here.
@@ -2077,7 +2128,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         through ``key`` (a binding coordinate or a post-loop key): the loop's
         symbolic fixed point of it (``python:loop.recurrence``)."""
         return ctor(
-            "python:loop.recurrence",
+            RECURRENCE_HEAD,
             [str_const(self.target_cid), str_const(key)],
             symbol_kind="coordinate",
         )
