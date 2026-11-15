@@ -18,11 +18,11 @@ an append) is never read off the callee's body: the call takes the one
 exposure rule every call takes, and on the call's completed face the
 caller's cell reads ``python:after(<call result>, "cell:<name>")``, keyed on
 the call (#7757 step 7).  The callee's contract states what it leaves in a
-cell it rebinds at its top level over that term
-(``UniverseValue.after_facts``), so the join decides a ``nonlocal``
-rebinding.  What an append leaves in a cell whose type nothing decides is
-not stated, so that twin stays ``open`` in both halves, never ``sat`` for
-the lie.
+cell it rebinds over that term on each completed arm that ran to the body's
+end (``UniverseValue.after_facts``), so the join decides a ``nonlocal``
+rebinding, also one that stands after an early ``return``.  What an append
+leaves in a cell whose type nothing decides is not stated, so that twin
+stays ``open`` in both halves, never ``sat`` for the lie.
 """
 
 from __future__ import annotations
@@ -95,6 +95,20 @@ def test_count():
     assert n == {claim}
 """
 
+_NONLOCAL_REBOUND_AFTER_AN_EARLY_RETURN = """\
+def test_count():
+    n = 0
+
+    def bump():
+        nonlocal n
+        if n > 5:
+            return
+        n += 1
+
+    bump()
+    assert n == {claim}
+"""
+
 _MODULE_DEF_DEFAULT = """\
 def f(a=3):
     return a
@@ -123,10 +137,18 @@ _TWINS = {
 
 # Decided before step 5 by following the callee's body; decided again at
 # prove since the callee's contract states what it left in the cell it
-# rebinds (``python:after(out, "cell:n")``, #7757 step 7).
+# rebinds (``python:after(out, "cell:n")``, #7757 step 7).  After an early
+# ``return`` the arm that ran on states it; the ordering ``n > 5`` over the
+# cell's ``0`` is decided at prove (#8812), so the ``return`` arm is not
+# taken.
 _STATED_BY_THE_CALLEE = {
     "nonlocal-rebound": (_NONLOCAL_REBOUND_THROUGH_THE_VALUE, "1", "0"),
     "direct-nonlocal-rebound": (_DIRECT_NONLOCAL_REBOUND, "1", "0"),
+    "nonlocal-rebound-after-an-early-return": (
+        _NONLOCAL_REBOUND_AFTER_AN_EARLY_RETURN,
+        "1",
+        "0",
+    ),
 }
 
 # Decided before step 5 by following the callee's body; ``open`` in both

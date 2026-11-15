@@ -171,14 +171,26 @@ UNDETERMINED_STATES = frozenset(
     }
 )
 
+# What else a contract never states as a value (``stated_by_its_inputs``):
+# a branch's slot (``BranchResultCoordinate``, which arm of one ``if`` ran,
+# keyed on its slot alone), and, by prefix, an object's identity and a live
+# loop's own publication (``python:loop.post_binding``, ``python:loop.item``,
+# ``python:loop.recurrence``, ...), keyed on the loop's occurrence.  A loop's
+# rebinding is stated only where the loop's result is decided (an unrolled
+# loop's keys), never over a live loop's (#7757 step 7).
+_UNSTATED_SLOTS = frozenset({"python:branch_result"})
+_UNSTATED_PREFIXES = ("py.object", "python:loop.", "python:loop-")
+
 
 def stated_by_its_inputs(term, formals) -> bool:
     """Whether ``term`` is a value a contract over ``formals`` (its
     parameters and inputs) determines: every variable one of its formals, no
     object identity (``py.object.*``: no two calls share one), no lambda, and
     no state keyed on an operation's occurrence alone
-    (``UNDETERMINED_STATES``).  A value the callee does not determine is
-    never stated: it stays undecided by name (#7757 step 7)."""
+    (``UNDETERMINED_STATES``; a branch's slot and a live loop's publication,
+    ``_UNSTATED_SLOTS``, ``_UNSTATED_PREFIXES``).  A value the callee does
+    not determine is never stated: it stays undecided by name (#7757 step
+    7)."""
     from sugar_lift_py_tests.ir import _Ctor, _Lambda, _Var
 
     formals = set(formals)
@@ -191,8 +203,10 @@ def stated_by_its_inputs(term, formals) -> bool:
         elif isinstance(current, _Lambda):
             return False
         elif isinstance(current, _Ctor):
-            if current.name in UNDETERMINED_STATES or current.name.startswith(
-                "py.object"
+            if (
+                current.name in UNDETERMINED_STATES
+                or current.name in _UNSTATED_SLOTS
+                or current.name.startswith(_UNSTATED_PREFIXES)
             ):
                 return False
             pending.extend(current.args)

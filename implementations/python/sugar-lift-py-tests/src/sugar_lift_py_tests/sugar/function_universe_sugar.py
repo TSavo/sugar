@@ -1146,6 +1146,13 @@ class FunctionUniverseSugar(Sugar):
     #: states it over ``python:after(out, "cell:<name>")``
     #: (``UniverseValue.after``, #7757 step 7).
     cells_after: tuple = dataclass_field(default=(), compare=False)
+    #: Whether every completed arm leaves with the scope ``cells_after`` was
+    #: read in: the body's ``return``, if any, is its last statement
+    #: (``nodes._returns_only_last``).  Otherwise only an arm that fell off
+    #: the body's end leaves with it; an arm an earlier ``return`` ended
+    #: left the frame before the statements after that ``return``, and
+    #: states nothing (#7757 step 7).
+    cells_after_every_arm: bool = dataclass_field(default=True, compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -1193,19 +1200,28 @@ class FunctionUniverseSugar(Sugar):
                     record=block_record(state),
                     bridge_source_symbol=self.bridge_source_symbol,
                     formal_coordinates=formal_coordinates,
-                    after=self._after(state.context),
+                    after=self._after(state),
                 )
             )
 
         return reduce_block_to_exitset(self.statements, ctx).and_then(universe)
 
-    def _after(self, ctx) -> tuple:
+    def _after(self, state) -> tuple:
         """``((formal, value), ...)``: each cell the body rebinds
-        (``cells_after``) as the arm that left ``ctx`` left it; a read that
-        does not complete with one value states nothing."""
+        (``cells_after``) as the arm whose record is ``state`` left it, read
+        in the context it left; a read that does not complete with one value
+        states nothing.  Where an earlier ``return`` may end an arm
+        (``cells_after_every_arm`` False), only an arm that ran to the end
+        -- it falls through, with no ``return`` pending in its record --
+        reads it; any other arm states nothing (#7757 step 7)."""
+        if not self.cells_after or not (
+            self.cells_after_every_arm
+            or (state.can_fall_through and not state.fall_through)
+        ):
+            return ()
         found = []
         for formal, read in self.cells_after:
-            value = plain_completed_value(read.desugar(ctx))
+            value = plain_completed_value(read.desugar(state.context))
             if value is not None:
                 found.append((formal, value))
         return tuple(found)
