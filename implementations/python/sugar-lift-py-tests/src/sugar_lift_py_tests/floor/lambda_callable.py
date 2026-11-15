@@ -145,12 +145,6 @@ class LambdaCallable(FloorValue):
         ``caller_visible_values``): the application a call by name of a
         ``def`` made, through the function's value.
         """
-        from sugar_lift_py_tests.ir import ctor, str_const
-        from sugar_lift_py_tests.sugar.call_site_sugar import (
-            bind_source_frame_call,
-            enter_source_frame,
-            with_captured_values,
-        )
         from sugar_source_tree.panic import SugarNotWritten
 
         owner = "LambdaCallable.callable_application_with"
@@ -163,14 +157,34 @@ class LambdaCallable(FloorValue):
                 requested="the ordinary SourceCallFrameV1 call door",
                 fix="carry the lambda's source-visible frame or keep the call loud",
             )
-        keyword_count = len(operation.keyword_names)
-        positional = (
-            operation.arguments[:-keyword_count]
-            if keyword_count
-            else operation.arguments
+        # Each actual is bound as the operation receiver it is
+        # (``project_operation_receiver_outcome``), as a call by name's
+        # actuals were (``CallSiteSugar._collect``): a constructed instance
+        # is the object its constructor's call retained, so the alias rule at
+        # the one bind door (``object_identity.as_bound_formals``) sees two
+        # formals given one object (``poke(box, box)``) and binds each with
+        # its state unknown, never two copies of the constructor's state.
+        return _as_operation_receivers(
+            tuple(operation.arguments),
+            ctx,
+            lambda arguments: self._apply_to(operation, arguments, frame, ctx),
         )
+
+    def _apply_to(self, operation, arguments, frame, ctx):
+        """The application of ``callable_application_with`` over
+        ``arguments``, the call's actuals as operation receivers."""
+        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.sugar.call_site_sugar import (
+            bind_source_frame_call,
+            enter_source_frame,
+            with_captured_values,
+        )
+
+        owner = "LambdaCallable.callable_application_with"
+        keyword_count = len(operation.keyword_names)
+        positional = arguments[:-keyword_count] if keyword_count else arguments
         keywords = (
-            tuple(zip(operation.keyword_names, operation.arguments[-keyword_count:]))
+            tuple(zip(operation.keyword_names, arguments[-keyword_count:]))
             if keyword_count
             else ()
         )
@@ -227,3 +241,19 @@ class LambdaCallable(FloorValue):
             defaults=self.defaults,
             call_occurrence=operation.call_occurrence,
         ).producer_outcome(ctx)
+
+
+def _as_operation_receivers(values, ctx, then):
+    """``then`` over ``values``, each projected to the operation receiver it
+    is (``project_operation_receiver_outcome``) in order, on every face of
+    each projection."""
+    if not values:
+        return then(())
+    head, *rest = values
+    return head.project_operation_receiver_outcome(
+        ctx, owner="LambdaCallable.callable_application_with actual"
+    ).and_then(
+        lambda actual: _as_operation_receivers(
+            tuple(rest), ctx, lambda tail: then((actual, *tail))
+        )
+    )
