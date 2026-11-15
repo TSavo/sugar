@@ -356,7 +356,6 @@ class SymbolicValue(FloorValue):
 
     def _runtime_binary_dispatch(self, other, site, ctx, operator):
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
-        from sugar_lift_py_tests.floor.string_value import StringValue
 
         owner = next(
             method
@@ -376,26 +375,12 @@ class SymbolicValue(FloorValue):
                 operands=(self, other),
                 coordinates=(left_coordinate, right_coordinate),
             )
-        # Symbolic + str concat without a seated formal (NameSugar desugar of a
-        # parameter before FormalRef seating) used to SNW at
-        # binary_operation_exception_floor — enum.py:75 ``cls_name + '.' + …``.
-        # That abort escaped through dependency ClassDef/function force-floor
-        # during MaterializeModule of pandas files (e.g. io/json/_json.py) and
-        # returned functionsTotal=0 before any function walk. Mint the same
-        # native-operation ExitSet carrier formals already use; coordinates may
-        # be None. Do not invent ExitSet.completed(SymbolicValue) concat
-        # (undecided-law).
-        if operator == "+" and type(other) is StringValue:
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                NativeOperationExitCarrierV1,
-            )
-
-            return NativeOperationExitCarrierV1.mint(
-                site=site,
-                operator=owner,
-                operands=(self, other),
-                coordinates=(left_coordinate, right_coordinate),
-            )
+        # No formal in either operand: nothing a caller's actual answers, so
+        # the operation is not deferred.  ``undecided + "s"`` takes the one
+        # undecided binary law below like every other pair; a carrier minted
+        # with no coordinate waited on a caller that never answers it, and
+        # every face composed beside it (a slice bound's, the subscript it
+        # bounds) waited with it (#7757).
         if isinstance(other, GuardedValue):
             from sugar_lift_py_tests.floor.floor_value import BINARY_FLOOR_OPERATIONS
 

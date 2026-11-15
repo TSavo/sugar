@@ -6,9 +6,9 @@ transitive stdlib (enum.py). Bare NameSugar desugar of a formal yields
 ``SugarNotWritten(owner=binary_operation_exception_floor)`` at enum.py:75:16
 and aborted SourceFile open with functionsTotal=0 before any function walk.
 
-Formal-seated formals already mint NativeOperationExitCarrierV1. This law
-extends the same carrier to formal-less SymbolicValue + StringValue (and the
-str + symbolic reverse) so materialize can complete and enumerate functions.
+Formal-seated formals mint NativeOperationExitCarrierV1. A formal-less
+SymbolicValue + StringValue takes the one undecided binary law (two faces),
+which is also no SNW; the str + symbolic reverse still mints the carrier.
 """
 
 from __future__ import annotations
@@ -39,14 +39,23 @@ def _tiny_binop_site():
     return next(node for node in source.nodes() if isinstance(node, BinOp)).fragment
 
 
-def test_symbolic_plus_string_mints_native_operation_carrier() -> None:
+def test_symbolic_plus_string_is_the_undecided_binary_law() -> None:
+    """A formal-less ``symbolic + str`` has no coordinate a caller answers, so
+    it is not deferred: it is the one undecided binary law's two faces, never
+    a carrier that waits on no one and holds every face beside it (#7757:
+    ``df[start : end[:-4] + "1:00"]`` lost its subscript halts that way)."""
+    from sugar_lift_py_tests.outcome.exit_set import Halted
+
     site = _tiny_binop_site()
     left = SymbolicValue(make_var("cls_name"))
     right = StringValue(".")
     assert left.formal_coordinate is None
     outcome = left.add(right, site, None)
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
-    assert outcome.demand.operator == "add"
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert [face.effect.producer_node_owner for face in halts] == [
+        "UndecidedBinary:+"
+    ]
 
 
 def test_string_plus_symbolic_mints_native_operation_carrier() -> None:
