@@ -600,8 +600,8 @@ def header_applied(statement, field: str, ctx):
     in ``statement``'s ``field``, an expression the statement evaluates
     before the rest of it reads what that expression did: an ``if`` test, an
     ``assert`` test, a live ``while``'s test at each item, a ``with`` item's
-    manager, a ``match`` subject, a ``raise`` operand -- reaches the rest of
-    the statement.
+    manager, a ``match`` subject, a ``raise`` operand, a ``return`` value --
+    reaches the rest of the statement.
 
     ``outcome`` is the header evaluated once, in ``ctx``.  Where no completed
     face of it carries a write (a walrus bind, a callee store), ``headed`` is

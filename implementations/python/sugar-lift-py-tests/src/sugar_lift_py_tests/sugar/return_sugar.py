@@ -57,41 +57,51 @@ class ReturnSugar(Sugar):
             if not left:
                 return ExitSet.completed(result)
             return ExitSet.completed(BlockValue((*left, result), can_fall_through=True))
-        # The returned value is what the frame answers.  A walrus inside it
-        # (``return (x := 5) + 1``) wrote this frame's name, which no reader
-        # after the return sees: the return holds the value it presents, so
-        # the bind never reaches the caller's temporal as a write of the
-        # caller's own name.
-        #
-        # A store a callee the value called made on an object the caller sees
-        # (``CallerStoreValue``) is not this frame's: it is laid in the record
-        # before the return, as a statement alone lays it
-        # (``record_statement_value``), so the caller of this frame reads it
-        # there (``caller_visible_stores``) and never misses it.
-        from sugar_lift_py_tests.floor.named_expression_value import (
-            caller_stores_of,
-            peel_walrus_binds,
-            written_by,
+        # The returned value is this statement's header: every write it
+        # carries -- a walrus's bind (``return (x := 5) + 1``), and what a
+        # call in it did to objects this frame shares with its caller (the
+        # callee's stores and the rest of the one projection,
+        # ``call_site_value.caller_visible_values``) -- reaches the record
+        # the ``return`` leaves by the one header rule (``header_applied``,
+        # ``header_ran``), as a call in statement position lays them
+        # (``record_statement_value``): the stores first in the record, so
+        # the caller of this frame reads them there
+        # (``caller_visible_stores``), and every write in the context the
+        # record leaves, where what the frame left of each shared object is
+        # read (``_left_here``, and the read where the body ends,
+        # ``SourceVisibleFunctionBodySugar.left_in``).  ``h`` returning
+        # ``g(a)`` leaves ``a`` as ``g`` left it.  The return holds the value
+        # the header presents beneath its writes.
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
         )
         from sugar_lift_py_tests.floor.object_identity import arrived
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            header_applied,
+            header_ran,
+        )
+
+        headed, valued = header_applied(self, "value", ctx)
+        if headed is not None:
+            return headed
+        if isinstance(valued, NativeOperationExitCarrierV1):
+            # A value whose completion waits on the caller's actuals takes
+            # the same step on the value it discharges to.
+            return valued.and_then(lambda value: header_ran(self, "value", value, ctx))
 
         def returned(value):
-            binds, presented = peel_walrus_binds(value)
-            _walrus, stores = caller_stores_of(binds)
             # The caller holds the returned value by binding: what this frame
             # made is not current in the caller's (``object_identity``).
-            result = ReturnValue(arrived(presented, self.site))
+            result = ReturnValue(arrived(value, self.site))
             # What the frame left of each object it shares with a caller, on
-            # the arm that leaves here: read after the value, whose own calls
-            # may have changed it.
-            left = self._left_here(written_by(value, ctx))
-            if not stores and not left:
+            # the arm that leaves here (the header's writes, where it carried
+            # any, are already in ``ctx``: ``header_ran``).
+            left = self._left_here(ctx)
+            if not left:
                 return ExitSet.completed(result)
-            return ExitSet.completed(
-                BlockValue((*stores, *left, result), can_fall_through=True)
-            )
+            return ExitSet.completed(BlockValue((*left, result), can_fall_through=True))
 
-        return self.value.desugar(ctx).and_then(returned)
+        return valued.and_then(returned)
 
     def _left_here(self, at) -> tuple:
         """Each exit read reduced in ``at`` (the context this ``return``
