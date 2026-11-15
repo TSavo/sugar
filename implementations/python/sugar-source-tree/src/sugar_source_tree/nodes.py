@@ -18968,14 +18968,17 @@ class With(Statement):
             )
             if d:
                 changed["body"] = new_body
+            exited_net, exited = self._exited(items, body_scope, body_net)
             # Keyed as the item is: the With's own sugar reads its slots off
             # the keyed item.
             return self._published(
                 self._keyed_evaluation(
                     self if not changed else rewrite(self, **changed), scope
                 ),
-                body_net,
-                self._halted(scope, head_scope, body_scope, body_edges, body_net),
+                exited_net,
+                self._halted(
+                    scope, head_scope, body_scope, body_edges, body_net, exited
+                ),
                 _header_halt_state(self, scope, head_scope),
             )
         for item in items:
@@ -18989,19 +18992,48 @@ class With(Statement):
         )
         if d:
             changed["body"] = new_body
+        exited_net, exited = self._exited(items, body_scope, body_net)
         return self._published(
             self if not changed else rewrite(self, **changed),
-            body_net,
-            self._halted(scope, head_scope, body_scope, body_edges, body_net),
+            exited_net,
+            self._halted(scope, head_scope, body_scope, body_edges, body_net, exited),
             _header_halt_state(self, scope, head_scope),
         )
 
-    def _halted(self, scope, head_scope, body_scope, body_edges, body_net):
+    def _exited(self, items, body_scope, body_net):
+        """``(net, exited)``: what the ``with`` leaves after its body
+        (``body_net`` over ``body_scope``) once each manager's ``__exit__``
+        ran (``container_mutation.thread_exit``), and the names ``__exit__``
+        may rebind.  Python runs ``__exit__`` after the body on every face,
+        so such a name is read after the ``with`` as another evaluation,
+        keyed by the ``with``'s own, whatever the body left in it -- never
+        the body's value, never the value before the ``with``.  Before, the
+        block's header thread moved it after the ``with`` only where the
+        body had not rebound it."""
+        from .container_mutation import thread_exit
+
+        final = {**body_scope, **body_net}
+        after = thread_exit(self, tuple(item.context_expr for item in items), final)
+        exited = {
+            name: state
+            for name, state in after.items()
+            if final.get(name, _MISSING) is not state
+        }
+        if not exited:
+            return body_net, frozenset()
+        return {**body_net, **exited}, frozenset(exited)
+
+    def _halted(
+        self, scope, head_scope, body_scope, body_edges, body_net, exited=frozenset()
+    ):
         """What a halt leaving the ``with`` carries to the halt edge of the
         statement enclosing it (``_compound_halt_state``): one inside its head
         (the manager's expression, ``__enter__``) what the head changed; one
         inside its body the state at its own body statement; one inside
-        ``__exit__`` after the body completed what the body left."""
+        ``__exit__`` after the body completed what the body left.  A halt
+        inside the body leaves through ``__exit__`` (propagated, or
+        suppressed and resumed after the ``with``): every name ``__exit__``
+        may rebind (``exited``, ``_exited``) is unknown at it."""
         final = {**body_scope, **body_net}
         left = {
             name: entry
@@ -19014,6 +19046,7 @@ class With(Statement):
             head_scope,
             ([*body_edges, (None, final)],),
             after=(left,),
+            unknown=exited,
         )
 
     @staticmethod

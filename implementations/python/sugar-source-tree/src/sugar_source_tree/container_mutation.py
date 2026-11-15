@@ -943,6 +943,45 @@ def thread_header(header, pre_scope, scope, *, repeated=False, operated=False):
     return scope
 
 
+def thread_exit(statement, managers, scope):
+    """``scope`` after a ``with`` (``statement``) leaves its body: Python
+    runs each manager's ``__exit__`` (``managers``: the items' values, as
+    substituted) after the body, on every face -- the body completed, a
+    halt the manager suppresses, a halt it lets propagate.  The one rule
+    for an operation that may run code (``_Operated``, ``_ambient_targets``,
+    ``_rebind``), as ``thread_header`` applies it to ``__enter__``: what that
+    code may rebind -- a ``nonlocal`` cell, a module global code may rebind,
+    a name bound to an object it may reach -- is read after it as another
+    evaluation.
+
+    Keyed by the statement's own evaluation, never by its header's
+    (``thread_header`` keys ``__enter__`` there): what ``__enter__`` left
+    and what ``__exit__`` leaves are two evaluations.  And unlike
+    ``havoc_after``, which keeps a name its statement bound, a name the body
+    bound is rebound too: ``__exit__`` runs after the body's stores.  The
+    header's own calls are not counted again: they ran once, before the
+    body."""
+    managers = tuple(node for node in managers if node is not None)
+    if not managers:
+        return scope
+    held = []
+
+    def holdings():
+        if not held:
+            held.append(_ambient_objects(statement, scope))
+        return held[0]
+
+    targets = []
+    for manager in managers:
+        targets.extend(
+            target[:3]
+            for target in _ambient_targets(
+                statement, _Operated(manager), scope, holdings
+            )
+        )
+    return _rebind(statement, scope, scope, targets)
+
+
 def _operates_header(statement) -> bool:
     """Whether ``statement`` runs dunders of its header's value
     (``threaded_header``) before its body: a ``for`` iterates it
