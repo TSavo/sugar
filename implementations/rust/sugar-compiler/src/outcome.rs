@@ -23,7 +23,7 @@ pub enum Outcome {
     /// The solver never ran; there is nothing yet to discharge.
     LinkError(Vec<sugar_linker::LinkerError>),
     /// Beat 1 bound every call edge (or there were none to bind); beat 2
-    /// (`verify_consistency_from_indexes`) ran to completion and produced
+    /// (`verify_consistency`) ran to completion and produced
     /// one verdict per consistency candidate, `Unsatisfied` included.
     Verdicts(Vec<sugar_verifier::consistency::ConsistencyResult>),
 }

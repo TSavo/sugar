@@ -1607,7 +1607,7 @@ fn witness_package_claim(evidence: &Json, tool: &str) -> Result<WitnessPackageCl
 }
 
 // Thread-local witness bodies: set for the duration of
-// `verify_consistency_from_indexes` so deep call sites (par_iter group
+// `verify_consistency_from_index` so deep call sites (par_iter group
 // solve → `try_witness_discharge`) read the bodies the proof states without
 // threading them through every private helper.
 thread_local! {
@@ -1636,17 +1636,6 @@ impl Drop for WitnessBodiesGuard {
 
 fn active_witness_bodies() -> Arc<WitnessBodies> {
     ACTIVE_WITNESS_BODIES.with(|c| c.borrow().clone())
-}
-
-/// Scope membership from memento locus metadata only (#3809 cut #5).
-/// Never `Path::exists`. Relative loci are in-scope; absolute loci must be
-/// under `scope_root` by path prefix.
-fn locus_in_scope(scope_root: &Path, file: &str) -> bool {
-    let p = Path::new(file);
-    if p.is_relative() {
-        return true;
-    }
-    p.starts_with(scope_root)
 }
 
 /// Rust VERIFY half of the trust boundary: blake3(bytes) vs claim.packageCid,
@@ -5181,15 +5170,15 @@ pub fn build_manifest_from_pool(
     manifest
 }
 
-/// Unscoped consistency over a whole pool: build the pool's
-/// [`ConsistencyIndex`] and drive the single solve door
-/// [`verify_consistency_from_indexes`] with no overlay and no scope. This is a
-/// thin convenience over the door for callers that hold a pool directly (the
-/// referee wrapper and the in-module tests); production `prove` and the daemon
-/// call the door themselves.
+/// THE consistency solve door, over every proof prove loaded (the project's
+/// own `.proof` and the staged imports alike, one pool): build the pool's
+/// `ConsistencyIndex` and solve it (`verify_consistency_from_index`).
+/// Production `prove`, the editor (through the same `prove_rows`) and the
+/// tests all come here, so the join (`collect_ambient_posts`) is always over
+/// every contract prove has.
 ///
 /// Zero project FS (#3809 series). Locus preference is speaker role only;
-/// scope is path-prefix only; witness bodies come from the proof (step 9).
+/// witness bodies come from the proof (step 9).
 pub fn verify_consistency(
     pool: &MementoPool,
     plan: &SolverPlan,
@@ -5197,21 +5186,16 @@ pub fn verify_consistency(
     compilers: &CompilerRegistry,
     project_root: &Path,
 ) -> Vec<ConsistencyResult> {
+    // project_root retained on the signature for API stability; never stats
+    // for locus or scope.
+    let _project_root = project_root;
     let index = build_consistency_index(pool);
-    verify_consistency_from_indexes(&index, None, plan, registry, compilers, project_root, None)
+    verify_consistency_from_index(&index, plan, registry, compilers)
 }
 
-/// Pool-derived consistency inputs, computed once per pool and reusable
-/// across solve calls (#3774 daemonSolve trim). Every field is a pure
-/// projection of `pool` -- field for field, the same construction
-/// `verify_consistency` performs inline before driving the solve door (the
-/// stages MOVED into `build_consistency_index_filtered`; they were not
-/// reimplemented). The daemon caches the resident base (vendor) pool's index
-/// in its ProveContext and, per request, builds only the tiny scratch-proof
-/// overlay's index, merging the two in
-/// `verify_consistency_scoped_with_base_index` -- so the per-save cost is
-/// O(overlay members), not O(pool re-scan + pool clone).
-pub struct ConsistencyIndex {
+/// Pool-derived consistency inputs. Every field is a pure projection of the
+/// one pool prove loaded.
+struct ConsistencyIndex {
     candidates: Vec<ConsistencyCandidate>,
     provenance_refusals: Vec<ConsistencyResult>,
     ambient_foralls: Vec<Json>,
@@ -5223,57 +5207,16 @@ pub struct ConsistencyIndex {
     /// Raw (contract/property name, locus, optional speaker role) triples in
     /// pool iteration order. The project-local preference merge (consumer
     /// file beats vendor file for the squiggle anchor) happens at solve time
-    /// in `verify_consistency_from_indexes` via speaker role only (#3809).
+    /// in `verify_consistency_from_index` via speaker role only (#3809).
     locus_entries: Vec<(String, SourceLocus, Option<SpeakerRole>)>,
     /// Witness package bodies this pool's `witness-memento` members state
     /// (step 9: the body a witness row is decided from is in the proof).
     witness_bodies: WitnessBodies,
 }
 
-impl ConsistencyIndex {
-    /// Number of consistency candidates the pool contributed. Exposed for
-    /// caller-side telemetry only; the solve path never re-derives from it.
-    pub fn candidate_count(&self) -> usize {
-        self.candidates.len()
-    }
-}
-
-/// Build the pool's [`ConsistencyIndex`]. This is stage 1 of
-/// `verify_consistency` factored out verbatim; callers that hold a stable
-/// pool (the daemon's resident vendor pool) build this once and pass it to
-/// `verify_consistency_scoped_with_base_index` per request.
-pub fn build_consistency_index(pool: &MementoPool) -> ConsistencyIndex {
-    build_consistency_index_filtered(pool, None)
-}
-
-/// Same construction as [`build_consistency_index`], but candidates and
-/// provenance refusals whose CID appears in `skip_cids` are dropped BEFORE
-/// ambient collection. Used for the overlay index in the merged (cached)
-/// path: when the same member CID exists in both the base pool and the
-/// overlay scratch proof, the merged-pool semantics are "one member" (the
-/// pool dedupes by CID on load), so the overlay index must not contribute a
-/// second copy -- a duplicate would flip an identical-assertion group from
-/// PROVEN to a same-kind-duplicate vacuity refusal the merged-pool run never
-/// raises.
-fn build_consistency_index_filtered(
-    pool: &MementoPool,
-    skip_cids: Option<&std::collections::HashSet<String>>,
-) -> ConsistencyIndex {
+/// Build the pool's [`ConsistencyIndex`]: stage 1 of `verify_consistency`.
+fn build_consistency_index(pool: &MementoPool) -> ConsistencyIndex {
     let (candidates, provenance_refusals) = collect_consistency_candidates(pool);
-    let (candidates, provenance_refusals): (Vec<ConsistencyCandidate>, Vec<ConsistencyResult>) =
-        match skip_cids {
-            None => (candidates, provenance_refusals),
-            Some(skip) => (
-                candidates
-                    .into_iter()
-                    .filter(|c| !skip.contains(&c.cid))
-                    .collect(),
-                provenance_refusals
-                    .into_iter()
-                    .filter(|r| !skip.contains(&r.contract_cid))
-                    .collect(),
-            ),
-        };
 
     // AMBIENT UNIVERSALS: a forall invariant (a lifted bounded loop, memento
     // `<test>::loop::<var>`, from any language's lifter) constrains every claim
@@ -5370,166 +5313,23 @@ fn build_consistency_index_filtered(
     }
 }
 
-/// CACHED-BASE solve body: base index + overlay pool, scoped groups.
-/// Shared by the public scoped entry and discrimination helpers; policy is
-/// explicit so instruments can compare pool-only vs cold-disk faces.
-fn verify_consistency_scoped_with_base_index_policy(
-    base: &ConsistencyIndex,
-    overlay_pool: &MementoPool,
+/// The per-pool solve: grouping and the per-group solve over the one pool's
+/// index. Witness bodies are what the pool's `witness-memento` members state
+/// (step 9: no kit is asked). Zero project FS (#3809).
+fn verify_consistency_from_index(
+    index: &ConsistencyIndex,
     plan: &SolverPlan,
     registry: &HashMap<SolverSeat, SolverHandle>,
     compilers: &CompilerRegistry,
-    project_root: &Path,
-    scope: &Path,
 ) -> Vec<ConsistencyResult> {
-    let skip: std::collections::HashSet<String> = base
-        .candidates
-        .iter()
-        .map(|c| c.cid.clone())
-        .chain(
-            base.provenance_refusals
-                .iter()
-                .map(|r| r.contract_cid.clone()),
-        )
-        .collect();
-    let overlay = build_consistency_index_filtered(overlay_pool, Some(&skip));
-    verify_consistency_from_indexes(
-        base,
-        Some(&overlay),
-        plan,
-        registry,
-        compilers,
-        project_root,
-        Some(scope),
-    )
-}
-
-/// Scoped consistency over a **resident** base index + overlay pool (#3809).
-///
-/// One solve door, zero project FS: speaker-role locus preference, path-prefix
-/// scope, witness bodies from the proof. No `pool_only_inputs` flag.
-///
-/// - **Is:** pure discharge over a resident base index + pre-fed overlay
-///   pool + in-memory plan/registry/compilers.
-/// - **Is not:** kit fold / mint / source overlay construction (lift face).
-///   Full `Runner`/`proof-run` face is
-///   `sugar_compiler::orchestrate::solve_project_with_pool`.
-pub fn verify_consistency_scoped_with_base_index(
-    base: &ConsistencyIndex,
-    overlay_pool: &MementoPool,
-    plan: &SolverPlan,
-    registry: &HashMap<SolverSeat, SolverHandle>,
-    compilers: &CompilerRegistry,
-    project_root: &Path,
-    scope: &Path,
-) -> Vec<ConsistencyResult> {
-    verify_consistency_scoped_with_base_index_policy(
-        base,
-        overlay_pool,
-        plan,
-        registry,
-        compilers,
-        project_root,
-        scope,
-    )
-}
-
-/// THE consistency solve door. Grouping, scoping, and the per-group solve,
-/// over the merged (base + optional overlay) index. Every consistency verdict
-/// -- production `prove` (via `verify_consistency`), the editor daemon (via
-/// `verify_consistency_scoped_with_base_index`), and the tests -- flows through
-/// this one function; `overlay` supplies the daemon's per-request scratch
-/// index (or `None` for a whole-pool run) and `scope` restricts which groups
-/// are solved (or `None` for the full CLI pass).
-///
-/// Zero project FS (#3809): locus preference = speaker role; scope = path
-/// prefix; witness bodies = what the base and overlay pools' `witness-memento`
-/// members state (step 9: no kit is asked). No `pool_only_inputs` flag.
-#[allow(clippy::too_many_arguments)]
-pub fn verify_consistency_from_indexes(
-    base: &ConsistencyIndex,
-    overlay: Option<&ConsistencyIndex>,
-    plan: &SolverPlan,
-    registry: &HashMap<SolverSeat, SolverHandle>,
-    compilers: &CompilerRegistry,
-    project_root: &Path,
-    scope: Option<&Path>,
-) -> Vec<ConsistencyResult> {
-    // project_root retained on the signature for API stability; never stats
-    // for locus/scope (speaker + path-prefix only).
-    let _project_root = project_root;
-    let witness_bodies: Arc<WitnessBodies> = Arc::new(
-        base.witness_bodies
-            .iter()
-            .chain(overlay.iter().flat_map(|o| o.witness_bodies.iter()))
-            .map(|(cid, bytes)| (cid.clone(), bytes.clone()))
-            .collect(),
-    );
+    let witness_bodies: Arc<WitnessBodies> = Arc::new(index.witness_bodies.clone());
     let _witness_bodies_guard = WitnessBodiesGuard::enter(&witness_bodies);
-    let candidates: Vec<&ConsistencyCandidate> = base
-        .candidates
-        .iter()
-        .chain(overlay.iter().flat_map(|o| o.candidates.iter()))
-        .collect();
-    let provenance_refusals: Vec<ConsistencyResult> = base
-        .provenance_refusals
-        .iter()
-        .cloned()
-        .chain(
-            overlay
-                .iter()
-                .flat_map(|o| o.provenance_refusals.iter().cloned()),
-        )
-        .collect();
-    let ambient_foralls: Vec<Json> = base
-        .ambient_foralls
-        .iter()
-        .cloned()
-        .chain(
-            overlay
-                .iter()
-                .flat_map(|o| o.ambient_foralls.iter().cloned()),
-        )
-        .collect();
-    let ambient_ground_callsite_facts: Vec<AmbientGroundCallsiteFact> = base
-        .ambient_ground_callsite_facts
-        .iter()
-        .cloned()
-        .chain(
-            overlay
-                .iter()
-                .flat_map(|o| o.ambient_ground_callsite_facts.iter().cloned()),
-        )
-        .collect();
-    // Joined posts merge with (site, source_symbol, target_cid) dedupe: the
-    // merged-pool run sees one bridge member per CID, so an overlay proof
-    // re-declaring a base bridge must not conjoin the same post twice.
-    let mut ambient_posts: Vec<AmbientPost> = base.ambient_posts.clone();
-    if let Some(o) = overlay {
-        let seen: std::collections::HashSet<(String, String, String)> = ambient_posts
-            .iter()
-            .map(|p| {
-                (
-                    p.site_cid.clone(),
-                    p.binding.source_symbol.clone(),
-                    p.binding.target_cid.clone(),
-                )
-            })
-            .collect();
-        for p in &o.ambient_posts {
-            if !seen.contains(&(
-                p.site_cid.clone(),
-                p.binding.source_symbol.clone(),
-                p.binding.target_cid.clone(),
-            )) {
-                ambient_posts.push(p.clone());
-            }
-        }
-    }
-    let mut exception_ancestry = base.exception_ancestry.clone();
-    for (symbol, facts) in overlay.iter().flat_map(|o| o.exception_ancestry.iter()) {
-        merge_exception_ancestry(&mut exception_ancestry, symbol.clone(), facts.clone());
-    }
+    let candidates: Vec<&ConsistencyCandidate> = index.candidates.iter().collect();
+    let provenance_refusals: Vec<ConsistencyResult> = index.provenance_refusals.clone();
+    let ambient_foralls = &index.ambient_foralls;
+    let ambient_ground_callsite_facts = &index.ambient_ground_callsite_facts;
+    let ambient_posts = &index.ambient_posts;
+    let exception_ancestry = &index.exception_ancestry;
 
     info!(
         candidates = candidates.len(),
@@ -5572,11 +5372,7 @@ pub fn verify_consistency_from_indexes(
     // are Consumer-stamped.
     let mut locus_by_name: HashMap<String, SourceLocus> = HashMap::new();
     let mut locus_role: HashMap<String, Option<SpeakerRole>> = HashMap::new();
-    for (name, l, role) in base
-        .locus_entries
-        .iter()
-        .chain(overlay.iter().flat_map(|o| o.locus_entries.iter()))
-    {
+    for (name, l, role) in &index.locus_entries {
         match locus_by_name.entry(name.clone()) {
             std::collections::hash_map::Entry::Vacant(e) => {
                 e.insert(l.clone());
@@ -5595,25 +5391,8 @@ pub fn verify_consistency_from_indexes(
         }
     }
 
-    // EDITOR SCOPE: keep groups whose anchor locus is in scope by path
-    // metadata only (relative or prefix under scope_root) — never Path::exists.
     let groups: Vec<(String, Vec<ConsistencyCandidate>)> = by_name
         .into_iter()
-        .filter(|(property_name, members)| match scope {
-            None => true,
-            Some(scope_root) => {
-                let anchored_in_scope = |name: &str| {
-                    locus_by_name
-                        .get(name)
-                        .map(|l| locus_in_scope(scope_root, &l.file))
-                        .unwrap_or(false)
-                };
-                anchored_in_scope(property_name)
-                    || members
-                        .iter()
-                        .any(|m| anchored_in_scope(contract_property_name(&m.body).as_ref()))
-            }
-        })
         .map(|(name, members)| (name, members.into_iter().cloned().collect()))
         .collect();
 
@@ -5627,10 +5406,10 @@ pub fn verify_consistency_from_indexes(
             process_consistency_group(
                 property_name,
                 members,
-                &ambient_posts,
-                &exception_ancestry,
-                &ambient_ground_callsite_facts,
-                &ambient_foralls,
+                ambient_posts,
+                exception_ancestry,
+                ambient_ground_callsite_facts,
+                ambient_foralls,
                 &locus_by_name,
                 plan,
                 registry,
@@ -5662,7 +5441,7 @@ pub fn verify_consistency_from_indexes(
 }
 
 /// PER-GROUP SOLVE, factored out of the solve door (pure relocation, no
-/// behavior change) so grouping/scoping in `verify_consistency_from_indexes`
+/// behavior change) so grouping in `verify_consistency_from_index`
 /// drives the conjoin/vacuity classification one `#euf#` group at a time.
 /// `property_name`/`members` name one `#euf#` (or plain) callsite group;
 /// `ambient_posts`/`ambient_ground_callsite_facts`/`ambient_foralls` are the
@@ -6856,157 +6635,6 @@ mod tests {
             vendor,
             json!([says_6]),
             "flipped vendorFactIr must be EXACTLY the (now vendor-spoken) ==6 conjunct vector"
-        );
-    }
-
-    /// #3807 OVERLAY PATH: daemon base index (vendor pool) + consumer overlay
-    /// pool must label client/vendor from speaker provenance that rides each
-    /// candidate/ambient conjunct — identical to the single-pool CLI path.
-    /// Producer-dependent order (base-first vs overlay-first) must NOT invert
-    /// labels; flipping who spoke which value must flip labels only.
-    #[test]
-    fn overlay_base_index_labels_follow_speaker_provenance_not_producer_order() {
-        use crate::types::SpeakerRole;
-        let (plan, reg) = z3_plan_and_registry();
-        let compilers = test_compilers();
-        let name = "numpy.add#euf#callresult_numpy_add_a2(2,3)::assertion";
-        let says_6 = eqf(var("r"), int(6));
-        let says_5 = eqf(var("r"), int(5));
-        let and1 = |c: &Json| json!({"kind":"and","operands":[c]});
-        // Scoped door keeps groups only when locus_entries anchor in scope
-        // (#3802). Mirror the daemon face: sibling source-memento carries
-        // file/span; contract inv is the claim body.
-        let insert_claim = |pool: &mut MementoPool, cid: &str, inv: Json| {
-            let env = json!({
-                "envelope": {
-                    "header": {
-                        "kind": "contract",
-                        "contractName": name,
-                        "inv": inv,
-                        "proofirProvenance": proofir_provenance("Stated")
-                    }
-                }
-            });
-            pool.insert_unanchored_for_tests(test_cid(cid), env);
-        };
-        let insert_source_locus = |pool: &mut MementoPool, cid: &str| {
-            let env = json!({
-                "envelope": {
-                    "header": {
-                        "kind": "source-memento",
-                        "contractName": name,
-                        "file": "src/lib.rs",
-                        "span": {"start_line": 1, "start_col": 0, "end_line": 1, "end_col": 10},
-                    }
-                }
-            });
-            pool.insert_unanchored_for_tests(test_cid(cid), env);
-        };
-
-        let solve_overlay = |consumer_speaks_6: bool| -> ConsistencyResult {
-            let mut base_pool = MementoPool::default();
-            let mut overlay_pool = MementoPool::default();
-            let (consumer_val, vendor_val) = if consumer_speaks_6 {
-                (says_6.clone(), says_5.clone())
-            } else {
-                (says_5.clone(), says_6.clone())
-            };
-            // Base = vendor-only resident index (daemon `.sugar/imports` shape).
-            insert_claim(&mut base_pool, "overlay-vendor", vendor_val);
-            insert_source_locus(&mut base_pool, "overlay-vendor-src");
-            base_pool.attribute_member_for_tests(
-                &test_cid_string("overlay-vendor"),
-                SpeakerRole::Vendor,
-                "staged-import",
-            );
-            base_pool.attribute_member_for_tests(
-                &test_cid_string("overlay-vendor-src"),
-                SpeakerRole::Vendor,
-                "staged-import",
-            );
-            // Overlay = consumer buffer feed (enumerate→fold scratch).
-            insert_claim(&mut overlay_pool, "overlay-consumer", consumer_val);
-            insert_source_locus(&mut overlay_pool, "overlay-consumer-src");
-            overlay_pool.attribute_member_for_tests(
-                &test_cid_string("overlay-consumer"),
-                SpeakerRole::Consumer,
-                "sugar-lsp",
-            );
-            overlay_pool.attribute_member_for_tests(
-                &test_cid_string("overlay-consumer-src"),
-                SpeakerRole::Consumer,
-                "sugar-lsp",
-            );
-            let base_index = build_consistency_index(&base_pool);
-            let mut res = verify_consistency_scoped_with_base_index(
-                &base_index,
-                &overlay_pool,
-                &plan,
-                &reg,
-                &compilers,
-                std::path::Path::new("."),
-                std::path::Path::new("."),
-            );
-            assert_eq!(
-                res.len(),
-                1,
-                "one conjoined overlay+base group expected: {res:?}"
-            );
-            res.remove(0)
-        };
-
-        let labels = |r: &ConsistencyResult| -> (Json, Json) {
-            let v = r
-                .verification
-                .as_ref()
-                .expect("verification detail")
-                .to_json();
-            (
-                v.get("clientFactIr")
-                    .expect("clientFactIr on overlay path")
-                    .clone(),
-                v.get("vendorFactIr")
-                    .expect("vendorFactIr on overlay path")
-                    .clone(),
-            )
-        };
-
-        let normal = solve_overlay(true);
-        assert_eq!(
-            normal.verdict,
-            ObligationVerdict::Unsatisfied,
-            "consumer==6 ∧ vendor==5 must refuse: {normal:?}"
-        );
-        let (client, vendor) = labels(&normal);
-        assert_eq!(
-            client,
-            and1(&says_6),
-            "#3807: overlay path clientFactIr must be consumer ==6, not inverted \
-             (was: vendor fact leading clientFactIr when base index ordered first)"
-        );
-        assert_eq!(
-            vendor,
-            json!([says_5]),
-            "#3807: overlay path vendorFactIr must be vendor ==5, not consumer \
-             (was: consumer asserted literal landing in vendorFactIr)"
-        );
-
-        let flipped = solve_overlay(false);
-        assert_eq!(
-            flipped.verdict,
-            ObligationVerdict::Unsatisfied,
-            "flip must not change verdict"
-        );
-        let (client, vendor) = labels(&flipped);
-        assert_eq!(
-            client,
-            and1(&says_5),
-            "flipped overlay clientFactIr follows consumer speaker"
-        );
-        assert_eq!(
-            vendor,
-            json!([says_6]),
-            "flipped overlay vendorFactIr follows vendor speaker"
         );
     }
 
@@ -10599,14 +10227,12 @@ mod tests {
         assert_eq!(results[0].verdict, ObligationVerdict::Unsatisfied);
     }
 
-    /// #3809 instrument: resident-base scoped solve must produce **byte-
-    /// identical** wire rows to a second call of the same one-door body on a
-    /// speaker-free base+overlay pool. One path, no `pool_only_inputs` flag.
-    ///
-    /// Layout mirrors the LSP face: resident **base** index (vendor) +
-    /// **overlay** pool (consumer) over one euf property with a contradiction.
+    /// #3809 instrument: the one solve door produces **byte-identical** wire
+    /// rows whatever `project_root` is, a file trap included (zero project
+    /// FS). The vendor's and the consumer's claims are one pool, as prove
+    /// loads them, over one euf property with a contradiction.
     #[test]
-    fn resident_base_solve_byte_identical_to_cold_disk_face() {
+    fn the_one_solve_door_reads_no_project_fs() {
         let z3_ok = std::process::Command::new("z3")
             .arg("--version")
             .output()
@@ -10655,61 +10281,32 @@ mod tests {
             pool.insert_unanchored_for_tests(test_cid(cid), env);
         };
 
-        // Base (vendor): check(2,3) == 5
-        let mut base_pool = MementoPool::default();
+        // Vendor: check(2,3) == 5; consumer: check(2,3) == 6 -> conjoined
+        // UNSAT. One pool, as prove loads the project's proof and its imports.
+        let mut pool = MementoPool::default();
         insert_with_file(
-            &mut base_pool,
+            &mut pool,
             "blake3-512:vendor-warm-gap3",
             json!({"kind":"and","operands":[eqf(var("r"), int_const(5))]}),
         );
-        insert_source_locus(&mut base_pool, "blake3-512:vendor-src-warm-gap3");
-        // Overlay (consumer): check(2,3) == 6  → conjoined UNSAT with vendor
-        let mut overlay = MementoPool::default();
+        insert_source_locus(&mut pool, "blake3-512:vendor-src-warm-gap3");
         insert_with_file(
-            &mut overlay,
+            &mut pool,
             "blake3-512:consumer-warm-gap3",
             json!({"kind":"and","operands":[eqf(var("r"), int_const(6))]}),
         );
-        insert_source_locus(&mut overlay, "blake3-512:consumer-src-warm-gap3");
+        insert_source_locus(&mut pool, "blake3-512:consumer-src-warm-gap3");
 
         let (plan, registry) = z3_plan_and_registry();
         let compilers = test_compilers();
-        let base_index = build_consistency_index(&base_pool);
-
-        // Same one-door body via policy helper and public resident-base entry.
-        let cold = verify_consistency_scoped_with_base_index_policy(
-            &base_index,
-            &overlay,
-            &plan,
-            &registry,
-            &compilers,
-            &project,
-            &project,
-        );
-        let warm = verify_consistency_scoped_with_base_index(
-            &base_index,
-            &overlay,
-            &plan,
-            &registry,
-            &compilers,
-            &project,
-            &project,
-        );
+        let cold = verify_consistency(&pool, &plan, &registry, &compilers, &project);
+        let warm = verify_consistency(&pool, &plan, &registry, &compilers, &project);
 
         // project_root as a FILE trap — zero project FS.
-        // Relative locus "src/lib.rs" stays in-scope without exists().
         let trap = unique_temp_dir("one-solve-gap3-trap");
         let trap_file = trap.join("project_root_is_a_file");
-        std::fs::write(&trap_file, b"resident-base solve must not open children\n").unwrap();
-        let warm_trap = verify_consistency_scoped_with_base_index(
-            &base_index,
-            &overlay,
-            &plan,
-            &registry,
-            &compilers,
-            &trap_file,
-            &trap_file,
-        );
+        std::fs::write(&trap_file, b"the solve must not open children\n").unwrap();
+        let warm_trap = verify_consistency(&pool, &plan, &registry, &compilers, &trap_file);
 
         let wire = |rows: &[ConsistencyResult]| -> Vec<String> {
             let mut blobs: Vec<String> = rows
@@ -10740,11 +10337,11 @@ mod tests {
         );
         assert_eq!(
             warm_wire, cold_wire,
-            "resident-base solve must be byte-identical to cold disk face (row_to_json)"
+            "the one solve door must be byte-identical across calls (row_to_json)"
         );
         assert_eq!(
             trap_wire, warm_wire,
-            "resident-base solve with file-trap project_root must match (zero project FS)"
+            "the solve with a file-trap project_root must match (zero project FS)"
         );
         assert!(
             !warm.is_empty(),
@@ -11529,6 +11126,39 @@ mod tests {
             "g(3) == 4 under g's `out = x` is refuted: {}",
             lying.reason
         );
+    }
+
+    /// The editor and `sugar prove` are one door over one pool: the
+    /// consumer's edge (its own proof) binds the import's bridge (a staged
+    /// proof) exactly as a same-proof edge binds, decided both ways. (The
+    /// overlay path that joined each index's edges only to its own bridges is
+    /// gone; `verify_consistency` is the only consistency door.)
+    #[test]
+    fn a_consumer_edge_binds_an_imported_bridge_through_the_one_door() {
+        use crate::types::SpeakerRole;
+        for (rhs, verdict) in [
+            (3, ObligationVerdict::Discharged),
+            (4, ObligationVerdict::Unsatisfied),
+        ] {
+            let (mut pool, member) = f_calls_g_pool(rhs);
+            let contract_cid = blake3_512_of(b"same-proof-contract-g");
+            let bridge_cid = blake3_512_of(b"same-proof-bridge-g");
+            for cid in [&contract_cid, &bridge_cid] {
+                pool.attribute_member_for_tests(
+                    &test_cid_string(cid),
+                    SpeakerRole::Vendor,
+                    "staged-import",
+                );
+            }
+            pool.attribute_member_for_tests(&member, SpeakerRole::Consumer, "me");
+            assert!(pool.is_vendor_member(&test_cid_string(&contract_cid)));
+            assert!(
+                joined_member_cids(&pool).contains(&member),
+                "the import's bridge answers the consumer's edge"
+            );
+            let result = the_one_claim(&pool);
+            assert_eq!(result.verdict, verdict, "g(3) == {rhs}: {}", result.reason);
+        }
     }
 
     /// `def g(x): return x`, `def f(x): return g(x)`, and
