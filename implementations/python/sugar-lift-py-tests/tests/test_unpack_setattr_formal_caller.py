@@ -59,7 +59,7 @@ from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
-from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted, true_guard
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef, FunctionDef
@@ -342,23 +342,26 @@ def test_swapped_receiver_value_coordinates_twin_fails() -> None:
 
 
 def test_first_store_halt_blocks_later_targets() -> None:
-    """``o.x, o.y = p, q`` free undecided o: first-halt arm has no second store."""
+    """``o.x, o.y = p, q`` with ``o`` bound nowhere: the first target's read of
+    ``o`` is Python's ``NameError``, and no later target runs.
+
+    The module binds no ``o``, so ``o`` is not an object of undecided type: the
+    first store's receiver read raises.  The body has that one unconditional
+    halt and nothing else -- no second halt from ``o.y``, no completed arm."""
+    from sugar_lift_py_tests.effect import NameErrorEffect
+
     source = "def f(p, q):\n    o.x, o.y = p, q\n    return p\n"
     tree = _tree(source, "dual_attr.py")
     fn = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     outcome = fn.sugar().desugar(None)
     halted = [e for e in outcome.exits if isinstance(e, Halted)]
     completed = [e for e in outcome.exits if isinstance(e, Completed)]
-    # Dual-face store composition: 2 halt + 1 completed.
-    assert len(halted) == 2
-    assert len(completed) == 1
-    # Each store halts with the one undetermined raise (``store_faces``).
-    assert all(
-        isinstance(h.effect, UndeterminedRaiseEffect)
-        and h.effect.producer_node_owner == "AttributeStoreRuntimeEffect"
-        for h in halted
-    )
-    # First-halt arm (no prior store) carries no AttributeStore testimony.
+    assert len(halted) == 1
+    assert completed == []
+    assert isinstance(halted[0].effect, NameErrorEffect)
+    assert halted[0].effect.name == "o"
+    assert halted[0] == Halted(true_guard(), halted[0].effect, halted[0].state)
+    # The halt was reached before any store: no AttributeStore testimony.
     testimonies = [
         sum(
             isinstance(getattr(e, "effect", None), AttributeStoreRuntimeEffect)
