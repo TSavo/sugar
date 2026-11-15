@@ -92,6 +92,26 @@ def _root(owner: str = "walrus-writes") -> ReduceContext:
     return ReduceContext.root(owner=owner)
 
 
+def _after_prior(rewritten, owner: str) -> ReduceContext:
+    """The context the function's first statement (``n = 0``, ``s = 0``)
+    leaves, reduced in the block that runs it.
+
+    A comprehension's walrus reads the name's binding before it through the
+    key that assignment binds (every read goes through its evaluation key):
+    the comprehension is reduced after the statement, never where nothing
+    bound the key, which is refused by name (``EvaluationRefSugar._unbound``)."""
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        plain_completed_value,
+        reduce_block_to_exitset,
+    )
+
+    record = plain_completed_value(
+        reduce_block_to_exitset((rewritten.body[0].sugar(),), _root(owner))
+    )
+    assert record is not None and record.context is not None, record
+    return record.context
+
+
 def _value(outcome):
     return outcome.completed_value()
 
@@ -204,7 +224,9 @@ def test_a_symbolic_comprehension_carries_the_last_write_or_the_prior() -> None:
     ).substitute({})
     (walrus,) = _walruses(rewritten)
     comprehension = _comprehension(rewritten, "ListComp")
-    carried = _value(comprehension.sugar().desugar(_root("walrus-symbolic")))
+    carried = _value(
+        comprehension.sugar().desugar(_after_prior(rewritten, "walrus-symbolic"))
+    )
     binds, presented = peel_walrus_binds(carried)
     assert isinstance(presented, ComprehensionValue)
     assert presented.finite_elements is None
@@ -290,7 +312,9 @@ def test_an_empty_comprehension_carries_the_prior_binding() -> None:
     ).substitute({})
     (walrus,) = _walruses(rewritten)
     comprehension = _comprehension(rewritten, "ListComp")
-    carried = _value(comprehension.sugar().desugar(_root("walrus-empty")))
+    carried = _value(
+        comprehension.sugar().desugar(_after_prior(rewritten, "walrus-empty"))
+    )
     binds, presented = peel_walrus_binds(carried)
     assert presented.finite_elements == ()
     assert [(bind.name, bind.evaluation, bind.assigned_value) for bind in binds] == [
@@ -360,7 +384,9 @@ def test_the_running_sum_reads_the_previous_members_write() -> None:
     rewritten = _function(_RUNNING).substitute({})
     (walrus,) = _walruses(rewritten)
     comprehension = _comprehension(rewritten, "ListComp")
-    carried = _value(comprehension.sugar().desugar(_root("walrus-running")))
+    carried = _value(
+        comprehension.sugar().desugar(_after_prior(rewritten, "walrus-running"))
+    )
     binds, presented = peel_walrus_binds(carried)
     assert presented.finite_elements == (TermValue(1), TermValue(3), TermValue(6))
     # Never every member reading `s = 0`.
@@ -380,7 +406,9 @@ def test_two_walruses_of_one_name_compose_in_evaluation_order() -> None:
     walruses = _walruses(rewritten)
     assert len(walruses) == 2
     comprehension = _comprehension(rewritten, "ListComp")
-    carried = _value(comprehension.sugar().desugar(_root("walrus-two")))
+    carried = _value(
+        comprehension.sugar().desugar(_after_prior(rewritten, "walrus-two"))
+    )
     binds, presented = peel_walrus_binds(carried)
     # Each member: the condition multiplies what the previous member left,
     # then the element adds to the condition's write.
@@ -411,7 +439,11 @@ def test_two_walruses_of_one_name_over_a_symbolic_iterable_carry_one_write() -> 
     ).substitute({})
     walruses = _walruses(rewritten)
     comprehension = _comprehension(rewritten, "ListComp")
-    carried = _value(comprehension.sugar().desugar(_root("walrus-two-symbolic")))
+    carried = _value(
+        comprehension.sugar().desugar(
+            _after_prior(rewritten, "walrus-two-symbolic")
+        )
+    )
     binds, presented = peel_walrus_binds(carried)
     assert presented.finite_elements is None
     # No longer refused: one guarded last write of `n`, under both keys.
@@ -527,7 +559,9 @@ def test_a_read_before_the_walrus_in_its_element_reads_the_running_value() -> No
     assert all(getattr(read, "member", False) is True for read in reads)
     ((name, _coordinate, ordered),) = comprehension.sugar().walrus_recurrence
     assert (name, ordered) == ("s", True)
-    carried = _value(comprehension.sugar().desugar(_root("walrus-before")))
+    carried = _value(
+        comprehension.sugar().desugar(_after_prior(rewritten, "walrus-before"))
+    )
     binds, presented = peel_walrus_binds(carried)
     assert presented.finite_elements == (TermValue(1), TermValue(3), TermValue(5))
     assert [bind.assigned_value for bind in binds] == [TermValue(3)]
@@ -541,7 +575,9 @@ def test_a_read_after_a_walrus_before_it_is_the_last_write() -> None:
 def test_a_read_after_the_walrus_in_its_element_reads_its_write() -> None:
     rewritten = _function(_AFTER).substitute({})
     comprehension = _comprehension(rewritten, "ListComp")
-    carried = _value(comprehension.sugar().desugar(_root("walrus-after")))
+    carried = _value(
+        comprehension.sugar().desugar(_after_prior(rewritten, "walrus-after"))
+    )
     binds, presented = peel_walrus_binds(carried)
     # `(s := s + x) + s`: the right operand reads the write the left made.
     assert presented.finite_elements == (TermValue(2), TermValue(6), TermValue(12))
@@ -553,7 +589,9 @@ def test_a_two_generator_running_sum_threads_through_nested_loop_order() -> None
     comprehension = _comprehension(rewritten, "ListComp")
     ((name, _coordinate, ordered),) = comprehension.sugar().walrus_recurrence
     assert (name, ordered) == ("s", True)
-    carried = _value(comprehension.sugar().desugar(_root("walrus-nested")))
+    carried = _value(
+        comprehension.sugar().desugar(_after_prior(rewritten, "walrus-nested"))
+    )
     binds, presented = peel_walrus_binds(carried)
     # Each outer member, then every inner member under it: 10, 110, 130, 330.
     assert presented.finite_elements == (
