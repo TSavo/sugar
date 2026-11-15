@@ -714,17 +714,24 @@ def _havoc(site_node, label, tags, *, prior=None, conditions=None):
         rule = (method, pure, sharer, index)
         if rule not in rules:
             rules.append(rule)
-    return _materialize(
-        site_node,
-        "ReceiverAfterCall",
-        (
-            ("label", Leaf(label)),
-            ("occurrence", Leaf(_evaluation(site_node, tags))),
-            ("prior", MaybeChild(None if prior is None else _handle_of(prior))),
-            ("subjects", Children(tuple(_handle_of(node) for node in subjects))),
-            ("rules", Leaf(tuple(rules))),
-        ),
-        tags,
+    from .nodes import _minted_binding_reference
+
+    # A value of the scope after the call, which no read may reach: it
+    # answers where it is minted, and a read that reaches it constructs it
+    # and answers again (``nodes._minted_binding_reference``).
+    return _minted_binding_reference(
+        _materialize(
+            site_node,
+            "ReceiverAfterCall",
+            (
+                ("label", Leaf(label)),
+                ("occurrence", Leaf(_evaluation(site_node, tags))),
+                ("prior", MaybeChild(None if prior is None else _handle_of(prior))),
+                ("subjects", Children(tuple(_handle_of(node) for node in subjects))),
+                ("rules", Leaf(tuple(rules))),
+            ),
+            tags,
+        )
     )
 
 
