@@ -698,18 +698,21 @@ def test_scale():
 def test_a_read_of_a_bound_key_never_applies_the_decorators_again() -> None:
     """With the statement's key bound, the read is the bound value: the
     decorator (here one that refuses whenever applied) is not run again.
-    Unbound, the read is the application."""
+    Unbound, the read is refused by name as every read of an unbound key is
+    (``evaluation_ref_sugar.refuse_unbound_evaluation``, #7757 item 21): the
+    decorators are never applied in the read's place, so the refusal names
+    the key, never the decorator's own refusal."""
     import pytest
 
     from sugar_lift_py_tests.context.reduce_context import ReduceContext
     from sugar_lift_py_tests.floor import TermValue
     from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
     from sugar_lift_py_tests.sugar.decorator_application_sugar import (
         DecoratorApplicationSugar,
         DecoratorStepV1,
     )
     from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
-    from sugar_source_tree.panic import SugarNotWritten
 
     key = EVALUATION_PREFIX + "blake3-512:decorated-definition/scale"
     read = DecoratorApplicationSugar(
@@ -725,8 +728,10 @@ def test_a_read_of_a_bound_key_never_applies_the_decorators_again() -> None:
     value = TermValue(7)
     bound = ScopeRebind(key, value).extend_scope(ctx)
     assert read.desugar(bound).completed_value() is value
-    with pytest.raises(SugarNotWritten):
+    with pytest.raises(ConstructionPanic, match="unbound") as refused:
         read.desugar(ctx)
+    assert key in str(refused.value)
+    assert "applied again" not in str(refused.value)
 
 
 # ---------------------------------------------------------------------------
