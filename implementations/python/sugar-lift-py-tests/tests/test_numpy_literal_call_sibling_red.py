@@ -59,6 +59,11 @@ NOT_BRIDGED_NUMPY_TWINS: tuple[str, ...] = (
     "test_numpy_sin_sqrt_fft_literal_call_is_not_bridged[sin]",
     "test_numpy_sin_sqrt_fft_literal_call_is_not_bridged[sqrt]",
     "test_numpy_sin_sqrt_fft_literal_call_is_not_bridged[fft]",
+    # ``np.fft.fft([1, 0])[0]``: the same not-bridged call with its result
+    # subscripted. It was stated a second time in ``test_numpy_fft_membrane.py``
+    # through readers of lift output no mint writes (factory audits, an
+    # ``assertion``-first warrant); it is this one twin now.
+    "test_numpy_sin_sqrt_fft_literal_call_is_not_bridged[fft-subscript]",
 )
 
 
@@ -388,6 +393,9 @@ def test_numpy_power_literal_call_is_not_bridged(
         pytest.param("sin", "np.sin(0)", "0", "1", id="sin"),
         pytest.param("sqrt", "np.sqrt(4)", "2", "3", id="sqrt"),
         pytest.param("fft", "np.fft.fft([1, 2])", "[1, 2]", "[2, 1]", id="fft"),
+        pytest.param(
+            "fft_subscript", "np.fft.fft([1, 0])[0]", "1", "2", id="fft-subscript"
+        ),
     ],
 )
 def test_numpy_sin_sqrt_fft_literal_call_is_not_bridged(
@@ -404,6 +412,10 @@ def test_numpy_sin_sqrt_fft_literal_call_is_not_bridged(
     about the same call (a different right-hand side) are both ``open``.
 
     This turns back into a decided twin when a numpy proof can be imported.
+
+    The call is recorded, never dropped: each half's proof owes one
+    ``undecided`` member whose symbol is the call's own target symbol
+    (step 8), which is what an imported numpy proof would answer.
     """
 
     def source(rhs: str) -> str:
@@ -422,6 +434,17 @@ def test_numpy_sin_sqrt_fft_literal_call_is_not_bridged(
     assert request.node.name in NOT_BRIDGED_NUMPY_TWINS
     assert stated.verdict == "open"
     assert contrary.verdict == "open"
+    for half in (stated, contrary):
+        assert half.result is not None
+        owed = [
+            row.get("symbol")
+            for row in half.result.lift_doc["ir"]
+            if row.get("kind") == "undecided"
+        ]
+        assert any(
+            isinstance(symbol, str) and symbol.startswith("python:numpy.")
+            for symbol in owed
+        ), owed
 
 
 def test_numpy_add_literal_call_is_not_bridged(
