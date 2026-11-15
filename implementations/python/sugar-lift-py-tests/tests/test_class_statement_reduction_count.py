@@ -140,8 +140,10 @@ def test_a_class_statement_is_reduced_once_however_often_it_is_called(
 # - ``int("x")`` is a builtin over a ground operand, decided by the
 #   builtin's own semantics (``cpython_cited_fold``): Python raises
 #   ``ValueError``, always.  The run completes on no arm and binds no class,
-#   so the read of ``Box`` is refused by name: the function is undecided,
-#   never handed the statement's halt by a second reduction of it.
+#   so no import completes and the read of ``Box`` is the run's halt
+#   (``tree_enumerate.module_run_halts``): the first class call is that
+#   ``ValueError`` and nothing after it runs, read off the module's one run,
+#   never off a second reduction of the statement.
 # ---------------------------------------------------------------------------
 
 _NOT_ONE_COMPLETION = {
@@ -152,8 +154,9 @@ _USES = {
     "one-call": ("    a = Box(1)\n    assert a.n == 1\n", 1),
     "two-calls": ("    a = Box(1)\n    b = Box(2)\n    assert a.n == 1\n", 2),
 }
-# Class bodies that never complete: the module run binds no class.
-_BODY_ALWAYS_RAISES = {"field-int-of-text"}
+# Class bodies that never complete: the module run binds no class, and the
+# exception its one halt raises.
+_BODY_ALWAYS_RAISES = {"field-int-of-text": "ValueError"}
 
 
 @pytest.mark.parametrize("body", sorted(_NOT_ONE_COMPLETION))
@@ -165,8 +168,7 @@ def test_a_class_statement_that_is_not_one_completion_builds_no_place_state(
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
     )
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
-    from sugar_lift_py_tests.outcome import Completed, ExitSet
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
     from sugar_source_tree import nodes
     from sugar_source_tree.tree import SourceFile
@@ -199,15 +201,18 @@ def test_a_class_statement_that_is_not_one_completion_builds_no_place_state(
         for node in tree.nodes()
         if isinstance(node, nodes.FunctionDef) and node.name.startswith("test_")
     )
-    if body in _BODY_ALWAYS_RAISES:
-        with pytest.raises(ConstructionPanic, match="read of `Box`.*unbound"):
-            function_universe_outcome(function)
-        assert place_states == [None] * class_calls
-        assert reductions["Box"] == 1
-        return
     outcome = function_universe_outcome(function)
 
     assert place_states == [None] * class_calls
     assert reductions["Box"] == 1
     assert isinstance(outcome, ExitSet), outcome
+    if body in _BODY_ALWAYS_RAISES:
+        assert not any(isinstance(face, Completed) for face in outcome.exits)
+        names = [
+            getattr(face.effect, "exception_name", None)
+            for face in outcome.exits
+            if isinstance(face, Halted)
+        ]
+        assert names.count(_BODY_ALWAYS_RAISES[body]) == 1, names
+        return
     assert [type(face) for face in outcome.exits] == [Completed]

@@ -21,9 +21,13 @@ Not in this change, and pinned below as what still happens:
 - a field whose right-hand side has several completed values still refuses by
   name.  Carrying those faces would build one class per value: a completion
   where there is a refusal, which is its own change.
-- the solver gives no verdict on a claim whose falsity is a raise: halted arms
-  of a reduction are not emitted (#7766).  The twin's lying half is "not
-  ``sat``", and the ``unsat`` it should be is marked expected-red.
+- a bare-name read of a module class (``b = Box``) is the name's free
+  symbolic, not the class statement's key (#7757 item 21's residue).
+
+A class statement runs once, in the module's run; a function called after
+import reads what that run left.  Where the run completes on no arm (the
+class body always raises) the read is the run's halts, so the twin's lying
+half reads ``unsat`` (#7766).
 """
 
 from __future__ import annotations
@@ -145,54 +149,58 @@ _USES_OF_A_RAISING_CLASS = {
 }
 
 
-def _refused_for_the_unbound_class(reduce) -> None:
-    """``reduce()`` reads ``Box`` through its class statement's key, and
-    nothing bound it: the module's one run completed on no arm (its class
-    statement halted), so the read is refused by name, the one refusal of a
-    read of an unbound key.  The class statement is never reduced again for
-    the reader, so its halt is the module run's, never a face of a function
-    that calls the class (#7757 item 21; before, #7794 landed it on each
-    call)."""
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+def _halts_with_the_import(outcome, exception: str = "ZeroDivisionError") -> None:
+    """``outcome`` reads ``Box`` through its class statement's key, and the
+    module's one run completed on no arm (its class statement halted): no
+    import completes, so the read is the run's halts, carried
+    (``tree_enumerate.module_run_halts``).  No face completes, and the class
+    statement's raise is one of the halts, exactly once; the others are the
+    prelude's own (each ``os.environ`` read may raise).  The class statement
+    is never reduced again for the reader (#7757 item 21): the halt is the
+    module run's, read off the one reduction, never refused and never a
+    completion."""
+    completed, halts = _faces(outcome)
 
-    with pytest.raises(ConstructionPanic, match="read of `Box`.*unbound"):
-        reduce()
+    assert completed == 0, outcome
+    assert sum(exception in halt for halt in halts) == 1, halts
 
 
 @pytest.mark.parametrize("use", sorted(_USES_OF_A_RAISING_CLASS))
-def test_a_function_that_calls_the_raising_class_is_undecided_by_name(
+def test_a_function_that_calls_the_raising_class_halts_with_the_import(
     use: str,
 ) -> None:
     """The class statement halts where it runs, in the module's run.  A
-    function that calls the class reads the class that run bound, and it
-    bound none: the function is refused by name (undecided), never handed
-    the statement's halt by a second reduction of it."""
-    _refused_for_the_unbound_class(
-        lambda: _function(
-            _ALWAYS_RAISES["only-field"], _USES_OF_A_RAISING_CLASS[use]
-        )
+    function that calls the class reads what that run left, and the run
+    completed on no arm: the function halts with the run's raise, never
+    handed it by a second reduction of the statement."""
+    _halts_with_the_import(
+        _function(_ALWAYS_RAISES["only-field"], _USES_OF_A_RAISING_CLASS[use])
     )
 
 
-def test_a_read_through_the_raising_class_call_is_undecided_by_name() -> None:
+def test_a_read_through_the_raising_class_call_halts_with_the_import() -> None:
     """``assert Box(1).n == 1``: the call's callee is the read of ``Box``,
-    which no run bound."""
-    _refused_for_the_unbound_class(
-        lambda: _function(
-            _ALWAYS_RAISES["only-field"], "    assert Box(1).n == 1\n"
-        )
+    which is the module run's halt, so the assert is that halt, not a
+    completion and not an ``AssertionError``."""
+    _halts_with_the_import(
+        _function(_ALWAYS_RAISES["only-field"], "    assert Box(1).n == 1\n")
     )
 
 
-def test_naming_the_raising_class_without_calling_it_is_undecided() -> None:
-    """``b = Box`` calls nothing, so the function has no raise of its own:
-    Python raised at the class statement, when the module ran, and bound no
-    ``Box``.  The read is that key's, which the run never bound: refused by
-    name, the same as a call of it.  It is never a class read off the
-    statement reduced again (#7757 item 21)."""
-    _refused_for_the_unbound_class(
-        lambda: _function(_ALWAYS_RAISES["only-field"], "    b = Box\n    return 3\n")
+def test_naming_the_raising_class_without_calling_it_completes() -> None:
+    """``b = Box`` calls nothing.  ``Box`` is bound only by its class
+    statement, so the module threading carries no binding of it to a reader
+    (``SourceUnit.module_threaded_names``) and the bare read is the name's
+    free symbolic (``NameSugar``), not the statement's key: it completes.
+    Wrong by Python (the import raises at the class statement, so the
+    function never runs) and a residue of #7757 item 21, recorded there: a
+    bare-name read of a module class is not yet the one read of its key, as
+    a call of it is.  Pinned as what happens."""
+    completed, halts = _faces(
+        _function(_ALWAYS_RAISES["only-field"], "    b = Box\n    return 3\n")
     )
+
+    assert (completed, halts) == (1, ())
 
 
 # ---------------------------------------------------------------------------
@@ -304,34 +312,40 @@ def test_the_initializer_universe_of_a_may_raise_class_runs_on_the_class_it_buil
     """An ``__init__`` universe runs on the receiver its class call makes
     (``ClassConstructorBodySugar.enter_initializer``), on the class its
     statement bound in the module's one run.  With a field call that may
-    raise (``limit = os.getcwd()``) that run binds the class on its
-    completed arm, and the statement's halt is the run's, not this
-    universe's: the universe is one completed face."""
+    raise (``limit = float(S)``, ``S`` a module global nothing here decides,
+    the run pinned above) that run binds the class on its completed arm,
+    and the statement's halt is the run's, not this universe's: the
+    universe is one completed face.
+
+    The probe was ``limit = os.getcwd()``: in the module's run its class
+    body holds the ``ContainerMutationStatement`` the module threading makes
+    of ``x = r.m()`` on the import ``os``, which the class statement refuses
+    by name (``ClassDef._require_class_members``).  That refusal is the
+    module run's, recorded on #7757, and not this universe's question."""
     completed, halts = _faces(
-        _initializer_universe("class Box:\n    limit = os.getcwd()\n" + _INIT)
+        _initializer_universe("class Box:\n    limit = float(S)\n" + _INIT)
     )
 
     assert (completed, halts) == (1, ())
 
 
-def test_the_initializer_universe_of_a_decided_raising_call_is_undecided() -> None:
+def test_the_initializer_universe_of_a_decided_raising_call_is_its_halt() -> None:
     """``limit = int("x")`` always raises ``ValueError`` (a builtin over a
-    ground operand, decided): the module's run bound no class, so the
-    ``__init__`` universe has no class to run on and is refused by name, as
-    for ``limit = 1 // 0`` below."""
-    _refused_for_the_unbound_class(
-        lambda: _initializer_universe('class Box:\n    limit = int("x")\n' + _INIT)
+    ground operand, decided): the module's run completes on no arm, so no
+    class exists, ``__init__`` never runs, and its universe is the run's
+    halts, as for ``limit = 1 // 0`` below."""
+    _halts_with_the_import(
+        _initializer_universe('class Box:\n    limit = int("x")\n' + _INIT),
+        "ValueError",
     )
 
 
-def test_the_initializer_universe_of_a_raising_class_is_undecided() -> None:
-    """``limit = 1 // 0``: the module's run bound no class, so ``__init__``
-    has none to run on; its universe is refused by name, never the class
-    statement's halt read off a second reduction of it."""
-    _refused_for_the_unbound_class(
-        lambda: _initializer_universe(
-            "class Box:\n" + _ALWAYS_RAISES["only-field"] + _INIT
-        )
+def test_the_initializer_universe_of_a_raising_class_is_its_halt() -> None:
+    """``limit = 1 // 0``: the module's run completes on no arm, so
+    ``__init__`` has no class to run on; its universe is the run's halts,
+    never the class statement's halt read off a second reduction of it."""
+    _halts_with_the_import(
+        _initializer_universe("class Box:\n" + _ALWAYS_RAISES["only-field"] + _INIT)
     )
 
 
@@ -501,16 +515,18 @@ def test_a_class_body_that_reads_an_undefined_name_halts_with_name_error(
 
 
 @pytest.mark.parametrize("use", sorted(_USES_OF_A_RAISING_CLASS))
-def test_a_function_that_calls_a_class_reading_an_undefined_name_is_undecided(
+def test_a_function_that_calls_a_class_reading_an_undefined_name_halts(
     use: str,
 ) -> None:
     """The ``NameError`` is the class statement's, in the module's run: that
-    run bound no class, so the function that calls it is refused by name."""
-    _refused_for_the_unbound_class(
-        lambda: _function(
-            _READS_AN_UNDEFINED_NAME["only-field"], _USES_OF_A_RAISING_CLASS[use]
-        )
+    run completed on no arm, so the function that calls the class halts with
+    the run's halts, the ``NameError`` of ``nope`` among them."""
+    outcome = _function(
+        _READS_AN_UNDEFINED_NAME["only-field"], _USES_OF_A_RAISING_CLASS[use]
     )
+
+    _halts_with_the_import(outcome, "NameError")
+    assert _the_name_error(outcome).name == "nope"
 
 
 # ---------------------------------------------------------------------------
@@ -520,15 +536,14 @@ def test_a_function_that_calls_a_class_reading_an_undefined_name_is_undecided(
 # ``sat``.  Lying: the class body raises at the class statement, in the
 # module's run, so no class is bound and the module's import fails.
 #
-# The lying half is "not ``sat``".  The class statement's halt is the module
-# run's, and is no face of ``test_box`` (#7757 item 21): ``test_box`` reads
-# ``Box`` through the statement's key, which the run never bound, so it is
-# refused by name and stated ``undecided`` (``refused_function_row``).  The
-# ``unsat`` this half should read needs the module run's halt stated as a
-# row of its own (the module reduction reaches no row today, #7766); until
-# then it is never ``sat``.  Before #7757 item 21 the halt was read off a
-# second reduction of the class statement at the call, which Python never
-# does.
+# The class statement's halt is the module run's (#7757 item 21), and the run
+# completes on no arm, so ``test_box``'s read of ``Box`` is that halt, read
+# off the one module reduction (``tree_enumerate.module_run_halts``): no arm
+# of ``test_box`` completes, the assert no arm reached states the halted
+# arm's guard negated, and the halt is under truth, so the row is ``false``
+# and the lying half reads ``unsat`` (#7766).  The test certainly raises (its
+# import does), so it fails.  The class statement is never reduced again at
+# the call.
 # ---------------------------------------------------------------------------
 
 _TWIN = (
@@ -548,17 +563,17 @@ def test_an_assert_after_a_call_of_a_class_that_exists_is_sat(tmp_path: Path) ->
     assert truthful.verdict == "sat"
 
 
-def test_an_assert_after_a_call_of_a_raising_class_is_not_sat(tmp_path: Path) -> None:
+def test_an_assert_after_a_call_of_a_raising_class_is_unsat(tmp_path: Path) -> None:
     lying = run_source_through_real_solver(tmp_path / "l", _TWIN.format(field="1 // 0"))
 
-    assert lying.verdict != "sat"
+    assert lying.verdict == "unsat"
 
 
 # #7799's own program: the class has an ``__init__``.  Its universe runs on the
 # receiver the class call makes (``tree_enumerate.function_universe_outcome``),
-# on the class the module's run bound.  When the statement halts the run binds
-# none, so the universe and ``test_box`` are both refused by name, as above:
-# the lying half is "not ``sat``".
+# on the class the module's run bound.  When the statement halts the run
+# completes on no arm, so the universe and ``test_box`` are both the run's
+# halt, as above: no arm reaches the assert, and the lying half is ``unsat``.
 _TWIN_WITH_INITIALIZER = (
     "class Box:\n"
     "    limit = {field}\n"
@@ -581,9 +596,9 @@ def test_a_field_of_an_object_of_a_class_that_exists_is_sat(tmp_path: Path) -> N
     assert truthful.verdict == "sat"
 
 
-def test_a_raising_class_with_an_initializer_is_not_sat(tmp_path: Path) -> None:
+def test_a_raising_class_with_an_initializer_is_unsat(tmp_path: Path) -> None:
     lying = run_source_through_real_solver(
         tmp_path / "l", _TWIN_WITH_INITIALIZER.format(field="1 // 0")
     )
 
-    assert lying.verdict != "sat"
+    assert lying.verdict == "unsat"

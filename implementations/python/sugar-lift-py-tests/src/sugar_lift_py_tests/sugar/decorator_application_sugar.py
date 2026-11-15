@@ -55,7 +55,12 @@ reduction the read stands in made, and, for a class statement the module
 body runs, read where nothing in that reduction bound the key (a function
 called after import), the binding the module's one run made
 (``call_site_sugar.ModuleFinalValue``, ``tree_enumerate.module_end_contexts``).
-A key neither holds is refused by name, as every read of an unbound key is
+Where that run completes on no arm, no import completes and the read is the
+run's halts, each carried as the run reached it
+(``tree_enumerate.module_run_halts``): ``class Box: limit = 1 // 0`` makes a
+function that calls ``Box()`` halt with the ``ZeroDivisionError`` the import
+raises, never complete and never refuse.  Any other key neither holds is
+refused by name, as every read of an unbound key is
 (``evaluation_ref_sugar.refuse_unbound_evaluation``): the class statement is
 never reduced again in the read's place.
 
@@ -221,25 +226,51 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
         # class's name) is the same read of the same key.  Where nothing
         # bound the key: a ``def``'s read is the application itself (a
         # module function's read after import); an application that reads
-        # its own result refuses; and a ``class``'s read is refused by name
-        # as a read of an unbound key (``_unbound_class_read``) -- the class
-        # statement runs only where it is the statement (``runs_statement``),
-        # never again at a read of its name.
+        # its own result refuses; and a ``class``'s read is the module run's
+        # halts where that run completes on no arm (``_module_run_halts``),
+        # else refused by name as a read of an unbound key
+        # (``_unbound_class_read``) -- the class statement runs only where it
+        # is the statement (``runs_statement``), never again at a read of
+        # its name.
         bound = self._bound_by_statement(ctx)
         if bound is not None:
             return ExitSet.completed(bound)
         if self.refusal is not None:
             _refuse(self.site, self.refusal)
         if self.definition_class is not None and not self.runs_statement:
+            halts = self._module_run_halts()
+            if halts:
+                return ExitSet(halts)
             self._unbound_class_read(ctx)
         return self._evaluate(self.decorators, (), ctx)
+
+    def _module_run_halts(self) -> tuple:
+        """The halted arms of the module's one run, where the module body
+        runs this class statement (``module_run``) and that run completes on
+        no arm (``tree_enumerate.module_run_halts``); else empty.
+
+        Python runs the class statement once, at import.  Where every arm of
+        that run halts (the class body or a base raises, or any statement of
+        the module body does), no import completes, so no route reaches this
+        read but through one of those halts: the read is them, each the
+        run's own arm, read off the one reduction (#7757 item 21, #7766).
+        The class statement is never reduced again for the reader, and the
+        halts are never a completion.  Where some arm completes, a function
+        is called after that import, and the read is the class it bound
+        (``_bound_by_statement``) or, bound by none, refused by name."""
+        if self.module_run is None or self.evaluation is None:
+            return ()
+        from sugar_lift_py_tests.tree_enumerate import module_run_halts
+
+        return module_run_halts(self.module_run)
 
     def _unbound_class_read(self, ctx):
         """A read of a ``class``'s name whose statement's key nothing bound
         where the read reduces: no reduction the read stands in ran the
         statement, and the module's one run bound nothing under it (the
-        statement does not run in the module body, the run completed on no
-        arm, or no completed arm ran the statement).  Refused by name, the
+        statement does not run in the module body, the run is under way, or
+        no completed arm ran the statement; a run that completes on no arm
+        is its halts, ``_module_run_halts``).  Refused by name, the
         one refusal of a read of an unbound key
         (``evaluation_ref_sugar.refuse_unbound_evaluation``): the function
         that reads it is undecided by that name
