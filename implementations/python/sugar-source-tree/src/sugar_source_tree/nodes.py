@@ -6165,45 +6165,57 @@ def _arm_walruses(arm):
 
     One entry per path from ``arm`` to a walrus, first child first: a node's
     walruses are itself (when it is one) and then each child's, in declared
-    order.  That list is built once per node.  A threaded term is a DAG of
-    shared nodes (a phi's two arms both hold the binding before the ``if``;
-    a value after a call holds the value before it), and an arm with no
-    walrus under it -- nearly every arm -- was walked once per path, which
-    is exponential in the number of joins above it."""
-    # ``id(node) -> its walruses``; ``alive`` keeps every keyed node's
-    # address from being reused while the table is read.
-    below: dict[int, tuple] = {}
-    alive = []
+    order.  A threaded term is a DAG of shared nodes (a phi's two arms both
+    hold the binding before the ``if``; a value after a call holds the value
+    before it), so walking every path is exponential in the number of joins
+    above a node.
+
+    What stands below a node is a fact of the node: the tree is immutable
+    after materialize, and a node's children are read off its construction
+    row (``Node._child_edges``).  It is kept there, beside the child edges,
+    and built once per row -- never again for the next conditional
+    expression that holds the node, nor for the next statement that
+    substitutes it."""
     stack = [(arm, False)]
     while stack:
         node, expanded = stack.pop()
-        key = id(node)
-        if key in below:
-            continue
         if node.kind in ("Lambda", "GeneratorExp"):
-            alive.append(node)
-            below[key] = ()
+            continue
+        row = node._coordinate()[2]
+        if _WALRUSES_BELOW in row:
             continue
         children = [child for _field, _index, child in node.children()]
         if not expanded:
-            # Children first (each once), then this node again to join them.
+            # Children first (each row once), then this node again to join
+            # them.
             stack.append((node, True))
-            stack.extend(
-                (child, False) for child in reversed(children) if id(child) not in below
-            )
+            stack.extend((child, False) for child in reversed(children))
             continue
-        found = []
-        if (
-            node.kind == "NamedExpr"
-            and isinstance(node.target, Name)
-            and isinstance(getattr(node, "evaluation", None), str)
-        ):
-            found.append(node)
+        below = []
         for child in children:
-            found.extend(below[id(child)])
-        alive.append(node)
-        below[key] = tuple(found)
-    return list(below[id(arm)])
+            below.extend(_walruses_at(child))
+        row[_WALRUSES_BELOW] = tuple(below)
+    return list(_walruses_at(arm))
+
+
+# The construction-row key ``_arm_walruses`` keeps a node's answer under.
+_WALRUSES_BELOW = "__walruses_below__"
+
+
+def _walruses_at(node) -> tuple:
+    """``node`` itself when it is a keyed walrus, then every one below it
+    (its row's ``_WALRUSES_BELOW``, which ``_arm_walruses`` built); nothing
+    at a lambda or a generator expression."""
+    if node.kind in ("Lambda", "GeneratorExp"):
+        return ()
+    below = node._coordinate()[2][_WALRUSES_BELOW]
+    if (
+        node.kind == "NamedExpr"
+        and isinstance(node.target, Name)
+        and isinstance(getattr(node, "evaluation", None), str)
+    ):
+        return (node, *below)
+    return below
 
 
 def _scope_after(scope, evaluated, substituted):
