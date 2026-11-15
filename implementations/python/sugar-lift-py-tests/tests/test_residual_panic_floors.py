@@ -42,13 +42,17 @@ def test_predicate_attribute_is_py_getattr_coordinate():
 
 def test_dict_key_membership_folds():
     d = fresh(DictValue, ((TermValue(1), TermValue(10)), (TermValue(2), TermValue(20))))
-    assert isinstance(d.contains(TermValue(2), "site").value, TrueBoolLiteralSugar)
-    assert isinstance(d.contains(TermValue(9), "site").value, FalseBoolLiteralSugar)
+    assert isinstance(
+        d.contains(TermValue(2), "site").completed_value(), TrueBoolLiteralSugar
+    )
+    assert isinstance(
+        d.contains(TermValue(9), "site").completed_value(), FalseBoolLiteralSugar
+    )
 
 
 def test_opaque_comprehension_membership_emits_py_in():
     comp = ComprehensionValue(ctor("py.listcomp", [make_var("xs")]))
-    result = comp.contains(TermValue(1), "site").value
+    result = comp.contains(TermValue(1), "site").completed_value()
     assert isinstance(result, PredicateValue)
     assert result.formula.name == "py.in"
 
