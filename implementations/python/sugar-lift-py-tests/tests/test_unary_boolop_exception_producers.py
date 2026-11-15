@@ -33,6 +33,7 @@ from sugar_lift_py_tests.context import ReduceContext
 from sugar_source_tree.panic import SugarNotWritten
 
 from sugar_lift_py_tests.repo_root import resolve_repo_root
+from sugar_lift_python_source.canonical import blake3_512_of
 
 CORPUS = authenticated_pandas_corpus().root
 UNARY_SITE = CORPUS / "tests/extension/base/ops.py"
@@ -61,6 +62,19 @@ class _Site:
     col = 0
     source = "operator"
     unit = type("_Unit", (), {"source": "~value\n"})()
+
+
+class _FragmentSite(_Site):
+    """``_Site`` with a source fragment's coordinate: an undecided truth's
+    faces key their atom on the operation's occurrence
+    (``occurrence.occurrence_key``), and a site with no source coordinate is
+    refused by name (#7808)."""
+
+    class _Span:
+        start_line, start_col, end_line, end_col = 1, 0, 1, 8
+
+    source_cid = blake3_512_of(b"operator")
+    line_col_span = _Span()
 
 
 def test_verified_pandas_303_reproducers_are_content_pinned() -> None:
@@ -193,8 +207,8 @@ class _EffectSugar:
         return ExitSet.halted(self.effect)
 
 
-def _boolop(kind: str, left, right, *, temporal=None):
-    return BoolOpSugar(kind, (left, right), _Site()).desugar(
+def _boolop(kind: str, left, right, *, temporal=None, site=None):
+    return BoolOpSugar(kind, (left, right), site or _Site()).desugar(
         ReduceContext(temporal or TemporalContext.empty())
     )
 
@@ -296,7 +310,12 @@ def test_undecided_symbolic_operand_truth_is_two_faced(kind: str) -> None:
     Truthful twin of the #7681 law for a bare symbolic operand: no ``py.truthy``
     completion is claimed unguarded and no exception identity is invented.
     """
-    outcome = _boolop(kind, NameSugar("obj1", _Site()), NameSugar("obj2", _Site()))
+    outcome = _boolop(
+        kind,
+        NameSugar("obj1", _Site()),
+        NameSugar("obj2", _Site()),
+        site=_FragmentSite(),
+    )
     _assert_two_faced_symbolic_truth(outcome, make_var("obj1"), make_var("obj2"))
 
 
