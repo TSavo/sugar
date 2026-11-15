@@ -58,7 +58,7 @@ from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
 from sugar_lift_py_tests.sugar.loop_recurrence_sugar import LoopRecurrenceSugar
 from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.nodes import Call, EvaluationRef, FunctionDef, Return
+from sugar_source_tree.nodes import EvaluationRef, FunctionDef, Return
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
@@ -147,10 +147,24 @@ def _returned_value(outcome):
 
 
 def _call_outcome(source: str):
-    """``source``'s last call, reduced through the production door."""
+    """The contract row of ``f``, the function ``source``'s last call calls,
+    reduced through the one door a function's universe takes
+    (``function_universe_outcome``).
+
+    A same-file call is its coordinate ``call:<target>(...)`` and an edge to
+    the callee's join symbol, joined at prove (#7757 steps 5 and 6, the
+    owner's ruling "Edge, join at prove", #8705): the lifter no longer
+    applies the callee's body at the call.  What the body returns is stated
+    by the callee's own contract row, which is what these tests read."""
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
     tree = _source(source, "walrus_writes_call.py")
-    call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
-    return call.sugar().desugar(None)
+    callee = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name == "f"
+    )
+    return function_universe_outcome(callee)
 
 
 # ---------------------------------------------------------------------------
