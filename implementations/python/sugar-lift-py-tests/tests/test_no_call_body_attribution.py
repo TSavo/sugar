@@ -587,11 +587,21 @@ def test_discovery_carries_source_property_binding_to_attribute_exit(tmp_path) -
 
     report = attribute_body_probes(probes)
 
+    # ``Receiver()`` is a class call: its coordinate and edge, joined at
+    # prove (#7757 step 6, #8738).  The lifter never runs the class body at
+    # the call, so the getter's ``ValueError`` is not at hand where
+    # ``.value`` is read: the read's exceptional face is the call's
+    # type-undetermined halt, kept (undischarged), never dropped and never
+    # authenticated.  What the getter raises on a class call's result is
+    # decided at prove: the post-call object state is step 7 and the
+    # attribute's dispatch on the result is step 8.  This used to be one
+    # authenticated exit, read off the class body at the call.
+    family = report.by_family[ProducerFamily.ATTRIBUTE]
     assert report.discrepancies == ()
-    assert (
-        report.by_family[ProducerFamily.ATTRIBUTE].authenticated_exceptional_exits == 1
-    )
-    assert report.by_family[ProducerFamily.ATTRIBUTE].named_refusals == 0
+    assert family.authenticated_exceptional_exits == 0
+    assert family.undischarged == 1
+    assert family.named_refusals == 0
+    assert family.construction_panics == 0
 
 
 def test_selected_family_denominator_remains_fixed() -> None:

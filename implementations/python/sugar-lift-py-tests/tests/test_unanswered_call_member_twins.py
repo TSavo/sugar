@@ -17,11 +17,14 @@ owing the same member kind at its own site, with no symbol
 told from it by its symbol (an imported callee) or by its site (the call's own
 span).
 
-A local call is not this member: the callee's body is reduced at the call site
-today (a second way, recorded as residue for item 26 / row 0a.3).  The local
-callee's OWN proof has no caller, so its ``x + x`` over a formal is undecided
-there and is owed by that proof, at the helper's line; the test function,
-which applies the body to ``3``, owes nothing, and its claim is read by
+A local call is this member too, with the callee's join symbol: a call of a
+same-file function is its coordinate and edge, joined at prove (#7757 steps 5
+and 6, the owner's ruling "Edge, join at prove", #8705), never the callee's
+body reduced at the call site (the second way recorded for item 26 / row
+0a.3, deleted).  Prove joins it to the callee's contract in the same proof
+and answers it, and the ``==`` on its result with it.  The local callee's
+OWN proof has no caller, so its ``x + x`` over a formal is undecided there
+and stays owed, at the helper's line; the test function's claim is read by
 ``witness_harness.claim_verdict``.
 
 Before this change (main, 72ef65bb1): the call left no record in the proof,
@@ -149,18 +152,33 @@ def test_a_call_with_no_symbol_is_a_member_with_symbol_null(tmp_path: Path) -> N
         assert prove_verdict(result.prove_doc) == "open", half
 
 
-def test_a_local_call_is_not_an_unanswered_member(tmp_path: Path) -> None:
+_DOUBLE = "python:test_witness.double"
+
+
+def test_a_local_call_is_a_member_prove_joins(tmp_path: Path) -> None:
+    """Was ``test_a_local_call_is_not_an_unanswered_member``: the local call
+    left no member because its body was reduced at the call.  Since #8705 it
+    is the one member kind with ``double``'s join symbol at the call's line,
+    and prove answers it by joining ``double``'s contract.  The claim
+    verdicts do not change."""
     truthful = run_source_through_real_solver(tmp_path / "t", _LOCAL.format(claim=6))
     lying = run_source_through_real_solver(tmp_path / "l", _LOCAL.format(claim=7))
     # ``def test_double`` is line 5; ``double`` and its ``x + x`` sit above it.
     test_line = 5
     for project, result in ((tmp_path / "t", truthful), (tmp_path / "l", lying)):
         members = _undecided_members(project)
-        # Nothing is owed at or below the test function: the local call is
-        # no member, and neither is anything applied to its decided result.
-        # What is owed is ``double``'s own proof's ``x + x`` over its formal.
-        assert _symbol_members(members) == []
-        assert [header["site"]["startLine"] for header in members.values()] == [2]
+        # The local call is one member, with ``double``'s join symbol, at
+        # the call (line 6).  Every member without a symbol is either
+        # ``double``'s own ``x + x`` over its formal (line 2) or the ``==``
+        # on the call's result (line 6).
+        calls = _symbol_members(members)
+        assert [header["symbol"] for header in calls] == [_DOUBLE], members
+        assert [header["site"]["startLine"] for header in calls] == [6]
+        assert {
+            header["site"]["startLine"] for header in _symbolless_members(members)
+        } <= {2, 6}, members
+        # After prove only ``double``'s own operation on its formal is owed:
+        # the call and the ``==`` on its result are answered by the join.
         assert result.prove_doc["owed"] == 1
     assert claim_verdict(truthful.prove_doc, claims_from_line=test_line) == "sat"
     assert prove_verdict(lying.prove_doc) == "unsat"
