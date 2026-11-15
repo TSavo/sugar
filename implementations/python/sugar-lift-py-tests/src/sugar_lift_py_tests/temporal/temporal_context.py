@@ -12,11 +12,6 @@ from .temporal_binding import TemporalBinding
 # an evaluation key can never be read as a source name.
 EVALUATION_PREFIX = "evaluation:"
 
-# The blame a followed call binds each formal's name under, to the caller's
-# actual (``call_site_value._ctx_with_curried_args``).  A read of such a
-# binding is that actual, with the caller's currency (``NameSugar``).
-FORMAL_ACTUAL_BLAME = "<callsite>"
-
 
 def projection_key(evaluation: str, name: str) -> str:
     """The key of target ``name``'s projection of one statement's evaluation.
@@ -87,11 +82,20 @@ class TemporalContext:
         )
 
     def bind_value(
-        self, name: str, value: FloorValue, *, blame: str | None = None
+        self,
+        name: str,
+        value: FloorValue,
+        *,
+        blame: str | None = None,
+        kind: type[TemporalBinding] = TemporalBinding,
     ) -> "TemporalContext":
-        """The one way a binding enters the temporal: a rebind shadows the old."""
+        """The one way a binding enters the temporal: a rebind shadows the old.
+
+        ``kind`` is the binding's type, which states what installed it
+        (``FormalActualBinding``: a followed call's formal); a rebind that
+        advances the object a binding holds passes the binding's own type."""
         remaining = tuple(binding for binding in self.bindings if binding.name != name)
-        return TemporalContext(remaining + (TemporalBinding(name, value, blame),))
+        return TemporalContext(remaining + (kind(name, value, blame),))
 
     def _gap(
         self,

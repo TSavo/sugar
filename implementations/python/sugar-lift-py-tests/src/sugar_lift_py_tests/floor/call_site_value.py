@@ -2384,7 +2384,9 @@ def _ctx_with_curried_args(
     closure: tuple[tuple[str, FloorValue], ...] = (),
 ):
     from sugar_lift_py_tests.temporal import curry_temporal
-    from sugar_lift_py_tests.temporal.temporal_context import FORMAL_ACTUAL_BLAME
+    from sugar_lift_py_tests.temporal.temporal_binding import FormalActualBinding
+
+    from .object_identity import as_bound_formals
 
     if closure:
         # The callee lambda's closure cells (``CallSiteValue.closure``):
@@ -2396,15 +2398,26 @@ def _ctx_with_curried_args(
             owner="CallSiteValue.force_floor closure cells",
             blame="<callsite-closure>",
         )
+    # Each formal holds its actual as the alias rule binds it
+    # (``object_identity.as_bound_formals``): the caller's actual, with its
+    # currency, unless another actual of this call may reach one of its
+    # objects.  Named by its coordinate where the frame carries one.
+    coordinates = len(formal_coordinate_cids) == len(arg_values)
+    arg_values = as_bound_formals(
+        arg_values, formal_coordinate_cids if coordinates else parameters
+    )
+    # The binding's kind is its type (``FormalActualBinding``), under the
+    # formal's name and under its coordinate alike.
     result = curry_temporal(
         ctx,
         parameters,
         arg_values,
         owner="CallSiteValue.force_floor",
-        blame=FORMAL_ACTUAL_BLAME,
+        blame="<callsite>",
+        kind=FormalActualBinding,
     )
     if formal_coordinate_cids:
-        if len(formal_coordinate_cids) != len(arg_values):
+        if not coordinates:
             return result
         result = curry_temporal(
             result,
@@ -2412,6 +2425,7 @@ def _ctx_with_curried_args(
             arg_values,
             owner="CallSiteValue.force_floor formal coordinates",
             blame="<callsite-coordinate>",
+            kind=FormalActualBinding,
         )
     return result
 

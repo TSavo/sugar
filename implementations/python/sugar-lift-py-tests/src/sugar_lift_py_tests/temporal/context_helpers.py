@@ -5,6 +5,7 @@ from typing import Any
 
 from sugar_lift_py_tests.floor import FloorValue
 
+from .temporal_binding import TemporalBinding
 from .temporal_context import TemporalContext
 
 
@@ -29,6 +30,7 @@ def curry_temporal(
     *,
     owner: str,
     blame: str,
+    kind: type[TemporalBinding] = TemporalBinding,
 ) -> Any:
     if len(parameters) != len(arg_values):
         raise TypeError(
@@ -37,7 +39,7 @@ def curry_temporal(
         )
     temporal = _ctx_temporal(ctx)
     for name, value in zip(parameters, arg_values, strict=True):
-        temporal = temporal.bind_value(name, value, blame=blame)
+        temporal = temporal.bind_value(name, value, blame=blame, kind=kind)
     return _ctx_with_temporal(ctx, temporal)
 
 

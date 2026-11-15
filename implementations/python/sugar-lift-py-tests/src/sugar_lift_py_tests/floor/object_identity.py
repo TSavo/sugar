@@ -29,9 +29,12 @@ followed call is the caller's actual, with the caller's currency: nothing
 ran between the caller's read and the body's entry, and the body's stores
 and calls update it by the same rules as anywhere.  A formal is arrived
 only where its state is unknown at the body's entry: in its function's own
-proof it has no actual at all (a symbolic formal), and a generator's body,
+proof it has no actual at all (a symbolic formal), a generator's body,
 which runs after its call returned, holds its formals arrived
-(``GeneratorConstructionV1._guard_evaluation_context``).
+(``GeneratorConstructionV1._guard_evaluation_context``), and an actual
+another actual of the same call may reach (``f(xs, xs)``) is bound arrived
+(``as_bound_formals``): the body holds two formals as two objects, so a
+store through one would leave the other's contents read as current.
 """
 
 from __future__ import annotations
@@ -431,6 +434,76 @@ def as_the_alias_holds(after, alias):
         allocation=alias.allocation if contents_current(after) else None,
         arrival=alias.arrival,
     )
+
+
+def as_bound_formals(actuals, arrivals) -> tuple:
+    """Each of a followed call's ``actuals`` as its formal holds it, the
+    alias rule at the one door a followed call binds its formals through
+    (``call_site_value._ctx_with_curried_args``).  ``arrivals`` names each
+    formal (its coordinate) in the same order.
+
+    A formal is its actual, with the caller's currency
+    (``contents_current``): nothing ran between the caller's read and the
+    body's entry.  The body's construction holds two formals as two objects
+    (``container_mutation.same_object``: each formal its own coordinate), so
+    a mutation through one rebinds that formal alone, and a store on an
+    object the alias scan does not reach (a container's one door, a path
+    store) advances no other binding.  So an actual that another actual of
+    the same call may be, or hold, one of its objects -- ``f(xs, xs)``,
+    ``f(xs, [xs])``, ``o.m(o.items)`` -- is the formal's at entry with its
+    state unknown (``arrived_as``, named by its formal): a read of it after a
+    store through the other formal never takes contents the object may no
+    longer hold.  Two objects are told apart by their construction
+    (``allocation``): one construction evaluated twice may be one object, so
+    it is never decided two."""
+    actuals = tuple(actuals)
+    if len(actuals) != len(arrivals):
+        return actuals
+    reached = tuple(_current_objects(actual) for actual in actuals)
+    bound = []
+    for index, (actual, arrival) in enumerate(zip(actuals, arrivals)):
+        shared = any(
+            reached[index] & other
+            for position, other in enumerate(reached)
+            if position != index
+        )
+        bound.append(arrived_as(actual, arrival) if shared else actual)
+    return tuple(bound)
+
+
+def _current_objects(value, depth=0) -> frozenset:
+    """The constructions (``allocation``) of every current mutable object
+    ``value`` is or holds at any depth: a ``list``/``dict``/``set`` and an
+    instance of a source class, through containers, a tuple's elements, an
+    instance's fields and the faces of a guarded value.  A stale object
+    (``contents_current``) is already read in its undecided form."""
+    from .dict_value import DictValue
+    from .guarded_value import GuardedValue
+    from .list_value import ListValue
+    from .object_value import ObjectValue
+    from .set_value import SetValue
+    from .tuple_value import TupleValue
+
+    if depth > 32:
+        return frozenset()
+    kind = type(value)
+    found = set()
+    container = kind in (ListValue, DictValue, SetValue)
+    if (container or isinstance(value, ObjectValue)) and contents_current(value):
+        found.add(value.allocation)
+    if kind in (ListValue, SetValue, TupleValue):
+        members = value.elements
+    elif kind is DictValue:
+        members = tuple(member for entry in value.entries for member in entry)
+    elif kind is GuardedValue:
+        members = (value.when_true, value.when_false)
+    elif isinstance(value, ObjectValue):
+        members = tuple(field.value for field in value.fields)
+    else:
+        members = ()
+    for member in members:
+        found |= _current_objects(member, depth + 1)
+    return frozenset(found)
 
 
 def arrived_outcome(outcome, site):

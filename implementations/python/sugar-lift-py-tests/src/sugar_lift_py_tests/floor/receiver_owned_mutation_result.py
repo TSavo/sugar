@@ -58,6 +58,7 @@ class ReceiverOwnedMutationResult(FloorValue):
                     binding.name,
                     as_the_alias_holds(self.receiver_after, candidate),
                     blame=binding.blame,
+                    kind=type(binding),
                 )
                 matched = True
         return ctx.with_temporal(temporal) if matched else ctx
