@@ -113,7 +113,14 @@ def _after_prior(rewritten, owner: str) -> ReduceContext:
 
 
 def _value(outcome):
-    return outcome.completed_value()
+    """The value of ``outcome``'s one completed face.  A condition over a
+    symbolic member (``(n := x) > 0``) has a halted face beside it: the
+    comparison completes under its completes atom and halts under the
+    complement, so the comprehension's value is the completed face beside
+    that halt."""
+    completed = [exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)]
+    assert len(completed) == 1, outcome
+    return completed[0].value
 
 
 def _returned_value(outcome):
@@ -159,9 +166,12 @@ def test_a_read_after_a_live_loop_reads_the_loops_carried_value() -> None:
     assert isinstance(ret, Return)
     # Not a reference to the walrus's construct-time key, which no item
     # binds (each item's write is under its own qualified key): the loop's
-    # projected post-binding of `t`.
+    # post-binding of `t`, the join of the binding before the loop and what
+    # the items carried.  A join the threading builds is a node (the ``IfExp``
+    # phi, #8294), which the read is itself (``Name.substitute``); only a
+    # binding state that is no node is read through ``GuardedBindingRead``.
     assert not isinstance(ret.value, EvaluationRef)
-    assert ret.value.kind == "GuardedBindingRead"
+    assert ret.value.kind == "IfExp"
 
 
 def test_a_live_loop_latches_its_walrus() -> None:
