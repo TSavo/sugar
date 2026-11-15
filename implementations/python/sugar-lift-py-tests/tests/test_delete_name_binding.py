@@ -40,11 +40,9 @@ from sugar_lift_py_tests.sugar.binding_projection import (
     GuardedProjection,
     UnboundProjection,
 )
-from sugar_lift_py_tests.sugar.delete_effect_sugar import (
-    AttributeDeleteEffectSugar,
-    SubscriptDeleteEffectSugar,
-)
+from sugar_lift_py_tests.sugar.delete_effect_sugar import AttributeDeleteEffectSugar
 from sugar_lift_py_tests.sugar.delete_name_sugar import DeleteNameSugar
+from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
 from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import GuardedBindingReadSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import FunctionDef
@@ -153,12 +151,12 @@ def test_delete_name_sugar_prior_is_bound_value_not_spelling() -> None:
     assert len(deletes) == 1
     delete = deletes[0]
     assert delete.name == "x"
-    # Prior is the bound construction (IntLiteral), not an unbound placeholder.
+    # Prior is the binding's one evaluation, read by reference (the temporal
+    # rewrite: a read is a reference to the evaluation's key, never the
+    # value inlined a second time) -- not an unbound placeholder.
     assert not isinstance(delete.prior, UnboundProjection)
-    from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
-
-    assert isinstance(delete.prior, IntLiteralSugar)
-    assert delete.prior.value == 1
+    assert isinstance(delete.prior, EvaluationRefSugar)
+    assert delete.prior.evaluation.startswith("evaluation:")
 
 
 def test_post_delete_binding_trace_is_unbound_at_delete_site() -> None:
@@ -261,10 +259,10 @@ def test_conditional_del_builds_guarded_projection_on_later_read() -> None:
     assert isinstance(read.state, GuardedProjection)
     assert isinstance(read.state.when_true, UnboundProjection)
     assert read.state.when_true.name == "x"
-    from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
-
-    assert isinstance(read.state.when_false, IntLiteralSugar)
-    assert read.state.when_false.value == 1
+    # The retained face reads the binding's one evaluation by reference; the
+    # value it holds (1) is pinned on the completed arm below.
+    assert isinstance(read.state.when_false, EvaluationRefSugar)
+    assert read.state.when_false.evaluation.startswith("evaluation:")
 
     # Runtime faces: halt under truthy; complete under not(truthy) with value 1.
     halted = [e for e in outcome.exits if isinstance(e, Halted)]
@@ -277,17 +275,21 @@ def test_conditional_del_builds_guarded_projection_on_later_read() -> None:
     assert _returned(completed[0]).value == TermValue(1)
 
 
-def test_true_branch_del_factors_unbound_and_retained_faces() -> None:
-    """``if True: del x; return x`` factors complementary guards (not collapsed silent)."""
+def test_true_branch_del_always_unbinds_the_later_read() -> None:
+    """``if True: del x; return x`` always raises ``UnboundLocalError``.
+
+    A constant ``if`` is the branch it runs: the ``del`` always runs, so the
+    later read is unbound on every path. There is no completed arm -- a
+    retained-binding face here would be a completion Python never reaches.
+    """
     _, outcome = _function_outcome(
         "def f():\n" "    x = 1\n" "    if True:\n" "        del x\n" "    return x\n"
     )
-    assert len(outcome.exits) >= 2
-    kinds = {type(e).__name__ for e in outcome.exits}
-    assert "Halted" in kinds
-    assert "Completed" in kinds
-    halt = next(e for e in outcome.exits if isinstance(e, Halted))
+    assert outcome.halts() == outcome.exits
+    halt = _sole_halt(outcome)
     assert isinstance(halt.effect, NameErrorEffect)
+    assert halt.effect.exception_name == "UnboundLocalError"
+    assert halt.effect.name == "x"
 
 
 def test_false_branch_del_retains_binding_on_completed_arm() -> None:
@@ -379,15 +381,26 @@ def test_attribute_delete_is_not_delete_name_sugar() -> None:
 
 
 def test_subscript_delete_is_not_delete_name_sugar() -> None:
-    """``del obj[i]`` lowers to SubscriptDeleteEffectSugar — out of scope here.
+    """``del obj[i]`` is ``obj.__delitem__(i)`` through the one mutation door
+    (``container_mutation.name_mutation_statement``) — out of scope here.
 
-    Formal delitem stays undischarged (carrier); this suite only pins the sugar
-    kind, never discharges subscript delete.
+    The value the receiver holds at reduce decides it; this suite only pins
+    the sugar kind, never discharges subscript delete.
     """
+    from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+        ContainerMutationStatementSugar,
+        PathContainerCallSugar,
+    )
+
     tree = _tree("def f(obj, i):\n    del obj[i]\n")
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     statements = _universe_statements(function)
-    assert any(isinstance(s, SubscriptDeleteEffectSugar) for s in statements)
+    (mutation,) = [
+        s for s in statements if isinstance(s, ContainerMutationStatementSugar)
+    ]
+    call = mutation.evaluated[0]
+    assert isinstance(call, PathContainerCallSugar)
+    assert call.method == "__delitem__"
     assert not any(isinstance(s, DeleteNameSugar) for s in statements)
 
 
