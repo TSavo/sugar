@@ -505,6 +505,54 @@ class ConstructionTestimonyReporterV1:
         """The typed occurrence registered for ``ref`` in this exact roll."""
         return self._materialized_by_ref.get(ref)
 
+    @staticmethod
+    def _producer_registration(node: Node, producer: object) -> Node | None:
+        """The occurrence ``producer`` registered for ``node``'s backend ref.
+
+        The one reading of another roll's registration.  A testimony reporter
+        answers from its materialize table.  The file-open
+        ``CollectingReporter`` keeps no table: a node it was opened with is
+        itself the occurrence it witnessed.  Any other producer registered
+        nothing, and neither did a ``CollectingReporter`` the node was not
+        built under: ``None``.
+        """
+        from sugar_source_tree.reporter import CollectingReporter
+
+        if type(producer) is ConstructionTestimonyReporterV1:
+            return producer._materialized_by_ref.get(node.ref)
+        if (
+            type(producer) is CollectingReporter
+            and getattr(node, "reporter", None) is producer
+        ):
+            return node
+        return None
+
+    def _retain_heard_occurrence(self, node: Node) -> None:
+        """Retain the registration of an occurrence this roll hears but did
+        not construct.
+
+        A memo row is served to every reporter that asks, and its testimony
+        is replayed to one that has not heard it
+        (``construction_cache.serve``).  The row's nodes were built under the
+        reporter that computed it, so this roll's ``register`` never took
+        them, and the call that computed the row reconciled its definition
+        with that reporter's roll (``Call._project_call_definition_occurrence``),
+        never with this one.  The identity guard below then asked this roll
+        for refs only the computing roll holds, and refused a call the
+        computing roll had answered (``definition-ref-not-materialized``).
+
+        What the guard asks of a heard occurrence is whether the roll that
+        built it registered it.  That registration is read through the one
+        reading of a producer's roll (``_producer_registration``) and retained
+        here, by backend ref.  An occurrence no roll registered is retained
+        nowhere, and the guard names it as before.
+        """
+        if node.ref in self._materialized_by_ref:
+            return
+        registered = self._producer_registration(node, node.reporter)
+        if registered is not None:
+            self._materialized_by_ref[node.ref] = registered
+
     def retain_registered_node_from(
         self, node: Node, producer: "ConstructionTestimonyReporterV1"
     ) -> Node:
@@ -553,17 +601,7 @@ class ConstructionTestimonyReporterV1:
         # FOREIGN: the producer DOES own a roster; this node is simply not the
         # occurrence it registered. That is a remint or a foreign roll, and the
         # repair is identity work, not seating.
-        if type(producer) is ConstructionTestimonyReporterV1:
-            registered = producer._materialized_by_ref.get(node.ref)
-        elif (
-            type(producer) is CollectingReporter
-            and getattr(node, "reporter", None) is producer
-        ):
-            # File-open door: CollectingReporter witnessed construction; the
-            # node itself is the authenticated occurrence for this ref.
-            registered = node
-        else:
-            registered = None
+        registered = self._producer_registration(node, producer)
         if (
             registered is not node
             or not isinstance(registered, type(node))
@@ -821,6 +859,10 @@ class ConstructionTestimonyReporterV1:
                 span.end_col,
             )
             frame = value.source_call_frame
+            # The two occurrences the guard asks this roll about, retained
+            # from the roll that built them when this roll only hears them.
+            self._retain_heard_occurrence(definition)
+            self._retain_heard_occurrence(node)
             fault = self._source_call_identity_fault(
                 node, value, definition, resolved_definition, call_occurrence, frame
             )

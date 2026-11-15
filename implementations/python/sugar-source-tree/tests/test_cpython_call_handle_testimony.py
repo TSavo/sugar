@@ -352,9 +352,11 @@ def _two_files_one_roll(tmp_path):
     """Two units materialized through ONE reporter roll.
 
     The cross-file case cannot be built from a single file, and it must share a
-    reporter: a definition materialized by a DIFFERENT reporter is a genuinely
-    unregistered ref and is refused by `definition-ref-not-materialized`, which
-    is a different fault and must stay one.
+    reporter: the guard's terms are asked of one roll, and a definition that
+    roll holds no registration for is refused by
+    `definition-ref-not-materialized`, which is a different fault and must stay
+    one. (``present_construction`` retains another roll's registration before
+    it asks; ``test_heard_call_retains_producer_registration.py``.)
     """
     helper_path = tmp_path / "callee_unit.py"
     helper_path.write_text("def find_level(value):\n    return value\n")
