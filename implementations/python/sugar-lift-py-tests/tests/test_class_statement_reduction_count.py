@@ -131,6 +131,11 @@ def test_a_class_statement_is_reduced_once_however_often_it_is_called(
 # that calls the class.  That is wrong by Python (the class body raises at the
 # class statement, never at the call) and is plan row 7, the temporal row; it
 # is pinned here as what happens.
+#
+# ``int("x")`` is a builtin over a ground operand, decided by the builtin's
+# own semantics (``cpython_cited_fold``): Python raises ``ValueError``,
+# always.  The statement has no completion, so the first class call is that
+# one halt and nothing after it runs, however many calls follow.
 # ---------------------------------------------------------------------------
 
 _NOT_ONE_COMPLETION = {
@@ -141,8 +146,10 @@ _USES = {
     "one-call": ("    a = Box(1)\n    assert a.n == 1\n", 1),
     "two-calls": ("    a = Box(1)\n    b = Box(2)\n    assert a.n == 1\n", 2),
 }
-# Halted faces one class call carries from the class body.
-_BODY_HALTS = {"field-may-raise": 2, "field-int-of-text": 1}
+# Halted faces one class call carries from a class body that may complete.
+_BODY_HALTS = {"field-may-raise": 2}
+# Class bodies that never complete: the exception their one halt raises.
+_BODY_ALWAYS_RAISES = {"field-int-of-text": "ValueError"}
 
 
 @pytest.mark.parametrize("body", sorted(_NOT_ONE_COMPLETION))
@@ -192,6 +199,10 @@ def test_a_class_statement_that_is_not_one_completion_builds_no_place_state(
     assert place_states == [None] * class_calls
     assert reductions["Box"] == 1
     assert isinstance(outcome, ExitSet), outcome
+    if body in _BODY_ALWAYS_RAISES:
+        assert [type(face) for face in outcome.exits] == [Halted]
+        assert outcome.exits[0].effect.exception_name == _BODY_ALWAYS_RAISES[body]
+        return
     assert [type(face) for face in outcome.exits] == [Completed] + [Halted] * (
         _BODY_HALTS[body] * class_calls
     )

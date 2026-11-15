@@ -188,7 +188,7 @@ def test_naming_the_raising_class_without_calling_it_completes() -> None:
 # constructor, and carries the halt.
 # ---------------------------------------------------------------------------
 
-_MAY_RAISE_CALLS = ['int("x")', "float(S)", "os.getcwd()", "frozenset(S)"]
+_MAY_RAISE_CALLS = ["float(S)", "os.getcwd()", "frozenset(S)"]
 
 
 @pytest.mark.parametrize("with_context", [False, True], ids=["no-ctx", "root-ctx"])
@@ -202,6 +202,26 @@ def test_a_field_call_that_may_raise_is_two_faces_with_or_without_a_context(
 
     assert completed == 1
     assert len(halts) == 1
+
+
+@pytest.mark.parametrize("with_context", [False, True], ids=["no-ctx", "root-ctx"])
+def test_a_field_call_python_decides_to_raise_is_its_one_halt(
+    with_context: bool,
+) -> None:
+    """``int("x")`` is a builtin over a ground operand: the builtin's own
+    semantics decide it (``cpython_cited_fold``,
+    ``test_builtin_call_may_raise_by_value``), and Python raises
+    ``ValueError``, always.  It is not a call that may raise: the class
+    statement halts with that one ``ValueError`` and no class exists, with a
+    context or without one, exactly as for ``limit = 1 // 0``."""
+    outcome = _class_statement('    limit = int("x")\n', with_context=with_context)
+    completed, halts = _faces(outcome)
+
+    assert completed == 0
+    assert len(halts) == 1
+    assert [
+        getattr(effect, "exception_name", None) for effect in _halt_effects(outcome)
+    ] == ["ValueError"]
 
 
 def _initializer_universe(source: str):
@@ -220,14 +240,28 @@ def _initializer_universe(source: str):
 def test_the_initializer_universe_of_a_may_raise_class_carries_its_halt() -> None:
     """An ``__init__`` universe runs on the receiver its class call makes
     (``ClassConstructorBodySugar.enter_initializer``), so the class
-    statement's halt is the universe's halt.  With ``limit = int("x")`` it
-    used to refuse by name; it is now one completed face and that halt."""
+    statement's halt is the universe's halt.  With a field call that may
+    raise (``limit = os.getcwd()``) it is one completed face and that halt."""
     completed, halts = _faces(
-        _initializer_universe('class Box:\n    limit = int("x")\n' + _INIT)
+        _initializer_universe("class Box:\n    limit = os.getcwd()\n" + _INIT)
     )
 
     assert completed == 1
     assert len(halts) == 1
+
+
+def test_the_initializer_universe_of_a_decided_raising_call_is_its_halt() -> None:
+    """``limit = int("x")`` always raises ``ValueError`` (a builtin over a
+    ground operand, decided): no class exists, so ``__init__`` never runs and
+    its universe is that one halt, as for ``limit = 1 // 0`` below."""
+    outcome = _initializer_universe('class Box:\n    limit = int("x")\n' + _INIT)
+    completed, halts = _faces(outcome)
+
+    assert completed == 0
+    assert len(halts) == 1
+    assert [
+        getattr(effect, "exception_name", None) for effect in _halt_effects(outcome)
+    ] == ["ValueError"]
 
 
 def test_the_initializer_universe_of_a_raising_class_is_its_halt() -> None:
