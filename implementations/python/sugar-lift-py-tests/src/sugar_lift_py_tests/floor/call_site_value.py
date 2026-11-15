@@ -2023,7 +2023,14 @@ def receiver_after_its_call(receiver, result):
       the receiver after that transition.
 
     A call that did not run a body on ``receiver`` (an unanswered callee,
-    a body run on another object) states nothing about it."""
+    a body run on another object) states nothing about it.
+
+    What the call states is ``receiver``'s object after it, never a newer
+    currency: the state is current only where ``receiver`` was and the call's
+    own state is (``object_identity.as_the_alias_holds``), and it keeps
+    ``receiver``'s arrival.  A receiver that arrived by binding stays one
+    after the call -- its fields are read undecided (``contents_current``) --
+    whatever object the callee or a builtin base held for it."""
     from .named_expression_value import peel_walrus_binds
     from .object_value import ObjectValue
 
@@ -2046,11 +2053,14 @@ def _stated_after(call, receiver):
 
     from .block_value import BlockValue
     from .named_expression_value import peel_walrus_binds
+    from .object_identity import as_the_alias_holds
     from .receiver_owned_mutation_result import ReceiverOwnedMutationResult
 
     if isinstance(call, ReceiverOwnedMutationResult):
         if _same_object_value(call.receiver_before, receiver):
-            return call.receiver_after
+            # The builtin base's transition, as ``receiver`` holds the object:
+            # its currency and arrival, never the base's own receiver's.
+            return as_the_alias_holds(call.receiver_after, receiver)
         return None
     if (
         not isinstance(call, CallSiteValue)
@@ -2080,7 +2090,7 @@ def _stated_after(call, receiver):
                 state = state.with_field_store(entry.attr, entry.value)
         elif isinstance(entry, ReceiverOwnedMutationResult):
             if _same_object_value(entry.receiver_before, receiver):
-                state = entry.receiver_after
+                state = as_the_alias_holds(entry.receiver_after, state)
         elif isinstance(entry, CallSiteValue):
             if entry.body is None:
                 # An unanswered call the body made in statement position (a
