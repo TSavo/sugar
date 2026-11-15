@@ -8805,6 +8805,22 @@ class Node(Typed):
             produced = (
                 new_stmt.statements if isinstance(new_stmt, _Splice) else (new_stmt,)
             )
+            if new_stmt is not stmt and not any(
+                produced_stmt.kind == stmt.kind and produced_stmt.span == stmt.span
+                for produced_stmt in produced
+            ):
+                # Nothing threaded in its place is this occurrence (a loop
+                # dissolved into its iterations, a store or a call become the
+                # one mutation door's statement, an annotated store split in
+                # two): the statement is constructed by nothing.  Its
+                # discharge is this substitution, as a replaced child's is
+                # (``_substitute_field``), and so is that of each binding
+                # spelling it bound through (``binding_spellings``), which what
+                # replaced it binds by name.  A replacement that is this
+                # occurrence (a rewrite borrowing its span) answers for it.
+                stmt.discharge_by_substitution()
+                for spelling in stmt.binding_spellings():
+                    spelling.discharge_by_substitution()
             for produced_stmt in produced:
                 pre_produced_scope = scope
                 new_items.append(produced_stmt)
