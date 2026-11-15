@@ -5,18 +5,15 @@ class as a bound method, and calling it runs ``type(receiver).m(receiver, ...)``
 A call with ``*``/``**`` reads its callee as a value first, so the lifter yields
 a ``BoundMethodValue`` for that read and the spread call dispatches through the
 receiver's own ``call_method_value`` (the selection ``MethodCallSugar`` uses).
-A ``staticmethod`` read off the instance binds differently and still refuses
-by name.
+A ``staticmethod`` read off the instance is the bare function: the same door
+binds no implicit actual for it.
 """
 
 from __future__ import annotations
 
-import pytest
-
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import TermValue
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 from sugar_source_tree.nodes import FunctionDef
 from sugar_source_tree.tree import SourceFile
@@ -97,9 +94,13 @@ def test_spread_call_on_self_yields_that_body_not_another():
     assert value.value == -7
 
 
-def test_a_staticmethod_read_off_the_instance_still_refuses_by_name():
+def test_a_staticmethod_read_off_the_instance_binds_no_receiver():
+    # ``self.pick`` for a ``staticmethod`` is the bare function: the one
+    # method door binds no implicit actual for it (``implicit_arguments``),
+    # so the spread call binds ``n=3`` alone and the body returns it.
     source = _box("n", decorator="@staticmethod\n    ", receiver="")
     assert _native(source) == 3
 
-    with pytest.raises(ConstructionPanic, match="ObjectValue.attribute"):
-        _returned(source)
+    value = _method_result(source)
+    assert isinstance(value, TermValue)
+    assert value.value == 3
