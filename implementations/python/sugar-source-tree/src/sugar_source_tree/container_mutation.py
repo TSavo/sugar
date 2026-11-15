@@ -3192,9 +3192,10 @@ def _followed_body(definition, node_scope):
         return row.value
     computation = open_row()
     try:
-        _body, _changed, net = definition._substitute_body_tracked(
+        body, _changed, net = definition._substitute_body_tracked(
             definition.body, node_scope
         )
+        _answered_where_minted(definition.body, body)
     except BaseException:
         abandon_row(computation)
         raise
@@ -3203,6 +3204,27 @@ def _followed_body(definition, node_scope):
     cache._pinned[memo] = (_handle(definition), bound)
     close_row(cache.substitutions, memo, computation, definition.reporter, value=net)
     return net
+
+
+def _answered_where_minted(source, followed) -> None:
+    """Answer the roll for every node the follow of a helper's body minted.
+
+    ``followed`` is ``source`` (the helper's body) substituted with its
+    formals bound to the caller's nodes (``_followed_body``): only the names
+    it leaves bound are read, and the body itself is constructed by nothing
+    -- the helper's frame is built where it is lifted and where a call
+    applies it.  Each node the rewrite made (a read of a formal re-spanned
+    to its site, ``Name.substitute``: ``out`` and ``result`` in ``out[:] =
+    result``, ``core/arraylike.py:476``; a statement it recast through the
+    one door) is no source occurrence: minting registered it, so it answers
+    here, as every binding a rewrite mints does
+    (``nodes._minted_binding_reference``).  A source node the body holds as
+    written answers where the helper is built, and is not touched here."""
+    written = {id(_handle(node)) for statement in source for node in statement.walk()}
+    for statement in followed:
+        for node in statement.walk():
+            if id(_handle(node)) not in written:
+                node.discharge_by_substitution()
 
 
 def _changed_state(state, actual, depth=0):

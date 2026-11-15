@@ -49,3 +49,23 @@ def test_an_inplace_operand_answers_the_roll(statement, kind, operand):
     column = 4 + statement.index(operand)
     absent = {(e.kind, e.start_line, e.start_col) for e in report.minority}
     assert (kind, 3, column) not in absent
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["    out[:] = result\n", "    out.append(result)\n"],
+)
+def test_a_followed_helper_s_minted_reads_answer_where_minted(body):
+    # ``core/arraylike.py:476``: a call to a source helper follows its body
+    # with each formal bound to the caller's object (``_followed_body``) to
+    # learn what it changed; the reads of ``out`` and ``result`` that follow
+    # re-spans to their sites are built by nothing, and answer where they
+    # are minted (``_answered_where_minted``).
+    report = _report(
+        "def put(out, result):\n"
+        + body
+        + "\n\ndef f(b):\n    x = [1]\n    put(x, b)\n    return x\n"
+    )
+    assert not any(
+        e.kind == "EvaluationRef" and e.start_line == 2 for e in report.minority
+    ), report.minority
