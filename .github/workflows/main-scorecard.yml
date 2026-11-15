@@ -9,26 +9,48 @@ name: Main scorecard
 # - the solver twins and examples/python-base64-federation/run.sh ran nowhere.
 #
 # This workflow measures the tip of main on every merge (push to main), once
-# an hour, and on demand, and posts one row of numbers. Its concurrency group
-# is its own with cancel-in-progress false: one run measures while the newest
-# trigger waits (GitHub keeps only the newest pending run). A run measures the
-# tip of main when it starts, so each row covers every merge since the
-# previous row, and the row names those PRs.
+# an hour, and on demand, and posts one row of numbers on the "Main scorecard"
+# issue. Its concurrency group is its own with cancel-in-progress false: one
+# run measures while the newest trigger waits. Every job checks out
+# github.sha, so every number in a row is about one commit, and the row names
+# the PRs merged since the previous row.
 #
-# Regression alarm: the scorecard job reads the previous row from the
-# "Main scorecard" issue and compares suite passed, twins passed, board
-# completed, board cpanic and federation PASS/FAIL. Any number that got worse
-# (or that was measured before and is unmeasured now) makes the comment start
-# with REGRESSION: and turns the job red. Otherwise the comment starts with OK.
+# A ROW IN SECONDS, NOT HOURS (owner, 2026-11-14)
 #
-# Every measuring job (8 suite shards, twins, federation, 4 board seats)
-# depends only on resolve and env-prepare, so they run in parallel; the board
-# join seals the seats' checkpoints. Every measuring job runs even when an
-# earlier one fails, so the scorecard always posts.
+# The first run posted nothing for over an hour: every job rebuilt the
+# environment, everything was measured from scratch, and the row was written
+# only after the slowest job. Now:
 #
-# It reuses the existing setup (python-test-environment wheelhouse, sugarbin,
-# tools/python_package_suite_shards.py, the recensus --slice seats) and does
-# not change the gating of any other workflow.
+# 1. Incremental. tools/scorecard_carry.py records, per pytest test and per
+#    pandas board file, the fingerprint of every first-party function it
+#    executed and the blob of every tracked file it read, in a
+#    content-addressed store on the runner host. A run reruns only the tests
+#    and board files whose recorded dependencies changed in this SHA and
+#    carries every other result forward; a test file whose every test is
+#    carried never starts pytest. The numbers are always full totals for the
+#    SHA, and the row says how many were rerun and how many carried. The
+#    store is keyed by interpreter + installed distributions + the carry
+#    module: a new key starts empty, so that run re-measures everything once
+#    and refills it. (The pandas-walking unit tests are carried like any
+#    other test: the corpus is pinned by the key.)
+# 2. Zero setup. tools/main_scorecard_env.sh keeps one persistent venv per
+#    dependency key in the cache directory every runner shares (pandas
+#    pinned with it) and puts gh on PATH; the sugar binary comes from
+#    bin/sugarbin's shelf; z3 is installed once; the Rust toolchain is set
+#    up only when something will actually run.
+# 3. Each job posts its own number. A measuring job banks its result in the
+#    run's shared directory and creates or edits the run's comment at once
+#    (tools/main_scorecard_post.py); anything still measuring is `?` and
+#    named pending. The final scorecard job marks whatever never reported as
+#    unmeasured.
+#
+# Regression alarm: each number is compared with the newest earlier row in
+# which it was measured. Any number that got worse (or was measured before
+# and is unmeasured now) makes the comment start with REGRESSION: and turns
+# the posting job red. Pending numbers are never compared.
+#
+# GitHub runs `shell: bash` as `bash -e`: every step whose commands may exit
+# nonzero on purpose (pytest, run.sh, the recensus) says `set +e` (#8293).
 
 on:
   push:
@@ -44,314 +66,297 @@ concurrency:
 permissions:
   contents: read
   issues: write
+  actions: read
 
 env:
   PYTHONUNBUFFERED: "1"
   SUITE_SHARD_COUNT: "8"
-  # Must match the board-seat matrix below.
+  # More test files than this to rerun -> fan out to SUITE_SHARD_COUNT jobs.
+  SUITE_INLINE_MAX_FILES: "40"
   BOARD_SEATS: "4"
   # Per-seat and join caps for the pandas board (seconds).
   BOARD_SEAT_CAP_S: "10800"
   BOARD_JOIN_CAP_S: "300"
   SCORECARD_ISSUE_TITLE: "Main scorecard"
+  GH_TOKEN: ${{ github.token }}
+  GH_REPO: ${{ github.repository }}
 
 jobs:
-  # ---------------------------------------------------------------- resolve
-  # Pin one SHA for the whole run: every job checks out exactly this commit.
-  resolve:
-    name: resolve main tip
-    runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 10
-    outputs:
-      sha: ${{ steps.sha.outputs.sha }}
-      time: ${{ steps.sha.outputs.time }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: main
-          fetch-depth: 1
-      - name: Record the measured SHA
-        id: sha
-        shell: bash
-        run: |
-          set -euo pipefail
-          sha="$(git rev-parse HEAD)"
-          now="$(date -u +%Y-%m-%dT%H:%MZ)"
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "time=$now" >> "$GITHUB_OUTPUT"
-          echo "main scorecard measures $sha at $now"
-
-  # ------------------------------------------------------------ env prepare
-  # Same shape as python-package-suite.yml: one env prep, shared wheelhouse.
-  env-prepare:
-    name: python test env (shared wheelhouse)
-    needs: [resolve]
-    if: always()
-    runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.resolve.outputs.sha || 'main' }}
-      - name: Prepare immutable Python test environment (once)
-        id: env
-        uses: ./.github/actions/python-test-environment
-        with:
-          identity-artifact: "false"
-      - name: Upload third-party wheelhouse
-        uses: actions/upload-artifact@v4
-        with:
-          name: main-scorecard-wheelhouse
-          path: ${{ steps.env.outputs.env-dir }}/wheelhouse/
-          if-no-files-found: error
-      - name: Upload tip environment identity
-        uses: actions/upload-artifact@v4
-        with:
-          name: main-scorecard-environment-identity
-          path: ${{ steps.env.outputs.identity-path }}
-          if-no-files-found: error
-
   # ------------------------------------------------------- (1) package suite
   suite:
-    name: suite shard ${{ matrix.shard }}
-    needs: [resolve, env-prepare]
-    if: always()
+    name: package suite
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 90
+    timeout-minutes: 120
+    outputs:
+      fanout: ${{ steps.plan.outputs.fanout }}
+    steps:
+      - name: Start the job clock
+        shell: bash
+        run: echo "JOB_T0=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12.13"
+      - name: Scorecard environment (persistent venv, gh)
+        shell: bash
+        run: bash tools/main_scorecard_env.sh
+      - name: Plan (which test files have a changed dependency)
+        id: plan
+        shell: bash
+        working-directory: implementations/python
+        run: |
+          set -euo pipefail
+          mkdir -p "$SCORECARD_RUNS/suite"
+          python "$GITHUB_WORKSPACE/tools/python_package_suite_shards.py" \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --shard-count 1 --shard-index 0 \
+            --emit-paths-for-cwd > "$RUNNER_TEMP/suite-paths.txt"
+          python "$GITHUB_WORKSPACE/tools/scorecard_carry.py" suite-plan \
+            --store "$SCORECARD_STORE" --label suite \
+            --paths-file "$RUNNER_TEMP/suite-paths.txt" \
+            --summary "$SCORECARD_RUNS/suite/plan.json" \
+            --rerun-paths "$RUNNER_TEMP/suite-rerun.txt"
+          n="$(grep -c . "$RUNNER_TEMP/suite-rerun.txt" || true)"
+          echo "rerun=$n" >> "$GITHUB_OUTPUT"
+          if [ "$n" -gt "$SUITE_INLINE_MAX_FILES" ]; then fanout=true; else fanout=false; fi
+          echo "fanout=$fanout" >> "$GITHUB_OUTPUT"
+          echo "suite files to run: $n (fan out: $fanout)"
+      - name: Set up Rust toolchain (only when tests run here)
+        if: steps.plan.outputs.rerun != '0' && steps.plan.outputs.fanout == 'false'
+        uses: ./.github/actions/setup-rust-cache
+      - name: Run the files with a changed dependency
+        if: steps.plan.outputs.rerun != '0' && steps.plan.outputs.fanout == 'false'
+        shell: bash
+        working-directory: implementations/python
+        run: |
+          set +e -uo pipefail
+          export SUGAR_BIN="$("$GITHUB_WORKSPACE/bin/sugarbin" --profile release)"
+          mapfile -t paths < "$RUNNER_TEMP/suite-rerun.txt"
+          PYTHONPATH="$GITHUB_WORKSPACE/tools:$PYTHONPATH" python -m pytest "${paths[@]}" -q \
+            -p no:cacheprovider -p no:randomly \
+            -p scorecard_carry_pytest \
+            --carry-store "$SCORECARD_STORE" --carry-label suite \
+            --carry-summary "$SCORECARD_RUNS/suite/inline.json" \
+            > "$GITHUB_WORKSPACE/suite.log" 2>&1
+          echo "pytest exit $? (evidence only)"
+          grep -a 'SCORECARD CARRY' "$GITHUB_WORKSPACE/suite.log"
+      - name: Post the suite number
+        if: always() && steps.plan.outputs.fanout != 'true'
+        shell: bash
+        run: |
+          set +e -uo pipefail
+          python3 tools/scorecard_carry.py summarize --label suite \
+            --out "$RUNNER_TEMP/suite-totals.json" \
+            --result "$RUNNER_TEMP/suite-result.json" \
+            "$SCORECARD_RUNS"/suite/*.json
+          python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" \
+            --put "suite=$RUNNER_TEMP/suite-result.json"
+      - name: Upload suite log
+        if: always() && steps.plan.outputs.rerun != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-scorecard-suite
+          path: suite.log
+          if-no-files-found: ignore
+      - name: Job wall time
+        if: always()
+        shell: bash
+        run: echo "job wall $(( $(date +%s) - JOB_T0 ))s"
+
+  # Empty store or a wide change: the files to run fan out over shards.
+  suite-shard:
+    name: suite shard ${{ matrix.shard }}
+    needs: [suite]
+    if: always() && needs.suite.outputs.fanout == 'true'
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         shard: [0, 1, 2, 3, 4, 5, 6, 7]
     steps:
+      - name: Start the job clock
+        shell: bash
+        run: echo "JOB_T0=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.resolve.outputs.sha || 'main' }}
-      - name: Download shared third-party wheelhouse
-        uses: actions/download-artifact@v4
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v6
         with:
-          name: main-scorecard-wheelhouse
-          path: ${{ runner.temp }}/python-test-wheelhouse
-      - name: Download tip environment identity
-        uses: actions/download-artifact@v4
-        with:
-          name: main-scorecard-environment-identity
-          path: ${{ runner.temp }}/python-test-identity
-      - name: Resolve LPT file-cost prior path
-        id: lpt
+          python-version: "3.12.13"
+      - name: Scorecard environment (persistent venv, gh)
         shell: bash
-        run: |
-          set -euo pipefail
-          dir="${GITHUB_WORKSPACE}/.cache/sugar/lpt-file-costs"
-          mkdir -p "$dir"
-          echo "dir=$dir" >> "$GITHUB_OUTPUT"
-          echo "SUGAR_LPT_PRIOR_DIR=$dir" >> "$GITHUB_ENV"
-      - name: Restore LPT file-cost prior (read only)
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ steps.lpt.outputs.dir }}
-          key: lpt-file-costs-${{ needs.resolve.outputs.sha }}
-          restore-keys: |
-            lpt-file-costs-
-      - name: Install from shared wheelhouse (no network resolve)
-        id: env
-        uses: ./.github/actions/python-test-environment-from-wheelhouse
-        with:
-          wheelhouse-path: ${{ runner.temp }}/python-test-wheelhouse
-          identity-path: ${{ runner.temp }}/python-test-identity/environment-identity.json
+        run: bash tools/main_scorecard_env.sh
       - name: Set up Rust toolchain
         uses: ./.github/actions/setup-rust-cache
-      - name: Resolve the sugar binary and read its source identity
-        id: binary
-        shell: bash
-        run: |
-          set -euo pipefail
-          sugar_bin="$(bin/sugarbin --profile release)"
-          echo "SUGAR_BIN=$sugar_bin" >> "$GITHUB_ENV"
-          manifest="$sugar_bin.sugarbin.json"
-          test -f "$manifest" || { echo "::error::resolved binary $sugar_bin has no $manifest"; exit 1; }
-          stamp="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sourceStamp"])' "$manifest")"
-          echo "stamp=$stamp" >> "$GITHUB_OUTPUT"
-      - name: Shard ${{ matrix.shard }} sweep
+      - name: Shard ${{ matrix.shard }}
         shell: bash
         working-directory: implementations/python
         env:
-          PYTHONPATH: ${{ github.workspace }}/tools:${{ env.SUGAR_CHECKOUT_PYTHONPATH }}
-          SUITE_IDENTITY_PATH: ${{ steps.env.outputs.identity-path }}
-          SUITE_BINARY_STAMP: ${{ steps.binary.outputs.stamp }}
-          MAIN_SHA: ${{ needs.resolve.outputs.sha }}
           SHARD: ${{ matrix.shard }}
         run: |
           set +e -uo pipefail
-          mapfile -t paths < <(
-            python3 "$GITHUB_WORKSPACE/tools/python_package_suite_shards.py" \
-              --repo-root "$GITHUB_WORKSPACE" \
-              --shard-count "$SUITE_SHARD_COUNT" \
-              --shard-index "$SHARD" \
-              --emit-paths-for-cwd
-          )
-          echo "shard $SHARD / $SUITE_SHARD_COUNT paths: ${#paths[@]}"
-          if [ "${#paths[@]}" -eq 0 ]; then
-            python3 "$GITHUB_WORKSPACE/tools/python_package_suite_shards.py" \
-              --shard-count "$SUITE_SHARD_COUNT" \
-              --shard-index "$SHARD" \
-              --mint-empty-report "$GITHUB_WORKSPACE/suite-report.json" \
-              --suite-identity "$SUITE_IDENTITY_PATH" \
-              --suite-commit "$MAIN_SHA" \
-              --suite-binary-stamp "$SUITE_BINARY_STAMP" \
-              --suite-order canonical
-            echo "empty shard $SHARD" > "$GITHUB_WORKSPACE/suite.log"
-          else
-            python -m pytest "${paths[@]}" -q \
+          tag="$(printf '%02d' "$SHARD")"
+          python "$GITHUB_WORKSPACE/tools/python_package_suite_shards.py" \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --shard-count "$SUITE_SHARD_COUNT" --shard-index "$SHARD" \
+            --emit-paths-for-cwd > "$RUNNER_TEMP/paths.txt"
+          python "$GITHUB_WORKSPACE/tools/scorecard_carry.py" suite-plan \
+            --store "$SCORECARD_STORE" --label suite \
+            --paths-file "$RUNNER_TEMP/paths.txt" \
+            --summary "$SCORECARD_RUNS/suite/plan-s$tag.json" \
+            --rerun-paths "$RUNNER_TEMP/rerun.txt"
+          mapfile -t paths < "$RUNNER_TEMP/rerun.txt"
+          echo "shard $SHARD files to run: ${#paths[@]}"
+          if [ "${#paths[@]}" -gt 0 ]; then
+            export SUGAR_BIN="$("$GITHUB_WORKSPACE/bin/sugarbin" --profile release)"
+            PYTHONPATH="$GITHUB_WORKSPACE/tools:$PYTHONPATH" python -m pytest "${paths[@]}" -q \
               -p no:cacheprovider -p no:randomly \
-              -p python_package_suite_report \
-              --suite-report="$GITHUB_WORKSPACE/suite-report.json" \
-              --suite-identity="$SUITE_IDENTITY_PATH" \
-              --suite-commit="$MAIN_SHA" \
-              --suite-binary-stamp="$SUITE_BINARY_STAMP" \
-              --suite-order=canonical \
-              --suite-shard-index="$SHARD" \
-              --suite-shard-count="$SUITE_SHARD_COUNT" \
-              --suite-label="main-scorecard-suite-shard-$(printf '%02d' "$SHARD")" \
+              -p scorecard_carry_pytest \
+              --carry-store "$SCORECARD_STORE" --carry-label suite \
+              --carry-summary "$SCORECARD_RUNS/suite/shard-$tag.json" \
               > "$GITHUB_WORKSPACE/suite.log" 2>&1
             echo "pytest exit $? (evidence only)"
+            grep -a 'SCORECARD CARRY' "$GITHUB_WORKSPACE/suite.log"
           fi
-          test -s "$GITHUB_WORKSPACE/suite-report.json"
-      - name: Upload shard report
+      - name: Upload shard log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: main-scorecard-suite-shard-${{ matrix.shard }}
-          path: |
-            suite.log
-            suite-report.json
-          if-no-files-found: warn
+          path: suite.log
+          if-no-files-found: ignore
+      - name: Job wall time
+        if: always()
+        shell: bash
+        run: echo "job wall $(( $(date +%s) - JOB_T0 ))s"
 
-  # -------------------------------------------------------- (2) solver twins
-  # Every test file that drives a source through the real solver.
-  twins:
-    name: solver twins
-    needs: [resolve, env-prepare]
-    if: always()
+  suite-join:
+    name: suite join
+    needs: [suite, suite-shard]
+    if: always() && needs.suite.outputs.fanout == 'true'
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 90
-    outputs:
-      passed: ${{ steps.count.outputs.passed }}
-      total: ${{ steps.count.outputs.total }}
-      failed: ${{ steps.count.outputs.failed }}
+    timeout-minutes: 15
     steps:
+      - name: Start the job clock
+        shell: bash
+        run: echo "JOB_T0=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.resolve.outputs.sha || 'main' }}
-      - name: Download shared third-party wheelhouse
-        uses: actions/download-artifact@v4
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v6
         with:
-          name: main-scorecard-wheelhouse
-          path: ${{ runner.temp }}/python-test-wheelhouse
-      - name: Install from shared wheelhouse (no network resolve)
-        uses: ./.github/actions/python-test-environment-from-wheelhouse
-        with:
-          wheelhouse-path: ${{ runner.temp }}/python-test-wheelhouse
-      - name: Set up Rust toolchain
-        uses: ./.github/actions/setup-rust-cache
-      - name: Install z3
+          python-version: "3.12.13"
+      - name: Scorecard environment (persistent venv, gh)
         shell: bash
-        run: tools/ci-apt-install.sh z3
-      - name: Resolve the sugar binary
+        run: bash tools/main_scorecard_env.sh
+      - name: Post the suite number
         shell: bash
         run: |
-          set -euo pipefail
-          echo "SUGAR_BIN=$(bin/sugarbin --profile release)" >> "$GITHUB_ENV"
-      - name: Run every real-solver twin
+          set +e -uo pipefail
+          python3 tools/scorecard_carry.py summarize --label suite \
+            --out "$RUNNER_TEMP/suite-totals.json" \
+            --result "$RUNNER_TEMP/suite-result.json" \
+            "$SCORECARD_RUNS"/suite/*.json
+          python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" \
+            --put "suite=$RUNNER_TEMP/suite-result.json"
+
+  # ------------------------------------- (2) solver twins + (3) federation
+  solver:
+    name: solver twins + federation
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 120
+    steps:
+      - name: Start the job clock
+        shell: bash
+        run: echo "JOB_T0=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12.13"
+      - name: Scorecard environment (persistent venv, gh)
+        shell: bash
+        run: bash tools/main_scorecard_env.sh
+      - name: Plan
+        id: plan
         shell: bash
         working-directory: implementations/python
-        env:
-          PYTHONPATH: ${{ github.workspace }}/tools:${{ env.SUGAR_CHECKOUT_PYTHONPATH }}
-        run: |
-          set +e -uo pipefail
-          mapfile -t files < <(
-            git grep -l run_source_through_real_solver -- '*/tests/test_*.py'
-          )
-          echo "real-solver twin files: ${#files[@]}"
-          printf '  %s\n' "${files[@]:-}"
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "::error::no test file uses run_source_through_real_solver"
-            exit 1
-          fi
-          python -m pytest "${files[@]}" -q \
-            -p no:cacheprovider -p no:randomly \
-            --junitxml="$GITHUB_WORKSPACE/twins.xml" \
-            > "$GITHUB_WORKSPACE/twins.log" 2>&1
-          echo "pytest exit $? (evidence only)"
-      - name: Count twins
-        id: count
-        if: always()
-        shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import os
-          import xml.etree.ElementTree as ET
-          from pathlib import Path
-
-          path = Path(os.environ["GITHUB_WORKSPACE"]) / "twins.xml"
-          tests = failed = skipped = 0
-          if path.is_file():
-              root = ET.parse(path).getroot()
-              suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
-              for s in suites:
-                  tests += int(s.get("tests", 0))
-                  failed += int(s.get("failures", 0)) + int(s.get("errors", 0))
-                  skipped += int(s.get("skipped", 0))
-          passed = tests - failed - skipped
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
-              out.write(f"passed={passed}\ntotal={tests}\nfailed={failed}\n")
-          print(f"twins passed={passed} failed={failed} skipped={skipped} total={tests}")
-          PY
-      - name: Upload twins log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: main-scorecard-twins
-          path: |
-            twins.log
-            twins.xml
-          if-no-files-found: warn
-
-  # ------------------------------------------------ (3) base64 federation
-  federation:
-    name: python-base64-federation
-    needs: [resolve, env-prepare]
-    if: always()
-    runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 60
-    outputs:
-      verdict: ${{ steps.run.outputs.verdict }}
-      last_fail: ${{ steps.run.outputs.last_fail }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.resolve.outputs.sha || 'main' }}
-      - name: Download shared third-party wheelhouse
-        uses: actions/download-artifact@v4
-        with:
-          name: main-scorecard-wheelhouse
-          path: ${{ runner.temp }}/python-test-wheelhouse
-      - name: Install from shared wheelhouse (no network resolve)
-        uses: ./.github/actions/python-test-environment-from-wheelhouse
-        with:
-          wheelhouse-path: ${{ runner.temp }}/python-test-wheelhouse
-      - name: Set up Rust toolchain
+          mkdir -p "$SCORECARD_RUNS/twins"
+          # Every test file that drives a source through the real solver.
+          git grep -l run_source_through_real_solver -- '*/tests/test_*.py' \
+            > "$RUNNER_TEMP/twins-paths.txt" || true
+          echo "real-solver twin files: $(grep -c . "$RUNNER_TEMP/twins-paths.txt" || true)"
+          python "$GITHUB_WORKSPACE/tools/scorecard_carry.py" suite-plan \
+            --store "$SCORECARD_STORE" --label twins \
+            --paths-file "$RUNNER_TEMP/twins-paths.txt" \
+            --summary "$SCORECARD_RUNS/twins/plan.json" \
+            --rerun-paths "$RUNNER_TEMP/twins-rerun.txt"
+          echo "twins_rerun=$(grep -c . "$RUNNER_TEMP/twins-rerun.txt" || true)" >> "$GITHUB_OUTPUT"
+          # The federation example is a chain of subprocesses, so it is not
+          # traced: a PASS is carried only while every input outside docs/
+          # and the other examples is byte-identical (git tree hashes). A
+          # FAIL is never carried.
+          cd "$GITHUB_WORKSPACE"
+          key="$(python tools/scorecard_carry.py verdict key \
+            --exclude docs --exclude examples \
+            --include examples/python-base64-federation \
+            --extra "z3=$(z3 --version 2>/dev/null || echo none)")"
+          echo "fed_key=$key" >> "$GITHUB_OUTPUT"
+          if [ "$(python tools/scorecard_carry.py verdict get --store "$SCORECARD_STORE" \
+                --name python-base64-federation --key "$key" 2>/dev/null || true)" = PASS ]; then
+            echo "fed_carried=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "fed_carried=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Set up Rust toolchain (only when something runs)
+        if: steps.plan.outputs.twins_rerun != '0' || steps.plan.outputs.fed_carried != 'true'
         uses: ./.github/actions/setup-rust-cache
-      - name: Install z3
+      - name: Install z3 (cached on the runner)
+        if: steps.plan.outputs.twins_rerun != '0' || steps.plan.outputs.fed_carried != 'true'
         shell: bash
         run: tools/ci-apt-install.sh z3
-      - name: Run examples/python-base64-federation/run.sh
-        id: run
+      - name: Run the twins with a changed dependency
+        if: steps.plan.outputs.twins_rerun != '0'
         shell: bash
-        env:
-          PYTHON_LITERAL_BASE64_VENV: ${{ runner.temp }}/python-literal-base64-venv
+        working-directory: implementations/python
         run: |
           set +e -uo pipefail
+          export SUGAR_BIN="$("$GITHUB_WORKSPACE/bin/sugarbin" --profile release)"
+          mapfile -t files < "$RUNNER_TEMP/twins-rerun.txt"
+          PYTHONPATH="$GITHUB_WORKSPACE/tools:$PYTHONPATH" python -m pytest "${files[@]}" -q \
+            -p no:cacheprovider -p no:randomly \
+            -p scorecard_carry_pytest \
+            --carry-store "$SCORECARD_STORE" --carry-label twins \
+            --carry-summary "$SCORECARD_RUNS/twins/run.json" \
+            > "$GITHUB_WORKSPACE/twins.log" 2>&1
+          echo "pytest exit $? (evidence only)"
+          grep -a 'SCORECARD CARRY' "$GITHUB_WORKSPACE/twins.log"
+      - name: Post the twins number
+        if: always()
+        shell: bash
+        run: |
+          set +e -uo pipefail
+          python3 tools/scorecard_carry.py summarize --label twins \
+            --out "$RUNNER_TEMP/twins-totals.json" \
+            --result "$RUNNER_TEMP/twins-result.json" \
+            "$SCORECARD_RUNS"/twins/*.json
+          python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" \
+            --put "twins=$RUNNER_TEMP/twins-result.json"
+      - name: Run examples/python-base64-federation/run.sh
+        id: fed
+        if: always() && steps.plan.outputs.fed_carried != 'true'
+        shell: bash
+        env:
+          FED_KEY: ${{ steps.plan.outputs.fed_key }}
+        run: |
+          set +e -uo pipefail
+          export PYTHON_LITERAL_BASE64_VENV="$SCORECARD_CACHE/python-literal-base64-venv"
           bash examples/python-base64-federation/run.sh > federation.log 2>&1
           rc=$?
           cat federation.log
@@ -360,44 +365,68 @@ jobs:
           echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
           echo "last_fail=$last_fail" >> "$GITHUB_OUTPUT"
           echo "federation rc=$rc verdict=$verdict last_fail=$last_fail"
-      - name: Upload federation log
+          if [ "$verdict" = PASS ] && [ -n "$FED_KEY" ]; then
+            python tools/scorecard_carry.py verdict put --store "$SCORECARD_STORE" \
+              --name python-base64-federation --key "$FED_KEY" --value PASS
+          fi
+      - name: Post the federation verdict
+        if: always()
+        shell: bash
+        env:
+          FED_CARRIED: ${{ steps.plan.outputs.fed_carried }}
+          FED_VERDICT: ${{ steps.fed.outputs.verdict }}
+          FED_LAST_FAIL: ${{ steps.fed.outputs.last_fail }}
+        run: |
+          set +e -uo pipefail
+          if [ "$FED_CARRIED" = true ]; then
+            python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" \
+              --set federation.verdict=PASS --set federation.carried=true
+          elif [ -n "$FED_VERDICT" ]; then
+            python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" \
+              --set "federation.verdict=$FED_VERDICT" \
+              --set "federation.last_fail=$FED_LAST_FAIL"
+          else
+            python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" \
+              --set federation.measured=false \
+              --set "federation.note=run.sh did not run"
+          fi
+      - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: main-scorecard-federation
-          path: federation.log
-          if-no-files-found: warn
+          name: main-scorecard-solver
+          path: |
+            twins.log
+            federation.log
+          if-no-files-found: ignore
+      - name: Job wall time
+        if: always()
+        shell: bash
+        run: echo "job wall $(( $(date +%s) - JOB_T0 ))s"
 
   # ----------------------------------------------------- (4) pandas board
   # The pass kit's shape (run.sh): BOARD_SEATS seats of --slice i/K, each with
-  # its own checkpoint, joined, then --aggregate-only. Each seat is its own
-  # job so the seats run in parallel with the suite, twins and federation.
-  # pandas is pinned to 3.0.3 by sugar-lift-py-tests[test] and
-  # docs/ledgers/pins/pandas-3.0.3.pin.json.
-  board-seat:
-    name: pandas board seat ${{ matrix.seat }}
-    needs: [resolve, env-prepare]
-    if: always()
+  # its own checkpoint, joined, then --aggregate-only. With --carry-store a
+  # seat measures only the files whose recorded dependencies changed and
+  # carries the other rows. pandas is pinned to 3.0.3 by
+  # sugar-lift-py-tests[test] and docs/ledgers/pins/pandas-3.0.3.pin.json.
+  board:
+    name: pandas board
     runs-on: [self-hosted, Linux, X64]
-    # BOARD_SEAT_CAP_S (180 min) plus setup.
-    timeout-minutes: 210
-    strategy:
-      fail-fast: false
-      matrix:
-        seat: [0, 1, 2, 3]
+    timeout-minutes: 240
     steps:
+      - name: Start the job clock
+        shell: bash
+        run: echo "JOB_T0=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.resolve.outputs.sha || 'main' }}
-      - name: Download shared third-party wheelhouse
-        uses: actions/download-artifact@v4
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v6
         with:
-          name: main-scorecard-wheelhouse
-          path: ${{ runner.temp }}/python-test-wheelhouse
-      - name: Install from shared wheelhouse (no network resolve)
-        uses: ./.github/actions/python-test-environment-from-wheelhouse
-        with:
-          wheelhouse-path: ${{ runner.temp }}/python-test-wheelhouse
+          python-version: "3.12.13"
+      - name: Scorecard environment (persistent venv, gh)
+        shell: bash
+        run: bash tools/main_scorecard_env.sh
       - name: Set up Rust toolchain
         uses: ./.github/actions/setup-rust-cache
       - name: Resolve authenticated pandas corpus
@@ -419,80 +448,7 @@ jobs:
           python tools/bx_corpus_pin_gate.py \
             --expected-pin docs/ledgers/pins/pandas-3.0.3.pin.json \
             --corpus-root "$PANDAS_CORPUS"
-      - name: Seat ${{ matrix.seat }}
-        shell: bash
-        working-directory: implementations/python/sugar-lift-py-tests
-        env:
-          PANDAS_CORPUS: ${{ steps.corpus.outputs.root }}
-          SEAT: ${{ matrix.seat }}
-        run: |
-          set +e -uo pipefail
-          export SUGAR_HOME="$GITHUB_WORKSPACE/.sugar"
-          OUT="$GITHUB_WORKSPACE/board"
-          mkdir -p "$OUT"
-          timeout -s KILL "$BOARD_SEAT_CAP_S" \
-            python -u scripts/control_effect_recensus.py "$PANDAS_CORPUS" \
-              --corpus-root "$PANDAS_CORPUS" \
-              --slice "$SEAT/$BOARD_SEATS" \
-              --out-dir "$OUT/s$SEAT" \
-              > "$OUT/s$SEAT.log" 2>&1
-          rc=$?
-          echo "$rc" > "$OUT/s$SEAT.rc"
-          echo "seat s$SEAT rc=$rc"
-      - name: Upload seat checkpoint
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: main-scorecard-board-seat-${{ matrix.seat }}
-          path: |
-            board/s${{ matrix.seat }}.log
-            board/s${{ matrix.seat }}.rc
-            board/s${{ matrix.seat }}/checkpoint.jsonl
-          if-no-files-found: warn
-
-  board-join:
-    name: pandas board join
-    needs: [resolve, env-prepare, board-seat]
-    if: always()
-    runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 30
-    outputs:
-      completed: ${{ steps.parse.outputs.completed }}
-      total: ${{ steps.parse.outputs.total }}
-      cpanic: ${{ steps.parse.outputs.cpanic }}
-      line: ${{ steps.parse.outputs.line }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.resolve.outputs.sha || 'main' }}
-      - name: Download shared third-party wheelhouse
-        uses: actions/download-artifact@v4
-        with:
-          name: main-scorecard-wheelhouse
-          path: ${{ runner.temp }}/python-test-wheelhouse
-      - name: Install from shared wheelhouse (no network resolve)
-        uses: ./.github/actions/python-test-environment-from-wheelhouse
-        with:
-          wheelhouse-path: ${{ runner.temp }}/python-test-wheelhouse
-      - name: Set up Rust toolchain
-        uses: ./.github/actions/setup-rust-cache
-      - name: Resolve authenticated pandas corpus
-        id: corpus
-        shell: bash
-        run: |
-          set -euo pipefail
-          root="$(
-            python -c 'from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus; print(authenticated_pandas_corpus().root)'
-          )"
-          echo "root=$root" >> "$GITHUB_OUTPUT"
-          echo "pandas corpus: $root"
-      - name: Download seat checkpoints
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          pattern: main-scorecard-board-seat-*
-          path: board/seats
-      - name: Join + aggregate
+      - name: Seats + join + aggregate
         shell: bash
         working-directory: implementations/python/sugar-lift-py-tests
         env:
@@ -501,15 +457,27 @@ jobs:
           set +e -uo pipefail
           export SUGAR_HOME="$GITHUB_WORKSPACE/.sugar"
           OUT="$GITHUB_WORKSPACE/board"
+          rm -rf "$OUT"
           mkdir -p "$OUT/join"
           K="$BOARD_SEATS"
           for i in $(seq 0 $((K - 1))); do
-            seat_dir="$OUT/seats/main-scorecard-board-seat-$i"
-            echo "seat s$i rc=$(cat "$seat_dir/s$i.rc" 2>/dev/null || echo missing)"
-            cp "$seat_dir/s$i.log" "$OUT/s$i.log" 2>/dev/null || true
-            cp "$seat_dir/s$i.rc" "$OUT/s$i.rc" 2>/dev/null || true
+            (
+              timeout -s KILL "$BOARD_SEAT_CAP_S" \
+                python -u scripts/control_effect_recensus.py "$PANDAS_CORPUS" \
+                  --corpus-root "$PANDAS_CORPUS" \
+                  --slice "$i/$K" \
+                  --out-dir "$OUT/s$i" \
+                  --carry-store "$SCORECARD_STORE" \
+                  > "$OUT/s$i.log" 2>&1
+              echo $? > "$OUT/s$i.rc"
+            ) &
           done
-          cat "$OUT"/seats/*/s*/checkpoint.jsonl > "$OUT/join/checkpoint.jsonl" 2>/dev/null
+          wait
+          for i in $(seq 0 $((K - 1))); do
+            echo "seat s$i rc=$(cat "$OUT/s$i.rc" 2>/dev/null || echo missing)"
+            grep -a 'RECENSUS CARRY' "$OUT/s$i.log" || echo "seat s$i: no RECENSUS CARRY line"
+          done
+          cat "$OUT"/s*/checkpoint.jsonl > "$OUT/join/checkpoint.jsonl" 2>/dev/null
           timeout -s KILL "$BOARD_JOIN_CAP_S" \
             python -u scripts/control_effect_recensus.py "$PANDAS_CORPUS" \
               --corpus-root "$PANDAS_CORPUS" \
@@ -518,8 +486,7 @@ jobs:
               > "$OUT/join.log" 2>&1
           echo "join rc=$?"
           grep -a 'RECENSUS DONE' "$OUT/join.log" || echo "no RECENSUS DONE line"
-      - name: Parse the board line
-        id: parse
+      - name: Post the board number
         if: always()
         shell: bash
         run: |
@@ -528,11 +495,24 @@ jobs:
           completed="$(printf '%s' "$line" | sed -n 's/.*files=\([0-9]*\)\/\([0-9]*\).*/\1/p')"
           total="$(printf '%s' "$line" | sed -n 's/.*files=\([0-9]*\)\/\([0-9]*\).*/\2/p')"
           cpanic="$(printf '%s' "$line" | sed -n 's/.*cpanic=\([0-9]*\).*/\1/p')"
-          echo "completed=$completed" >> "$GITHUB_OUTPUT"
-          echo "total=$total" >> "$GITHUB_OUTPUT"
-          echo "cpanic=$cpanic" >> "$GITHUB_OUTPUT"
-          echo "line=$(printf '%s' "$line" | cut -c1-300)" >> "$GITHUB_OUTPUT"
-          echo "board completed=$completed total=$total cpanic=$cpanic"
+          carried=0; rerun=0
+          for log in board/s*.log; do
+            [ -f "$log" ] || continue
+            c="$(grep -a 'RECENSUS CARRY' "$log" | tail -n 1 | sed -n 's/.* carried=\([0-9]*\).*/\1/p')"
+            r="$(grep -a 'RECENSUS CARRY' "$log" | tail -n 1 | sed -n 's/.* rerun=\([0-9]*\).*/\1/p')"
+            carried=$((carried + ${c:-0})); rerun=$((rerun + ${r:-0}))
+          done
+          echo "board completed=$completed total=$total cpanic=$cpanic rerun=$rerun carried=$carried"
+          if [ -n "$completed" ] && [ -n "$total" ]; then
+            python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" \
+              --set "board.completed=$completed" --set "board.total=$total" \
+              --set "board.cpanic=${cpanic:-?}" \
+              --set "board.line=$(printf '%s' "$line" | cut -c1-300)" \
+              --set "board.carry.rerun=$rerun" --set "board.carry.carried=$carried"
+          else
+            python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" \
+              --set board.measured=false --set "board.note=no RECENSUS DONE line"
+          fi
       - name: Upload board logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -543,270 +523,40 @@ jobs:
             board/*.rc
             board/join/**
           if-no-files-found: warn
+      - name: Job wall time
+        if: always()
+        shell: bash
+        run: echo "job wall $(( $(date +%s) - JOB_T0 ))s"
 
   # ------------------------------------------------------- (5) scorecard
+  # Each measuring job already posted its number. This job closes the row:
+  # a measure that never reported becomes unmeasured, and is compared.
   scorecard:
-    name: scorecard
-    needs: [resolve, suite, twins, federation, board-join]
+    name: scorecard (final row)
+    needs: [suite, suite-shard, suite-join, solver, board]
     if: always()
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
     steps:
-      - name: Download suite shard reports
-        uses: actions/download-artifact@v4
-        continue-on-error: true
+      - uses: actions/checkout@v6
         with:
-          pattern: main-scorecard-suite-shard-*
-          path: suite
-      - name: Write the summary and post the row
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12.13"
+      - name: Scorecard environment (persistent venv, gh)
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          MAIN_SHA: ${{ needs.resolve.outputs.sha }}
-          MAIN_TIME: ${{ needs.resolve.outputs.time }}
-          TWINS_PASSED: ${{ needs.twins.outputs.passed }}
-          TWINS_TOTAL: ${{ needs.twins.outputs.total }}
-          TWINS_FAILED: ${{ needs.twins.outputs.failed }}
-          FED_VERDICT: ${{ needs.federation.outputs.verdict }}
-          FED_LAST_FAIL: ${{ needs.federation.outputs.last_fail }}
-          BOARD_COMPLETED: ${{ needs.board-join.outputs.completed }}
-          BOARD_TOTAL: ${{ needs.board-join.outputs.total }}
-          BOARD_CPANIC: ${{ needs.board-join.outputs.cpanic }}
-          BOARD_LINE: ${{ needs.board-join.outputs.line }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash tools/main_scorecard_env.sh
+      - name: Final row
+        shell: bash
         run: |
           set +e -uo pipefail
-          command -v gh >/dev/null || { echo "::error::gh is not on this runner's PATH"; exit 1; }
-
-          python3 - <<'PY'
-          """Post one scorecard row and compare it with the previous row.
-
-          Comment shape (first line, then the machine-readable row):
-            OK ... | REGRESSION: <each number that dropped> | PRs <range>
-            sha=<s> prev=<p> suite=<pass>/<total> twins=<pass>/<total> federation=<PASS|FAIL> board=<done>/<total> cpanic=<n> issues=<n> prs=<#a,#b,...>
-          A value that could not be measured is written "?". The job exits 1
-          when any compared number got worse than the previous row.
-          """
-          import json
-          import os
-          import re
-          import subprocess
-          import sys
-          from pathlib import Path
-
-          env = os.environ
-          repo = env["GH_REPO"]
-          sha = env.get("MAIN_SHA") or "?"
-          when = env.get("MAIN_TIME") or "?"
-          title = env["SCORECARD_ISSUE_TITLE"]
-          run_url = env["RUN_URL"]
-
-          ROW = re.compile(
-              r"^sha=(?P<sha>\S+) prev=(?P<prev>\S+) "
-              r"suite=(?P<suite>\S+)/(?P<suite_total>\S+) "
-              r"twins=(?P<twins>\S+)/(?P<twins_total>\S+) "
-              r"federation=(?P<federation>\S+) "
-              r"board=(?P<board>\S+)/(?P<board_total>\S+) "
-              r"cpanic=(?P<cpanic>\S+) issues=(?P<issues>\S+) prs=(?P<prs>\S*)$"
-          )
-
-
-          def gh(*args):
-              """Run gh; return its stdout, or None when it fails (printed)."""
-              r = subprocess.run(["gh", *args], capture_output=True, text=True)
-              if r.returncode != 0:
-                  print(f"::warning::gh {' '.join(args[:2])} failed: {r.stderr.strip()[:300]}")
-                  return None
-              return r.stdout.strip()
-
-
-          def num(value):
-              value = (value or "").strip()
-              return value if value.isdigit() else "?"
-
-
-          # Suite: sum the shard reports that exist; name the missing shards.
-          count = int(env["SUITE_SHARD_COUNT"])
-          s_passed = s_failed = s_total = 0
-          missing = []
-          for i in range(count):
-              p = Path("suite") / f"main-scorecard-suite-shard-{i}" / "suite-report.json"
-              try:
-                  c = json.loads(p.read_text()).get("counts", {})
-              except (OSError, ValueError):
-                  missing.append(str(i))
-                  continue
-              s_passed += int(c.get("passed") or 0)
-              s_failed += (
-                  int(c.get("failed") or 0)
-                  + int(c.get("error") or 0)
-                  + int(c.get("collectionError") or 0)
-              )
-              s_total += int(c.get("collected") or 0)
-          measured = len(missing) < count
-          suite_pass = str(s_passed) if measured else "?"
-          suite_total = str(s_total) if measured else "?"
-
-          twins_pass = num(env.get("TWINS_PASSED"))
-          twins_total = num(env.get("TWINS_TOTAL"))
-          if twins_total in ("?", "0"):
-              # No junit XML: the twins job did not run to the end.
-              twins_pass = twins_total = "?"
-          fed = env.get("FED_VERDICT") or ""
-          fed = fed if fed in ("PASS", "FAIL") else "?"
-          board_done = num(env.get("BOARD_COMPLETED"))
-          board_total = num(env.get("BOARD_TOTAL"))
-          cpanic = num(env.get("BOARD_CPANIC"))
-
-          issues = num(gh("issue", "list", "--state", "open", "--limit", "10000",
-                          "--json", "number", "--jq", "length"))
-          s7757 = gh("issue", "view", "7757", "--json", "state", "--jq", ".state") or "?"
-          s7766 = gh("issue", "view", "7766", "--json", "state", "--jq", ".state") or "?"
-
-          # Tracking issue: found by exact title; created and pinned if missing.
-          issue = gh("issue", "list", "--state", "open",
-                     "--search", f'"{title}" in:title', "--json", "number,title",
-                     "--jq", f'map(select(.title == "{title}")) | .[0].number // empty')
-          if issue is None:
-              sys.exit("::error::could not list issues to find the scorecard issue")
-          if not issue:
-              url = gh("issue", "create", "--title", title, "--body",
-                       "One row per run of .github/workflows/main-scorecard.yml "
-                       "(every push to main, hourly, on demand). Each comment "
-                       "starts with OK or REGRESSION:, then one machine-readable "
-                       "line: sha= prev= suite= twins= federation= board= "
-                       "cpanic= issues= prs=.")
-              if url is None:
-                  sys.exit("::error::could not create the scorecard issue")
-              issue = url.rsplit("/", 1)[-1]
-              if gh("issue", "pin", issue) is None:
-                  print(f"::warning::could not pin issue #{issue}")
-
-          # Previous row: the newest comment on the issue that carries a
-          # machine-readable row (older free-form rows and human comments are
-          # skipped).
-          owner, name = repo.split("/", 1)
-          query = (
-              "query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r)"
-              "{issue(number:$n){comments(last:50){nodes{body}}}}}"
-          )
-          raw = gh("api", "graphql", "-f", f"query={query}",
-                   "-f", f"o={owner}", "-f", f"r={name}", "-F", f"n={issue}")
-          prev = None
-          prev_error = raw is None
-          if raw is not None:
-              nodes = json.loads(raw)["data"]["repository"]["issue"]["comments"]["nodes"]
-              for node in reversed(nodes):
-                  for line in (node.get("body") or "").splitlines():
-                      m = ROW.match(line.strip())
-                      if m:
-                          prev = m.groupdict()
-                          break
-                  if prev:
-                      break
-          prev_sha = prev["sha"] if prev else "none"
-
-          # PRs merged between the previous row's SHA and this one: the
-          # "(#NNNN)" in each commit subject of the compare range.
-          prs = []
-          prs_known = True
-          if prev and prev_sha != "?" and sha != "?" and prev_sha != sha:
-              out = gh("api", "--paginate", f"repos/{repo}/compare/{prev_sha}...{sha}",
-                       "--jq", r'.commits[].commit.message | split("\n")[0]')
-              if out is None:
-                  prs_known = False
-              else:
-                  for subject in out.splitlines():
-                      for n in re.findall(r"\(#(\d+)\)", subject):
-                          if f"#{n}" not in prs:
-                              prs.append(f"#{n}")
-          elif not prev or prev_sha == "?" or sha == "?":
-              prs_known = prev is None and not prev_error
-          prs_cell = ",".join(prs) if prs_known else "?"
-
-          # Regression alarm.
-          drops = []
-
-
-          def higher_is_better(label, cur, before):
-              if not before.isdigit():
-                  return
-              if not cur.isdigit():
-                  drops.append(f"{label} unmeasured (was {before})")
-              elif int(cur) < int(before):
-                  drops.append(f"{label} {before} -> {cur}")
-
-
-          if prev:
-              higher_is_better("suite passed", suite_pass, prev["suite"])
-              higher_is_better("twins passed", twins_pass, prev["twins"])
-              higher_is_better("board completed", board_done, prev["board"])
-              if prev["cpanic"].isdigit():
-                  if not cpanic.isdigit():
-                      drops.append(f"board cpanic unmeasured (was {prev['cpanic']})")
-                  elif int(cpanic) > int(prev["cpanic"]):
-                      drops.append(f"board cpanic {prev['cpanic']} -> {cpanic}")
-              if prev["federation"] == "PASS" and fed != "PASS":
-                  drops.append(f"federation PASS -> {fed if fed != '?' else 'unmeasured'}")
-
-          range_txt = f"PRs {prs_cell or 'none'} ({prev_sha[:9]}..{sha[:9]})"
-          if prev_error:
-              status = f"UNCOMPARED: the previous row could not be read | {range_txt}"
-          elif prev is None:
-              status = "OK first machine-readable row, nothing to compare"
-          elif drops:
-              status = "REGRESSION: " + "; ".join(drops) + f" | {range_txt}"
-          else:
-              status = f"OK all held or improved | {range_txt}"
-
-          row = (
-              f"sha={sha} prev={prev_sha} suite={suite_pass}/{suite_total} "
-              f"twins={twins_pass}/{twins_total} federation={fed} "
-              f"board={board_done}/{board_total} cpanic={cpanic} "
-              f"issues={issues} prs={prs_cell}"
-          )
-          suite_note = f" (shards missing: {','.join(missing)})" if missing else ""
-          details = (
-              f"`{sha[:9]}` {when} | suite {suite_pass}/{suite_total}{suite_note} "
-              f"failed+error {s_failed} | twins {twins_pass}/{twins_total} "
-              f"failed+error {env.get('TWINS_FAILED') or '?'} | federation {fed} | "
-              f"board {board_done}/{board_total} cpanic={cpanic} | "
-              f"open issues {issues} | [run]({run_url})"
-          )
-          body = f"{status}\n\n{row}\n\n{details}\n"
-
-          with open(env["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
-              summary.write("\n".join([
-                  "### Main scorecard",
-                  "",
-                  status,
-                  "",
-                  f"`{row}`",
-                  "",
-                  "| measure | value |",
-                  "| --- | --- |",
-                  f"| main SHA | `{sha}` |",
-                  f"| previous row SHA | `{prev_sha}` |",
-                  f"| PRs since previous row | {prs_cell or 'none'} |",
-                  f"| time | {when} |",
-                  f"| package suite passed/collected | {suite_pass}/{suite_total}{suite_note} (failed+error {s_failed}) |",
-                  f"| solver twins passed/total | {twins_pass}/{twins_total} (failed+error {env.get('TWINS_FAILED') or '?'}) |",
-                  f"| python-base64-federation | {fed} |",
-                  f"| federation last FAIL line | `{env.get('FED_LAST_FAIL') or 'none'}` |",
-                  f"| pandas board completed/total | {board_done}/{board_total} |",
-                  f"| pandas board cpanic | {cpanic} |",
-                  f"| board line | `{env.get('BOARD_LINE') or 'no RECENSUS DONE line'}` |",
-                  f"| open issues | {issues} |",
-                  f"| #7757 | {s7757} |",
-                  f"| #7766 | {s7766} |",
-                  "",
-              ]))
-
-          if gh("issue", "comment", issue, "--body", body) is None:
-              sys.exit(f"::error::could not comment on #{issue}")
-          print(f"posted to #{issue}:\n{body}")
-          if drops or prev_error:
-              print(f"::error::{status}")
-              sys.exit(1)
-          PY
+          python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" --final
+      - name: Store housekeeping (every 20th run)
+        if: always()
+        shell: bash
+        run: |
+          set +e -uo pipefail
+          if [ $(( GITHUB_RUN_NUMBER % 20 )) -ne 0 ]; then echo "housekeeping skipped"; exit 0; fi
+          python tools/scorecard_carry.py gc --store "$SCORECARD_STORE"
+          find "$SCORECARD_CACHE/runs" -mindepth 1 -maxdepth 1 -type d -mtime +2 -exec rm -rf {} +
