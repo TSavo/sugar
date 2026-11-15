@@ -245,8 +245,12 @@ def test_source_file_constructs_and_seals_inside_one_reporter_event(
     construction_values = [
         value for kind, value in reporter.events if kind == "construction"
     ]
-    assert len(construction_values) == 1
-    assert construction_values[0] is receipt
+    # The open constructs each provider member's value through the one door
+    # (``Node.sugar``), which presents the constructed sugar as every
+    # construction does; the receipt seals the event once, after them.
+    assert construction_values[-1] is receipt
+    assert sum(value is receipt for value in construction_values) == 1
+    assert len(construction_values) == 1 + len(receipt.provider_member_rows)
 
 
 def test_independent_sourcefile_construction_door_evidence_closes_owner_privacy_and_zero_work(

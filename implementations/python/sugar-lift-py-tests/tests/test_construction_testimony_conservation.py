@@ -59,10 +59,19 @@ def _module(src):
 
 
 def _testimony_tree(src):
-    """One module materialized under a testimony reporter over a collector."""
+    """One module materialized under a testimony reporter over a collector.
+
+    The file is opened under a roll of its own.  The open constructs what it
+    reads -- a module-level constant's sugar (``Backend.materialize_module``)
+    -- under a reporter that builds no testimony, and that roll hears it
+    present.  ``collector`` hears the testimony roll alone, so a present
+    answer in it is one the testimony reporter let through.
+    """
     path = _module(src)
+    sf = _open_at_seat(
+        Path(path), root=Path(path).parent, reporter=CollectingReporter()
+    )
     collector = CollectingReporter()
-    sf = _open_at_seat(Path(path), root=Path(path).parent, reporter=collector)
     reporter = ConstructionTestimonyReporterV1(
         collector, SubstitutionTraceBuilderV1(_SCOPE_CID)
     )
@@ -142,6 +151,23 @@ def test_supported_node_valued_construction_still_canonicalizes():
     testimony = reporter.testimony_for(node)
     assert testimony is not None
     assert testimony.cid.startswith("blake3-512:")
+
+
+def test_a_module_constants_testimony_reaches_a_reporter_that_asks_later():
+    # The open constructs a module-level constant's sugar under its own roll
+    # (``Backend.materialize_module``), through the one door.  A testimony
+    # reporter that asks afterwards is served that row and hears the whole of
+    # its testimony: the constructed value is presented to it, so the
+    # coordinate carries testimony, never a present answer with none.
+    root, reporter, collector = _testimony_tree("x = 1\n")
+    node = _first(root, "Constant")
+    assert reporter.testimony_for(node) is None
+    node.sugar()
+    testimony = reporter.testimony_for(node)
+    assert testimony is not None
+    assert testimony.cid.startswith("blake3-512:")
+    assert [n for n in collector.present if n.ref is node.ref] != []
+    assert collector.gaps == []
 
 
 def test_gap_is_recorded_once_and_the_node_registers_once():
