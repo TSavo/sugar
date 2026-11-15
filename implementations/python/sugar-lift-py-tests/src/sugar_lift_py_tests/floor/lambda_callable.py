@@ -435,6 +435,34 @@ def definition_edge_call(
     owner_name = str(site)
     parameters = tuple(parameters)
     actuals = tuple(actuals)
+    positional = tuple(positional)
+    keywords = tuple(keywords)
+    # What the callee may change, read once off its body (the alias rule's
+    # one question of a callee, ``nodes._names_a_call_may_change``), and
+    # the formal each operand binds.
+    changed = _names_the_callee_may_change(symbol_definition, signature)
+    operands = (
+        tuple(zip(parameters, actuals))
+        if packed
+        else (
+            *((f"arg:{index}", value) for index, value in enumerate(positional)),
+            *((f"kw:{name}", value) for name, value in keywords),
+        )
+    )
+    operand_formals = (
+        tuple(name for name, _value in operands)
+        if packed
+        else (
+            *(
+                parameters[index] if index < len(parameters) else None
+                for index in range(len(positional))
+            ),
+            *(name if name in parameters else None for name, _value in keywords),
+        )
+    )
+    operand_changes = tuple(
+        _actual_changes(changed, formal) for formal in operand_formals
+    )
     if packed:
         # A formal ``*args`` / ``**kwargs`` is the packed value the call
         # binds, never one positional actual: every formal by name, each
@@ -503,10 +531,16 @@ def definition_edge_call(
     if signature is not None:
         module_site = current_module_execution_site()
         globals_read = tuple(
-            value
-            for value in (
-                global_read_at_call(
-                    signature, item.coordinate.name, caller_ctx, module_site=module_site
+            (name, value)
+            for name, value in (
+                (
+                    item.coordinate.name,
+                    global_read_at_call(
+                        signature,
+                        item.coordinate.name,
+                        caller_ctx,
+                        module_site=module_site,
+                    ),
                 )
                 for item in _global_inputs(signature)
             )
@@ -534,24 +568,38 @@ def definition_edge_call(
     # A call that binds one object to two of them -- or one and a container
     # holding it (``f(xs, xs)``, ``f(xs, [xs])``), or a formal and a module
     # global or captured cell the callee reads (``g(G)`` where ``g`` reads
-    # ``G``) -- is not that contract's call: a store through one would leave
-    # the other's entry value standing at prove, a lie.  It is the call no
-    # contract answers, owed and joined to nothing, the alias rule's own test
+    # ``G``) -- where the callee may change that object through one of the
+    # two (``_names_the_callee_may_change``) is not that contract's call: a
+    # store through one would leave the other's entry value standing at
+    # prove, a lie.  It is the call no contract answers, owed and joined to
+    # nothing, the alias rule's own test
     # (``object_identity.actuals_share_an_object``).  Joining the contract
     # with the shared actual standing as an opaque identity is no answer: the
     # post still relates one formal's state after a store to the other's at
     # entry, as two objects (``diff(a, b): a.append(1); return len(a) -
     # len(b)`` states ``len(T) + 1 - len(T) == 1`` for one ``T``, where
-    # Python returns 0).
+    # Python returns 0).  One object the callee changes through neither
+    # (``mul(n, n)``) is one value read twice, which the contract over two
+    # formals states truly: the call is the contract's.
     from .object_identity import actuals_share_an_object
 
     if symbol is not None and actuals_share_an_object(
         (
-            *positional,
-            *(value for _name, value in keywords),
+            *(value for _label, value in operands),
             *(value for _name, _cid, value in captured),
-            *globals_read,
-        )
+            *(value for _name, value in globals_read),
+        ),
+        (
+            *operand_changes,
+            *(
+                _actual_changes(changed, name, unseen_code_reaches=True)
+                for name, _cid, _value in captured
+            ),
+            *(
+                _actual_changes(changed, name, unseen_code_reaches=True)
+                for name, _value in globals_read
+            ),
+        ),
     ):
         symbol = None
     target = (
@@ -586,6 +634,33 @@ def definition_edge_call(
         **testimony,
     )
     return UnknownCalleeCallV1(target).faces(callsite, site)
+
+
+def _names_the_callee_may_change(symbol_definition, signature):
+    """What a call of ``symbol_definition`` may change, read off its body
+    (``nodes._names_a_call_may_change``: ``(names, runs_unseen_code)``),
+    where the contract's formals are the signature's own (a function or a
+    method, as ``_after_labels`` reads them); ``EVERY_NAME`` (None) for
+    anything else (a class, whose constructor's formals are not its
+    parameters by position): every operand may be changed."""
+    from sugar_source_tree.nodes import EVERY_NAME, _names_a_call_may_change
+
+    if signature is None or signature is not symbol_definition:
+        return EVERY_NAME
+    return _names_a_call_may_change(symbol_definition)
+
+
+def _actual_changes(changed, name, *, unseen_code_reaches=False) -> bool:
+    """Whether the callee (``changed``, ``_names_the_callee_may_change``)
+    may change the object the formal or input ``name`` binds, or rebind it.
+    ``name`` None (an operand bound to no formal by name) and an unread
+    callee: it may.  ``unseen_code_reaches``: ``name`` is a captured cell or
+    a module global, which code the body runs and this frame does not see
+    may change (``runs_unseen_code``)."""
+    if changed is None or name is None:
+        return True
+    names, runs_unseen_code = changed
+    return name in names or (unseen_code_reaches and runs_unseen_code)
 
 
 def _after_labels(

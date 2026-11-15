@@ -809,7 +809,10 @@ def dispatch_edge_call(
     is the call no contract answers, owed and joined to nothing (no symbol),
     by the alias rule's own test (``object_identity.
     actuals_share_an_object``), the one a same-file definition's edge asks
-    (``lambda_callable.definition_edge_call``)."""
+    (``lambda_callable.definition_edge_call``).  It is asked of every pair
+    here (no ``changes``): which function runs is decided at prove, on the
+    class a caller binds, so no body is read here for what the call may
+    change (``nodes._names_a_call_may_change``)."""
     from sugar_lift_py_tests.call_symbol import call_symbol
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.floor.object_identity import actuals_share_an_object

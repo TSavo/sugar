@@ -65,6 +65,85 @@ def test_a_call_joined_at_prove_asks_the_alias_rule_s_own_test():
     assert not actuals_share_an_object((xs,))
 
 
+def test_a_shared_object_the_callee_changes_through_neither_formal_is_no_alias():
+    """The test asks only of a pair the callee may change one of
+    (``changes``): one object read twice is one value."""
+    from sugar_lift_py_tests.floor.object_identity import actuals_share_an_object
+
+    xs = ListValue((TermValue(1),), allocation="xs-site")
+    assert not actuals_share_an_object((xs, xs), (False, False))
+    assert actuals_share_an_object((xs, xs), (True, False))
+    assert actuals_share_an_object((xs, xs), (False, True))
+    assert not actuals_share_an_object((xs, TupleValue((xs,))), (False, False))
+    assert actuals_share_an_object((xs, TupleValue((xs,))), (False, True))
+
+
+def _definition(source: str, name: str):
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_source_tree.nodes import FunctionDef
+    from sugar_source_tree.tree import SourceFile
+
+    tree = SourceFile(
+        (source, "test_witness.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
+    (function,) = tuple(
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name == name
+    )
+    return function
+
+
+def test_what_a_call_may_change_is_read_off_the_callee_s_body():
+    """``nodes._names_a_call_may_change``: a name the body changes, hands to
+    code, aliases or rebinds; never one it only reads as an operand, a test,
+    an index or a returned value."""
+    from sugar_source_tree.nodes import _names_a_call_may_change
+
+    names, unseen = _names_a_call_may_change(
+        _definition("def mul(a, b):\n    return a * b\n", "mul")
+    )
+    assert "a" not in names and "b" not in names and not unseen
+    names, unseen = _names_a_call_may_change(
+        _definition(
+            "def pick(a, b, i):\n"
+            "    if a[i] > b.n and not b:\n"
+            "        return a[i:]\n"
+            "    return b\n",
+            "pick",
+        )
+    )
+    assert not names & {"a", "b", "i"} and not unseen
+    names, unseen = _names_a_call_may_change(
+        _definition("def grow(a, b):\n    a.append(1)\n    return len(b)\n", "grow")
+    )
+    assert {"a", "b"} <= names and unseen
+    names, unseen = _names_a_call_may_change(
+        _definition("def f(a, b):\n    c = a\n    return b[0]\n", "f")
+    )
+    assert "a" in names and "b" not in names
+    names, unseen = _names_a_call_may_change(
+        _definition("def f(a, b):\n    a[0] = 1\n    return b[0]\n", "f")
+    )
+    assert "a" in names and "b" not in names and unseen
+    names, unseen = _names_a_call_may_change(
+        _definition("def f(a, b):\n    a += b\n    return a\n", "f")
+    )
+    assert {"a", "b"} <= names
+    names, _unseen = _names_a_call_may_change(
+        _definition("def f(a):\n    global G\n    G = 1\n    return a\n", "f")
+    )
+    assert "G" in names and "a" not in names
+    assert (
+        _names_a_call_may_change(_definition("def f(a, b):\n    yield a\n", "f"))
+        is None
+    )
+
+
 def test_a_formal_binding_states_its_kind_by_its_type():
     from sugar_lift_py_tests.temporal.temporal_binding import (
         FormalActualBinding,
@@ -137,6 +216,67 @@ def test_a_post_relating_two_formals_is_never_applied_to_one_object(
     _never_lies(
         tmp_path, "related", _TWO_FORMALS_RELATED_AFTER_A_STORE, true="0", false="1"
     )
+
+
+_LIST_HANDED_TO_A_CALL_THROUGH_ONE_FORMAL = """\
+def helper(c):
+    c.append(1)
+
+
+def grow(a, b):
+    helper(a)
+    return len(b)
+
+
+def test_grow():
+    xs = []
+    n = grow(xs, xs)
+    assert n == {claim}
+"""
+
+
+def test_an_append_a_formal_is_handed_to_is_seen_through_the_other(tmp_path: Path):
+    """``grow(xs, xs)`` where ``grow`` hands ``a`` to a call that appends:
+    the callee changes the object through ``a`` (``_names_a_call_may_change``),
+    so ``len(b)`` is never the 0 the contents before the call would say."""
+    _never_lies(
+        tmp_path,
+        "handed",
+        _LIST_HANDED_TO_A_CALL_THROUGH_ONE_FORMAL,
+        true="1",
+        false="0",
+    )
+
+
+_ONE_VALUE_READ_TWICE = """\
+def mul(a, b):
+    return a * b
+
+
+def square(n):
+    return mul(n, n)
+
+
+def test_square():
+    assert square(3) == {claim}
+"""
+
+
+def test_one_value_bound_to_two_formals_the_callee_never_changes_is_decided(
+    tmp_path: Path,
+):
+    """``mul(n, n)`` in ``square``'s own proof binds one parameter to both
+    formals, and ``mul`` changes neither: the call is ``mul``'s contract's,
+    so ``square(3) == 9`` is decided both ways."""
+    t = run_source_through_real_solver(
+        tmp_path / "square-true", _ONE_VALUE_READ_TWICE.format(claim="9")
+    )
+    f = run_source_through_real_solver(
+        tmp_path / "square-false", _ONE_VALUE_READ_TWICE.format(claim="4")
+    )
+    print(json.dumps({"true": t.verdict, "false": f.verdict}, sort_keys=True))
+    assert t.verdict == "sat"
+    assert f.verdict == "unsat"
 
 
 _FIELD_THROUGH_ONE_FORMAL = """\
