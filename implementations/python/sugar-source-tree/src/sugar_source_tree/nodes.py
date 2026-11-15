@@ -15483,16 +15483,31 @@ class Assign(Statement):
         store leaf sits under a nested level (neither display unpack takes
         it), none: the statement refuses by name and nothing answers with
         it."""
-        if len(self.targets) != 1:
+        walk = self._unpack_walk()
+        if walk is None:
             return ()
-        displays: list = []
+        return tuple(item for kind, item in walk if kind == "display")
+
+    def _unpack_walk(self) -> "Optional[tuple]":
+        """The display unpack of a one-target ``Tuple``/``List`` statement,
+        in the order Python evaluates it: ``("display", value)`` where a
+        level consumes a display (before any of its members), ``("name",
+        name)`` for each Name leaf and ``("store", leaf)`` for each
+        Attribute/Subscript leaf, left to right, a starred leaf in its
+        place.  None where a level does not pair with a display, or a store
+        leaf sits under a nested level (``_unpacked_displays``)."""
+        if len(self.targets) != 1 or not isinstance(self.targets[0], (Tuple_, List)):
+            return None
+        events: list = []
 
         def visit(target, value, depth: int) -> bool:
             if isinstance(target, Starred):
                 target = target.value
             if isinstance(target, Name):
+                events.append(("name", target.id))
                 return True
             if isinstance(target, (Attribute, Subscript)):
+                events.append(("store", target))
                 return depth == 1
             if not isinstance(target, (Tuple_, List)) or not isinstance(
                 value, (Tuple_, List)
@@ -15514,21 +15529,48 @@ class Assign(Statement):
                 tail = len(target.elts) - star - 1
                 if len(value.elts) < len(target.elts) - 1:
                     return False
-                pairs = list(zip(target.elts[:star], value.elts[:star]))
-                if tail:
-                    pairs.extend(zip(target.elts[-tail:], value.elts[-tail:]))
-                if not visit(target.elts[star], None, depth + 1):
-                    return False
-            displays.append(value)
+                # The starred leaf collects its members into a fresh list
+                # (``_make_unpack_rest_list``): never a display unpacked.
+                pairs = [
+                    *zip(target.elts[:star], value.elts[:star]),
+                    (target.elts[star], None),
+                    *(zip(target.elts[-tail:], value.elts[-tail:]) if tail else ()),
+                ]
+            events.append(("display", value))
             return all(
                 visit(element, member, depth + 1) for element, member in pairs
             )
 
-        if not isinstance(self.targets[0], (Tuple_, List)):
-            return ()
         if not visit(self.targets[0], self.value, 0):
-            return ()
-        return tuple(displays)
+            return None
+        return tuple(events)
+
+    def _unpacked_in_order(self, values) -> tuple:
+        """``(name, value sugar)`` for each Name a display unpack binds
+        (``values``, the bindings ``_destructured_binding`` read), in the
+        order Python evaluates them, each display level's carried
+        evaluations (``ListComp._evaluated_first_sugars``: a comprehension
+        the unroll dissolved into it evaluates its iterable before any
+        member) in its place as ``(None, sugar)`` -- evaluated there, bound
+        to no name (``MultiAssignSugar``).  A name repeated keeps its first
+        place and the value ``values`` gives it, as the bindings do."""
+        walk = self._unpack_walk()
+        if walk is None:
+            return tuple((name, value.sugar()) for name, value in values.items())
+        entries: list = []
+        seen: set = set()
+        for kind, item in walk:
+            if kind == "display":
+                entries.extend(
+                    (None, sugar) for sugar in ListComp._evaluated_first_sugars(item)
+                )
+            elif kind == "name" and item in values and item not in seen:
+                seen.add(item)
+                entries.append((item, values[item].sugar()))
+        entries.extend(
+            (name, value.sugar()) for name, value in values.items() if name not in seen
+        )
+        return tuple(entries)
 
     def substitute(self, scope):
         """Substitute the RHS, and load-side store target coordinates.
@@ -16725,9 +16767,7 @@ class Assign(Statement):
                 from sugar_lift_py_tests.sugar.assign_sugar import MultiAssignSugar
 
                 return MultiAssignSugar(
-                    bindings=tuple(
-                        (name, val.sugar()) for name, val in bindings.items()
-                    ),
+                    bindings=self._unpacked_in_order(bindings),
                     site=self.fragment,
                     evaluations=self.target_evaluations(),
                 )
@@ -16743,7 +16783,13 @@ class Assign(Statement):
                 )
 
                 evaluation = self._store_value_evaluation()
-                name_bindings = []
+                # A flat unpack consumes one display: what a comprehension the
+                # unroll dissolved into it carries is evaluated before every
+                # member, bound to no name (``UnpackStoreAssignSugar``).
+                name_bindings = [
+                    (None, sugar)
+                    for sugar in ListComp._evaluated_first_sugars(self.value)
+                ]
                 members = []
                 for leaf, val in store_pairs:
                     if isinstance(leaf, Name):
