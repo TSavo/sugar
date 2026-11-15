@@ -24,7 +24,10 @@ from sugar_lift_py_tests.floor.object_identity import (
     contents_current,
 )
 from sugar_lift_py_tests.floor.tuple_value import TupleValue
-from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
+from sugar_lift_py_tests.witness_harness import (
+    claim_verdict,
+    run_source_through_real_solver,
+)
 
 
 def test_one_object_bound_to_two_formals_is_bound_with_its_state_unknown():
@@ -267,7 +270,13 @@ def test_one_value_bound_to_two_formals_the_callee_never_changes_is_decided(
 ):
     """``mul(n, n)`` in ``square``'s own proof binds one parameter to both
     formals, and ``mul`` changes neither: the call is ``mul``'s contract's,
-    so ``square(3) == 9`` is decided both ways."""
+    so ``square(3) == 9`` is decided both ways.
+
+    ``mul``'s own row still owes its ``a * b``: with no caller in its own
+    proof, nothing binds ``a`` and ``b``, so the whole source reads ``open``
+    however ``test_square`` is decided.  The truthful half reads the test
+    function's claims (``claim_verdict``), as every twin whose helper owes
+    over its formals does."""
     t = run_source_through_real_solver(
         tmp_path / "square-true", _ONE_VALUE_READ_TWICE.format(claim="9")
     )
@@ -275,7 +284,9 @@ def test_one_value_bound_to_two_formals_the_callee_never_changes_is_decided(
         tmp_path / "square-false", _ONE_VALUE_READ_TWICE.format(claim="4")
     )
     print(json.dumps({"true": t.verdict, "false": f.verdict}, sort_keys=True))
-    assert t.verdict == "sat"
+    test_line = _ONE_VALUE_READ_TWICE.splitlines().index("def test_square():") + 1
+    assert t.verdict != "unsat"
+    assert claim_verdict(t.prove_doc, claims_from_line=test_line) == "sat"
     assert f.verdict == "unsat"
 
 
