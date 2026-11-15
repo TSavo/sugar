@@ -179,12 +179,21 @@ def dispatch_on_receiver(name, receiver, positional, kw_values, site, *, unit):
       Only for a method name this module never spells as anything but a
       callee (``module_attribute_names``): a field of that name stored on
       the formal in the frame would shadow the method unseen;
+    - ``receiver`` is the instance an ``__init__``'s own contract runs on
+      (``self``: an ``ObjectValue`` that arrived through the initializer's
+      receiver coordinate, ``initializer_receiver_formals``) and the class
+      of that parameter is an input of the ``__init__``'s contract: its
+      class is ``class:<param>``, bound by the caller -- ``super().
+      __init__()`` from a subclass supplies the subclass -- under the same
+      method-name guard as a formal;
     - ``receiver`` is a same-file class's call result whose construction runs
       no source code (``class_value``): its class is decided, and prove
       resolves the method on it as on any other.
 
-    ``unit`` is the module the call stands in; without it nothing is
-    dispatched."""
+    An instance a construction in this frame made is dispatched where the
+    one attribute lookup selected a method (``ObjectValue.call_member``,
+    over its class), never here.  ``unit`` is the module the call stands
+    in; without it nothing is dispatched."""
     if unit is None or site is None:
         return None
     receiver_class = _receiver_class(name, receiver, unit)
@@ -200,12 +209,25 @@ _PARAMETER_KINDS = ("positional-only", "positional-or-keyword", "keyword-only")
 
 def _receiver_class(name, receiver, unit):
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.object_value import ObjectValue
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
     from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
     from sugar_lift_py_tests.ir import make_var
 
     if isinstance(receiver, CallSiteValue):
         return class_value(receiver)
+    if isinstance(receiver, ObjectValue):
+        if receiver.allocation is not None or receiver.arrival is None:
+            return None
+        formal = initializer_receiver_formals(unit).get(receiver.arrival)
+        if formal is None:
+            return None
+        names, dynamic = module_attribute_names(unit)
+        if dynamic or name in names:
+            return None
+        from sugar_lift_py_tests.contract_input import CLASS_INPUT, input_formal
+
+        return make_var(input_formal(CLASS_INPUT, formal))
     coordinate = getattr(receiver, "formal_coordinate", None)
     if (
         type(receiver) is SymbolicValue
@@ -266,6 +288,59 @@ def class_input_formals(unit) -> frozenset:
         _CLASS_INPUT_FORMALS.clear()
     _CLASS_INPUT_FORMALS[id(module)] = (module, answer)
     return answer
+
+
+# Module -> (module, {receiver coordinate CID: formal}), the last few read.
+_INITIALIZER_RECEIVERS: dict = {}
+
+
+def initializer_receiver_formals(unit) -> dict:
+    """``{receiver coordinate CID: parameter name}`` for each ``__init__`` a
+    class statement of the module ``unit`` holds writes
+    (``SourceUnit.lexical_class_owner_for``) whose receiver parameter's
+    class is an input of its contract (``nodes._receiver_class_parameters``).
+
+    An ``__init__``'s own contract runs on the instance its class's
+    constructor makes, seated at that receiver coordinate
+    (``FunctionDef._constructed_receiver_coordinate``, the coordinate the
+    class's constructor frame mints) and arrived by binding through it
+    (``ClassConstructorBodySugar._made``: no class call of the reading frame
+    made it).  A method call on that instance is a method call on the
+    parameter: its class is the ``class:<param>`` input, never the class
+    whose body wrote the ``__init__`` (a subclass's ``super().__init__()``
+    runs it on an instance of the subclass).  Read once per typed module."""
+    from sugar_source_tree.nodes import FunctionDef, _receiver_class_parameters
+
+    module = getattr(unit, "typed_module", None)
+    if module is None:
+        return {}
+    held = _INITIALIZER_RECEIVERS.get(id(module))
+    if held is not None and held[0] is module:
+        return held[1]
+    found = {}
+    for statement in module.body:
+        for node in statement.walk():
+            if (
+                not isinstance(node, FunctionDef)
+                or node.name != "__init__"
+                or not node.params
+            ):
+                continue
+            receiver = node.params[0]
+            if receiver.name not in _receiver_class_parameters(node):
+                continue
+            # The coordinate is minted from the class statement and the
+            # parameter alone; an ``__init__`` the class does not run seats
+            # no instance there, so its entry is never read.
+            owner = node.unit.lexical_class_owner_for(node)
+            if owner is None:
+                continue
+            coordinate = node._constructed_receiver_coordinate(owner, receiver)
+            found[coordinate.cid] = receiver.name
+    if len(_INITIALIZER_RECEIVERS) >= 8:
+        _INITIALIZER_RECEIVERS.clear()
+    _INITIALIZER_RECEIVERS[id(module)] = (module, found)
+    return found
 
 
 def dispatch_edge_call(name, receiver, receiver_class, positional, kw_values, site):

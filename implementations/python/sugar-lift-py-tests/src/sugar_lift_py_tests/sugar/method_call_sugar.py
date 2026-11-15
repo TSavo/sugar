@@ -255,8 +255,11 @@ def dispatch_method_call(
     contents are the object's contents at this call
     (``object_identity.contents_current``), with ground arguments, calling a
     method that does not change it, is decided by the cited fold alone
-    (``container_method_cited_fold``, #7757).  A source-class instance is
-    ``o.m`` read through the one attribute lookup, then that value called
+    (``container_method_cited_fold``, #7757).  The receiver of an
+    ``__init__``'s own contract whose class is an input of that contract is
+    the dispatched edge over the input (``receiver_dispatch.
+    dispatch_on_receiver``, #7757 step 8).  Any other source-class instance
+    is ``o.m`` read through the one attribute lookup, then that value called
     (``_source_instance_method_call``).  Otherwise a floor of the
     receiver answers first (a closed builtin method).  When none does and the receiver or an operand is a
     formal, the caller's actual selects the method: the call defers through
@@ -291,6 +294,19 @@ def dispatch_method_call(
     from sugar_lift_py_tests.floor.object_value import ObjectValue
 
     if isinstance(receiver, ObjectValue):
+        if exception_type_coordinate is None:
+            # ``self`` in an ``__init__``'s own contract whose class is an
+            # input of that contract: the dispatched edge over the input,
+            # bound at prove by the caller (``super().__init__()``, a class's
+            # constructor), never looked up on the initializer's own class
+            # (#7757 step 8).
+            from sugar_lift_py_tests.receiver_dispatch import dispatch_on_receiver
+
+            dispatched = dispatch_on_receiver(
+                name, receiver, positional, kw_values, site, unit=unit
+            )
+            if dispatched is not None:
+                return dispatched
         return _source_instance_method_call(
             name,
             receiver,
