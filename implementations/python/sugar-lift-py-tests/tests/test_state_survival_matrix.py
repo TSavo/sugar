@@ -366,30 +366,6 @@ _SOURCE_TRY_SETITEM = (
 )
 
 
-def _returned(value, *, owner: str):
-    """What an applied source call returns: the call's sole authenticated
-    return (``CallSiteValue.project_operation_receiver``), never a block
-    walked for a ``ReturnValue`` -- the call is applied where it stands and
-    its completed face is the value it returned.
-
-    The completed value carries what the callee's frame left of each object
-    it shares with the caller as writes riding it (``caller_visible_values``);
-    the value returned is what they present."""
-    _carried, value = peel_walrus_binds(value)
-    if isinstance(value, CallSiteValue):
-        return value.project_operation_receiver(None, owner=owner)
-    return value
-
-
-def _actual_after(value, name: str):
-    """The elements of the caller's list actual ``name`` as the callee left
-    it: the write riding the call's completed value."""
-    carried, _value = peel_walrus_binds(value)
-    (state,) = [bind.assigned_value for bind in carried if bind.name == name]
-    assert isinstance(state, ListValue), state
-    return state.elements
-
-
 def test_r2_source_try_helper_alone_still_defers_as_setitem_carrier() -> None:
     """#6685: helper desugar remains one undischarged setitem carrier (correct)."""
     tree = _tree(_SOURCE_TRY_SETITEM, "r2_try_helper.py")
@@ -400,32 +376,27 @@ def test_r2_source_try_helper_alone_still_defers_as_setitem_carrier() -> None:
     assert pending.pre_effect_state is not None
 
 
-def test_r2_source_try_indexerror_routes_to_handler_on_authenticated_call() -> None:
-    """#6685 FLIP: source call discharges through Try; IndexError → handler return 1."""
-    tree = _tree(_SOURCE_TRY_SETITEM + "\nhelper([0], 4, 9)\n", "r2_try_halt.py")
+@pytest.mark.parametrize("index", (4, 0))
+def test_r2_a_source_call_is_its_coordinate_never_the_helper_s_body(
+    index: int,
+) -> None:
+    """#7757 step 5: ``helper([0], i, 9)`` is the call's coordinate, joined at
+    prove as an imported call is; the helper's body (its ``try`` routing the
+    store's ``IndexError`` to ``return 1``) is never applied at the call.
+    Before step 5 the out-of-range call was decided here as ``1`` and the
+    in-range one as ``0`` with the list changed: both read off the body.  It
+    is the one unanswered call: it completes under its ``completes`` atom and
+    halts under the complement."""
+    source = _SOURCE_TRY_SETITEM + f"\nhelper([0], {index}, 9)\n"
+    tree = _tree(source, f"r2_try_{index}.py")
     call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
     outcome = call.sugar().desugar(None)
     assert isinstance(outcome, ExitSet)
-    assert len(outcome.exits) == 1
-    face = outcome.exits[0]
-    assert isinstance(face, Completed)
-    assert _returned(face.value, owner="r2-try-handler") == TermValue(1)
-    # The store raised before it changed the list.
-    assert _actual_after(face.value, "actual:0") == (TermValue(0),)
-
-
-def test_r2_source_try_success_bypasses_handler() -> None:
-    """#6685 FLIP: in-range store completes through try → return 0."""
-    tree = _tree(_SOURCE_TRY_SETITEM + "\nhelper([0], 0, 9)\n", "r2_try_ok.py")
-    call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
-    outcome = call.sugar().desugar(None)
-    assert isinstance(outcome, ExitSet)
-    assert len(outcome.exits) == 1
-    face = outcome.exits[0]
-    assert isinstance(face, Completed)
-    assert _returned(face.value, owner="r2-try-success") == TermValue(0)
-    # The in-range store changed the caller's list.
-    assert _actual_after(face.value, "actual:0") == (TermValue(9),)
+    assert sum(isinstance(face, Completed) for face in outcome.exits) == 1
+    assert sum(isinstance(face, Halted) for face in outcome.exits) == 1
+    (face,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    _carried, value = peel_walrus_binds(face.value)
+    assert not (isinstance(value, CallSiteValue) and value.body is not None)
 
 
 # ===========================================================================

@@ -25864,11 +25864,9 @@ class Call(Expression):
         (``_closure_cells``, under the coordinates the frame reads them
         through: ``FunctionDef._captured_bindings``), binds each default from
         the key the ``def`` statement bound it under (``DefaultValueSugar``),
-        raises where the body raises (``CallSiteValue.producer_outcome``),
-        carries what the body did to the caller's objects back through the
-        one projection (``caller_visible_values``), and stamps this call's
-        occurrence on the call it binds.  Following a same-file callee's body
-        is how the reduction decides this call (step 6).
+        and stands as the call's coordinate and edge, joined at prove as an
+        imported call is (``LambdaCallable._edge_call``, #7757 step 5): no
+        body is followed at the call.
 
         A call by name whose ``def`` is at its recursion seat (its frame is
         under construction up the stack) or has no frame is not answered

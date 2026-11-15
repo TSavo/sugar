@@ -1,26 +1,24 @@
-"""A call through a function's value applies it as a call by name does (#7757).
+"""A call through a function's value is its coordinate and edge (#7757 step 5).
 
 A local plain ``def`` binds its name to the function its statement built
-(``nodes._binds_function_value``), and ``h = g; h()`` calls that value.  The
-value's one application (``LambdaCallable.callable_application_with``) does
-what a call by name of the ``def`` did:
+(``nodes._binds_function_value``), and ``h = g; h()`` calls that value.  A
+call of it, by name or through the value, is the call's coordinate with an
+edge carrying the callee's join symbol, joined at prove exactly as an
+imported call is (``LambdaCallable._edge_call``):
 
-- it reads each closure cell where the call stands (``Call._closure_cells``,
-  ``CallableApplication.captured``): Python reads the cell when the body
-  runs, so ``y = 2`` before ``h()`` is what ``g`` returns;
-- what the body does to an object the caller sees reaches the caller through
-  the one projection (``container_mutation.source_helper_actual_states``,
-  ``call_site_value.caller_visible_values``): a ``nonlocal`` rebinding and an
-  append are read after the call.
+- the call reads each closure cell where the call stands
+  (``Call._closure_cells``, ``CallableApplication.captured``) and supplies it
+  as ``py.closure``: Python reads the cell when the body runs, so ``y = 2``
+  before ``h()`` is what ``g`` returns, decided by the join;
+- a parameter the call omits is supplied as ``py.default``, the value the
+  ``def`` statement bound.
 
-Before, the value's application carried no cell (refused by name) and the
-caller's threading followed only a call spelled by name (the cell was
-unknown after the call): neither half was decided.
-
-A call by name of a plain ``def`` is that same application
-(``Call._function_value_call``): no call seats a ``def``'s frame by its name
-any more.  The direct twins below (a local ``def`` reading a cell, a module
-``def`` binding its default, a ``*`` call) are decided through it.
+What the body does to an object the caller sees (a ``nonlocal`` rebinding,
+an append) is no longer read off the callee's body: the call takes the one
+exposure rule every unanswered call takes, so the caller's cell is unknown
+after the call.  The callee's contract does not yet state its effects on
+what it shares with its caller (step 7), so those twins are ``open`` in both
+halves, never ``sat`` for the lie (decided before step 5, marked below).
 """
 
 from __future__ import annotations
@@ -114,28 +112,31 @@ def test_spread():
 
 _TWINS = {
     "cell-read-at-the-call": (_CELL_READ_AT_THE_CALL, "2", "1"),
-    "nonlocal-rebound": (_NONLOCAL_REBOUND_THROUGH_THE_VALUE, "1", "0"),
-    "append-carried": (_APPEND_THROUGH_THE_VALUE, "1", "0"),
     "direct-cell-read-at-the-call": (_DIRECT_CELL_READ_AT_THE_CALL, "2", "1"),
-    "direct-nonlocal-rebound": (_DIRECT_NONLOCAL_REBOUND, "1", "0"),
     "module-def-default": (_MODULE_DEF_DEFAULT, "3", "4"),
     "module-def-spread": (_MODULE_DEF_SPREAD, "3", "4"),
 }
 
+# Decided before step 5 by following the callee's body; ``open`` in both
+# halves until the callee's contract states its effects on what it shares
+# with its caller (step 7).
+_OPEN_UNTIL_STEP_7 = {
+    "nonlocal-rebound": (_NONLOCAL_REBOUND_THROUGH_THE_VALUE, "1", "0"),
+    "append-carried": (_APPEND_THROUGH_THE_VALUE, "1", "0"),
+    "direct-nonlocal-rebound": (_DIRECT_NONLOCAL_REBOUND, "1", "0"),
+}
+
 # The called function's own contract (its body lifted alone, never the
 # call's reduction) owes these rows (step 8): a nested ``def`` reading a cell
-# of its enclosing function has that cell free (``return y``, ``nonlocal
-# n``), and an operation on a formal nothing decides is unanswered
-# (``xs.append(1)`` on the cell, ``a + b``).  A source that owes anything is
-# never ``sat`` (``witness_harness.prove_verdict``), so the truthful half
-# whose callee owes is ``open`` -- its claim decided all the same: the test's
-# consistency row is discharged while the lying half's is refuted.
+# of its enclosing function has that cell free (``return y``), and an
+# operation on a formal nothing decides is unanswered (``a + b``).  A source
+# that owes anything is never ``sat`` (``witness_harness.prove_verdict``), so
+# the truthful half whose callee owes is ``open`` -- its claim decided all
+# the same: the test's consistency row is discharged while the lying half's
+# is refuted.
 _OWED_BY_THE_CALLEE = {
     "cell-read-at-the-call": ("undecided:test_witness.py:4",),
-    "nonlocal-rebound": ("undecided:test_witness.py:4",),
-    "append-carried": ("undecided:test_witness.py:5",),
     "direct-cell-read-at-the-call": ("undecided:test_witness.py:4",),
-    "direct-nonlocal-rebound": ("undecided:test_witness.py:4",),
     "module-def-default": (),
     "module-def-spread": ("undecided:test_witness.py:2",),
 }
@@ -182,3 +183,18 @@ def test_a_call_through_the_value_is_decided(shape: str, tmp_path: Path) -> None
     owed = _OWED_BY_THE_CALLEE[shape]
     assert _owed(truthful.prove_doc) == owed, truthful.prove_doc
     assert truthful.verdict == ("open" if owed else "sat"), truthful.prove_doc
+
+
+@pytest.mark.parametrize("shape", sorted(_OPEN_UNTIL_STEP_7))
+def test_an_effect_of_a_same_file_call_is_open_until_its_contract_states_it(
+    shape: str, tmp_path: Path
+) -> None:
+    source, true, false = _OPEN_UNTIL_STEP_7[shape]
+    truthful = run_source_through_real_solver(
+        tmp_path / "t", source.format(claim=true)
+    )
+    lying = run_source_through_real_solver(tmp_path / "l", source.format(claim=false))
+    # The call is joined at prove; nothing it states says what it did to the
+    # caller's cell, which the call left unknown: never ``sat`` for the lie.
+    assert truthful.verdict == "open", truthful.prove_doc
+    assert lying.verdict == "open", lying.prove_doc

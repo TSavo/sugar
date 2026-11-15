@@ -63,11 +63,9 @@ receiver an active ``__init__`` constructs):
   in a function each object a local is bound to is exposed (no local is
   rebound: CPython 3.13, PEP 667); at module or class scope each name may
   be rebound.
-  A source function that is followed carries what it did to each one it
-  names out of the call, as it does its actuals and the binding it wrote
-  to each cell it declares ``nonlocal``: each name of the caller bound to
-  such an object reads the value the call carried for it
-  (``source_helper_actual_states``, ``call_site_value.caller_visible_values``).
+  A call of a same-file source function is no exception (#7757 step 5): its
+  body is never followed here; it is joined at prove, as an imported call
+  is.
 - **A field store** (``o.f = v``, ``nodes.ReceiverFieldStoreStatement``) is
   ``type(o).__setattr__``: one operation more (``_FieldStore``).  The
   receiver's value decides at reduce what it runs
@@ -102,8 +100,6 @@ from __future__ import annotations
 
 import functools
 from typing import NamedTuple
-
-from .construction_cache import AmbientSet
 
 
 class _CitedBuiltins(NamedTuple):
@@ -1101,7 +1097,6 @@ def havoc_after(statement, pre_scope, scope, *, loop=None, operated=False):
     if loop is None:
         loop = isinstance(statement, (For, While, LoopRecurrenceStatement))
     targets = []
-    applied = []
     sites = _calls(
         statement,
         bound_refs,
@@ -1111,19 +1106,11 @@ def havoc_after(statement, pre_scope, scope, *, loop=None, operated=False):
     if operated:
         sites = (*sites, _Operated(statement))
     for call in sites:
-        # A call handed the frame's own namespace (``_reaches_the_frame``)
-        # may change through it what no actual names: it is not followed,
-        # and takes the one exposure rule (``_ambient_targets``).
-        helper = (
-            None
-            if loop or _reaches_the_frame(statement, call)
-            else source_helper_actual_states(call, bound_refs, pre_scope)
-        )
-        if helper is not None:
-            havoc_targets, states = helper
-            targets.extend(havoc_targets)
-            applied.extend(states)
-            continue
+        # A call of a source function is a call like any other (#7757 step
+        # 5): its callee's body is never read here to decide which of the
+        # caller's objects it changed.  It is joined at prove as an imported
+        # call is, and what it is handed and what its code may reach take the
+        # one exposure rule below.
         if isinstance(call, PathContainerCall):
             targets.extend(ambient(call))
             root, _steps = path_steps(call.receiver)
@@ -1159,10 +1146,6 @@ def havoc_after(statement, pre_scope, scope, *, loop=None, operated=False):
     on_self = calls_on_self(statement, threaded=header)
     targets.extend(_calls_on_self_reach(on_self, bound_refs, ambient))
     havocked = _rebind(statement, pre_scope, scope, targets)
-    if applied:
-        havocked = _apply_actual_states(
-            statement, pre_scope, scope, havocked, applied
-        )
     return calls_on_self_left(
         statement, pre_scope, scope, havocked, loop=loop, calls=on_self
     )
@@ -2917,69 +2900,17 @@ def _mutation_through(
 
 
 # ---------------------------------------------------------------------------
-# What a followed source helper did to an object its caller holds reaches the
-# caller through the one projection at the call.
+# A call of a same-file source function is joined at prove (#7757 step 5, the
+# owner's ruling of 2026-11-15): its caller's threading never reads the
+# callee's body to decide which of the caller's objects the call changed.
+# What the call is handed, and what its code may reach, take the one exposure
+# rule every call takes (``_call_targets``, ``_ambient_targets``): unknown
+# after the call, never the pre-call contents.  What a callee does to its
+# arguments is stated by its contract (step 7), never followed here.
 #
-# ``def add(l): l.append(1)`` / ``r = []; add(r); return r`` returns ``[1]``:
-# ``l`` is bound to the very object ``r`` names, and the helper's append is a
-# store on that object. THE LAW, at a statement that calls a same-module
-# source function whose body substitution can be followed:
-#
-# - The callee's frame reads, where its body ends, each object it shares with
-#   its caller -- each formal, each closure cell it reads or declares
-#   ``nonlocal``, each module global it reads -- that its body changed
-#   (``nodes._exit_reads``).  The call carries each one's value out of the
-#   callee's frame on every arm, completed and halted, under the call's key
-#   and the object's label (``call_site_value.caller_visible_values``), with
-#   the receiver field stores the callee made: the one projection of what a
-#   callee did to what its caller sees.  A value the callee's frame does not
-#   decide where it left (an unknown, a halt before the store that made it)
-#   is carried undecided, an unknown minted at the call.
-# - Here the caller's own threading decides only WHICH of its names read that
-#   value (``source_helper_actual_states``): the helper's body is substituted
-#   with each formal bound to the caller's actual node (the object), and an
-#   object whose binding after the body is a state of that same object is
-#   one the helper changed; every name bound to it reads the value the call
-#   carried for its label (``SourceCallActualAfter``), never a node of the
-#   callee's frame.  A cell the helper rebinds is that name alone.
-# - A body with control flow is followed as a straight one is: its threading
-#   joins each object over the branches (an ``if``'s, a ``try``'s or a
-#   ``match``'s phi), and the object is changed where some arm changed it
-#   (``_changed_state``).  Each arm of the callee's reduction carries what
-#   its frame left of the object where that arm ended: a ``return`` its read
-#   where the ``return`` stands (``nodes.FrameReturn``), every other arm the
-#   read where the body ends; undecided where that arm does not decide it.
-# - Anything else -- a formal rebound to another object, an object a loop or
-#   a ``with`` left unknown, an object only CONTAINED in an actual -- keeps
-#   the havoc: unknown after the call, never the pre-call contents.
-# - An actual of an immutable builtin type is never changed, whatever the
-#   helper did with its formal: ``x += 2`` on an ``int`` binds the helper's
-#   own local to another object.  The threading here follows ``x += e`` as
-#   the object changed in place, which only its value decides, so the call
-#   carries that actual itself for its label
-#   (``call_site_value._immutable_actuals``) and every name bound to it reads
-#   the value it had.
-#
-# The objects followed are every one the helper reaches that its caller holds:
-# its actuals, the module objects it reads as globals, and the closure cells
-# it reads or declares ``nonlocal`` (``_callee_reach``). What it may reach and
-# its frame does not carry -- a module object or cell only a source function
-# it calls reads, and every other module object and cell of the caller when
-# some call in it runs code that is not a source function by name
-# (``_Reach.closed``) -- takes the havoc, as every call that is not followed
-# does (``_ambient_targets``).
-#
-# The call's own halts are its faces at the call (the Call producer); a halt
-# path never reaches the statement's continuation. A handler that catches one
-# reads each such name at the halt (``Try._mid_statement_state``): the value
-# the call carried where the halt's record holds the call's key -- the call
-# ran, and left on that arm -- and the object as the statement found it where
-# it does not, since then the call never ran (``at_halt``).
+# The helpers below are still read by a method's and a class constructor's
+# frame (``nodes._exit_reads``, step 6).
 # ---------------------------------------------------------------------------
-
-# Ambient to memo rows: a row that asked is served only where the helper is
-# in progress or not as it was.
-_HELPERS_IN_PROGRESS: AmbientSet = AmbientSet("helpers_in_progress")
 
 
 def _followable_helper(definition) -> bool:
@@ -3013,197 +2944,6 @@ def _same_read(node, actual) -> bool:
         and getattr(actual, "kind", None) in _FORMAL_KINDS
         and _ref(node) == _ref(actual)
     )
-
-
-def source_helper_actual_states(call, bound_refs, scope):
-    """``(havoc_targets, [(object, call, label, name)])`` for a call to a
-    followable source helper, or None when the call is not one (it keeps its
-    havoc, ``havoc_after``).  ``havoc_targets`` are ``_rebind``'s ``(object,
-    rules, subject)``.  Each other entry is an object the helper changed:
-    every name bound to it reads, after the call, the value the call carried
-    out of the helper's frame for ``label`` (``_actual_after``,
-    ``call_site_value.caller_visible_values``).  ``name``: the cell the
-    helper declares ``nonlocal`` and rebinds, whose name alone reads it; None
-    for an object every alias of which does.
-
-    The helper is the function the call runs, however its callee is spelled
-    (``_source_callee``): a name, or a local ``def``'s function value
-    (``nodes._function_value_definition``, ``x = g; x()``), whose
-    application carries what the body left of each object out of its frame
-    through the same projection.
-
-    The objects the helper reaches that its caller holds are followed alike:
-    every actual that is a bound object a call may change
-    (``_may_be_changed``, the exposure candidates), whatever it was given,
-    every module object the helper reads as a global that ``scope``, the
-    caller's, binds -- the helper's read of it is the caller's object -- and
-    every closure cell it reads or declares ``nonlocal`` (``_callee_reach``).
-    The helper's body, substituted with each one bound to the caller's node,
-    says which it changed: one whose binding after the body is a state of
-    the same object (a mutation through the one door, a field store, a
-    nested helper's carried value, a call's exposure of it), or a cell the
-    helper rebinds (``n += 1``, ``n = v``).  What that state IS is never
-    read here: it is the callee frame's own, carried by the call.  A formal
-    the body rebound to another object takes the havoc, as does a module
-    object only a source function the helper calls reads (the helper's frame
-    does not read it) and what it may reach and does not follow
-    (``_unfollowed_reach``)."""
-    from .nodes import Call, Name, Starred, _function_value_definition
-
-    if (
-        not isinstance(call, Call)
-        or not (
-            isinstance(call.func, Name)
-            or _function_value_definition(call.func) is not None
-        )
-        or call.keywords
-        or any(isinstance(arg, Starred) for arg in call.args)
-    ):
-        return None
-    actuals = [
-        (index, arg)
-        for index, arg in enumerate(call.args)
-        if _ref(arg) in bound_refs and _may_be_changed(arg)
-    ]
-    if not actuals and not any(_ambient_objects(call, scope)):
-        # Nothing the caller holds is the helper's to reach.
-        return None
-    reach = _callee_reach(call, scope)
-    if reach is None:
-        return None
-    cells = [cell for cell in reach.cells if cell.direct]
-    if not actuals and not reach.module and not cells:
-        return None
-    definition = reach.definition
-    if not _followable_helper(definition):
-        return None
-    params = definition.params
-    if len(params) != len(call.args):
-        return None
-    key = id(definition)
-    if key in _HELPERS_IN_PROGRESS:
-        return None
-    node_scope = {param.name: arg for param, arg in zip(params, call.args)}
-    havoc_targets = []
-    # ``(name, object, label, rebinds)``: ``rebinds``, the helper's write of
-    # ``name`` is the caller's binding (a ``nonlocal`` cell), not a local.
-    followed = [
-        (params[index].name, actual, f"actual:{index}", False)
-        for index, actual in actuals
-    ]
-    # The module globals the helper's own frame reads: each is a name its
-    # frame carries out of the call (``nodes._exit_reads``).  Only which
-    # names is asked: the frame reads their bindings where it is built.
-    read_by_frame = definition._module_globals_read()
-    for name, node in reach.module:
-        if name in node_scope or name not in read_by_frame:
-            # A formal of the same name hides the module object from the
-            # helper's body, and a module object only a source function it
-            # calls reads is not its frame's to carry: what that function
-            # does to it is not followed here, so it takes the havoc.
-            havoc_targets.append((node, None, None))
-            continue
-        node_scope[name] = node
-        followed.append((name, node, f"global:{name}", False))
-    for cell in cells:
-        if cell.name in node_scope:
-            havoc_targets.append((cell.node, None, None))
-            continue
-        node_scope[cell.name] = cell.node
-        followed.append((cell.name, cell.node, f"cell:{cell.name}", cell.nonlocal_))
-    # Every holder the helper follows -- an actual, a module object, a cell --
-    # is one object key: the value the call carries for it is what the
-    # caller reads on both arms, and no havoc of what the helper may reach
-    # unfollowed takes it, whichever way the caller hands it over.
-    followed_keys = {_object_key(node) for _n, node, _l, _r in followed}
-    havoc_targets.extend(_unfollowed_reach(call, scope, reach, followed_keys))
-    _HELPERS_IN_PROGRESS.add(key)
-    try:
-        net = _followed_body(definition, node_scope)
-    finally:
-        _HELPERS_IN_PROGRESS.discard(key)
-    states = []
-    # What an operand reaches that the helper does not follow takes the
-    # exposure an operand handed to a call takes.  A followed holder is
-    # excluded by its object key, never by the node that spelled it: the
-    # walk reaches an actual's object through its read too (``_walk_values``
-    # follows a read to the object it denotes), and that object is the
-    # actual.
-    for arg in call.args:
-        havoc_targets.extend(
-            (node, _OPERAND_RULES, None)
-            for node in _exposed(arg, bound_refs)
-            if _object_key(node) not in followed_keys
-        )
-    for name, actual, label, rebinds in followed:
-        state = _state(net[name]) if name in net else actual
-        rebound = (
-            _rebinds(_read_of(net[name]), actual) if rebinds and name in net else False
-        )
-        if rebound is None:
-            # One arm rebound the cell and another changed the object it
-            # held: no one set of names reads one value after the call.
-            havoc_targets.append((actual, None, None))
-            continue
-        if rebound:
-            # The helper rebound the caller's cell (``n += 1``, ``n = v``) on
-            # some arm: its write is the caller's binding, which the call
-            # carries out of its frame.  Only the cell's name reads it --
-            # another name bound to the object it held keeps it.
-            states.append((actual, call, label, name))
-            continue
-        changed = _changed_state(state, actual)
-        if changed is None:
-            havoc_targets.append((actual, None, None))
-            continue
-        if changed:
-            states.append((actual, call, label, None))
-        # Otherwise the helper left the object as it was.
-    return havoc_targets, states
-
-
-def _followed_body(definition, node_scope):
-    """What threading ``definition``'s body leaves each name of
-    ``node_scope`` bound to (``Node._substitute_body_tracked``'s ``net``),
-    with each name bound to the caller's node.
-
-    The threading is a function of the body and of the nodes it is bound
-    over, and of nothing else the caller holds.  It is asked through the one
-    memo door (``construction_cache.serve``), keyed by the definition and by
-    each name with its node, never by the scope dict, which the caller builds
-    afresh at every ask: the same call is asked by its own statement, by
-    every compound statement that holds it and by each of their headers
-    (``havoc_after`` reads every operation under the statement it is given),
-    and each ask threaded the whole body again -- and, inside it, every
-    helper the body calls, the same number of times over.  What the door
-    reads of the ambient state (which helpers are in progress, the module
-    threading) decides where a row is served, as for every row."""
-    from .construction_cache import abandon_row, close_row, open_row, serve
-
-    cache = definition._construction_cache()
-    bound = tuple((name, _handle(node)) for name, node in node_scope.items())
-    memo = (
-        "followed-body",
-        id(_handle(definition)),
-        tuple((name, id(handle)) for name, handle in bound),
-    )
-    row = serve(cache.substitutions, memo, definition.reporter)
-    if row is not None:
-        return row.value
-    computation = open_row()
-    try:
-        body, _changed, net = definition._substitute_body_tracked(
-            definition.body, node_scope
-        )
-        _answered_where_minted(definition.body, body)
-    except BaseException:
-        abandon_row(computation)
-        raise
-    # Pin every identity the key names for the row's lifetime, so no address
-    # in it is reused by another node (``Node._substituted_child``).
-    cache._pinned[memo] = (_handle(definition), bound)
-    close_row(cache.substitutions, memo, computation, definition.reporter, value=net)
-    return net
 
 
 def _answered_where_minted(source, followed, kept=()) -> None:
@@ -3677,32 +3417,6 @@ def _constructs_builtin_exception(call) -> bool:
     if call.keywords and not builtin_exception_constructor_rejects_keywords(name):
         return False
     return not builtin_exception_construction_reads_values(name, len(call.args))
-
-
-def _unfollowed_reach(call, scope, reach, followed):
-    """``_rebind``'s targets for what a followed source helper (``reach``)
-    may change of what its caller holds and does not follow (``followed``:
-    the object keys it follows): a cell only a source function it calls by
-    name reads; and, unless every call in it is one it follows or runs no
-    code (``_Reach.closed``), every module object and closure cell the
-    caller holds (``_ambient_objects``).  A cell a nested scope declares
-    ``nonlocal`` may be rebound, whatever it holds."""
-    targets = []
-    for cell in reach.cells:
-        if cell.direct or _object_key(cell.node) in followed:
-            continue
-        targets.append((cell.node, None if cell.nonlocal_ else _OPERAND_RULES, None))
-    if not reach.closed:
-        objects, rebound = _ambient_objects(call, scope)
-        targets.extend(
-            (node, _OPERAND_RULES, None)
-            for node in objects
-            if _object_key(node) not in followed
-        )
-        targets.extend(
-            (node, None, None) for node in rebound if _object_key(node) not in followed
-        )
-    return targets
 
 
 def _ambient_targets(statement, call, scope, ambient=None):
@@ -4419,29 +4133,8 @@ def exit_read_keys(read) -> tuple:
     return tuple(keys)
 
 
-def _actual_after(site_node, call, label, prior, tags):
-    """An object the followed ``call`` shares with its caller, read after
-    the call: the value the call carried out of the callee's frame for
-    ``label`` (``call_site_value.caller_visible_values``), under the call's
-    key (``nodes.carried_evaluation``).  ``prior`` is the caller's read of
-    the object before the call: which object it is, and what a halt read
-    before the call ran finds (``at_halt_read``)."""
-    from sugar_lift_py_tests.temporal.temporal_context import projection_key
-
-    from .nodes import carried_evaluation
-
-    return _caller_visible_read(
-        site_node,
-        projection_key(carried_evaluation(call), label),
-        label,
-        _evaluation(site_node, tags),
-        prior,
-        tags,
-    )
-
-
 def at_halt_read(site_node, read, tags):
-    """``read`` (an ``_actual_after``) as a halt inside the statement that
+    """``read`` (a ``SourceCallActualAfter``) as a halt inside the statement that
     holds the call reads it (``Try._mid_statement_state``): the value the
     call carried where the halt's record holds its key -- the call ran and
     left on that arm, completed or halted -- else the object as the
@@ -4484,56 +4177,6 @@ def _caller_visible_read(
     return _minted_binding_reference(
         _materialize(site_node, "SourceCallActualAfter", fields, tags)
     )
-
-
-def _apply_actual_states(statement, pre_scope, scope, havocked, applied):
-    """Rebind every name bound to an object a followed helper changed to the
-    value its call carried for it (``_actual_after``); a name the havoc
-    already rebound, or the statement itself bound, keeps that binding. A
-    name that merely contains the object is unknown.  A cell the helper
-    rebinds (``name``) is that name alone: the object it held is not
-    changed, and every other name keeps it."""
-    from .shadow import occurrence_tags_of
-
-    tags = occurrence_tags_of(statement)
-    binding = {}
-    havoc_names = []
-    for actual, call, label, cell in applied:
-        if cell is not None:
-            if cell in binding or cell in havoc_names:
-                # Two calls of the statement wrote it: which wrote last is
-                # not followed here.
-                binding.pop(cell, None)
-                if cell not in havoc_names:
-                    havoc_names.append(cell)
-            elif _untouched(cell, pre_scope, scope, havocked):
-                binding[cell] = _actual_after(statement, call, label, actual, tags)
-            continue
-        exact, containing = aliases(scope, actual)
-        after = None
-        for name in exact:
-            if name in binding:
-                if binding[name] is not after and name not in havoc_names:
-                    # Two calls of the statement changed the object: which
-                    # left it last is not followed here.
-                    havoc_names.append(name)
-                continue
-            if not _untouched(name, pre_scope, scope, havocked):
-                continue
-            if after is None:
-                after = _actual_after(statement, call, label, actual, tags)
-            binding[name] = after
-        for name in containing:
-            if name in binding or name in havoc_names:
-                continue
-            if _untouched(name, pre_scope, scope, havocked):
-                havoc_names.append(name)
-    for name in havoc_names:
-        binding[name] = _havoc(statement, name, tags)
-    if not binding:
-        return havocked
-    binding = statement._binding_entries(binding, havocked)
-    return {**havocked, **binding}
 
 
 def _untouched(name, pre_scope, scope, havocked) -> bool:

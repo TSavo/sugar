@@ -56,11 +56,11 @@ def test_an_inplace_operand_answers_the_roll(statement, kind, operand):
     ["    out[:] = result\n", "    out.append(result)\n"],
 )
 def test_a_followed_helper_s_minted_reads_answer_where_minted(body):
-    # ``core/arraylike.py:476``: a call to a source helper follows its body
-    # with each formal bound to the caller's object (``_followed_body``) to
-    # learn what it changed; the reads of ``out`` and ``result`` that follow
-    # re-spans to their sites are built by nothing, and answer where they
-    # are minted (``_answered_where_minted``).
+    # ``core/arraylike.py:476``: a call to a source helper once followed its
+    # body with each formal bound to the caller's object to learn what it
+    # changed, minting reads built by nothing.  Since #7757 step 5 no body is
+    # followed (the call is joined at prove), and no read of the helper's
+    # body is left unanswered.
     report = _report(
         "def put(out, result):\n"
         + body
