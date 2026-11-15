@@ -1038,6 +1038,24 @@ class NativeOperationExitCarrierV1:
             value, guard = undecided_binary_terms(
                 binary, left, right, occurrence_key(site)
             )
+        elif self.demand.operator == "equals" and len(self.demand.operand_terms) == 2:
+            # ``==`` takes the one form every undecided equality takes
+            # (``comparison_op_sugar.undecided_dispatch_faces``): the
+            # predicate ``py.eq(left, right)`` completing under
+            # ``python:compare.completes(python:compare("Eq", left, right,
+            # <key>))``, over the demand's own operand terms, so the inputs
+            # bound at prove (a caller's actual, a stated global) decide it.
+            left, right = self.demand.operand_terms
+            value = None
+            guard = atomic(
+                "python:compare.completes",
+                [
+                    ctor(
+                        "python:compare",
+                        (str_const("Eq"), left, right, str_const(occurrence_key(site))),
+                    )
+                ],
+            )
         else:
             operation = ctor(
                 "python:unanswered_native_operation",
@@ -1045,8 +1063,15 @@ class NativeOperationExitCarrierV1:
             )
             value = ctor("python:native_operation_result", (operation,))
             guard = atomic("python:unanswered_native_operation.completes", [operation])
+        if value is None:
+            from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+            from sugar_lift_py_tests.ir import py_eq
+
+            completed = PredicateValue(py_eq(*self.demand.operand_terms), self.site)
+        else:
+            completed = SymbolicValue(value)
         return ExitSet.two_faced(
-            SymbolicValue(value),
+            completed,
             UndeterminedRaiseEffect(
                 blame=f"authenticated caller actual absent for {absent}",
                 occurrence=occurrence_key(site),
