@@ -13,8 +13,16 @@ caller through the join (#8690).
 Solver twins: the lying source makes the constructor raise, so the assertion
 after the class call is never reached (``unsat``: a certain halt in a callee
 refutes the lie).  Where the raise is in a method ``__init__`` calls on
-``self`` (``self.check(n)``), that call is not dispatched until #7757 step 8,
-so the lie reads ``open`` until then (``_LIE_OPEN_UNTIL_STEP_8``).  The
+``self`` (``self.check(n)``), the class's constructor contract states that
+call as the one dispatched edge over the instance it constructs (#7757 step
+8, #8799: ``call:dispatch:check(<instance>, n, py.class("0",
+python:instance(<Box>, "n")))``), and its halt as a panic locus guarded by
+that call's completes atom over its ``python:call_result`` term (#8753).
+Prove joins ``Box(n)`` to the class's contract, then, in turn, the dispatched
+call that contract's halt guard reads (resolved on ``Box::namespace`` to
+``Box.check``, #8750), whose own halt guard is ``true`` (always raises) or
+``n > 5`` at the bound actual: ``check``'s call does not complete, so
+``Box(n)`` does not (#8762), and the assertion after it is refuted.  The
 truthful source's claim reads ``box.n``, a field of a call's result: the read names the instance as its construction left it
 (``python:after(<call result>, "out")``), and the class's contract states
 that field's value and that a read of it completes (#7757 step 7), so the
@@ -60,15 +68,15 @@ def _pair(
     assert lie_result.verdict == lie
 
 
-# The constructor's halt below comes from ``self.check(n)``: a method call on
-# ``self``, which arrived by binding, so its dispatch is not decided and it
-# is the unanswered call (#8738).  ``__init__``'s contract states that halt as
-# the undetermined raise under the call's own completes atom, which nothing at
-# the class call decides, so the lie reads ``open`` on main (scorecard
-# 43738710481), listed on #7661.  Dispatch of ``self.m()`` at prove (#7757
-# step 8: #8750 prove side, the lift side not merged) joins ``check``'s halt
-# and decides the lie ``unsat``.  Never ``sat`` for the lie.
-_LIE_OPEN_UNTIL_STEP_8 = "open"
+# The constructor's halt below comes from ``self.check(n)``.  Measured
+# ``open`` on main scorecard 43738710481 (``38c87e62a``), when the edge's
+# completes atom named the bare callee (``unknown_callee_call("<m>.check",
+# <occurrence>)``), which no join reads, and nothing stated that a joined call
+# completes exactly where none of its halts holds.  #8753 states the atom over
+# the call's ``python:call_result`` term (which the join reads in turn), #8762
+# states the completion fact, and #8799 makes the call the one dispatched
+# edge prove resolves on ``Box::namespace``: the lie is refuted again,
+# ``unsat``.  Never ``sat`` for the lie.
 
 
 _CONSTRUCTOR = """\
@@ -99,7 +107,6 @@ def test_constructor_halt_reaches_the_class_call(tmp_path: Path) -> None:
         "constructor-always",
         _CONSTRUCTOR.format(body=_PLAIN, actual=3),
         _CONSTRUCTOR.format(body=_ALWAYS, actual=3),
-        lie=_LIE_OPEN_UNTIL_STEP_8,
     )
 
 
@@ -111,7 +118,6 @@ def test_constructor_halt_on_one_face_reaches_the_class_call(tmp_path: Path) -> 
         "constructor-one-face",
         _CONSTRUCTOR.format(body=_ONE_FACE, actual=3),
         _CONSTRUCTOR.format(body=_ONE_FACE, actual=9),
-        lie=_LIE_OPEN_UNTIL_STEP_8,
     )
 
 
