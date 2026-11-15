@@ -49,7 +49,7 @@ def test_builtin_without_instance_dict_delete_has_exact_owner_occurrence(
     (halt,) = outcome.halts()
     assert halt.effect.exception_name == "AttributeError"
     assert halt.effect.producer_node_owner == owner
-    assert halt.effect.occurrence_id == str(site)
+    assert halt.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
 
 @pytest.mark.parametrize("receiver", (fresh(ListValue, ()), NoneValue()))

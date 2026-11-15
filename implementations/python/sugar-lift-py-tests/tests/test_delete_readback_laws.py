@@ -149,10 +149,12 @@ def _keyerror_raise(outcome, *, site) -> Halted:
     assert raise_value.effect.occurrence is not None or (
         raise_value.effect.occurrence_id is not None
     )
-    # Same source fragment as the delete when readback uses the delete site.
+    # Same source fragment as the delete when readback uses the delete site:
+    # a raise locus spells its site as file:line:col, never the fragment repr.
+    locus = f"{site.filename}:{site.line}:{site.col}"
     assert (
-        str(site) in str(raise_value.effect.occurrence)
-        or str(raise_value.effect.occurrence) == str(site)
+        locus in str(raise_value.effect.occurrence)
+        or str(raise_value.effect.occurrence) == locus
         or site is raise_value.effect.occurrence
         or (
             getattr(raise_value.effect.occurrence, "filename", None)
@@ -160,8 +162,8 @@ def _keyerror_raise(outcome, *, site) -> Halted:
         )
         or "Delete" in str(raise_value.effect.occurrence)
         or "delitem" in str(raise_value.effect.occurrence).lower()
-        or str(raise_value.effect.blame) == str(site)
-        or str(site) in str(raise_value.effect.blame)
+        or str(raise_value.effect.blame) == locus
+        or locus in str(raise_value.effect.blame)
     ), (
         f"{CODEX3}: KeyError occurrence lineage lost delete locus; "
         f"occurrence={raise_value.effect.occurrence!r} site={site!r}"

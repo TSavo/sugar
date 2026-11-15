@@ -68,6 +68,23 @@ def _guard(index: int):
     return atomic("g", [make_var(f"v{index}")])
 
 
+# The destination pool's raised classes: language-owned exception classes,
+# one per pool index (``for_builtin`` mints only a class the interpreter owns;
+# an invented spelling has no exception_type_identity). Eight distinct
+# classes cover every pool size drawn below, so distinct indices stay
+# distinct destinations exactly as before.
+_POOL_EXCEPTIONS = (
+    "ValueError",
+    "TypeError",
+    "KeyError",
+    "IndexError",
+    "RuntimeError",
+    "OSError",
+    "LookupError",
+    "ArithmeticError",
+)
+
+
 def _effect(name: str) -> RaiseEffect:
     return RaiseEffect.for_builtin(
         name,
@@ -86,7 +103,7 @@ def _random_exits(rng: random.Random, count: int, distinct: int) -> tuple:
             exits.append(
                 Halted(
                     guard,
-                    _effect(f"eff{rng.randrange(distinct)}"),
+                    _effect(_POOL_EXCEPTIONS[rng.randrange(distinct)]),
                     _state(f"state{rng.randrange(distinct)}"),
                 )
             )

@@ -79,7 +79,7 @@ def test_source_tuple_zero_slice_step_is_exact_value_error(
     assert isinstance(halt.effect, RaiseEffect)
     assert halt.effect.exception_name == "ValueError"
     assert halt.effect.producer_node_owner == "TupleValue.subscript"
-    assert halt.effect.occurrence_id == str(site)
+    assert halt.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
 
 def test_source_tuple_symbolic_slice_bound_is_the_two_faced_unanswered_read(

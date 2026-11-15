@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 
+from .authenticated_raise_locus import AuthenticatedRaiseLocus
 from .raise_effect import RaiseEffect
 
 
@@ -25,10 +26,9 @@ class NameErrorEffect(RaiseEffect):
 
         exception_name = _unbound_read_exception_name(name, site)
         coordinate, mro = _builtin_exception_identity(exception_name)
-        locus = f"{site.filename}:{site.line}:{site.col}"
         return cls(
             exception_type_coordinate=coordinate,
-            occurrence=locus,
+            occurrence=AuthenticatedRaiseLocus.of(site),
             exception_name=exception_name,
             exception_type_mro=mro,
             producer_node_owner="NameErrorEffect",
@@ -37,7 +37,7 @@ class NameErrorEffect(RaiseEffect):
         )
 
     def __post_init__(self) -> None:
-        locus = f"{self.site.filename}:{self.site.line}:{self.site.col}"
+        locus = AuthenticatedRaiseLocus.of(self.site).value
         source = getattr(getattr(self.site, "unit", None), "source", None)
         object.__setattr__(self, "blame", locus)
         object.__setattr__(

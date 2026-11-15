@@ -172,12 +172,13 @@ def identity_term(value, site, role: str, *, owner: str):
         )
     from sugar_lift_py_tests.occurrence import occurrence_key
 
-    return _named(value, occurrence_key(site), role, owner).to_term(owner=owner)
+    return _named(value, occurrence_key(site), role, owner, site).to_term(owner=owner)
 
 
-def _named(value, key: str, path: str, owner: str, depth=0):
+def _named(value, key: str, path: str, owner: str, site, depth=0):
     """``value`` with each stale container or instance in it replaced by its
-    object's term (``identity_term``)."""
+    object's term (``identity_term``).  ``site`` is the read's: what a
+    refusal here blames."""
     from dataclasses import replace
 
     from .dict_value import DictValue
@@ -192,7 +193,7 @@ def _named(value, key: str, path: str, owner: str, depth=0):
             from sugar_source_tree.panic import SugarNotWritten
 
             raise SugarNotWritten(
-                blame=None,
+                blame=site,
                 owner=owner,
                 observed=(
                     f"undecided read of a stale {type(value).__name__} "
@@ -222,7 +223,7 @@ def _named(value, key: str, path: str, owner: str, depth=0):
         return replace(
             value,
             elements=tuple(
-                _named(element, key, f"{path}/{position}", owner, depth + 1)
+                _named(element, key, f"{path}/{position}", owner, site, depth + 1)
                 for position, element in enumerate(value.elements)
             ),
         )
@@ -231,8 +232,8 @@ def _named(value, key: str, path: str, owner: str, depth=0):
             value,
             entries=tuple(
                 (
-                    _named(entry, key, f"{path}/{position}k", owner, depth + 1),
-                    _named(item, key, f"{path}/{position}", owner, depth + 1),
+                    _named(entry, key, f"{path}/{position}k", owner, site, depth + 1),
+                    _named(item, key, f"{path}/{position}", owner, site, depth + 1),
                 )
                 for position, (entry, item) in enumerate(value.entries)
             ),
@@ -240,8 +241,8 @@ def _named(value, key: str, path: str, owner: str, depth=0):
     if kind is GuardedValue:
         return replace(
             value,
-            when_true=_named(value.when_true, key, path, owner, depth + 1),
-            when_false=_named(value.when_false, key, path, owner, depth + 1),
+            when_true=_named(value.when_true, key, path, owner, site, depth + 1),
+            when_false=_named(value.when_false, key, path, owner, site, depth + 1),
         )
     return value
 

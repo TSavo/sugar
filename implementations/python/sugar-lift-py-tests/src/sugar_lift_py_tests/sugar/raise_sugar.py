@@ -69,7 +69,7 @@ class RaiseSugar(Sugar):
         source_sha256 = (
             hashlib.sha256(source.encode()).hexdigest() if source is not None else None
         )
-        blame = f"{self.site.filename}:{self.site.line}:{self.site.col}"
+        blame = AuthenticatedRaiseLocus.of(self.site).value
         context_effect = None
         if self.in_flight_slot is not None:
             from sugar_lift_py_tests.in_flight_effect import (

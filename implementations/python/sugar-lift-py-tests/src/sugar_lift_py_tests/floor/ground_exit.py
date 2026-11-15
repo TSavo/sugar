@@ -108,11 +108,18 @@ def ground_raise_effect(*, exception_name: str, site, owner: str, raised_value=N
             requested="workspace-relative source locus",
             fix="route the source through the workspace-relative lift door",
         )
+    from sugar_lift_py_tests.effect.authenticated_raise_locus import (
+        AuthenticatedRaiseLocus,
+    )
+
     source = unit.source
     source_sha256 = (
         hashlib.sha256(source.encode()).hexdigest() if source is not None else None
     )
-    blame = str(site)
+    # The locus is the site's file:line:col, through the one locus door --
+    # never ``str(site)``, a fragment's repr, which states no line or column.
+    occurrence = AuthenticatedRaiseLocus.of(site)
+    blame = occurrence.value
     type_coordinate, type_mro = _builtin_exception_identity(exception_name)
     if type_coordinate is None:
         construction_panic_gap(
@@ -122,13 +129,9 @@ def ground_raise_effect(*, exception_name: str, site, owner: str, raised_value=N
             requested="a language-owned exception with python:exception_type_identity",
             fix="use a builtin exception name or supply authenticated coordinate",
         )
-    from sugar_lift_py_tests.effect.authenticated_raise_locus import (
-        AuthenticatedRaiseLocus,
-    )
-
     return RaiseEffect(
         exception_type_coordinate=type_coordinate,
-        occurrence=AuthenticatedRaiseLocus.of(blame),
+        occurrence=occurrence,
         exception_name=exception_name,
         blame=blame,
         source_sha256=source_sha256,

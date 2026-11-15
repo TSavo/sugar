@@ -712,7 +712,7 @@ def test_immutable_slice_delete_has_exact_typeerror_occurrence(receiver, owner):
     (halt,) = outcome.halts()
     assert halt.effect.exception_name == "TypeError"
     assert halt.effect.producer_node_owner == owner
-    assert halt.effect.occurrence_id == str(site)
+    assert halt.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
 
 @pytest.mark.parametrize(
