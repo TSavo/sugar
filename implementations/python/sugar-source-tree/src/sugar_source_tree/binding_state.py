@@ -793,6 +793,49 @@ class ConstructionTestimonyReporterV1:
             return "frame-definition-site-foreign"
         return None
 
+    def _guard_source_call_identity(
+        self, node: Node, value: object, call_occurrence: object
+    ) -> None:
+        """Ask the call ``node`` the identity terms of its own call-site sugar
+        ``value``; a term that refuses is the one typed testimony gap."""
+        definition = value.expected_definition_ref
+        resolved_definition = node.unit.source_function_definition_for_call(node)
+        if resolved_definition is None:
+            # The caller's unit is the lexical authority for a call in it,
+            # and for a cross-FILE callee it correctly has no answer -- the
+            # callee is not lexically bound here. Falling straight through
+            # left every cross-file call reading `resolved-not-a-functiondef`,
+            # which named a missing DEFINITION when the truth was that the
+            # wrong unit had been asked.
+            #
+            # The independent authority is the callee's OWN SOURCE TEXT.
+            # Re-pointing this at the import binding would be circular --
+            # `expected_definition_ref` came from there, and a guard that
+            # re-derives from its own source proves nothing. The binding
+            # supplies a NAME; the callee's unit supplies a LOCATION and
+            # CONTENT, and those can disagree.
+            resolved_definition = _callee_definition_by_name_in_its_unit(definition)
+            if resolved_definition is None:
+                resolved_definition = _callee_nested_call_method_by_seal(definition)
+        frame = value.source_call_frame
+        # The two occurrences the guard asks this roll about, retained
+        # from the roll that built them when this roll only hears them.
+        self._retain_heard_occurrence(definition)
+        self._retain_heard_occurrence(node)
+        fault = self._source_call_identity_fault(
+            node, value, definition, resolved_definition, call_occurrence, frame
+        )
+        if fault is not None:
+            self._testimony_gap(
+                node,
+                value,
+                "constructed value",
+                ValueError(
+                    "source call definition is not this call's exact typed "
+                    f"occurrence: {fault}"
+                ),
+            )
+
     def present_construction(self, node: Node, value: object) -> None:
         from sugar_lift_py_tests.sugar.call_site_sugar import (
             CallSiteSugar,
@@ -827,29 +870,6 @@ class ConstructionTestimonyReporterV1:
                 SourceFragmentCoordinateV1,
             )
 
-            definition = value.expected_definition_ref
-            resolved_definition = node.unit.source_function_definition_for_call(node)
-            if resolved_definition is None:
-                # The caller's unit is the lexical authority for a call in it,
-                # and for a cross-FILE callee it correctly has no answer -- the
-                # callee is not lexically bound here. Falling straight through
-                # left every cross-file call reading `resolved-not-a-functiondef`,
-                # which named a missing DEFINITION when the truth was that the
-                # wrong unit had been asked.
-                #
-                # The independent authority is the callee's OWN SOURCE TEXT.
-                # Re-pointing this at the import binding would be circular --
-                # `expected_definition_ref` came from there, and a guard that
-                # re-derives from its own source proves nothing. The binding
-                # supplies a NAME; the callee's unit supplies a LOCATION and
-                # CONTENT, and those can disagree.
-                resolved_definition = _callee_definition_by_name_in_its_unit(
-                    definition
-                )
-                if resolved_definition is None:
-                    resolved_definition = (
-                        _callee_nested_call_method_by_seal(definition)
-                    )
             span = node.line_col_span()
             call_occurrence = SourceFragmentCoordinateV1(
                 node.unit.source_cid,
@@ -858,24 +878,8 @@ class ConstructionTestimonyReporterV1:
                 span.end_line,
                 span.end_col,
             )
-            frame = value.source_call_frame
-            # The two occurrences the guard asks this roll about, retained
-            # from the roll that built them when this roll only hears them.
-            self._retain_heard_occurrence(definition)
-            self._retain_heard_occurrence(node)
-            fault = self._source_call_identity_fault(
-                node, value, definition, resolved_definition, call_occurrence, frame
-            )
-            if fault is not None:
-                self._testimony_gap(
-                    node,
-                    value,
-                    "constructed value",
-                    ValueError(
-                        "source call definition is not this call's exact typed "
-                        f"occurrence: {fault}"
-                    ),
-                )
+            if value.call_occurrence == call_occurrence or _sited_at(value, node):
+                self._guard_source_call_identity(node, value, call_occurrence)
         try:
             node_shape_cid = node_construction_shape_cid(node)
         except (TypeError, ValueError) as cause:
@@ -1023,6 +1027,27 @@ def _callee_definition_by_name_in_its_unit(definition: object):
     if not isinstance(resolved, (FunctionDef, AsyncFunctionDef, ClassDef)):
         return None
     return resolved
+
+
+def _sited_at(value: object, node: Node) -> bool:
+    """Whether the call-site sugar ``value`` is sited at the call ``node``.
+
+    A call does not always construct as its own call-site sugar.  A call that
+    constructs as its operand (``typing.cast(typ, val)`` returns ``val``, so
+    the call's sugar is ``val``'s: ``Call._construct_call_sugar``) presents
+    the operand's sugar, and where the operand is a source call that sugar is
+    the operand call's: sited there, naming that call's occurrence.  It
+    answered the identity guard where the operand presented it.  Asked again
+    at the outer call, the guard's terms are asked of the wrong call: which
+    definition the outer callee resolves to, and whether the sugar names the
+    outer call's occurrence (``call-occurrence-mismatch``).
+
+    Only a sugar that states another call's site is another call's.  A sugar
+    sited at this call that names another occurrence is still asked, and
+    still refused by that term.
+    """
+    site = value.site
+    return site is None or site.seal() == node.fragment.seal()
 
 
 def _testimony_blame(node: object) -> str:
