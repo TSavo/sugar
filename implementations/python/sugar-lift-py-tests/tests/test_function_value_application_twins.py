@@ -20,7 +20,8 @@ caller's cell reads ``python:after(<call result>, "cell:<name>")``, keyed on
 the call (#7757 step 7).  The callee's contract states what it leaves in a
 cell it rebinds over that term on each completed arm that ran to the body's
 end (``UniverseValue.after_facts``), so the join decides a ``nonlocal``
-rebinding, also one that stands after an early ``return``.  What an append
+rebinding.  One that reads the cell after a test that may run code (``if n >
+5: return``) is not stated, and stays open.  What an append
 or an item store leaves in a list or dict the call handed it is stated over
 the dispatched call's receiver and decided at prove where the caller binds
 the object's class to the builtin (#7757 step 7).
@@ -185,12 +186,11 @@ _TWINS = {
 
 # Decided before step 5 by following the callee's body; decided again at
 # prove since the callee's contract states what it left in the cell it
-# rebinds (``python:after(out, "cell:n")``, #7757 step 7).  After an early
-# ``return`` the arm that ran on states it; the ordering ``n > 5`` over the
-# cell's ``0`` is decided at prove (#8812), so the ``return`` arm is not
-# taken.  A module global the callee declares ``global`` and rebinds is
-# stated the same way (``python:after(out, "global:G")``), and the caller's
-# read of the global after the call is that term, keyed on the call.
+# rebinds (``python:after(out, "cell:n")``, #7757 step 7).  A module global
+# the callee declares ``global`` and rebinds is stated the same way
+# (``python:after(out, "global:G")``), and the caller's read of the global
+# after the call is that term, keyed on the call (#8877: one slotted target,
+# never also the unslotted one that left the read the unknown).
 #
 # What a callee leaves in a list or dict it was handed -- a captured cell or a
 # parameter -- is stated the same way (#7757 step 7): the mutation is the
@@ -205,15 +205,32 @@ _STATED_BY_THE_CALLEE = {
     "global-rebound": (_GLOBAL_REBOUND, "5", "0"),
     "nonlocal-rebound": (_NONLOCAL_REBOUND_THROUGH_THE_VALUE, "1", "0"),
     "direct-nonlocal-rebound": (_DIRECT_NONLOCAL_REBOUND, "1", "0"),
+    "append-carried": (_APPEND_THROUGH_THE_VALUE, "1", "0"),
+    "append-to-a-parameter": (_APPEND_TO_A_PARAMETER, "1", "0"),
+    "item-store-to-a-parameter": (_ITEM_STORE_TO_A_PARAMETER, "5", "1"),
+    "key-store-to-a-parameter": (_KEY_STORE_TO_A_PARAMETER, "5", "1"),
+}
+
+# Open in both halves, never ``sat`` for the lie: ``bump``'s contract states
+# nothing of the cell on the arm that ran past ``if n > 5: return``.  ``n >
+# 5`` over the cell's free input may run code (``__gt__``), and code may
+# rebind a cell a nested scope declares ``nonlocal``, so ``n`` read after the
+# test is another evaluation (the exposure rule,
+# ``container_mutation._ambient_targets``, #8823/#8847): ``n += 1`` adds to
+# that unknown (``python:receiver_after_call``), which no input of the
+# contract determines, so ``python:after(out, "cell:n")`` is not stated
+# (``universe_value.stated_by_its_inputs``).  The comparison itself is the
+# one unanswered operation on the cell's input, owed (scorecard 43752693483:
+# the truthful claim ``undecidable``, "a joined answer was dropped").  It is
+# decided where the contract states the cell after the test over its class
+# input, which the caller binds (``py.class("cell:n", ...)``, step 7): an
+# ``int``'s ``__gt__`` runs no code.
+_OPEN_WHILE_THE_TEST_MAY_RUN_CODE = {
     "nonlocal-rebound-after-an-early-return": (
         _NONLOCAL_REBOUND_AFTER_AN_EARLY_RETURN,
         "1",
         "0",
     ),
-    "append-carried": (_APPEND_THROUGH_THE_VALUE, "1", "0"),
-    "append-to-a-parameter": (_APPEND_TO_A_PARAMETER, "1", "0"),
-    "item-store-to-a-parameter": (_ITEM_STORE_TO_A_PARAMETER, "5", "1"),
-    "key-store-to-a-parameter": (_KEY_STORE_TO_A_PARAMETER, "5", "1"),
 }
 
 # The called function's own contract (its body lifted alone, never the
@@ -312,3 +329,24 @@ def test_a_cell_the_callee_rebinds_is_decided_by_its_contract(
     assert _claim_statuses(truthful.prove_doc) == ["discharged"], truthful.prove_doc
     assert truthful.verdict != "unsat", truthful.prove_doc
     assert lying.verdict == "unsat", lying.prove_doc
+
+
+@pytest.mark.parametrize("shape", sorted(_OPEN_WHILE_THE_TEST_MAY_RUN_CODE))
+def test_a_cell_read_after_a_test_that_may_run_code_is_not_stated(
+    shape: str, tmp_path: Path
+) -> None:
+    source, true, false = _OPEN_WHILE_THE_TEST_MAY_RUN_CODE[shape]
+    truthful = run_source_through_real_solver(
+        tmp_path / "t", source.format(claim=true)
+    )
+    lying = run_source_through_real_solver(tmp_path / "l", source.format(claim=false))
+    print(
+        json.dumps(
+            {"truthful": truthful.verdict, "lying": lying.verdict}, sort_keys=True
+        )
+    )
+    # Nothing the callee states decides the caller's read: the claim stays
+    # undecided in both halves, never ``sat`` for the lie.
+    assert _claim_statuses(truthful.prove_doc) == ["undecidable"], truthful.prove_doc
+    assert truthful.verdict == "open", truthful.prove_doc
+    assert lying.verdict == "open", lying.prove_doc

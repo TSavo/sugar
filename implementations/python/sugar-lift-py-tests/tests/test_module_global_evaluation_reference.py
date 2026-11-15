@@ -1634,10 +1634,17 @@ def test_a_function_reduced_on_its_own_reads_a_module_loops_publication() -> Non
     # #8705): the run iterates the call's result as the one undecided read
     # (``CallSiteValue.iter_with``, #8775), so it completes, but how many
     # items it ran -- and so whether ``last`` was written, and to what -- is
-    # not decided here.  ``f`` reads its free input ``global:last`` (#8704),
-    # and its row states no value for it, so a claim over ``last`` stays
+    # not decided here.  ``last``'s module binding is the loop's publication
+    # (``GuardedBinding``: its post-loop key where an item wrote it, unbound
+    # where none did), so ``f`` has two faces: under the loop's slot it
+    # returns its free input ``global:last`` (#8704; the one key the
+    # publication reads through is bound to it), and where no item wrote
+    # ``last`` it raises ``NameError``, as Python does -- never dropped.  Its
+    # row states no value for the input, so a claim over ``last`` stays
     # undecided at prove.  Before step 5 ``g``'s body was followed: the run
     # wrote ``last = 2`` and ``f`` returned 2.
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.universe_value import UniverseValue
     from sugar_lift_py_tests.tree_enumerate import (
         function_universe_outcome,
         module_end_contexts,
@@ -1646,7 +1653,24 @@ def test_a_function_reduced_on_its_own_reads_a_module_loops_publication() -> Non
     tree = _source(LOOP_FIRST_BOUND)
     assert module_end_contexts(_function(tree).unit)
     outcome = function_universe_outcome(_function(tree))
-    assert _reads_its_global_input(_returned_value(outcome), "last")
+    completed = [exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)]
+    halted = [exit_ for exit_ in outcome.exits if isinstance(exit_, Halted)]
+    # Each completed face runs under the publication's slot and returns the
+    # free input; the read where no item wrote ``last`` is the halt.
+    assert completed, outcome
+    for face in completed:
+        assert "python:branch_result" in repr(face.guard), outcome
+        assert isinstance(face.value, UniverseValue), outcome
+        (returned,) = [
+            entry
+            for entry in face.value.record.statements
+            if isinstance(entry, ReturnValue)
+        ]
+        assert _reads_its_global_input(returned.value, "last")
+    assert any(
+        isinstance(face.effect, NameErrorEffect) and face.effect.name == "last"
+        for face in halted
+    ), outcome
     assert "global:last" not in _stated(_function(tree))
 
 
