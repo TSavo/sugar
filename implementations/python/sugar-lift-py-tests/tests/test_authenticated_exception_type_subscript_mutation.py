@@ -27,6 +27,13 @@ def _value():
     return AuthenticatedExceptionTypeValue(carried, str_const("exception-type"))
 
 
+def _only_halt(outcome):
+    """The outcome is one unconditional halt and nothing else: its effect."""
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.exits
+    return halt.effect
+
+
 @pytest.mark.parametrize(
     ("operation", "owner", "site_index"),
     (
@@ -45,9 +52,10 @@ def test_authenticated_exception_type_subscript_mutations_dispatch_to_exact_carr
         if operation == "setitem"
         else value.delitem(TermValue(0), site, None)
     )
-    assert outcome.value.effect.exception_name == "TypeError"
-    assert outcome.value.effect.producer_node_owner == owner
-    assert outcome.value.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
+    effect = _only_halt(outcome)
+    assert effect.exception_name == "TypeError"
+    assert effect.producer_node_owner == owner
+    assert effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
 
 def test_authenticated_exception_type_subscript_mutations_reject_wrong_site(tmp_path):
@@ -55,5 +63,5 @@ def test_authenticated_exception_type_subscript_mutations_reject_wrong_site(tmp_
     value = _value()
     store = value.setitem(TermValue(0), TermValue(7), store_site, None)
     delete = value.delitem(TermValue(0), delete_site, None)
-    assert store.value.effect.occurrence_id != f"{delete_site.filename}:{delete_site.line}:{delete_site.col}"
-    assert delete.value.effect.occurrence_id != f"{store_site.filename}:{store_site.line}:{store_site.col}"
+    assert _only_halt(store).occurrence_id != f"{delete_site.filename}:{delete_site.line}:{delete_site.col}"
+    assert _only_halt(delete).occurrence_id != f"{store_site.filename}:{store_site.line}:{store_site.col}"
