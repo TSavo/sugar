@@ -364,17 +364,31 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             writes.append(ScopeRebind(*written))
         return tuple(writes)
 
-    def _start(self, runtime, ctx):
-        """``(ctx, carried, early)``: the context the first item of a live
-        loop (a ``for``'s or a ``while``'s) begins in, with the header of each
-        carried name bound to its pre-loop value, and those values
-        (``carried``); or ``early``, the outcome a pre-loop value reduced to
-        that is not one unconditional value owing nothing, returned whole in
-        place of the loop."""
+    def _start(self, runtime, ctx, first):
+        """The live loop (a ``for``'s or a ``while``'s) from its first item:
+        ``first(runtime_ctx, carried)``, where ``runtime_ctx`` is the context
+        the first item begins in, with the header of each carried name bound
+        to its pre-loop value, and ``carried`` those values.
+
+        A pre-loop value is an outcome like every other, and the loop is what
+        follows it on every face it completes on (``ExitSet.sequence``): under
+        that face's guard and faces, owing what it owes -- a read after an
+        earlier loop is that loop's exit route under its guard
+        (``guarded_binding_read_sugar._read_loop_projection``).  One waiting
+        on its caller's actual runs the loop once it discharges
+        (``and_then``).  A face that halts halted before the first item: it
+        leaves carrying the record of where it halted (``halts_recorded``).
+        The pre-loop value is never the loop's outcome in its place: the
+        loop runs and publishes on every exit it leaves by."""
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
+        from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
         from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            halt_record,
+            halts_recorded,
+        )
         from sugar_lift_py_tests.temporal import bind_temporal
 
         from dataclasses import replace
@@ -390,43 +404,54 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                     )
                 ),
             )
-        initial_values = []
-        for (header, _writes, _else_writes), sugar in zip(
-            self._carried_evaluations(runtime),
-            runtime.initial_value_sugars,
-            strict=True,
-        ):
+        starts = tuple(
+            zip(
+                self._carried_evaluations(runtime),
+                runtime.initial_value_sugars,
+                strict=True,
+            )
+        )
+
+        def start_from(index, runtime_ctx, initial_values):
+            if index == len(starts):
+                # The first item begins with the pre-loop values.
+                return first(runtime_ctx, initial_values)
+            (header, _writes, _else_writes), sugar = starts[index]
             if sugar is None:
                 # A name first bound in the loop: its header starts unbound.
                 # Nothing is bound under it until an item writes the name,
                 # and each item decides its write slot (``_enter_header``).
-                initial_values.append(None)
-                continue
-            initial = sugar.desugar(runtime_ctx)
+                return start_from(index + 1, runtime_ctx, (*initial_values, None))
+
+            def bound(initial_value):
+                # The pre-loop value is bound under the header's key where
+                # the loop stands (``evaluation_here``), outside every item of
+                # it: the header's evaluation before the first item.  The name
+                # is never written; each item binds its own header to what it
+                # begins with (``_enter_header``).
+                started = runtime_ctx
+                if header is not None:
+                    started = bind_temporal(
+                        started,
+                        evaluation_here(header),
+                        initial_value,
+                        owner="LoopRecurrenceSugar.pre-loop",
+                        blame=str(self.site),
+                    )
+                return start_from(index + 1, started, (*initial_values, initial_value))
+
+            initial = halts_recorded(sugar.desugar(runtime_ctx), halt_record(ctx))
             if isinstance(initial, NativeOperationExitCarrierV1):
-                return runtime_ctx, None, initial
+                return initial.and_then(bound)
+            initial = _require_exit_set(initial, owner="LoopRecurrenceSugar.pre-loop")
             initial_value = initial.completed_value()
-            # Only one unconditional value owing nothing is bound and carried
-            # on; any other shape (a halt, several faces, an arm that owes)
-            # is returned whole, with every arm it has.
-            if initial_value is None or initial.owed_items():
-                return runtime_ctx, None, initial
-            # The pre-loop value is bound under the header's key where the
-            # loop stands (``evaluation_here``), outside every item of it: the
-            # header's evaluation before the first item.  The name is never
-            # written; each item binds its own header to what it begins with
-            # (``_enter_header``).
-            if header is not None:
-                runtime_ctx = bind_temporal(
-                    runtime_ctx,
-                    evaluation_here(header),
-                    initial_value,
-                    owner="LoopRecurrenceSugar.pre-loop",
-                    blame=str(self.site),
-                )
-            initial_values.append(initial_value)
-        # The first item begins with the pre-loop values.
-        return runtime_ctx, tuple(initial_values), None
+            if initial_value is not None and not initial.owed_items():
+                # One unconditional value owing nothing: the loop is exactly
+                # what follows it.
+                return bound(initial_value)
+            return initial.sequence(bound)
+
+        return start_from(0, runtime_ctx, ())
 
     def _desugar_with_iterable(self, iterable, ctx):
         runtime = self.construction.loop_runtime
@@ -459,18 +484,17 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             and not isinstance(iterable, SymbolicValue)
             and not contents_stale(iterable)
         ):
-            runtime_ctx, carried, early = self._start(runtime, ctx)
-            if early is not None:
-                # A pre-loop value halted before the first item: it carries
-                # the record of where it halted (``halts_recorded``).
-                return halts_recorded(early, halt_record(ctx))
-            return halts_recorded(
-                iterator_operation.submit(iterable, runtime_ctx), halt_record(ctx)
-            ).and_then(
-                lambda iterator: self._advance_iterator(
-                    iterator, runtime, runtime_ctx, entries=(), carried=carried
+            def first(runtime_ctx, carried):
+                return halts_recorded(
+                    iterator_operation.submit(iterable, runtime_ctx),
+                    halt_record(ctx),
+                ).and_then(
+                    lambda iterator: self._advance_iterator(
+                        iterator, runtime, runtime_ctx, entries=(), carried=carried
+                    )
                 )
-            )
+
+            return self._start(runtime, ctx, first)
 
         # An iterable the reduction has not decided -- a symbolic value (a
         # formal, an unknown), or a container whose contents are not current
@@ -1192,18 +1216,12 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         (``_start``).  A test that does not decide where the first item
         begins leaves the loop its recurrence, as a ``while`` whose items do
         not run (``_desugar_with_iterable``)."""
-        from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            halt_record,
-            halts_recorded,
-        )
-
-        runtime_ctx, carried, early = self._start(runtime, ctx)
-        if early is not None:
-            # A pre-loop value halted before the first item: it carries the
-            # record of where it halted (``halts_recorded``).
-            return halts_recorded(early, halt_record(ctx))
-        return self._test_item(
-            runtime, runtime_ctx, entries=(), carried=carried, index=0, before=ctx
+        return self._start(
+            runtime,
+            ctx,
+            lambda runtime_ctx, carried: self._test_item(
+                runtime, runtime_ctx, entries=(), carried=carried, index=0, before=ctx
+            ),
         )
 
     def _test_item(self, runtime, ctx, *, entries, carried, index, before=None):
