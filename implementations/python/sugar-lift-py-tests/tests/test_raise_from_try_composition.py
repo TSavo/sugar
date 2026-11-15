@@ -82,13 +82,23 @@ def _site(line: int = 1, col: int = 0, *, filename: str = "unit.py"):
 
 
 def _call_exception(name: str, message: str | None = None):
+    """A constructed builtin exception as its construction leaves it: the
+    call value carries the class it constructed.  A raise reads the raised
+    class off the value, never off the raise's spelled name, so a call value
+    with no class is the undetermined raise."""
+    from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+
     args = (StringValue(message),) if message is not None else ()
+    coordinate, mro = _builtin_exception_identity(name)
+    assert coordinate is not None, name
     return CallSiteValue(
         target_name=name,
         arg_values=args,
         parameters=(),
         term=ctor(f"call:{name}", []),
         body=None,
+        exception_type_coordinate=coordinate,
+        exception_type_mro=mro,
     )
 
 
