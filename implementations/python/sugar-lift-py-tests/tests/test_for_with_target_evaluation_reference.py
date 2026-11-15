@@ -313,13 +313,14 @@ def test_a_with_tuple_target_without_its_store_binds_nothing() -> None:
     assert with_node.substitution_binding({}) is None
 
 
-def test_a_generator_manager_tuple_target_reads_its_projections(
-    monkeypatch,
-) -> None:
-    # ``with gen() as (a, b)``: the manager's contract is its generator frame.
-    # The store is lowered as for a class-based manager, so after the with
-    # ``a``/``b`` are the store's projections, not their prior state.
-    monkeypatch.setattr(With, "_generator_manager_frame", lambda self, item: object())
+def test_a_module_manager_tuple_target_reads_its_projections() -> None:
+    # ``with m as (a, b)`` over a module-level manager.  Since #8740 (#7757
+    # step 6) there is no generator-manager branch: every head is the reduced
+    # manager (``WithReducedManagerSugar``), and its store is lowered onto the
+    # enter result, so after the with ``a``/``b`` are the store's
+    # projections, not their prior state.  (This test forced the deleted
+    # ``With._generator_manager_frame`` branch; the assertions are the one
+    # path's.)
     with_node = _with(_node(_function(WITH_TUPLE), With).substitute({}))
     assert isinstance(with_node, With)
     item = with_node.items[0]
@@ -352,8 +353,10 @@ def test_a_formal_manager_tuple_target_lowers_its_store_and_constructs() -> None
     function.sugar()
 
 
-def test_a_generator_manager_store_is_lowered_once(monkeypatch) -> None:
-    monkeypatch.setattr(With, "_generator_manager_frame", lambda self, item: object())
+def test_a_with_store_is_lowered_once() -> None:
+    # Every manager's store target is lowered the same way since #8740 (the
+    # generator-manager branch this test forced is deleted); the rewrite is
+    # idempotent.
     with_node = _node(_function(WITH_TUPLE), With)
     bound = with_node._bind_store_target(with_node.items[0])
     assert len(bound.body) == len(with_node.body) + 1
