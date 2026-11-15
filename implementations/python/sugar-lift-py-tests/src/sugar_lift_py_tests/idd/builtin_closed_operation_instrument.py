@@ -79,7 +79,8 @@ is larval.
 (typed BuiltinCoordinate / sole floor application path) and residual R is
 stable zero.
 
-SCOREBOARD_AUTHORITY = False
+Not the board (``SCOREBOARD_AUTHORITY = False`` below): its denominator is
+name/vendor gates in the kit's own source, not corpus constructions.
 """
 
 from __future__ import annotations
@@ -87,6 +88,10 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 from pathlib import Path
+
+# Declared in code, where the one-board recognizer reads it; the docstring
+# alone declares nothing.
+SCOREBOARD_AUTHORITY = False
 
 VENDOR_CM_ROOTS: frozenset[str] = frozenset(
     {

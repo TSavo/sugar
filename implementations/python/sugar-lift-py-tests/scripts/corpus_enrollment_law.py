@@ -66,7 +66,8 @@ census cannot *start* without a complete terminal set equal to
 ``SourceTree(authenticated_root).paths()``, so unenrolled is unrepresentable
 and this count is permanently zero without a separate scanner.
 
-SCOREBOARD_AUTHORITY = False
+Not the board (``SCOREBOARD_AUTHORITY = False`` below): its denominator is
+corpus files that never reached a terminal, not constructions.
 """
 
 from __future__ import annotations
@@ -76,6 +77,10 @@ import json
 from pathlib import Path
 import sys
 from typing import NamedTuple, Sequence
+
+# Declared in code, where the one-board recognizer reads it; the docstring
+# alone declares nothing.
+SCOREBOARD_AUTHORITY = False
 
 
 class EnrollmentReport(NamedTuple):
