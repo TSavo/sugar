@@ -199,7 +199,19 @@ def test_the_same_source_gives_the_same_reference() -> None:
 
 def test_a_local_of_the_same_name_is_not_the_global() -> None:
     tree = _source("x = 1\nx += 1\ndef f():\n    x = 5\n    return x\n")
-    assert not isinstance(_returned(_function(tree)), EvaluationRef)
+    function = _function(tree)
+    read = _returned(function)
+    # Every read is a reference to the store that wrote it.  The local's
+    # read names the local ``x = 5``'s own key, and neither of the module's
+    # two evaluations of ``x``.
+    (module_assignment,) = _assignment_keys(tree, "x")
+    (module_rebind,) = _module_evaluations(tree)
+    local = function.substitute({}).body[0]
+    assert isinstance(local, Assign)
+    assert isinstance(read, EvaluationRef)
+    assert read.name == "x"
+    assert read.evaluation == dict(local.target_evaluations())["x"]
+    assert read.evaluation not in {module_assignment, module_rebind}
 
 
 def test_a_global_last_written_by_an_assignment_reads_its_key() -> None:
