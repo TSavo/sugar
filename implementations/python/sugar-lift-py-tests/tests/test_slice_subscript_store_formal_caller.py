@@ -6,11 +6,10 @@ the index species:
   - SliceSugar builds Floor ``SliceValue`` (not a SymbolicValue term shell)
   - ListValue.setitem handles ground SliceValue (Python list slice assignment)
   - Helper alone stays undischarged setitem when formals own receiver/value
-  - Production callers (positional / keyword / default) complete through the
-    real call binder — never hand-built discharge dicts for the positive path.
-    The list is the caller's own, made at the call: ``obj`` is that actual
-    with the caller's currency (#8249), so the store is decided and its
-    post-state is what Python computes
+  - Production callers (positional / keyword / default) are the call's
+    coordinate and edge, joined at prove (#7757 steps 5 and 6, #8705): the
+    edge carries the actuals; the store's post-state is the helper's row
+    discharged with them, what prove's one binder binds its carrier with
   - Wrong-coordinate / missing actual refuse fabricated completion
   - Extended-slice length mismatch is named ValueError; non-sequence RHS TypeError
 
@@ -42,7 +41,7 @@ from sugar_lift_py_tests.sugar.slice_sugar import SliceSugar
 from sugar_lift_py_tests.sugar.store_effect_sugar import SubscriptStoreEffectSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.nodes import Call, FunctionDef
+from sugar_source_tree.nodes import FunctionDef
 from sugar_source_tree.tree import SourceFile
 
 
@@ -59,21 +58,66 @@ def _helper(source: str):
     return function, function.sugar().desugar(None)
 
 
-def _call_outcome(signature: str, body: str, actuals: str):
-    source = f"def helper({signature}):\n    {body}\n\nhelper({actuals})\n"
-    tree = _tree(source, "slice_call.py")
-    call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
-    return call.sugar().desugar(None)
+def _call_outcome(signature: str, body: str, actuals: dict):
+    """The helper's contract row discharged with ``actuals`` (formal name to
+    value): what prove's one binder binds its carrier with at a call that
+    supplies them.
+
+    A same-file call is its coordinate and edge, joined at prove (#7757
+    steps 5 and 6, #8705): the call no longer discharges the helper's store
+    carrier, and what the callee leaves of the caller's list is no longer
+    carried out of its frame (``caller_visible_values``, deleted by #8739).
+    The store's post-state is read off the helper's own row; the call itself
+    is the edge (``_the_call``)."""
+    function, pending = _helper(f"def helper({signature}):\n    {body}\n")
+    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
+    return pending.discharge(
+        None,
+        {
+            coordinate.coordinate_cid: actuals[coordinate.declared_name]
+            for coordinate in function.sugar().formal_coordinates
+            if coordinate.declared_name in actuals
+        },
+    )
+
+
+def _the_call(signature: str, body: str, actuals: str):
+    """``helper({actuals})`` in a caller's body, read off the caller's
+    contract row: the call value on its one completed face (the edge, which
+    owes its halt under the complement of its ``completes`` atom)."""
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.outcome import Halted
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    source = (
+        f"def helper({signature}):\n    {body}\n\n\n"
+        f"def caller():\n    return helper({actuals})\n"
+    )
+    caller = next(
+        node
+        for node in _tree(source, "slice_call.py").nodes()
+        if isinstance(node, FunctionDef) and node.name == "caller"
+    )
+    outcome = function_universe_outcome(caller)
+    assert [face for face in outcome.exits if isinstance(face, Halted)], outcome
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert len(completed) == 1, outcome
+    returns = [
+        s for s in completed[0].value.record.statements if isinstance(s, ReturnValue)
+    ]
+    assert returns, completed[0].value
+    edge = returns[-1].value
+    assert isinstance(edge, CallSiteValue), type(edge)
+    return edge
+
+
+def _ints(*values: int) -> ListValue:
+    return fresh(ListValue, tuple(TermValue(value) for value in values))
 
 
 def _stored_list(outcome) -> ListValue:
-    """The caller's list after the call.
-
-    A completed call carries what its callee's frame left of each object it
-    shares with the caller, as a write labelled by the object
-    (``caller_visible_values``): ``actual:0`` is the first actual, the list
-    every caller here passes as ``obj``.  That write's value is the list
-    after the store."""
+    """The list after the store, read off the discharged row's record."""
     from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
 
     assert isinstance(outcome, ExitSet), type(outcome)
@@ -520,59 +564,74 @@ def test_discrimination_helper_alone_is_not_completed() -> None:
 
 
 def test_positional_caller_completes_slice_store() -> None:
+    edge = _the_call("obj, value", "obj[1:3] = value", "[0, 1, 2, 3], [9, 9]")
+    assert edge.arg_values == (_ints(0, 1, 2, 3), _ints(9, 9))
     outcome = _call_outcome(
         "obj, value",
         "obj[1:3] = value",
-        "[0, 1, 2, 3], [9, 9]",
+        {"obj": _ints(0, 1, 2, 3), "value": _ints(9, 9)},
     )
     stored = _stored_list(outcome)
-    assert stored == fresh(
-        ListValue, (TermValue(0), TermValue(9), TermValue(9), TermValue(3))
-    )
+    assert stored == _ints(0, 9, 9, 3)
 
 
 def test_keyword_caller_completes_slice_store() -> None:
+    from sugar_lift_py_tests.ir import str_const
+
+    edge = _the_call("obj, value", "obj[1:3] = value", "obj=[0, 1, 2, 3], value=[8]")
+    assert [arg.name for arg in edge.term.args] == ["py.kwarg", "py.kwarg"]
+    assert [arg.args[0] for arg in edge.term.args] == [
+        str_const("obj"),
+        str_const("value"),
+    ]
     outcome = _call_outcome(
         "obj, value",
         "obj[1:3] = value",
-        "obj=[0, 1, 2, 3], value=[8]",
+        {"obj": _ints(0, 1, 2, 3), "value": _ints(8)},
     )
     stored = _stored_list(outcome)
-    assert stored == fresh(ListValue, (TermValue(0), TermValue(8), TermValue(3)))
+    assert stored == _ints(0, 8, 3)
 
 
 def test_default_caller_completes_slice_store() -> None:
+    # The omitted ``value`` binds what the ``def`` statement's module run
+    # evaluated, carried on the edge as ``py.default`` (a caller called after
+    # import; a module-body call reduced alone is reached by no ``def``
+    # statement's run and its default read is refused by name).
+    from sugar_lift_py_tests.ir import str_const
+
+    edge = _the_call("obj, value=[7, 7]", "obj[1:3] = value", "[0, 1, 2, 3]")
+    assert edge.arg_values == (_ints(0, 1, 2, 3),)
+    (default,) = edge.term.args[1:]
+    assert default.name == "py.default"
+    assert default.args[0] == str_const("value")
     outcome = _call_outcome(
         "obj, value=[7, 7]",
         "obj[1:3] = value",
-        "[0, 1, 2, 3]",
+        {"obj": _ints(0, 1, 2, 3), "value": _ints(7, 7)},
     )
     stored = _stored_list(outcome)
-    assert stored == fresh(
-        ListValue, (TermValue(0), TermValue(7), TermValue(7), TermValue(3))
-    )
+    assert stored == _ints(0, 7, 7, 3)
 
 
 def test_full_slice_caller_replaces_entire_list() -> None:
     outcome = _call_outcome(
         "obj, value",
         "obj[:] = value",
-        "[0, 1], [5, 6, 7]",
+        {"obj": _ints(0, 1), "value": _ints(5, 6, 7)},
     )
     stored = _stored_list(outcome)
-    assert stored == fresh(ListValue, (TermValue(5), TermValue(6), TermValue(7)))
+    assert stored == _ints(5, 6, 7)
 
 
 def test_discrimination_production_slice_store_is_not_identity() -> None:
     outcome = _call_outcome(
         "obj, value",
         "obj[1:3] = value",
-        "[0, 1, 2, 3], [9, 9]",
+        {"obj": _ints(0, 1, 2, 3), "value": _ints(9, 9)},
     )
     stored = _stored_list(outcome)
-    assert stored != fresh(
-        ListValue, (TermValue(0), TermValue(1), TermValue(2), TermValue(3))
-    )
+    assert stored != _ints(0, 1, 2, 3)
 
 
 # ---------------------------------------------------------------------------
@@ -605,14 +664,10 @@ def test_missing_actual_does_not_fabricate_completed_slice_store() -> None:
 
 
 def test_production_delete_slice_caller() -> None:
-    """``del obj[1:3]`` through production call binder."""
-    outcome = _call_outcome(
-        "obj",
-        "del obj[1:3]",
-        "[0, 1, 2, 3]",
-    )
+    """``del obj[1:3]`` discharged with the caller's list."""
+    outcome = _call_outcome("obj", "del obj[1:3]", {"obj": _ints(0, 1, 2, 3)})
     stored = _stored_list(outcome)
-    assert stored == fresh(ListValue, (TermValue(0), TermValue(3)))
+    assert stored == _ints(0, 3)
 
 
 def test_step_zero_setitem_is_named_valueerror_with_occurrence() -> None:
@@ -697,10 +752,10 @@ def test_a_caller_completes_a_store_through_a_formal_slice_bound() -> None:
     outcome = _call_outcome(
         "obj, lo, value",
         "obj[lo:3] = value",
-        "[0, 1, 2, 3], 1, [9]",
+        {"obj": _ints(0, 1, 2, 3), "lo": TermValue(1), "value": _ints(9)},
     )
     stored = _stored_list(outcome)
-    assert stored == fresh(ListValue, (TermValue(0), TermValue(9), TermValue(3)))
+    assert stored == _ints(0, 9, 3)
 
 
 def test_slice_assign_iterable_door_not_getattr_probe() -> None:
