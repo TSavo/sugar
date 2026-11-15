@@ -54,7 +54,7 @@ def test_send_continues_from_the_same_resume_coordinate_to_termination():
 def test_throw_routes_the_exact_incoming_effect_as_a_halted_face():
     api = _api()
     yielded = _machine(api.YieldStepV1(_int(7)), api.ReturnStepV1(_int(9))).resume()
-    incoming = RaiseEffect.for_builtin("RenamedError", occurrence="body:3")
+    incoming = RaiseEffect.for_builtin("ValueError", occurrence="body:3")
 
     exits = yielded.machine.throw(incoming)
 
@@ -112,7 +112,7 @@ def test_throw_runs_constructed_finally_and_restores_exact_incoming_effect():
         api.FinallyStepV1((InertSugar(site="cleanup"),)),
         api.ReturnStepV1(),
     ).resume()
-    incoming = RaiseEffect.for_builtin("RenamedError", occurrence="body:8")
+    incoming = RaiseEffect.for_builtin("ValueError", occurrence="body:8")
 
     exits = yielded.machine.throw(incoming)
 

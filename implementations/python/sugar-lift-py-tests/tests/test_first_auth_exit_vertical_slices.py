@@ -46,6 +46,7 @@ from sugar_lift_py_tests.sugar.with_opaque_cited_manager_sugar import (
 from sugar_lift_python_source.manager_summary_derivation import (
     populate_source_derived_resource_refs,
 )
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.nodes import (
     Attribute,
@@ -88,7 +89,12 @@ def _build_slice(
         workspace_path_source(str(path), root=str(root)),
         construction_context=context,
     )
-    populate_source_derived_resource_refs(tree, root=root, path=path)
+    populate_source_derived_resource_refs(
+        tree,
+        root=root,
+        path=path,
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
+    )
     with_node = next(node for node in tree.nodes() if isinstance(node, With))
     body_expr = with_node.body[0].value
     return context, with_node, body_expr
