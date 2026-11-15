@@ -148,7 +148,17 @@ def holds_recurrence_value(value) -> bool:
     stands either is a free term the solver may choose, so a claim over it --
     a lie included -- could read ``sat`` (#7757, step 6).  A decided item (a
     member of an in-hand list, tuple or range) is a concrete item's value,
-    never ``LOOP_ITEM``: the loop runs unrolled over it."""
+    never ``LOOP_ITEM``: the loop runs unrolled over it.
+
+    A comprehension's symbolic fold is the same recurrence over the same
+    iterator path (``iterator_operation.iterated``, ``stepped``): a
+    ``ComprehensionValue`` with no finite members holds
+    ``py.listcomp(<iterable>, <member lambda>, ...)`` (or its set, dict or
+    generator kind, ``ComprehensionSugar._fold_term``), a constructor prove
+    does not interpret, so the list, set or dict it accumulates (and what a
+    generator yields) is a value the solver chooses.  One whose owner
+    projected every member (``finite_elements``) is decided."""
+    from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
     from sugar_lift_py_tests.floor.guarded_value import GuardedValue
     from sugar_lift_py_tests.ir import _Ctor
 
@@ -157,6 +167,9 @@ def holds_recurrence_value(value) -> bool:
         current = pending.pop()
         if isinstance(current, GuardedValue):
             pending.extend((current.when_true, current.when_false))
+        elif isinstance(current, ComprehensionValue):
+            if current.finite_elements is None:
+                return True
         elif isinstance(current, SymbolicValue):
             term = current.term
             if isinstance(term, _Ctor) and term.name in _RECURRENCE_VALUES:
@@ -170,7 +183,10 @@ def read_of_bound_value(value, site):
     decides (``holds_recurrence_value``) -- the name the loop carries read
     after it (``LoopBindingRefSugar``), in its ``else`` suite or inside its
     symbolic item through the header, or the item itself read through the
-    target's key (``EvaluationRefSugar``) -- the undecided member, as a slot
+    target's key (``EvaluationRefSugar``), and a comprehension's symbolic
+    fold, read where the comprehension completes with it
+    (``ComprehensionSugar._complete``) and through any key it is bound
+    under -- the undecided member, as a slot
     nothing decided is (``branch_result_coordinate.undecided_slot_debt``):
     the value still stands, and every claim that reads it owes, never
     decided by a value the solver selects (#7757)."""
