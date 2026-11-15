@@ -43,14 +43,31 @@ def _test_line(module: str) -> int:
 # raised instance.  Neither the reduction nor the class's contract decides
 # that today (the contract states fields, never the instance's class), so
 # ``f``'s row reads an undecided value and both halves read ``open`` on main
-# (scorecard 43738710481), listed on #7661.  The class of a call's result
-# at prove (#7757 step 8: ``python:instance`` and dispatch, #8750 prove
-# side, the lift side not merged) decides them: truthful ``sat``, lying
-# ``unsat``.  The resolver itself (each read of the class name denotes the
-# one class statement) is what the halves will then witness.
+# (scorecard 43738710481; the truthful halves measured, the lies set by
+# reasoning), listed on #7661.  The resolver itself (each read of the class
+# name denotes the one class statement) is what the halves will witness
+# once the class of the call's result is stated.
+#
+# Step 8 as merged (#8750 prove, #8778 and #8799 lift) does not state it
+# here.  It supplies a receiver class (``python:instance(<class>,
+# <field>...)``) only for the result of a class whose construction runs no
+# source code (``_bare_instance_symbol``), and only to a method call on it:
+# - ``Box`` and ``Marker`` run a source ``__init__``, so their call's result
+#   names no class (the field set is the class contract's, which dispatch
+#   does not read).  ``Box.__exit__(self, *exc)`` would not fit prove's one
+#   binder either (no ``*args``), and ``box.value`` reads a field of
+#   ``__enter__``'s result, which no contract states.
+# - ``isinstance`` and an ``except`` test read the class of a value, not a
+#   method: a type test reads no object off a call
+#   (``class_definition_value._instance_held_by``), and ``with_raised_types``
+#   types only a call's own raise (``python:raised(<call>, ...)``), never a
+#   raised value made by a class call (``raise Boom()``).
+# None of these is step 7 part 1 (what a callee leaves in what it was
+# handed): each needs the class of a class call's result stated at prove.
 _OPEN_UNTIL_STEP_8 = (
-    "the class of a same-file class call's result is decided at prove "
-    "(#7757 step 8)"
+    "the class of a same-file class call's result is not stated at prove "
+    "(#7757 step 8 supplies it only to a method call on a class whose "
+    "construction runs no source code)"
 )
 
 
