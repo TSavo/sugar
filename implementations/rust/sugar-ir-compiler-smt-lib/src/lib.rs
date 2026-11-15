@@ -20,6 +20,8 @@ mod isinstance_encoding;
 mod literal_encoding;
 pub mod regex_regln;
 
+pub use emitter::PYTHON_VALUE_BUILTIN;
+
 pub const DIALECT: &str = "smt-lib-v2.6";
 pub const COMPILER_NAME: &str = "smt-lib-reference";
 pub const COMPILER_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -2855,6 +2857,107 @@ mod tests {
         let ordering = py_compare("Lt", string_const("a"), int_const(1), "k");
         assert_eq!(solve(&ordering), "sat");
         assert_eq!(solve(&not_formula(ordering)), "sat");
+    }
+
+    fn joined_call(callee: &str) -> serde_json::Value {
+        ctor(
+            "python:call_result",
+            vec![
+                ctor(callee, vec![int_const(3)]),
+                ctor("python:occurrence", vec![string_const("call-site")]),
+            ],
+        )
+    }
+
+    #[test]
+    fn a_value_bound_to_a_literal_has_the_literal_type_for_py_eq() {
+        // A joined post `out = 6`: a plain `=` to an int literal. The literal
+        // states its own type, so the value is the int 6 and `py.eq` over it
+        // is SMT equality, never the free application (#8416).
+        let call = joined_call("call:v.twice");
+        let post = eq(call.clone(), int_const(6));
+        let under_post = |claim: serde_json::Value| all_of(vec![post.clone(), claim]);
+        assert_twin(
+            under_post(py_eq(call.clone(), int_const(6))),
+            under_post(py_eq(call.clone(), int_const(7))),
+            "twice(3) == 6 under `out = 6`",
+        );
+        assert_twin(
+            under_post(not_formula(py_eq(call.clone(), int_const(8)))),
+            under_post(not_formula(py_eq(call.clone(), int_const(6)))),
+            "twice(3) != 8 under `out = 6`",
+        );
+        assert_eq!(
+            solve(&under_post(py_eq(call.clone(), string_const("6")))),
+            "unsat",
+            "an int is never equal to a str"
+        );
+
+        // The post bound under its completion guard: the type follows the
+        // value wherever the `=` holds.
+        let completes = atomic("python:unknown_callee_call.completes", vec![call.clone()]);
+        let guarded = implies(completes.clone(), post.clone());
+        let claim = |rhs: i64| all_of(vec![completes.clone(), guarded.clone(), py_eq(call.clone(), int_const(rhs))]);
+        assert_twin(claim(6), claim(7), "twice(3) == 6 under `completes -> out = 6`");
+
+        // A str literal states its type and its content.
+        let named = joined_call("call:v.name");
+        let post = eq(named.clone(), string_const("abc"));
+        let under_post = |claim: serde_json::Value| all_of(vec![post.clone(), claim]);
+        assert_twin(
+            under_post(py_eq(named.clone(), string_const("abc"))),
+            under_post(py_eq(named.clone(), string_const("abd"))),
+            "name(3) == \"abc\" under `out = \"abc\"`",
+        );
+        assert_eq!(
+            solve(&under_post(py_eq(named.clone(), int_const(1)))),
+            "unsat",
+            "a str is never equal to an int"
+        );
+
+        // Two values, each bound to a literal: equal by value.
+        let other = joined_call("call:v.thrice");
+        let both = |left: i64, right: i64| {
+            all_of(vec![
+                eq(call.clone(), int_const(left)),
+                eq(other.clone(), int_const(right)),
+                py_eq(call.clone(), other.clone()),
+            ])
+        };
+        assert_twin(both(6, 6), both(6, 7), "twice(3) == thrice(3) over two literals");
+    }
+
+    #[test]
+    fn py_eq_over_an_untyped_operand_is_free_until_the_operand_is_a_builtin() {
+        // Nothing states the call's type: the last branch of `py.eq` is the
+        // free application, so a model may answer it either way and the two
+        // contradictory claims are satisfiable together.
+        let call = joined_call("call:v.f");
+        let contradictory = all_of(vec![
+            py_eq(call.clone(), int_const(7)),
+            py_eq(call.clone(), int_const(8)),
+        ]);
+        assert_eq!(solve(&contradictory), "sat");
+        // Stated a `str` or an `int`, no `py.eq` over it reaches the free
+        // branch: a satisfiable claim must be satisfiable as Python reads it.
+        let builtin = atomic(PYTHON_VALUE_BUILTIN, vec![call.clone()]);
+        assert_eq!(
+            solve(&all_of(vec![builtin.clone(), contradictory])),
+            "unsat",
+            "one builtin value is not both 7 and 8"
+        );
+        assert_eq!(
+            solve(&all_of(vec![builtin.clone(), py_eq(call.clone(), int_const(7))])),
+            "sat"
+        );
+        let parts = fixture_compile_asserted_to_parts(&builtin).expect("compile");
+        assert!(
+            !parts.preamble.contains("|python:value.builtin|"),
+            "the builtin atom is rendered, never declared:\n{}",
+            parts.preamble
+        );
+        // A literal operand is a builtin as it stands.
+        assert_eq!(solve(&atomic(PYTHON_VALUE_BUILTIN, vec![int_const(7)])), "sat");
     }
 
     #[test]

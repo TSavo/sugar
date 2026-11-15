@@ -2531,7 +2531,10 @@ fn expected_atomic_arg_sort(name: &str, args: &[Term]) -> Option<String> {
         return Some(BV32_SORT.to_string());
     }
     let smt_name = smt_atomic_name(name);
-    if name == "py.eq" || matches!(smt_name, "=" | "distinct" | "<" | "<=" | ">" | ">=") {
+    if name == "py.eq"
+        || name == PYTHON_VALUE_BUILTIN
+        || matches!(smt_name, "=" | "distinct" | "<" | "<=" | ">" | ">=")
+    {
         let known: Vec<String> = args.iter().filter_map(known_term_sort).collect();
         for preferred in ["SugarOptionOption", "SugarResultOption"] {
             if known.iter().any(|sort| sort == preferred) {
@@ -3406,6 +3409,10 @@ fn collect_predicate_decls_formula(formula: &Formula, out: &mut BTreeMap<String,
             if name == "identity" && args.len() == 2 {
                 return;
             }
+            // Rendered over the Python-value type guards, never applied.
+            if name == PYTHON_VALUE_BUILTIN {
+                return;
+            }
             // G2: BV32 atoms are emitted as theory expressions — do not declare
             // them as uninterpreted predicates.
             if crate::literal_encoding::routes_to_bv32_theory(name) {
@@ -3623,7 +3630,24 @@ fn emit_grounded_int_bitwise(name: &str, args: &[Term]) -> Option<String> {
 // `python:value.str`); when neither guard holds it is the uninterpreted `py.eq`
 // application it was. An `=` binding an undecided value to a decided operation
 // (a joined post's `out = <value>`) states that type and content, so a `py.eq`
-// over the same value reads them.
+// over the same value reads them. An int or str literal states its own type:
+// each concrete Int value the script holds is an `int`, and each string
+// literal's opaque Int constant is a `str` with that content
+// (`py_literal_type_axioms`), so a value bound by `=` to a literal (a joined
+// post's `out = 8`) has the literal's type by congruence. Two undecided
+// operands are equal by value when both types are stated and the same, and
+// unequal when the stated types differ.
+//
+// Where no type is stated, `py.eq` stays the uninterpreted application on its
+// last branch. That branch is sound for a refutation (an unsatisfiable script
+// is unsatisfiable under every reading of `py.eq`) but not for satisfiability:
+// a model may answer the free `py.eq` either way. The atom
+// `python:value.builtin(<operand>)` (`PYTHON_VALUE_BUILTIN`) states that the
+// operand is a `str` or an `int`, so that no `py.eq` over it reaches the free
+// branch; the verifier conjoins it to confirm a satisfiable claim.
+
+/// The atom stating that an operand is a `str` or an `int` (see above).
+pub const PYTHON_VALUE_BUILTIN: &str = "python:value.builtin";
 
 const PY_VALUE_OF_STR: &str = "|python:value.of_str|";
 const PY_VALUE_STR: &str = "|python:value.str|";
@@ -3656,6 +3680,32 @@ fn py_value_preamble() -> String {
          (declare-fun {PY_VALUE_IS_STR} (Int) Bool)\n\
          (declare-fun {PY_VALUE_IS_INT} (Int) Bool)\n"
     )
+}
+
+/// An int or str literal states its own builtin type, when the body used the
+/// Python-value functions: each concrete Int value is an `int`, and each
+/// string literal's opaque constant (`strlit_*`, declared by the literal
+/// preamble, which this follows) is a `str` holding the literal's text. Each
+/// is a Python-true fact about the literal, so it holds in every position.
+fn py_literal_type_axioms(literals: &LiteralConstants) -> String {
+    if !PY_VALUE_USED.with(|used| used.get()) {
+        return String::new();
+    }
+    let mut out = String::new();
+    for n in literals.concrete_int_values() {
+        let n = smt_int_numeral(n);
+        out.push_str(&format!(
+            "(assert (and ({PY_VALUE_IS_INT} {n}) (not ({PY_VALUE_IS_STR} {n}))))\n"
+        ));
+    }
+    for text in literals.string_literal_texts() {
+        let symbol = crate::literal_encoding::string_lit_name(text);
+        out.push_str(&format!(
+            "(assert (and ({PY_VALUE_IS_STR} {symbol}) (not ({PY_VALUE_IS_INT} {symbol})) (= ({PY_VALUE_STR} {symbol}) {})))\n",
+            smt_string_literal(text)
+        ));
+    }
+    out
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3984,6 +4034,26 @@ fn py_eq_guarded(decided: &PyDecided, undecided: &str, atom: &str) -> String {
     }
 }
 
+/// `left == right` over two undecided values: equal by value when both are
+/// stated `int`s or both stated `str`s, unequal when one is a `str` and the
+/// other an `int`; `atom` (the uninterpreted `py.eq`) when neither pair of
+/// types is stated.
+fn py_eq_both_undecided(left: &str, right: &str, atom: &str) -> String {
+    let (left_str, left_int) = py_type_guards(left);
+    let (right_str, right_int) = py_type_guards(right);
+    format!(
+        "(ite (and {left_int} {right_int}) (= {left} {right}) \
+         (ite (and {left_str} {right_str}) (= ({PY_VALUE_STR} {left}) ({PY_VALUE_STR} {right})) \
+         (ite (or (and {left_str} {right_int}) (and {left_int} {right_str})) false {atom})))"
+    )
+}
+
+/// `undecided` is a `str` or an `int`, exactly one of them.
+fn py_builtin(undecided: &str) -> String {
+    let (is_str, is_int) = py_type_guards(undecided);
+    format!("(or (and {is_str} (not {is_int})) (and {is_int} (not {is_str})))")
+}
+
 /// `undecided` IS the decided value: its builtin type and its content.
 fn py_value_is(decided: &PyDecided, undecided: &str) -> String {
     let (is_str, is_int) = py_type_guards(undecided);
@@ -4034,6 +4104,22 @@ fn py_compare_completes(operator: &str, left: &Term, right: &Term) -> Option<Str
 /// `py.eq`, or an `=` with a decided operation on one side. `None` leaves the
 /// atom to `emit_atomic`.
 fn emit_python_value_atomic(name: &str, args: &[Term]) -> Result<Option<String>, CompileError> {
+    // The operand is a `str` or an `int`: a decided value is, where it holds;
+    // an undecided one by its stated type; a value outside the Int universe
+    // is neither.
+    if name == PYTHON_VALUE_BUILTIN {
+        let [operand] = args else {
+            return Err(CompileError::MalformedIr(format!(
+                "{PYTHON_VALUE_BUILTIN} takes one operand, got {}",
+                args.len()
+            )));
+        };
+        return Ok(Some(match py_side(operand) {
+            Some(PySide::Decided(decided)) => decided.holds(),
+            Some(PySide::Undecided(undecided)) => py_builtin(&undecided),
+            None => "false".to_string(),
+        }));
+    }
     if let [Term::Ctor {
         name: protocol,
         args: protocol_args,
@@ -4100,7 +4186,10 @@ fn emit_python_value_atomic(name: &str, args: &[Term]) -> Result<Option<String>,
             };
             smt_ite(&decided.holds(), &read, &atom)
         }
-        (PySide::Undecided(_), PySide::Undecided(_)) => return Ok(None),
+        // Only `py.eq` reaches here: an `=` arm has a decided operation.
+        (PySide::Undecided(left), PySide::Undecided(right)) => {
+            py_eq_both_undecided(&left, &right, &atom)
+        }
     };
     Ok(Some(rendered))
 }
@@ -4381,7 +4470,10 @@ pub fn compile_formula(formula: &Formula) -> Result<CompiledFormula, CompileErro
     // values; bool encoded as int; floats residual). See `literal_encoding`.
     // The axiom is a Python-TRUE fact, so it is sound on the negated path too:
     // it only removes spurious models, never adds one.
-    preamble.push_str(&LiteralConstants::from_formula_for_legacy_literals(formula).preamble());
+    let literals = LiteralConstants::from_formula_for_legacy_literals(formula);
+    preamble.push_str(&literals.preamble());
+    // Each int or str literal states its own builtin type (Python-true too).
+    preamble.push_str(&py_literal_type_axioms(&literals));
     // Emit isinstance disjointness clauses for genuinely-disjoint builtin type
     // pairs that appear with the same subject in the formula. These are
     // Python-TRUE facts (ground, quantifier-free). See `isinstance_encoding`.
@@ -4505,7 +4597,10 @@ pub fn compile_asserted_formula(formula: &Formula) -> Result<CompiledFormula, Co
     // Declare string-literal constants and emit the cross-type distinctness
     // axiom (str/None distinct from each other and from concrete int/bool
     // values; bool encoded as int; floats residual). See `literal_encoding`.
-    preamble.push_str(&LiteralConstants::from_formula_for_legacy_literals(formula).preamble());
+    let literals = LiteralConstants::from_formula_for_legacy_literals(formula);
+    preamble.push_str(&literals.preamble());
+    // Each int or str literal states its own builtin type.
+    preamble.push_str(&py_literal_type_axioms(&literals));
     // Emit isinstance disjointness clauses (see `isinstance_encoding`).
     preamble.push_str(&IsinstanceClauses::from_formula(formula).preamble());
     // Family (e) float floor axioms (#3415): see `float_floor_axiom_preamble`.
