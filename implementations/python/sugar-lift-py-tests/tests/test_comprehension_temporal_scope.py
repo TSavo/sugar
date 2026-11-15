@@ -173,7 +173,15 @@ def test_comprehension_target_coordinate_cannot_escape_into_enclosing_x():
     )
     from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
 
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
     function = next(_source_file(source).functions()).sugar()
+    # TRUTHFUL: the comprehension's ``x`` stays inside it; the tuple's ``x``
+    # is the enclosing binding, ``outer``.
+    told = function.desugar()
+    assert told.completed_value() is not None
+    assert told.completed_value().post().args[1].args[0] == make_var("outer")
+
     # ``result`` is read in the ``return`` through its assignment's key: the
     # fold is built by the ``result = [...]`` statement, where it runs.
     (assign,) = [
@@ -185,28 +193,26 @@ def test_comprehension_target_coordinate_cannot_escape_into_enclosing_x():
     generator = fold.generators[0]
 
     # LYING COORDINATE: deliberately collide the comprehension-local binder
-    # with the enclosing formal's spelling. Lexical lambda scope must contain
-    # that mutation; it may alter the fold binder but never the tuple's outer x.
+    # with the enclosing formal's spelling.  The element reads each member
+    # under the coordinate its comprehension binds it (``EvaluationRefSugar``,
+    # ``member``), so a fold that binds under a forged coordinate leaves the
+    # element's read unbound: refused by name, naming the coordinate, never a
+    # completion that reads the enclosing ``x`` or the formal in its place.
     liar = replace(
         fold,
         generators=(replace(generator, binding_coordinate_cid="outer"),),
     )
     mutated_assign = replace(assign, value=liar)
-    outcome = replace(
-        function,
-        statements=tuple(
-            mutated_assign if statement is assign else statement
-            for statement in function.statements
-        ),
-    ).desugar()
-
-    assert outcome.completed_value() is not None
-    post = outcome.completed_value().post().args[1]
-    outer, mutated_fold = post.args
-    assert outer == make_var("outer")
-    assert mutated_fold.args[1].param_name == "outer"
-    assert mutated_fold.args[1].body == make_var("outer")
-    assert post.args[0] == outer
+    with pytest.raises(
+        ConstructionPanic, match="comprehension member `x` read with its coordinate"
+    ):
+        replace(
+            function,
+            statements=tuple(
+                mutated_assign if statement is assign else statement
+                for statement in function.statements
+            ),
+        ).desugar()
 
 
 def test_finite_comprehensions_transport_exact_constructed_objects_in_order():
