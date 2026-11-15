@@ -1,4 +1,14 @@
-"""Closed construction-occurrence identity of an object."""
+"""Closed construction-evaluation identity of an object.
+
+An object is the evaluation that made it: one allocation per evaluation of
+a construction, never one per source call.  ``constructionEvaluation`` is
+the key of the evaluation that bound the constructed value (the
+assignment's evaluation key, ``Statement._evaluation_key``), which carries
+every loop iteration, exit path and occurrence copy the statement was
+substituted for.  Two unrolled iterations of ``b = Box(i)``, or two calls
+of a function that constructs, are two objects; the call's fragment
+(``callOccurrence``) only names where the construction is spelled.
+"""
 
 from __future__ import annotations
 
@@ -17,9 +27,9 @@ def _cid(value: object, field: str) -> str:
     return value
 
 
-def _generation(value: object) -> int:
-    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-        raise BindingProvenanceGap("constructionGeneration must be non-negative")
+def _evaluation(value: object) -> str:
+    if not isinstance(value, str) or not value:
+        raise BindingProvenanceGap("constructionEvaluation must be an evaluation key")
     return value
 
 
@@ -56,7 +66,7 @@ def _checked(preimage: dict[str, Any], observed: object, field: str) -> str:
 class SourceObjectCoordinateV1:
     allocation_definition: dict[str, Any]
     call_occurrence: dict[str, Any]
-    construction_generation: int
+    construction_evaluation: str
     source_cid: str
     artifact_cid: str
     cid: str
@@ -68,7 +78,7 @@ class SourceObjectCoordinateV1:
             "schemaVersion": "1",
             "allocationDefinition": self.allocation_definition,
             "callOccurrence": self.call_occurrence,
-            "constructionGeneration": self.construction_generation,
+            "constructionEvaluation": self.construction_evaluation,
             "sourceCid": self.source_cid,
             "artifactCid": self.artifact_cid,
         }
@@ -82,7 +92,7 @@ class SourceObjectCoordinateV1:
         *,
         allocation_definition: SourceFragment,
         call_occurrence: SourceFragment,
-        construction_generation: int,
+        construction_evaluation: str,
         source_cid: str,
         artifact_cid: str,
     ) -> "SourceObjectCoordinateV1":
@@ -91,14 +101,14 @@ class SourceObjectCoordinateV1:
             "schemaVersion": "1",
             "allocationDefinition": allocation_definition.seal().to_dict(),
             "callOccurrence": call_occurrence.seal().to_dict(),
-            "constructionGeneration": _generation(construction_generation),
+            "constructionEvaluation": _evaluation(construction_evaluation),
             "sourceCid": _cid(source_cid, "sourceCid"),
             "artifactCid": _cid(artifact_cid, "artifactCid"),
         }
         return cls(
             preimage["allocationDefinition"],
             preimage["callOccurrence"],
-            construction_generation,
+            construction_evaluation,
             source_cid,
             artifact_cid,
             cid_of_json(preimage),
@@ -113,7 +123,7 @@ class SourceObjectCoordinateV1:
                 "schemaVersion",
                 "allocationDefinition",
                 "callOccurrence",
-                "constructionGeneration",
+                "constructionEvaluation",
                 "sourceCid",
                 "artifactCid",
                 "objectCoordinateCid",
@@ -124,20 +134,20 @@ class SourceObjectCoordinateV1:
             raise BindingProvenanceGap("unsupported SourceObjectCoordinateV1")
         allocation = _memento(raw["allocationDefinition"], "allocationDefinition")
         occurrence = _memento(raw["callOccurrence"], "callOccurrence")
-        generation = _generation(raw["constructionGeneration"])
+        evaluation = _evaluation(raw["constructionEvaluation"])
         source = _cid(raw["sourceCid"], "sourceCid")
         artifact = _cid(raw["artifactCid"], "artifactCid")
         preimage = {
             key: value for key, value in raw.items() if key != "objectCoordinateCid"
         }
         cid = _checked(preimage, raw["objectCoordinateCid"], "object coordinate CID")
-        return cls(allocation, occurrence, generation, source, artifact, cid)
+        return cls(allocation, occurrence, evaluation, source, artifact, cid)
 
 
 @dataclass(frozen=True)
 class OpaqueObjectCoordinateV1:
     call_occurrence: dict[str, Any]
-    construction_generation: int
+    construction_evaluation: str
     source_cid: str
     artifact_cid: str
     cid: str
@@ -151,7 +161,7 @@ class OpaqueObjectCoordinateV1:
             "kind": "opaque-object-coordinate",
             "schemaVersion": "1",
             "callOccurrence": self.call_occurrence,
-            "constructionGeneration": self.construction_generation,
+            "constructionEvaluation": self.construction_evaluation,
             "sourceCid": self.source_cid,
             "artifactCid": self.artifact_cid,
         }
@@ -164,7 +174,7 @@ class OpaqueObjectCoordinateV1:
         cls,
         *,
         call_occurrence: SourceFragment,
-        construction_generation: int,
+        construction_evaluation: str,
         source_cid: str,
         artifact_cid: str,
     ) -> "OpaqueObjectCoordinateV1":
@@ -172,13 +182,13 @@ class OpaqueObjectCoordinateV1:
             "kind": "opaque-object-coordinate",
             "schemaVersion": "1",
             "callOccurrence": call_occurrence.seal().to_dict(),
-            "constructionGeneration": _generation(construction_generation),
+            "constructionEvaluation": _evaluation(construction_evaluation),
             "sourceCid": _cid(source_cid, "sourceCid"),
             "artifactCid": _cid(artifact_cid, "artifactCid"),
         }
         return cls(
             preimage["callOccurrence"],
-            construction_generation,
+            construction_evaluation,
             source_cid,
             artifact_cid,
             cid_of_json(preimage),
@@ -192,7 +202,7 @@ class OpaqueObjectCoordinateV1:
                 "kind",
                 "schemaVersion",
                 "callOccurrence",
-                "constructionGeneration",
+                "constructionEvaluation",
                 "sourceCid",
                 "artifactCid",
                 "objectCoordinateCid",
@@ -202,7 +212,7 @@ class OpaqueObjectCoordinateV1:
         if raw["kind"] != "opaque-object-coordinate" or raw["schemaVersion"] != "1":
             raise BindingProvenanceGap("unsupported OpaqueObjectCoordinateV1")
         occurrence = _memento(raw["callOccurrence"], "callOccurrence")
-        generation = _generation(raw["constructionGeneration"])
+        evaluation = _evaluation(raw["constructionEvaluation"])
         source = _cid(raw["sourceCid"], "sourceCid")
         artifact = _cid(raw["artifactCid"], "artifactCid")
         # This type OWNS the opaque-object-coordinate category: one static
@@ -221,7 +231,7 @@ class OpaqueObjectCoordinateV1:
             key: value for key, value in raw.items() if key != "objectCoordinateCid"
         }
         cid = _checked(preimage, observed, "object coordinate CID")
-        result = cls(occurrence, generation, source, artifact, cid)
+        result = cls(occurrence, evaluation, source, artifact, cid)
         cls._interned[cid] = result
         return result
 

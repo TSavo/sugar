@@ -6,9 +6,9 @@ key, so after substitution a class name in a function body is a
 ``DecoratedDefinitionRef``, not a ``Name``.  Every reader that decides which
 definition a reference denotes asks the one resolver
 (``SourceUnit.module_definition_denoted_by``), never the reference's syntax
-node: a raised and a handled class, a base.  A call of the class through
-the key is a call of the class value its statement built, not a source
-allocation (``SourceUnit.source_allocation_definition_for_call``).
+node: a call of the class (#8535), a raised and a handled class, a base.
+Which object a call of the class makes is the evaluation that made it
+(``Assign._object_place_state``), never the call's fragment.
 
 Each twin is a truthful/lying pair through the real solver: the truthful
 claim is ``sat`` on the test function's own claims, the lying one ``unsat``.
