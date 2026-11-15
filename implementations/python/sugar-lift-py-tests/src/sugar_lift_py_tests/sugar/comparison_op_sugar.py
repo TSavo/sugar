@@ -69,17 +69,6 @@ _LAW_BY_OP: dict[str, CompareLaw] = {
     "IsNot": CompareLaw.IDENTITY,
 }
 
-_DISPATCH_RAISE_COORDINATE = {
-    "Eq": "python.eq_dispatch_raises",
-    "NotEq": "python.eq_dispatch_raises",
-    "Lt": "python.lt_dispatch_raises",
-    "LtE": "python.le_dispatch_raises",
-    "Gt": "python.gt_dispatch_raises",
-    "GtE": "python.ge_dispatch_raises",
-    "In": "python.contains_dispatch_raises",
-    "NotIn": "python.contains_dispatch_raises",
-}
-
 
 def compare_law_for(op_kind: str) -> CompareLaw:
     """The construction law that owns one comparison operator kind."""
