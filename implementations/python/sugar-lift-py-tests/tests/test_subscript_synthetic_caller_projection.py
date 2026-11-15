@@ -35,14 +35,24 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
 from sugar_source_tree.tree import SourceFile
 
+# Each caller stands in its own function, called after import.  In the module
+# body, ``helper([7], 1)`` raises IndexError: the module's one run completes on
+# no arm, no import completes, and a later call omitting ``key`` has no
+# ``def`` statement's evaluation of the default to read (the key is read off
+# that run, ``module_final_default_keys``) -- refused by name, as Python
+# never reaches it.
 CALLER_SOURCE = (
     "def helper(obj, key=1):\n"
     "    return obj[key]\n"
     "\n"
-    "helper([7], 0)\n"
-    "helper([7], 1)\n"
-    "helper([7], key=1)\n"
-    "helper([7])\n"
+    "def completed():\n"
+    "    helper([7], 0)\n"
+    "def positional():\n"
+    "    helper([7], 1)\n"
+    "def keyword():\n"
+    "    helper([7], key=1)\n"
+    "def default():\n"
+    "    helper([7])\n"
 )
 
 
