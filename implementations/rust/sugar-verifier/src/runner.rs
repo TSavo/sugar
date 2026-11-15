@@ -1034,6 +1034,9 @@ fn discover_input_artifact_cids_from_pool(
     cfg: &RunnerConfig,
 ) -> BTreeSet<String> {
     let mut cids: BTreeSet<String> = pool.mementos.keys().map(|cid| cid.to_string()).collect();
+    // Every `.proof` bundle the pool read, by its content CID: the run names
+    // the proofs it was given, not only the members they held.
+    cids.extend(pool.bundle_members.keys().map(|cid| cid.to_string()));
     for proof in &cfg.extra_proofs {
         cids.insert(sugar_canonicalizer::blake3_512_of(&proof.bytes));
     }
