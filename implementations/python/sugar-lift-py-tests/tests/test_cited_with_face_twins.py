@@ -60,11 +60,28 @@ def test_cited_with_keeps_its_suppressed_face_through_the_solver(
     assert truthful.prove_doc["owed"] >= 1
     # Lying: ``open(p)`` is a call of a same-file class, its coordinate and
     # edge (#7757 step 6, #8738), and the manager the ``with`` enters is that
-    # call's result.  ``__enter__``/``__exit__`` on it are method calls on a
-    # call's result, whose dispatch is not decided at the reduction (#8744):
-    # they are the unanswered call, so whether ``__exit__`` suppresses is
-    # undecided and the claim is not refuted.  ``open`` on main (scorecard
-    # 43738710481), listed on #7661; dispatch at prove (#7757 step 8: #8750
-    # prove side, the lift side not merged) decides it ``unsat``.  Never
-    # ``sat`` for the lie.
+    # call's result.  The class's contract states the fields its
+    # construction set (``attr:p(python:after(out, "out")) == p``, #8746),
+    # never the instance's class.  ``__enter__``/``__exit__`` on the result
+    # are the unanswered call, so whether ``__exit__`` suppresses the body's
+    # raise is undecided and the claim is not refuted: ``open`` on main
+    # (scorecard 43738710481), listed on #7661.  Never ``sat`` for the lie.
+    #
+    # Step 8 (#8750, #8778, #8799) does not reach it, for two named reasons,
+    # neither of them step 7 part 1 (what a callee leaves in what it was
+    # handed):
+    # 1. Dispatch on a class call's result is supplied only for a class whose
+    #    construction runs no source code (``_bare_instance_symbol``:
+    #    ``object.__new__`` and ``object.__init__``), because the receiver
+    #    class value ``python:instance(<class>, <field>...)`` names every
+    #    field the instance's ``__dict__`` may hold and prove's
+    #    ``dispatched_symbol`` reads those fields before the class.  ``open``
+    #    runs a source ``__init__``: its fields are its contract's, which
+    #    neither ``receiver_dispatch.class_value`` nor dispatch reads.  (An
+    #    implicit special-method call reads ``type(m).__exit__``, where no
+    #    field can shadow, but dispatch states no such lookup.)
+    # 2. ``__exit__(self, *exc)``: prove's one binder
+    #    (``consistency::call_argument_formals``) binds no ``*args``
+    #    parameter, so ``__exit__(m, type, value, tb)`` would not fit the
+    #    contract even when dispatched, and stays owed.
     assert lying.verdict == "open"
