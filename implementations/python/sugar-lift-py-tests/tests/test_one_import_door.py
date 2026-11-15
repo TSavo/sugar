@@ -32,17 +32,40 @@ def _value(post):
         "from idn import ident as g\n\n\ndef f():\n    return g(3)\n",
         "import idn\n\n\ndef f():\n    return idn.ident(3)\n",
         "import idn as q\n\n\ndef f():\n    return q.ident(3)\n",
-        # the rewrite substitutes the bound alias for ``m``: the chain has no
-        # source coordinate of its own, its head Name still has its row.
-        "import idn\n\n\ndef f():\n    m = idn\n    return m.ident(3)\n",
-        "from idn import ident\n\n\ndef f():\n    g = ident\n    return g(3)\n",
     ],
-    ids=["from-import", "from-import-alias", "module", "module-alias", "alias-var", "member-var"],
+    ids=["from-import", "from-import-alias", "module", "module-alias"],
 )
 def test_every_import_bound_call_is_spelled_by_its_target_symbol(source) -> None:
     post = _post(source)
     assert _application(post).name == "call:idn.ident"
     assert _scoped(post, ()).formula.free_vars == {"out"}
+
+
+@pytest.mark.parametrize(
+    ("source", "spelling"),
+    [
+        ("import idn\n\n\ndef f():\n    m = idn\n    return m.ident(3)\n", "call:ident"),
+        (
+            "from idn import ident\n\n\ndef f():\n    g = ident\n    return g(3)\n",
+            "py.call",
+        ),
+    ],
+    ids=["alias-var", "member-var"],
+)
+def test_a_call_through_a_local_holding_an_import_is_not_the_doors(
+    source, spelling
+) -> None:
+    """THE DISCRIMINATION: the door is lexical.  It keys a reference by that
+    reference's own coordinate, and ``m`` / ``g`` are locals: a read of one is
+    a reference to its assignment's evaluation, never ``idn`` / ``ident`` read
+    again where the local is used (temporal choice 1, #7757 item 7).  So the
+    call through the local is a call on the value the local holds, spelled as
+    any such call is, and the door's ``call:<target_symbol>`` is not written
+    for it: nothing here joins it to ``idn.ident``.  These once passed only
+    because the rewrite substituted the bound alias for the local at its
+    read, the second way of reading an alias that item 7 deleted.  Pinned so
+    a change that starts deciding the call is seen."""
+    assert _application(_post(source)).name == spelling
 
 
 def test_a_submodule_import_call_is_a_call() -> None:
