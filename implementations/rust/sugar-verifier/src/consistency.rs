@@ -92,6 +92,8 @@ enum IrFormula {
     And(Vec<Json>),
     /// `{"kind":"not","operands":[body]}` -- negation (the raw-sat solver goal).
     Not(Json),
+    /// `{"kind":"or","operands":[..]}` -- disjunction of zero or more operands.
+    Or(Vec<Json>),
 }
 
 impl IrFormula {
@@ -101,6 +103,7 @@ impl IrFormula {
         match self {
             IrFormula::And(operands) => json!({ "kind": "and", "operands": operands }),
             IrFormula::Not(body) => json!({ "kind": "not", "operands": [body] }),
+            IrFormula::Or(operands) => json!({ "kind": "or", "operands": operands }),
         }
     }
 
