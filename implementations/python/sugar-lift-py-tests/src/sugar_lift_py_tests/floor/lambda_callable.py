@@ -141,7 +141,6 @@ class LambdaCallable(FloorValue):
         comprehension's cell (``closure``), which no input of its contract
         takes: a call of it stays owed."""
         from sugar_lift_py_tests.ir import ctor, str_const
-        from sugar_source_tree.panic import SugarNotWritten
 
         frame = self.source_call_frame
         definition = getattr(frame, "owner", None)
@@ -150,13 +149,10 @@ class LambdaCallable(FloorValue):
         symbol_of = getattr(definition, "bridge_source_symbol", None)
         if symbol_of is None:
             return None
-        try:
-            symbol = symbol_of()
-        except SugarNotWritten:
-            # The definition names no symbol here (an absolute locus): the
-            # value keeps its opaque identity, and a call of it is refused
-            # by name at its edge (``definition_edge_call``), as before.
-            return None
+        # A unit seated under a workspace root by an absolute locus refuses
+        # by name here, as the edge of a call of it does
+        # (``definition_edge_call``): a refusal is never held and continued.
+        symbol = symbol_of()
         if not symbol:
             return None
         defaulted = tuple(
