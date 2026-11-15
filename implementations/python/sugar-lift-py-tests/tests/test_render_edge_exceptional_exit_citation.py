@@ -309,12 +309,15 @@ def test_nameless_face_cannot_reach_fol_emission() -> None:
     with pytest.raises(ConstructionPanic) as raised:
         _exceptional_exit_term(nameless)
 
+    # An undetermined raise names no exception: it is refused as itself, by
+    # its own kind, before any name or coordinate is read off it.
     info = raised.value.info
     assert info.owner == "exceptional_exit_term"
-    assert "neither" in info.observed
-    assert "exception_name" in info.observed
-    assert "exception_type_coordinate" in info.observed
-    assert "reraise" in info.fix
+    assert info.observed == (
+        "UndeterminedRaiseEffect cannot emit authenticated exceptional-exit FOL"
+    )
+    assert "exception_type_coordinate" in info.requested
+    assert "do not invent a name" in info.fix
 
 
 def test_name_without_source_sha_cannot_cite_unavailable() -> None:
@@ -359,7 +362,10 @@ def test_fabricated_reraise_string_is_not_authenticated_bare_raise() -> None:
     info = raised.value.info
     assert info.owner == "exceptional_exit_term"
     assert _LOCUS in info.blame
-    assert "neither" in info.observed
+    # A locus and a sha do not make it a cited exit: the same refusal.
+    assert info.observed == (
+        "UndeterminedRaiseEffect cannot emit authenticated exceptional-exit FOL"
+    )
 
 
 def test_exception_name_reraise_placeholder_cannot_reach_fol() -> None:
