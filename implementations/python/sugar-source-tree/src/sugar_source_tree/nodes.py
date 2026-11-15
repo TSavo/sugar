@@ -12337,7 +12337,50 @@ class ClassDef(Statement):
         (``namespace_owner(name, after=...)``, ``mro_holds``;
         ``BuiltinSuperValue``) and the constructor defaults a class value
         binds (``ClassDefinitionValue.constructor_defaults``).
+
+        The walk reads this statement's base expressions and, for each class
+        statement it reaches, the unit's binding tables, all fixed once the
+        typed root is bound: it is made once per class statement shell and
+        typed root (``_class_statement_fact``), and every reader after the
+        first reads that order.
         """
+        tail = self._class_statement_fact(
+            "__method_resolution_tail__", None, self._method_resolution_tail
+        )
+        if tail is None:
+            return None
+        return (self, *tail)
+
+    def _class_statement_fact(self, slot: str, name, compute):
+        """``compute()``'s answer for this class statement, made once: kept
+        on the statement's own field row (``Node._coordinate``, the row its
+        fields and child edges are kept on, one per backend ref) under
+        ``slot`` and ``name``, beside the typed root it was read under.
+
+        The row is the statement's own, so a copy substitution made of the
+        statement (another ref, whose bases or body may be rewritten) keeps
+        its own answers.  Nothing is kept before the unit's typed root is
+        bound, or for a root that was replaced: the binding tables the
+        answers read are bound with it (``SourceUnit.bind_typed_module``).
+        A refusal ``compute`` raises is not kept; it is raised again by the
+        next ask.
+        """
+        module = self.unit.typed_module
+        if module is None:
+            return compute()
+        row = self._coordinate()[2]
+        held = row.get(slot)
+        if held is None or held[0] is not module:
+            held = (module, {})
+            row[slot] = held
+        answers = held[1]
+        if name not in answers:
+            answers[name] = compute()
+        return answers[name]
+
+    def _method_resolution_tail(self) -> "tuple | None":
+        """``method_resolution_order`` after this class: the entries the C3
+        linearization puts behind it, or None when the order is not read."""
         from sugar_lift_py_tests.floor.class_definition_value import c3_tail
         from sugar_lift_py_tests.temporal.builtin_name_bindings import (
             BUILTIN_EXCEPTION_BASES,
@@ -12390,7 +12433,7 @@ class ClassDef(Statement):
         found = tail(own)
         if found is None:
             return None
-        return (self, *(entries[entry_key] for entry_key in found))
+        return tuple(entries[entry_key] for entry_key in found)
 
     def _read_base(self, base):
         """One base expression of this class statement, read by its binding
@@ -12699,7 +12742,18 @@ class ClassDef(Statement):
         The member a read of ``name`` on the class meets is this statement's
         value, never an earlier binding of the same name: a ``def`` after a
         ``property``, an assignment after a ``def`` (``ObjectValue.class_member``).
+
+        The answer reads the whole class body, so it is read once per name
+        for this statement (``_class_statement_fact``): every lookup of a
+        name on the class, and every class after it in an order
+        (``_creation_writes``), asks.
         """
+        return self._class_statement_fact(
+            "__body_binders__", name, lambda: self._body_binder(name)
+        )
+
+    def _body_binder(self, name: str):
+        """``body_binder``, read off the class symtable and the body."""
         table = self.unit.class_symtable(self.name, self.line_col_span().start_line)
         try:
             symbol = table.lookup(name)
