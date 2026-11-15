@@ -392,7 +392,21 @@ def test_keyword_caller_reaches_same_demand() -> None:
 
 
 def test_default_value_caller_reaches_same_demand() -> None:
-    halted = _assert_named_halt(_call_outcome("obj, value=2", "1"))
+    # The call stands in a function called after import: the omitted
+    # ``value`` binds what the ``def`` statement evaluated when the module
+    # ran (``ModuleFinalValue``).  A module-body call reduced alone is
+    # reached by no ``def`` statement's run, and its default read is refused
+    # by name (``DefaultValueSugar``): never the default expression evaluated
+    # again at the call.
+    source = (
+        "def helper(obj, value=2):\n"
+        "    obj.field = value\n\n"
+        "def caller():\n"
+        "    helper(1)\n"
+    )
+    tree = _tree(source)
+    call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
+    halted = _assert_named_halt(call.sugar().desugar(None))
     assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
 
 
