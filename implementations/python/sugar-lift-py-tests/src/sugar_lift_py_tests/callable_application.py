@@ -28,6 +28,16 @@ class CallableApplication:
     # callable ignores it.
     exception_type_coordinate: object = None
     exception_type_mro: tuple | None = None
+    # ``((name, coordinate cid, value), ...)``: what the call read, at the
+    # call, for each enclosing local the called function's body reads
+    # (``Call._closure_cells``, ``read_captured_values``).  Python reads a
+    # closure cell when the function runs, so the function value applied
+    # here binds these under its frame's captured coordinates
+    # (``LambdaCallable.callable_application_with``), as a call by name of
+    # the function did; never the binding the function was made under.
+    # Empty where the call carries none (every callable that is not a
+    # function value ignores it).
+    captured: tuple = ()
 
     def __post_init__(self) -> None:
         if (
