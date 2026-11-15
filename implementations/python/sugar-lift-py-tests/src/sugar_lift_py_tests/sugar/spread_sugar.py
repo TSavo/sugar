@@ -133,6 +133,76 @@ def _collect(sugars: tuple, ctx, done: tuple, finish, *, earlier: tuple = ()):
     return leave(finished, prefix=prefix, halted=halted)
 
 
+def _spread_members(value):
+    """The members ``*value`` yields, in order, when this frame holds them:
+    a ``list`` or ``tuple`` whose contents are current.  None otherwise -- an
+    iterable whose iteration this frame does not decide (a set's order, a
+    generator, a value that arrived with contents not current)."""
+    from sugar_lift_py_tests.floor.list_value import ListValue
+    from sugar_lift_py_tests.floor.object_identity import holds_stale
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+    if type(value) not in (ListValue, TupleValue) or holds_stale(value):
+        return None
+    return tuple(value.elements)
+
+
+def _display_members(wrappers: tuple, values: tuple):
+    """The members of ``[a, *b]`` in order, each ``*`` operand contributing
+    the members it yields; None when a ``*`` operand's members are not held
+    here (``_spread_members``)."""
+    members: list = []
+    for wrapper, value in zip(wrappers, values, strict=True):
+        if wrapper is None:
+            members.append(value)
+            continue
+        spread = _spread_members(value)
+        if spread is None:
+            return None
+        members.extend(spread)
+    return tuple(members)
+
+
+def _built_display(kind: str, members, site):
+    """``[a, *b]`` / ``(a, *b)`` / ``{a, *b}``: the display its non-spread
+    sibling builds (``collection_sugar``) over ``members``
+    (``_display_members``)."""
+    from sugar_lift_py_tests.floor.list_value import ListValue
+    from sugar_lift_py_tests.floor.object_identity import made_at
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+    from sugar_lift_py_tests.sugar.collection_sugar import _built_set
+
+    # The display makes a new object here (``made_at``): a spread is
+    # evaluated at runtime, never a folded constant.
+    if kind == "list":
+        return ExitSet.completed(ListValue(members, allocation=made_at(site)))
+    if kind == "tuple":
+        return ExitSet.completed(TupleValue(members, allocation=made_at(site)))
+    # ``kind`` is ``set``: the three displays a ``*`` operand appears in.
+    return _built_set(members, site)
+
+
+def _spread_dict_pairs(spread_flags: tuple, values: tuple):
+    """The pairs of ``{k: v, **d}`` in order, each ``**`` operand
+    contributing its entries; None when a ``**`` operand is not a dict whose
+    contents are current."""
+    from sugar_lift_py_tests.floor.dict_value import DictValue
+    from sugar_lift_py_tests.floor.object_identity import holds_stale
+
+    pairs: list = []
+    value_iter = iter(values)
+    for spread in spread_flags:
+        if spread:
+            mapping = next(value_iter)
+            if type(mapping) is not DictValue or holds_stale(mapping):
+                return None
+            pairs.extend(mapping.entries)
+            continue
+        key = next(value_iter)
+        pairs.append((key, next(value_iter)))
+    return tuple(pairs)
+
+
 @dataclass(frozen=True)
 class SpreadCollectionSugar(ConstructedTermSugar):
     """A display containing spread operands, as encoded by the reference lifter.
@@ -192,8 +262,23 @@ class SpreadCollectionSugar(ConstructedTermSugar):
 
         def finish(values):
             from sugar_lift_py_tests.floor import SymbolicValue
+            from sugar_lift_py_tests.floor.named_expression_value import (
+                consume_operands,
+                peel_walrus_binds,
+            )
             from sugar_lift_py_tests.ir import ctor
 
+            wrappers = tuple(wrapper for wrapper, _ in self.elements)
+            presented = tuple(peel_walrus_binds(value)[1] for value in values)
+            if _display_members(wrappers, presented) is not None:
+                # The one operand door: a walrus operand's bind still reaches
+                # the enclosing statement.
+                return consume_operands(
+                    lambda *held: _built_display(
+                        self.kind, _display_members(wrappers, held), self.site
+                    ),
+                    *values,
+                )
             owner = str(self.site)
             terms = []
             for (wrapper, _), value in zip(self.elements, values):
@@ -268,8 +353,23 @@ class SpreadDictSugar(ConstructedTermSugar):
 
         def finish(values):
             from sugar_lift_py_tests.floor import SymbolicValue
+            from sugar_lift_py_tests.floor.named_expression_value import (
+                consume_operands,
+                peel_walrus_binds,
+            )
             from sugar_lift_py_tests.ir import ctor
+            from sugar_lift_py_tests.sugar.collection_sugar import _built_dict
 
+            spread_flags = tuple(key is None for key, _ in self.entries)
+            presented = tuple(peel_walrus_binds(value)[1] for value in values)
+            if _spread_dict_pairs(spread_flags, presented) is not None:
+                # The one operand door (``consume_operands``).
+                return consume_operands(
+                    lambda *held: _built_dict(
+                        _spread_dict_pairs(spread_flags, held), self.site
+                    ),
+                    *values,
+                )
             owner = str(self.site)
             value_iter = iter(values)
             terms = []
