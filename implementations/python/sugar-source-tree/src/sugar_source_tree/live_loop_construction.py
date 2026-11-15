@@ -227,9 +227,8 @@ def _carried_writes(statements, names) -> dict[str, tuple[str, ...]]:
     A write binds a key, never the name, and every node says which names it
     writes under which keys (``Node.written_keys``): ``x += e`` and a walrus
     their evaluation, every assignment (``y = e``, ``y: T = e``, an unpack)
-    each target's projection of its evaluation, every assignment (an
-    ``if``'s phi among them) its carried write of the name
-    (``carried_write_key``), a mutation statement, bare or assigned, its key
+    each target's projection of its evaluation (the one key its later reads
+    read too), a mutation statement, bare or assigned, its key
     of every name it writes -- the name it assigns (``r += x``, ``x =
     x.m()``) and each name bound to the object it changes (``acc.append(x)``
     writes ``acc`` to the list after the append), so the next item begins

@@ -37,71 +37,8 @@ carries no key, and its later reads are name reads.
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
-import functools
 
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-
-
-def carried_write_key(site, name: str) -> str:
-    """The key an assignment statement at ``site`` binds the value it writes
-    to ``name`` under, where ``name`` is a name a live loop carries.
-
-    A write of a carried name is read by the loop, never by spelling: the
-    recurrence hands on (and publishes) the latest of every write of the name
-    and its header (``LoopRecurrenceSugar._latest_written``), and
-    ``construct_live_loop_recurrence`` names this same key from the
-    statement node (``live_loop_construction._carried_writes``).  The key is
-    an evaluation key (``EVALUATION_PREFIX``), so it is never a source name,
-    an ``if`` carries it out of an arm, and each live item qualifies it as its
-    own (``evaluation_here``)."""
-    return _carried_write_key(site.seal().cid, name)
-
-
-@functools.lru_cache(maxsize=65536)
-def _carried_write_key(statement_fragment_cid: str, name: str) -> str:
-    from sugar_lift_python_source.canonical import cid_of_json
-    from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
-
-    return EVALUATION_PREFIX + cid_of_json(
-        {
-            "kind": "python-carried-name-write-v1",
-            "statementFragmentCid": statement_fragment_cid,
-            "name": name,
-        }
-    )
-
-
-def _bind_carried_writes(active, bind, completed, site):
-    """``active`` with each ``(name, value index)`` a live loop carries bound
-    to its completed value under this statement's write of the name
-    (``carried_write_key``), qualified by the live loop item it runs in
-    (``evaluation_here``).  The name is never written: every later read of it
-    in the block is substituted, and the loop reads the write by its key."""
-    from sugar_lift_py_tests.floor.floor_value import FloorValue
-    from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
-    from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
-
-    live = getattr(active, "live_loop_names", frozenset())
-    for name, index in bind:
-        value = completed[index]
-        if name not in live or not isinstance(value, FloorValue):
-            continue
-        if not hasattr(site, "seal"):
-            from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-            construction_panic_gap(
-                owner="assigned_value._bind_carried_writes",
-                blame=site,
-                observed=(
-                    f"assignment of `{name}`, a name a live loop carries, "
-                    "with no source fragment to key its write"
-                ),
-                requested="the assignment statement's source fragment",
-                fix="construct the assignment sugar with its statement fragment",
-            )
-        key = evaluation_here(carried_write_key(site, name))
-        active = ScopeRebind(key, value).extend_scope(active)
-    return active
 
 
 def _bind_evaluations(active, evaluations, index, value):
@@ -192,9 +129,7 @@ def evaluate_assignment_values(
     values,
     ctx,
     tail=None,
-    bind=(),
     evaluations=(),
-    site=None,
     targets=(),
     as_completed=(),
 ):
@@ -206,14 +141,11 @@ def evaluate_assignment_values(
     completed value. ``tail(ctx, completed)``, if given, runs after the last
     RHS with ``completed`` the completed value of each RHS, in ``values``
     order, so it consumes the one evaluation instead of a second; its outcome
-    replaces the empty completed block. ``bind`` (without
-    ``tail``) names the ``(name, value index)`` pairs the statement (at
-    ``site``) assigns: the completed path binds each name a live loop carries
-    under the statement's write of it (``_bind_carried_writes``).
-    ``evaluations`` names ``(key, value index)`` pairs: each
-    RHS's completed value is bound under a Name target's key once every RHS
-    has completed (``_bind_evaluations``), so the completed path and ``tail``
-    carry it.
+    replaces the empty completed block.  ``evaluations`` names ``(key,
+    value index)`` pairs: each RHS's completed value is bound under a Name
+    target's key once every RHS has completed (``_bind_evaluations``), so the
+    completed path and ``tail`` carry it -- the one key every later read of
+    the name reads, a live loop's latch included.
 
     ``targets`` (without ``tail``): a statement with store targets, its
     targets left to right -- each Name target's ``(key, value index)`` and
@@ -288,10 +220,6 @@ def evaluate_assignment_values(
             if stores:
                 outcome = halts_recorded(outcome, halt_record(active))
             return laid_in_record(stores, outcome)
-        if bind:
-            bound = _bind_carried_writes(active, bind, completed, site)
-            if bound is not active:
-                return ExitSet.completed(_ReducedBlock(stores, True, (), (), bound))
         if active is ctx and not stores:
             # Nothing recorded: the statement contributes nothing, as before.
             return ExitSet.completed(BlockValue((), can_fall_through=True))
