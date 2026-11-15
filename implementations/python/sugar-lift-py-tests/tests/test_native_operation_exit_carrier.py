@@ -12,7 +12,6 @@ from sugar_lift_py_tests.caller_parameter_contract import (
     _NATIVE_OPERATION_PROJECTORS,
     authenticated_exceptional_resolution_count,
     production_native_operation_operators,
-    source_coordinate,
 )
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
@@ -778,7 +777,7 @@ def test_only_coordinate_authenticated_resolutions_count_as_exceptional_exits():
     source = _site()
     named = NativeOperationResolutionV1.exceptional(
         exception_type_coordinate=_Expected("TypeError").identity,
-        operation_occurrence=source_coordinate(source),
+        operation_occurrence=source,
     )
     nameless = NativeOperationResolutionV1.undischarged("identity unproven")
     completed = NativeOperationResolutionV1.completed(TermValue(1))
@@ -810,20 +809,14 @@ def test_nameless_halt_stays_outside_matching_boundary_end_to_end():
 def test_same_named_exception_keeps_distinct_operation_origins():
     source = _site()
     exception_type = _Expected("TypeError").identity
-    origin = source_coordinate(source)
     first = NativeOperationResolutionV1.exceptional(
         exception_type_coordinate=exception_type,
-        operation_occurrence=origin,
+        operation_occurrence=source,
     )
+    # Another operation's site: the same exception type at a distinct origin.
     second = NativeOperationResolutionV1.exceptional(
         exception_type_coordinate=exception_type,
-        operation_occurrence=type(origin)(
-            origin.source_cid,
-            origin.start_line + 1,
-            origin.start_col,
-            origin.end_line + 1,
-            origin.end_col,
-        ),
+        operation_occurrence=_setitem_site(),
     )
 
     first_exit = first.project(source_node=source).exits[0]

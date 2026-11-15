@@ -375,6 +375,10 @@ def test_a_mapping_object_getitem_with_a_parameter_key_defers_to_the_caller() ->
         allocation=FRAME_FRESH,
     )
 
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+    from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
+
+    owed = (unanswered_call(None, site),)
     for pending in (
         mapping.subscript(key, site),
         mapping.call_method_value(
@@ -383,7 +387,16 @@ def test_a_mapping_object_getitem_with_a_parameter_key_defers_to_the_caller() ->
     ):
         _assert_index_deferred(pending, coordinate)
         exits = pending.discharge(None, {coordinate.coordinate_cid: StringValue("a")})
-        assert exits.completed_value() == TermValue(1)
+        # The dict base's storage is not current
+        # (``MappingObjectValue._builtin_dict``): the caller's key reads it
+        # in the undecided form -- two faces, each owing the ``undecided``
+        # member (reason ``unanswered``) at the read's site -- never the
+        # entry it holds and never a refusal.
+        (done,) = [arm for arm in exits.exits if isinstance(arm, Completed)]
+        (halt,) = [arm for arm in exits.exits if isinstance(arm, Halted)]
+        assert exits.completed_value() is None
+        assert done.owed == halt.owed == owed
+        assert owed_calls(exits) == owed
 
 
 def test_a_guarded_parameter_arm_defers_its_read_through_the_door() -> None:

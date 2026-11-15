@@ -1472,8 +1472,10 @@ def _siteless_undecided_read(owner: str, read: str, node: str) -> NoReturn:
     """
     from sugar_source_tree.panic import SugarNotWritten
 
+    # No site to blame: the floor that reached the read without it (``owner``)
+    # is the coordinate this refusal names.
     raise SugarNotWritten(
-        blame=None,
+        blame=owner,
         owner=owner,
         observed=f"undecided read with no source site: {read}",
         requested="the read's source site, to key its two faces and its debt",

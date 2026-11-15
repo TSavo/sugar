@@ -109,9 +109,9 @@ def test_raise_outer_from_handler_binding_keeps_distinct_type_and_occurrence():
     effect = _halt_effect(_desugar(source))
 
     assert effect.exception_name == "RuntimeError"
-    assert isinstance(effect.occurrence, str) and ":" in effect.occurrence, (
+    assert isinstance(effect.occurrence_id, str) and ":" in effect.occurrence_id, (
         "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {effect.occurrence!r}"
+        f"not presence-only; got {effect.occurrence_id!r}"
     )
     assert "RuntimeError" in (effect.exception_name or "")
 
@@ -121,10 +121,11 @@ def test_raise_outer_from_handler_binding_keeps_distinct_type_and_occurrence():
     assert isinstance(cause_effect, RaiseEffect)
     assert cause_effect.exception_name == "ValueError"
     assert (
-        isinstance(cause_effect.occurrence, str) and ":" in cause_effect.occurrence
+        isinstance(cause_effect.occurrence_id, str)
+        and ":" in cause_effect.occurrence_id
     ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {cause_effect.occurrence!r}"
+        f"not presence-only; got {cause_effect.occurrence_id!r}"
     )
 
     # Type + occurrence pairs are distinct; never collapse cause into outer.
@@ -155,7 +156,8 @@ def test_handler_state_projects_authentic_cause_not_handler_type():
     effect = _halt_effect(_desugar(truthful))
     assert isinstance(effect.cause_value, ObservedEffectValue)
     assert effect.cause_value.effect.exception_name == "KeyError"
-    assert effect.cause_value.effect.occurrence == str(truthful)
+    # The body raise ``raise KeyError('inner')``: line 3, column 8.
+    assert effect.cause_value.effect.occurrence_id == "raise_from_try.py:3:8"
     # Occurrence is the body raise site, not the except clause / outer site.
     body_occ = effect.cause_value.effect.occurrence
     assert body_occ != effect.occurrence
@@ -215,9 +217,9 @@ def test_from_none_suppresses_chaining_without_erasing_outer():
     effect = _halt_effect(_desugar(source))
 
     assert effect.exception_name == "RuntimeError"
-    assert isinstance(effect.occurrence, str) and ":" in effect.occurrence, (
+    assert isinstance(effect.occurrence_id, str) and ":" in effect.occurrence_id, (
         "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {effect.occurrence!r}"
+        f"not presence-only; got {effect.occurrence_id!r}"
     )
     assert isinstance(effect.raised_value, CallSiteValue)
     assert effect.raised_value.target_name == "RuntimeError"
@@ -279,7 +281,7 @@ def test_halt_while_evaluating_cause_prevents_outer_raise():
 
     # Cause evaluation's halt is the exit — not RuntimeError outer.
     assert effect.exception_name == "KeyError"
-    assert effect.occurrence == "unit.py:9:4"
+    assert effect.occurrence_id == "unit.py:9:4"
     assert effect.exception_name != "RuntimeError"
     # Outer was constructed as a completion but never wrapped into a raise halt.
     assert not (
@@ -301,7 +303,7 @@ def test_successful_cause_then_outer_is_the_compose_twin():
     )
     effect = _halt_effect(sugar.desugar())
     assert effect.exception_name == "RuntimeError"
-    assert effect.occurrence == "compose.py:3:4"
+    assert effect.occurrence_id == "compose.py:3:4"
     assert isinstance(effect.cause_value, CallSiteValue)
     assert effect.cause_value.target_name == "KeyError"
     assert effect.cause_value is not effect.raised_value
@@ -342,8 +344,8 @@ def test_wrong_occurrence_twin_refuses_handler_site_as_cause_locus():
         "        raise RuntimeError('outer') from e\n"
     )
     effect = _halt_effect(_desugar(source, name="occ.py"))
-    cause_occ = effect.cause_value.effect.occurrence
-    outer_occ = effect.occurrence
+    cause_occ = effect.cause_value.effect.occurrence_id
+    outer_occ = effect.occurrence_id
     assert cause_occ != outer_occ
     # Body raise is earlier in the source than the outer raise line.
     # Format is file:line:col — line numbers must differ.

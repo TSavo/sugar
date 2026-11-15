@@ -54,11 +54,20 @@ class MappingObjectValue(ObjectValue):
         not threaded through a source ``__setitem__``/``__delitem__``
         override's post-state, so whether this state is the object's state
         now is not decided here.  Every read of it takes its undecided form
-        (``object_identity.contents_current``).  Nor is which instance it
-        is (``identity`` may be its class's): it names no ``arrival``, so an
-        undecided read of it refuses by name (``identity_term``) rather than
-        share one term with every other instance's state."""
-        return DictValue(self.entries, allocation=None)
+        (``object_identity.contents_current``): the read's two faces, each
+        owing the ``undecided`` member (reason ``unanswered``) at the read's
+        site -- never a member it holds.
+
+        The storage is this instance's own (the instance is the dict), so it
+        is named as the instance is (``identity_term``), never by
+        ``identity``, which may be its class's: the binding read it arrived
+        through (``arrival``), or, made in this frame, the construction that
+        made it (``allocation``).  An instance that names neither leaves its
+        storage unnamed, and an undecided read of it refuses by name rather
+        than share one term with every other instance's state."""
+        return DictValue(
+            self.entries, allocation=None, arrival=self.arrival or self.allocation
+        )
 
     def protocol_owner(self, name: str, site) -> str | None:
         """Who answers ``name`` read on this receiver's class (#7757):

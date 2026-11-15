@@ -30,6 +30,8 @@ class NativeOperationResolutionV1:
     The exceptional arm is authenticated only when both the exception type
     coordinate and operation occurrence coordinate are present.  A halt without
     those coordinates is not a fourth exit kind: it remains ``undischarged``.
+    The operation occurrence is the operation's source site: its raise locus
+    is that site's ``file:line:col`` (``AuthenticatedRaiseLocus.of``).
     """
 
     __slots__ = (
@@ -155,10 +157,14 @@ class NativeOperationResolutionV1:
             testimony = self.pre_effect_state
             effect = self.effect
             if testimony is None:
+                # The operation's site is the locus, through the one locus
+                # door (``file:line:col``), the same locus the projector's own
+                # raise at that site carries -- never a coordinate's wire dict.
+                locus = AuthenticatedRaiseLocus.of(occurrence)
                 effect = RaiseEffect(
                     exception_type_coordinate=self.exception_type_coordinate,
-                    occurrence=AuthenticatedRaiseLocus.of(str(occurrence.wire())),
-                    blame=str(occurrence.wire()),
+                    occurrence=locus,
+                    blame=locus.value,
                     site=source_node,
                 )
             if not isinstance(effect, RaiseEffect):
@@ -1046,7 +1052,7 @@ class NativeOperationExitCarrierV1:
             else:
                 resolution = NativeOperationResolutionV1.exceptional(
                     exception_type_coordinate=effect.exception_type_coordinate,
-                    operation_occurrence=self.demand.source_node,
+                    operation_occurrence=self.site,
                     effect=effect,
                     pre_effect_state=self.pre_effect_state,
                 )
