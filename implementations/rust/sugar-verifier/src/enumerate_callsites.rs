@@ -103,7 +103,11 @@ pub fn run(pool: &MementoPool) -> Vec<CallSite> {
     out
 }
 
-fn panic_loci_from_body(body: &Json) -> Vec<Json> {
+/// A contract's panic loci: its `panicLoci`, or its `effectLoci` of the
+/// panic-freedom kind. The one reader of a contract's halts, used here for
+/// the contract's own callsites and by the join (`consistency`) for the halts
+/// an imported contract states on a consumer's call path.
+pub(crate) fn panic_loci_from_body(body: &Json) -> Vec<Json> {
     let old = json_array_field(body, "panicLoci");
     let new = json_array_field(body, "effectLoci")
         .into_iter()
@@ -298,7 +302,7 @@ fn callsite_from_panic_locus(
 /// obligation (`(and guard_facts) => pre`), byte-blind like a `cf_ite` guard.
 /// A locus without the field (every other kit's) states no guard: empty, as
 /// before.
-fn guard_facts_from_locus(locus: &Json) -> Vec<Json> {
+pub(crate) fn guard_facts_from_locus(locus: &Json) -> Vec<Json> {
     locus
         .get("guard")
         .filter(|guard| guard.is_object())

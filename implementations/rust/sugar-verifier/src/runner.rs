@@ -406,30 +406,7 @@ impl Runner {
         }
 
         let report_stage_capture = StageCapture::start("report", sorted_keys(&pool.mementos));
-        let mut violations = 0usize;
-        for (cs, verdict, reason, method, body_tier) in per_results {
-            if callsite_row_is_owned_by_consistency(&cs, &pool)
-                || callsite_row_is_owned_by_self_post(&cs, &pool)
-            {
-                debug!(
-                    bridge = %cs.bridge_ir_name,
-                    property = %cs.property_name,
-                    "verifier/linker: pool-level verifier owns body-bearing callsite row"
-                );
-                continue;
-            }
-            if verdict != ObligationVerdict::Discharged {
-                violations += 1;
-            }
-            report_stage::add_callsite_with_discharge(
-                cs,
-                verdict,
-                &reason,
-                method,
-                body_tier,
-                &mut report,
-            );
-        }
+        let mut violations = fold_callsite_results(per_results, &pool, &mut report);
         report_stage::add_load_errors(&pool.load_errors, &mut report);
 
         // Self-post pass (THE 309): verify each body-derived contract's OWN
@@ -439,33 +416,17 @@ impl Runner {
         // actually verified. Results flow into the same buckets.
         let self_post_results =
             verify_contract_self_posts(&pool, &self.plan, &self.registry, &self.compilers);
-        for spr in &self_post_results {
-            match spr.verdict {
-                ObligationVerdict::Discharged => {
-                    n_solved.fetch_add(1, Ordering::Relaxed);
-                    match spr.method {
-                        Some(body_discharge::DischargeMethod::Reflexive) => {
-                            n_reflexive.fetch_add(1, Ordering::Relaxed);
-                        }
-                        Some(body_discharge::DischargeMethod::Substantive) => {
-                            n_substantive.fetch_add(1, Ordering::Relaxed);
-                        }
-                        None => {}
-                    }
-                }
-                _ => {
-                    violations += 1;
-                    n_residue.fetch_add(1, Ordering::Relaxed);
-                }
-            }
-            report_stage::add_self_post_with_method(
-                &spr.contract_cid,
-                spr.verdict,
-                &spr.reason,
-                spr.method.map(|m| m.as_str().to_string()),
-                &mut report,
-            );
-        }
+        violations += fold_self_post_results(
+            &self_post_results,
+            &pool,
+            SelfPostCounters {
+                solved: &n_solved,
+                reflexive: &n_reflexive,
+                substantive: &n_substantive,
+                residue: &n_residue,
+            },
+            &mut report,
+        );
         info!(
             self_posts = self_post_results.len(),
             self_post_reflexive = self_post_results
@@ -684,30 +645,7 @@ impl Runner {
         }
 
         // Aggregate report rows.
-        let mut violations = 0usize;
-        for (cs, verdict, reason, method, body_tier) in per_results {
-            if callsite_row_is_owned_by_consistency(&cs, &pool)
-                || callsite_row_is_owned_by_self_post(&cs, &pool)
-            {
-                debug!(
-                    bridge = %cs.bridge_ir_name,
-                    property = %cs.property_name,
-                    "verifier/linker: pool-level verifier owns body-bearing callsite row"
-                );
-                continue;
-            }
-            if verdict != ObligationVerdict::Discharged {
-                violations += 1;
-            }
-            report_stage::add_callsite_with_discharge(
-                cs,
-                verdict,
-                &reason,
-                method,
-                body_tier,
-                &mut report,
-            );
-        }
+        let mut violations = fold_callsite_results(per_results, &pool, &mut report);
         report_stage::add_load_errors(&pool.load_errors, &mut report);
 
         // Self-post pass: verify every body-derived contract's OWN
@@ -722,33 +660,17 @@ impl Runner {
         // reflexive / substantive / residue buckets so the proof-run split
         // is unified.
         let self_post_results = verify_contract_self_posts(&pool, plan, registry, compilers);
-        for spr in &self_post_results {
-            match spr.verdict {
-                ObligationVerdict::Discharged => {
-                    n_solved.fetch_add(1, Ordering::Relaxed);
-                    match spr.method {
-                        Some(body_discharge::DischargeMethod::Reflexive) => {
-                            n_reflexive.fetch_add(1, Ordering::Relaxed);
-                        }
-                        Some(body_discharge::DischargeMethod::Substantive) => {
-                            n_substantive.fetch_add(1, Ordering::Relaxed);
-                        }
-                        None => {}
-                    }
-                }
-                _ => {
-                    violations += 1;
-                    n_residue.fetch_add(1, Ordering::Relaxed);
-                }
-            }
-            report_stage::add_self_post_with_method(
-                &spr.contract_cid,
-                spr.verdict,
-                &spr.reason,
-                spr.method.map(|m| m.as_str().to_string()),
-                &mut report,
-            );
-        }
+        violations += fold_self_post_results(
+            &self_post_results,
+            &pool,
+            SelfPostCounters {
+                solved: &n_solved,
+                reflexive: &n_reflexive,
+                substantive: &n_substantive,
+                residue: &n_residue,
+            },
+            &mut report,
+        );
         info!(
             self_posts = self_post_results.len(),
             self_post_reflexive = self_post_results
@@ -1256,6 +1178,89 @@ type CallsiteResult = (
     Option<String>,
     Option<String>,
 );
+
+/// Fold the callsite verdicts into the report. A row a pool-level verifier
+/// owns is skipped; an imported contract's callsite (its halt loci, its own
+/// calls) is carried as the import's state (step 9); the project's own rows
+/// count. Returns the project's own not-discharged count. The one fold both
+/// run paths use.
+fn fold_callsite_results(
+    per_results: Vec<CallsiteResult>,
+    pool: &MementoPool,
+    report: &mut Report,
+) -> usize {
+    let mut violations = 0usize;
+    for (cs, verdict, reason, method, body_tier) in per_results {
+        if callsite_row_is_owned_by_consistency(&cs, pool)
+            || callsite_row_is_owned_by_self_post(&cs, pool)
+        {
+            debug!(
+                bridge = %cs.bridge_ir_name,
+                property = %cs.property_name,
+                "verifier/linker: pool-level verifier owns body-bearing callsite row"
+            );
+            continue;
+        }
+        if report_stage::add_callsite_result(cs, verdict, &reason, method, body_tier, pool, report)
+        {
+            violations += 1;
+        }
+    }
+    violations
+}
+
+/// The tier counters a self-post verdict moves.
+struct SelfPostCounters<'a> {
+    solved: &'a AtomicUsize,
+    reflexive: &'a AtomicUsize,
+    substantive: &'a AtomicUsize,
+    residue: &'a AtomicUsize,
+}
+
+/// Fold the self-post verdicts into the report and the tier counters. An
+/// imported contract's self-post is the import's state (step 9) and moves no
+/// counter. Returns the project's own not-discharged count. The one fold both
+/// run paths use.
+fn fold_self_post_results(
+    results: &[SelfPostResult],
+    pool: &MementoPool,
+    counters: SelfPostCounters<'_>,
+    report: &mut Report,
+) -> usize {
+    let mut violations = 0usize;
+    for spr in results {
+        let imported = report_stage::add_self_post_result(
+            &spr.contract_cid,
+            spr.verdict,
+            &spr.reason,
+            spr.method.map(|m| m.as_str().to_string()),
+            pool,
+            report,
+        );
+        if imported {
+            continue;
+        }
+        match spr.verdict {
+            ObligationVerdict::Discharged => {
+                counters.solved.fetch_add(1, Ordering::Relaxed);
+                match spr.method {
+                    Some(body_discharge::DischargeMethod::Reflexive) => {
+                        counters.reflexive.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Some(body_discharge::DischargeMethod::Substantive) => {
+                        counters.substantive.fetch_add(1, Ordering::Relaxed);
+                    }
+                    None => {}
+                }
+            }
+            _ => {
+                violations += 1;
+                counters.residue.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+    violations
+}
 
 fn callsite_row_is_owned_by_consistency(cs: &CallSite, pool: &MementoPool) -> bool {
     let Some(property_cid) = cs.property_cid.as_ref() else {

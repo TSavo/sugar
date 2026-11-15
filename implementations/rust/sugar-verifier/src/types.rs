@@ -370,6 +370,14 @@ pub struct Report {
     /// status `undecidable`; a report with `owed > 0` is never green.
     pub owed: usize,
     pub rows: Vec<ReportRow>,
+    /// An imported proof's own obligations, carried as that import's state
+    /// (step 9): the halt sites, owed members and self-posts of members a
+    /// staged import (`.sugar/imports/**`) spoke. They are that proof's debt,
+    /// not this project's: never in `rows`, never counted in `discharged`,
+    /// `violations`, `refused` or `owed`, and they never move `verdict`. A
+    /// halt the joined contract states on the consumer's call path enters the
+    /// consumer's own row through the join, not through here.
+    pub imported: Vec<ReportRow>,
     pub load_errors: Vec<LoadError>,
     pub call_edges: Vec<ResolvedCallEdge>,
     pub toolchain_plans: Vec<ToolchainPlanReport>,
@@ -387,6 +395,15 @@ impl Report {
                 )
             })
             .collect()
+    }
+
+    /// The imported rows that are owed `undecided` members (the import's own
+    /// `owed`), counted apart from this project's `owed`.
+    pub fn imported_owed(&self) -> usize {
+        self.imported
+            .iter()
+            .filter(|row| row.discharge_method.as_deref() == Some("undecided"))
+            .count()
     }
 
     /// Green means decided: see [`ReportVerdict`].
