@@ -4182,7 +4182,19 @@ def _cell_names(table):
     of its own variables a nested scope reads (its locals some nested
     scope's free variable names) and those it reads from an enclosing
     function; ``declared`` those it or a nested scope declares
-    ``nonlocal``.  ``__class__`` is a class's cell, not a function's."""
+    ``nonlocal``.  ``__class__`` is a class's cell, not a function's.
+
+    A nested scope is a function, lambda or class.  A comprehension is not
+    one: what its element and conditions read are the frame's own
+    variables, whichever of the four forms it is.  CPython inlines a list,
+    set or dict comprehension into the frame (PEP 709, so its symtable has
+    no child for it) but still compiles a generator expression as a
+    function of its own (``_comprehension_scope``), whose reads would make
+    every name it reads a cell here, and every unfollowed operation the
+    frame runs -- its own first iterable's iteration included -- would read
+    that name as changed (``_ambient_targets``) where the other three forms
+    read it as it is.  Its symbols are skipped; a function, lambda or class
+    nested in it still captures what it reads."""
     symbols = table.get_symbols()
     own = {
         symbol.get_name()
@@ -4195,6 +4207,8 @@ def _cell_names(table):
     while stack:
         child = stack.pop()
         stack.extend(child.get_children())
+        if _comprehension_scope(child):
+            continue
         for symbol in child.get_symbols():
             if symbol.is_nonlocal():
                 declared.add(symbol.get_name())
@@ -4203,6 +4217,15 @@ def _cell_names(table):
     declared = (declared & own) - {"__class__"}
     captured = (captured & own) - declared - {"__class__"}
     return frozenset(captured), frozenset(declared)
+
+
+def _comprehension_scope(table) -> bool:
+    """Whether CPython symtable ``table`` is a comprehension's own scope (a
+    generator expression's, the one form CPython does not inline): a
+    function scope whose implicit argument is ``.0``, the iterator of its
+    first iterable, which no ``def`` or ``lambda`` can name."""
+    parameters = getattr(table, "get_parameters", None)
+    return parameters is not None and ".0" in parameters()
 
 
 def _handle(node):
