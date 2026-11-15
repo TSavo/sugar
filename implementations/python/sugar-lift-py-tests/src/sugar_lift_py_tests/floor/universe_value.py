@@ -34,7 +34,13 @@ class UniverseValue(FloorValue):
     ``python:plain_store(class:<param>, "<attr>")`` over the class input the
     caller binds, which prove decides on the class's namespace row (#7757
     step 7).  Where the guard is not decided, nothing is concluded and the
-    caller's read stays undecided."""
+    caller's read stays undecided.
+
+    ``fields_guard`` is the guard under which this arm ran past every
+    earlier guarded ``return`` its record still carries (the block's
+    fall-through guard), or None where none is pending: the fields hold
+    only there, beside the plain-store guard
+    (``FunctionUniverseSugar._fields_guard``)."""
 
     name: str
     formals: tuple[str, ...]
@@ -44,6 +50,7 @@ class UniverseValue(FloorValue):
     after: tuple = ()
     fields: tuple = ()
     plain_stores: tuple = ()
+    fields_guard: object = None
 
     def guarded(self, formula):
         """Ride under a branch by guarding every body record entry.
@@ -162,6 +169,10 @@ class UniverseValue(FloorValue):
         ]
         if not stated or not guards:
             return None
+        if self.fields_guard is not None:
+            # An earlier guarded ``return`` this record still carries ended
+            # the frame before the store where its guard fails.
+            guards.append(self.fields_guard)
         guard = guards[0] if len(guards) == 1 else and_(guards)
         return implies(guard, and_(stated))
 

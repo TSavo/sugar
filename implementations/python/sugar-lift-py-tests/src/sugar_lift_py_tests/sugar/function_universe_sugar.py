@@ -1216,6 +1216,7 @@ class FunctionUniverseSugar(Sugar):
                     after=self._after(state),
                     fields=self._fields(state),
                     plain_stores=self.plain_stores,
+                    fields_guard=self._fields_guard(state),
                 )
             )
 
@@ -1251,10 +1252,21 @@ class FunctionUniverseSugar(Sugar):
         """``((param, attr, value), ...)``: each field the body stores last
         on a parameter (``fields_after``), its value read through the
         store's key in the context the arm whose record is ``state`` left, on
-        an arm that ran to the end (``_ran_to_the_end``: it ran the store); a
-        read that does not complete with one value states nothing (#7757
-        step 7)."""
-        if not self.fields_after or not self._ran_to_the_end(state):
+        an arm that ran the store; a read that does not complete with one
+        value states nothing (#7757 step 7).
+
+        An arm ran the store where it ran to the end (``_ran_to_the_end``),
+        and also where it falls through with an earlier guarded ``return``
+        still in its record (``if c: return``): the block reducer goes on
+        past such a ``return`` as one record under the fall-through guard
+        (``reduce_block_to_exitset``), so the arm ran the store exactly where
+        that guard holds, and the fields are stated only under it
+        (``_fields_guard``).  An arm a ``return`` ended (it does not fall
+        through, and the body's ``return`` is not only its last statement)
+        states nothing."""
+        if not self.fields_after:
+            return ()
+        if not (self.cells_after_every_arm or state.can_fall_through):
             return ()
         found = []
         for param, attr, read in self.fields_after:
@@ -1262,3 +1274,17 @@ class FunctionUniverseSugar(Sugar):
             if value is not None:
                 found.append((param, attr, value))
         return tuple(found)
+
+    def _fields_guard(self, state):
+        """The guard the fields this arm states (``_fields``) hold under: the
+        fall-through guard of the earlier guarded ``return``s its record
+        still carries (``_fall_through_guard``), or None where every arm ran
+        to the end or none is pending."""
+        if (
+            not self.fields_after
+            or self.cells_after_every_arm
+            or not state.can_fall_through
+            or not state.fall_through
+        ):
+            return None
+        return _fall_through_guard(state)
