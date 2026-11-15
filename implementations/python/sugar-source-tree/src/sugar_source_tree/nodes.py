@@ -9642,7 +9642,20 @@ class Expression(Node):
 
 @_abstract
 class Pattern(Node):
-    """A structural pattern inside ``match``."""
+    """A structural pattern inside ``match``.
+
+    A grammar piece the match's construction consumes and never constructs
+    as a value (``Match._pattern_alternatives``, ``Match._pattern_spec``):
+    it answers the roll where its case does, with every sub-pattern it holds
+    (``_structural_part``).  What it holds that Python evaluates -- a value
+    pattern's expression, a class pattern's class, a mapping pattern's keys
+    -- is an ordinary node and answers for itself, built or refused.  Before
+    this a value pattern was built by nothing: ``core/computation/
+    parsing.py`` (``case "`":`` in a ``while``) ended in ``MatchValue
+    registered but never answered the roll call`` on the pandas board at
+    ``d54a43717`` (#7757)."""
+
+    _structural_part = True
 
 
 @_abstract
@@ -10081,6 +10094,11 @@ class MatchCase(Node):
     guard: Optional[Expression]
     body: Tuple[Statement, ...]
     _child_fields = ("pattern", "guard", "body")
+    # A grammar piece of its ``match``: the match's construction consumes it
+    # (``Match._construct_sugar``), building its guard and its body, which
+    # answer for themselves; the case and its pattern answer where the match
+    # constructs (``_structural_part``).
+    _structural_part = True
 
     def substitute(self, scope, extra_bindings=None):
         """The case alone (``substitute_route``), its net dropped."""
