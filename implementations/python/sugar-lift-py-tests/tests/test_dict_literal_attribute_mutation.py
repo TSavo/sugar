@@ -16,6 +16,13 @@ def _sites(tmp_path):
     return body[0].fragment, body[1].fragment
 
 
+def _raise(outcome):
+    """The mutation's one exit is its raise: a halt, never a completion."""
+    (halt,) = outcome.exits
+    assert outcome.halts() == (halt,)
+    return halt.effect
+
+
 @pytest.mark.parametrize(
     ("operation", "owner", "site_index"),
     (
@@ -34,9 +41,10 @@ def test_dict_literal_attribute_mutations_have_exact_owner_occurrences(
         if operation == "setattr"
         else value.delattr("attr", site, None)
     )
-    assert outcome.value.effect.exception_name == "AttributeError"
-    assert outcome.value.effect.producer_node_owner == owner
-    assert outcome.value.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
+    effect = _raise(outcome)
+    assert effect.exception_name == "AttributeError"
+    assert effect.producer_node_owner == owner
+    assert effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
 
 def test_dict_literal_attribute_mutations_reject_wrong_site(tmp_path):
@@ -44,5 +52,5 @@ def test_dict_literal_attribute_mutations_reject_wrong_site(tmp_path):
     value = DictLiteralValue(())
     store = value.setattr("attr", TermValue(7), store_site, None)
     delete = value.delattr("attr", delete_site, None)
-    assert store.value.effect.occurrence_id != f"{delete_site.filename}:{delete_site.line}:{delete_site.col}"
-    assert delete.value.effect.occurrence_id != f"{store_site.filename}:{store_site.line}:{store_site.col}"
+    assert _raise(store).occurrence_id != f"{delete_site.filename}:{delete_site.line}:{delete_site.col}"
+    assert _raise(delete).occurrence_id != f"{store_site.filename}:{store_site.line}:{store_site.col}"

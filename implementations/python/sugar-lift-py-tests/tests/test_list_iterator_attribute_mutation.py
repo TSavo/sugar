@@ -25,15 +25,23 @@ def _outcomes(tmp_path):
     )
 
 
+def _raise(outcome):
+    """The mutation's one exit is its raise: a halt, never a completion."""
+    (halt,) = outcome.exits
+    assert outcome.halts() == (halt,)
+    return halt.effect
+
+
 def test_list_iterator_attribute_mutations_have_exact_owner_occurrences(tmp_path):
     for outcome, owner, site in _outcomes(tmp_path):
-        assert outcome.value.effect.exception_name == "AttributeError"
-        assert outcome.value.effect.producer_node_owner == owner
-        assert outcome.value.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
+        effect = _raise(outcome)
+        assert effect.exception_name == "AttributeError"
+        assert effect.producer_node_owner == owner
+        assert effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
 
 def test_list_iterator_attribute_mutations_reject_wrong_site(tmp_path):
     store, _, store_site = _outcomes(tmp_path)[0]
     delete, _, delete_site = _outcomes(tmp_path)[1]
-    assert store.value.effect.occurrence_id != f"{delete_site.filename}:{delete_site.line}:{delete_site.col}"
-    assert delete.value.effect.occurrence_id != f"{store_site.filename}:{store_site.line}:{store_site.col}"
+    assert _raise(store).occurrence_id != f"{delete_site.filename}:{delete_site.line}:{delete_site.col}"
+    assert _raise(delete).occurrence_id != f"{store_site.filename}:{store_site.line}:{store_site.col}"
