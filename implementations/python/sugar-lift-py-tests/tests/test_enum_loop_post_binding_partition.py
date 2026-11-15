@@ -100,13 +100,23 @@ def test_post_binding_route_lies_remain_typed_loud(
 ) -> None:
     calls, original = _loop_projection_calls(monkeypatch, tmp_path)
     kwargs = dict(calls[0][0])
+    # The lie is told about a state the projection reads: a completed exit
+    # route's (``projectedStateCid``).  ``runtime_states`` also holds the
+    # loop's entry state (``live_loop_construction``: the pre-state is its
+    # first key), which no exit route projects, so a lie about it is no lie
+    # about the post-binding partition.
+    state_cid = next(
+        record["projectedStateCid"]
+        for record in kwargs["construction"].wire_graph()["records"]
+        if record.get("kind") == "loop-post-binding"
+        and record["bindingCoordinateCid"] == kwargs["binding_coordinate"].cid
+    )
     if axis == "missing":
         states = dict(kwargs["runtime_states"])
-        states.pop(next(iter(states)))
+        states.pop(state_cid)
         kwargs["runtime_states"] = states
     elif axis == "duplicate":
         states = dict(kwargs["runtime_states"])
-        state_cid = next(iter(states))
         states[state_cid] = (*states[state_cid], *states[state_cid])
         kwargs["runtime_states"] = states
     elif axis == "foreign_coordinate":
