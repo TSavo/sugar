@@ -124,14 +124,21 @@ def _bypasses_in(source: str, relative: str) -> list[str]:
                 and _own(node.func.value)
             ):
                 allowed.add(id(node))
-    return [
-        f"{relative}:{node.lineno}"
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr in _READS
-        and id(node) not in allowed
-    ]
+    # In source order: ``ast.walk`` is breadth-first, so a call in a module
+    # function would otherwise be named before the calls in a class's methods
+    # above it.
+    bypasses = sorted(
+        (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _READS
+            and id(node) not in allowed
+        ),
+        key=lambda node: (node.lineno, node.col_offset),
+    )
+    return [f"{relative}:{node.lineno}" for node in bypasses]
 
 
 def test_no_module_outside_the_door_reads_a_floors_subscript() -> None:
