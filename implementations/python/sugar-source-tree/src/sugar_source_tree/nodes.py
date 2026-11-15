@@ -8300,13 +8300,37 @@ class _Splice:
     body statements, and ``_substitute_body`` splices them into the enclosing
     block so the loop's carried accumulator is just ordinary block-threading.
     Not a Node -- only ``_substitute_body`` handles it, and a `for` is always a
-    statement in a block, so it is never substituted anywhere else."""
+    statement in a block, so it is never substituted anywhere else.
 
-    __slots__ = ("statements", "bindings")
+    ``halted`` is what a halt leaving the statement carries to the halt edge
+    of the statement enclosing it (``_HaltEdgeJoin.escaping_state``): the
+    state at the halt, a store on a path that halts without completing
+    included.  None where the statement states none
+    (``Try._mid_statement_state`` then reads what its completion changed)."""
 
-    def __init__(self, statements: tuple, bindings: BindingMap | None = None) -> None:
+    __slots__ = ("statements", "bindings", "halted")
+
+    def __init__(
+        self,
+        statements: tuple,
+        bindings: BindingMap | None = None,
+        halted: BindingMap | None = None,
+    ) -> None:
         self.statements = statements
         self.bindings = bindings or {}
+        self.halted = halted
+
+
+class _StatementEdge(tuple):
+    """One entry ``_substitute_body_tracked`` reports into ``edge_states``:
+    the pair ``(statement, state in effect when it begins)``, and
+    ``halted``, the state a halt leaving the statement carries
+    (``_Splice.halted``), or None where the statement states none."""
+
+    halted = None
+
+    def __new__(cls, statement, pre):
+        return super().__new__(cls, (statement, pre))
 
 
 
@@ -8994,8 +9018,9 @@ class Node(Typed):
         changed = False
         for stmt in statements:
             pre_statement_scope = dict(scope)
+            edge = _StatementEdge(stmt, pre_statement_scope)
             if edge_states is not None:
-                edge_states.append((stmt, pre_statement_scope))
+                edge_states.append(edge)
             record = scope.get(_MODULE_STATEMENT_STATES)
             if record is not None and record.open:
                 record.record(stmt, pre_statement_scope)
@@ -9024,7 +9049,18 @@ class Node(Typed):
                     )
                     new_stmt = live_loop.statement
                     live_loop_bindings = live_loop.bindings
-            if new_stmt is not stmt:
+            if isinstance(new_stmt, _Splice):
+                # What a halt leaving the statement carries, for the halt
+                # edge of the statement enclosing this block.
+                edge.halted = new_stmt.halted
+            # A statement that only states what its halts carry is itself.
+            unchanged = new_stmt is stmt or (
+                isinstance(new_stmt, _Splice)
+                and not new_stmt.bindings
+                and len(new_stmt.statements) == 1
+                and new_stmt.statements[0] is stmt
+            )
+            if not unchanged:
                 changed = True
             # A statement may EXPAND into several: a `for` over a concrete
             # iterable dissolves into its unrolled body statements, spliced right
@@ -10149,7 +10185,7 @@ class MatchCase(Node):
         """The case alone (``substitute_route``), its net dropped."""
         return self.substitute_route(scope, extra_bindings or {})[0]
 
-    def substitute_route(self, scope, captures):
+    def substitute_route(self, scope, captures, *, edge_states=None):
         """`case <pattern> [if <guard>]: <body>` -- the pattern captures bind for
         the guard and body. Pattern value-exprs evaluate in the enclosing scope;
         guard and body are masked by the captures, then ``captures`` (each
@@ -10158,7 +10194,10 @@ class MatchCase(Node):
 
         Returns ``(case, net)``: ``net`` is what the body's own threading
         binds (``_substitute_body_tracked``), the case's route out of the
-        match together with ``captures`` (``Match.substitute``)."""
+        match together with ``captures`` (``Match.substitute``).  Given
+        ``edge_states``, the body's threading is reported there, closed by
+        the state the body leaves with (what its halts carry,
+        ``Match.substitute``)."""
         from .shadow import rewrite
 
         bound = self._pattern_bound_names(self.pattern)
@@ -10174,11 +10213,14 @@ class MatchCase(Node):
             changed["guard"] = new_guard
         # The guard is evaluated before its case's body: a walrus in it is
         # read there through its key (``_scope_after``).
+        body_scope = _scope_after(inner, self.guard, new_guard)
         new_body, d, net = self._substitute_body_tracked(
-            self.body, _scope_after(inner, self.guard, new_guard)
+            self.body, body_scope, edge_states=edge_states
         )
         if d:
             changed["body"] = new_body
+        if edge_states is not None:
+            edge_states.append((None, {**body_scope, **net}))
         return (self if not changed else rewrite(self, **changed)), net
 
 
@@ -17094,6 +17136,7 @@ class For(Statement):
             # (``container_mutation.thread_header``).
             from .container_mutation import thread_header
 
+            entry = scope
             scope = thread_header(
                 subst_iter,
                 scope,
@@ -17148,12 +17191,20 @@ class For(Statement):
                             scope
                         )  # carries loop variables across iterations
                         final_target_bindings = None
+                        # The names a halt inside an item may carry changed.
+                        halt_names: set = set()
                         for index, element_bindings in enumerate(bindings):
                             final_target_bindings = element_bindings
                             iter_scope = _iteration_scope(
                                 self, index, {**carried, **element_bindings}, scope
                             )
-                            new_body, _c = self._substitute_body(self.body, iter_scope)
+                            item_edges: list = []
+                            new_body, _c, item_net = self._substitute_body_tracked(
+                                self.body, iter_scope, edge_states=item_edges
+                            )
+                            halt_names |= _loop_item_halt_names(
+                                self, scope, iter_scope, item_edges, item_net
+                            )
                             if unpacks[index] is not None:
                                 # The iteration's unpack of its item opens it.
                                 new_body = (unpacks[index], *new_body)
@@ -17185,11 +17236,21 @@ class For(Statement):
                                     _EVALUATION_OCCURRENCE, ()
                                 ),
                             }
-                            else_body, _c = self._substitute_body(
-                                self.orelse, else_scope
+                            else_edges: list = []
+                            else_body, _c, else_net = self._substitute_body_tracked(
+                                self.orelse, else_scope, edge_states=else_edges
+                            )
+                            halt_names |= _loop_item_halt_names(
+                                self, scope, else_scope, else_edges, else_net
                             )
                             unrolled.extend(else_body)
-                        return _Splice(tuple(unrolled), final_target_bindings)
+                        return _Splice(
+                            tuple(unrolled),
+                            final_target_bindings,
+                            _compound_halt_state(
+                                self, entry, scope, (), unknown=frozenset(halt_names)
+                            ),
+                        )
                 if elements is not None:
                     # A concrete iterable whose display element the target did
                     # not destructure -- an arity or nesting the display does
@@ -17917,9 +17978,21 @@ class While(Statement):
         concrete loop is a non-termination the unroll must not fake."""
         from .shadow import rewrite
 
-        unrolled = self._try_unroll(scope)
+        # The names a halt inside an unrolled item may carry changed
+        # (``_try_unroll``); an unroll whose items hold a jump of the loop's
+        # own states none, and an enclosing halt edge reads what it changed.
+        halt_names: set = set()
+        unrolled = self._try_unroll(scope, halt_names)
         if unrolled is not None:
-            return _Splice(unrolled)
+            if For._body_has_owned_loop_control(self):
+                return _Splice(unrolled)
+            return _Splice(
+                unrolled,
+                None,
+                _compound_halt_state(
+                    self, scope, scope, (), unknown=frozenset(halt_names)
+                ),
+            )
 
         # Symbolic (or unsupported) while: keep the node; mask the carried
         # names (any name the body rebinds) so the update stays symbolic.  The
@@ -17993,9 +18066,13 @@ class While(Statement):
                 changed[f] = new
         return self if not changed else rewrite(self, **changed)
 
-    def _try_unroll(self, scope):
+    def _try_unroll(self, scope, halt_names=None):
         """The unrolled statement tuple, or None if the loop is not concrete
-        (condition undecidable against the carried state, or fuel exhausted)."""
+        (condition undecidable against the carried state, or fuel exhausted).
+
+        ``halt_names`` collects the names a halt inside an item (or the
+        ``else``) may carry changed (``_loop_item_halt_names``); an item
+        holding a jump of the loop's own is not read for them."""
         controlled = For._body_has_owned_loop_control(self)
         carried = dict(scope)
         unrolled: list = []
@@ -18008,7 +18085,14 @@ class While(Statement):
                 # Exit via the condition: with no break (jump-guard), the
                 # `else` always runs -- spliced after the iterations.
                 if self.orelse:
-                    else_body, _c = self._substitute_body(self.orelse, carried)
+                    else_edges: list = []
+                    else_body, _c, else_net = self._substitute_body_tracked(
+                        self.orelse, carried, edge_states=else_edges
+                    )
+                    if halt_names is not None:
+                        halt_names |= _loop_item_halt_names(
+                            self, scope, carried, else_edges, else_net
+                        )
                     unrolled.extend(else_body)
                 return tuple(unrolled)
             if controlled:
@@ -18023,7 +18107,14 @@ class While(Statement):
                     return tuple(unrolled)
                 continue
             carried = _iteration_scope(self, index, carried, scope)
-            new_body, _c = self._substitute_body(self.body, carried)
+            item_edges: list = []
+            new_body, _c, item_net = self._substitute_body_tracked(
+                self.body, carried, edge_states=item_edges
+            )
+            if halt_names is not None:
+                halt_names |= _loop_item_halt_names(
+                    self, scope, carried, item_edges, item_net
+                )
             new_body = _iteration_copies(self, index, new_body)
             unrolled.extend(new_body)
             for stmt in new_body:
@@ -18138,15 +18229,32 @@ class If(Statement):
         # rebinds leaves the ``if`` in that state.
         from .container_mutation import thread_header
 
+        entry = scope
         scope = thread_header(
             new_test, scope, _scope_after(scope, self.test, new_test), operated=True
         )
-        new_body, d, then_net = self._substitute_body_tracked(self.body, scope)
+        then_edges: list = []
+        new_body, d, then_net = self._substitute_body_tracked(
+            self.body, scope, edge_states=then_edges
+        )
         if d:
             changed["body"] = new_body
-        new_orelse, d, else_net = self._substitute_body_tracked(self.orelse, scope)
+        else_edges: list = []
+        new_orelse, d, else_net = self._substitute_body_tracked(
+            self.orelse, scope, edge_states=else_edges
+        )
         if d:
             changed["orelse"] = new_orelse
+        halted = _compound_halt_state(
+            self,
+            entry,
+            scope,
+            (
+                [*then_edges, (None, {**scope, **then_net})],
+                [*else_edges, (None, {**scope, **else_net})],
+            ),
+            header_halts=not Try._statement_cannot_halt(self, self.test),
+        )
         if retained_slot:
             node = self if not changed else rewrite(self, **changed)
         else:
@@ -18171,9 +18279,9 @@ class If(Statement):
                 phis.append(self._make_assign(name, joined))
             else:
                 availability[name] = joined
-        if not phis and not availability:
+        if not phis and not availability and not halted:
             return node
-        return _Splice((node, *phis), availability)
+        return _Splice((node, *phis), availability, halted)
 
     def _rewrite_with_slot(self, changed, slot, *, authenticated_slot=None):
         from .backend import Leaf, materialize
@@ -18686,13 +18794,14 @@ class With(Statement):
         # (``container_mutation.thread_header``).
         from .container_mutation import thread_header
 
-        body_scope = dict(
+        head_scope = dict(
             thread_header(
                 tuple(item.context_expr for item in items),
                 scope,
                 _scope_after(scope, self.items, items),
             )
         )
+        body_scope = dict(head_scope)
         if self.unit.construction_context is not None:
             if len(items) != 1:
                 return self if not changed else rewrite(self, **changed)
@@ -18732,8 +18841,9 @@ class With(Statement):
                 body_scope[item.optional_vars.id] = item._make_observation_ref(
                     enter_slot, ENTER_RESULT
                 )
+            body_edges: list = []
             new_body, d, body_net = self._substitute_body_tracked(
-                self.body, body_scope
+                self.body, body_scope, edge_states=body_edges
             )
             if d:
                 changed["body"] = new_body
@@ -18744,27 +18854,53 @@ class With(Statement):
                     self if not changed else rewrite(self, **changed), scope
                 ),
                 body_net,
+                self._halted(scope, head_scope, body_scope, body_edges, body_net),
             )
         for item in items:
             if item.optional_vars is not None:
                 for name in self._bound_names_in(item.optional_vars):
                     body_scope.pop(name, None)
 
-        new_body, d, body_net = self._substitute_body_tracked(self.body, body_scope)
+        body_edges = []
+        new_body, d, body_net = self._substitute_body_tracked(
+            self.body, body_scope, edge_states=body_edges
+        )
         if d:
             changed["body"] = new_body
         return self._published(
-            self if not changed else rewrite(self, **changed), body_net
+            self if not changed else rewrite(self, **changed),
+            body_net,
+            self._halted(scope, head_scope, body_scope, body_edges, body_net),
+        )
+
+    def _halted(self, scope, head_scope, body_scope, body_edges, body_net):
+        """What a halt leaving the ``with`` carries to the halt edge of the
+        statement enclosing it (``_compound_halt_state``): one inside its head
+        (the manager's expression, ``__enter__``) what the head changed; one
+        inside its body the state at its own body statement; one inside
+        ``__exit__`` after the body completed what the body left."""
+        final = {**body_scope, **body_net}
+        left = {
+            name: entry
+            for name, entry in final.items()
+            if head_scope.get(name, _MISSING) is not entry
+        }
+        return _compound_halt_state(
+            self,
+            scope,
+            head_scope,
+            ([*body_edges, (None, final)],),
+            after=(left,),
         )
 
     @staticmethod
-    def _published(node, body_net):
+    def _published(node, body_net, halted=None):
         """``node`` leaving the ``with`` with what its body left: every name
         the body rebound and every object a store, call or container
         mutation in it changed is read after the ``with`` as the body left
         it, as after any block (``Try.substitute``'s completion, an ``if``'s
         arms) -- never as it stood before the body.  ``node`` itself where
-        the body changed nothing.
+        the body changed nothing and no halt leaving it carries a change.
 
         A halt inside the body that the manager does not suppress leaves the
         ``with`` as a halt; one it suppresses goes on after the ``with`` from
@@ -18772,10 +18908,10 @@ class With(Statement):
         a store the body never reached is unbound: the read refuses by name
         (``EvaluationRefSugar._unbound``), never the completed body's value.
         A halt inside the ``with`` itself reaches an enclosing handler with
-        every name the body changed unknown (``Try._mid_statement_state``)."""
-        if not body_net:
+        the state it carries (``halted``, ``With._halted``)."""
+        if not body_net and not halted:
             return node
-        return _Splice((node,), body_net)
+        return _Splice((node,), body_net, halted)
 
     def _with_assignment_binding(self, item, value, scope):
         """Delegate a with-as binding to Python's ordinary Assign seam."""
@@ -19209,6 +19345,63 @@ class _HaltEdgeJoin:
                 out[name] = joined
         return out
 
+    def escaping_state(self, statement, escaping=(), unkeyed=(), unknown=()):
+        """What a halt leaving ``statement`` carries to the halt edge of the
+        statement enclosing it: the state at the halt, never the state
+        ``statement`` would have completed with (step 5, the temporal
+        rewrite).  Every compound statement states it here
+        (``_Splice.halted``), and ``Try._mid_statement_state`` reads it.
+
+        ``escaping`` are the halt edges this join keys (a ``try`` body's
+        halts no arm surely catches, an arm's own halt), joined exactly as the
+        ``finally`` sees them (``finally_state``).  ``unkeyed`` are the states
+        of halts no edge slot names (a ``try``'s ``else`` and ``finally``
+        suites, the header and suites of an ``if``, a ``with``, a ``match``):
+        a name is read there only where every one of them agrees with the
+        join.  A name they do not agree on, and every name of ``unknown``
+        (what a ``finally`` changes before a halt leaves through it, what a
+        loop's items change), is unknown at the halt -- except a name unbound
+        before ``statement``, which keeps that state, as at any compound
+        statement (an unknown would drop its read's ``UnboundLocalError``
+        face).  A name ``statement``'s scope does not hold is not stated."""
+        joined = self.finally_state(escaping)
+        names = {name for name in unknown if isinstance(name, str)}
+        for state in (*escaping, *unkeyed):
+            names.update(name for name in state if isinstance(name, str))
+        out = {}
+        lost = []
+        for name in _ordered_binding_keys(names):
+            before = _explicit_state(name, self.scope)
+            if before is _MISSING:
+                continue
+            if name in unknown:
+                value = _MISSING
+            elif any(name in state for state in escaping):
+                value = joined.get(name, _MISSING)
+            elif escaping:
+                value = self.scope[name]
+            else:
+                value = self._value(unkeyed[0], name)
+            if value is not _MISSING and all(
+                self._agrees(self._value(state, name), value) for state in unkeyed
+            ):
+                out[name] = value
+            elif not isinstance(before, UnboundBinding):
+                lost.append(name)
+        if lost:
+            from .container_mutation import _havoc
+            from .shadow import occurrence_tags_of
+
+            tags = occurrence_tags_of(statement)
+            binding = {name: _havoc(statement, name, tags) for name in lost}
+            out.update(statement._binding_entries(binding, self.scope))
+        return out
+
+    @staticmethod
+    def _agrees(state, other) -> bool:
+        state, other = unwrap_binding_state(state), unwrap_binding_state(other)
+        return state is other or state == other
+
     def edge_keys(self):
         """``(slot id, occurrence keys)`` per body statement that is an edge."""
         body = self.try_node.body
@@ -19231,6 +19424,61 @@ class _HaltEdgeJoin:
         return tuple(keys)
 
 
+def _compound_halt_state(
+    statement, entry, header, suites, *, after=(), unknown=(), header_halts=True
+):
+    """What a halt leaving the compound ``statement`` carries to the halt
+    edge of the statement enclosing it (``_Splice.halted``).  An ``if``, a
+    ``with``, a ``match`` and an unrolled loop state it here, through the
+    one join a ``try`` states it through (``_HaltEdgeJoin.escaping_state``):
+    none of their halts is caught inside them, and no edge slot names which
+    one left.
+
+    ``entry`` is the state the statement begins with and ``header`` the
+    state after its header (an ``if`` test, a ``with`` head, a ``match``
+    subject, a loop's iterable; ``container_mutation.thread_header``).  A
+    halt inside the header (where ``header_halts``: an ``if`` test built
+    only of halt-free nodes has none) carries what the header changed as at
+    any halt inside a compound statement (``Try._mid_statement_state``).  A
+    halt inside a suite (each of ``suites``: its threading, closed by the
+    state it leaves with) carries the state at its own statement over that
+    (``Try._suite_halt_states``); ``after`` are further states a halt
+    carries, as what changed against ``header`` (a ``with``'s ``__exit__``
+    after its body, a ``match`` guard's captures).  Every name of
+    ``unknown`` is unknown at every halt."""
+    head = Try._mid_statement_state(statement, statement, entry, header, {})
+    states = [head] if header_halts else []
+    for edge_states in suites:
+        states.extend(
+            {**head, **state}
+            for state in Try._suite_halt_states(statement, edge_states, header)
+        )
+    states.extend({**head, **state} for state in after)
+    return _HaltEdgeJoin(statement, entry, None).escaping_state(
+        statement, (), states, unknown
+    )
+
+
+def _loop_item_halt_names(loop, header, item_scope, edge_states, net) -> set:
+    """The names a halt inside one item (or the ``else``) of an unrolled
+    loop may carry changed against ``header``: what the items before it left
+    and its own target (``item_scope``, the state the item begins with), and
+    what each of its statements that can halt carries
+    (``Try._suite_halt_states``; ``edge_states`` is the item's threading,
+    ``net`` what it bound).  The state an item reaches is that item's copy's
+    (``_iteration_copies``), never a state outside the loop: each of these
+    names is unknown at the loop's halts (``_compound_halt_state``)."""
+    names = {
+        name
+        for name, entry in item_scope.items()
+        if isinstance(name, str) and header.get(name, _MISSING) is not entry
+    }
+    closed = [*edge_states, (None, {**item_scope, **net})]
+    for state in Try._suite_halt_states(loop, closed, header):
+        names.update(name for name in state if isinstance(name, str))
+    return names
+
+
 class Try(Statement):
     body: Tuple[Statement, ...]
     handlers: Tuple[ExceptHandler, ...]
@@ -19245,7 +19493,11 @@ class Try(Statement):
         alike (``TryStar.substitute``): the body threads into ``else``, each
         arm begins from the state its routed halts carry, ``finally`` is
         substituted for its completion and for its halted faces, and the
-        statement exports what its completion routes bound."""
+        statement exports what its completion routes bound -- and what a halt
+        leaving it carries (``_Splice.halted``): the escaping halts joined as
+        the ``finally`` sees them, never the state its completion would have
+        left, which a body that always raises beneath an arm that returns
+        never reaches."""
         from .shadow import rewrite
 
         changed = {}
@@ -19269,9 +19521,15 @@ class Try(Statement):
         ]
         routed = self._route_halt_edges(halt_edges)
         body_state = {**scope, **body_net}
-        new_orelse, d, else_net = self._substitute_body_tracked(self.orelse, body_state)
+        else_edge_states: list = []
+        new_orelse, d, else_net = self._substitute_body_tracked(
+            self.orelse, body_state, edge_states=else_edge_states
+        )
         if d:
             changed["orelse"] = new_orelse
+        # A halt inside ``else`` leaves the try uncaught, from the state at
+        # its own statement (the body completed before it).
+        else_edge_states.append((None, {**body_state, **else_net}))
         body_completion = {**body_net, **else_net}
 
         handler_nets = []
@@ -19388,42 +19646,24 @@ class Try(Statement):
                 )
                 finally_scope = {**scope, **reached}
                 minted = minted or reached_minted
-            # ``finally`` also runs on every body halt no arm surely catches,
-            # beginning from that halt's own state -- never the pre-try state.
-            escaping = [
-                state
-                for identity, mro, state in halt_edges
-                if not any(
-                    self._handler_surely_matches(handler, identity, mro)
-                    for handler in self.handlers
-                )
-            ]
-            # An arm may itself raise (or re-raise) after its own stores: that
-            # halt reaches ``finally`` from the state at the arm statement
-            # that halted when there is one such statement, else with every
-            # name the arm changed unknown.
-            for handler_index, (handler, handler_net) in enumerate(
-                zip(self.handlers, handler_nets)
-            ):
-                if handler_index not in routed:
-                    continue
-                arm_state = join.arm_halt_state(
-                    handler,
-                    handler_index,
-                    handler_net,
-                    scope,
-                    at_halt=handler_halts[handler_index],
-                )
-                if arm_state is not None:
-                    escaping.append(arm_state)
+            # ``finally`` also runs on every halt that leaves the body and the
+            # arms, beginning from that halt's own state -- never the pre-try
+            # state.
+            escaping = self._escaping_halt_edges(
+                join, halt_edges, routed, handler_nets, handler_halts, scope
+            )
             halted_entries = join.finally_state(escaping)
         else:
+            escaping = None
             halted_entries = {}
+        completion_final_scope = _exit_path_scope(self, "completion", finally_scope)
+        final_edge_states: list = []
         new_finalbody, d, final_net = self._substitute_body_tracked(
-            self.finalbody, _exit_path_scope(self, "completion", finally_scope)
+            self.finalbody, completion_final_scope, edge_states=final_edge_states
         )
         if d:
             changed["finalbody"] = new_finalbody
+        final_edge_states.append((None, {**completion_final_scope, **final_net}))
         merged = {**merged, **final_net}
         # A halt reaches ``finally`` with its own state, not the completion
         # join: the same clause is substituted once more for the halted faces
@@ -19434,6 +19674,8 @@ class Try(Statement):
         # one always gets its halted copy, or the halted faces would reduce
         # the completion copy and bind its key a second time.
         finalbody_halted = None
+        halted_final_net: BindingMap = {}
+        halted_final_edge_states: list = []
         if (
             any(
                 final_scope.get(name) is not entry
@@ -19442,9 +19684,16 @@ class Try(Statement):
             or finally_scope is not final_scope
             or _holds_evaluation(new_finalbody)
         ):
-            finalbody_halted, _d = self._substitute_body(
+            halted_final_scope = _exit_path_scope(
+                self, "halt", {**final_scope, **halted_entries}
+            )
+            finalbody_halted, _d, halted_final_net = self._substitute_body_tracked(
                 self.finalbody,
-                _exit_path_scope(self, "halt", {**final_scope, **halted_entries}),
+                halted_final_scope,
+                edge_states=halted_final_edge_states,
+            )
+            halted_final_edge_states.append(
+                (None, {**halted_final_scope, **halted_final_net})
             )
 
         edge_keys = join.edge_keys() if join.minted else ()
@@ -19462,7 +19711,67 @@ class Try(Statement):
         else:
             node = self if not changed else rewrite(self, **changed)
         node = self._keyed_evaluation(node, scope)
-        return _Splice((node,), merged) if merged else node
+        # What a halt leaving the try carries to the halt edge of the
+        # statement enclosing it: the escaping halts joined as the
+        # ``finally`` sees them; a halt inside ``else`` or inside either copy
+        # of ``finally`` from its own statement's state; and every name the
+        # ``finally`` changes unknown under a halt that leaves through it.
+        if escaping is None:
+            escaping = self._escaping_halt_edges(
+                join, halt_edges, routed, handler_nets, handler_halts, scope
+            )
+        unkeyed = [
+            state
+            for edge_states in (
+                else_edge_states,
+                final_edge_states,
+                halted_final_edge_states,
+            )
+            for state in Try._suite_halt_states(self, edge_states, scope)
+        ]
+        halted = join.escaping_state(
+            self,
+            escaping,
+            unkeyed,
+            frozenset((*final_net, *halted_final_net)) if self.finalbody else (),
+        )
+        if merged or halted:
+            return _Splice((node,), merged, halted)
+        return node
+
+    def _escaping_halt_edges(
+        self, join, halt_edges, routed, handler_nets, handler_halts, scope
+    ):
+        """Every halt that leaves the body and the arms uncaught, each with
+        the state it carries: a body halt no arm surely catches, from that
+        halt's own state, and an arm's own raise (or re-raise) after its
+        stores -- from the state at the arm statement that halted when there
+        is one such statement, else with every name the arm changed unknown
+        (``_HaltEdgeJoin.arm_halt_state``).  What ``finally`` begins from
+        under a halt, and what the try's halts carry out of it."""
+        escaping = [
+            state
+            for identity, mro, state in halt_edges
+            if not any(
+                self._handler_surely_matches(handler, identity, mro)
+                for handler in self.handlers
+            )
+        ]
+        for handler_index, (handler, handler_net) in enumerate(
+            zip(self.handlers, handler_nets)
+        ):
+            if handler_index not in routed:
+                continue
+            arm_state = join.arm_halt_state(
+                handler,
+                handler_index,
+                handler_net,
+                scope,
+                at_halt=handler_halts[handler_index],
+            )
+            if arm_state is not None:
+                escaping.append(arm_state)
+        return escaping
 
     def _keyed_handlers(self, scope) -> tuple:
         """This ``try``'s (or ``try ... except*``'s) handlers, each keyed as
@@ -19558,15 +19867,21 @@ class Try(Statement):
     #: every handler must be prepared to receive.
     _HALT_FREE_NODES = ("Assign", "Name", "Constant", "Tuple_", "List", "Pass")
 
+    # The halt-edge reading below (``_body_halt_edges`` and the steps it
+    # takes) names its steps through ``Try``, never through ``self``: every
+    # compound statement reads its suites' halts through it
+    # (``_suite_halt_states``), an ``if``, a ``with``, a loop and a ``match``
+    # as much as a ``try``.
+
     def _halt_free_classes(self, *extra):
         return tuple(extra) + tuple(
             cls
-            for cls in (globals().get(name) for name in self._HALT_FREE_NODES)
+            for cls in (globals().get(name) for name in Try._HALT_FREE_NODES)
             if isinstance(cls, type)
         )
 
     def _statement_cannot_halt(self, statement) -> bool:
-        allowed = self._halt_free_classes()
+        allowed = Try._halt_free_classes(self)
         return all(isinstance(node, allowed) for node in statement.walk())
 
     def _raise_testimony_of(self, statement):
@@ -19598,7 +19913,8 @@ class Try(Statement):
         _ground_edges``: the halt's occurrence names the statement), never the
         spelling of what its receiver was given."""
         edges = []
-        for index, (statement, pre_statement_scope) in enumerate(edge_states):
+        for index, entry in enumerate(edge_states):
+            statement, pre_statement_scope = entry
             if statement is None:
                 continue
             net = {
@@ -19609,10 +19925,29 @@ class Try(Statement):
             post = (
                 edge_states[index + 1][1] if index + 1 < len(edge_states) else None
             )
-            net = self._mid_statement_state(statement, pre_statement_scope, post, net)
+            net = Try._mid_statement_state(
+                self,
+                statement,
+                pre_statement_scope,
+                post,
+                net,
+                getattr(entry, "halted", None),
+            )
             net = _HaltEdgeState(net, edge=index)
-            edges.extend(self._statement_halt_edges(statement, net))
+            edges.extend(Try._statement_halt_edges(self, statement, net))
         return edges
+
+    def _suite_halt_states(self, edge_states, base):
+        """The state every halt inside one suite carries, as what it changed
+        against ``base``: the suite's threading (``edge_states``, closed by
+        ``(None, state the suite leaves with)``) read at each statement that
+        can halt (``_body_halt_edges``).  What a compound statement's halts
+        carry out of it is joined from these
+        (``_HaltEdgeJoin.escaping_state``)."""
+        return [
+            state
+            for _identity, _mro, state in Try._body_halt_edges(self, edge_states, base)
+        ]
 
     #: States a statement's completion binds to an object some code it ran may
     #: have changed (``container_mutation.havoc_after``): that code may change
@@ -19634,7 +19969,7 @@ class Try(Statement):
         }
     )
 
-    def _mid_statement_state(self, statement, pre, post, net):
+    def _mid_statement_state(self, statement, pre, post, net, halted=None):
         """The state a halt INSIDE ``statement`` carries.
 
         A simple statement's halt carries the state it began with -- except an
@@ -19643,15 +19978,28 @@ class Try(Statement):
         leaves, a walrus before a later operand, a raise's or an assert's
         walrus): a name unbound before the statement is read at the halt
         through the statement's key, which the halt's record holds exactly
-        when the name was bound before it halted (``_read_at_halt``).  A
-        compound statement may halt after any of its inner stores: every name
-        it changes is unknown at its halt, never the state it began with."""
+        when the name was bound before it halted (``_read_at_halt``).
+
+        A compound statement that states what its halts carry (``halted``,
+        ``_HaltEdgeJoin.escaping_state``) is read at that state: a store on a
+        path that halts without completing (a nested ``try`` whose body
+        raises and whose arm returns) is the state its halt carries, though
+        the statement's completion never binds it.  Any other compound
+        statement may halt after any of its inner stores: every name it
+        changes is unknown at its halt, never the state it began with."""
+        if halted is not None:
+            binding = {
+                name: entry
+                for name, entry in halted.items()
+                if pre.get(name, _MISSING) is not entry
+            }
+            return {**net, **binding} if binding else net
         if post is None:
             return net
         from .container_mutation import _havoc, _read_of, at_halt_read
         from .shadow import occurrence_tags_of
 
-        compound = getattr(statement, "kind", None) in self._COMPOUND_KINDS
+        compound = getattr(statement, "kind", None) in Try._COMPOUND_KINDS
         tags = occurrence_tags_of(statement)
         binding = {}
         for name, before in pre.items():
@@ -19694,7 +20042,7 @@ class Try(Statement):
                     if kept and getattr(statement, "kind", None) == "If"
                     else _havoc(statement, name, tags)
                 )
-            elif kind in self._MID_STATEMENT_MUTATION_KINDS:
+            elif kind in Try._MID_STATEMENT_MUTATION_KINDS:
                 binding[name] = state if kept else _havoc(statement, name, tags)
             elif (
                 kind == "PathAfterCall"
@@ -19720,17 +20068,19 @@ class Try(Statement):
     def _statement_halt_edges(self, statement, net):
         """The halted exits ONE statement contributes, all carrying ``net`` --
         the state in effect when that statement begins."""
-        if self._statement_cannot_halt(statement):
+        if Try._statement_cannot_halt(self, statement):
             return []
         if isinstance(statement, Raise) and all(
-            isinstance(node, self._halt_free_classes(Raise))
+            isinstance(node, Try._halt_free_classes(self, Raise))
             for node in statement.walk()
         ):
-            testimony = self._raise_testimony_of(statement)
+            testimony = Try._raise_testimony_of(self, statement)
             if testimony is not None:
                 return [(testimony[0], testimony[1], net)]
             return [(None, None, net)]
-        if isinstance(statement, If) and self._statement_cannot_halt(statement.test):
+        if isinstance(statement, If) and Try._statement_cannot_halt(
+            self, statement.test
+        ):
             # A partition halts on whichever branch is taken; both branches
             # begin from the same incoming state, so each branch's own exits
             # are edges of this statement.
@@ -19738,7 +20088,7 @@ class Try(Statement):
                 edge
                 for branch in (statement.body, statement.orelse)
                 for inner in branch
-                for edge in self._statement_halt_edges(inner, net)
+                for edge in Try._statement_halt_edges(self, inner, net)
             ]
         return [(None, None, net)]
 
@@ -20119,6 +20469,7 @@ class TryStar(Statement):
     _body_halt_edges = Try._body_halt_edges
     _mid_statement_state = Try._mid_statement_state
     _statement_halt_edges = Try._statement_halt_edges
+    _escaping_halt_edges = Try._escaping_halt_edges
     _route_halt_edges = Try._route_halt_edges
     _handler_surely_matches = Try._handler_surely_matches
     _incoming_halt_state = Try._incoming_halt_state
@@ -20834,6 +21185,7 @@ class Match(Statement):
         # changed is read as they left it (``container_mutation.thread_header``).
         from .container_mutation import thread_header
 
+        entry = scope
         scope = thread_header(
             subject,
             scope,
@@ -20849,16 +21201,28 @@ class Match(Statement):
         cases_changed = False
         routes = []
         capture_keys = []
+        case_edges = []
+        bound_captures = []
         for arm, case in enumerate(self.cases):
             keys = self._case_capture_keys(case, scope)
             capture_keys.append(keys)
             captures = self._case_captures(case, subject, keys)
-            new_case, net = case.substitute_route(scope, captures)
+            edges: list = []
+            new_case, net = case.substitute_route(scope, captures, edge_states=edges)
+            case_edges.append(edges)
+            bound_captures.append(captures)
             if new_case is not case:
                 cases_changed = True
             new_cases.append(new_case)
             if self._block_has_completed_fallthrough(case.body):
                 routes.append((arm, {**captures, **net}))
+        # What a halt leaving the match carries: a case whose body raises
+        # (or returns) is no route out, but its halt still carries what the
+        # body stored before it -- and a halt in a guard (or a pattern's own
+        # calls) the captures bound before it.
+        halted = _compound_halt_state(
+            self, entry, scope, case_edges, after=tuple(bound_captures)
+        )
         if not (self.cases and self._irrefutable_case(self.cases[-1])):
             # No case was selected: the match completes with what stood
             # before it.
@@ -20883,7 +21247,9 @@ class Match(Statement):
             node = rewrite_with_leaves(self, leaves, **changed)
         else:
             node = self if not changed else rewrite(self, **changed)
-        return _Splice((node,), merged) if merged else node
+        if merged or halted:
+            return _Splice((node,), merged, halted)
+        return node
 
     def _case_capture_keys(self, case, scope) -> tuple:
         """``((name, key), ...)``: the key each name ``case``'s pattern
