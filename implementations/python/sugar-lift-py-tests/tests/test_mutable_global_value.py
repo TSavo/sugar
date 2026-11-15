@@ -61,8 +61,15 @@ def test_mutable_dict_global_lookup_preserves_complementary_value_and_keyerror_f
     assert completed.value.target_name == "py.subscript"
     assert completed.value.site is site
     assert completed.guard.operands == (halted.guard,)
-    assert halted.faces and completed.faces
-    assert next(iter(halted.faces)).partition == next(iter(completed.faces)).partition
+    # The pair is the one two-faced outcome (``ExitSet.two_faced``): whether
+    # the dict holds the key is not decided here, so both arms owe the
+    # ``undecided`` member at the lookup's site, and neither is hand-stamped.
+    from sugar_lift_py_tests.unanswered_calls import unanswered_call
+
+    assert completed.owed == (unanswered_call(None, site),)
+    assert halted.owed == (unanswered_call(None, site),)
+    assert completed.owed[0].site is not None
+    assert not halted.faces and not completed.faces
 
 
 def test_mutable_dict_global_lookup_refuses_foreign_source_coordinate(

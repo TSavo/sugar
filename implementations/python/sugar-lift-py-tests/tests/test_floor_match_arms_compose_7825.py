@@ -21,6 +21,7 @@ from sugar_lift_py_tests.outcome.exit_set import (
     Completed,
     ExitSet,
     Halted,
+    _are_exclusive,
     _faces_exclusive,
     complement_guard,
     partition,
@@ -33,6 +34,7 @@ from sugar_lift_py_tests.sugar.match_sugar import (
 )
 from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.unanswered_calls import unanswered_call
 from sugar_source_tree.nodes import Name, Subscript
 
 
@@ -122,20 +124,23 @@ def test_a_mutable_global_lookup_splits_beneath_every_coordinate_arm(
 
     exits = value.subscript(StringValue("display.max_rows"), site).exits
 
+    # The lookup's own split is the one two-faced outcome
+    # (``ExitSet.two_faced``): after what the coordinate owed, both of its
+    # arms owe the ``undecided`` member at the lookup's site.
+    undecided = unanswered_call(None, site)
     completed = [arm for arm in exits if isinstance(arm, Completed)]
     assert [arm.value for arm in completed] == [TermValue(1)]
-    assert completed[0].owed == ("debt:coordinate",)
+    assert completed[0].owed == ("debt:coordinate", undecided)
     halts = {
         arm.effect.exception_name: arm for arm in exits if isinstance(arm, Halted)
     }
     assert set(halts) == {"KeyError", "ValueError"}
-    assert halts["KeyError"].owed == ("debt:coordinate",)
+    assert halts["KeyError"].owed == ("debt:coordinate", undecided)
+    # The coordinate's own halt stands as it was and owes nothing of the lookup.
     assert halts["ValueError"].guard == complement_guard(completes)
-    # The lookup's own split still marks its two faces.
-    (key_error_face,) = halts["KeyError"].faces
-    (value_face,) = completed[0].faces
-    assert key_error_face.partition == value_face.partition
-    assert key_error_face.side != value_face.side
+    assert halts["ValueError"].owed == ("debt:coordinate",)
+    # The two arms of the lookup cannot hold together.
+    assert _are_exclusive(completed[0].guard, halts["KeyError"].guard)
 
 
 # -- MatchSugar ---------------------------------------------------------------

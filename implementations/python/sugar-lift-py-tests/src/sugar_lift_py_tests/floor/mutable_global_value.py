@@ -74,7 +74,7 @@ class MutableGlobalValue(FloorValue):
         from sugar_lift_py_tests.floor.ground_exit import ground_raise_effect
         from sugar_lift_py_tests.ir import atomic
         from sugar_lift_py_tests.outcome import ExitSet
-        from sugar_lift_py_tests.outcome.exit_set import complement_guard, partition
+        from sugar_lift_py_tests.outcome.exit_set import complement_guard
 
         raises = atomic(
             "python.mutable_dict_lookup_raises_key_error",
@@ -83,25 +83,22 @@ class MutableGlobalValue(FloorValue):
                 index.to_term(owner="mutable global lookup"),
             ],
         )
-        halted_face, completed_face = partition(
-            ("mutable-global-dict-subscript", _occurrence_key(site))
-        )
         coordinate = self.py_subscript_coordinate(index, site)
         effect = ground_raise_effect(
             exception_name="KeyError",
             site=site,
             owner="MutableGlobalValue.subscript",
         )
-        # The lookup splits beneath every completed arm of the coordinate:
-        # each arm's guard, faces and ``owed`` ride onto both faces, and a
-        # halt of the coordinate stands.
+        # Whether the dict holds the key is not decided here, so the lookup
+        # is the one two-faced outcome (``ExitSet.two_faced``): it completes
+        # with the coordinate where the lookup does not raise and halts with
+        # ``KeyError`` under the complement, and both arms owe the
+        # ``undecided`` member at this site.  The pair is built beneath every
+        # completed arm of the coordinate: each arm's guard, faces and
+        # ``owed`` ride onto both, and a halt of the coordinate stands.
         return coordinate.sequence(
-            lambda value: ExitSet.halted(effect)
-            .guarded(raises, halted_face)
-            .union(
-                ExitSet.completed(value).guarded(
-                    complement_guard(raises), completed_face
-                )
+            lambda value: ExitSet.two_faced(
+                value, effect, guard=complement_guard(raises), site=site
             )
         )
 
@@ -138,14 +135,3 @@ class MutableGlobalValue(FloorValue):
                 operand_callsites=(*item.callsites(), *self.callsites()),
             )
         )
-
-
-def _occurrence_key(site: object) -> tuple[object, object, object, object]:
-    fragment = getattr(site, "fragment", site)
-    span = getattr(fragment, "span", None)
-    return (
-        getattr(fragment, "filename", None),
-        getattr(fragment, "source_cid", None),
-        getattr(span, "start", None),
-        getattr(span, "end", None),
-    )
