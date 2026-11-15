@@ -11841,18 +11841,24 @@ class ClassDef(Statement):
         each name it binds read under the key its sugar binds it under
         (``Node.written_keys``, ``_class_body_block``, which refuses by name
         a bound name with no key); a ``def`` and a ``class`` (in the body
-        itself); ``pass``; the docstring; and an ``if`` over the same.  A
-        compound statement (a loop, ``with``, ``try``, ``match``: its
-        writes are not read here), a walrus (its write is its own node's,
-        not its statement's), and a ``def`` or ``class`` under an ``if`` (an
-        arm's ``def`` is in no method roster, and an arm's class statement
-        binds no key), are refused here, never dropped."""
+        itself); ``pass``; the docstring; an ``if`` over the same; and a
+        ``def`` under an ``if``.  An arm's ``def`` is the one ``def``
+        statement (``_def_statement_sugar``), built where ``IfSugar`` builds
+        its arm; it is in no method roster, so the class statement's
+        reduction refuses it by name (``ClassDefinitionSugar._namespace``,
+        ``unrostered_definitions``), never drops it.  A compound statement
+        (a loop, ``with``, ``try``, ``match``: its writes are not read
+        here), a walrus (its write is its own node's, not its statement's),
+        and a ``class`` under an ``if`` (an arm's class statement binds no
+        key), are refused here, never dropped."""
         for index, item in enumerate(statements):
             if isinstance(item, Pass):
                 continue
             if isinstance(item, If):
                 self._require_class_members(item.body, top=False)
                 self._require_class_members(item.orelse, top=False)
+                continue
+            if not top and isinstance(item, (FunctionDef, AsyncFunctionDef)):
                 continue
             if (
                 not isinstance(
@@ -11895,7 +11901,8 @@ class ClassDef(Statement):
 
     def _class_body_block(self, body):
         """The class body as the block the class statement runs:
-        ``(statements, fields, branch_fields, branch_slots, default_keys)``.
+        ``(statements, fields, branch_fields, branch_slots, default_keys,
+        unrostered_definitions)``.
 
         ``body`` is this statement's body, threaded
         (``_substitute_body``): every assignment carries its evaluation key
@@ -11922,7 +11929,11 @@ class ClassDef(Statement):
         a field.  ``branch_fields`` are the indexes of the rows standing in
         an arm of an ``if`` (bound only where that arm ran);
         ``branch_slots`` the slot of each ``if`` of the body;
-        ``default_keys`` the key of each method default.  The phi an ``if``
+        ``default_keys`` the key of each method default;
+        ``unrostered_definitions`` the fragment CID of each ``def`` standing
+        in an arm of an ``if``: its statement is built in its arm, but no
+        method roster carries it, so the class statement's reduction refuses
+        it by name (``ClassDefinitionSugar._namespace``).  The phi an ``if``
         splices after itself (``If.substitute``) carries no key and is no
         row: the arms' own statements are."""
         from sugar_lift_py_tests.context_manager_resolution import (
@@ -11957,6 +11968,7 @@ class ClassDef(Statement):
         branch_fields = set()
         branch_slots = []
         default_keys = []
+        unrostered = []
 
         def enroll(row, in_branch):
             if in_branch:
@@ -12024,6 +12036,13 @@ class ClassDef(Statement):
                         in_branch,
                     )
                     bound.add(item.target.id)
+                return False
+            if isinstance(item, (FunctionDef, AsyncFunctionDef)):
+                # A ``def`` in an arm (``_require_class_members``): its
+                # statement is the arm's, built by ``IfSugar``; the method
+                # it binds is in no roster, refused at the class's reduction.
+                unrostered.append(item.fragment.seal().cid)
+                bound.add(item.name)
                 return False
             written(item, in_branch, bound, armed)
             return False
@@ -12161,6 +12180,7 @@ class ClassDef(Statement):
             frozenset(branch_fields),
             tuple(branch_slots),
             tuple(default_keys),
+            tuple(unrostered),
         )
 
 
@@ -12341,6 +12361,7 @@ class ClassDef(Statement):
             branch_fields,
             branch_slots,
             default_keys,
+            unrostered_definitions,
         ) = self._class_body_block(threaded)
         bases = ()
         if self.bases:
@@ -12398,6 +12419,7 @@ class ClassDef(Statement):
             branch_fields=branch_fields,
             branch_slots=branch_slots,
             default_keys=default_keys,
+            unrostered_definitions=unrostered_definitions,
         )
 
 
