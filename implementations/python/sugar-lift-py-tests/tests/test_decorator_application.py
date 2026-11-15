@@ -1216,6 +1216,25 @@ def test_default():
     assert _raises(raising, "ZeroDivisionError") != []
 
 
+def test_the_class_statement_evaluates_its_methods_decorators() -> None:
+    """Python evaluates a method's decorator expressions when its ``def``
+    statement runs, which is when the class body runs: a decorator that
+    raises raises at the class statement, whether or not the method is ever
+    called, though the class body's descriptor table applies its value."""
+    raising = _test_function_outcome(
+        """\
+def test_decorator():
+    class Box:
+        @(1 // 0)
+        def pick(self):
+            return 1
+
+    assert 1 == 1
+"""
+    )
+    assert _raises(raising, "ZeroDivisionError") != []
+
+
 def test_the_statement_and_the_frame_name_one_default_key() -> None:
     """The ``def`` statement binds each default under the key every frame
     of the definition reads."""

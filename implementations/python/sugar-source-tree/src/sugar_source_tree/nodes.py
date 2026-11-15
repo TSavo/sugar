@@ -12328,8 +12328,11 @@ class ClassDef(Statement):
     def _class_method_defaults(self, method):
         """The class-body ``def`` statement ``method`` as the class body's
         block runs it, where it stands in source order: the evaluation of
-        its defaults (``DefinitionDefaultsSugar``), or None for a statement
-        that evaluates none.
+        its decorator expressions, then its defaults
+        (``DefinitionDefaultsSugar``), or None for a statement that
+        evaluates none.  Every decorator expression is built here, each face
+        of it the class statement's, though the class body's descriptor
+        table, not this statement, applies its value.
 
         Python evaluates a method's defaults when its ``def`` statement runs,
         which is when the class body runs.  The statement is the one
@@ -12439,7 +12442,8 @@ class ClassDef(Statement):
         (``_body_statement_sugar``): an assignment is ``AssignSugar``, an
         ``if`` is ``IfSugar``, a nested ``class`` the one decorator
         application bound under its evaluation key.  A ``def`` statement is
-        its defaults' evaluation (``_class_method_defaults``): its descriptor
+        its decorator expressions' and defaults' evaluation
+        (``_class_method_defaults``): its descriptor
         is the class body's descriptor table's, its body runs only at a
         call.  The docstring and ``pass`` run nothing.
 
@@ -25459,23 +25463,38 @@ def _definition_default_evaluations(statement) -> tuple:
 
 
 def _definition_defaults_sugar(statement):
-    """A ``def`` statement's defaults where its decorators apply nothing (an
-    undecorated statement in a body, or a class-body method, whose
-    descriptor is the class body's): it evaluates each default, left to
-    right, where it stands, and binds each completed value under the
-    default's key (``_default_evaluation_key``), as an assignment binds its
-    value (``AssignSugar``).  Every face of a default is the statement's.
-    The defaults are the statement's own, substituted in the scope the
-    statement runs in, so ``x = 1; def f(a=x): ...; x = 2`` binds 1.  A
-    statement with no default reduces nothing (``InertSugar``)."""
+    """A ``def`` statement where its decorators apply nothing here (an
+    undecorated statement in a body, a generator under
+    ``contextlib.contextmanager`` whose call applies its own frame,
+    ``call_applies_own_frame``, or a class-body method, whose descriptor is
+    the class body's): it evaluates each decorator expression, top to
+    bottom, then each default, left to right, where it stands, and binds
+    each completed default under the default's key
+    (``_default_evaluation_key``), as an assignment binds its value
+    (``AssignSugar``).  Every face of a decorator expression and of a
+    default is the statement's.
+
+    Each decorator is decided by the one decorator step
+    (``_decorator_step``), the step the decorated statement's application
+    evaluates (``_decorator_application_sugar``): Python evaluates every
+    decorator expression when the ``def`` runs, whatever applies its value
+    afterwards, so a decorator is never left unbuilt because nothing here
+    applies it.  The defaults are the statement's own, substituted in the
+    scope the statement runs in, so ``x = 1; def f(a=x): ...; x = 2`` binds
+    1.  A statement with neither reduces nothing (``InertSugar``)."""
+    decorators = tuple(
+        _decorator_step(statement, decorator, None)
+        for decorator in statement.decorators
+    )
     defaults = _definition_default_evaluations(statement)
-    if not defaults:
+    if not defaults and not decorators:
         from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
 
         return InertSugar(site=statement.fragment)
     from sugar_lift_py_tests.sugar.default_value_sugar import DefinitionDefaultsSugar
 
     return DefinitionDefaultsSugar(
+        decorators=decorators,
         values=tuple(sugar for _key, sugar in defaults),
         evaluations=tuple(
             (key, position) for position, (key, _sugar) in enumerate(defaults)
@@ -25570,10 +25589,12 @@ def _def_statement_sugar(statement):
     The statement builds the function and binds its name; the body runs
     only when the function is called, in the call's frame.  So the
     statement reduces nothing of the body, and no face of the body (a
-    raise, a refusal) is the enclosing body's.  An undecorated statement
-    (substitution bound every later read of the name to the definition,
-    ``_local_definition_binding``) evaluates its defaults, once, where it
-    stands, and nothing else (``_definition_defaults_sugar``); a decorated
+    raise, a refusal) is the enclosing body's.  A statement whose call
+    applies its own frame (``call_applies_own_frame``: undecorated, or a
+    ``contextmanager`` generator; substitution bound every later read of the
+    name to the definition, ``_local_definition_binding``) evaluates its
+    decorator expressions, then its defaults, once, where it stands, and
+    nothing else (``_definition_defaults_sugar``); a decorated
     one evaluates its decorator expressions, then its defaults (the same
     per-parameter keys), builds the function value carrying them, applies
     its decorators to that value once and binds the name to their result
