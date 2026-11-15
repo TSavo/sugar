@@ -202,9 +202,24 @@ def test_callsite_container_emits_py_in():
         body=None,
         site="site",
     )
-    result = container.contains(TermValue(1), "site").completed_value()
-    assert isinstance(result.formula, _Atomic)
-    assert result.formula.name == "py.in"
+    # An opaque call result's container type is undecided: ``1 in opaque(xs)``
+    # dispatches a ``__contains__`` nobody looked at, so it is the two-faced
+    # outcome (``FloorValue.undecided_contains``). It completes with the
+    # ``py.in`` predicate only under its ``python:compare.completes`` guard and
+    # halts with an undetermined raise under the complement -- never an
+    # unconditional completion.
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed
+
+    outcome = container.contains(TermValue(1), "site")
+    assert outcome.completed_value() is None
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    (halt,) = outcome.halts()
+    assert isinstance(done.value.formula, _Atomic)
+    assert done.value.formula.name == "py.in"
+    assert "python:compare.completes" in repr(done.guard)
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.effect.producer_node_owner == "UndecidedCompare:In"
 
 
 def test_comparison_op_routes_membership_to_list_contains():
