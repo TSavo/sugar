@@ -315,7 +315,11 @@ def test_the_projection_arm_still_refuses_an_enrolled_slot_without_its_pattern(k
         FiniteProjectionNonSuccessV1.AUTHENTICATED_LOOKUP_FAILED
     )
     with pytest.raises(FiniteProjectionRefusalV1) as refused:
-        sugar._after_iterable(stranded, TupleValue(()), 0, (), None)
+        # As ``desugar`` enters the first generator: no walrus write yet, and
+        # the comprehension's own context is the outer one.
+        sugar._after_iterable(
+            stranded, TupleValue(()), 0, (), None, writes=(), outer=None
+        )
     assert (
         refused.value.reason
         is FiniteProjectionNonSuccessV1.AUTHENTICATED_LOOKUP_FAILED
@@ -417,8 +421,15 @@ def test_replacement_failure_is_its_own_reason_and_never_a_finite_verdict():
 
     assert decision == NotProjected(FiniteProjectionNonSuccessV1.REPLACEMENT_FAILED)
     with pytest.raises(FiniteProjectionRefusalV1) as refused:
+        context = _UnreplaceableContext()
         sugar._after_iterable(
-            sugar.generators[0], TupleValue(()), 0, (), _UnreplaceableContext()
+            sugar.generators[0],
+            TupleValue(()),
+            0,
+            (),
+            context,
+            writes=(),
+            outer=context,
         )
     assert refused.value.reason is FiniteProjectionNonSuccessV1.REPLACEMENT_FAILED
 
