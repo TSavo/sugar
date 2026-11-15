@@ -73,6 +73,13 @@ FLOOR_ATTR = (
 )
 
 DELITEM = "def helper(obj, key):\n    del obj[key]\n"
+# Since #8857 ``DELITEM``'s ``obj`` takes ``class:obj`` as an input (deleted
+# from, used no other way): its delete is the dispatched ``__delitem__``
+# edge, answered at prove by the class a caller binds (#8864), never a
+# carrier discharged here.  The ``delitem`` carrier these readback laws read
+# stands for a formal whose class is no input: ``return obj`` reads ``obj``
+# bare (``nodes._receiver_uses``), so ``project_delitem`` mints it.
+DELITEM_CARRIER = "def helper(obj, key):\n    del obj[key]\n    return obj\n"
 DELATTR = "def helper2(obj):\n    del obj.field\n"
 
 
@@ -90,8 +97,33 @@ def _identity(name: str):
     )
 
 
+def test_delitem_on_a_class_input_formal_is_the_dispatched_edge() -> None:
+    """``DELITEM`` alone: ``call:dispatch:__delitem__(obj, key, py.class("0",
+    class:obj))``, owed, its halt kept under the edge's owner (#8857)."""
+    from sugar_lift_py_tests.call_symbol import call_symbol
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    tree = _tree(DELITEM, "delitem_dispatched.py")
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    outcome = function.sugar().desugar(None)
+    assert isinstance(outcome, ExitSet)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "UnknownCallee:dispatch:__delitem__"
+    ]
+    assert len(halts) == 1, outcome
+    assert "python:dispatch:__delitem__" in {c.symbol for c in owed_calls(outcome)}
+    call = halts[0].effect.raised_by_call.args[0]
+    assert call.name == call_symbol("dispatch:__delitem__")
+    assert [arg.name for arg in call.args[:2]] == ["obj", "key"]
+    assert call.args[2].name == "py.class"
+    assert call.args[2].args[1].name == "class:obj"
+
+
 def _delitem_pending():
-    tree = _tree(DELITEM, "delitem_readback.py")
+    tree = _tree(DELITEM_CARRIER, "delitem_readback.py")
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     pending = function.sugar().desugar(None)
     assert isinstance(pending, NativeOperationExitCarrierV1)
