@@ -99,7 +99,7 @@ def test_reducing_a_class_with_a_def_under_an_if_refuses_by_name() -> None:
 
     sugar = _box(_ARM_DEF).sugar()
 
-    with pytest.raises(SugarNotWritten, match="under an if of its body"):
+    with pytest.raises(SugarNotWritten, match="which no method roster carries"):
         sugar.desugar(ReduceContext.root(owner="test_class_body_conditional_def"))
 
 
