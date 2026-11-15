@@ -105,6 +105,20 @@ row = rows[0]
 viol = doc.get("violations") or 0
 print(f"  consumer conjoin row: {row.get('status')}  {row.get('reason','')[:110]}")
 print(f"  totals: discharged={doc.get('discharged')} violations={viol}")
+# Everything prove's exit reads (Report::verdict, prove_exit_code), so a
+# nonzero exit on a report with no violation names its cause in the log.
+print(f"  verdict={doc.get('verdict')} owed={doc.get('owed')} refused={doc.get('refused')} rc={rc}")
+for r in doc["rows"]:
+    print(f"    row {r.get('property')}: {r.get('status')}  {str(r.get('reason') or '')[:120]}")
+for e in doc.get("loadErrors") or []:
+    print(f"    load error: {json.dumps(e)[:200]}")
+for p in doc.get("toolchainPlans") or []:
+    if p.get("status") == "refuted":
+        print(f"    toolchain plan refuted: {str(p.get('reason') or '')[:160]}")
+for e in doc.get("linkErrors") or []:
+    print(f"    link error: {json.dumps(e)[:200]}")
+if doc.get("linkDerivationError"):
+    print(f"    link derivation error: {str(doc['linkDerivationError'])[:200]}")
 if expect == "PROVEN":
     ok = row.get("status") == "discharged" and viol == 0 and int(rc) == 0
 else:

@@ -47,6 +47,13 @@ pub fn run(args: ProveArgs) -> u8 {
     for (key, value) in report_fmt::verdict_fields(report) {
         report_json[key] = value;
     }
+    // The link surface is read by prove's exit (#3893): a report with no
+    // unresolved edge exits as its verdict says, one with any exits
+    // EXIT_LINK_FAIL. Name the edges in the report, not only as a count on
+    // stderr, so a caller reading the JSON sees why it exited.
+    report_json["linkErrors"] =
+        serde_json::to_value(&proven.link_errors).unwrap_or(Value::Array(Vec::new()));
+    report_json["linkDerivationError"] = json!(proven.link_derivation_error);
     if args.out.json {
         match serde_json::to_string_pretty(&report_json) {
             Ok(s) => println!("{s}"),
