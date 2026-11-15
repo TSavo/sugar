@@ -8462,28 +8462,40 @@ class _Splice:
     of the statement enclosing it (``_HaltEdgeJoin.escaping_state``): the
     state at the halt, a store on a path that halts without completing
     included.  None where the statement states none
-    (``Try._mid_statement_state`` then reads what its completion changed)."""
+    (``Try._mid_statement_state`` then reads what its completion changed).
 
-    __slots__ = ("statements", "bindings", "halted")
+    ``header`` is what a halt inside the statement's header alone carries
+    (``_header_halt_state``: an ``if`` test, a ``for`` iterable, a ``with``
+    item's manager and ``__enter__``, a ``match`` subject), before any of its
+    suites ran.  A ``try`` enclosing the statement gives such a halt an edge
+    of its own (``Try._body_halt_edges``).  None where the statement has no
+    header that can halt apart from its suites."""
+
+    __slots__ = ("statements", "bindings", "halted", "header")
 
     def __init__(
         self,
         statements: tuple,
         bindings: BindingMap | None = None,
         halted: BindingMap | None = None,
+        header: BindingMap | None = None,
     ) -> None:
         self.statements = statements
         self.bindings = bindings or {}
         self.halted = halted
+        self.header = header
 
 
 class _StatementEdge(tuple):
     """One entry ``_substitute_body_tracked`` reports into ``edge_states``:
     the pair ``(statement, state in effect when it begins)``, and
     ``halted``, the state a halt leaving the statement carries
-    (``_Splice.halted``), or None where the statement states none."""
+    (``_Splice.halted``), or None where the statement states none; and
+    ``header``, the state a halt inside its header alone carries
+    (``_Splice.header``), or None."""
 
     halted = None
+    header = None
 
     def __new__(cls, statement, pre):
         return super().__new__(cls, (statement, pre))
@@ -9195,6 +9207,12 @@ class Node(Typed):
                         construct_live_loop_recurrence,
                     )
 
+                    if isinstance(stmt, For) and isinstance(new_stmt, For):
+                        # A halt inside the live loop's iterable, evaluated
+                        # once before any item: the state at its header.
+                        edge.header = stmt._iterable_halt_state(
+                            pre_statement_scope, new_stmt.iter
+                        )
                     live_loop = construct_live_loop_recurrence(new_stmt, scope)
                     # The names the loop writes that it does not carry under
                     # a binding coordinate are published through its
@@ -9207,8 +9225,10 @@ class Node(Typed):
                     live_loop_bindings = live_loop.bindings
             if isinstance(new_stmt, _Splice):
                 # What a halt leaving the statement carries, for the halt
-                # edge of the statement enclosing this block.
+                # edge of the statement enclosing this block, and what one
+                # inside its header alone carries.
                 edge.halted = new_stmt.halted
+                edge.header = new_stmt.header
             # A statement that only states what its halts carry is itself.
             unchanged = new_stmt is stmt or (
                 isinstance(new_stmt, _Splice)
@@ -17557,15 +17577,8 @@ class For(Statement):
             # and an object its calls, or the iteration of its value
             # (``__iter__``, ``__next__``), changed is read as they left it
             # (``container_mutation.thread_header``).
-            from .container_mutation import thread_header
-
             entry = scope
-            scope = thread_header(
-                subst_iter,
-                scope,
-                _scope_after(scope, self.iter, subst_iter),
-                operated=True,
-            )
+            scope = self._header_scope(scope, subst_iter)
 
             # `else` is unrollable too: the jump-guard means no `break` exists, and
             # with no break the else ALWAYS runs -- it is just more block, spliced
@@ -17681,6 +17694,7 @@ class For(Statement):
                             _compound_halt_state(
                                 self, entry, scope, (), unknown=frozenset(halt_names)
                             ),
+                            _header_halt_state(self, entry, scope),
                         )
                 if elements is not None:
                     # A concrete iterable whose display element the target did
@@ -17790,6 +17804,29 @@ class For(Statement):
                     return self
                 rewritten = rewrite(self, **changed)
                 return rewritten
+
+    def _header_scope(self, scope, subst_iter):
+        """The state after the loop's header, ``subst_iter`` (the iterable
+        as substituted in ``scope``) evaluated once before every item and
+        the ``else``: a walrus in it read through its key (``_scope_after``),
+        an object its calls, or the iteration of its value, changed read as
+        they left it (``container_mutation.thread_header``)."""
+        from .container_mutation import thread_header
+
+        return thread_header(
+            subst_iter,
+            scope,
+            _scope_after(scope, self.iter, subst_iter),
+            operated=True,
+        )
+
+    def _iterable_halt_state(self, scope, subst_iter):
+        """What a halt inside a live loop's iterable carries
+        (``_header_halt_state``): the state at its header (``_header_scope``),
+        before any item ran.  The live loop states no other halt
+        (``_Splice.halted``); a ``try`` enclosing it reads the halts of its
+        items as those of a compound statement (``Try._mid_statement_state``)."""
+        return _header_halt_state(self, scope, self._header_scope(scope, subst_iter))
 
     @staticmethod
     def _stmts_bound_names(statements) -> set:
@@ -18772,6 +18809,7 @@ class If(Statement):
             ),
             header_halts=not Try._statement_cannot_halt(self, self.test),
         )
+        header = _header_halt_state(self, entry, scope)
         if retained_slot:
             node = self if not changed else rewrite(self, **changed)
         else:
@@ -18797,8 +18835,10 @@ class If(Statement):
             else:
                 availability[name] = joined
         if not phis and not availability and not halted:
+            # No halt carries a change: a header halt carries what the
+            # statement began with, as the statement's one edge does.
             return node
-        return _Splice((node, *phis), availability, halted)
+        return _Splice((node, *phis), availability, halted, header)
 
     def branch_slot(self, scope, item: Optional[str] = None) -> BranchResultSlot:
         """This ``if``'s branch-result slot where it is evaluated in
@@ -19414,6 +19454,7 @@ class With(Statement):
                 ),
                 body_net,
                 self._halted(scope, head_scope, body_scope, body_edges, body_net),
+                _header_halt_state(self, scope, head_scope),
             )
         for item in items:
             if item.optional_vars is not None:
@@ -19430,6 +19471,7 @@ class With(Statement):
             self if not changed else rewrite(self, **changed),
             body_net,
             self._halted(scope, head_scope, body_scope, body_edges, body_net),
+            _header_halt_state(self, scope, head_scope),
         )
 
     def _halted(self, scope, head_scope, body_scope, body_edges, body_net):
@@ -19453,7 +19495,7 @@ class With(Statement):
         )
 
     @staticmethod
-    def _published(node, body_net, halted=None):
+    def _published(node, body_net, halted=None, header=None):
         """``node`` leaving the ``with`` with what its body left: every name
         the body rebound and every object a store, call or container
         mutation in it changed is read after the ``with`` as the body left
@@ -19467,10 +19509,12 @@ class With(Statement):
         a store the body never reached is unbound: the read refuses by name
         (``EvaluationRefSugar._unbound``), never the completed body's value.
         A halt inside the ``with`` itself reaches an enclosing handler with
-        the state it carries (``halted``, ``With._halted``)."""
+        the state it carries (``halted``, ``With._halted``); one inside its
+        head alone (the manager's expression, ``__enter__``) with ``header``
+        (``_header_halt_state``)."""
         if not body_net and not halted:
             return node
-        return _Splice((node,), body_net, halted)
+        return _Splice((node,), body_net, halted, header)
 
     def _with_assignment_binding(self, item, value, scope):
         """Delegate a with-as binding to Python's ordinary Assign seam."""
@@ -19883,7 +19927,7 @@ class _HaltEdgeJoin:
             if edge is None:
                 return _MISSING
             joined = join_binding_state(
-                slot=try_edge_slot(self.site_id, edge),
+                slot=self._slot(edge),
                 when_true=value,
                 when_false=joined,
                 make_ifexp=self.try_node._make_ifexp,
@@ -19970,25 +20014,50 @@ class _HaltEdgeJoin:
         return state is other or state == other
 
     def edge_keys(self):
-        """``(slot id, occurrence keys)`` per body statement that is an edge."""
+        """``(slot id, occurrence keys)`` per body statement that is an edge.
+
+        A statement whose header has an edge of its own (``(index,
+        "header")``, ``Try._body_halt_edges``) splits its keys: the header's
+        (``_header_occurrence_keys``) name that edge, and the statement's
+        edge keeps the rest, so a halt names at most one of the two."""
         body = self.try_node.body
         keys = []
         for edge in sorted((e for e in self.edges if e is not None), key=str):
             if isinstance(edge, str):
                 # An arm's own halt: no body statement holds it, so a body halt
                 # decides it false and nothing decides it true.
-                keys.append((try_edge_slot(self.site_id, edge).slot_id, ()))
+                keys.append((self._slot(edge).slot_id, ()))
+                continue
+            if isinstance(edge, tuple):
+                index, _header = edge
+                if index < len(body):
+                    keys.append(
+                        (
+                            self._slot(edge).slot_id,
+                            _header_occurrence_keys(body[index]),
+                        )
+                    )
                 continue
             if edge >= len(body):
                 continue
             statement = body[edge]
-            keys.append(
-                (
-                    try_edge_slot(self.site_id, edge).slot_id,
-                    _statement_occurrence_keys(statement),
+            statement_keys = _statement_occurrence_keys(statement)
+            if (edge, "header") in self.edges:
+                header_keys = set(_header_occurrence_keys(statement))
+                statement_keys = tuple(
+                    key for key in statement_keys if key not in header_keys
                 )
-            )
+            keys.append((self._slot(edge).slot_id, statement_keys))
         return tuple(keys)
+
+    def _slot(self, edge):
+        """Edge ``edge``'s ``try-edge`` slot: a body statement's by its
+        index, an arm's by its name, a statement's header's
+        (``(index, "header")``) as ``<index>:header``."""
+        if isinstance(edge, tuple):
+            index, _header = edge
+            return try_edge_slot(self.site_id, f"{index}:header")
+        return try_edge_slot(self.site_id, edge)
 
 
 def _compound_halt_state(
@@ -20026,6 +20095,79 @@ def _compound_halt_state(
     return _HaltEdgeJoin(statement, entry, None).escaping_state(
         statement, (), states, unknown
     )
+
+
+#: The compound statements whose header is evaluated once, before any of
+#: their suites: a halt inside it carries the state at the header alone
+#: (``_header_halt_state``).  A ``while`` test is not among them: it is
+#: evaluated again before every item, after the items before it stored, and
+#: no occurrence tells its first evaluation from a later one.
+_ONCE_EVALUATED_HEADERS = ("For", "AsyncFor", "If", "Match", "With", "AsyncWith")
+
+
+def _header_nodes(statement) -> tuple:
+    """The nodes of ``statement``'s header (``_ONCE_EVALUATED_HEADERS``): a
+    loop's iterable, an ``if`` test, a ``match`` subject, a ``with``'s first
+    item's manager -- a later item is a ``with`` nested in the first one's
+    body (``With._nest_items``), entered after it."""
+    kind = getattr(statement, "kind", None)
+    if kind in ("For", "AsyncFor"):
+        return (statement.iter,)
+    if kind == "If":
+        return (statement.test,)
+    if kind == "Match":
+        return (statement.subject,)
+    if kind in ("With", "AsyncWith"):
+        return (statement.items[0].context_expr,)
+    return ()
+
+
+def _header_occurrence_keys(statement) -> tuple:
+    """Every key a halt inside ``statement``'s header alone is spelled by
+    (``_statement_occurrence_keys`` of each ``_header_nodes``), and, for a
+    ``with``, the site its first item's ``__enter__`` is called at
+    (``protocol_step_site``), whose frame a halt inside ``__enter__`` names.
+    The statement's own node is not among them: a loop's ``iter()`` and every
+    item's ``next()`` are keyed by it alike, as are a ``with``'s protocol
+    refusals and ``__exit__``.  Nor is any key of a generator expression in
+    the header: its elements are evaluated as it is consumed, a loop's after
+    the items before them ran, so a halt there is the statement's."""
+    from sugar_lift_py_tests.context_manager_contract import protocol_step_site
+
+    keys = set()
+    lazy = set()
+    for node in _header_nodes(statement):
+        keys.update(_statement_occurrence_keys(node))
+        for inner in node.walk():
+            if isinstance(inner, GeneratorExp):
+                lazy.update(_statement_occurrence_keys(inner))
+    keys -= lazy
+    if getattr(statement, "kind", None) in ("With", "AsyncWith"):
+        keys.add(protocol_step_site(statement.items[0]._exit_face_id(), "__enter__"))
+    return tuple(sorted(keys))
+
+
+def _header_halt_state(statement, entry, header):
+    """What a halt inside the compound ``statement``'s header alone carries
+    (``_Splice.header``): the header is evaluated once, before any suite
+    (``_ONCE_EVALUATED_HEADERS``), so nothing a suite stores is in it -- the
+    state ``statement`` began with (``entry``) and what the header itself
+    changed (``header``, ``container_mutation.thread_header``), a walrus in
+    it read at the halt through its key.  The one join every compound halt
+    is stated through (``_compound_halt_state``), given the header alone.
+
+    None where no part of the header can halt (a header of names and
+    constants; a ``with`` always may, in ``__enter__``) or where the
+    statement's header is evaluated more than once (a ``while`` test)."""
+    kind = getattr(statement, "kind", None)
+    if kind not in _ONCE_EVALUATED_HEADERS:
+        return None
+    if kind not in ("With", "AsyncWith") and all(
+        Try._statement_cannot_halt(statement, node)
+        for node in _header_nodes(statement)
+    ):
+        return None
+    return _compound_halt_state(statement, entry, header, ())
 
 
 def _unpack_may_raise(target, value) -> bool:
@@ -20107,7 +20249,7 @@ class Try(Statement):
         # so each statement's halt edge can see what that statement changed.
         body_edge_states.append((None, {**scope, **body_net}))
         join = _HaltEdgeJoin(self, scope, site_id)
-        halt_edges = self._body_halt_edges(body_edge_states, scope)
+        halt_edges = self._body_halt_edges(body_edge_states, scope, header_edges=True)
         halt_edges = [
             (identity, mro, join.carry(state)) for identity, mro, state in halt_edges
         ]
@@ -20508,7 +20650,7 @@ class Try(Statement):
             self.unit.exception_type_mro(node),
         )
 
-    def _body_halt_edges(self, edge_states, scope):
+    def _body_halt_edges(self, edge_states, scope, *, header_edges=False):
         """The body's halted exits, each paired with the temporal state in
         effect at its own occurrence.
 
@@ -20522,13 +20664,21 @@ class Try(Statement):
         Every statement that is not halt-free by its nodes is an edge: whether
         it raised is the halt's own testimony at reduce (``try_sugar.
         _ground_edges``: the halt's occurrence names the statement), never the
-        spelling of what its receiver was given."""
+        spelling of what its receiver was given.
+
+        ``header_edges`` (a ``try`` body's own edges, each keyed by a slot):
+        a compound statement whose header alone states what its halts carry
+        (``_StatementEdge.header``, ``_header_halt_state``) gives them an edge
+        of their own, ``(index, "header")``, beside the statement's: a halt
+        its occurrence names in the header (``_header_occurrence_keys``)
+        began before any suite ran, so it carries none of what a suite
+        stored.  The statement's own edge keeps every other halt of it."""
         edges = []
         for index, entry in enumerate(edge_states):
             statement, pre_statement_scope = entry
             if statement is None:
                 continue
-            net = {
+            before = {
                 name: state
                 for name, state in pre_statement_scope.items()
                 if scope.get(name) is not state
@@ -20541,11 +20691,20 @@ class Try(Statement):
                 statement,
                 pre_statement_scope,
                 post,
-                net,
+                before,
                 getattr(entry, "halted", None),
             )
             net = _HaltEdgeState(net, edge=index)
-            edges.extend(Try._statement_halt_edges(self, statement, net))
+            statement_edges = Try._statement_halt_edges(self, statement, net)
+            header = getattr(entry, "header", None)
+            if header_edges and header is not None and statement_edges:
+                at_header = Try._mid_statement_state(
+                    self, statement, pre_statement_scope, post, before, header
+                )
+                edges.append(
+                    (None, None, _HaltEdgeState(at_header, edge=(index, "header")))
+                )
+            edges.extend(statement_edges)
         return edges
 
     def _suite_halt_states(self, edge_states, base):
@@ -21842,6 +22001,8 @@ class Match(Statement):
         halted = _compound_halt_state(
             self, entry, scope, case_edges, after=tuple(bound_captures)
         )
+        # A halt inside the subject, before any pattern was tried.
+        header = _header_halt_state(self, entry, scope)
         if not (self.cases and self._irrefutable_case(self.cases[-1])):
             # No case was selected: the match completes with what stood
             # before it.
@@ -21867,7 +22028,7 @@ class Match(Statement):
         else:
             node = self if not changed else rewrite(self, **changed)
         if merged or halted:
-            return _Splice((node,), merged, halted)
+            return _Splice((node,), merged, halted, header)
         return node
 
     def _case_capture_keys(self, case, scope) -> tuple:

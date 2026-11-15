@@ -144,9 +144,11 @@ def match_route_site(match_node: Node) -> str:
     )
 
 
-def try_edge_slot(site_id: str, edge: int) -> BranchResultSlot:
+def try_edge_slot(site_id: str, edge: int | str) -> BranchResultSlot:
     """Body halt edge ``edge``'s slot: true exactly when the exception a
-    handler (or ``finally``) received was raised by body statement ``edge``.
+    handler (or ``finally``) received was raised by body statement ``edge``
+    (an arm's own halt is ``arm<k>``; the header of body statement ``i``,
+    ``i:header``, ``nodes._HaltEdgeJoin._slot``).
     ``TrySugar`` grounds it from the routed halt's own occurrence; a halt it
     cannot place leaves it an undecided coordinate."""
     return BranchResultSlot(f"{site_id}:edge:{edge}")

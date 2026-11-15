@@ -239,6 +239,7 @@ class ReducedManagerProtocolV1:
         """``step`` completes with ``value`` under its site-keyed atom, or
         raises something nothing names under the complement: the one
         two-faced constructor, owing the undecided member at the item."""
+        from sugar_lift_py_tests.context_manager_contract import protocol_step_site
         from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
         from sugar_lift_py_tests.ir import atomic, ctor, str_const
         from sugar_lift_py_tests.outcome import ExitSet
@@ -256,7 +257,7 @@ class ReducedManagerProtocolV1:
             value,
             UndeterminedRaiseEffect(
                 blame=self.exit_face_id,
-                occurrence=f"{self.exit_face_id}#{step}",
+                occurrence=protocol_step_site(self.exit_face_id, step),
                 producer_node_owner=f"ReducedManagerProtocolV1.{step}",
                 site=self.fragment,
             ),
@@ -298,7 +299,20 @@ class ReducedManagerProtocolV1:
                     site=self.fragment,
                 )
             )
-        enter = _call_protocol_method(receiver, "__enter__", (), self.exit_face_id, ctx)
+        # ``__enter__`` is called at its own step's site, never the exit
+        # face ``__exit__`` is called at: a halt raised in its frame is named
+        # by that call (``try_sugar._edge_hits``), so the ``try`` enclosing
+        # the ``with`` reads it as a halt of the ``with``'s header, before
+        # any of the body ran -- one raised by ``__exit__`` follows the body.
+        from sugar_lift_py_tests.context_manager_contract import protocol_step_site
+
+        enter = _call_protocol_method(
+            receiver,
+            "__enter__",
+            (),
+            protocol_step_site(self.exit_face_id, "__enter__"),
+            ctx,
+        )
         return _resource_enter_transitions(receiver, enter, blame=self.exit_face_id)
 
     def exit_outcome_for_body(self, entered, body_face, ctx: object = None):
@@ -314,20 +328,22 @@ class ReducedManagerProtocolV1:
         )
 
 
-def _call_protocol_method(receiver, name, arguments, exit_face_id, ctx):
+def _call_protocol_method(receiver, name, arguments, site, ctx):
     """``receiver.<name>(*arguments)``: bound, then applied, as every call is.
 
     The protocol method binds through ``bind_method_call`` (the receiver's
     ``bound_method_call``), so its frame is read again at the module
     execution site the With runs at (#7972), and is applied by
-    ``_apply_protocol_call`` (``CallSiteValue.producer_outcome``).
+    ``_apply_protocol_call`` (``CallSiteValue.producer_outcome``).  ``site``
+    is the call's site: the item's exit face for ``__exit__``, its
+    ``__enter__`` step's site for ``__enter__`` (``protocol_step_site``).
     """
     from sugar_source_tree.panic import SugarNotWritten
 
     bound_method_call = getattr(receiver, "bound_method_call", None)
     if not callable(bound_method_call):
         raise SugarNotWritten(
-            blame=exit_face_id,
+            blame=site,
             owner="ConstructedManagerProtocolV1.protocol_method",
             observed=type(receiver).__name__,
             requested=f"authenticated {name} call over projected receiver state",
@@ -338,7 +354,7 @@ def _call_protocol_method(receiver, name, arguments, exit_face_id, ctx):
             name,
             arguments,
             owner="ConstructedManagerProtocolV1.protocol_method",
-            blame=exit_face_id,
+            blame=site,
             ctx=ctx,
         ),
         ctx,

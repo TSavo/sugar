@@ -37,6 +37,18 @@ EFFECT = "effect"
 ENTER_RESULT = "enter-result"
 
 
+def protocol_step_site(exit_face_id: str, step: str) -> str:
+    """The site of one manager-protocol step of a ``with`` item
+    (``"__enter__"``, ``"__exit__"``): its exit face, then the step.  The
+    one speller of it: the undecided manager's halt of the step is keyed by
+    it (``ReducedManagerProtocolV1._undecided_step``), ``__enter__`` is
+    called at it (its frame's ``call:`` segment), and the ``try`` enclosing
+    the ``with`` names the step of its header by it (``nodes.
+    _header_occurrence_keys``), so a halt raised by ``__enter__`` is told
+    from one raised by ``__exit__`` after the body."""
+    return f"{exit_face_id}#{step}"
+
+
 @dataclass(frozen=True)
 class NeverSuppresses:
     pass
