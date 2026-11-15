@@ -10077,6 +10077,14 @@ class WithItem(Node):
     context_expr: Expression
     optional_vars: Optional[Expression]
     _child_fields = ("context_expr", "optional_vars")
+    # A ``with`` item is a structural part of its statement: the ``with``
+    # builds from its head (``With._construct_sugar``) and never constructs
+    # the item as a value, as a comprehension's clause is its
+    # comprehension's.  It answers the roll with the ``with``
+    # (``Node.structural_parts``), and so does the ``as`` target it binds
+    # through (``binding_spellings``); its manager expression is an ordinary
+    # node and answers for itself, built or refused.
+    _structural_part = True
 
     def substitute(self, scope):
         """Substitute the manager while retaining its enrolled source locus.
