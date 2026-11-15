@@ -3354,6 +3354,12 @@ pub enum DroppedAmbientPostReason {
     /// owed (never assumed). Not a wrong answer: the row is not decided on
     /// what remains.
     RecursiveContract,
+    /// Nothing answers the call or operation at this site: no bridge states
+    /// the member's symbol, the answering contract states no post, or the
+    /// member has no symbol at all (an owed operation such as `==`). A row
+    /// that reads it through a joined contract reads a free value, so it is
+    /// not decided on what remains. Not a wrong answer.
+    Unanswered,
 }
 
 /// One ambient vendor post that matched a callsite but did not enter `linkedPosts`.
@@ -3382,7 +3388,19 @@ impl DroppedAmbientPostReason {
             DroppedAmbientPostReason::WrongProvider => "wrong-provider",
             DroppedAmbientPostReason::StaleContractRef => "stale-or-malformed-contract-ref",
             DroppedAmbientPostReason::RecursiveContract => "recursive-contract",
+            DroppedAmbientPostReason::Unanswered => "unanswered",
         }
+    }
+
+    /// True for an edge nothing answers (step 9): the member stays owed. The
+    /// claim's own read of it is that member's row (`add_undecided_members`);
+    /// a read reached through a joined contract leaves the caller's row
+    /// undecided (`linked_ambient_post_instances_for_inv`).
+    pub fn is_owed(&self) -> bool {
+        matches!(
+            self,
+            DroppedAmbientPostReason::RecursiveContract | DroppedAmbientPostReason::Unanswered
+        )
     }
 
     /// True for the join's refusals: something answered the call, wrongly.
@@ -3430,11 +3448,23 @@ fn refuse_dropped_answers(result: &mut ConsistencyResult) {
     if result.dropped_ambient_posts.is_empty() || result.verdict != ObligationVerdict::Discharged {
         return;
     }
-    let dropped: Vec<String> = result
+    let mut dropped: Vec<String> = result
         .dropped_ambient_posts
         .iter()
-        .map(|d| format!("{} for {}", d.reason.label(), d.source_symbol))
+        .map(|d| {
+            if d.reason.is_owed() && !d.member_cid.is_empty() {
+                format!(
+                    "{} for {} (member {})",
+                    d.reason.label(),
+                    d.source_symbol,
+                    d.member_cid
+                )
+            } else {
+                format!("{} for {}", d.reason.label(), d.source_symbol)
+            }
+        })
         .collect();
+    dropped.dedup();
     result.verdict = ObligationVerdict::Undecidable;
     result.reason = format!(
         "owed: a joined answer was dropped, so the call is unanswered and the row is not decided on what remains ({})",
@@ -3455,6 +3485,12 @@ fn refuse_dropped_answers(result: &mut ConsistencyResult) {
 struct AmbientPostInstances {
     kept: Vec<LinkedPostInstance>,
     dropped: Vec<DroppedAmbientPost>,
+    /// Owed operations a joined post reads (step 9): a completes atom, at the
+    /// call's actuals, keyed at a site nothing answers. The row reads it
+    /// through the joined contract; unless what the joined posts state decides
+    /// the atom, the value is free and the row is not decided on it
+    /// (`settle_owed_operations` moves it to `dropped`).
+    owed_operations: Vec<(DroppedAmbientPost, Json)>,
 }
 
 /// One vendor answer to one unanswered call (step 9): the consumer's
@@ -3643,9 +3679,16 @@ fn bridge_answer(
 /// - The answering contract is recursive (it reaches itself through calls
 ///   the join answers): the encoding states no recursion, so the call is not
 ///   answered and its member stays owed (`recursive_contract_cids`).
+///
+/// Every edge nothing answers, and every `undecided` member with no symbol
+/// (an owed operation), is carried as an owed entry at its site
+/// (`DroppedAmbientPostReason::is_owed`): it answers nothing and conjoins
+/// nothing, but a row that reads its site through a joined contract is not
+/// decided on that free value.
 fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
     let edges = unanswered_edges(pool);
     let mut posts = Vec::new();
+    let mut owed = Vec::new();
     for edge in &edges {
         let bridges: Vec<&sugar_proof_envelope::StoredMember> = pool
             .bridge_members()
@@ -3655,6 +3698,12 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
             .map(|(_, bridge)| bridge)
             .collect();
         let Some(first) = bridges.first() else {
+            owed.push(owed_post(
+                &edge.symbol,
+                &edge.member_cid,
+                &edge.site_cid,
+                DroppedAmbientPostReason::Unanswered,
+            ));
             continue;
         };
         let targets: std::collections::BTreeSet<&str> = bridges
@@ -3678,7 +3727,12 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                 site_cid: edge.site_cid.clone(),
                 refusal: None,
             }),
-            Ok(None) => {}
+            Ok(None) => owed.push(owed_post(
+                &edge.symbol,
+                &edge.member_cid,
+                &edge.site_cid,
+                DroppedAmbientPostReason::Unanswered,
+            )),
             Err((target_cid, reason)) => posts.push(AmbientPost {
                 binding: BridgeBinding {
                     source_symbol: edge.symbol.clone(),
@@ -3695,26 +3749,63 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
             }),
         }
     }
-    let recursive = recursive_contract_cids(&posts);
-    if recursive.is_empty() {
-        return posts;
+    for (site_cid, (member_cid, subject)) in unanswered_operations(pool) {
+        owed.push(owed_post(
+            &subject,
+            &member_cid,
+            &site_cid,
+            DroppedAmbientPostReason::Unanswered,
+        ));
     }
-    posts
+    let recursive = recursive_contract_cids(&posts);
+    let mut joined: Vec<AmbientPost> = posts
         .into_iter()
-        .filter(|post| {
+        .map(|post| {
             let on_cycle =
                 post.refusal.is_none() && recursive.contains(post.binding.target_cid.as_str());
-            if on_cycle {
-                info!(
-                    symbol = %post.binding.source_symbol,
-                    target_cid = %post.binding.target_cid,
-                    member_cid = %post.member_cid,
-                    "verifier/linker: a recursive contract answers this call; the encoding states no recursion, so the call stays owed"
-                );
+            if !on_cycle {
+                return post;
             }
-            !on_cycle
+            info!(
+                symbol = %post.binding.source_symbol,
+                target_cid = %post.binding.target_cid,
+                member_cid = %post.member_cid,
+                "verifier/linker: a recursive contract answers this call; the encoding states no recursion, so the call stays owed"
+            );
+            owed_post(
+                &post.binding.source_symbol,
+                &post.member_cid,
+                &post.site_cid,
+                DroppedAmbientPostReason::RecursiveContract,
+            )
         })
-        .collect()
+        .collect();
+    joined.extend(owed);
+    joined
+}
+
+/// An owed entry at `site_cid`: it answers nothing and conjoins nothing; a
+/// row that reads the site through a joined contract is not decided on it.
+fn owed_post(
+    subject: &str,
+    member_cid: &str,
+    site_cid: &str,
+    reason: DroppedAmbientPostReason,
+) -> AmbientPost {
+    AmbientPost {
+        binding: BridgeBinding {
+            source_symbol: subject.to_string(),
+            target_cid: String::new(),
+            target_proof_cid: None,
+            formals: Vec::new(),
+            out_binding: String::new(),
+        },
+        post: Json::Null,
+        halt_guards: Vec::new(),
+        member_cid: member_cid.to_string(),
+        site_cid: site_cid.to_string(),
+        refusal: Some(reason),
+    }
 }
 
 /// Every `python:call_result` term a formula states outside a quantifier.
@@ -3877,8 +3968,9 @@ fn collect_completes_atoms<'a>(node: &'a Json, out: &mut Vec<(&'a str, &'a Json)
 }
 
 /// Every `undecided` member with `reason: unanswered` and no symbol, by the
-/// coordinate CID of its site: site CID to member CID.
-fn unanswered_operations(pool: &MementoPool) -> BTreeMap<String, String> {
+/// coordinate CID of its site: site CID to the member CID and the site's
+/// `file:line` (what the member is named by, having no symbol).
+fn unanswered_operations(pool: &MementoPool) -> BTreeMap<String, (String, String)> {
     use sugar_proof_envelope::{UndecidedMember, UndecidedReason};
     let mut operations = BTreeMap::new();
     for (cid, member) in pool.undecided_members() {
@@ -3893,7 +3985,10 @@ fn unanswered_operations(pool: &MementoPool) -> BTreeMap<String, String> {
         }
         operations.insert(
             undecided_site_coordinate_cid(&undecided.site),
-            cid.to_string(),
+            (
+                cid.to_string(),
+                format!("{}:{}", undecided.site.file, undecided.site.start_line),
+            ),
         );
     }
     operations
@@ -4017,7 +4112,7 @@ pub fn members_answered_at_prove(
         collect_completes_atoms(&claim, &mut stated);
         let mut reads: BTreeMap<String, Vec<&Json>> = BTreeMap::new();
         for (site, atom) in stated {
-            if let Some(member_cid) = operations.get(site) {
+            if let Some((member_cid, _subject)) = operations.get(site) {
                 let atoms = reads.entry(member_cid.clone()).or_default();
                 if !atoms.contains(&atom) {
                     atoms.push(atom);
@@ -4106,7 +4201,10 @@ fn linked_ambient_post_instances_for_inv(
     inv: &Json,
     ambient: &[AmbientPost],
 ) -> AmbientPostInstances {
-    if ambient.is_empty() {
+    // Owed entries answer nothing: they matter only to a read reached through
+    // a contract something answers.
+    let is_owed = |post: &AmbientPost| post.refusal.as_ref().is_some_and(|r| r.is_owed());
+    if ambient.iter().all(is_owed) {
         return AmbientPostInstances::default();
     }
     let mut callsites = Vec::new();
@@ -4117,6 +4215,7 @@ fn linked_ambient_post_instances_for_inv(
 
     let mut kept = Vec::new();
     let mut dropped = Vec::new();
+    let mut owed_operations: Vec<(DroppedAmbientPost, Json)> = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     // The join reads only the term the claim constrains: the call's
     // completed result at its occurrence. The vendor's `out` IS that term.
@@ -4150,7 +4249,38 @@ fn linked_ambient_post_instances_for_inv(
             });
             continue;
         };
-        for post in ambient.iter().filter(|post| post.site_cid == site_cid) {
+        // What answers this site: a contract (rightly or wrongly), or, when
+        // nothing does, the owed entries. The claim's own read of an owed
+        // site is that member's row; a read reached through a joined
+        // contract leaves the claim reading a free value, so it is dropped
+        // and the row is not decided on what remains (step 9).
+        let at_site: Vec<&AmbientPost> = ambient
+            .iter()
+            .filter(|post| post.site_cid == site_cid)
+            .collect();
+        let answering: Vec<&AmbientPost> =
+            at_site.iter().copied().filter(|p| !is_owed(*p)).collect();
+        if answering.is_empty() {
+            // A site with no member at all is not a call another proof
+            // answers: a body the lift reduced states its result in the same
+            // post (`derived_equality_residue`), so nothing is owed there.
+            if !through.is_empty() {
+                for post in at_site {
+                    dropped.push(DroppedAmbientPost {
+                        source_symbol: post.binding.source_symbol.clone(),
+                        target_cid: post.binding.target_cid.clone(),
+                        member_cid: post.member_cid.clone(),
+                        reason: post
+                            .refusal
+                            .clone()
+                            .unwrap_or(DroppedAmbientPostReason::Unanswered),
+                        spelling: compact_json(result_term),
+                    });
+                }
+            }
+            continue;
+        }
+        for post in answering {
             if let Some(reason) = &post.refusal {
                 dropped.push(DroppedAmbientPost {
                     source_symbol: post.binding.source_symbol.clone(),
@@ -4252,6 +4382,39 @@ fn linked_ambient_post_instances_for_inv(
                         pending.push_back((nested, nested_through));
                     }
                 }
+                // The joined contract's owed operations (an `==` nothing
+                // answers, keyed at the callee's site): the claim reads them
+                // through this instance too. Each is settled against what the
+                // joined posts state (`settle_owed_operations`).
+                let mut atoms = Vec::new();
+                collect_completes_atoms(&instance, &mut atoms);
+                for (atom_site, atom) in atoms {
+                    let owed_here: Vec<&AmbientPost> = ambient
+                        .iter()
+                        .filter(|p| p.site_cid == atom_site)
+                        .collect();
+                    if owed_here.is_empty() || !owed_here.iter().all(|p| is_owed(*p)) {
+                        continue;
+                    }
+                    for owed in owed_here {
+                        let entry = DroppedAmbientPost {
+                            source_symbol: owed.binding.source_symbol.clone(),
+                            target_cid: String::new(),
+                            member_cid: owed.member_cid.clone(),
+                            reason: owed
+                                .refusal
+                                .clone()
+                                .unwrap_or(DroppedAmbientPostReason::Unanswered),
+                            spelling: compact_json(atom),
+                        };
+                        if !owed_operations
+                            .iter()
+                            .any(|(seen, seen_atom)| seen == &entry && seen_atom == atom)
+                        {
+                            owed_operations.push((entry, atom.clone()));
+                        }
+                    }
+                }
                 kept.push(LinkedPostInstance {
                     binding: post.binding.clone(),
                     call: result_term.clone(),
@@ -4261,7 +4424,41 @@ fn linked_ambient_post_instances_for_inv(
             }
         }
     }
-    AmbientPostInstances { kept, dropped }
+    AmbientPostInstances {
+        kept,
+        dropped,
+        owed_operations,
+    }
+}
+
+/// An owed operation a joined post reads is a free value in the row unless
+/// what the joined posts state, alone, decides its completes atom (proves it
+/// or its negation): then the row reads a decided value. Otherwise it moves
+/// to `dropped`, and the row is not decided on what remains
+/// (`refuse_dropped_answers`), naming the owed member.
+fn settle_owed_operations(
+    partition: &mut AmbientPostInstances,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+) {
+    let owed = std::mem::take(&mut partition.owed_operations);
+    if owed.is_empty() {
+        return;
+    }
+    let context = IrFormula::And(
+        partition
+            .kept
+            .iter()
+            .map(|post| post.instantiated_post.clone())
+            .collect(),
+    )
+    .to_value();
+    for (entry, atom) in owed {
+        if !joined_context_decides(&context, &atom, plan, registry, compilers) {
+            partition.dropped.push(entry);
+        }
+    }
 }
 
 fn with_ambient_posts_with_instances(
@@ -5275,7 +5472,9 @@ fn process_consistency_group(
                         .into_iter()
                 })
                 .collect();
-            let (inv, ambient_partition) = with_ambient_posts_with_instances(inv, &ambient_posts);
+            let (inv, mut ambient_partition) =
+                with_ambient_posts_with_instances(inv, &ambient_posts);
+            settle_owed_operations(&mut ambient_partition, plan, registry, compilers);
             let inv = with_exception_ancestry(inv, exception_ancestry);
             let linked_posts = ambient_partition.kept.clone();
             let dropped_ambient_posts = ambient_partition.dropped.clone();
@@ -5333,8 +5532,9 @@ fn process_consistency_group(
                 let scope = ambient_ground_callsite_scope(property_name);
                 let current_ground_witnesses =
                     ground_callsite_witness_keys(&original_inv, &scope, candidate.provenance_kind);
-                let (inv, ambient_partition) =
+                let (inv, mut ambient_partition) =
                     with_ambient_posts_with_instances(original_inv.clone(), &ambient_posts);
+                settle_owed_operations(&mut ambient_partition, plan, registry, compilers);
                 let inv = with_exception_ancestry(inv, exception_ancestry);
                 let linked_posts = ambient_partition.kept.clone();
                 let dropped_ambient_posts = ambient_partition.dropped.clone();
@@ -10345,8 +10545,9 @@ mod tests {
     }
 
     fn prove_joined(inv: Json, ambient: &[AmbientPost]) -> ConsistencyResult {
-        let (inv, partition) = with_ambient_posts_with_instances(inv, ambient);
+        let (inv, mut partition) = with_ambient_posts_with_instances(inv, ambient);
         let (plan, registry) = z3_plan_and_registry();
+        settle_owed_operations(&mut partition, &plan, &registry, &test_compilers());
         let mut result = check_inv_consistency(
             "ident-claim".to_string(),
             "consistency:test_ident",
@@ -10968,7 +11169,9 @@ mod tests {
     fn a_recursive_edge_stays_owed() {
         let (pool, test_member, self_member) = recursive_pool();
         assert!(
-            collect_ambient_posts(&pool).is_empty(),
+            collect_ambient_posts(&pool)
+                .iter()
+                .all(|post| post.refusal == Some(DroppedAmbientPostReason::RecursiveContract)),
             "a recursive contract answers nothing: the encoding states no recursion"
         );
         let joined = joined_member_cids(&pool);
@@ -11005,6 +11208,158 @@ mod tests {
             partition.dropped
         );
         assert!(!DroppedAmbientPostReason::RecursiveContract.is_wrong_answer());
+    }
+
+    // ── A row is never green on what a joined contract leaves unanswered ──
+    // `def f(x): return g(x)` where nothing answers `g`, and
+    // `def test_f(): assert f(3) == rhs`. f's contract is joined, but its post
+    // reads `g(3)`, which is free: `f(3) == 4` would be satisfiable. The row
+    // is not decided on it, and names g's owed member.
+
+    fn f_reads_unanswered_g_pool(rhs: i64) -> (MementoPool, String) {
+        let test_site = answered_site(4, 12);
+        let test_site_cid = undecided_site_coordinate_cid(&test_site);
+        let f_site = answered_site(20, 24);
+        let f_site_cid = undecided_site_coordinate_cid(&f_site);
+        let mut pool = MementoPool::default();
+        insert_unanswered(&mut pool, Some("python:m.f"), test_site);
+        let g_member = insert_unanswered(&mut pool, Some("python:m.g"), f_site);
+        let inner = json!({"kind": "ctor", "name": "call:g", "args": [var("x")]});
+        own_function(
+            &mut pool,
+            "f",
+            "python:m.f",
+            eqf(var("out"), call_result(inner, &f_site_cid)),
+        );
+        insert_contract(
+            &mut pool,
+            "blake3-512:transitively-owed-test-f",
+            "test_f",
+            same_proof_claim("call:f", rhs, &test_site_cid),
+        );
+        (pool, g_member)
+    }
+
+    #[test]
+    fn a_call_a_joined_contract_reads_and_nothing_answers_leaves_the_row_owed() {
+        for rhs in [3, 4] {
+            let (pool, g_member) = f_reads_unanswered_g_pool(rhs);
+            let result = the_one_claim(&pool);
+            assert_eq!(
+                result.verdict,
+                ObligationVerdict::Undecidable,
+                "f(3) == {rhs} reads g(3) through f, and nothing answers g: {}",
+                result.reason
+            );
+            assert!(
+                result.reason.contains("unanswered for python:m.g"),
+                "{}",
+                result.reason
+            );
+            assert!(result.reason.contains(&g_member), "{}", result.reason);
+            // f's call is still answered by f; g's stays owed.
+            let joined = joined_member_cids(&pool);
+            assert!(!joined.contains(&g_member));
+        }
+        assert!(DroppedAmbientPostReason::Unanswered.is_owed());
+        assert!(!DroppedAmbientPostReason::Unanswered.is_wrong_answer());
+        assert_eq!(DroppedAmbientPostReason::Unanswered.label(), "unanswered");
+    }
+
+    #[test]
+    fn the_claims_own_unanswered_read_is_its_members_row_not_a_drop() {
+        // `assert g(3) == 4` with nothing answering g: the member is the
+        // claim proof's own owed row; the claim reads no joined contract.
+        let site = answered_site(4, 12);
+        let site_cid = undecided_site_coordinate_cid(&site);
+        let mut pool = MementoPool::default();
+        insert_unanswered(&mut pool, Some("python:m.g"), site);
+        insert_contract(
+            &mut pool,
+            "blake3-512:own-unanswered-read",
+            "test_g",
+            same_proof_claim("call:g", 4, &site_cid),
+        );
+        let partition = linked_ambient_post_instances_for_inv(
+            &same_proof_claim("call:g", 4, &site_cid),
+            &collect_ambient_posts(&pool),
+        );
+        assert!(
+            partition.kept.is_empty() && partition.dropped.is_empty(),
+            "{partition:?}"
+        );
+        let mut report = crate::types::Report::default();
+        crate::report::add_undecided_members(&pool, &BTreeMap::new(), &mut report);
+        assert_eq!(report.owed, 1, "the unanswered call is owed");
+    }
+
+    /// `def f(x): return x == 1`-shaped: f's post reads an owed `==` at its
+    /// own site (a member with no symbol). `decided` states the operation's
+    /// completes atom in the post itself, so the joined post decides it.
+    fn f_reads_owed_operation_pool(rhs: i64, decided: bool) -> (MementoPool, String) {
+        let test_site = answered_site(4, 12);
+        let test_site_cid = undecided_site_coordinate_cid(&test_site);
+        let compare_site = answered_site(30, 36);
+        let compare_key = undecided_site_coordinate_cid(&compare_site);
+        let mut pool = MementoPool::default();
+        insert_unanswered(&mut pool, Some("python:m.f"), test_site);
+        let compare_member = insert_unanswered(&mut pool, None, compare_site);
+        let completes = json!({
+            "kind": "atomic",
+            "name": "python:compare.completes",
+            "args": [{
+                "kind": "ctor",
+                "name": "python:compare",
+                "args": [str_const("Eq"), var("x"), int(1), str_const(&compare_key)]
+            }]
+        });
+        let guarded = json!({
+            "kind": "implies",
+            "operands": [completes.clone(), eqf(var("out"), var("x"))]
+        });
+        let post = if decided {
+            json!({"kind": "and", "operands": [completes, guarded]})
+        } else {
+            guarded
+        };
+        own_function(&mut pool, "f", "python:m.f", post);
+        insert_contract(
+            &mut pool,
+            "blake3-512:owed-operation-test-f",
+            "test_f",
+            same_proof_claim("call:f", rhs, &test_site_cid),
+        );
+        (pool, compare_member)
+    }
+
+    #[test]
+    fn an_owed_operation_a_joined_post_reads_leaves_the_row_owed() {
+        for rhs in [3, 4] {
+            let (pool, compare_member) = f_reads_owed_operation_pool(rhs, false);
+            let result = the_one_claim(&pool);
+            assert_eq!(
+                result.verdict,
+                ObligationVerdict::Undecidable,
+                "f(3) == {rhs} reads f's owed `==`, which nothing decides: {}",
+                result.reason
+            );
+            let reason = &result.reason;
+            assert!(reason.contains("unanswered for"), "{reason}");
+            assert!(reason.contains(&compare_member), "{reason}");
+        }
+    }
+
+    #[test]
+    fn an_owed_operation_the_joined_posts_decide_does_not_hold_the_row() {
+        let truthful = the_one_claim(&f_reads_owed_operation_pool(3, true).0);
+        assert_eq!(
+            truthful.verdict,
+            ObligationVerdict::Discharged,
+            "f's post decides its `==` completes: {}",
+            truthful.reason
+        );
+        let lying = the_one_claim(&f_reads_owed_operation_pool(4, true).0);
+        assert_eq!(lying.verdict, ObligationVerdict::Unsatisfied, "{}", lying.reason);
     }
 
     #[test]
