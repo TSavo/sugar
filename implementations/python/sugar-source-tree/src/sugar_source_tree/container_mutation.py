@@ -56,7 +56,9 @@ receiver an active ``__init__`` constructs):
   a builtin value runs none; a call bound to a builtin exception class
   that stores its actuals as ``args`` runs none, decided by its binding,
   ``_constructs_builtin_exception``) and the value is one a call may change; a
-  cell a nested scope declares ``nonlocal`` is unknown whatever it holds.
+  cell a nested scope declares ``nonlocal``, and a module global a body
+  writes through a ``global`` declaration (``_frame_globals``), is unknown
+  whatever it holds.
   Code that runs in the frame's own namespace -- ``exec``/``eval`` handed
   no globals mapping, any operation handed a ``locals()``/``vars()``
   mapping of it -- reaches every name of the frame too (``_frame_targets``):
@@ -3485,7 +3487,10 @@ def _ambient_targets(statement, call, scope, ambient=None):
       operand is.
 
     A cell a nested scope declares ``nonlocal`` may be rebound by such code
-    whatever it holds: it is unknown after the call.  ``ambient`` (no
+    whatever it holds: it is unknown after the call.  So is a module global
+    some body writes through a ``global`` declaration (``_frame_globals``):
+    a source callee whose reach is read rebinds those it, or a function it
+    calls by name, writes (``_closure_global_writes``).  ``ambient`` (no
     arguments) answers what the caller holds, once per statement.
 
     An operation handed the frame's own namespace reaches every name of the
@@ -3503,7 +3508,7 @@ def _ambient_targets(statement, call, scope, ambient=None):
         subjects = _code_subjects(call, scope)
         if subjects is not None and not subjects:
             return frame
-    objects, rebound = (
+    objects, rebound, globals_ = (
         _ambient_objects(statement, scope) if ambient is None else ambient()
     )
     if not objects and not rebound:
@@ -3514,6 +3519,10 @@ def _ambient_targets(statement, call, scope, ambient=None):
         objects = [node for _name, node in reach.module]
         objects.extend(cell.node for cell in reach.cells if not cell.nonlocal_)
         rebound = [cell.node for cell in reach.cells if cell.nonlocal_]
+        # A global it, or a source function it calls by name, writes
+        # through a ``global`` declaration is rebound by the call.
+        writes = _closure_global_writes(reach.definition) if globals_ else ()
+        rebound.extend(node for name, node in globals_ if name in writes)
         subjects = None
     elif isinstance(call, Call):
         subjects = None if reach is not None else _code_subjects(call, scope)
@@ -4030,17 +4039,91 @@ def _code_subjects(call, scope):
 
 
 def _ambient_objects(site, scope):
-    """``(objects, rebound)``: the reads of what the caller at ``site`` holds
-    that code it does not follow may reach other than through an operand --
-    the module objects ``scope`` binds (``_held_module_objects``), in a
-    module body's threading for its readers as in any other, and the
-    closure cells of the function ``site`` runs in (``_frame_cells``).
-    ``objects``: those a call may change; ``rebound``: the cells a nested
-    scope declares ``nonlocal``, which it may rebind."""
+    """``(objects, rebound, globals_)``: the reads of what the caller at
+    ``site`` holds that code it does not follow may reach other than through
+    an operand -- the module objects ``scope`` binds
+    (``_held_module_objects``), in a module body's threading for its readers
+    as in any other, the closure cells of the function ``site`` runs in
+    (``_frame_cells``) and the module globals that function reads that such
+    code may rebind (``_frame_globals``).  ``objects``: those a call may
+    change; ``rebound``: the cells a nested scope declares ``nonlocal`` and
+    those globals, which it may rebind whatever they hold; ``globals_``:
+    ``[(name, read)]`` of those globals, for a callee whose reach is read
+    (``_ambient_targets``)."""
     objects = [node for _name, node in _held_module_objects(scope, site.unit)]
     cells, rebound = _frame_cells(site, scope)
     objects.extend(cells)
-    return objects, rebound
+    globals_ = _frame_globals(site, scope)
+    return objects, [*rebound, *(node for _name, node in globals_)], globals_
+
+
+def _frame_globals(site, scope):
+    """``[(name, read)]``: ``scope``'s reads of the module globals the
+    function ``site`` runs in reads as globals (CPython's symtable:
+    implicit or declared ``global``) that code it does not follow may
+    rebind -- one a function or class body of the module writes through a
+    ``global`` declaration, or any the module threading carries when the
+    module reaches a dynamic global writer
+    (``SourceUnit.module_rebindable_names``).
+
+    Such code rebinds the name, whatever it held: a read of it after an
+    operation that may run that code is another evaluation than the read
+    before (``_havoc``'s unknown, keyed by the operation's evaluation,
+    ``_evaluation``), never the free ``global:<name>`` input both reads
+    would otherwise read through the one undecided key
+    (``nodes.undecided_module_binding_key``), and never a store this frame
+    made before it (#8802's known limit).  Empty outside a function: the
+    module threading keys these names undecided itself."""
+    from .nodes import AsyncFunctionDef, FunctionDef
+
+    unit = site.unit
+    owner = unit.innermost_function_containing(site.line_col_span())
+    if not isinstance(owner, (FunctionDef, AsyncFunctionDef)):
+        return []
+    rebindable = unit.module_rebindable_names()
+    if not rebindable:
+        return []
+    table = unit.function_symtable(owner.name, owner.line_col_span().start_line)
+    found = []
+    for name in sorted(rebindable):
+        if name not in scope:
+            continue
+        try:
+            symbol = table.lookup(name)
+        except KeyError:
+            continue
+        if not symbol.is_global():
+            continue
+        node = _read_of(scope[name])
+        if node is None or getattr(node, "kind", None) == "Name":
+            continue
+        found.append((name, node))
+    return found
+
+
+@functools.lru_cache(maxsize=4096)
+def _closure_global_writes(definition) -> frozenset:
+    """The module globals ``definition`` and every source function it calls
+    by name (``_closure``'s ``functions``) write through a ``global``
+    declaration (CPython's symtable: declared global, and assigned,
+    deleted or imported there).  Every global, when the module reaches a
+    dynamic global writer: a ``globals()`` mapping's item store runs no code
+    and still rebinds."""
+    unit = definition.unit
+    if unit._module_reaches_dynamic_global_writer():
+        return unit.module_rebindable_names()
+    names = set()
+    for function in _closure(definition)[0]:
+        table = unit.function_symtable(
+            function.name, function.line_col_span().start_line
+        )
+        names.update(
+            symbol.get_name()
+            for symbol in table.get_symbols()
+            if symbol.is_declared_global()
+            and (symbol.is_assigned() or symbol.is_imported())
+        )
+    return frozenset(names)
 
 
 def _frame_cells(site, scope):
