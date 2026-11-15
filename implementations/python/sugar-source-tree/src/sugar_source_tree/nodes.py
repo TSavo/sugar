@@ -20847,17 +20847,17 @@ class Try(Statement):
                 # ``from m import E``, ``except re.error``) by its target
                 # symbol, or the undecided citation of a class a star import
                 # may bind (its read owes the member; the match against it is
-                # retained).  Only a type that is none of them -- a computed,
-                # shadowed, or instance-attribute except type -- stays loud.
+                # retained).  A type that is none of them -- a call
+                # (``except tuple(types):``), a name bound to a value
+                # (``excs = (A, B)``; ``except excs:``), an attribute of a
+                # value (``except pa.ArrowInvalid:``, ``pa`` a call's
+                # result) -- is a computed arm: CPython evaluates it only
+                # when an exception reaches the arm, and matches the class
+                # or tuple of classes it holds (ComputedExceptionTypeSugar,
+                # which refuses by name a value with no authenticated
+                # exception identity).
                 identity = self.unit.exception_type_identity(type_node)
-                mro = (
-                    self.unit.exception_type_mro(type_node)
-                    if identity is not None
-                    else None
-                )
-                if identity is None and type_node.kind == "Call":
-                    # ``except tuple(types):`` -- a computed arm, read when a
-                    # raise reaches it (ComputedExceptionTypeSugar).
+                if identity is None:
                     from sugar_lift_py_tests.sugar.computed_exception_type_sugar import (
                         ComputedExceptionTypeSugar,
                     )
@@ -20872,14 +20872,7 @@ class Try(Statement):
                         )
                     )
                     continue
-                if identity is None:
-                    raise SugarNotWritten(
-                        owner="Try._construct_sugar",
-                        blame=self.fragment,
-                        observed="typed except handler lacks authenticated exception identity",
-                        requested="a constructed exception-type coordinate",
-                        fix="resolve the handler type lexically or keep the try loud",
-                    )
+                mro = self.unit.exception_type_mro(type_node)
                 from sugar_lift_py_tests.sugar.authenticated_exception_type_sugar import (
                     AuthenticatedExceptionTypeSugar,
                 )
