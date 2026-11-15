@@ -119,6 +119,104 @@ def test_an_undecorated_function_keeps_its_call_frame() -> None:
 
 
 # ---------------------------------------------------------------------------
+# A function-body read of an undecorated module ``def``'s name is the
+# function its statement built (#7757).
+# ---------------------------------------------------------------------------
+
+_PASSED = """\
+def g():
+    return 1
+
+
+def h(f):
+    return f()
+
+
+def test_f():
+    return h(g)
+
+
+alias = g
+"""
+
+
+def test_a_function_body_read_of_a_module_def_is_its_function_value() -> None:
+    """``h(g)`` in a function reads ``g`` as the function its ``def``
+    statement built: the one application with no decorator to apply and no
+    default evaluated at the read, over the definition's own frame.  The
+    read is never the bare name with no function value behind it.  A read
+    the module body itself runs (``alias = g``) stands before or after the
+    ``def`` statement in that run and is not answered by this reader."""
+    from sugar_lift_py_tests.sugar.decorator_application_sugar import (
+        DecoratorApplicationSugar,
+    )
+
+    tree = _tree(_PASSED)
+    reads = {
+        node.line_col_span().start_line: node
+        for node in tree.nodes()
+        if isinstance(node, Name) and node.id == "g"
+    }
+    in_function, in_module = reads[10], reads[13]
+    definition = in_function.unit.function_definition_for_read(in_function)
+    assert isinstance(definition, FunctionDef)
+    assert definition.name == "g"
+    assert in_module.unit.function_definition_for_read(in_module) is None
+
+    value = in_function.sugar()
+    assert isinstance(value, DecoratorApplicationSugar)
+    assert value.definition_name == "g"
+    assert value.decorators == ()
+    assert value.defaults == ()
+    assert value.definition_frame is not None
+    assert value.evaluation is None
+
+
+def test_only_a_plain_once_bound_def_is_read_as_its_function() -> None:
+    """A generator function and an ``async def`` are no value this carries,
+    and a name the module binds twice is not one definition's: none is read
+    as a function value.  A plain ``def`` bound once is."""
+    tree = _tree(
+        "def gen():\n    yield 1\n\n\n"
+        "async def co():\n    return 1\n\n\n"
+        "def twice():\n    return 1\n\n\n"
+        "twice = None\n\n\n"
+        "def plain():\n    return 1\n\n\n"
+        "def test_f():\n    return [gen, co, twice, plain]\n"
+    )
+    answers = {
+        node.id: node.unit.function_definition_for_read(node)
+        for node in tree.nodes()
+        if isinstance(node, Name) and node.id in {"gen", "co", "twice", "plain"}
+    }
+    assert answers["gen"] is None
+    assert answers["co"] is None
+    assert answers["twice"] is None
+    assert isinstance(answers["plain"], FunctionDef)
+    assert answers["plain"].name == "plain"
+
+
+def test_a_def_bound_to_a_local_name_is_called_through_its_function() -> None:
+    """``f = g; f()``: ``f`` holds the function ``g``'s ``def`` statement
+    built, and the call through it applies ``g``'s body by the one call
+    door, as ``g()`` does.  The lying half's raise is the call's."""
+    source = """\
+def g():
+    return {x}
+
+
+def test_f():
+    f = g
+    a = f()
+    return 3
+"""
+    truthful = _test_function_outcome(source.format(x="1"))
+    assert _raises(truthful, "ZeroDivisionError") == []
+    assert truthful.completed_value() is not None, truthful
+    _only_raise(_test_function_outcome(source.format(x="1 // 0")), "ZeroDivisionError")
+
+
+# ---------------------------------------------------------------------------
 # A source decorator's result is what the call runs.
 # ---------------------------------------------------------------------------
 

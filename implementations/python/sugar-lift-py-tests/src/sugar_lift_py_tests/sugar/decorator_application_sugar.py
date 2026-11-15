@@ -29,9 +29,9 @@ statement runs (``sugar_source_tree.nodes._decorator_step``) into one
   bound to that unanswered call's result, never the bare definition.  The
   statement completes: only a read or call of the name is undecided, never
   the run that binds it;
-- ``apply``: a source ``def`` (its frame), a ``class`` or decorated
-  definition (its value's sugar), or any other expression: its value is
-  called on the definition through the one call routine,
+- ``apply``: a source ``def``, ``class`` or decorated definition (its
+  value's sugar, the one read of its name), or any other expression: its
+  value is called on the definition through the one call routine,
   ``callable_application_with`` (``enter_source_frame``, ``bind_call``,
   ``CallSiteValue.producer_outcome``), so every face of the decorator's body
   is the statement's.
@@ -40,6 +40,13 @@ An ``async def`` or generator function is no value this carries
 (``uncarried``): its decorator expressions are evaluated, and what they make of
 it is one unanswered call, the ``undecided`` citation under the outermost
 decorator's target symbol where it has one.
+
+An undecorated ``def`` read as a value is the same application with no
+decorator to apply (``nodes.SourceUnit.function_definition_for_read``): the
+function its statement built, its own frame, with no default evaluated at the
+read.  Its statement bound each default under its per-parameter key
+(``DefinitionDefaultsSugar``) and every call of the function reads those
+keys, as a call by name does.
 """
 
 from __future__ import annotations
@@ -64,9 +71,8 @@ class DecoratorStepV1:
     # applied by nothing (an imported factory call, a builtin factory's
     # arguments).
     evaluate: tuple = field(default=(), compare=False)
-    # ``apply``: the decorator is this source ``def``'s function ...
-    frame: object = field(default=None, compare=False)
-    # ... or the value this sugar reduces to.
+    # ``apply``: the decorator is the value this sugar reduces to (a source
+    # ``def`` read as a value among them: the one read of its name).
     callee: object = field(default=None, compare=False)
 
     @classmethod
@@ -84,10 +90,10 @@ class DecoratorStepV1:
         )
 
     @classmethod
-    def apply(cls, site, spelling, *, frame=None, callee=None):
-        if (frame is None) == (callee is None):
-            raise TypeError("DecoratorStepV1.apply takes exactly one of frame, callee")
-        return cls("apply", site, spelling, frame=frame, callee=callee)
+    def apply(cls, site, spelling, *, callee):
+        if callee is None:
+            raise TypeError("DecoratorStepV1.apply takes the decorator's callee")
+        return cls("apply", site, spelling, callee=callee)
 
     def evaluated(self, ctx, then) -> ExitSet:
         """The decorator expression evaluated where the statement runs, then
@@ -98,8 +104,6 @@ class DecoratorStepV1:
         if self.kind == "unanswered":
             return _evaluated_in_order(self.evaluate, ctx, lambda: then(None))
         if self.kind == "apply":
-            if self.frame is not None:
-                return then(_function_value(self.frame, self.site))
             return self.callee.desugar(ctx).and_then(
                 lambda value: _returned(value, ctx).and_then(then)
             )
