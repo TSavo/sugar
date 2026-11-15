@@ -82,9 +82,23 @@ class BranchResultSlot:
     slot_id: str
 
 
-def branch_result_slot(test: Node) -> BranchResultSlot:
+def branch_result_slot(test: Node, evaluation: str | None = None) -> BranchResultSlot:
+    """The slot of one evaluation of the condition ``test``: its source
+    occurrence, and the evaluation it is decided in.
+
+    A branch decision is made each time the condition runs, so the slot is
+    keyed as every evaluation-time identity is (an object by
+    ``constructionEvaluation``, an effect by ``Statement._evaluation_slot``):
+    ``evaluation`` is the ``if`` statement's evaluation key when it is one of
+    several evaluations of its source -- a loop iteration's copy, an exit
+    path's copy of a duplicated clause, an occurrence copy
+    (``Statement._duplicated_evaluation_key``).  Two runs of one source ``if``
+    are two slots, never one decision shared.  ``None`` is a condition
+    evaluated once, which keeps its source occurrence's slot."""
     memento = test.fragment.seal()
     address = f"{memento.source_cid}@{memento.start}:{memento.end}#{memento.cid}"
+    if evaluation is not None:
+        address = f"{address}/{evaluation}"
     return BranchResultSlot(f"branch-result:{address}")
 
 
@@ -2198,8 +2212,11 @@ def join_binding_state(
 
     ``GuardedBinding`` is what later mints
     ``partition(("binding.projection", slot.slot_id))``, and ``slot_id`` is
-    keyed on ``(source_cid, span, fragment_cid)`` with NO execution component
-    (``branch_result_slot``). ``_faces_exclusive`` then proves two arms
+    keyed on ``(source_cid, span, fragment_cid)`` and the ``if``'s evaluation
+    key only when the ``if`` is one of several evaluations of its source (an
+    unrolled iteration, an exit-path copy: ``branch_result_slot``,
+    ``If.branch_slot``). A live loop's body is constructed once for every
+    item, so its ``if`` keeps one slot. ``_faces_exclusive`` then proves two arms
     exclusive from their carried faces alone and never reads their guards. So
     two arms from DIFFERENT executions that shared one slot would be declared
     mutually exclusive and collapsed into a single guarded value -- the second
