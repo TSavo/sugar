@@ -1,11 +1,9 @@
 """Population authority is constructed with a session, never inferred later."""
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-from sugar_lift_python_source.manager_construction import _graph_is_off_population
 from sugar_lift_python_source.resolution_session import (
     SourceResolutionSession,
     clear_walk_sessions,
@@ -20,19 +18,6 @@ def test_source_resolution_session_requires_an_explicit_roster() -> None:
         SourceResolutionSession()  # type: ignore[call-arg]
     with pytest.raises(TypeError, match="enrolled_distributions"):
         SourceResolutionSession(enrolled_distributions=None)  # type: ignore[arg-type]
-
-
-def test_empty_roster_is_authority_while_unknown_cannot_classify() -> None:
-    """Empty means no distributions enrolled; unknown is not the same fact."""
-    graph = SimpleNamespace(
-        artifact_kind="distribution",
-        distribution_name="example-dist",
-    )
-    empty = SourceResolutionSession(enrolled_distributions=frozenset())
-
-    assert _graph_is_off_population(graph, session=empty) is True
-    with pytest.raises(TypeError, match="enrolled distribution roster"):
-        _graph_is_off_population(graph, session=None)
 
 
 def test_session_or_new_refuses_to_mint_unknown_authority() -> None:

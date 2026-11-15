@@ -578,7 +578,7 @@ def _prior_reraise(
 
 def _proximity(file: str, reachability: str) -> dict[str, Any]:
     if reachability == "direct" and any(
-        token in file for token in ("lift_rpc.py", "manager_construction.py", "nodes.py")
+        token in file for token in ("lift_rpc.py", "nodes.py")
     ):
         return {"rank": 0, "kind": "direct-lifter-or-mint"}
     if reachability == "direct":

@@ -3,8 +3,7 @@
 Values minted only by their producer carry a private ``object()`` sentinel in
 ``_authority``. Walking that field made constructed-value testimony refuse
 with ``unclassified constructed value category builtins.object`` (pandas
-``tests/series/accessors/test_dt_accessor.py:197`` via
-``ImportedCallValueSubsumptionV1``). Every such field is declared
+``tests/series/accessors/test_dt_accessor.py:197``). Every such field is declared
 ``metadata={"testimony": "authority"}``, as ``TupleCoordinateValue`` already
 was, so the content coordinate is the semantic fields alone.
 """
@@ -15,9 +14,6 @@ from dataclasses import fields
 
 import pytest
 
-from sugar_lift_py_tests.context_manager_resolution import (
-    ImportedCallValueSubsumptionV1,
-)
 from sugar_lift_py_tests.floor.import_member_value import ImportMemberValue
 from sugar_source_tree.binding_state import constructed_value_cid_v2
 from sugar_source_tree import nodes
@@ -27,7 +23,7 @@ from sugar_source_tree import nodes
 def _authority_classes():
     from sugar_lift_py_tests import import_binding
 
-    found = [ImportedCallValueSubsumptionV1, ImportMemberValue]
+    found = [ImportMemberValue]
     for module in (nodes, import_binding):
         for value in vars(module).values():
             if isinstance(value, type) and value.__module__ == module.__name__:

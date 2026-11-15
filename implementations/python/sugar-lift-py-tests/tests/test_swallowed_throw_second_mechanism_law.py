@@ -222,13 +222,6 @@ def test_drained_sin_cluster_4_sites_are_absent_on_live_tree() -> None:
     offenders = _SCANNER.scan_python_root(_PYTHON_ROOT)
 
     # Content pins: drained patterns must be gone from production source text.
-    manager = (
-        _PYTHON_ROOT
-        / "sugar-lift-python-source/src/sugar_lift_python_source/manager_construction.py"
-    ).read_text(encoding="utf-8")
-    assert "kept_prefix" not in manager
-    assert "never panic the door" not in manager
-
     nodes = (
         _PYTHON_ROOT / "sugar-source-tree/src/sugar_source_tree/nodes.py"
     ).read_text(encoding="utf-8")
@@ -261,11 +254,6 @@ def test_drained_sin_cluster_4_sites_are_absent_on_live_tree() -> None:
     # Scanner pins: drained kinds absent at drained loci (Try soft residual may remain).
     assert not any(
         o.path.endswith("nodes.py") and o.kind == "soft-unresolved-sugar-return"
-        for o in offenders
-    ), _SCANNER.format_report(offenders)
-    assert not any(
-        o.path.endswith("manager_construction.py")
-        and o.kind == "construction-panic-soft-continue"
         for o in offenders
     ), _SCANNER.format_report(offenders)
     # Permanent membrane residual: multi-file corpus census only.

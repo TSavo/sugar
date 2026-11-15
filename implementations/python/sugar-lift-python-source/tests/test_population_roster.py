@@ -12,10 +12,8 @@ body is never lifted, so an installed module outside the list is cited.
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 from sugar_lift_python_source import resolution_session
-from sugar_lift_python_source.manager_construction import _graph_is_off_population
 from sugar_lift_python_source.resolution_session import (
     SourceResolutionSession,
     clear_walk_sessions,
@@ -43,13 +41,6 @@ def _project(tmp_path: Path, **files: str) -> Path:
     return root
 
 
-def _graph(cid: str | None, *, files: tuple[str, ...] = ()):
-    return SimpleNamespace(
-        modules=SimpleNamespace(source_cid_of=lambda _name: cid),
-        files=tuple(SimpleNamespace(content_cid=item) for item in files),
-    )
-
-
 def test_no_package_name_is_listed_in_code_or_the_environment() -> None:
     for name in (
         "STANDING_EXTRA_POPULATIONS",
@@ -75,22 +66,6 @@ def test_roster_is_the_content_cid_of_every_listed_file(tmp_path) -> None:
     assert roster == expected
     for name in ("cpython-stdlib:contextlib", "numpy", "pytest", "cpython-stdlib"):
         assert name not in roster
-
-
-def test_only_a_listed_file_enrolls_a_module() -> None:
-    session = SourceResolutionSession(
-        enrolled_distributions=frozenset({"blake3-512:listed"})
-    )
-    listed = _graph("blake3-512:listed", files=("blake3-512:listed",))
-    other = _graph("blake3-512:other", files=("blake3-512:other",))
-    assert not _graph_is_off_population(listed, session=session, module_name="m")
-    assert _graph_is_off_population(other, session=session, module_name="m")
-    assert not _graph_is_off_population(listed, session=session)
-    assert _graph_is_off_population(other, session=session)
-    # Nothing else admits: not a module the artifact holds no source for, not
-    # a module no artifact authenticates.
-    assert _graph_is_off_population(_graph(None), session=session, module_name="m")
-    assert _graph_is_off_population(None, session=session, module_name="m")
 
 
 def test_the_session_has_no_import_admission() -> None:

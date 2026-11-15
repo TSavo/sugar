@@ -1210,18 +1210,31 @@ def test_with_resource_body_carrier_is_refused_by_name(_carrier_body):
     _refused(excinfo, "WithResourceSugar.body")
 
 
-def test_with_effect_boundary_manager_carrier_is_refused_by_name(monkeypatch):
+def test_with_effect_boundary_manager_carrier_is_refused_by_name():
+    from sugar_lift_py_tests.context_manager_contract import (
+        EffectBoundarySemanticsV1,
+        ExceptionInfoBindingV1,
+        ExpectsModeV1,
+        FormalArgumentProjectionV1,
+        NoMessagePatternV1,
+        RaiseEffectKindV1,
+    )
     from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
         WithEffectBoundarySugar,
     )
 
     carrier, _, _ = _carrier()
-    monkeypatch.setattr(WithEffectBoundarySugar, "_semantics_faces", lambda self: ())
     sugar = _bare(
         WithEffectBoundarySugar,
         manager=_Answer(carrier),
         body=(),
-        semantics=None,
+        semantics=EffectBoundarySemanticsV1(
+            ExpectsModeV1(),
+            RaiseEffectKindV1(),
+            FormalArgumentProjectionV1(0),
+            NoMessagePatternV1(),
+            ExceptionInfoBindingV1(),
+        ),
         contract_ref=None,
         context_manager_edge=None,
         site=None,
