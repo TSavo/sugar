@@ -554,6 +554,13 @@ class ConstructionCache:
         # term: ``_substitute_body_tracked`` mints a FRESH scope dict per
         # binding (``{**scope, **binding}``), never mutates one in place, so a
         # rebind cannot alias a memo row that was minted before it.
+        #
+        # A followed helper's body threaded over the caller's nodes
+        # (``container_mutation._followed_body``) is the same function, asked
+        # with a scope its caller builds afresh at every ask: its key is
+        # ``("followed-body", definition, ((name, node), ...))``, the scope's
+        # content in place of the scope object, and its value what the
+        # threading left each name bound to.
         self.substitutions: dict[tuple, list] = {}
         # memo key -> the source-visible call frames a definition coordinate
         # has constructed, one row per distinct answer the traversal above it
