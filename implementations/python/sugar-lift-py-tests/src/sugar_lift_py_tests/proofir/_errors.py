@@ -9,9 +9,9 @@ from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
 class FreeVariableRefusal(ConstructionPanic):
     """The scope law: a formula names a variable its declared scope does not.
 
-    Still a ``ConstructionPanic`` everywhere it propagates. It is typed so the
-    one place that turns a function's rows into the wire can refuse that one
-    function by name and keep the rest of the file (#7785). ``names`` are the
+    A ``ConstructionPanic`` everywhere it propagates: the universe scan
+    records it as the function's refused member by the one rule for every
+    refusal by name (step 8, #7785), never by this type. ``names`` are the
     free names, sorted.
     """
 
