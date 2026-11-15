@@ -47,6 +47,13 @@ from sugar_lift_py_tests.effect.expectation_not_met_effect import (
 from sugar_lift_py_tests.floor import ObjectValue, StringValue, TermValue
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
+from sugar_lift_py_tests.floor.named_expression_value import (
+    caller_stores_of,
+    peel_walrus_binds,
+)
+from sugar_lift_py_tests.floor.receiver_field_store_value import (
+    ReceiverFieldStoreValue,
+)
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute, Call, ClassDef, FunctionDef
@@ -172,10 +179,20 @@ def _assert_named_halt(outcome, *, require_pre_effect_state: bool = True) -> Hal
 
 
 def _assert_completed_call(outcome) -> CallSiteValue:
+    """The call completes, carrying the store ``obj.field = value`` the body
+    made on the caller's ``Target()`` (``CallerStoreValue``,
+    ``caller_visible_stores``), and presents the call beneath it."""
     value = outcome.completed_value()
     assert value is not None, outcome
-    assert isinstance(value, CallSiteValue), value
-    return value
+    binds, presented = peel_walrus_binds(value)
+    walrus, stores = caller_stores_of(binds)
+    assert walrus == (), value
+    assert [(type(s), s.attr, s.value) for s in stores] == [
+        (ReceiverFieldStoreValue, "field", TermValue(7))
+    ], value
+    assert stores[0].receiver.class_name == "Target", value
+    assert isinstance(presented, CallSiteValue), value
+    return presented
 
 
 def _obj_value_cids(pending: NativeOperationExitCarrierV1):
@@ -357,7 +374,7 @@ def test_discrimination_writable_completion_is_not_attributeerror() -> None:
         TARGET_CLASS + METHOD_BODY + "\nWriter().store(Target(), 7)\n"
     )
     _assert_completed_call(outcome)
-    assert not isinstance(outcome, ExitSet)
+    assert not outcome.halts()
 
 
 # ---------------------------------------------------------------------------
