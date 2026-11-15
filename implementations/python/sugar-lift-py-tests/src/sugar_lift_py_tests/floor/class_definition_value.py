@@ -596,7 +596,16 @@ class ClassDefinitionValue(GuardStableValue):
         of, ``python:after(<call result>, "out")`` (as a field read of it
         is, ``CallSiteValue.attribute``).  A class whose metaclass is not
         decided to be ``type`` (its ``__instancecheck__`` may be anything)
-        keeps the one refusal (``FloorValue.test_python_type``)."""
+        keeps the one refusal (``FloorValue.test_python_type``).
+
+        That term is two-faced (``_isinstance_faces``): where ``type(x)`` is
+        no subclass of this class, ``type.__instancecheck__``
+        (``object_isinstance``, Objects/abstract.c) reads ``x.__class__``,
+        and a class of ``type(x)``'s order that binds ``__class__`` (a
+        property) or ``__getattribute__`` runs code there that may raise.
+        The test completes only under ``python:isinstance.completes``, which
+        prove's isinstance law decides from the class a contract states of
+        ``x``; its halt face is owed, never dropped."""
         from sugar_lift_py_tests.floor.object_identity import contents_current
         from sugar_lift_py_tests.floor.object_value import ObjectValue
         from sugar_lift_py_tests.outcome import ExitSet
@@ -612,20 +621,42 @@ class ClassDefinitionValue(GuardStableValue):
             and instance.defining_class is self
         ):
             return ExitSet.completed(TrueBoolLiteralSugar(site=site))
-        tested = self._isinstance_term(value, site)
+        tested = self._isinstance_faces(value, site)
         if tested is not None:
-            return ExitSet.completed(tested)
+            return tested
         return super().test_python_type(value, site)
 
-    def _isinstance_term(self, value, site):
-        """``python:isinstance(<value>, "<class symbol>")`` as a value
+    def _isinstance_faces(self, value, site):
+        """The two faces of ``isinstance(<value>, <this class>)``
         (``test_python_type``), or None where this class has no join symbol
-        or its metaclass is not decided to be ``type``."""
+        or its metaclass is not decided to be ``type``.
+
+        The value is ``python:isinstance(<value>, "<class symbol>")``; it
+        completes under ``python:isinstance.completes(<that term>, <key>)``,
+        keyed on the exact source site (two tests of one object may read a
+        ``__class__`` that answers differently), and halts with an
+        ``UndeterminedRaiseEffect`` under the complement, owed at the site
+        (``ExitSet.two_faced``).  Prove's isinstance law
+        (``consistency::isinstance_law_facts``) decides the completion where
+        a contract states ``python:type_is(<value>, "<D>")`` and either
+        ``D``'s order holds this class (``True`` before anything runs) or
+        every class of ``D``'s order has a namespace row binding neither
+        ``__class__`` nor ``__getattribute__`` and the only builtin in it is
+        ``object`` (``x.__class__`` is ``object.__class__``'s getter, which
+        never raises and returns ``D``: the test is ``False``).  Nothing else
+        decides it, so the halt stays owed."""
+        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.floor.floor_value import _siteless_undecided_read
         from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.ir import ctor, str_const
-        from sugar_lift_py_tests.receiver_dispatch import ISINSTANCE
+        from sugar_lift_py_tests.ir import atomic, ctor, str_const
+        from sugar_lift_py_tests.occurrence import occurrence_key
+        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.receiver_dispatch import (
+            ISINSTANCE,
+            ISINSTANCE_COMPLETES,
+        )
         from sugar_lift_py_tests.source_call_resolution import (
             CALL_RESULT_LABEL,
             object_after_call,
@@ -637,12 +668,31 @@ class ClassDefinitionValue(GuardStableValue):
         symbol = definition.bridge_source_symbol()
         if symbol is None:
             return None
+        owner = "ClassDefinitionValue.test_python_type"
+        if site is None:
+            _siteless_undecided_read(
+                owner, f"isinstance(..., {self.class_name})", "Call"
+            )
         _binds, held = peel_walrus_binds(value)
-        owner = str(site)
-        subject = value.to_term(owner=owner)
+        term_owner = str(site)
+        subject = value.to_term(owner=term_owner)
         if isinstance(held, CallSiteValue) and held.constructed_by_edge:
-            subject = object_after_call(held.to_term(owner=owner), CALL_RESULT_LABEL)
-        return SymbolicValue(ctor(ISINSTANCE, [subject, str_const(symbol)]))
+            subject = object_after_call(
+                held.to_term(owner=term_owner), CALL_RESULT_LABEL
+            )
+        tested = ctor(ISINSTANCE, [subject, str_const(symbol)])
+        key = occurrence_key(site)
+        return ExitSet.two_faced(
+            SymbolicValue(tested),
+            UndeterminedRaiseEffect(
+                blame=str(site),
+                occurrence=key,
+                producer_node_owner=owner,
+                site=site,
+            ),
+            guard=atomic(ISINSTANCE_COMPLETES, [tested, str_const(key)]),
+            site=site,
+        )
 
     def to_term(self, *, owner: str):
         del owner

@@ -153,6 +153,73 @@ def test_isinstance_of_a_same_module_class_reads_the_class(tmp_path: Path) -> No
     assert lied.verdict == "unsat"
 
 
+_ISINSTANCE_OF_ANOTHER_CLASS = (
+    "class Other:\n"
+    "    def __init__(self):\n"
+    "        self.seen = 1\n"
+    "\n"
+    "\n"
+    "class Plain:\n"
+    "    def __init__(self):\n"
+    "        self.seen = 2\n"
+    "{masked}"
+    "\n"
+    "\n"
+    "def f():\n"
+    "    return isinstance(Plain(), Other)\n"
+    "\n"
+    "\n"
+    "def test_f():\n"
+    "    assert f() == {claim}\n"
+)
+
+# ``Plain``'s order binds a ``__class__`` property that raises: CPython's
+# ``object_isinstance`` reads ``x.__class__`` once ``type(x)`` is no subclass
+# of ``Other``, so ``f`` raises ``ValueError``.
+_MASKED_CLASS = (
+    "    @property\n"
+    "    def __class__(self):\n"
+    "        raise ValueError('masked')\n"
+)
+
+
+def test_isinstance_of_an_unrelated_class_is_false_where_the_class_read_runs_no_code(
+    tmp_path: Path,
+) -> None:
+    """``isinstance(Plain(), Other)``: ``type(x)`` is ``Plain``, no subclass
+    of ``Other``, so ``type.__instancecheck__`` reads ``x.__class__``.  No
+    class of ``Plain``'s order binds ``__class__`` or ``__getattribute__``
+    and it ends in ``object`` alone, so the read is ``object.__class__``'s
+    getter: it returns ``Plain`` and never raises, and the test completes
+    ``False``.  Prove's isinstance law states both from ``Plain``'s
+    namespace row and the ``python:type_is`` its constructor contract states
+    (#7757 step 9): truthful ``sat``, lying ``unsat``."""
+    module = _ISINSTANCE_OF_ANOTHER_CLASS.replace("{masked}", "")
+    told = run_source_through_real_solver(tmp_path / "t", module.format(claim="False"))
+    lied = run_source_through_real_solver(tmp_path / "l", module.format(claim="True"))
+    line = _test_line(module)
+    assert claim_verdict(told.prove_doc, claims_from_line=line) == "sat"
+    assert lied.verdict == "unsat"
+
+
+def test_isinstance_whose_class_read_may_run_code_keeps_its_halt_owed(
+    tmp_path: Path,
+) -> None:
+    """``isinstance(Plain(), Other)`` with a ``__class__`` property on
+    ``Plain`` that raises: the test's completion is not decided (the read
+    runs the property), so its halt face stays owed and neither its value
+    nor its completion is stated.  Python raises here, so every claim on
+    ``f()``'s value is a lie: neither half may read ``sat``; both stay
+    ``open`` (#7757 step 9: nothing states what the property does)."""
+    module = _ISINSTANCE_OF_ANOTHER_CLASS.replace("{masked}", _MASKED_CLASS)
+    line = _test_line(module)
+    for role, claim in (("f", "False"), ("t", "True")):
+        result = run_source_through_real_solver(
+            tmp_path / role, module.format(claim=claim)
+        )
+        assert claim_verdict(result.prove_doc, claims_from_line=line) == "open", claim
+
+
 _RAISE_AND_HANDLE_SAME_MODULE_CLASS = (
     "class Boom(Exception):\n"
     "    pass\n"

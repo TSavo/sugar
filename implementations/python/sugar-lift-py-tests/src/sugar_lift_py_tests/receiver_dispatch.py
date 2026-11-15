@@ -62,8 +62,18 @@ TYPE_IS = "python:type_is"
 #: ``isinstance(<object>, <class>)`` returns, for a source class whose
 #: metaclass is ``type`` (``ClassDefinitionValue.test_python_type``).  Prove
 #: states it ``true`` where a contract states ``python:type_is(<object>, D)``
-#: and ``D``'s order contains the class (``consistency::with_isinstance_law``).
+#: and ``D``'s order contains the class (``consistency::with_isinstance_law``),
+#: and ``false`` where it does not and ``x.__class__`` is decided to be
+#: ``object.__class__``'s getter (``ISINSTANCE_COMPLETES``).
 ISINSTANCE = "python:isinstance"
+
+#: ``python:isinstance.completes(<isinstance term>, <occurrence key>)``: the
+#: type test completes (``type(x)`` a subclass of the class, or ``x.__class__``
+#: read by ``object.__class__``'s getter alone).  Prove states it where a
+#: contract states ``python:type_is(<object>, D)`` and ``D``'s namespace rows
+#: decide it (``consistency::isinstance_law_facts``); its complement is the
+#: test's owed halt face.
+ISINSTANCE_COMPLETES = "python:isinstance.completes"
 
 #: ``python:may_hold(<object>, <name>)``: the object's ``__dict__`` may hold
 #: ``<name>`` (``consistency::PYTHON_MAY_HOLD``), one fact per name.
