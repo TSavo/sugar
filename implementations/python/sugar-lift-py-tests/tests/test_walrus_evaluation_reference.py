@@ -224,20 +224,52 @@ def _returned_value(outcome):
     assert len(outcome.exits) == 1
     face = outcome.exits[0]
     assert isinstance(face, Completed), type(face)
-    value = face.value
+    return _settled(face.value)
+
+
+def _decided_returns(statements) -> list:
+    """The returns a reduced body left by, read off its record: a plain
+    return, or a return inside a branch whose every guard is decided true
+    (``if (t := 5): return t``).  A return under a guard nothing decides is
+    not one returned value and is not read here."""
+    from sugar_lift_py_tests.floor import GuardedReturn
+    from sugar_lift_py_tests.outcome import true_guard
+
+    return [
+        statement
+        for statement in statements
+        if isinstance(statement, ReturnValue)
+        or (
+            isinstance(statement, GuardedReturn)
+            and all(guard == true_guard() for guard in statement.guards)
+        )
+    ]
+
+
+def _returned(value):
+    """A returned value: a call's own value (``return g(...)``) is read down
+    to what that call returned; anything else stands as it is."""
+    from sugar_lift_py_tests.floor import CallSiteValue
+
+    return _settled(value) if isinstance(value, CallSiteValue) else value
+
+
+def _settled(value):
+    """``value`` read down to what the call returned: a call's value is
+    forced to its body's record, whose one decided return is read."""
     force = getattr(value, "force_floor", None)
     if callable(force):
         forced = force(None, owner="walrus_evaluation_test")
         if isinstance(forced, BlockValue):
-            returns = [s for s in forced.statements if isinstance(s, ReturnValue)]
+            returns = _decided_returns(forced.statements)
             assert returns, forced.statements
-            return returns[-1].value
+            return _returned(returns[-1].value)
         return forced
     record = getattr(value, "record", None)
     if record is not None:
-        returns = [s for s in record.statements if isinstance(s, ReturnValue)]
+        returns = _decided_returns(record.statements)
         if returns:
-            return returns[-1].value
+            return _returned(returns[-1].value)
     return value
 
 
