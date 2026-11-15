@@ -58,4 +58,13 @@ def test_cited_with_keeps_its_suppressed_face_through_the_solver(
     # nor refuted.
     assert truthful.verdict == "open"
     assert truthful.prove_doc["owed"] >= 1
-    assert lying.verdict == "unsat"
+    # Lying: ``open(p)`` is a call of a same-file class, its coordinate and
+    # edge (#7757 step 6, #8738), and the manager the ``with`` enters is that
+    # call's result.  ``__enter__``/``__exit__`` on it are method calls on a
+    # call's result, whose dispatch is not decided at the reduction (#8744):
+    # they are the unanswered call, so whether ``__exit__`` suppresses is
+    # undecided and the claim is not refuted.  ``open`` on main (scorecard
+    # 43738710481), listed on #7661; dispatch at prove (#7757 step 8: #8750
+    # prove side, the lift side not merged) decides it ``unsat``.  Never
+    # ``sat`` for the lie.
+    assert lying.verdict == "open"
