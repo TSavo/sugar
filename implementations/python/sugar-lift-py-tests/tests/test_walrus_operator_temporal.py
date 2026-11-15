@@ -263,8 +263,18 @@ class _MustNotRun(Sugar):
         raise AssertionError("branch must not reduce after condition halt")
 
 
+def _unbound_name_halt() -> NameErrorEffect:
+    """An unbound read's halt, minted through its one door at a real read
+    site: the effect carries the builtin's identity and the read's locus."""
+    from sugar_source_tree.nodes import Name
+
+    tree = _tree("missing\n", "walrus_condition_halt.py")
+    site = next(node for node in tree.nodes() if isinstance(node, Name)).fragment
+    return NameErrorEffect.at(name="missing", site=site)
+
+
 def test_condition_halt_bypasses_both_arms() -> None:
-    effect = NameErrorEffect(name="missing", site=SITE)
+    effect = _unbound_name_halt()
     halt = _HaltValue(effect)
     then_body = (_MustNotRun(),)
     else_body = (_MustNotRun(),)
@@ -282,7 +292,7 @@ def test_condition_halt_bypasses_both_arms() -> None:
 
 def test_condition_halt_has_no_branch_returns() -> None:
     """Halt is a halted exit — not a Completed branch return of the bound name."""
-    effect = NameErrorEffect(name="missing", site=SITE)
+    effect = _unbound_name_halt()
     out = _if(
         _walrus("n", _HaltValue(effect)),
         then_body=(_ret(_read("n")),),
