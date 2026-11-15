@@ -69,6 +69,21 @@ def test_an_initializer_assert_over_a_field_is_a_panic_locus(tmp_path):
     assert [locus.line for locus in _assertion_loci(row)] == [4]
 
 
+def test_an_initializer_assert_is_no_claim_of_the_class(tmp_path):
+    # The failing ``assert`` is the construction's halt (the locus above),
+    # never the class's claim: stated as one it held on no completed arm of
+    # the construction and read ``false``, refuting the class row and every
+    # caller joined to it, whatever the actual (scorecard at d95c22a49).
+    row = _contract_row(
+        tmp_path,
+        "class C:\n    def __init__(self, n):\n        assert n > 0\n",
+        "C",
+    )
+
+    assert row.inv is None, row.inv
+    assert [locus.line for locus in _assertion_loci(row)] == [3]
+
+
 def test_an_initializer_with_no_assert_states_no_assertion_locus(tmp_path):
     row = _contract_row(
         tmp_path,

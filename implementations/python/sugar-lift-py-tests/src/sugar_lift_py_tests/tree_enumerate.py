@@ -16,8 +16,9 @@ from sugar_source_tree.tree import SourceFile
 from sugar_source_tree.nodes import Assert
 
 
-def halted_assertion_sites(halted_arms) -> tuple:
-    """The ``assert`` statements at which a halted arm of a reduction left.
+def halted_assertion_sites(halted_arms, definition) -> tuple:
+    """The ``assert`` statements of ``definition``'s own body at which a
+    halted arm of its reduction left.
 
     Read off the reduction, never off the source: a halted arm's raise carries
     the exception value it raised, and that value carries the fragment it was
@@ -25,10 +26,22 @@ def halted_assertion_sites(halted_arms) -> tuple:
     reached the assertion and control halted there. A raise from inside the
     assertion's operands is sited at the operand, and an ``assert`` no arm
     reached is sited nowhere: neither is an assertion the reduction halted at.
+
+    Only an ``assert`` of ``definition``'s own body is a claim of its
+    contract (``own_assertion_sites``); ``None`` owns none.  A class's
+    contract is the construction (``class_contract_rows``): an ``assert`` in
+    its ``__init__`` that fails is a halt of the call, stated as a panic
+    locus (``class_constructor_body_sugar.halts_where_its_asserts_fail``),
+    and its claim is ``__init__``'s own row's.  Stated as the class's, the
+    claim held on no completed arm of the construction (the object, never
+    ``__init__``'s record) and read ``false``: the class row was refuted
+    whatever the actual, and every caller joined to it with it.
     """
     from sugar_lift_py_tests.effect import RaiseEffect
     from sugar_lift_py_tests.floor import ExceptionValue
+    from sugar_lift_py_tests.floor.universe_value import assertion_site_key
 
+    own = {assertion_site_key(site) for site in own_assertion_sites(definition)}
     sites = []
     for arm in halted_arms:
         effect = arm.effect
@@ -37,8 +50,46 @@ def halted_assertion_sites(halted_arms) -> tuple:
         raised = effect.raised_value
         if not isinstance(raised, ExceptionValue):
             continue
-        if isinstance(getattr(raised.site, "node", None), Assert):
+        if (
+            isinstance(getattr(raised.site, "node", None), Assert)
+            and assertion_site_key(raised.site) in own
+        ):
             sites.append(raised.site)
+    return tuple(sites)
+
+
+def own_assertion_sites(definition) -> tuple:
+    """The fragments of the ``assert`` statements of ``definition``'s own
+    body, in source order: a nested ``def``, ``class`` or ``lambda`` is
+    another frame and states its own.  ``None`` (a class's contract, whose
+    statement body runs where the class statement stands) owns none."""
+    from sugar_source_tree.nodes import (
+        AsyncFunctionDef,
+        ClassDef,
+        FunctionDef,
+        Lambda,
+        Node,
+    )
+
+    if definition is None:
+        return ()
+    sites = []
+    seen_nodes: set = set()
+    body = getattr(definition, "body", ()) or ()
+    # A ``def``'s body is its statements; a lambda's is one expression,
+    # which holds no ``assert``.
+    stack = [body] if isinstance(body, Node) else list(reversed(tuple(body)))
+    while stack:
+        node = stack.pop()
+        if id(node) in seen_nodes:
+            continue
+        seen_nodes.add(id(node))
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef, Lambda)):
+            continue
+        if isinstance(node, Assert):
+            sites.append(node.fragment)
+            continue
+        stack.extend(child for _field, _index, child in reversed(node.children()))
     return tuple(sites)
 
 
@@ -57,13 +108,6 @@ def unreached_assertion_sites(definition, halted_arms) -> tuple:
     """
     from sugar_lift_py_tests.floor.inv_value import InvValue
     from sugar_lift_py_tests.floor.universe_value import assertion_site_key
-    from sugar_source_tree.nodes import (
-        AsyncFunctionDef,
-        ClassDef,
-        FunctionDef,
-        Lambda,
-        Node,
-    )
 
     passed = {
         assertion_site_key(entry.site)
@@ -71,25 +115,11 @@ def unreached_assertion_sites(definition, halted_arms) -> tuple:
         for entry in getattr(arm.state, "entries", ())
         if isinstance(entry, InvValue) and entry.site is not None
     }
-    sites = []
-    seen_nodes: set = set()
-    body = getattr(definition, "body", ()) or ()
-    # A ``def``'s body is its statements; a lambda's is one expression,
-    # which holds no ``assert``.
-    stack = [body] if isinstance(body, Node) else list(reversed(tuple(body)))
-    while stack:
-        node = stack.pop()
-        if id(node) in seen_nodes:
-            continue
-        seen_nodes.add(id(node))
-        if isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef, Lambda)):
-            continue
-        if isinstance(node, Assert):
-            if assertion_site_key(node.fragment) not in passed:
-                sites.append(node.fragment)
-            continue
-        stack.extend(child for _field, _index, child in reversed(node.children()))
-    return tuple(sites)
+    return tuple(
+        site
+        for site in own_assertion_sites(definition)
+        if assertion_site_key(site) not in passed
+    )
 
 
 def _stated_fragment(holder):
@@ -1365,7 +1395,7 @@ def reduction_rows(outcome, *, owner, blame, def_memento, definition):
             if isinstance(exit_, Completed)
         )
         halted = tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
-        halted_sites = halted_assertion_sites(halted)
+        halted_sites = halted_assertion_sites(halted, definition)
         unread = [
             type(exit_).__name__
             for exit_ in outcome.exits
@@ -1527,7 +1557,9 @@ def class_contract_rows(cls, file_rel: str):
     )
     # No ``definition``: the class statement's own body runs where the class
     # statement stands, never at a call of the class, so none of its
-    # ``assert`` statements is this contract's.
+    # ``assert`` statements is this contract's; nor is one of its
+    # ``__init__``'s, whose failure is a halt of the call (a panic locus),
+    # never a claim of the class (``halted_assertion_sites``).
     rows = reduction_rows(
         owner_reduction(cls).outcome,
         owner=stated_by,
