@@ -634,9 +634,6 @@ class StringValue(GuardStableValue):
             ),
         )
 
-    def subscript_with(self, operation, ctx):
-        return operation.subscript_string(self, ctx)
-
 
 _NOT_GROUND = object()
 

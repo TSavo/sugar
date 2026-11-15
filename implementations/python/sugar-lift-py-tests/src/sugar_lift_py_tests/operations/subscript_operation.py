@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, NoReturn
 
 from sugar_lift_py_tests.floor.call_site_value import force_floor
-from sugar_lift_py_tests.ir import num
 from sugar_lift_py_tests.outcome import ExitSet
 
 
@@ -53,28 +52,6 @@ class SubscriptOperation:
     def submit(self, receiver: Any, ctx: object) -> ExitSet:
         """Ask the receiver to answer this subscript demand."""
         return receiver.subscript_with(self, ctx)
-
-    def subscript_string(self, receiver, ctx: object) -> ExitSet:
-        from sugar_lift_py_tests.floor import (
-            Bv32Value,
-            EncodedStringValue,
-            SliceValue,
-            StringValue,
-            TermValue,
-        )
-
-        index = force_floor(self.index, ctx, owner=f"{self.owner} index")
-        index = _unwrap_index(index)
-        if isinstance(index, SliceValue):
-            return _subscript_string_slice(receiver, index, self.blame)
-        if isinstance(index, TermValue) and type(index.value) is int:
-            return ExitSet.completed(StringValue(receiver.value[index.value]))
-        return ExitSet.completed(
-            EncodedStringValue(
-                table=tuple(ord(ch) for ch in receiver.value),
-                indices=(_string_index_term(index),),
-            )
-        )
 
     def subscript_tuple(self, receiver, ctx: object) -> ExitSet:
         index = force_floor(self.index, ctx, owner=f"{self.owner} tuple index")
@@ -204,44 +181,6 @@ def _subscript_sequence(
         observed=type(index).__name__,
         requested="concrete sequence index",
         fix=f"add sequence index floor for {type(index).__name__}",
-    )
-
-
-def _string_index_term(value: Any):
-    from sugar_lift_py_tests.floor import Bv32Value, TermValue
-
-    if isinstance(value, Bv32Value):
-        return value.term
-    if isinstance(value, TermValue):
-        return num(int(value.value))
-    raise TypeError(
-        f"write more Floor for SubscriptOperation string index "
-        f"`{type(value).__name__}`: expected TermValue or Bv32Value"
-    )
-
-
-def _subscript_string_slice(receiver, index, blame: object) -> ExitSet:
-    from sugar_lift_py_tests.floor import StringValue, TermValue
-
-    lower = _concrete_slice_bound(index.lower, blame)
-    upper = _concrete_slice_bound(index.upper, blame)
-    step = _concrete_slice_bound(index.step, blame)
-    return ExitSet.completed(StringValue(receiver.value[slice(lower, upper, step)]))
-
-
-def _concrete_slice_bound(value: Any | None, blame: object) -> int | None:
-    from sugar_lift_py_tests.floor import TermValue
-
-    if value is None:
-        return None
-    if isinstance(value, TermValue) and type(value.value) is int:
-        return value.value
-    _raise_subscript_gap(
-        owner="SubscriptOperation.string_slice",
-        blame=str(blame),
-        observed=type(value).__name__,
-        requested="concrete slice bounds",
-        fix="add symbolic StringValue slice lowering",
     )
 
 
