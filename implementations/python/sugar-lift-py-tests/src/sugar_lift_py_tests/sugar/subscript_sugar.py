@@ -74,10 +74,9 @@ class SubscriptSugar(ConstructedTermSugar):
     def desugar(self, ctx: Any = None) -> ExitSet:
         # Operand reduction may publish a dual-edge ExitSet. Sequence its
         # completed faces through the receiver floor; a typed refusal remains a
-        # refusal and must never be converted into an empty outcome. One plain
-        # completed arm hands its value straight to the step (``and_then``),
-        # as a deferred carrier the step answers; over any other shape a
-        # carrier is refused by ``ExitSet.and_then``. An undecided lookup is the
+        # refusal and must never be converted into an empty outcome. A
+        # deferred carrier the step answers composes beneath its arm, beside
+        # every other face (``ExitSet.and_then``). An undecided lookup is the
         # receiver floor's two-faced unanswered read (``undecided_subscript``);
         # exact exits complete.
         from sugar_lift_py_tests.floor.named_expression_value import (

@@ -979,6 +979,13 @@ class ExitSet(Generic[T]):
         arm's continuation in arm order, and the answer is that carrier.
         Anything else that is not an ``ExitSet`` cannot compose and is refused
         by name (``_require_exit_set``, owner ``ExitSet.sequence``).
+
+        Never refused for its shape: a carrier answered beneath one arm of
+        several composes beside the others exactly as beneath a sole arm, so
+        every face, halts included, stands once the carrier discharges.
+        Beneath ONE plain arm (truth, no faces, owing nothing) the composition
+        is the continuation itself, so a carrier answered there is handed on
+        as itself.
         """
 
         exits: list[Exit[U]] = []
@@ -1001,36 +1008,23 @@ class ExitSet(Generic[T]):
             deferred.append((len(exits), exit_, _carrier_or_refuse(continued)))
         if deferred is None:
             return ExitSet(tuple(exits)).normalize()
+        if not exits and len(deferred) == 1 and _is_plain(deferred[0][1]):
+            # Beneath one plain arm with nothing beside it, the composition is
+            # the carrier itself.
+            return deferred[0][2]
         return _compose_after_discharge(tuple(exits), tuple(deferred))
 
     def and_then(self, step):
         """Run ``step`` on every completed arm's value; halts bypass it.
 
-        This is ``sequence`` per arm, with each arm's guard, faces and
-        ``owed`` carried onto what ``step`` produced under it.
-
-        Over ONE plain arm (truth, no faces, owing nothing) it is exactly
-        ``step(v)``, including when ``step`` answers a deferred
-        native-operation carrier: that carrier is handed on. Over any other
-        shape a carrier, or anything else that is not an ``ExitSet``, is
-        refused by name (``_require_exit_set``).
+        The one composition (``sequence``): each arm's guard, faces and
+        ``owed`` ride onto what ``step`` produced under it, a carrier
+        ``step`` answers composes through its ``after_discharge`` beside every
+        other arm (handed on as itself beneath one plain arm), and every
+        halted arm stands with its guard, record and ``owed``. Never refused
+        for having several faces (#7757).
         """
-        if (
-            len(self.exits) == 1
-            and isinstance(self.exits[0], Completed)
-            and _is_true(self.exits[0].guard)
-            and not self.exits[0].faces
-            and not self.exits[0].owed
-        ):
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                NativeOperationExitCarrierV1,
-            )
-
-            following = step(self.exits[0].value)
-            if isinstance(following, NativeOperationExitCarrierV1):
-                return following
-            return self.sequence(lambda _value: _require_exit_set(following))
-        return self.sequence(lambda value: _require_exit_set(step(value)))
+        return self.sequence(step)
 
     def and_finally(
         self,
@@ -1299,6 +1293,17 @@ def _extend_beneath(target: list, prefix: Exit, continued: ExitSet) -> None:
             target.append(Halted(guard, following.effect, following.state, faces, owed))
 
 
+def _is_plain(exit_: Exit) -> bool:
+    """A completed arm under truth, with no faces, owing nothing: beneath it
+    a continuation is itself."""
+    return (
+        isinstance(exit_, Completed)
+        and _is_true(exit_.guard)
+        and not exit_.faces
+        and not exit_.owed
+    )
+
+
 def _carrier_or_refuse(outcome):
     """A deferred native-operation carrier ``sequence`` can compose, or the
     refusal of anything else that is not an ``ExitSet``."""
@@ -1435,12 +1440,12 @@ def factored_operand(outcome):
 def _require_exit_set(outcome, *, owner: str = "ExitSet.and_then") -> ExitSet:
     """The one refusal of something that is not exits where exits are needed.
 
-    ``and_then`` refuses a step that answered something else; every position
-    that reads an outcome's arms directly (``.exits``, ``completed_value()``,
-    ``sequence``) and cannot hand a deferred carrier on through the carrier's
-    own ``and_then`` / ``after_discharge`` refuses through here too, under its
-    own ``owner``. ``ExitSet.sequence`` composes a carrier a step answers and
-    refuses anything else here (owner ``ExitSet.sequence``).
+    The one composition (``ExitSet.and_then``, through ``sequence``) composes
+    a carrier a step answers and refuses anything else here (owner
+    ``ExitSet.sequence``); every position that reads an outcome's arms
+    directly (``.exits``, ``completed_value()``) and cannot hand a deferred
+    carrier on through the carrier's own ``and_then`` / ``after_discharge``
+    refuses through here too, under its own ``owner``.
 
     Not a conversion: an ``ExitSet`` is handed back as itself and nothing
     else is ever turned into one. A deferred native-operation carrier is

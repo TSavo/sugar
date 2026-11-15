@@ -128,15 +128,51 @@ def _raise_effect(name: str) -> RaiseEffect:
     return RaiseEffect.for_builtin("RuntimeError", occurrence=name)
 
 
-# --- the one refusal --------------------------------------------------------
+# --- the one composition ----------------------------------------------------
 
 
-def test_and_then_keeps_its_own_owner():
-    carrier, _, _ = _carrier()
+def test_and_then_composes_a_carrier_beneath_a_guarded_arm():
+    # ``and_then`` is the one composition: a carrier beneath a guarded arm
+    # composes as ``sequence`` composes it, never refused for its shape.
+    carrier, left, right = _carrier()
     prefix = ExitSet.completed(TermValue(0), guard=atomic("test.prefix", []))
-    with pytest.raises(ConstructionPanic) as excinfo:
-        prefix.and_then(lambda _value: carrier)
-    _refused(excinfo, "ExitSet.and_then")
+    composed = prefix.and_then(lambda _value: carrier)
+    assert isinstance(composed, NativeOperationExitCarrierV1)
+    actuals = _actuals(left, right)
+    discharged = carrier.discharge(None, actuals)
+    exits = composed.discharge(None, actuals)
+    assert exits == prefix.sequence(lambda _value: discharged)
+    assert all("test.prefix" in str(exit_.guard) for exit_ in exits.exits)
+
+
+def test_and_then_keeps_every_face_beside_a_carrier():
+    # Several faces: the halt and the other completed face stand once the
+    # carrier beneath one face discharges, with their guards and debts.
+    carrier, left, right = _carrier()
+    face, _ = partition("carrier-bridge-sites.and_then")
+    first = Completed(
+        atomic("test.first", []), TermValue(1), frozenset({face}), ("owed.first",)
+    )
+    second = Completed(atomic("test.second", []), TermValue(2), owed=("owed.second",))
+    halt = Halted(atomic("test.halt", []), _raise_effect("and-then"), owed=("h",))
+    body = ExitSet((first, second, halt))
+    tail = ExitSet.completed(TermValue(9))
+
+    composed = body.and_then(lambda value: carrier if value == TermValue(1) else tail)
+
+    assert isinstance(composed, NativeOperationExitCarrierV1)
+    actuals = _actuals(left, right)
+    exits = composed.discharge(None, actuals)
+    discharged = carrier.discharge(None, actuals)
+    eager = body.sequence(lambda value: discharged if value == TermValue(1) else tail)
+    assert exits == eager
+    assert _testimony(exits) == _testimony(eager)
+    assert halt in exits.exits
+
+
+def test_and_then_hands_a_carrier_on_beneath_one_plain_arm():
+    carrier, _, _ = _carrier()
+    assert ExitSet.completed(TermValue(0)).and_then(lambda _value: carrier) is carrier
 
 
 # --- ExitSet.sequence -------------------------------------------------------
