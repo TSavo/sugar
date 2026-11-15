@@ -124,6 +124,7 @@ def genuine_runtime_operand(operation: str, operand) -> RuntimeOperand:
 
 
 def is_lift_time_decidable(term: Term) -> bool:
+    from sugar_lift_py_tests.floor.universe_value import UNDETERMINED_STATES
     from sugar_lift_py_tests.ir import (
         _ConstBool,
         _ConstInt,
@@ -170,6 +171,15 @@ def is_lift_time_decidable(term: Term) -> bool:
         # executing the guarded operation. The exception class coordinate may
         # be ground, but the occurrence testimony is runtime-by-nature.
         if current.name == "py.except":
+            decisions[identity] = False
+            continue
+        # A state no input determines -- a receiver after an undecided call
+        # (``python:receiver_after_call``, step 7's undecided after-call
+        # value), an undecided builtin method or native operation -- is keyed
+        # on its operation's occurrence alone: its ground occurrence string
+        # names the operation, not the value, which exists only once Python
+        # runs it (#7757).
+        if current.name in UNDETERMINED_STATES:
             decisions[identity] = False
             continue
         # Comprehension / generator folds are iteration products; members are

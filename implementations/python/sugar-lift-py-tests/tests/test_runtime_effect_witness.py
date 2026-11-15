@@ -136,6 +136,27 @@ def test_deep_runtime_operand_decision_is_construction_closed() -> None:
     assert not is_lift_time_decidable(runtime)
 
 
+def test_a_store_on_a_receiver_after_an_undecided_call_is_runtime_dependent() -> None:
+    """``python:receiver_after_call(<occurrence>, <label>)`` -- the receiver
+    after an undecided call or store (#7757 step 7's undecided after-call
+    value) -- carries only ground strings, but they name the operation, not
+    the value: the store over it is runtime-dependent, never refused as
+    ground (``live_loop_evaluation.py:4:8``)."""
+    after = ctor(
+        "python:receiver_after_call",
+        [str_const("blake3-512:occurrence@loop#1"), str_const(".n")],
+    )
+    store = ctor("python:attribute_store", [after, str_const("n"), str_const("2")])
+    assert not is_lift_time_decidable(after)
+    assert not is_lift_time_decidable(store)
+    assert genuine_runtime_operand("RuntimeEffect", store).term == store
+    with pytest.raises(TypeError, match="ground/decidable"):
+        genuine_runtime_operand(
+            "RuntimeEffect",
+            ctor("python:attribute_store", [str_const("o"), str_const("n")]),
+        )
+
+
 def test_dynamic_type_operand_effect_names_its_operation() -> None:
     """A constructor partition can identity-hash a dynamic isinstance halt."""
     from sugar_lift_py_tests.effect import (

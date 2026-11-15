@@ -162,7 +162,7 @@ class UniverseValue(FloorValue):
 # (``builtin_container_call_sugar._unknown_after``, ``_opaque_pair``,
 # ``NativeOperationExitCarrierV1._unanswered_exits``).  A contract instantiated
 # at two calls would state one such term for both, so it never states one.
-_UNDETERMINED_STATES = frozenset(
+UNDETERMINED_STATES = frozenset(
     {
         "python:receiver_after_call",
         "python:builtin_method",
@@ -177,7 +177,7 @@ def stated_by_its_inputs(term, formals) -> bool:
     parameters and inputs) determines: every variable one of its formals, no
     object identity (``py.object.*``: no two calls share one), no lambda, and
     no state keyed on an operation's occurrence alone
-    (``_UNDETERMINED_STATES``).  A value the callee does not determine is
+    (``UNDETERMINED_STATES``).  A value the callee does not determine is
     never stated: it stays undecided by name (#7757 step 7)."""
     from sugar_lift_py_tests.ir import _Ctor, _Lambda, _Var
 
@@ -191,7 +191,7 @@ def stated_by_its_inputs(term, formals) -> bool:
         elif isinstance(current, _Lambda):
             return False
         elif isinstance(current, _Ctor):
-            if current.name in _UNDETERMINED_STATES or current.name.startswith(
+            if current.name in UNDETERMINED_STATES or current.name.startswith(
                 "py.object"
             ):
                 return False
