@@ -6923,7 +6923,9 @@ def _minted_binding_reference(reference):
     parameter, a walrus's or a comprehension member's ``EvaluationRef`` at
     its target, a statement's ``EvaluationRef`` (``_discharge_binding_
     references``), the ``ReceiverAfterCall`` a call leaves for an object it
-    may have changed -- answering the roll where it is minted.
+    may have changed, a join's phi and its condition (``If._make_ifexp``),
+    an assignment's object state (``Assign._object_place_state``) --
+    answering the roll where it is minted.
 
     It is no source occurrence: a read of a name bound to a reference at
     another span is re-spanned to the read's own site (``Name.substitute``),
@@ -16325,19 +16327,28 @@ class Assign(Statement):
                 source_cid=self.unit.source_cid,
                 artifact_cid=self.unit.source_cid,
             )
-            return materialize(
-                self.unit,
-                ShadowNode(
-                    "OpaqueObjectStateV1",
-                    self.targets[0].span,
-                    (
-                        ("object_coordinate", Leaf(coordinate)),
-                        ("base", Child(_handle_of(self.value))),
-                        ("evaluation", Leaf(reference.evaluation)),
-                        ("name", Leaf(reference.name)),
+            # The object state is the name's binding, a value of the block's
+            # scope and no source node: a binding nothing reads, or reads
+            # only through a later state (the object after a call that may
+            # have changed it, ``container_mutation._havoc``), is constructed
+            # by nothing.  It answers where it is minted
+            # (``_minted_binding_reference``), as the reference it refines
+            # does; a read that reaches it constructs it and answers again.
+            return _minted_binding_reference(
+                materialize(
+                    self.unit,
+                    ShadowNode(
+                        "OpaqueObjectStateV1",
+                        self.targets[0].span,
+                        (
+                            ("object_coordinate", Leaf(coordinate)),
+                            ("base", Child(_handle_of(self.value))),
+                            ("evaluation", Leaf(reference.evaluation)),
+                            ("name", Leaf(reference.name)),
+                        ),
                     ),
-                ),
-                self.reporter,
+                    self.reporter,
+                )
             )
         if not self.unit.source_class_has_authenticated_default_attribute_behavior(
             definition
@@ -16363,23 +16374,27 @@ class Assign(Statement):
         from .backend import Child, Leaf, materialize
         from .shadow import ShadowNode, _handle_of
 
-        return materialize(
-            self.unit,
-            ShadowNode(
-                "ObjectPlaceStateV1",
-                self.targets[0].span,
-                (
-                    ("object_coordinate", Leaf(object_coordinate)),
-                    ("construction_testimony", Leaf(testimony)),
-                    ("object_identity_cid", Leaf(object_coordinate.cid)),
-                    ("base", Child(_handle_of(constructor))),
-                    # The testimony above names the call; a read of the
-                    # object reads this assignment's key.
-                    ("evaluation", Leaf(reference.evaluation)),
-                    ("name", Leaf(reference.name)),
+        # The name's binding, as the opaque state above is: it answers where
+        # it is minted.
+        return _minted_binding_reference(
+            materialize(
+                self.unit,
+                ShadowNode(
+                    "ObjectPlaceStateV1",
+                    self.targets[0].span,
+                    (
+                        ("object_coordinate", Leaf(object_coordinate)),
+                        ("construction_testimony", Leaf(testimony)),
+                        ("object_identity_cid", Leaf(object_coordinate.cid)),
+                        ("base", Child(_handle_of(constructor))),
+                        # The testimony above names the call; a read of the
+                        # object reads this assignment's key.
+                        ("evaluation", Leaf(reference.evaluation)),
+                        ("name", Leaf(reference.name)),
+                    ),
                 ),
-            ),
-            self.reporter,
+                self.reporter,
+            )
         )
 
     def chained_store_sugar(self, value_sugar):
@@ -18538,20 +18553,33 @@ class If(Statement):
             ("test", Child(_handle_of(test))),
             ("orelse", Child(_handle_of(orelse))),
         )
-        return materialize(
-            self.unit, ShadowNode("IfExp", self.span, slots), self.reporter
+        # The phi is a binding, a value of the scope the join leaves, no
+        # source node: a ``try``'s or a live loop's join of a name nothing
+        # reads after it (a module-level ``try``, a loop's write after the
+        # loop) is constructed by nothing.  It answers where it is minted
+        # (``_minted_binding_reference``); a read that reaches it constructs
+        # it and answers again, present or refused by name.
+        return _minted_binding_reference(
+            materialize(
+                self.unit, ShadowNode("IfExp", self.span, slots), self.reporter
+            )
         )
 
     def _make_branch_result_ref(self, slot: BranchResultSlot) -> "Node":
+        """The test of a phi (``_make_ifexp``): the slot's condition result,
+        no source node.  It answers where it is minted, as its phi does, and
+        again where a read constructs the phi."""
         from .backend import Leaf, materialize
         from .shadow import ShadowNode
 
-        return materialize(
-            self.unit,
-            ShadowNode(
-                "BranchResultRef", self.span, (("slot_id", Leaf(slot.slot_id)),)
-            ),
-            self.reporter,
+        return _minted_binding_reference(
+            materialize(
+                self.unit,
+                ShadowNode(
+                    "BranchResultRef", self.span, (("slot_id", Leaf(slot.slot_id)),)
+                ),
+                self.reporter,
+            )
         )
 
     def _construct_sugar(self):
