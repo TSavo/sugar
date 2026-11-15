@@ -19,8 +19,11 @@ call (#7757 step 7).  These are unit checks of the contract; the twins are
 
 from __future__ import annotations
 
+import pytest
+
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.outcome import Completed
 from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -163,17 +166,20 @@ def test_count():
 """
 
 
-def test_an_early_return_states_on_the_arm_that_ran_on() -> None:
+def test_a_cell_read_after_an_early_returns_test_is_not_stated() -> None:
     # The arm the ``return`` ended left the frame before ``n += 1``: it
-    # states nothing.  The arm that ran to the end states the in-place
-    # result over the cell's input (#7757 step 7).
+    # states nothing.  The arm that ran on reads ``n`` after ``n > 5``,
+    # which over the cell's free input may run code (``__gt__``) that
+    # rebinds a ``nonlocal`` cell: the read is another evaluation, the
+    # exposure rule's unknown (``container_mutation._ambient_targets``,
+    # #8823/#8847), and ``n += 1`` over it names no input, so nothing is
+    # stated (``stated_by_its_inputs``; scorecard 43752693483: the one post
+    # is the ``return`` arm's).  Decided where the contract states the cell
+    # after the test over its class input (step 7).
     posts = _posts(_EARLY_RETURN, "bump")
-    stated = [post for post in posts if "python:after" in post]
-    assert stated, posts
-    assert len(stated) < len(posts), posts
-    for post in stated:
-        assert "cell:n" in post, post
-        assert "+=" in post, post
+    assert posts, posts
+    for post in posts:
+        assert "python:after" not in post, post
 
 
 _LIVE_LOOP = """\
@@ -190,11 +196,17 @@ def test_count(xs):
 """
 
 
-def test_a_rebinding_in_a_live_loop_is_not_stated() -> None:
-    # A live loop's result is its own publication, keyed on the loop
-    # (``python:loop.*``): no input determines it, so nothing is stated.
-    for post in _posts(_LIVE_LOOP, "bump"):
-        assert "python:after" not in post, post
+def test_a_rebinding_in_a_live_loop_is_refused_by_name() -> None:
+    # A live loop over the cell ``xs`` runs its one symbolic item, and the
+    # recurrence carries the ``nonlocal`` cell ``n`` through its header
+    # alone, with no recurrence coordinate: its header is left unbound in
+    # the item and the read of ``n`` in ``n += x`` is refused by name
+    # (``LoopRecurrenceSugar._recurrence_starts``,
+    # ``refuse_unbound_evaluation``; scorecard 43752693483).  The function
+    # is refused, so its contract states nothing of the cell, never a value
+    # made up for it.
+    with pytest.raises(ConstructionPanic, match="read of `n`"):
+        _posts(_LIVE_LOOP, "bump")
 
 
 _UNROLLED_LOOP = """\
