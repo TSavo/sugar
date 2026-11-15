@@ -537,13 +537,7 @@ class ClassDefinitionValue(GuardStableValue):
 
     def to_term(self, *, owner: str):
         del owner
-        from sugar_lift_py_tests.ir import ctor, str_const
-
-        return ctor(
-            "python:class-definition",
-            [str_const(self.class_definition_cid)],
-            symbol_kind="coordinate",
-        )
+        return class_definition_term(self.class_definition_cid)
 
     def setitem(self, index, value, site, ctx):
         del index, value, ctx
@@ -725,3 +719,19 @@ def c3_tail(bases, tail_of, *, blame, owner: str) -> tuple:
             if sequence and sequence[0] == candidate:
                 sequence.pop(0)
     return tuple(result)
+
+
+def class_definition_term(class_definition_cid: str):
+    """The term a source class object is spelled by wherever a reduction
+    reads it (``ClassDefinitionValue.to_term``):
+    ``python:class-definition(<class definition cid>)``.  A class's namespace
+    row states it (``tree_enumerate.class_namespace_rows``,
+    ``python:class_object``), so a ``classmethod`` dispatched at prove binds
+    the very term a reading of the class here is (#7757 step 8)."""
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    return ctor(
+        "python:class-definition",
+        [str_const(class_definition_cid)],
+        symbol_kind="coordinate",
+    )
