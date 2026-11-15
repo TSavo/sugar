@@ -229,6 +229,81 @@ def _scope_body_bounds(node) -> "tuple | None":
     return (first.start_line, first.start_col), (last.end_line, last.end_col)
 
 
+def _nested_rows_index(rows) -> "tuple | None":
+    """``(starts, order, parents)`` over scope rows ``(start, end,
+    candidate)`` when the rows nest -- every two of them either one inside
+    the other or strictly apart, as the scopes of one source do -- else None.
+
+    ``order`` holds the row indexes by ``(start, widest first, row index)``,
+    ``starts`` their starts in that order, and ``parents`` for each place in
+    ``order`` the place of the narrowest row around it (-1: none).  Rows
+    that only touch at one position, or overlap without nesting, are not
+    indexed (None): their reader scans them (``_innermost_row``).
+    """
+    order = sorted(
+        range(len(rows)),
+        key=lambda at: (rows[at][0], (-rows[at][1][0], -rows[at][1][1]), at),
+    )
+    parents = [-1] * len(order)
+    open_places: list = []
+    for place, at in enumerate(order):
+        start, end = rows[at][0], rows[at][1]
+        while open_places and rows[order[open_places[-1]]][1] < start:
+            open_places.pop()
+        if open_places:
+            if end > rows[order[open_places[-1]]][1]:
+                return None
+            parents[place] = open_places[-1]
+        open_places.append(place)
+    return tuple(rows[at][0] for at in order), tuple(order), tuple(parents)
+
+
+def _innermost_row(rows, nested, position, tie):
+    """The candidate of the row of ``rows`` that holds ``position`` (both
+    ends included) with the greatest ``tie(start)``, the first such row in
+    ``rows`` order; None when no row holds it.
+
+    With ``nested`` (``_nested_rows_index``) the rows that hold the position
+    are the narrowest one and every row around it: the last row starting at
+    or before the position, or the first row around that one which reaches
+    the position, and its parents.  Their starts only fall going outward,
+    so the rows with the greatest ``tie(start)`` are the first of that
+    chain.  Without it every row is scanned.
+    """
+    if nested is None:
+        owner = None
+        owner_tie = None
+        for start, end, candidate in rows:
+            if start <= position <= end and (
+                owner_tie is None or tie(start) > owner_tie
+            ):
+                owner = candidate
+                owner_tie = tie(start)
+        return owner
+    starts, order, parents = nested
+    place = bisect.bisect_right(starts, position) - 1
+    while place >= 0 and rows[order[place]][1] < position:
+        place = parents[place]
+    if place < 0:
+        return None
+    best = order[place]
+    best_tie = tie(rows[best][0])
+    place = parents[place]
+    while place >= 0 and tie(rows[order[place]][0]) == best_tie:
+        if order[place] < best:
+            best = order[place]
+        place = parents[place]
+    return rows[best][2]
+
+
+def _start_line(start: tuple) -> int:
+    return start[0]
+
+
+def _whole_start(start: tuple) -> tuple:
+    return start
+
+
 def _order_position(order, statement) -> "int | None":
     """The index of the class statement ``statement`` in a base walk's
     ``order`` (``ClassDef.method_resolution_order`` or its head), matched by
@@ -2534,8 +2609,11 @@ class SourceUnit:
     _function_span_index: object = field(
         init=False, default=None, repr=False, compare=False
     )
-    # ``(typed module, scope body rows, answers by position)``: the body of
-    # every class, function and lambda, for ``class_body_holding``.
+    # ``(typed module, scope body rows, answers by position, the rows'
+    # nesting)``: the body of every class, function and lambda, for
+    # ``class_body_holding``; ``_function_span_index`` holds the same four for
+    # ``function_nodes``.  The nesting (``_nested_rows_index``) answers a
+    # position without a scan of every row.
     _scope_body_index: object = field(
         init=False, default=None, repr=False, compare=False
     )
@@ -2658,6 +2736,9 @@ class SourceUnit:
         The same choice the scan of ``function_nodes`` made -- every function
         whose span contains the position, latest start line, first in
         ``function_nodes`` order on a tie -- answered once per position.
+        Function spans nest, so a position's answer is read off the rows
+        sorted once (``_nested_rows_index``), never a scan of every function
+        of the module per position.
         """
         nodes = self.function_nodes
         index = self._function_span_index
@@ -2672,20 +2753,14 @@ class SourceUnit:
                         candidate,
                     )
                 )
-            index = (nodes, tuple(rows), {})
+            rows = tuple(rows)
+            index = (nodes, rows, {}, _nested_rows_index(rows))
             object.__setattr__(self, "_function_span_index", index)
         position = (span.start_line, span.start_col)
         answers = index[2]
         if position in answers:
             return answers[position]
-        owner = None
-        owner_line = None
-        for start, end, candidate in index[1]:
-            if start <= position <= end and (
-                owner_line is None or start[0] > owner_line
-            ):
-                owner = candidate
-                owner_line = start[0]
+        owner = _innermost_row(index[1], index[3], position, _start_line)
         answers[position] = owner
         return owner
 
@@ -2712,6 +2787,12 @@ class SourceUnit:
         belongs to the function; a lambda is a function scope of its own
         (``symtable``'s FunctionBlock).  A unit with no typed root refuses by
         name (``_require_typed_module``).
+
+        The body with the latest start that holds the position, the first
+        in walk order on a tie, answered once per position.  Scope bodies
+        nest, so the answer is read off the rows sorted once
+        (``_nested_rows_index``), never a scan of every scope of the module
+        per position.
         """
         module = self._require_typed_module(
             "SourceUnit.scope_holding", blame=self.filename
@@ -2723,20 +2804,14 @@ class SourceUnit:
                 bounds = _scope_body_bounds(node)
                 if bounds is not None:
                     rows.append((*bounds, node))
-            index = (module, tuple(rows), {})
+            rows = tuple(rows)
+            index = (module, rows, {}, _nested_rows_index(rows))
             object.__setattr__(self, "_scope_body_index", index)
         position = (span.start_line, span.start_col)
         answers = index[2]
         if position in answers:
             return answers[position]
-        owner = None
-        owner_start = None
-        for start, end, candidate in index[1]:
-            if start <= position <= end and (
-                owner_start is None or start > owner_start
-            ):
-                owner = candidate
-                owner_start = start
+        owner = _innermost_row(index[1], index[3], position, _whole_start)
         answers[position] = owner
         return owner
 
