@@ -577,18 +577,55 @@ def test_distinct_constructed_subscript_keys_do_not_collide(tmp_path):
     )
 
 
-def test_symbolic_subscript_key_stays_typed_loud(tmp_path):
-    path = tmp_path / "symbolic_subscript_key.py"
-    path.write_text(
+def _formal_key_type_error(path: Path, statement: str, message: str) -> None:
+    """``statement`` over ``item[key]`` on an instance whose type binds no
+    item method: CPython raises ``TypeError`` whatever ``key`` is, so the
+    lift halts with it at once, never waiting on the caller's ``key``
+    (``receiver_lacks_item_method``)."""
+    source = (
         "class Vessel:\n    pass\n\n"
         "def boundary(key):\n"
         "    item = Vessel()\n"
-        "    item[key] = 7\n"
-        "    return item[key]\n"
+        f"    {statement}\n"
+        "    return 0\n"
     )
-    # Never a completion that stores the item: an undischarged demand on the
-    # formal ``key`` is no answer at all.
-    assert _claims_no_field_value(_outcome_or_panic(path, "boundary"))
+    path.write_text(source)
+    native: dict = {}
+    exec(compile(source, str(path), "exec"), native)
+    for key in (0, "k", None):
+        with pytest.raises(TypeError, match=message):
+            native["boundary"](key)
+
+    outcome = _outcome_or_panic(path, "boundary")
+    assert isinstance(outcome, ExitSet), outcome
+    assert outcome.halts() == outcome.exits, outcome
+    assert [halt.effect.exception_name for halt in outcome.halts()] == [
+        "TypeError"
+    ], outcome
+
+
+def test_symbolic_subscript_key_store_raises_type_error_at_once(tmp_path):
+    _formal_key_type_error(
+        tmp_path / "symbolic_subscript_key.py",
+        "item[key] = 7",
+        "does not support item assignment",
+    )
+
+
+def test_symbolic_subscript_key_delete_raises_type_error_at_once(tmp_path):
+    _formal_key_type_error(
+        tmp_path / "symbolic_subscript_key_delete.py",
+        "del item[key]",
+        "doesn't support item deletion",
+    )
+
+
+def test_symbolic_subscript_key_read_raises_type_error_at_once(tmp_path):
+    _formal_key_type_error(
+        tmp_path / "symbolic_subscript_key_read.py",
+        "item[key]",
+        "not subscriptable",
+    )
 
 
 def test_unhashable_subscript_key_stays_typed_loud(tmp_path):

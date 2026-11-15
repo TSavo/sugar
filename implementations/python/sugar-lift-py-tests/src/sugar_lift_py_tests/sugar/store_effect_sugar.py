@@ -99,6 +99,9 @@ class SubscriptStoreEffectSugar(Sugar):
 
     Projection arms:
 
+    0. **A receiver whose type binds no ``__setitem__``**
+       (``receiver_lacks_item_method``) → its ``TypeError``, whatever the
+       key and value are: a formal key or value is not waited on.
     1. **Any formal operand** → ``NativeOperationExitCarrierV1`` demand
        ``setitem`` with operands and coordinates in *discharge* order
        ``(receiver, index, value)``.  The n-ary projector calls
@@ -152,6 +155,8 @@ class SubscriptStoreEffectSugar(Sugar):
         chain or an unpack (each is that same statement); the store applies
         under the statement's ``ctx``.
         """
+        from sugar_lift_py_tests.floor.floor_value import receiver_lacks_item_method
+
         receiver = receiver.project_operation_receiver(
             ctx, owner="SubscriptStoreEffectSugar receiver"
         )
@@ -165,6 +170,11 @@ class SubscriptStoreEffectSugar(Sugar):
             getattr(operand, "formal_coordinate", None)
             for operand in (receiver, index, value)
         )
+        if receiver_lacks_item_method(receiver, "__setitem__"):
+            # The receiver's type binds no ``__setitem__``: the store raises
+            # ``TypeError`` whatever the key and value are, so it waits on
+            # neither (``ObjectValue.setitem``).
+            return receiver.setitem(index, value, site, ctx)
         if any(coordinate is not None for coordinate in coordinates):
             # Undischarged demand awaiting caller actuals — not a refusal.
             return SubscriptStoreEffectSugar.mint_setitem_carrier(

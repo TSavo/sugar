@@ -601,20 +601,45 @@ class ObjectValue(FloorValue):
         anything is stored; nothing else answers it.  Any other answer -- a
         class that binds it, a builtin base that does, a lookup not decided
         -- is not written here and still refuses by name."""
-        definition = getattr(self.defining_class, "class_definition", None)
-        if definition is not None:
-            decided, owner = definition.namespace_owner("__setitem__")
-            if decided and owner is None:
-                from sugar_lift_py_tests.floor.ground_exit import (
-                    ground_exceptional_exit,
-                )
-
-                return ground_exceptional_exit(
-                    exception_name="TypeError",
-                    site=site,
-                    owner="ObjectValue.setitem",
-                )
+        if self.lacks_item_method("__setitem__"):
+            return self._item_method_absent(site, owner="ObjectValue.setitem")
         return super().setitem(index, value, site, ctx)
+
+    def delitem(self, index, site, ctx):
+        """``del self[index]``: ``type(self).__delitem__``
+        (``PyObject_DelItem``), the same implicit lookup as ``setitem``.  No
+        class of the MRO binding it raises ``TypeError`` ("object doesn't
+        support item deletion") whatever the key; any other answer is not
+        written here and still refuses by name."""
+        if self.lacks_item_method("__delitem__"):
+            return self._item_method_absent(site, owner="ObjectValue.delitem")
+        return super().delitem(index, site, ctx)
+
+    def lacks_item_method(self, method: str) -> bool:
+        """Whether ``type(self)`` binds no ``method`` (``__getitem__``,
+        ``__setitem__``, ``__delitem__``): the one class-namespace lookup
+        (``ClassDef.namespace_owner``) decides that no class of the MRO binds
+        it, ``object`` and builtin bases included.  An implicit special-method
+        lookup is on the type, so no instance field and no ``__getattr__``
+        answers it: the item operation raises ``TypeError`` whatever its key
+        and value are (``_item_method_absent``).  False whenever the lookup
+        does not decide it, or no class statement is read."""
+        definition = getattr(self.defining_class, "class_definition", None)
+        if definition is None:
+            return False
+        decided, owner = definition.namespace_owner(method)
+        return decided and owner is None
+
+    @staticmethod
+    def _item_method_absent(site, *, owner: str) -> ExitSet:
+        """The ``TypeError`` an item operation raises when its type binds no
+        item method (``lacks_item_method``): a halt at the operation's
+        fragment, the builtin by binding."""
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner=owner
+        )
 
     def authenticates_plain_attribute_store(self, name: str) -> bool:
         """Whether ``self.name = value`` is an ordinary instance-field store."""
@@ -937,6 +962,12 @@ class ObjectValue(FloorValue):
     def subscript_with(
         self, operation: SubscriptOperation, ctx: ReduceContext | None
     ) -> ExitSet:
+        # ``self[k]`` with no ``__getitem__`` on the type: ``TypeError``
+        # ("object is not subscriptable") whatever ``k`` is.
+        if self.lacks_item_method("__getitem__"):
+            return self._item_method_absent(
+                operation.site, owner="ObjectValue.subscript_with"
+            )
         return operation.subscript_object(self, ctx)
 
     def project_sequence_with(

@@ -723,6 +723,17 @@ class FloorValue:
         )
         construction_panic(info)
 
+    def lacks_item_method(self, method: str) -> bool:
+        """Whether this value's type is decided to bind no item method
+        ``method`` (``__getitem__``, ``__setitem__``, ``__delitem__``), so
+        the item operation raises ``TypeError`` whatever its key is.  The
+        item doors ask it before waiting on a formal key or value: the
+        receiver's own answer needs neither.  Default False: only a value
+        that reads its type's namespace (a source instance,
+        ``ObjectValue.lacks_item_method``) decides absence."""
+        del method
+        return False
+
     def setitem(self, index, value, site, ctx):
         """``receiver[index] = value`` under the store statement's context.
 
@@ -1407,6 +1418,19 @@ class FloorValue:
             requested="format data-model method",
             fix="construct __format__",
         )
+
+
+def receiver_lacks_item_method(receiver, method: str) -> bool:
+    """Whether an item operation's ``receiver`` -- itself no formal -- is a
+    floor value whose type is decided to bind no item ``method``
+    (``FloorValue.lacks_item_method``).  Each item door (subscript, store,
+    delete) asks it before waiting on a formal key or value: the receiver
+    answers with its ``TypeError`` whatever they are."""
+    return (
+        isinstance(receiver, FloorValue)
+        and getattr(receiver, "formal_coordinate", None) is None
+        and receiver.lacks_item_method(method)
+    )
 
 
 def _siteless_undecided_read(owner: str, read: str, node: str) -> NoReturn:
