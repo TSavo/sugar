@@ -51,13 +51,14 @@ def test_concrete_if_elif_else_constructs_and_selects_each_reachable_slot() -> N
     values = []
     for function in functions:
         outcome = function.sugar().desugar(None)
-        assert hasattr(outcome, "value")
+        universe = outcome.completed_value()
+        assert universe is not None, outcome
         returns = tuple(
             entry
-            for entry in outcome.value.record.statements
+            for entry in universe.record.statements
             if isinstance(entry, (ReturnValue, GuardedReturn))
         )
-        assert len(returns) == 1, repr(outcome.value.record.statements)
+        assert len(returns) == 1, repr(universe.record.statements)
         value = returns[0].value
         assert isinstance(value, TermValue)
         values.append(value.value)
@@ -185,9 +186,9 @@ def test_symbolic_ternary_result_uses_its_authenticated_branch_slot() -> None:
     ternary = next(node for node in tree.nodes() if isinstance(node, IfExp))
     outcome = ternary.sugar().desugar(None)
 
-    assert hasattr(outcome, "value")
-    assert isinstance(outcome.value, GuardedValue)
-    assert outcome.value.guard == branch_result_guard(
+    value = outcome.completed_value()
+    assert isinstance(value, GuardedValue), outcome
+    assert value.guard == branch_result_guard(
         branch_result_slot(ternary.test), ternary.fragment
     )
 
@@ -235,8 +236,7 @@ def test_boolean_short_circuit_returns_the_exact_stopping_operand(
 
     outcome = BoolOpSugar(kind, (left, Skipped()), "boolop-site").desugar(None)
 
-    assert hasattr(outcome, "value")
-    assert outcome.value is left
+    assert outcome.completed_value() is left, outcome
 
 
 @pytest.mark.parametrize(
