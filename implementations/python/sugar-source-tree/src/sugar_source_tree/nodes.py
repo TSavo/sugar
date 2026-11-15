@@ -2579,6 +2579,17 @@ class SourceUnit:
     _class_namespace_stores_memo: object = field(
         init=False, default=None, repr=False, compare=False
     )
+    # ``(construction context, its workspace root, root, path)``: the seat
+    # the lexical import pass runs under (``_lexical_import_seat``), and
+    # ``(root, path, residency key)``: the key that pass is resident under
+    # for that seat (``_lexical_import_pass``).  Each is rebuilt if what it
+    # was built from is replaced.
+    _lexical_import_seat_memo: object = field(
+        init=False, default=None, repr=False, compare=False
+    )
+    _lexical_import_pass_key_memo: object = field(
+        init=False, default=None, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
@@ -2616,6 +2627,8 @@ class SourceUnit:
         object.__setattr__(self, "_module_binding_states_memo", None)
         object.__setattr__(self, "_module_statement_starts_memo", None)
         object.__setattr__(self, "_class_namespace_stores_memo", None)
+        object.__setattr__(self, "_lexical_import_seat_memo", None)
+        object.__setattr__(self, "_lexical_import_pass_key_memo", None)
 
     def _published_enrollment_decisions(
         self, occurrence: SourceOccurrenceIdentityV1
@@ -3015,17 +3028,28 @@ class SourceUnit:
         """``(root, path)`` this unit's lexical import pass runs under: the
         construction context's workspace root and the unit's file in it, the
         same seat the kit's demand pass uses, so the module name (and so every
-        relative import's target) is the one the demands carry."""
+        relative import's target) is the one the demands carry.
+
+        A function of the unit's file name and the context's workspace root,
+        so it is built once per context and root: every import-bound
+        reference read asks for it (``_lexical_import_pass``)."""
+        context = self.construction_context
+        workspace_root = getattr(context, "workspace_root", None)
+        memo = self._lexical_import_seat_memo
+        if memo is not None and memo[0] is context and memo[1] == workspace_root:
+            return memo[2], memo[3]
         from pathlib import Path
 
-        context = self.construction_context
-        root = getattr(context, "workspace_root", None)
+        root = workspace_root
         path = Path(self.filename)
         if root is None:
             root = path.parent if path.is_absolute() else Path(".")
         root = Path(root)
         if not path.is_absolute() and root.is_absolute():
             path = root / path
+        object.__setattr__(
+            self, "_lexical_import_seat_memo", (context, workspace_root, root, path)
+        )
         return root, path
 
     def module_member_target_symbol(self, name: str) -> Optional[str]:
@@ -3061,15 +3085,34 @@ class SourceUnit:
         The door binds the typed tree before any reader runs
         (``Backend.materialize_module`` builds the tree structurally, then
         ``bind_typed_module``), so there is no window before the tree: a unit
-        without it refuses by name (``_require_typed_module``)."""
+        without it refuses by name (``_require_typed_module``).
+
+        Every import-bound reference read asks (``import_reference_target``,
+        once or more per name, attribute chain and call), so the key the
+        pass is resident under (``lexical_import_pass_key``: the module name
+        this seat spells, its package role) is built once per seat, and each
+        ask is the one residency lookup under it."""
         module = self._require_typed_module(
             "SourceUnit._lexical_import_pass", blame=self.filename
         )
         from sugar_source_tree.process_resident_file import (
             get_or_prepare_lexical_import_pass,
+            lexical_import_pass_key,
+            resident_lexical_import_pass,
         )
 
         root, path = self._lexical_import_seat()
+        memo = self._lexical_import_pass_key_memo
+        if memo is None or memo[0] is not root or memo[1] is not path:
+            memo = (
+                root,
+                path,
+                lexical_import_pass_key(root, path, self.source_cid, {}),
+            )
+            object.__setattr__(self, "_lexical_import_pass_key_memo", memo)
+        resident = resident_lexical_import_pass(memo[2])
+        if resident is not None:
+            return resident
         return get_or_prepare_lexical_import_pass(
             module,
             root=root,

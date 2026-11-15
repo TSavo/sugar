@@ -313,6 +313,41 @@ def _lexical_key(
     return (source_cid, module_name, module_is_package, id_items)
 
 
+def lexical_import_pass_key(
+    root, path, source_cid: str, module_identities: dict | None = None
+) -> tuple:
+    """The key the lexical import pass of the file at ``path`` under ``root``
+    is resident under (``_lexical_key``): its content CID, the module name
+    the seat spells (None outside the root), its package role and the
+    identity map.  The one speller of that key: the pass's own door
+    (``get_or_prepare_lexical_import_pass``) and a unit that asks for its
+    pass many times (``SourceUnit._lexical_import_pass``) both read it."""
+    from pathlib import Path
+
+    from sugar_lift_py_tests.import_binding import module_name_for_path
+
+    root_p = Path(root)
+    path_p = Path(path)
+    module_is_package = path_p.name == "__init__.py"
+    try:
+        module_name = module_name_for_path(root_p, path_p)
+    except ValueError:
+        # Outside the root: the pass itself refuses this seat on a miss.
+        module_name = None
+    return _lexical_key(source_cid, module_name, module_is_package, module_identities)
+
+
+def resident_lexical_import_pass(key: tuple) -> Any:
+    """The lexical import pass resident under ``key``
+    (``lexical_import_pass_key``), touched as the most recently used, or
+    None when none is resident: the hit ``get_or_prepare_lexical_import_pass``
+    answers with."""
+    hit = _LEXICAL.get(key)
+    if hit is not None:
+        _LEXICAL.move_to_end(key)
+    return hit
+
+
 def get_or_prepare_lexical_import_pass(
     module,
     *,
@@ -330,23 +365,13 @@ def get_or_prepare_lexical_import_pass(
     """
     from pathlib import Path
 
-    from sugar_lift_py_tests.import_binding import (
-        _run_lexical_import_pass_on_module,
-        module_name_for_path,
-    )
+    from sugar_lift_py_tests.import_binding import _run_lexical_import_pass_on_module
 
     root_p = Path(root)
     path_p = Path(path)
-    module_is_package = path_p.name == "__init__.py"
-    try:
-        module_name = module_name_for_path(root_p, path_p)
-    except ValueError:
-        # Outside the root: the pass itself refuses this seat on a miss.
-        module_name = None
-    key = _lexical_key(source_cid, module_name, module_is_package, module_identities)
-    hit = _LEXICAL.get(key)
+    key = lexical_import_pass_key(root_p, path_p, source_cid, module_identities)
+    hit = resident_lexical_import_pass(key)
     if hit is not None:
-        _LEXICAL.move_to_end(key)
         return hit
 
     _LEXICAL_PREPARE_COUNTS[source_cid] = _LEXICAL_PREPARE_COUNTS.get(source_cid, 0) + 1
