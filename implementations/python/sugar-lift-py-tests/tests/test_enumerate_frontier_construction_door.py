@@ -43,8 +43,6 @@ from sugar_lift_py_tests import lift_rpc
 
 # The exact text the masked board reported 772 times, one per file.
 ABSENT_AUTHORITY = "With manager has no injected authenticated preconstruction authority"
-# The exact text a supplied-but-empty authority must report instead.
-LOOKUP_FAILURE = "authenticated preconstruction resolution has no contract ref"
 
 
 def _facts_leaf(workspace: Path, file_rel: str) -> dict:
@@ -102,70 +100,36 @@ def test_facts_leaf_does_not_report_absent_construction_authority(
     )
 
 
-def test_facts_leaf_keeps_the_unresolvable_with_a_countable_panic(
+def test_facts_leaf_builds_a_with_whose_manager_nothing_authenticates(
     tmp_path: Path,
 ) -> None:
-    """ARM TWO. Supplying the authority must not buy a single ``with`` its way in.
+    """ARM TWO. A ``with`` over a manager nothing authenticates is built.
 
-    This manager is a bare formal parameter: nothing authenticates it, so the
-    provisional table holds a typed gap row at its use-site and no contract ref
-    is manufactured for it. It stays a countable construction panic -- named as
-    the product's own lookup failure at ``With._construct_sugar``, not as the
-    instrument's missing authority.
+    This manager is a bare formal parameter. The table answers imported calls
+    only; every other head keeps the undecided row, and its manager is the
+    value the head reduces to (``With._reduced_manager_sugar``): each step of
+    it is decided at reduce, two-faced and owing the one undecided member
+    where the value's type is not known. So the tree is built -- no
+    construction panic, neither the instrument's missing authority nor a
+    lookup failure -- and no contract ref is manufactured for it
+    (``test_facts_leaf_never_manufactures_a_contract_ref``).
 
-    Without this arm, arm one is satisfiable by deleting the demand.
+    It used to be a countable construction panic at ``With._construct_sugar``
+    (``authenticated preconstruction resolution has no contract ref``); that
+    refusal was the source-derived manager pre-pass, which is deleted.
     """
     (tmp_path / "consumer.py").write_text(UNRESOLVABLE_WITH, encoding="utf-8")
 
     core = _facts_leaf(tmp_path, "consumer.py")
-    assert core["status"] == "failed"
-    with_gaps = [
-        gap
-        for gap in _panic_gaps(core)
-        if str(gap.get("owner")) == "With._construct_sugar"
-    ]
-    assert with_gaps, f"the With demand stopped biting: {core['panics']}"
-    assert any(LOOKUP_FAILURE in str(gap.get("observed")) for gap in with_gaps), (
-        "an unresolvable manager must name the lookup failure, never a missing "
-        f"authority: {with_gaps}"
+    assert core["status"] == "clean", core
+    assert _panic_gaps(core) == [], core["panics"]
+
+    source_file = lift_rpc.open_source_file_for_construction(
+        tmp_path / "consumer.py", root=tmp_path
     )
-    assert all(
-        str(gap.get("observedEventType", "")).endswith(
-            ".ContextManagerResolutionConstructionGap"
-        )
-        for gap in with_gaps
-    ), with_gaps
-
-
-def test_facts_leaf_terminal_names_the_resolution_that_actually_ran(
-    tmp_path: Path,
-) -> None:
-    """ARM THREE. The terminal carries testimony only a real resolution can carry.
-
-    A missing authority has nothing to say about the manager: it reports the
-    same sentence at every use-site. A resolution that RAN reports what it
-    found -- here the demand row's own ``runtime-selected`` kind, at this exact
-    use-site. That suffix is unforgeable by the absent-authority arm, which is
-    what makes this a discriminator rather than a restatement of arm two.
-
-    NOT asserted here: that a later function in the same file now gets
-    measured. An unresolvable ``with`` still terminates the module root, so a
-    file whose only ``with`` cannot resolve reports the same one terminal as
-    before -- with a different, honest name. Unmasking shows up on files whose
-    ``with``es DO resolve, which needs an enrolled distribution and is measured
-    on the corpus, not here.
-    """
-    (tmp_path / "consumer.py").write_text(UNRESOLVABLE_WITH, encoding="utf-8")
-
-    core = _facts_leaf(tmp_path, "consumer.py")
-    observed = [str(gap.get("observed")) for gap in _panic_gaps(core)]
-    assert any(
-        text.startswith(LOOKUP_FAILURE) and text != LOOKUP_FAILURE
-        for text in observed
-    ), (
-        "the terminal names no resolution outcome -- nothing resolved, the "
-        f"entrance only reported its own absence: {observed}"
-    )
+    function = next(source_file.functions())
+    (statement,) = function.sugar().statements
+    assert type(statement).__name__.startswith("With"), type(statement).__name__
 
 
 def test_frontier_leaf_never_reaches_the_bare_door(tmp_path: Path) -> None:
