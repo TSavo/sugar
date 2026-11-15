@@ -1614,53 +1614,42 @@ def _exit_reads(definition, start: BindingMap, final: BindingMap) -> tuple:
     The body reduces each read where each arm leaves it, completed or
     halted, and the call carries the values out: the one projection of what
     a callee did to what its caller sees
-    (``call_site_value.caller_visible_values``).  Only a body every path
-    through which is the threading's (``_straight_line_helper``: no loop, no
-    early ``return``, guards that only raise), so a read after its last
-    statement is the object as every completed arm leaves it; a caller
-    follows no other (``container_mutation.source_helper_actual_states``).
-    A changed object is one a caller follows as changed: a state of the same
-    object through the one door or a nested call's carried value
+    (``call_site_value.caller_visible_values``).  Any body a call by name
+    runs as written (``_followable_helper``), whatever its control flow:
+    the threading joins each object over the branches, so the read after
+    the last statement is the object as every arm that reaches the end
+    leaves it, and a ``return`` carries its own read where it stands
+    (``FrameReturn``); a caller follows the same objects
+    (``container_mutation.source_helper_actual_states``).  A changed object
+    is one a caller follows as changed: a state of the same object through
+    the one door or a nested call's carried value on some arm
     (``_changed_state``), or a cell the body declares ``nonlocal`` and
-    rebinds.
+    rebinds on some arm (``_rebinds``).  A cell one arm rebinds and another
+    changes is carried by none (the caller keeps the havoc).
     """
     from .container_mutation import (
-        _MUTATED_BINDINGS,
         _changed_state,
+        _followable_helper,
         _free_names,
         _read_of,
-        _same_read,
+        _rebinds,
         _state,
-        _straight_line_helper,
         exit_read_keys,
     )
 
-    if not _straight_line_helper(definition):
+    if not _followable_helper(definition):
         return ()
     references = definition._module_global_references()
     start = {**start, **references}
-    captured, _coordinates = definition._captured_bindings()
     declared = {name for name, nonlocal_ in _free_names(definition) if nonlocal_}
-    named = (
-        *(
-            (f"actual:{index}", param.name)
-            for index, param in enumerate(definition.params)
-        ),
-        *((f"cell:{name}", name) for name in captured),
-        *((f"global:{name}", name) for name in sorted(references)),
-    )
     reads = []
-    for label, name in named:
+    for label, name in _shared_names(definition, references):
         if name not in final or name not in start or final[name] is start[name]:
             continue
         entry = _state(start[name])
-        written = _read_of(final[name])
-        rebound = (
-            name in declared
-            and written is not None
-            and getattr(written, "kind", None) not in _MUTATED_BINDINGS
-            and not _same_read(written, entry)
-        )
+        rebound = _rebinds(_read_of(final[name]), entry) if name in declared else False
+        if rebound is None:
+            continue
         if not rebound and _changed_state(_state(final[name]), entry) is not True:
             continue
         read = _name_read(definition, name, final)
@@ -1668,6 +1657,150 @@ def _exit_reads(definition, start: BindingMap, final: BindingMap) -> tuple:
             continue
         reads.append((label, read.sugar(), exit_read_keys(read)))
     return tuple(reads)
+
+
+def _shared_names(definition, references) -> tuple:
+    """``((label, name), ...)``: each name ``definition``'s frame shares
+    with a caller -- each formal (``actual:<index>``), each closure cell it
+    reads or declares ``nonlocal`` (``cell:<name>``), each module global it
+    reads (``global:<name>``; ``references``, its
+    ``_module_global_references``)."""
+    captured, _coordinates = definition._captured_bindings()
+    return (
+        *(
+            (f"actual:{index}", param.name)
+            for index, param in enumerate(definition.params)
+        ),
+        *((f"cell:{name}", name) for name in captured),
+        *((f"global:{name}", name) for name in sorted(references)),
+    )
+
+
+# Scope key: the call frame whose every ``return`` reads, where it stands,
+# each object the frame shares with a caller (``_ExitReadFrameV1``).
+_EXIT_READ_FRAME = object()
+
+
+@dataclass(frozen=True, eq=False)
+class _ExitReadFrameV1:
+    """A followed call frame as its threading reads it
+    (``FunctionDef._source_visible_call_frame_unguarded``): each of its own
+    ``return`` statements leaves the frame with the read, where it stands,
+    of each object the frame shares with a caller (``_shared_names``), a
+    ``FrameReturn``.  ``returns``: ``(extent, reads)`` for each of them
+    (``_frame_returns``); ``reads`` is False for a ``return`` after which
+    code still runs before the frame is left, or that a loop may take on
+    any item (a ``finally``, a ``with``'s exit, a loop's body): its read
+    where it stands is not the object as the frame leaves it, so it carries
+    the object undecided.  ``shared``: ``_shared_names``.  ``frame``: the
+    frame's token, which every value it carries out names
+    (``CallerVisibleStateValue.frame``)."""
+
+    returns: tuple
+    shared: tuple
+    frame: object
+
+    def leaving(self, statement, rewritten, scope):
+        """The ``return`` ``statement`` (``rewritten``, already substituted)
+        as the frame leaves by it (``FrameReturn``): each shared object read
+        in ``scope``, the scope the returned value's own calls leave,
+        where its read there is the object as the frame leaves; undecided
+        where it is not, or where nothing is bound to the name there."""
+        reads_here = self.reads_at(statement)
+        labels, reads, undecided = [], [], []
+        for label, name in self.shared:
+            read = _name_read(statement, name, scope) if reads_here else None
+            if read is None:
+                undecided.append(label)
+                continue
+            labels.append(label)
+            reads.append(read)
+        return _frame_return(
+            statement, rewritten.value, labels, reads, undecided, self.frame
+        )
+
+    def reads_at(self, statement):
+        """Whether ``statement`` is one of the frame's own ``return``
+        statements: None when it is not; else whether its read where it
+        stands is the object as the frame leaves by it."""
+        span = statement.span
+        extent = (span.start, span.end)
+        for at, reads in self.returns:
+            if at == extent:
+                return reads
+        return None
+
+
+def _frame_returns(body) -> tuple:
+    """``(extent, reads)`` for each of ``body``'s own ``return`` statements
+    -- not one of a function, lambda or class nested in it -- wherever it
+    stands.  ``reads`` is False where code runs after it before the frame is
+    left (inside a ``try`` with a ``finally``, not in that ``finally``;
+    inside a ``with``) or where a loop runs it (a ``for``'s or a
+    ``while``'s body or ``else``): its read where it stands is not the
+    object as the frame leaves by it."""
+    found: list = []
+
+    def walk(node, reads):
+        if not isinstance(node, Node):
+            return
+        if isinstance(node, Return):
+            found.append(((node.span.start, node.span.end), reads))
+            return
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
+            return
+        if isinstance(node, (For, AsyncFor, While)):
+            for _name, _index, child in node._child_edges():
+                walk(child, False)
+            return
+        if isinstance(node, (With, AsyncWith)):
+            for _name, _index, child in node._child_edges():
+                walk(child, False)
+            return
+        if isinstance(node, (Try, TryStar)) and node.finalbody:
+            for statement in node.body:
+                walk(statement, False)
+            for handler in node.handlers:
+                walk(handler, False)
+            for statement in node.orelse:
+                walk(statement, False)
+            for statement in node.finalbody:
+                walk(statement, reads)
+            return
+        for _name, _index, child in node._child_edges():
+            walk(child, reads)
+
+    for statement in body:
+        walk(statement, True)
+    return tuple(found)
+
+
+def _frame_return(
+    statement: "Node", value, labels, reads, undecided, frame
+) -> "Node":
+    """``statement`` (a followed frame's ``return``, ``value`` its
+    substituted value) carrying the read of each object it shares with a
+    caller where it stands (``reads``, one per label of ``labels``), and
+    the labels of those its read there does not decide (``undecided``)
+    (``FrameReturn``)."""
+    from .backend import Children, Leaf, MaybeChild, materialize
+    from .shadow import ShadowNode, _handle_of
+
+    return materialize(
+        statement.unit,
+        ShadowNode(
+            "FrameReturn",
+            statement.span,
+            (
+                ("value", MaybeChild(None if value is None else _handle_of(value))),
+                ("shared_reads", Children(tuple(_handle_of(read) for read in reads))),
+                ("read_labels", Leaf(tuple(labels))),
+                ("undecided_labels", Leaf(tuple(undecided))),
+                ("frame_token", Leaf(frame)),
+            ),
+        ),
+        statement.reporter,
+    )
 
 
 def _first_formal_stated_by_stores(definition, start: BindingMap, final: BindingMap):
@@ -9775,6 +9908,32 @@ class FunctionDef(Statement):
             self, self.body, formal_scope
         )
         generator_steps = self._source_visible_generator_steps_from(substituted_body)
+        exit_reads = (
+            () if generator_steps is not None else _exit_reads(self, formal_scope, final)
+        )
+        # A body that leaves by a ``return`` before its end: each ``return``
+        # reads, where it stands, what the frame left of each object it
+        # carries out (``FrameReturn``), as the read where the body ends is
+        # every other arm's.  The one threading, with every ``return`` of the
+        # frame's own reading those objects.
+        returns_read = bool(exit_reads) and _returns_before_the_end(self.body)
+        if returns_read:
+            carried = {label for label, _read, _keys in exit_reads}
+            frame = _ExitReadFrameV1(
+                _frame_returns(self.body),
+                tuple(
+                    (label, name)
+                    for label, name in _shared_names(
+                        self, self._module_global_references()
+                    )
+                    if label in carried
+                ),
+                owner_cid,
+            )
+            substituted_body, _changed, final = FunctionDef._substitute_body_to_end(
+                self, self.body, {**formal_scope, _EXIT_READ_FRAME: frame}
+            )
+            exit_reads = _exit_reads(self, formal_scope, final)
         body = SourceVisibleFunctionBodySugar(
             (
                 ()
@@ -9785,11 +9944,9 @@ class FunctionDef(Statement):
                 )
             ),
             self.fragment,
-            exit_reads=(
-                ()
-                if generator_steps is not None
-                else _exit_reads(self, formal_scope, final)
-            ),
+            exit_reads=exit_reads,
+            frame=owner_cid,
+            returns_read=returns_read,
         )
         return SourceVisibleCallFrameV1(
             source_identity_cid=self.unit.source_cid,
@@ -13258,15 +13415,29 @@ class Return(Statement):
         on ``self``, evaluated in place (``_call_on_self_in_place``): the
         exposure rule reads the receiver after it as the call states it left
         it (``container_mutation.calls_on_self_left``), and the ``return``
-        leaves with that."""
-        held = scope.get(_INITIALIZER_RECEIVER)
-        if not isinstance(held, _InitializerReceiverV1) or not held.reads_at(self):
-            return self._substitute_children(scope)
-        from .container_mutation import havoc_after
+        leaves with that.
 
-        rewritten = self._substitute_children(scope)
-        after = havoc_after(rewritten, scope, scope)
-        return self._leaving(held, after, rewritten)
+        A ``return`` of a followed call frame (``_EXIT_READ_FRAME``),
+        wherever it stands (``_frame_returns``), leaves the frame with the
+        read, in the scope the value's own calls leave, of each object the
+        frame shares with a caller (``FrameReturn``): what the frame left of
+        it on the arm that leaves by this ``return``, which the read after
+        the body's last statement is not."""
+        held = scope.get(_INITIALIZER_RECEIVER)
+        frame = scope.get(_EXIT_READ_FRAME)
+        if isinstance(held, _InitializerReceiverV1) and held.reads_at(self):
+            from .container_mutation import havoc_after
+
+            rewritten = self._substitute_children(scope)
+            after = havoc_after(rewritten, scope, scope)
+            return self._leaving(held, after, rewritten)
+        if isinstance(frame, _ExitReadFrameV1) and frame.reads_at(self) is not None:
+            from .container_mutation import havoc_after
+
+            rewritten = self._substitute_children(scope)
+            after = havoc_after(rewritten, scope, scope)
+            return frame.leaving(self, rewritten, after)
+        return self._substitute_children(scope)
 
     def _leaving(self, held, scope, rewritten):
         """This initializer ``return`` (``rewritten``, already substituted)
@@ -13321,6 +13492,49 @@ class InitializerReturn(Return):
             past_exits=(
                 self.past_exits.sugar() if self.past_exits is not None else None
             ),
+        )
+
+
+class FrameReturn(Return):
+    """A ``return`` of a followed call frame (``Return.substitute``,
+    ``_ExitReadFrameV1``) with the read, where it stands, of each object the
+    frame shares with a caller (``shared_reads``, one per label of
+    ``read_labels``), and the labels of those its read there does not
+    decide (``undecided_labels``: code still runs after it, or a loop runs
+    it).  The arm that leaves by it carries each one out of the frame
+    (``ReturnSugar.exit_reads``), as every other arm carries the read where
+    the body ends (``SourceVisibleFunctionBodySugar.exit_reads``): one
+    projection, each arm read where it ended.  ``frame_token``: the frame's
+    (``CallerVisibleStateValue.frame``)."""
+
+    shared_reads: Tuple[Expression, ...]
+    read_labels: tuple
+    undecided_labels: tuple
+    frame_token: str
+    _child_fields = ("value", "shared_reads")
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
+
+        from .container_mutation import exit_read_keys
+
+        return ReturnSugar(
+            value=self.value.sugar() if self.value is not None else None,
+            site=self.fragment,
+            exit_reads=(
+                *(
+                    (label, read.sugar(), exit_read_keys(read))
+                    for label, read in zip(
+                        self.read_labels, self.shared_reads, strict=True
+                    )
+                ),
+                *((label, None, ()) for label in self.undecided_labels),
+            ),
+            frame=self.frame_token,
         )
 
 
