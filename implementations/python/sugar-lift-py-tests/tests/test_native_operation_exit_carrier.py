@@ -21,7 +21,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
-from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
@@ -610,11 +610,13 @@ def test_same_native_operation_demand_can_halt_for_authenticated_actuals():
     assert isinstance(halted, Halted)
     assert halted.effect.exception_name is None
     assert halted.effect.exception_type_coordinate == _Expected("TypeError").identity
+    assert isinstance(halted.effect.occurrence, AuthenticatedRaiseLocus)
     assert (
-        isinstance(halted.effect.occurrence, str) and ":" in halted.effect.occurrence
+        isinstance(halted.effect.occurrence_id, str)
+        and ":" in halted.effect.occurrence_id
     ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {halted.effect.occurrence!r}"
+        f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
 
 
@@ -787,23 +789,29 @@ def test_only_coordinate_authenticated_resolutions_count_as_exceptional_exits():
 
 
 def test_nameless_halt_stays_outside_matching_boundary_end_to_end():
-    body = ExitSet(
-        (
-            Halted(
-                true_guard(),
-                RaiseEffect(occurrence=AuthenticatedRaiseLocus.of("operation-origin")),
-            ),
-        )
+    """A halt with no exception identity is an ``UndeterminedRaiseEffect``:
+    an authenticated ``RaiseEffect`` cannot be built without its type. The
+    boundary consumes only a raise it can authenticate, so the nameless halt
+    leaves the boundary as the halt it came in as -- never consumed, never
+    renamed, never dropped."""
+    nameless = UndeterminedRaiseEffect(
+        occurrence=AuthenticatedRaiseLocus.of("operation-origin"), site=_site()
+    )
+    body = ExitSet((Halted(true_guard(), nameless),))
+
+    projected = body.and_exit(
+        ExitSet.completed(object()),
+        disposition=EffectBoundaryDisposition(
+            matcher=AuthenticatedRaiseMatcher(expected=_Expected("TypeError")),
+            unmet=ExpectationNotMetEffect("raise", "assertion-site"),
+        ),
     )
 
-    with pytest.raises(SugarNotWritten, match="no term to state the test over"):
-        body.and_exit(
-            ExitSet.completed(object()),
-            disposition=EffectBoundaryDisposition(
-                matcher=AuthenticatedRaiseMatcher(expected=_Expected("TypeError")),
-                unmet=ExpectationNotMetEffect("raise", "assertion-site"),
-            ),
-        )
+    assert len(projected.exits) == 1
+    halted = projected.exits[0]
+    assert isinstance(halted, Halted)
+    assert halted.effect is nameless
+    assert halted.effect.exception_type_coordinate is None
 
 
 def test_same_named_exception_keeps_distinct_operation_origins():
@@ -929,11 +937,13 @@ def test_setitem_discharges_and_halts_with_named_exception_identity():
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _Expected("IndexError").identity
+    assert isinstance(halted.effect.occurrence, AuthenticatedRaiseLocus)
     assert (
-        isinstance(halted.effect.occurrence, str) and ":" in halted.effect.occurrence
+        isinstance(halted.effect.occurrence_id, str)
+        and ":" in halted.effect.occurrence_id
     ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {halted.effect.occurrence!r}"
+        f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
 
 
@@ -1173,9 +1183,11 @@ def test_symbolic_formal_subscript_discharges_authenticated_exceptional_through_
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _Expected("TypeError").identity
+    assert isinstance(halted.effect.occurrence, AuthenticatedRaiseLocus)
     assert (
-        isinstance(halted.effect.occurrence, str) and ":" in halted.effect.occurrence
+        isinstance(halted.effect.occurrence_id, str)
+        and ":" in halted.effect.occurrence_id
     ), (
         "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {halted.effect.occurrence!r}"
+        f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
