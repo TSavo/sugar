@@ -23,7 +23,7 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
-from sugar_lift_py_tests.sugar.if_sugar import truth_formula
+from sugar_lift_py_tests.sugar.if_sugar import predicate_formula, truth_formula
 
 
 @dataclass(frozen=True)
@@ -127,6 +127,9 @@ class IfExpSugar(ConstructedTermSugar):
         # not decided here (`5 if c else 6`) is its two faces, each completed
         # truth face selecting the arms under its own guard and a halted
         # truth halting the expression before either arm ran.
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
         from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             plain_completed_value,
@@ -137,6 +140,18 @@ class IfExpSugar(ConstructedTermSugar):
             return truth.sequence(
                 lambda truth_value: self._join_on(
                     truth_formula(ExitSet.completed(truth_value), cond_value), ctx
+                )
+            )
+        if isinstance(truth, NativeOperationExitCarrierV1):
+            # The truth of a formal waits on its caller's actual, exactly as
+            # the statement form's does (``IfSugar._desugar_condition``): the
+            # deferred ``truth`` operation (``SymbolicValue.truth``) is
+            # carried, and each value it discharges to joins the arms through
+            # its own formula.  Never coerced to a formula here -- that was a
+            # bare ``NotImplementedError`` out of ``truth_formula``.
+            return truth.and_then(
+                lambda truth_value: self._join_on(
+                    predicate_formula(truth_value, self.site), ctx
                 )
             )
         return self._join_on(truth_formula(truth, cond_value), ctx)

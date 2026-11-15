@@ -163,6 +163,24 @@ GUARDED_SYMBOLIC_ELSE = (
 )
 
 
+def _discharged_on_an_undecided_condition(tmp_path: Path, source: str, stem: str):
+    """``... if c else ...`` on a formal ``c`` waits for the caller's actual to
+    answer ``bool(c)`` (``NativeOperationExitCarrierV1``, operator ``truth``),
+    as the statement form does: the function alone is never a completion.
+    The caller hands a value nothing decides, whose truth is ``py.truthy(c)``;
+    the arms join under that formula."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+    carrier = _outcome(tmp_path, source, stem)
+    assert isinstance(carrier, NativeOperationExitCarrierV1), type(carrier)
+    assert carrier.demand.operator == "truth"
+    (condition,) = carrier.demand.operand_coordinate_cids
+    return carrier.discharge(None, {condition: SymbolicValue(make_var("c"))})
+
+
 def _halted_unpack_exits(outcome):
     """The halted exits of a partition that carry the retained unpack demand:
     the runtime unpack's undetermined raise (``runtime_unpack_faces``), not
@@ -189,7 +207,9 @@ def test_guarded_arm_effect_rides_the_branch_guard(tmp_path: Path) -> None:
     """
     from sugar_lift_py_tests.ir import not_
 
-    outcome = _outcome(tmp_path, GUARDED_SYMBOLIC_ELSE, "guarded_else")
+    outcome = _discharged_on_an_undecided_condition(
+        tmp_path, GUARDED_SYMBOLIC_ELSE, "guarded_else"
+    )
     halted = _halted_unpack_exits(outcome)
     assert len(halted) == 2, outcome
     first, second = (set(getattr(h.guard, "operands", (h.guard,))) for h in halted)
@@ -208,9 +228,12 @@ def test_guarded_arm_effect_is_not_owed_unconditionally(tmp_path: Path) -> None:
     from sugar_lift_py_tests.outcome import true_guard
 
     halted = _halted_unpack_exits(
-        _outcome(tmp_path, GUARDED_SYMBOLIC_ELSE, "guarded_else")
+        _discharged_on_an_undecided_condition(
+            tmp_path, GUARDED_SYMBOLIC_ELSE, "guarded_else"
+        )
     )
-    assert halted[0].guard != true_guard()
+    assert halted, "the guarded arms' unpack halts were dropped"
+    assert all(halt.guard != true_guard() for halt in halted)
 
 
 # ---------------------------------------------------------------------------
