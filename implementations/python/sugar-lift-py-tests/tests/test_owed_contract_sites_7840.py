@@ -153,7 +153,12 @@ def test_a_formal_subscript_owes_the_carrier_demand_instead() -> None:
     assert len(outcome.exits) == 2
     (completed,) = (exit_ for exit_ in outcome.exits if isinstance(exit_, Completed))
     (halted,) = outcome.halts()
-    assert "python:unanswered_native_operation.completes" in repr(completed.guard)
+    # A subscript takes the one form every undecided subscript takes, over
+    # the demand's own operand terms (``_unanswered_exits``): it completes
+    # under ``python:subscript.completes``, never under a second, generic
+    # unanswered-operation guard.
+    assert "python:subscript.completes" in repr(completed.guard)
+    assert "python:unanswered_native_operation" not in repr(completed.guard)
     assert type(halted.effect) is UndeterminedRaiseEffect
     assert halted.effect.exception_name is None
     assert outcome.owed_items()
