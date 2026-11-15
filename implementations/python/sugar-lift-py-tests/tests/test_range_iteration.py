@@ -161,14 +161,24 @@ def test_range_over_a_formal_keeps_its_own_halt_only(name: str) -> None:
 
 # The decided ``range`` the solver twin iterates, and the same call with a
 # zero step, which CPython refuses with ``ValueError`` before any item.
-_SOLVER_TRUTH = _DECIDED["comprehension"]
+#
+# The solver twin iterates by a ``for``, never a comprehension: a
+# comprehension over a range object is its symbolic fold (the range is no
+# finite container, ``comprehension_sugar._finite_members``), and the fold
+# completing is its read, owed as the undecided member (#8916, step 6), so
+# the comprehension's truthful source reads ``open`` whatever ``range`` does
+# (scorecard at d95c22a49: the test row discharged beside the fold's and the
+# member's owed rows).  A loop that reads neither its item nor a carried name
+# owes nothing, so the twin asks only about ``range``'s halts.
+_SOLVER_TRUTH = _DECIDED["loop"]
 _SOLVER_ZERO_STEP = (
     "def test_it():\n"
     "    n = len([1, 2, 3])\n"
-    "    ys = [i for i in range(0, n, 0)]\n"
+    "    for i in range(0, n, 0):\n"
+    "        pass\n"
     "    assert True\n"
 )
-_SOLVER_FORMAL = _FORMAL["comprehension"]
+_SOLVER_FORMAL = _FORMAL["loop"]
 
 
 def test_a_dropped_range_halt_would_read_sat(tmp_path: Path) -> None:
