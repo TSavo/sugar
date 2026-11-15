@@ -457,18 +457,13 @@ impl Runner {
             &self.compilers,
             &self.cfg.project_root,
         );
-        for cr in &consistency_results {
-            match cr.verdict {
-                ObligationVerdict::Discharged => {
-                    n_solved.fetch_add(1, Ordering::Relaxed);
-                }
-                _ => {
-                    violations += 1;
-                    n_residue.fetch_add(1, Ordering::Relaxed);
-                }
-            }
-            report_stage::add_consistency_result(cr, &mut report);
-        }
+        violations += fold_consistency_results(
+            &consistency_results,
+            &pool,
+            &n_solved,
+            &n_residue,
+            &mut report,
+        );
         report_stage::add_toolchain_plans(&pool, &mut report);
         // Step 9: an operation with no symbol is answered where the joined
         // contracts decide it; every other `undecided` member is owed.
@@ -705,18 +700,13 @@ impl Runner {
             compilers,
             &self.cfg.project_root,
         );
-        for cr in &consistency_results {
-            match cr.verdict {
-                ObligationVerdict::Discharged => {
-                    n_solved.fetch_add(1, Ordering::Relaxed);
-                }
-                _ => {
-                    violations += 1;
-                    n_residue.fetch_add(1, Ordering::Relaxed);
-                }
-            }
-            report_stage::add_consistency_result(cr, &mut report);
-        }
+        violations += fold_consistency_results(
+            &consistency_results,
+            &pool,
+            &n_solved,
+            &n_residue,
+            &mut report,
+        );
         report_stage::add_toolchain_plans(&pool, &mut report);
         // Step 9: an operation with no symbol is answered where the joined
         // contracts decide it; every other `undecided` member is owed.
@@ -1268,6 +1258,38 @@ fn fold_self_post_results(
             _ => {
                 violations += 1;
                 counters.residue.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+    violations
+}
+
+/// Fold the consistency verdicts into the report and the tier counters. A
+/// row a staged import alone spoke is that import's state (step 9,
+/// `consistency::result_is_imported`): carried in `Report::imported` with its
+/// status and moving no counter. Returns the project's own not-discharged
+/// count. The one fold both run paths use.
+fn fold_consistency_results(
+    results: &[crate::consistency::ConsistencyResult],
+    pool: &MementoPool,
+    solved: &AtomicUsize,
+    residue: &AtomicUsize,
+    report: &mut Report,
+) -> usize {
+    let groups = crate::consistency::groups_spoken_only_by_imports(pool);
+    let mut violations = 0usize;
+    for cr in results {
+        let imported = crate::consistency::result_is_imported(pool, &groups, cr);
+        if report_stage::add_consistency_result_spoken(cr, imported, report) {
+            continue;
+        }
+        match cr.verdict {
+            ObligationVerdict::Discharged => {
+                solved.fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {
+                violations += 1;
+                residue.fetch_add(1, Ordering::Relaxed);
             }
         }
     }

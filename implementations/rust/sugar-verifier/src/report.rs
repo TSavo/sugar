@@ -287,8 +287,37 @@ pub fn add_consistency_result(result: &ConsistencyResult, r: &mut Report) {
     );
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn add_consistency_with_verification(
+/// One consistency result through the one door, with its speaker (step 9).
+/// A row a staged import alone spoke (`imported`, decided by
+/// `consistency::result_is_imported`) is that proof's own claim about its own
+/// test: carried as the import's state with its status, never one of this
+/// project's rows, counts or verdict. Every other result is the project's own
+/// row. Returns `imported`.
+pub fn add_consistency_result_spoken(
+    result: &ConsistencyResult,
+    imported: bool,
+    r: &mut Report,
+) -> bool {
+    if !imported {
+        add_consistency_result(result, r);
+        return false;
+    }
+    add_imported(
+        consistency_row(
+            &result.contract_cid,
+            &result.property_name,
+            result.verdict,
+            &result.reason,
+            VerifyEffectCarrier::from_producer(result.verdict, result.effect.as_ref()),
+            result.verification.as_ref().map(|value| value.to_json()),
+            result.locus.clone(),
+        ),
+        r,
+    );
+    true
+}
+
+fn consistency_row(
     contract_cid: &str,
     property_name: &str,
     verdict: ObligationVerdict,
@@ -296,8 +325,7 @@ pub fn add_consistency_with_verification(
     verify_effect: VerifyEffectCarrier,
     verification: Option<Json>,
     locus: Option<SourceLocus>,
-    r: &mut Report,
-) {
+) -> ReportRow {
     // Carry the assertion's own source locus (file/line/column, recovered from
     // the contract memento's `file`+`span`) onto the row so an `unsatisfied`
     // verdict says WHERE. Without this, directory-prove drops the source and an
@@ -314,7 +342,7 @@ pub fn add_consistency_with_verification(
         source_column,
         ..CallSite::default()
     };
-    r.rows.push(ReportRow {
+    ReportRow {
         callsite: cs,
         status: verdict,
         reason: reason.to_string(),
@@ -322,7 +350,29 @@ pub fn add_consistency_with_verification(
         body_discharge_tier: None,
         verification,
         verify_effect,
-    });
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn add_consistency_with_verification(
+    contract_cid: &str,
+    property_name: &str,
+    verdict: ObligationVerdict,
+    reason: &str,
+    verify_effect: VerifyEffectCarrier,
+    verification: Option<Json>,
+    locus: Option<SourceLocus>,
+    r: &mut Report,
+) {
+    r.rows.push(consistency_row(
+        contract_cid,
+        property_name,
+        verdict,
+        reason,
+        verify_effect,
+        verification,
+        locus,
+    ));
     if verdict == ObligationVerdict::Discharged {
         r.discharged += 1;
     } else if verdict == ObligationVerdict::Refused {
