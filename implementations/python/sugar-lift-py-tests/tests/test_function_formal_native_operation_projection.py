@@ -48,54 +48,49 @@ def test_function_definition_preserves_formal_demand_until_caller_discharge() ->
     assert isinstance(function.sugar().desugar(None), NativeOperationExitCarrierV1)
 
 
-def test_ordinary_function_call_discharge_can_complete() -> None:
-    outcome = _call_outcome("1, 2")
+def _edge(outcome):
+    """#7757 step 5 (#8705, "Edge, join at prove"): a call of a same-file def
+    is its coordinate and edge, the one unanswered call -- it completes under
+    its ``python:unknown_callee_call.completes`` atom and halts under the
+    complement naming nothing -- never ``compare``'s body applied to the
+    actuals.  ``compare``'s carrier over its formals (its contract) is what
+    prove joins; whether ``None < 2`` raises ``TypeError`` is decided there.
+    Before #8705 these tests read the completion and the named ``TypeError``
+    off the body applied at the call."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 
     assert isinstance(outcome, ExitSet)
-    assert len(outcome.exits) == 1
-    assert isinstance(outcome.exits[0], Completed)
-
-
-def test_ordinary_function_call_discharge_can_halt_with_named_identity() -> None:
-    from sugar_lift_py_tests.ir import ctor, str_const
-
-    outcome = _call_outcome("None, 2")
-
-    assert isinstance(outcome, ExitSet)
-    assert len(outcome.exits) == 1
-    halted = outcome.exits[0]
+    assert len(outcome.exits) == 2
+    (completed,) = (exit_ for exit_ in outcome.exits if isinstance(exit_, Completed))
+    (halted,) = outcome.halts()
     assert isinstance(halted, Halted)
-    # Pin the positive identity — `is not None` is a weak tooth under a name
-    # that promises TypeError from None < int.
-    type_error = ctor(
-        "python:exception_type_identity",
-        [str_const("builtins"), str_const("TypeError")],
-    )
-    assert halted.effect.exception_type_coordinate == type_error
-    assert halted.effect.exception_name == "TypeError"
-    assert (
-        isinstance(halted.effect.occurrence_id, str)
-        and ":" in halted.effect.occurrence_id
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {halted.effect.occurrence_id!r}"
-    )
+    assert completed.guard.name == "python:unknown_callee_call.completes"
+    assert type(halted.effect) is UndeterminedRaiseEffect
+    assert halted.effect.exception_name is None
+    assert "TypeError" not in repr(outcome)
+    call = completed.value.term.args[0]
+    assert call.name.startswith("call:")
+    return call, halted
 
 
-def test_swapped_actuals_retain_the_operation_coordinate() -> None:
+def test_a_call_python_completes_is_its_coordinate_and_edge() -> None:
+    _edge(_call_outcome("1, 2"))
+
+
+def test_a_call_python_raises_at_is_its_coordinate_and_edge() -> None:
+    _edge(_call_outcome("None, 2"))
+
+
+def test_swapped_actuals_are_carried_in_order_by_each_call() -> None:
     forward, swapped = _call_outcomes("None, 2", "2, None")
 
-    forward_halt = forward.exits[0]
-    swapped_halt = swapped.exits[0]
-    assert isinstance(forward_halt, Halted)
-    assert isinstance(swapped_halt, Halted)
-    # An occurrence is the operation's coordinate and the call that reached
-    # it: ``<file:line:col>@call:<call cid>``.  Both halts leave at the one
-    # ``left < right``; the two calls are two occurrences of it.
-    forward_site, forward_call = forward_halt.effect.occurrence_id.split("@call:")
-    swapped_site, swapped_call = swapped_halt.effect.occurrence_id.split("@call:")
-    assert forward_site == swapped_site == "formal_calls.py:2:11"
-    assert forward_call != swapped_call
+    forward_call, forward_halt = _edge(forward)
+    swapped_call, swapped_halt = _edge(swapped)
+    # Each call is its own coordinate: the swapped actuals are carried in
+    # order, and each call is its own occurrence.
+    assert forward_call.name == swapped_call.name
+    assert tuple(forward_call.args) == tuple(reversed(tuple(swapped_call.args)))
+    assert forward_halt.effect.occurrence_id != swapped_halt.effect.occurrence_id
 
 
 def test_shadowed_function_name_does_not_borrow_module_definition() -> None:

@@ -160,8 +160,42 @@ def test_nearby_condition_slot_is_rejected_at_the_if_occurrence() -> None:
     assert "if-construct-slot.py:2:4" in message
 
 
+def _call_and_callee(source: str):
+    """``choose(None)`` and ``choose``'s own reduction.
+
+    #7757 step 5 (#8705, "Edge, join at prove"): the call is its coordinate
+    and edge, the one unanswered call (completes under its
+    ``python:unknown_callee_call.completes`` atom, halts under the complement
+    with nothing named), never ``choose``'s body applied to ``None``.  What
+    the body does with ``None`` is stated by ``choose``'s contract over its
+    formal and decided at prove: its reduction is the condition's carrier,
+    pending on ``value < 1`` before either branch is entered, so a halt of the
+    condition is stated ahead of both bodies."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
+    from sugar_source_tree.nodes import FunctionDef
+
+    tree = _tree(source)
+    (outcome,) = tuple(
+        node.sugar().desugar(None) for node in tree.nodes() if isinstance(node, Call)
+    )
+    assert isinstance(outcome, ExitSet)
+    assert len(outcome.exits) == 2
+    (halted,) = outcome.halts()
+    assert isinstance(halted, Halted)
+    assert type(halted.effect) is UndeterminedRaiseEffect
+    assert halted.effect.exception_name is None
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    pending = function.sugar().desugar(None)
+    assert isinstance(pending, NativeOperationExitCarrierV1)
+    assert pending.demand.operator == "less_than"
+    return tree, outcome, halted
+
+
 def test_condition_halt_bypasses_both_if_bodies() -> None:
-    source = (
+    _call_and_callee(
         "def choose(value):\n"
         "    if value < 1:\n"
         "        return 10\n"
@@ -170,30 +204,10 @@ def test_condition_halt_bypasses_both_if_bodies() -> None:
         "\n"
         "choose(None)\n"
     )
-    outcomes = tuple(
-        node.sugar().desugar(None)
-        for node in _tree(source).nodes()
-        if isinstance(node, Call)
-    )
-
-    assert len(outcomes) == 1
-    outcome = outcomes[0]
-    assert isinstance(outcome, ExitSet)
-    assert len(outcome.exits) == 1
-    halted = outcome.exits[0]
-    assert isinstance(halted, Halted)
-    assert (
-        isinstance(halted.effect.occurrence_id, str)
-        and ":" in halted.effect.occurrence_id
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {halted.effect.occurrence_id!r}"
-    )
-    assert halted.state is not None
 
 
 def test_condition_halt_emits_no_occurrence_from_toxic_body_twins() -> None:
-    source = (
+    tree, outcome, halted = _call_and_callee(
         "def choose(value):\n"
         "    if value < 1:\n"
         "        return None < 2\n"
@@ -202,33 +216,17 @@ def test_condition_halt_emits_no_occurrence_from_toxic_body_twins() -> None:
         "\n"
         "choose(None)\n"
     )
-    tree = _tree(source)
     comparisons = tuple(node for node in tree.nodes() if isinstance(node, Compare))
     assert len(comparisons) == 3
-    (outcome,) = tuple(
-        node.sugar().desugar(None) for node in tree.nodes() if isinstance(node, Call)
-    )
-
-    assert isinstance(outcome, ExitSet)
-    assert len(outcome.exits) == 1
-    halted = outcome.exits[0]
-    assert isinstance(halted, Halted)
 
     def address(site) -> str:
         return f"{site.filename}:{site.line}:{site.col}"
 
-    condition_address = address(comparisons[0].sugar().site)
     body_addresses = {address(node.sugar().site) for node in comparisons[1:]}
-    assert condition_address not in body_addresses
-    # The halt is raised at the condition, in the frame ``choose(None)``
-    # entered: its occurrence is the condition's address, then the call it
-    # was reached through (``occurrence_key``) -- content, never a fragment's
-    # repr, and never either body comparison.
-    raised_at, separator, path = halted.effect.occurrence_id.partition("@")
-    assert raised_at == condition_address
-    assert separator == "@" and path.startswith("call:")
-    assert raised_at not in body_addresses
-    assert halted.state is not None
+    # The call's own halt is raised at the call, never at a body comparison:
+    # nothing of ``choose``'s body is read at the call.
+    assert not any(body in repr(outcome) for body in body_addresses)
+    assert halted.effect.exception_name is None
 
 
 def test_complementary_results_share_only_the_condition_owned_slot() -> None:

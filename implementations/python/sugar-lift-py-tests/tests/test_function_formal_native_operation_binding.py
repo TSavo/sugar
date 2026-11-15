@@ -1,19 +1,28 @@
-"""Formal native operations use the one Python call binder."""
+"""Formal native operations use the one Python call binder.
+
+#7757 step 5 (#8705, the owner's ruling "Edge, join at prove"): a call of a
+same-file def is its coordinate and edge, never the callee's body applied to
+its actuals.  ``helper``'s contract states its one ``left + right`` carrier
+over its formals; each call carries its binding in its call term exactly as
+prove's one binder (``consistency::bind_call_arguments``) binds that
+contract: a positional actual as written, a keyword as ``py.kwarg``, an
+omitted defaulted formal as ``py.default`` with the value its ``def``
+statement bound.  Whether ``None + 2`` raises ``TypeError`` is decided at
+prove, where the join binds the actuals; nothing of it is named at the call.
+
+Deleted with the body-following application (#8705), which they measured:
+``test_wrong_boundary_type_leaves_named_binary_exception_unconsumed`` (a
+``TypeError`` named at the call reaching a ``ValueError`` boundary) and
+``test_keyword_and_default_calls_can_complete_from_the_existing_floor`` (a
+completion decided at the call).
+"""
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.context_manager_contract import (
-    AuthenticatedRaiseMatcher,
-    EffectBoundaryDisposition,
-)
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.effect.expectation_not_met_effect import (
-    ExpectationNotMetEffect,
-)
 from sugar_lift_py_tests.floor import TermValue
-from sugar_lift_py_tests.ir import ctor, str_const
+from sugar_lift_py_tests.ir import str_const
 from sugar_lift_py_tests.outcome import (
-    Completed,
     ExitSet,
     Halted,
     NativeOperationExitCarrierV1,
@@ -55,31 +64,45 @@ def _call_outcomes(signature: str, *actuals: str):
     return tuple(node.sugar().desugar(None) for node in nodes)
 
 
-def _assert_named_halt(outcome) -> None:
+def _call_term(outcome):
+    """The call's coordinate ``call:<target>(<arguments>)``: the one
+    unanswered call, completing under its ``python:unknown_callee_call.
+    completes`` atom and halting under the complement naming nothing."""
     assert isinstance(outcome, ExitSet)
-    assert len(outcome.exits) == 1
-    halted = outcome.exits[0]
+    assert len(outcome.exits) == 2
+    (halted,) = outcome.halts()
     assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate == _Expected("TypeError").identity
-    assert (
-        isinstance(halted.effect.occurrence_id, str)
-        and ":" in halted.effect.occurrence_id
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {halted.effect.occurrence_id!r}"
-    )
+    assert halted.effect.exception_name is None
+    assert halted.effect.exception_type_coordinate is None
+    (completed,) = (face for face in outcome.exits if face is not halted)
+    assert completed.guard.name == "python:unknown_callee_call.completes"
+    result = completed.value.term
+    assert result.name == "python:call_result"
+    call = result.args[0]
+    assert call.name.startswith("call:")
+    return call
 
 
 def test_positional_actuals_discharge_through_python_binder() -> None:
-    _assert_named_halt(_call_outcome("left, right", "None, 2"))
+    call = _call_term(_call_outcome("left, right", "None, 2"))
+    assert len(call.args) == 2
+    assert not any(str(getattr(arg, "name", "")).startswith("py.") for arg in call.args)
 
 
 def test_keyword_actuals_discharge_through_python_binder() -> None:
-    _assert_named_halt(_call_outcome("left, right", "left=None, right=2"))
+    call = _call_term(_call_outcome("left, right", "left=None, right=2"))
+    assert [arg.name for arg in call.args] == ["py.kwarg", "py.kwarg"]
+    assert [arg.args[0] for arg in call.args] == [
+        str_const("left"),
+        str_const("right"),
+    ]
 
 
 def test_default_actual_is_keyed_to_its_formal_coordinate() -> None:
-    _assert_named_halt(_call_outcome("left, right=2", "None"))
+    call = _call_term(_call_outcome("left, right=2", "None"))
+    _actual, default = call.args
+    assert default.name == "py.default"
+    assert default.args[0] == str_const("right")
 
 
 def test_helper_alone_retains_the_undischarged_binary_carrier() -> None:
@@ -95,69 +118,21 @@ def test_helper_alone_retains_the_undischarged_binary_carrier() -> None:
 
 
 def test_positional_keyword_and_default_calls_reach_the_same_binary_demand() -> None:
-    positional, keyword, default = _call_outcomes(
-        "left, right=2", "None, 2", "None, right=2", "None"
-    )
-
-    halted = []
-    for outcome in (positional, keyword, default):
-        _assert_named_halt(outcome)
-        halted.append(outcome.exits[0])
-    assert {exit_.effect.exception_type_coordinate for exit_ in halted} == {
-        halted[0].effect.exception_type_coordinate
-    }
-    # One binary operation, reached by three calls: the same ``left + right``
-    # locus, and each call its own evaluation of it (a halt that leaves a
-    # callee is stamped with that call's frame, ``call_owned``).
-    occurrences = [exit_.effect.occurrence_id for exit_ in halted]
-    assert {occurrence.split("@", 1)[0] for occurrence in occurrences} == {
-        "formal_binding.py:2:11"
-    }
-    assert all("@call:" in occurrence for occurrence in occurrences)
-    assert len(set(occurrences)) == 3
-
-
-def test_keyword_and_default_calls_can_complete_from_the_existing_floor() -> None:
-    keyword, default = _call_outcomes("left, right=2", "1, right=2", "1")
-
-    assert all(
-        isinstance(outcome, ExitSet)
-        and len(outcome.exits) == 1
-        and isinstance(outcome.exits[0], Completed)
-        for outcome in (keyword, default)
-    )
-
-
-class _Expected:
-    def __init__(self, name: str):
-        self.identity = ctor(
-            "python:exception_type_identity",
-            [str_const("builtins"), str_const(name)],
+    """Three calls, one callee: the same target, ``right`` bound by
+    position, by keyword and by its default, each call its own coordinate."""
+    positional, keyword, default = (
+        _call_term(outcome)
+        for outcome in _call_outcomes(
+            "left, right=2", "None, 2", "None, right=2", "None"
         )
-
-    def exception_type_identity(self):
-        return self.identity
-
-
-def test_wrong_boundary_type_leaves_named_binary_exception_unconsumed() -> None:
-    outcome = _call_outcome("left, right=2", "None")
-    _assert_named_halt(outcome)
-    original = outcome.exits[0]
-
-    routed = outcome.and_exit(
-        ExitSet.completed(object()),
-        disposition=EffectBoundaryDisposition(
-            matcher=AuthenticatedRaiseMatcher(expected=_Expected("ValueError")),
-            unmet=ExpectationNotMetEffect("raise", "assertion-site"),
-        ),
     )
 
-    assert len(routed.exits) == 1
-    escaped = routed.exits[0]
-    assert isinstance(escaped, Halted)
-    assert escaped.effect.exception_type_coordinate == _Expected("TypeError").identity
-    assert escaped.effect.exception_type_coordinate != _Expected("ValueError").identity
-    assert escaped.effect.occurrence_id == original.effect.occurrence_id
+    assert len({positional.name, keyword.name, default.name}) == 1
+    none_actual, two_actual = positional.args
+    assert keyword.args[0] == none_actual == default.args[0]
+    assert keyword.args[1].name == "py.kwarg"
+    assert keyword.args[1].args[1] == two_actual
+    assert default.args[1].name == "py.default"
 
 
 def test_wrong_coordinate_actual_cannot_discharge_pending_operation() -> None:

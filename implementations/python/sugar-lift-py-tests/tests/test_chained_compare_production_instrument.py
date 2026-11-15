@@ -10,12 +10,12 @@ from sugar_lift_py_tests.caller_parameter_contract import (
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 from sugar_lift_py_tests.ir import and_, atomic, ctor, make_var, not_, str_const
-from sugar_lift_py_tests.occurrence import call_frame_path, occurrence_key
+from sugar_lift_py_tests.occurrence import occurrence_key
 from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
-from sugar_source_tree.nodes import Call, Compare
+from sugar_source_tree.nodes import Compare
 from sugar_source_tree.tree import SourceFile
 
 
@@ -33,12 +33,6 @@ def _tree(calls: str = "", helper: str = _helper("1 < 2 < 3")) -> SourceFile:
     )
 
 
-def _calls(tree: SourceFile):
-    return tuple(
-        node.sugar().desugar(None) for node in tree.nodes() if isinstance(node, Call)
-    )
-
-
 def _pair_sites(tree: SourceFile):
     compare = next(node for node in tree.nodes() if isinstance(node, Compare))
     return tuple(value.site for value in compare.sugar().values)
@@ -46,15 +40,6 @@ def _pair_sites(tree: SourceFile):
 
 def _occurrence(site) -> str:
     return str(site)
-
-
-def _raise_locus(site, call: Call) -> str:
-    """A ``TypeError`` raised at ``site`` inside ``call``: its ``file:line:col``
-    locus (``AuthenticatedRaiseLocus.of``, never the fragment's repr, #7808),
-    stamped with the call frame it was raised in where it crossed the call
-    (``call_site_value.call_owned``)."""
-    locus = AuthenticatedRaiseLocus.of(site).value
-    return f"{locus}@{'/'.join(call_frame_path(call.fragment, ()))}"
 
 
 def _undecided_occurrence(site) -> str:
@@ -112,15 +97,26 @@ def test_false_first_leg_selects_false_body_and_emits_no_second_occurrence() -> 
 def test_named_type_error_keeps_the_evaluated_leg_occurrence(
     expression: str, leg: int
 ) -> None:
-    tree = _tree("chain()\n", _helper(expression))
+    """The chain reduced where it stands, in ``chain``'s body (the reduction
+    ``chain``'s contract states).  Before #8705 this read the halt off
+    ``chain()``, the body applied at the call; a same-file call is now its
+    coordinate and edge (#7757 step 5, "Edge, join at prove"), so the call
+    names nothing and the leg's ``TypeError`` is the callee's own halt,
+    joined at prove."""
+    tree = _tree("", _helper(expression))
     sites = _pair_sites(tree)
-    (outcome,) = _calls(tree)
-    call = next(node for node in tree.nodes() if isinstance(node, Call))
+    outcome = (
+        next(node for node in tree.nodes() if isinstance(node, Compare))
+        .sugar()
+        .desugar(None)
+    )
 
     halted = _only(outcome, Halted)
     assert halted.effect.exception_type_coordinate == _type_error_identity()
-    assert halted.effect.occurrence_id == _raise_locus(sites[leg], call)
-    assert halted.effect.occurrence_id != _raise_locus(sites[1 - leg], call)
+    assert halted.effect.occurrence_id == AuthenticatedRaiseLocus.of(sites[leg]).value
+    assert halted.effect.occurrence_id != (
+        AuthenticatedRaiseLocus.of(sites[1 - leg]).value
+    )
 
 
 def test_undecidable_ordering_legs_keep_exact_guards_and_occurrences() -> None:

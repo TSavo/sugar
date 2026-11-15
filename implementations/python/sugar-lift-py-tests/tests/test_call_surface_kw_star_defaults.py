@@ -53,18 +53,28 @@ def _sf(source: str, name: str = "t.py") -> SourceFile:
 
 
 def _module_run_completes(tree: SourceFile) -> bool:
-    """The module body's one run completes on its one arm, under truth.
+    """The module body's one run completes on its one completed arm.
 
     A spread call reads the name it spreads (``xs`` in ``f(*xs)``), which the
     statement before it bound.  The call reduced alone, in no context, reads a
     name nothing bound: a state Python never runs the call in.  So the call is
-    reduced where it stands, by THE module reduction (``owner_reduction``)."""
+    reduced where it stands, by THE module reduction (``owner_reduction``).
+
+    The call of ``f`` is its coordinate and edge (#7757 step 5, #8705, "Edge,
+    join at prove"): the one unanswered call, which completes under its own
+    ``completes`` atom and halts under the complement.  So the run has its
+    completed arm beside the call's halt; before #8705 the body of ``f`` was
+    applied at the call and the run was one completion."""
+    from sugar_lift_py_tests.outcome import Completed
     from sugar_lift_py_tests.tree_enumerate import owner_reduction
 
     reduction = owner_reduction(None, tree)
-    return (
-        reduction.outcome.completed_value() is not None and len(reduction.ends) == 1
-    )
+    completed = [
+        face
+        for face in getattr(reduction.outcome, "exits", ())
+        if isinstance(face, Completed)
+    ]
+    return len(completed) == 1 and len(reduction.ends) == 1
 
 
 def test_named_keyword_actual_constructs_on_call_site() -> None:
@@ -101,7 +111,14 @@ def test_method_keyword_actual_constructs() -> None:
     assert isinstance(sugar, MethodCallSugar)
     assert sugar.keywords[0][0] == "x"
     assert isinstance(sugar.keywords[0][1], ConstructedTermSugar)
-    assert sugar.desugar(None).completed_value() is not None
+    # ``C()`` is a class call, its coordinate and edge (#7757 step 6, #8738),
+    # and a method of its result is the undecided read: the call completes on
+    # one face beside its halt, never ``m``'s body applied (was:
+    # ``completed_value()``, one completion read off the body).
+    from sugar_lift_py_tests.outcome import Completed
+
+    outcome = sugar.desugar(None)
+    assert any(isinstance(face, Completed) for face in outcome.exits)
 
 
 def test_starred_positional_actual_constructs_spread_call() -> None:

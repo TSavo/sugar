@@ -4,18 +4,10 @@ from __future__ import annotations
 
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.context_manager_contract import (
-    AuthenticatedRaiseMatcher,
-    EffectBoundaryDisposition,
-)
-from sugar_lift_py_tests.effect import (
-    ExpectationNotMetEffect,
-    UndeterminedRaiseEffect,
-)
+from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
     GuardedReturn,
-    ReturnValue,
     TermValue,
 )
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
@@ -52,54 +44,26 @@ def _call_outcomes(calls: str):
     )
 
 
-def _only_completed(outcome: object) -> Completed:
+def _the_call_edge(outcome: object) -> tuple[Completed, Halted]:
+    """#7757 step 5 (#8705, the owner's ruling "Edge, join at prove"): a call
+    of a same-file def is its coordinate and edge, never the callee's body
+    applied to the actuals.  It is the one unanswered call: it completes under
+    its ``python:unknown_callee_call.completes`` atom with the call's result,
+    and halts under the complement with nothing named here.  Which branch
+    the actuals select, and the ``TypeError`` of ``None < 2``, are stated by
+    the callee's contract over its formals (the carrier below) and decided at
+    prove, where the join binds the actuals."""
     assert isinstance(outcome, ExitSet)
-    assert len(outcome.exits) == 1
-    completed = outcome.exits[0]
-    assert isinstance(completed, Completed)
-    return completed
-
-
-def _only_halted(outcome: object) -> Halted:
-    assert isinstance(outcome, ExitSet)
-    assert len(outcome.exits) == 1
-    halted = outcome.exits[0]
-    assert isinstance(halted, Halted)
-    return halted
-
-
-def _expected_exception(name: str):
-    """Resolve builtin type identity through the lexical floor, never spelling dispatch."""
-    from sugar_lift_py_tests.temporal.temporal_context import TemporalContext
-
-    return TemporalContext.empty().value_for(name)
-
-
-def _through_assertion_boundary(outcome: ExitSet, expected: str) -> ExitSet:
-    return outcome.and_exit(
-        ExitSet.completed(object()),
-        disposition=EffectBoundaryDisposition(
-            matcher=AuthenticatedRaiseMatcher(
-                expected=_expected_exception(expected), message_pattern=None
-            ),
-            unmet=ExpectationNotMetEffect("raise", "compare-through-if.py"),
-        ),
-    )
-
-
-def _returned_term(completed: Completed) -> TermValue:
-    value = completed.value
-    if isinstance(value, CallSiteValue):
-        # The dug floor is the value the call returned
-        # (``_project_authenticated_source_return``), not the callee's block.
-        value = value._dig_floor_or_none(None, owner="test_compare_through_if_sugar")
-        assert value is not None
-    if isinstance(value, GuardedReturn):
-        value = value.value
-    if isinstance(value, ReturnValue):
-        value = value.value
-    assert isinstance(value, TermValue)
-    return value
+    assert len(outcome.exits) == 2
+    (completed,) = (face for face in outcome.exits if isinstance(face, Completed))
+    (halted,) = outcome.halts()
+    assert completed.guard.name == "python:unknown_callee_call.completes"
+    assert isinstance(completed.value, CallSiteValue)
+    assert completed.value.body is None
+    assert completed.value.term.name == "python:call_result"
+    assert type(halted.effect) is UndeterminedRaiseEffect
+    assert halted.effect.exception_name is None
+    return completed, halted
 
 
 def test_formal_ordering_condition_creates_exactly_one_carrier() -> None:
@@ -110,67 +74,24 @@ def test_formal_ordering_condition_creates_exactly_one_carrier() -> None:
     assert len(pending.demand.operand_coordinate_cids) == 2
 
 
-def test_caller_actuals_discharge_the_condition_carrier() -> None:
-    (outcome,) = _call_outcomes("helper(1, 2)\n")
+def test_a_call_of_the_helper_is_its_coordinate_and_edge() -> None:
+    """Was: the caller's actuals discharged the helper's carrier at the call
+    (``helper(1, 2)`` returned 1, ``helper(2, 1)`` returned 0, ``helper(None,
+    2)`` halted with ``TypeError`` and its state reached an assertion
+    boundary).  That was the body-following application #8705 deleted; each
+    call is now its own coordinate, the three told apart by their actuals."""
+    outcomes = _call_outcomes("helper(1, 2)\nhelper(2, 1)\nhelper(None, 2)\n")
 
-    completed = _only_completed(outcome)
-    assert _returned_term(completed).value == 1
-
-
-def test_completed_predicate_selects_the_correct_branch() -> None:
-    truthful, lying = _call_outcomes("helper(1, 2)\nhelper(2, 1)\n")
-
-    assert _returned_term(_only_completed(truthful)).value == 1
-    assert _returned_term(_only_completed(lying)).value == 0
-
-
-def test_exceptional_condition_bypasses_both_bodies() -> None:
-    (outcome,) = _call_outcomes("helper(None, 2)\n")
-
-    halted = _only_halted(outcome)
-    assert (
-        halted.effect.exception_type_coordinate
-        == _expected_exception("TypeError").exception_type_identity()
-    )
-    assert (
-        isinstance(halted.effect.occurrence_id, str)
-        and ":" in halted.effect.occurrence_id
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {halted.effect.occurrence_id!r}"
-    )
-
-
-def test_matching_assertion_boundary_consumes_and_preserves_pre_effect_state() -> None:
-    """Join #6631 + #6627: the formal condition halt reaches its boundary.
-
-    RED until ``caller_parameter_contract.py`` threads the reducer's real
-    pre-effect state into ``NativeOperationResolutionV1.project``.  The
-    assertion boundary correctly refuses a matching halt with ``state=None``;
-    never fabricate that state in this test or in the boundary consumer.
-    """
-    (produced,) = _call_outcomes("helper(None, 2)\n")
-    original = _only_halted(produced)
-    assert original.state is not None, (
-        "caller_parameter_contract.py NativeOperationResolutionV1.project "
-        "omitted the formal ordering halt's real pre-effect state"
-    )
-
-    routed = _through_assertion_boundary(produced, "TypeError")
-
-    completed = _only_completed(routed)
-    assert completed.value is original.state
-
-
-def test_wrong_expected_type_retains_the_same_formal_ordering_halt() -> None:
-    (produced,) = _call_outcomes("helper(None, 2)\n")
-    original = _only_halted(produced)
-
-    routed = _through_assertion_boundary(produced, "ValueError")
-
-    remaining = _only_halted(routed)
-    assert remaining.effect is original.effect
-    assert remaining.state is original.state
+    assert len(outcomes) == 3
+    terms = []
+    for outcome in outcomes:
+        completed, _halted = _the_call_edge(outcome)
+        (call_term, _occurrence) = completed.value.term.args
+        assert call_term.name.startswith("call:")
+        assert len(completed.value.arg_values) == 2
+        terms.append(call_term)
+    assert len(set(map(repr, terms))) == 3
+    assert "TypeError" not in repr(outcomes)
 
 
 def test_symbolic_if_branches_keep_complementary_guards() -> None:

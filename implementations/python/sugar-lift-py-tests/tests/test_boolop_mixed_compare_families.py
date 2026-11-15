@@ -140,56 +140,40 @@ def _caller_tree(calls: str) -> SourceFile:
     )
 
 
-def _calls_of(calls: str) -> tuple[Call, ...]:
-    return tuple(node for node in _caller_tree(calls).nodes() if isinstance(node, Call))
+def test_a_call_of_mixed_is_its_coordinate_and_edge() -> None:
+    """#7757 step 5 (#8705, "Edge, join at prove"): each call of ``mixed`` is
+    its coordinate and edge, the one unanswered call (completes under its
+    ``python:unknown_callee_call.completes`` atom, halts under the complement
+    naming nothing), never ``mixed``'s body applied to the actuals.  Which leg
+    raises for which actuals is stated by ``mixed``'s contract over its
+    formals (each leg's own two-faced halt, above) and decided at prove.
 
+    Replaces ``test_first_leg_halt_blocks_toxic_and_safe_membership_with_
+    exact_state`` and ``test_truthful_first_leg_routes_membership_halt_to_
+    second_occurrence_and_state``, which read each leg's halt and the callee's
+    state off the body applied at the call: the mechanism #8705 deleted.  The
+    same leg facts over literals are the tests above."""
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 
-def _caller_outcomes(calls: str):
-    tree = _caller_tree(calls)
+    tree = _caller_tree(
+        "mixed(None, 1, None, 3)\n" "mixed(None, 1, 1, [1])\n" "mixed(1, 2, None, 3)\n"
+    )
     comparisons = tuple(node for node in tree.nodes() if isinstance(node, Compare))
+    assert len(comparisons) == 2
+    legs = {
+        AuthenticatedRaiseLocus.of(compare.sugar().site).value
+        for compare in comparisons
+    }
     outcomes = tuple(
         node.sugar().desugar(None) for node in tree.nodes() if isinstance(node, Call)
     )
-    assert len(comparisons) == 2
-    return outcomes, comparisons
-
-
-def _only_halted(outcome) -> Halted:
-    assert isinstance(outcome, ExitSet)
-    assert len(outcome.exits) == 1
-    halted = outcome.exits[0]
-    assert isinstance(halted, Halted)
-    return halted
-
-
-def test_first_leg_halt_blocks_toxic_and_safe_membership_with_exact_state() -> None:
-    source_calls = "mixed(None, 1, None, 3)\n" "mixed(None, 1, 1, [1])\n"
-    (toxic, safe), comparisons = _caller_outcomes(source_calls)
-    toxic_call, safe_call = _calls_of(source_calls)
-    toxic_halt = _only_halted(toxic)
-    safe_halt = _only_halted(safe)
-
-    # Each call raises at the first leg, stamped with its own call frame.
-    assert toxic_halt.effect.occurrence_id == _locus(comparisons[0], toxic_call)
-    assert safe_halt.effect.occurrence_id == _locus(comparisons[0], safe_call)
-    assert toxic_halt.effect.occurrence_id != _locus(comparisons[1], toxic_call)
-    assert toxic_halt.state is not None
-    assert safe_halt.state is not None
-    assert toxic_halt.state == safe_halt.state
-
-
-def test_truthful_first_leg_routes_membership_halt_to_second_occurrence_and_state() -> (
-    None
-):
-    source_calls = "mixed(1, 2, None, 3)\n"
-    (outcome,), comparisons = _caller_outcomes(source_calls)
-    (call,) = _calls_of(source_calls)
-    halted = _only_halted(outcome)
-
-    # ``None in 3`` raises at the second leg, stamped with the call's frame:
-    # the one locus spelling (``file:line:col``, #7808), never the fragment's
-    # repr.
-    assert halted.effect.exception_name == "TypeError"
-    assert halted.effect.occurrence_id == _locus(comparisons[1], call)
-    assert halted.effect.occurrence_id != _locus(comparisons[0], call)
-    assert halted.state is not None
+    assert len(outcomes) == 3
+    for outcome in outcomes:
+        assert isinstance(outcome, ExitSet)
+        assert len(outcome.exits) == 2
+        (halted,) = outcome.halts()
+        assert isinstance(halted, Halted)
+        assert type(halted.effect) is UndeterminedRaiseEffect
+        assert halted.effect.exception_name is None
+        raised_at = str(halted.effect.occurrence_id)
+        assert not any(raised_at.startswith(leg) for leg in legs)

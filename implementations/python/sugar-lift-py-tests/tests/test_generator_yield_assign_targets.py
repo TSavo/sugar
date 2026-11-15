@@ -829,14 +829,31 @@ def test_a_read_modify_store_of_a_yield_reads_the_field_then_suspends() -> None:
     assert receiver_key != read_key
 
 
+def _the_completed_yield(result) -> YieldEffect:
+    """The yield the machine reaches on the face where ``Box()`` completed.
+
+    ``Box()`` is a same-file class call: its coordinate and edge, joined at
+    prove (#7757 step 6, #8738), the one unanswered call -- it completes or
+    raises.  The machine leaves on the halted face and advances past the
+    statement on the completed one (``_transition_term_exitset``); before
+    #8738 the class body was applied and the statement had one face."""
+    if isinstance(result, YieldEffect):
+        return result
+    assert isinstance(result, ExitSet), type(result).__name__
+    (yielded,) = (
+        face.value
+        for face in result.exits
+        if not isinstance(face, Halted) and isinstance(face.value, YieldEffect)
+    )
+    return yielded
+
+
 def test_a_read_modify_store_of_a_yield_adds_the_sent_value() -> None:
     steps = _steps(PLACE_AUG_YIELD)
-    yielded = _machine("aug_store", steps).resume()
-    assert isinstance(yielded, YieldEffect)
+    yielded = _the_completed_yield(_machine("aug_store", steps).resume())
     assert yielded.value == TermValue(5)
     # ``box.size = 7``, then ``box.size`` (7) is read before ``yield 6``.
-    second = yielded.machine.send(TermValue(7))
-    assert isinstance(second, YieldEffect)
+    second = _the_completed_yield(yielded.machine.send(TermValue(7)))
     assert second.value == TermValue(6)
     # ``box.size += 3``: 7 + 3.
     assert TermValue(10) in _returned_values(second.machine.send(TermValue(3)))

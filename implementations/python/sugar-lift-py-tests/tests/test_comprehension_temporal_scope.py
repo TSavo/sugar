@@ -1,4 +1,12 @@
-"""Comprehensions are scoped folds and preserve temporal halts verbatim."""
+"""Comprehensions are scoped folds and preserve temporal halts verbatim.
+
+Deleted: ``test_finite_comprehensions_transport_exact_constructed_objects_in_
+order`` read the objects ``Item(index, name)`` built off ``build(2, 1)``, the
+body of ``build`` applied at the call (#8705) and the body of ``Item``'s
+``__init__`` applied at each class call (#8738).  Both calls are now their
+coordinate and edge, joined at prove (#7757 steps 5 and 6), so no object is
+built at reduce for the second comprehension to transport.
+"""
 
 from dataclasses import dataclass, replace
 
@@ -9,11 +17,7 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
-from sugar_lift_py_tests.floor import (
-    DictValue,
-    ObjectValue,
-    SymbolicValue,
-)
+from sugar_lift_py_tests.floor import SymbolicValue
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import true_guard
@@ -131,6 +135,16 @@ def test_real_source_comprehension_keeps_the_enclosing_x_binding():
 
 
 def test_real_source_element_halt_keeps_exact_pre_comprehension_state():
+    """``run``'s own reduction, the one its contract states.  ``values[4]``
+    on the one-element list raises ``IndexError`` out of ``run``: the sole
+    face, with no completion, and the record it halted with.
+
+    Before #8738 this read the halt off ``Worker().run()``, ``run``'s body
+    applied at the call; a method call on a decided receiver is now its
+    coordinate and edge (#7757 step 6, "Edge, join at prove"), and the halt
+    reaches the caller at prove as a panic locus of ``run``'s contract."""
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
     source = (
         "class Worker:\n"
         "    def run(self):\n"
@@ -138,28 +152,19 @@ def test_real_source_element_halt_keeps_exact_pre_comprehension_state():
         "        values[0] = 7\n"
         "        [values[4] for item in [1]]\n"
         "        return values[0]\n"
-        "\n"
-        "Worker().run()\n"
     )
-    call = next(
-        node
-        for node in _source_file(source).nodes()
-        if node.kind == "Call"
-        and node.func.kind == "Attribute"
-        and node.func.attr == "run"
+    run = next(
+        function
+        for function in _source_file(source).functions()
+        if function.name == "run"
     )
-    # The call is applied where it stands (``CallSiteValue.producer_outcome``
-    # runs inside the Call's reduction): its outcome is the body's, every halt
-    # published at the Call.  ``values[4]`` on the one-element list raises
-    # ``IndexError`` out of ``run``: the sole face, with no completion.
-    outcome = call.sugar().desugar(None)
+    outcome = function_universe_outcome(run)
 
     assert isinstance(outcome, ExitSet), repr(outcome)
     assert len(outcome.exits) == 1
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_name == "IndexError"
-    assert halted.effect.producer_node_owner == "Call"
     assert halted.state is not None
     assert not any(isinstance(face, Completed) for face in outcome.exits)
 
@@ -213,39 +218,6 @@ def test_comprehension_target_coordinate_cannot_escape_into_enclosing_x():
                 for statement in function.statements
             ),
         ).desugar()
-
-
-def test_finite_comprehensions_transport_exact_constructed_objects_in_order():
-    """The second comprehension binds the exact objects built by the first."""
-    source = (
-        "class Item:\n"
-        "    def __init__(self, index, name):\n"
-        "        self.index = index\n"
-        "        self.name = name\n"
-        "def build(*names):\n"
-        "    items = [Item(index, name) for index, name in enumerate(names)]\n"
-        "    return {item.name: item for item in items}\n"
-        "build(2, 1)\n"
-    )
-    call = tuple(
-        node
-        for node in _source_file(source).nodes()
-        if node.kind == "Call" and node.func.kind == "Name" and node.func.id == "build"
-    )[-1]
-    outcome = call.sugar().desugar(None)
-
-    assert outcome.completed_value() is not None
-    returned = outcome.completed_value().project_operation_receiver(
-        None, owner="finite-comprehension-transport-test"
-    )
-    assert isinstance(returned, DictValue)
-    assert tuple(key.value for key, _ in returned.entries) == (2, 1)
-    objects = tuple(value for _, value in returned.entries)
-    assert all(type(value) is ObjectValue for value in objects)
-    assert tuple(value.fields[0].value.value for value in objects) == (0, 1)
-    assert tuple(value.fields[1].value.value for value in objects) == (2, 1)
-    assert returned.entries[0][1] is objects[0]
-    assert returned.entries[1][1] is objects[1]
 
 
 def test_finite_comprehension_refuses_swapped_tuple_target_coordinates():

@@ -44,47 +44,8 @@ def _raise_occurrence(outcome) -> str:
     return halted[0].effect.occurrence_id
 
 
-def _caller_outcomes(calls: str):
-    source = (
-        "def choose(a, b, c, d, e, f):\n"
-        "    return a < b and c < d and e in f\n"
-        f"\n{calls}"
-    )
-    tree = _tree(source)
-    comparisons = tuple(node for node in tree.nodes() if isinstance(node, Compare))
-    calls = tuple(node for node in tree.nodes() if isinstance(node, Call))
-    outcomes = tuple(node.sugar().desugar(None) for node in calls)
-    assert len(comparisons) == 3
-    return outcomes, comparisons, calls
-
-
-def _only_halted(outcome) -> Halted:
-    assert isinstance(outcome, ExitSet)
-    assert len(outcome.exits) == 1
-    halted = outcome.exits[0]
-    assert isinstance(halted, Halted)
-    return halted
-
-
 def _occurrence(compare: Compare) -> str:
     return str(compare.sugar().site)
-
-
-def _raise_locus_in_call(compare: Compare, call: Call) -> str:
-    """The occurrence a raise at ``compare`` carries out of ``call``'s frame.
-
-    A raise locus is the site's ``file:line:col`` (the one locus door, never
-    a fragment's repr), and a halt that crosses a call is stamped with the
-    path its callee reduced under, so each call is its own evaluation of the
-    comparison (``call_site_value.call_owned``).
-    """
-    from sugar_lift_py_tests.effect.authenticated_raise_locus import (
-        AuthenticatedRaiseLocus,
-    )
-    from sugar_lift_py_tests.occurrence import call_frame_path
-
-    locus = AuthenticatedRaiseLocus.of(compare.sugar().site).value
-    return f"{locus}@{'/'.join(call_frame_path(call.fragment, ()))}"
 
 
 def test_first_false_returns_exact_operand_and_skips_both_later_legs() -> None:
@@ -116,54 +77,50 @@ def test_successful_three_leg_chain_returns_exact_last_operand() -> None:
     assert str(outcome.completed_value().site) == _occurrence(comparisons[2])
 
 
-def test_middle_typeerror_blocks_toxic_and_safe_membership_with_exact_state() -> None:
-    (toxic, safe), comparisons, (toxic_call, safe_call) = _caller_outcomes(
-        "choose(1, 2, None, 1, None, 3)\n" "choose(1, 2, None, 1, 1, [1])\n"
+
+def test_a_call_of_choose_is_its_coordinate_and_edge() -> None:
+    """#7757 step 5 (#8705, "Edge, join at prove"): each call of ``choose`` is
+    its coordinate and edge, the one unanswered call (completes under its
+    ``python:unknown_callee_call.completes`` atom, halts under the complement
+    naming nothing), never ``choose``'s body applied to the actuals.  Which leg
+    raises for which actuals is stated by ``choose``'s contract over its
+    formals and decided at prove; the leg control itself is the literal tests
+    above.
+
+    Replaces ``test_middle_typeerror_blocks_toxic_and_safe_membership_with_
+    exact_state``, ``test_first_typeerror_blocks_distinct_middle_and_
+    membership_twins`` and ``test_third_leg_membership_halt_retains_its_
+    occurrence_and_state``, which read the leg's halt and the callee's state
+    off the body applied at the call: the mechanism #8705 deleted."""
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.effect.authenticated_raise_locus import (
+        AuthenticatedRaiseLocus,
     )
-    toxic_halt = _only_halted(toxic)
-    safe_halt = _only_halted(safe)
 
-    # Both calls halt at the middle comparison, each as its own evaluation.
-    middle = comparisons[1]
-    assert toxic_halt.effect.occurrence_id == _raise_locus_in_call(middle, toxic_call)
-    assert safe_halt.effect.occurrence_id == _raise_locus_in_call(middle, safe_call)
-    assert toxic_halt.effect.occurrence_id != _raise_locus_in_call(
-        comparisons[2], toxic_call
-    )
-    assert toxic_halt.state is not None
-    assert safe_halt.state is not None
-    assert toxic_halt.state == safe_halt.state
-
-
-def test_first_typeerror_blocks_distinct_middle_and_membership_twins() -> None:
-    (toxic, safe), comparisons, (toxic_call, safe_call) = _caller_outcomes(
-        "choose(None, 2, None, 1, None, 3)\n" "choose(None, 2, 1, 2, 1, [1])\n"
-    )
-    toxic_halt = _only_halted(toxic)
-    safe_halt = _only_halted(safe)
-
-    # Both calls halt at the first comparison, each as its own evaluation.
-    first = comparisons[0]
-    assert toxic_halt.effect.occurrence_id == _raise_locus_in_call(first, toxic_call)
-    assert safe_halt.effect.occurrence_id == _raise_locus_in_call(first, safe_call)
-    assert toxic_halt.effect.occurrence_id not in {
-        _raise_locus_in_call(comparisons[1], toxic_call),
-        _raise_locus_in_call(comparisons[2], toxic_call),
-    }
-    assert toxic_halt.state is not None
-    assert safe_halt.state is not None
-    assert toxic_halt.state == safe_halt.state
-
-
-def test_third_leg_membership_halt_retains_its_occurrence_and_state() -> None:
-    (outcome,), comparisons, (call,) = _caller_outcomes(
+    tree = _tree(
+        "def choose(a, b, c, d, e, f):\n"
+        "    return a < b and c < d and e in f\n"
+        "\n"
+        "choose(1, 2, None, 1, None, 3)\n"
+        "choose(None, 2, 1, 2, 1, [1])\n"
         "choose(1, 2, 2, 3, None, 3)\n"
     )
-    halted = _only_halted(outcome)
-
-    assert halted.effect.occurrence_id == _raise_locus_in_call(comparisons[2], call)
-    assert halted.effect.occurrence_id not in {
-        _raise_locus_in_call(comparisons[0], call),
-        _raise_locus_in_call(comparisons[1], call),
+    comparisons = tuple(node for node in tree.nodes() if isinstance(node, Compare))
+    assert len(comparisons) == 3
+    legs = {
+        AuthenticatedRaiseLocus.of(compare.sugar().site).value
+        for compare in comparisons
     }
-    assert halted.state is not None
+    outcomes = tuple(
+        node.sugar().desugar(None) for node in tree.nodes() if isinstance(node, Call)
+    )
+    assert len(outcomes) == 3
+    for outcome in outcomes:
+        assert isinstance(outcome, ExitSet)
+        assert len(outcome.exits) == 2
+        (halted,) = outcome.halts()
+        assert isinstance(halted, Halted)
+        assert type(halted.effect) is UndeterminedRaiseEffect
+        assert halted.effect.exception_name is None
+        raised_at = str(halted.effect.occurrence_id)
+        assert not any(raised_at.startswith(leg) for leg in legs)
