@@ -299,10 +299,6 @@ def _object(node):
         elif kind == "ReceiverFieldStoreState":
             # ``o.x = v``: the object ``o`` was, with a field stored.
             node = _identity(node.receiver)
-        elif kind == "SourceCallActualAfter":
-            # An object a followed callee shares, read after the call
-            # (``_actual_after``): the object it was before the call.
-            node = _identity(node.prior)
         else:
             break
         seen += 1
@@ -1383,8 +1379,6 @@ def _built_after(state, calls) -> bool:
             node = _identity(node.root)
         elif kind == "ReceiverFieldStoreState":
             node = _identity(node.receiver)
-        elif kind == "SourceCallActualAfter":
-            node = _identity(node.prior)
         else:
             return False
     return False
@@ -1548,7 +1542,6 @@ _READ_KINDS = frozenset(
         "PathAfterCall",
         "ReceiverAfterCall",
         "BuiltinContainerProjection",
-        "SourceCallActualAfter",
     }
 )
 
@@ -1579,7 +1572,6 @@ _EXPOSED_KINDS = frozenset(
         "BuiltinContainerProjection",
         "ReceiverAfterCall",
         "OpaqueObjectStateV1",
-        "SourceCallActualAfter",
         "ReceiverFieldStoreState",
         "ObjectPlaceStateV1",
         "ConstructedReceiverRef",
@@ -2906,30 +2898,10 @@ def _mutation_through(
 # What the call is handed, and what its code may reach, take the one exposure
 # rule every call takes (``_call_targets``, ``_ambient_targets``): unknown
 # after the call, never the pre-call contents.  What a callee does to its
-# arguments is stated by its contract (step 7), never followed here.
-#
-# The helpers below are still read by a method's and a class constructor's
-# frame (``nodes._exit_reads``, step 6).
+# arguments is stated by its contract (step 7), never followed here.  A call
+# of a same-file class or method is joined at prove the same way (#7757
+# step 6).
 # ---------------------------------------------------------------------------
-
-
-def _followable_helper(definition) -> bool:
-    """``definition`` is a frame a call by name runs as written: a plain
-    ``def`` (no decorator: the name is bound to the function itself), no
-    generator (a call runs none of its body), every formal positional or
-    keyword (each actual binds one formal).  Its body may branch, loop,
-    ``try`` and ``return`` anywhere: the threading follows every path, and
-    each arm of its reduction carries what it left (``nodes._exit_reads``,
-    ``nodes.FrameReturn``)."""
-    from .nodes import FunctionDef
-
-    if type(definition) is not FunctionDef or definition.decorators:
-        return False
-    if FunctionDef._owns_yield(definition.body):
-        return False
-    return all(
-        param.param_kind == "positional_or_keyword" for param in definition.params
-    )
 
 
 def _same_read(node, actual) -> bool:
@@ -2972,102 +2944,6 @@ def _answered_where_minted(source, followed, kept=()) -> None:
         for node in statement.walk():
             if id(_handle(node)) not in written:
                 node.discharge_by_substitution()
-
-
-def _changed_state(state, actual, depth=0):
-    """Whether ``state`` (a followed holder's binding after the helper's
-    body) is ``actual``'s object as the helper changed it: True for a chain
-    of mutations through the one door (``name_mutation_statement``), or of
-    values source helpers it called carried out (``SourceCallActualAfter``),
-    begun from the actual itself; False for the actual itself, left as it
-    was; None for anything else -- a formal the body rebound to another
-    object, a value some unfollowed call left of it (``ReceiverAfterCall``),
-    which keeps the havoc.  A join the body's threading built over its
-    branches (an ``if``'s, a ``try``'s or a ``match``'s phi, ``IfExp``) is
-    asked of every arm: changed where some arm changed it and every arm is
-    the object, else None.  What the state holds is never read here: the
-    call carries it (``source_helper_actual_states``)."""
-    from .nodes import PathAfterCall, PathContainerCall
-
-    node = _identity(state)
-    changed = False
-    for _ in range(64):
-        if isinstance(node, PathAfterCall) and node.mode == "root" and not node.steps:
-            call = node.call
-            if not isinstance(call, PathContainerCall):
-                return None
-            node = _identity(call.receiver)
-        elif getattr(node, "kind", None) == "SourceCallActualAfter":
-            node = _identity(node.prior)
-        elif getattr(node, "kind", None) == "IfExp":
-            if depth >= _JOIN_DEPTH:
-                return None
-            arms = (
-                _changed_state(node.body, actual, depth + 1),
-                _changed_state(node.orelse, actual, depth + 1),
-            )
-            if any(arm is None for arm in arms):
-                return None
-            return changed or any(arms)
-        else:
-            break
-        changed = True
-    if not _same_read(node, actual):
-        return None
-    return changed
-
-
-# The joins nested in one binding a follower asks arm by arm.
-_JOIN_DEPTH = 16
-
-
-def _binding_arms(written, depth=0):
-    """The bindings ``written`` (a name's binding after a body) is on each
-    path: ``written`` itself where it is no join, else every arm of the join
-    the threading built over the body's branches (``IfExp``), each asked
-    again; None past ``_JOIN_DEPTH`` nested joins."""
-    if written is None:
-        return ()
-    if getattr(_identity(written), "kind", None) != "IfExp":
-        return (written,)
-    if depth >= _JOIN_DEPTH:
-        return None
-    node = _identity(written)
-    body = _binding_arms(node.body, depth + 1)
-    orelse = _binding_arms(node.orelse, depth + 1)
-    if body is None or orelse is None:
-        return None
-    return (*body, *orelse)
-
-
-def _rebinds(written, actual):
-    """Whether ``written`` (a ``nonlocal`` cell's binding after a body that
-    began with the cell bound to ``actual``) is the body's rebinding of the
-    cell: True where some path rebinds it (``n += 1``, ``n = v``: a write's
-    reference, never a binding the one door's mutation left) and none
-    changed the object it held; False where no path rebinds it; None where
-    one path rebinds it and another changed the object (no one set of names
-    reads one value after the call), or where the join is past asking."""
-    arms = _binding_arms(written)
-    if arms is None:
-        return None
-    rebound = mutated = False
-    for arm in arms:
-        if _same_read(arm, actual):
-            continue
-        if getattr(arm, "kind", None) in _MUTATED_BINDINGS:
-            mutated = True
-        else:
-            rebound = True
-    if rebound and mutated:
-        return None
-    return rebound
-
-
-# A binding the one door's mutation (or a source helper's such mutations)
-# leaves on a name: the object, changed.  A write's reference (``n = v``,
-# ``r += x``) is a rebinding.
-_MUTATED_BINDINGS = frozenset({"PathAfterCall", "SourceCallActualAfter"})
 
 
 class _Cell(NamedTuple):
@@ -4084,99 +3960,6 @@ def _path_to(statement, call):
             if isinstance(child, Node):
                 stack.append((child, (*path, (node, position))))
     return None
-
-
-def exit_read_keys(read) -> tuple:
-    """The evaluation keys ``read`` reads through: a callee frame's read of
-    an object it shares with its caller where its body ends
-    (``nodes._exit_reads``), walked down the object's states -- each
-    one-door mutation's pair (``PathAfterCall``), each value a source helper
-    it called carried (``SourceCallActualAfter``), each field store
-    (``ReceiverFieldStoreState``), the object a call may have changed
-    (``ReceiverAfterCall``), to the binding it began from (a key reference's
-    own key; a formal's or cell's coordinate is none).
-
-    A halt's record holds a statement's key exactly when the statement
-    completed before the halt, so the read is the object's state at the
-    halt only where the record holds every one of them
-    (``SourceVisibleFunctionBodySugar``); elsewhere what the callee left of
-    the object there is undecided."""
-    from .nodes import PathContainerCall
-
-    keys = []
-    node = read
-    for _ in range(64):
-        kind = getattr(node, "kind", None)
-        evaluation = getattr(node, "evaluation", None)
-        if isinstance(evaluation, str) and kind in (
-            "PathAfterCall",
-            "SourceCallActualAfter",
-            "ReceiverFieldStoreState",
-            "EvaluationRef",
-        ):
-            keys.append(evaluation)
-        if (
-            kind == "PathAfterCall"
-            and getattr(node, "mode", None) == "root"
-            and not getattr(node, "steps", ())
-            and isinstance(getattr(node, "call", None), PathContainerCall)
-        ):
-            node = node.call.receiver
-        elif kind == "SourceCallActualAfter":
-            node = node.prior
-        elif kind == "ReceiverFieldStoreState":
-            node = node.receiver
-        elif kind == "ReceiverAfterCall" and getattr(node, "prior", None) is not None:
-            node = node.prior
-        else:
-            break
-    return tuple(keys)
-
-
-def at_halt_read(site_node, read, tags):
-    """``read`` (a ``SourceCallActualAfter``) as a halt inside the statement that
-    holds the call reads it (``Try._mid_statement_state``): the value the
-    call carried where the halt's record holds its key -- the call ran and
-    left on that arm, completed or halted -- else the object as the
-    statement found it (``prior``): nothing of the call ran before that
-    halt."""
-    return _caller_visible_read(
-        site_node,
-        read.evaluation,
-        read.label,
-        read.occurrence,
-        read.prior,
-        tags,
-        at_halt=True,
-    )
-
-
-def _caller_visible_read(
-    site_node, evaluation, label, occurrence, prior, tags, *, at_halt=False
-):
-    """The one ``SourceCallActualAfter`` node: a read of the value a call
-    carried under ``evaluation``.
-
-    A value of the scope after the call, which no read may reach (an
-    actual a source call statement changed and nothing reads after it,
-    ``tests/io/parser/dtypes/test_dtypes_basic.py:220``): it answers where
-    it is minted, and a read that reaches it constructs it and answers
-    again, as ``_havoc``'s does (``nodes._minted_binding_reference``)."""
-    from .backend import Child, Leaf
-    from .nodes import _minted_binding_reference
-    from .shadow import _handle_of
-
-    fields = (
-        ("evaluation", Leaf(evaluation)),
-        ("label", Leaf(label)),
-        ("occurrence", Leaf(occurrence)),
-        ("prior", Child(_handle_of(prior))),
-    )
-    if at_halt:
-        fields = (*fields, ("at_halt", Leaf(True)))
-    return _minted_binding_reference(
-        _materialize(site_node, "SourceCallActualAfter", fields, tags)
-    )
 
 
 def _untouched(name, pre_scope, scope, havocked) -> bool:

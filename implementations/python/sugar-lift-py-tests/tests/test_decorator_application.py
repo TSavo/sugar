@@ -1130,7 +1130,7 @@ def test_default():
 
 def test_a_spread_class_call_binds_the_init_default_of_its_class_statement() -> None:
     """``C(*(5,))`` is the class call ``C(5)`` is
-    (``ClassConstructorBodySugar.bind_class_call``): the omitted ``b`` binds
+    (``ClassDefinitionValue.callable_application_with``): the omitted ``b`` binds
     the value the ``__init__`` statement evaluated when the class body ran,
     never an undecided read and never ``x`` read again at the call."""
     _binds_the_statements_value(

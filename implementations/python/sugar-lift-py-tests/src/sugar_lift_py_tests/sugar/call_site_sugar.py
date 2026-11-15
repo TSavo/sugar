@@ -1312,7 +1312,7 @@ def bind_source_frame_call(
     ``enter_source_frame``) says about the callee: its formals, its
     declaration body (``source_frame_body``, or ``body`` where the caller
     already has it: a class call's constructor body entered on its class
-    value, ``ClassConstructorBodySugar.bind_class_call``), its coordinates.
+    value, ``ClassDefinitionValue.callable_application_with``), its coordinates.
     With no frame the call is bound bodyless.  The result is applied by
     ``CallSiteValue.producer_outcome``, as every call is.
     """

@@ -19,7 +19,6 @@ _MUTATION_KINDS = {
     "PathContainerCall",
     "PathAfterCall",
     "ReceiverAfterCall",
-    "SourceCallActualAfter",
 }
 
 _SHARED = (

@@ -603,21 +603,6 @@ class ClassConstructorBodySugar(Sugar):
             )
         return step(self.class_value, self)
 
-    def bind_class_call(self, bind) -> ExitSet:
-        """THE class call ``Cls(...)``: the call is bound and applied by
-        ``bind(defaults, body)`` on the class this constructor was entered on
-        (``enter``).
-
-        ``defaults`` are the ``(key, value)`` pairs the class value carries
-        for its constructor (``ClassDefinitionValue.constructor_defaults``):
-        what the ``__init__`` / ``__new__`` ``def`` statement evaluated when
-        its class body ran.  ``bind`` hands them to ``object_value.bind_call``
-        (``defaults``), so a formal the call omits binds that value
-        (``DefaultValueSugar``), never its default expression evaluated at
-        the call.  ``body`` is this constructor entered on the class value,
-        the body the bound call applies."""
-        return self.enter(lambda value, body: bind(constructor_defaults(value), body))
-
     def enter_initializer(self, ctx, initialize) -> ExitSet:
         """THE class call up to its ``__init__``: the one place a receiver is
         made for an initializer to run on.
@@ -803,21 +788,6 @@ def returned_as_it_is(made) -> bool:
     if type(presented) is TermValue:
         return type(presented.value) in (int, float)
     return type(presented) in (NoneValue, TrueBoolLiteralSugar, FalseBoolLiteralSugar)
-
-
-def constructor_defaults(value) -> tuple:
-    """The ``(key, value)`` pairs a class call binds where it binds its
-    actuals: each method default the class value and every class of its
-    MRO carries (``ClassDefinitionValue.constructor_defaults``), among them
-    its ``__init__``'s, own or inherited, and its source ``__new__``'s.  A
-    class value that is no source class statement's carries none."""
-    from sugar_lift_py_tests.floor.class_definition_value import (
-        ClassDefinitionValue,
-    )
-
-    if not isinstance(value, ClassDefinitionValue):
-        return ()
-    return value.constructor_defaults()
 
 
 @dataclass(frozen=True)

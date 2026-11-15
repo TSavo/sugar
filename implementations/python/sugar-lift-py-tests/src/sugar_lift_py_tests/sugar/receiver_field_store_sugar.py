@@ -35,7 +35,7 @@ class ReceiverFieldStoreSugar(Sugar):
         is that call (``ObjectValue.field_store_call``), applied like any
         call, its halts the store's and its value recorded as a call in
         statement position is (``record_statement_value``: what it did to
-        what this frame sees rides it, ``caller_visible_values``).
+        what this frame sees rides it, ``caller_visible_stores``).
       - a class whose lookup does not decide (an unread base, a builtin
         base with a ``__setattr__`` of its own, a member not decided) is the
         one unanswered call: two faces, owed.

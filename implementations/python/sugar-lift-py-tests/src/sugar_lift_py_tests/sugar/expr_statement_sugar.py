@@ -111,7 +111,7 @@ def record_statement_value(value, ctx):
         # ``producer_outcome`` (#7757 entry 6) -- native operations
         # discharge against the bound actuals and the body's raises are
         # the Call's own.  Each completed face is the Call carrying what its
-        # body did to what this frame sees (``caller_visible_values``): the
+        # body did to what this frame sees (``caller_visible_stores``): the
         # statement lays the stores in its record, and the rest of the block
         # reads every other write the call carried, as a walrus's.
         def applied(result):
