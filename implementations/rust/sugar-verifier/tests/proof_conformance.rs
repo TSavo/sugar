@@ -143,10 +143,21 @@ fn unsigned_catalog_reports_catalog_signature_rule() {
 fn catalog_body_tamper_reports_catalog_signature_rule() {
     let dir = make_unique_dir("catalog-tamper");
     let (_cid, mut bytes) = fixture_proof_bytes();
-    let date_offset = bytes
-        .windows(b"2026".len())
-        .position(|window| window == b"2026")
-        .expect("fixture carries declaredAt");
+    // Tamper the catalog's own `declaredAt`, not a member: the CID-indexed
+    // reader refuses a tampered member before the catalog signature is read.
+    // Deterministic CBOR orders the root keys by encoded length, so the
+    // catalog's text key `declaredAt` (0x6a) follows the members map.
+    let mut key = vec![0x6a];
+    key.extend_from_slice(b"declaredAt");
+    let key_offset = bytes
+        .windows(key.len())
+        .rposition(|window| window == key.as_slice())
+        .expect("catalog carries declaredAt");
+    let date_offset = key_offset
+        + bytes[key_offset..]
+            .windows(b"2026".len())
+            .position(|window| window == b"2026")
+            .expect("catalog declaredAt carries the year");
     bytes[date_offset + 3] = b'7';
     let tampered_cid = sugar_canonicalizer::blake3_512_of(&bytes);
     let hex = cid_hex(&tampered_cid).expect("cid prefix");
