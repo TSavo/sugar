@@ -89,7 +89,13 @@ def test_swapped_actuals_retain_the_operation_coordinate() -> None:
     swapped_halt = swapped.exits[0]
     assert isinstance(forward_halt, Halted)
     assert isinstance(swapped_halt, Halted)
-    assert forward_halt.effect.occurrence_id == swapped_halt.effect.occurrence_id
+    # An occurrence is the operation's coordinate and the call that reached
+    # it: ``<file:line:col>@call:<call cid>``.  Both halts leave at the one
+    # ``left < right``; the two calls are two occurrences of it.
+    forward_site, forward_call = forward_halt.effect.occurrence_id.split("@call:")
+    swapped_site, swapped_call = swapped_halt.effect.occurrence_id.split("@call:")
+    assert forward_site == swapped_site == "formal_calls.py:2:11"
+    assert forward_call != swapped_call
 
 
 def test_shadowed_function_name_does_not_borrow_module_definition() -> None:
