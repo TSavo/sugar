@@ -64,6 +64,7 @@ from .construction_cache import (
     AmbientVar,
     abandon_row,
     close_row,
+    has_testified,
     open_row,
     serve,
     testify,
@@ -8835,10 +8836,13 @@ class Node(Typed):
         template constructs the node's sugar (``_construct_sugar``, which each
         concrete class overrides) and records the PRESENT answer through the
         reporter the node already carries -- no parameter is threaded, because
-        the node holds its own roll call. The ABSENT answer is recorded inside
-        the abstract ``_construct_sugar`` before it throws. So every node either
-        answers present here or is reported absent there: no node discharges
-        silently.
+        the node holds its own roll call. The ABSENT answer is a refusal by
+        name: recorded where it is raised (the abstract ``_construct_sugar``,
+        a ``with`` door) or, when its raise site did not say it, here, at the
+        node whose construction raised it. So every node either answers
+        present here or is reported absent by name: no node discharges
+        silently, and a named refusal never reaches the roll as an
+        unaccounted absentee.
 
         The answer is given ONCE PER CONSTRUCTION COORDINATE, not once per DAG
         path. Substitution shares node objects, so a bound value is one node
@@ -8891,6 +8895,17 @@ class Node(Typed):
                 # answer whose testimony silently failed to exist.
                 testify(self.reporter, "present_construction", self, result)
             except (SourceTreePanic, ConstructionPanic) as panic:
+                # A refusal by name is the ABSENT answer of the node whose
+                # construction raised it, and the roll hears every absent
+                # answer by its name: testified here, once, unless its own
+                # raise site (the abstract door, a ``with`` door) or a child
+                # on the way up already said it.  An ancestor finds the
+                # child's testimony nested in its own row and stays quiet, so
+                # one refusal is one gap, at the node that refused.
+                if isinstance(panic, SugarNotWritten) and not has_testified(
+                    computation, "report_gap", panic
+                ):
+                    testify(self.reporter, "report_gap", self, panic)
                 # The two sanctioned construction gaps. Remember the panic so
                 # this coordinate keeps throwing it -- memoization must never
                 # turn an absent answer into a present one.

@@ -388,6 +388,29 @@ class MemoRow:
         return True
 
 
+def has_testified(computation: _Computation, method: str, subject: object) -> bool:
+    """Whether ``computation`` already holds ``method`` testimony about
+    ``subject`` (one of its arguments, by identity): its own, a row's nested
+    in it (a child that closed, a row it was served), or that of a
+    computation opened under it and never closed, whose testimony is this
+    one's when it closes (``_pop``)."""
+    seen: set[int] = set()
+    pending = [computation.testimony]
+    for index, opened in enumerate(_OPEN):
+        if opened is computation:
+            pending.extend(nested.testimony for nested in _OPEN[index + 1 :])
+            break
+    while pending:
+        for entry in pending.pop():
+            if type(entry) is MemoRow:
+                if id(entry) not in seen:
+                    seen.add(id(entry))
+                    pending.append(entry.testimony)
+            elif entry[0] == method and any(arg is subject for arg in entry[1]):
+                return True
+    return False
+
+
 def _replay(row: MemoRow, reporter: object) -> None:
     if id(reporter) in row.heard:
         return
