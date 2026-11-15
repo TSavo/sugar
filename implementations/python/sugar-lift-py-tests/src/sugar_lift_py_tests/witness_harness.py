@@ -441,7 +441,35 @@ def mint_and_prove(project: Path) -> WitnessPipelineResult:
             "sugar prove --z3 returned malformed JSON\n"
             f"stdout:\n{prove.stdout}\nstderr:\n{prove.stderr}"
         ) from exc
+    _keep_evidence(project, lift_doc, prove_doc)
     return WitnessPipelineResult(lift_doc=lift_doc, prove_doc=prove_doc)
+
+
+def _keep_evidence(project: Path, lift_doc: dict, prove_doc: dict) -> None:
+    """Keep what a twin was decided on, for CI to upload (SUGAR_WITNESS_EVIDENCE_DIR).
+
+    A twin that fails in CI shows only its assertion; the claim formula, the
+    joined posts and the lifted rows are in the prove and lift documents, which
+    live in memory. The main scorecard sets SUGAR_WITNESS_EVIDENCE_DIR and
+    uploads that directory, so a failing twin can be diagnosed from CI's own
+    artifact without running anything by hand. Unset, this does nothing.
+    """
+    out = os.environ.get("SUGAR_WITNESS_EVIDENCE_DIR")
+    if not out:
+        return
+    test = os.environ.get("PYTEST_CURRENT_TEST", "unknown").split(" ")[0]
+    name = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in test)
+    half = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in project.name)
+    dest = Path(out) / f"{name}__{half}"
+    try:
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / "source.py").write_text(
+            (project / "test_witness.py").read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        (dest / "lift.json").write_text(json.dumps(lift_doc, indent=1, sort_keys=True))
+        (dest / "prove.json").write_text(json.dumps(prove_doc, indent=1, sort_keys=True))
+    except OSError:
+        pass
 
 
 def run_source_through_real_solver(project: Path, source: str) -> WitnessPipelineResult:
