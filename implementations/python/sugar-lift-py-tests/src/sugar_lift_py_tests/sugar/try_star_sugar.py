@@ -113,6 +113,11 @@ class TryStarSugar(Sugar):
     orelse: tuple = ()
     finalbody: tuple = ()
     site: object = dataclass_field(compare=False, default=None)
+    #: ``finally`` substituted under the state a halt carries into it (the
+    #: one temporal rewrite, ``Try.substitute``, which ``TryStar`` runs);
+    #: None when that is the completion state.  Read by the one ``finally``
+    #: (``try_sugar._and_finally_with_raise_context``), as ``TrySugar``'s is.
+    finalbody_halted: object = None
 
     @classmethod
     def witnesses(cls):
@@ -427,9 +432,18 @@ class TryStarSugar(Sugar):
                 # record a halt carries -- and re-emits that arm's exit after
                 # it unless it exits itself. A ``finally`` still waiting on
                 # the caller's actuals is composed once they discharge
-                # (``_finally_beneath``).
+                # (``_finally_beneath``).  A halted arm runs the copy
+                # substituted for the halted faces (``finalbody_halted``),
+                # a completed arm the completion copy.  The rewrite's
+                # ``try-route`` and ``try-edge`` slots are not grounded
+                # here: a binding joined over one is read under both of its
+                # arms (``GuardedBindingReadSugar``).
                 result = _and_finally_with_raise_context(
-                    result, self.finalbody, ctx=ctx, site=self.site
+                    result,
+                    self.finalbody,
+                    ctx=ctx,
+                    site=self.site,
+                    finalbody_halted=self.finalbody_halted,
                 )
             # The try*'s own faces, read the one way a ``try``'s are
             # (``_try_outcome``): a halt stays a halted arm, never an entry
