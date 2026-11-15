@@ -3591,6 +3591,12 @@ struct AmbientPost {
     /// under the call's actual. A halt certain on that path refutes every
     /// arm of the claim on which the call completed.
     halt_guards: Vec<Json>,
+    /// Every panic locus the answering contract states names its guard
+    /// (`contract_guards_every_halt`), so `halt_guards` are all the halts it
+    /// can take: the call completes exactly where none of them holds. False
+    /// when a locus states no path condition: then nothing says when the call
+    /// completes, and only `completes -> not(guard)` is stated.
+    every_halt_guarded: bool,
     /// The halts the answering contract states with their raised type:
     /// `(type, guard)` per panic locus whose `argTerm` names the raised
     /// exception's class and that states its guard (`contract_typed_halts`).
@@ -3682,6 +3688,18 @@ fn contract_halt_guards(body: &Json) -> Vec<Json> {
         .collect()
 }
 
+/// Whether every panic locus an answering contract states names its guard
+/// (true where it states none). A Python contract states one locus per halted
+/// arm of its one reduction, each with the arm's guard (#7766: a halt is never
+/// dropped), and the arms of one reduction partition its executions; so when
+/// every locus states its guard, the halt guards are all the ways the call
+/// can halt, and it completes exactly where none holds.
+fn contract_guards_every_halt(body: &Json) -> bool {
+    crate::enumerate_callsites::panic_loci_from_body(body)
+        .iter()
+        .all(|locus| !crate::enumerate_callsites::guard_facts_from_locus(locus).is_empty())
+}
+
 /// Each halt an answering contract states with its raised type, as `(type,
 /// guard)`: a panic locus whose `argTerm` is a ctor (the raised class's
 /// coordinate, the Python kit's `tree_enumerate.halt_locus`) and whose
@@ -3700,9 +3718,9 @@ fn contract_typed_halts(body: &Json) -> Vec<(Json, Json)> {
         .collect()
 }
 
-/// One bridge's answer: the binding, the post, the halt guards, and the
-/// typed halts.
-type BridgeAnswer = (BridgeBinding, Json, Vec<Json>, Vec<(Json, Json)>);
+/// One bridge's answer: the binding, the post, the halt guards, whether
+/// every halt states its guard, and the typed halts.
+type BridgeAnswer = (BridgeBinding, Json, Vec<Json>, bool, Vec<(Json, Json)>);
 
 /// What one bridge answers for `symbol`: its binding, post and halt guards,
 /// or the reason the answer is wrong. `Ok(None)` when the contract states no
@@ -3765,6 +3783,7 @@ fn bridge_answer(
             .map(|cid| cid.to_string())
     });
     let halt_guards = contract_halt_guards(&body);
+    let every_halt_guarded = contract_guards_every_halt(&body);
     let typed_halts = contract_typed_halts(&body);
     let stated_inputs = stated_input_values(&body);
     Ok(Some((
@@ -3778,6 +3797,7 @@ fn bridge_answer(
         },
         post,
         halt_guards,
+        every_halt_guarded,
         typed_halts,
     )))
 }
@@ -4412,7 +4432,7 @@ fn dispatch_table(pool: &MementoPool) -> DispatchTable {
                 Some(first) if targets.len() == 1 => bridge_answer(pool, symbol, first)
                     .ok()
                     .flatten()
-                    .filter(|(binding, _, _, _)| {
+                    .filter(|(binding, _, _, _, _)| {
                         !binding
                             .formals
                             .iter()
@@ -4454,13 +4474,14 @@ fn dispatch_answer(post: &AmbientPost, call: &Json) -> Option<AmbientPost> {
         _ => None,
     })?;
     let symbol = dispatched_symbol(&dispatch.table.namespaces, &dispatch.method, &class)?;
-    let (binding, answer, halt_guards, typed_halts) =
+    let (binding, answer, halt_guards, every_halt_guarded, typed_halts) =
         dispatch.table.answers.get(&symbol)?.clone()?;
     bind_call_arguments(&binding.formals, &binding.stated_inputs, args)?;
     Some(AmbientPost {
         binding,
         post: answer,
         halt_guards,
+        every_halt_guarded,
         typed_halts,
         member_cid: post.member_cid.clone(),
         site_cid: post.site_cid.clone(),
@@ -4546,16 +4567,19 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
             bridge_answer(pool, &edge.symbol, first)
         };
         match answer {
-            Ok(Some((binding, post, halt_guards, typed_halts))) => posts.push(AmbientPost {
-                binding,
-                post,
-                halt_guards,
-                typed_halts,
-                member_cid: edge.member_cid.clone(),
-                site_cid: edge.site_cid.clone(),
-                refusal: None,
-                dispatch: None,
-            }),
+            Ok(Some((binding, post, halt_guards, every_halt_guarded, typed_halts))) => {
+                posts.push(AmbientPost {
+                    binding,
+                    post,
+                    halt_guards,
+                    every_halt_guarded,
+                    typed_halts,
+                    member_cid: edge.member_cid.clone(),
+                    site_cid: edge.site_cid.clone(),
+                    refusal: None,
+                    dispatch: None,
+                })
+            }
             Ok(None) => owed.push(owed_post(
                 &edge.symbol,
                 &edge.member_cid,
@@ -4573,6 +4597,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                 },
                 post: Json::Null,
                 halt_guards: Vec::new(),
+                every_halt_guarded: false,
                 typed_halts: Vec::new(),
                 member_cid: edge.member_cid.clone(),
                 site_cid: edge.site_cid.clone(),
@@ -4635,6 +4660,7 @@ fn owed_post(
         },
         post: Json::Null,
         halt_guards: Vec::new(),
+        every_halt_guarded: false,
         typed_halts: Vec::new(),
         member_cid: member_cid.to_string(),
         site_cid: site_cid.to_string(),
@@ -5461,21 +5487,42 @@ fn linked_ambient_post_instances_for_inv(
             // conjoins `true`. `out` stands for the result term here and is
             // replaced with it below, after the formals are bound, so no
             // caller term is ever rewritten by the callee's bindings.
-            let mut instance = if post.halt_guards.is_empty() {
+            //
+            // The converse, the completion fact: where every halt the
+            // contract states names its guard (`every_halt_guarded`), those
+            // are all the ways the call can halt (one locus per halted arm,
+            // the arms of one reduction partition its executions), so where
+            // none holds the call completes: `not(guard)... -> completes`,
+            // and with no halt stated it always completes. Together:
+            // `completes(<result>) <-> and(not(guard))`, for a joined call
+            // only (an owed or refused call never reaches here and keeps both
+            // faces). Without it a joined callee that cannot halt on these
+            // actuals left the caller a satisfiable halt face, and a lie on
+            // that call's handler path read sat.
+            let completes = json!({
+                "kind": "atomic",
+                "name": PYTHON_CALL_COMPLETES,
+                "args": [{"kind": "var", "name": post.binding.out_binding}],
+            });
+            let off_path = IrFormula::And(
+                post.halt_guards
+                    .iter()
+                    .map(|guard| IrFormula::Not(guard.clone()).to_value())
+                    .collect(),
+            )
+            .to_value();
+            let mut instance = if post.every_halt_guarded && post.halt_guards.is_empty() {
+                IrFormula::And(vec![post.post.clone(), completes]).to_value()
+            } else if post.every_halt_guarded {
+                IrFormula::And(vec![
+                    post.post.clone(),
+                    json!({"kind": "implies", "operands": [completes.clone(), off_path.clone()]}),
+                    json!({"kind": "implies", "operands": [off_path, completes]}),
+                ])
+                .to_value()
+            } else if post.halt_guards.is_empty() {
                 post.post.clone()
             } else {
-                let off_path = IrFormula::And(
-                    post.halt_guards
-                        .iter()
-                        .map(|guard| IrFormula::Not(guard.clone()).to_value())
-                        .collect(),
-                )
-                .to_value();
-                let completes = json!({
-                    "kind": "atomic",
-                    "name": PYTHON_CALL_COMPLETES,
-                    "args": [{"kind": "var", "name": post.binding.out_binding}],
-                });
                 IrFormula::And(vec![
                     post.post.clone(),
                     json!({"kind": "implies", "operands": [completes, off_path]}),
@@ -11160,6 +11207,9 @@ mod tests {
             },
             post,
             halt_guards: Vec::new(),
+            // The one-way join (`completes -> not(guard)`) these fixtures pin;
+            // the completion fact's tests set it (`guarded_ident_post`).
+            every_halt_guarded: false,
             typed_halts: Vec::new(),
             member_cid: "test-member-cid".to_string(),
             site_cid: site_cid.to_string(),
@@ -11558,6 +11608,99 @@ mod tests {
             &[ident_vendor_post_halting_when(eqf(int(1), int(1)))],
         );
         assert_eq!(result.verdict, ObligationVerdict::Discharged, "{}", result.reason);
+    }
+
+    // ── Step 9: the completion fact ──────────────────────────────────────
+    // A Python contract states every halt of its one reduction with its
+    // guard, so a joined call completes exactly where no halt's guard holds:
+    // `completes(<result>) <-> and(not(guard))` under the call's actual.
+
+    /// `ident` whose every halt states its guard: `guards` are all of them.
+    fn guarded_ident_post(guards: Vec<Json>) -> AmbientPost {
+        let mut post = ident_vendor_post();
+        post.halt_guards = guards;
+        post.every_halt_guarded = true;
+        post
+    }
+
+    /// `try: ident(3) except: r = 2`, then `assert r == 2`: the handler's arm,
+    /// on which the call halted.
+    fn handler_arm_claim(site_cid: &str) -> Json {
+        json!({"kind": "not", "operands": [ident_completes(site_cid)]})
+    }
+
+    #[test]
+    fn a_joined_call_whose_callee_states_no_halt_always_completes() {
+        // `def ident(x): return x` states no halt: the handler never runs,
+        // so a claim on its arm is a lie, and the completed arm is the truth.
+        let lying = prove_joined(handler_arm_claim(JOIN_SITE), &[guarded_ident_post(vec![])]);
+        assert_eq!(lying.verdict, ObligationVerdict::Unsatisfied, "{}", lying.reason);
+        let truthful = prove_joined(
+            completed_ident_claim(3, JOIN_SITE),
+            &[guarded_ident_post(vec![])],
+        );
+        assert_eq!(
+            truthful.verdict,
+            ObligationVerdict::Discharged,
+            "{}",
+            truthful.reason
+        );
+    }
+
+    #[test]
+    fn a_joined_call_completes_where_the_actual_rules_out_every_halt() {
+        // `def ident(x): if x == 4: raise ValueError; return x` at 3: no
+        // halt's guard holds, so the call completes and the handler's arm
+        // is refuted.
+        let halts_at_4 = || guarded_ident_post(vec![eqf(var("x"), int(4))]);
+        let lying = prove_joined(handler_arm_claim(JOIN_SITE), &[halts_at_4()]);
+        assert_eq!(lying.verdict, ObligationVerdict::Unsatisfied, "{}", lying.reason);
+        let truthful = prove_joined(completed_ident_claim(3, JOIN_SITE), &[halts_at_4()]);
+        assert_eq!(
+            truthful.verdict,
+            ObligationVerdict::Discharged,
+            "{}",
+            truthful.reason
+        );
+    }
+
+    #[test]
+    fn a_certain_halt_keeps_the_handler_arm_under_the_completion_fact() {
+        // The halt at 3 holds: the call halts, the handler's arm is the
+        // truth and the completed arm the lie.
+        let halts_at_3 = || guarded_ident_post(vec![eqf(var("x"), int(3))]);
+        let truthful = prove_joined(handler_arm_claim(JOIN_SITE), &[halts_at_3()]);
+        assert_eq!(
+            truthful.verdict,
+            ObligationVerdict::Discharged,
+            "{}",
+            truthful.reason
+        );
+        let lying = prove_joined(completed_ident_claim(3, JOIN_SITE), &[halts_at_3()]);
+        assert_eq!(lying.verdict, ObligationVerdict::Unsatisfied, "{}", lying.reason);
+    }
+
+    #[test]
+    fn a_halt_with_no_guard_states_no_completion() {
+        // A locus that states no path condition: nothing says when the call
+        // completes, so its halt face stays open.
+        let result = prove_joined(handler_arm_claim(JOIN_SITE), &[ident_vendor_post()]);
+        assert_eq!(result.verdict, ObligationVerdict::Discharged, "{}", result.reason);
+        let locus = |guard: Option<Json>| {
+            let mut locus = json!({"callee": "concept:panic-freedom.leaf.runtime-failure-site"});
+            if let Some(guard) = guard {
+                locus["guard"] = guard;
+            }
+            locus
+        };
+        let guarded = locus(Some(eqf(var("x"), int(3))));
+        assert!(contract_guards_every_halt(&json!({"formals": ["x"]})));
+        assert!(contract_guards_every_halt(
+            &json!({"formals": ["x"], "panicLoci": [guarded.clone()]})
+        ));
+        assert!(!contract_guards_every_halt(
+            &json!({"formals": ["x"], "panicLoci": [guarded, locus(None)]})
+        ));
     }
 
     #[test]
