@@ -3,9 +3,9 @@
 A JoinedStr is the CONCATENATION of its parts -- literal chunks (StringLiteral)
 and interpolations (FormattedValue). Ground string parts fold left with `add`.
 A mix of a ground string and a named interpolation is ``python:fstring`` over
-the part terms: inventing the formatted string is dishonest, and
-``str + symbolic`` mints a deferred carrier that cannot travel through If
-guards. A FormattedValue projects the Python reference's
+the part terms: inventing the formatted string is dishonest, and joining
+two strings never raises, so the join is not a ``+`` with a raise face of its
+own. A FormattedValue projects the Python reference's
 opaque ``python:fstring_value(value, conversion, format_spec)`` coordinate.
 Conversion and format spec remain typed operands: absence is explicit ``None``
 and a present spec is a nested ``python:fstring`` coordinate. The coordinate
@@ -27,10 +27,11 @@ from sugar_lift_py_tests.sugar.witnesses import _assertion_pair
 def _concatenate_joined_parts(left, right, site, ctx):
     """Name an unground join as an f-string coordinate, without inventing the string.
 
-    Ground string parts still concatenate through ``add``. A mix of a ground
-    string and a named interpolation currently mints
-    ``NativeOperationExitCarrierV1`` (``StringValue.add(SymbolicValue)``), and
-    that carrier cannot join through ``IfSugar.union``. RaisesExc writes
+    Ground string parts still concatenate through ``add``. Every part of an
+    f-string is a ``str`` (``format`` raises when ``__format__`` returns
+    anything else, and that raise is the formatted part's own face), so the
+    join itself cannot raise: it is not ``StringValue.add`` over an undecided
+    operand, whose law has a raise face. RaisesExc writes
     ``f"DID NOT RAISE {self.expected_exceptions[0].__name__}"`` inside
     ``if len(...) == 1``. Emit ``python:fstring`` over the part terms instead.
     """
