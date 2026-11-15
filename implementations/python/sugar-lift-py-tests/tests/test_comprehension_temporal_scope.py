@@ -171,10 +171,17 @@ def test_comprehension_target_coordinate_cannot_escape_into_enclosing_x():
         "    result = [x for x in items]\n"
         "    return (x, result)\n"
     )
+    from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
+
     function = next(_source_file(source).functions()).sugar()
-    returned = function.statements[-1]
-    pair = returned.value
-    fold = pair.elements[1]
+    # ``result`` is read in the ``return`` through its assignment's key: the
+    # fold is built by the ``result = [...]`` statement, where it runs.
+    (assign,) = [
+        statement
+        for statement in function.statements
+        if isinstance(statement, AssignSugar) and statement.name == "result"
+    ]
+    fold = assign.value
     generator = fold.generators[0]
 
     # LYING COORDINATE: deliberately collide the comprehension-local binder
@@ -184,13 +191,13 @@ def test_comprehension_target_coordinate_cannot_escape_into_enclosing_x():
         fold,
         generators=(replace(generator, binding_coordinate_cid="outer"),),
     )
-    mutated_return = replace(
-        returned,
-        value=replace(pair, elements=(pair.elements[0], liar)),
-    )
+    mutated_assign = replace(assign, value=liar)
     outcome = replace(
         function,
-        statements=(*function.statements[:-1], mutated_return),
+        statements=tuple(
+            mutated_assign if statement is assign else statement
+            for statement in function.statements
+        ),
     ).desugar()
 
     assert outcome.completed_value() is not None
