@@ -32,10 +32,6 @@ MANIFEST_CID = (
     "blake3-512:6f317a5a489eb7e730064d79792f0d1656723130603309e2f2ed9cbedb604eda"
     "1c4b77a26dc90c980411292ea3994af9015da4cd850b5a307af5a4998b563530"
 )
-DEMAND_TABLE_KEY = (
-    "blake3-512:0ce7c645a7525f1fe5189b808162b49d3fc3ba3d898bfb3d5086e0f295b8b8d"
-    "263fe7f530a6aa34adb125615a21e69fdee249e0314bf199b8f43580375153ab0"
-)
 
 
 def _repo_root() -> Path:
@@ -125,6 +121,11 @@ def _assert_undecided(node: Attribute, receiver, *, name: str | None = None) -> 
 
 
 def test_shared_table_authenticates_the_exact_assertion_manager(tmp_path: Path) -> None:
+    from sugar_lift_py_tests.no_call_body_attribution import (
+        shared_demand_table_content_key,
+    )
+
+    demand_table_key = shared_demand_table_content_key()
     output = tmp_path / "python-demand-table.json"
     pulled = subprocess.run(
         [
@@ -134,7 +135,7 @@ def test_shared_table_authenticates_the_exact_assertion_manager(tmp_path: Path) 
             "--kind",
             "python-demand-table",
             "--content-key",
-            DEMAND_TABLE_KEY,
+            demand_table_key,
             "--output",
             str(output),
             "--runtime",
@@ -152,7 +153,7 @@ def test_shared_table_authenticates_the_exact_assertion_manager(tmp_path: Path) 
     with output.open("rb") as table_file, mmap.mmap(
         table_file.fileno(), 0, access=mmap.ACCESS_READ
     ) as table:
-        assert table.find(DEMAND_TABLE_KEY.encode()) >= 0
+        assert table.find(demand_table_key.encode()) >= 0
         assert table.find(b'"python": "cpython-3.12.13"') >= 0
         assert table.find(MANIFEST_CID.encode()) >= 0
         assert table.find(b'"pandas": "3.0.3"') >= 0

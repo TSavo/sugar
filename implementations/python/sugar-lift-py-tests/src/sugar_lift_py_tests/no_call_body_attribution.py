@@ -29,10 +29,22 @@ HISTORICAL_PATH_SHAPE_DIGEST = (
 AUTHENTICATED_RUNTIME = "cpython-3.12.13"
 AUTHENTICATED_PANDAS = "3.0.3"
 AUTHENTICATED_FILE_COUNT = 1421
-SHARED_DEMAND_TABLE_CONTENT_KEY = (
-    "blake3-512:0ce7c645a7525f1fe5189b808162b49d3fc3ba3d898bfb3d5086e0f295b8b8d"
-    "263fe7f530a6aa34adb125615a21e69fdee249e0314bf199b8f43580375153ab0"
-)
+
+
+def shared_demand_table_content_key() -> str:
+    """The shared table's content key, derived at use.
+
+    The key hashes the producer source files, so it is computed from them
+    each time it is needed rather than copied down; a copy goes stale on the
+    next producer edit (#7757).
+    """
+    from .demand_table_identity import demand_table_identity_for_manifest
+
+    return demand_table_identity_for_manifest(
+        CANONICAL_CORPUS_MANIFEST_CID,
+        AUTHENTICATED_FILE_COUNT,
+        source_root=Path(__file__).resolve().parents[1],
+    ).content_key
 
 
 class ProducerFamily(str, Enum):
@@ -510,6 +522,7 @@ def pull_shared_demand_table(repo_root: Path, output: Path) -> dict:
     import os
     import subprocess
 
+    content_key = shared_demand_table_content_key()
     environment = dict(os.environ)
     environment.update(
         SUGAR_BINARY_ALLOW_BUILD="0",
@@ -523,7 +536,7 @@ def pull_shared_demand_table(repo_root: Path, output: Path) -> dict:
             "--kind",
             "python-demand-table",
             "--content-key",
-            SHARED_DEMAND_TABLE_CONTENT_KEY,
+            content_key,
             "--output",
             str(output),
             "--runtime",
@@ -538,7 +551,7 @@ def pull_shared_demand_table(repo_root: Path, output: Path) -> dict:
     if completed.returncode == 1:
         print(
             "python-demand-table CAS miss: "
-            f"requested semantic key={SHARED_DEMAND_TABLE_CONTENT_KEY}; "
+            f"requested semantic key={content_key}; "
             "falling back to authenticated derivation",
             file=sys.stderr,
             flush=True,
@@ -588,7 +601,7 @@ def pull_shared_demand_table(repo_root: Path, output: Path) -> dict:
         )
     return validate_shared_demand_table(
         json.loads(output.read_text(encoding="utf-8")),
-        expected_content_key=SHARED_DEMAND_TABLE_CONTENT_KEY,
+        expected_content_key=content_key,
     )
 
 

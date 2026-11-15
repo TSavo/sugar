@@ -174,11 +174,7 @@ def _initialize(
     demand_table_identity = None
     if demand_table_path:
         from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
-        from sugar_lift_py_tests.no_call_body_attribution import (
-            SHARED_DEMAND_TABLE_CONTENT_KEY,
-        )
         from sugar_lift_py_tests.prebuilt_demand_table import (
-            DemandTableArtifactRefusal,
             load_prebuilt_demand_table,
             validate_prebuilt_demand_table,
         )
@@ -224,11 +220,8 @@ def _initialize(
                 "aggregateHash": corpus.manifest_cid,
             },
         )
-        if table.semantic_identity.content_key == SHARED_DEMAND_TABLE_CONTENT_KEY:
-            raise DemandTableArtifactRefusal(
-                "legacy shared demand table identity refused: "
-                f"{SHARED_DEMAND_TABLE_CONTENT_KEY}"
-            )
+        # A table keyed on any other corpus, producer source, parser or
+        # config is refused here by name: the key is re-derived, never pinned.
         validate_prebuilt_demand_table(table, corpus)
         contract_refs = provisional_contract_refs_from_demand_rows(list(table.rows))
         demand_table_identity = table.semantic_identity.content_key

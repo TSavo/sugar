@@ -67,7 +67,9 @@ def test_pull_shared_demand_table_executes_authenticated_miss_fallback(
         pass
 
     table = SimpleNamespace(
-        semantic_identity=SimpleNamespace(content_key=module.SHARED_DEMAND_TABLE_CONTENT_KEY),
+        semantic_identity=SimpleNamespace(
+            content_key=module.shared_demand_table_content_key()
+        ),
         rows=({"kind": "test-row"},),
         corpus_pin=SimpleNamespace(
             version=module.AUTHENTICATED_PANDAS,
@@ -96,7 +98,7 @@ def test_pull_shared_demand_table_executes_authenticated_miss_fallback(
     output = tmp_path / "demand.json"
     result = module.pull_shared_demand_table(Path("/repo"), output)
 
-    assert result["contentKey"] == module.SHARED_DEMAND_TABLE_CONTENT_KEY
+    assert result["contentKey"] == module.shared_demand_table_content_key()
     assert json.loads(output.read_text(encoding="utf-8"))["schema"] == (
         "python-provisional-demand-table/v1"
     )

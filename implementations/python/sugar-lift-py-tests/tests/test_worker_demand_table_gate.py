@@ -17,9 +17,12 @@ if str(_SCRIPTS) not in sys.path:
 
 import _supervised_enum_worker as worker
 from sugar_lift_py_tests.authenticated_pytest import authenticate_corpus
-from sugar_lift_py_tests.no_call_body_attribution import SHARED_DEMAND_TABLE_CONTENT_KEY
+from sugar_lift_py_tests.demand_table_identity import (
+    demand_table_identity_for_manifest,
+)
 from sugar_lift_py_tests.prebuilt_demand_table import (
-    DemandTableArtifactRefusal,
+    DemandTableSemanticIdentityMismatch,
+    content_cid_for_preimage,
     mint_prebuilt_demand_table,
     write_prebuilt_demand_table,
 )
@@ -74,13 +77,24 @@ def test_worker_refuses_workspace_root_that_does_not_contain_corpus(
     assert "source_workspace_root does not contain corpus_root" in result["reason"]
 
 
-def test_worker_refuses_legacy_key_by_name(tmp_path: Path, monkeypatch):
+def test_worker_refuses_table_keyed_on_other_producer_source(
+    tmp_path: Path, monkeypatch
+):
     root, handle, table = _fixture(tmp_path)
-    legacy_identity = dataclasses.replace(
-        table.semantic_identity, content_key=SHARED_DEMAND_TABLE_CONTENT_KEY
+    other_source = tmp_path / "other-producer-source" / "sugar_lift_py_tests"
+    other_source.mkdir(parents=True)
+    (other_source / "lift_rpc.py").write_text("# another producer\n", encoding="utf-8")
+    stale_identity = demand_table_identity_for_manifest(
+        table.semantic_identity.corpus_manifest_cid,
+        table.semantic_identity.file_count,
+        source_root=other_source.parent,
     )
-    legacy = dataclasses.replace(table, semantic_identity=legacy_identity)
-    artifact = write_prebuilt_demand_table(legacy, tmp_path / "legacy.json")
+    assert stale_identity.content_key != table.semantic_identity.content_key
+    stale = dataclasses.replace(table, semantic_identity=stale_identity)
+    stale = dataclasses.replace(
+        stale, content_cid=content_cid_for_preimage(stale.preimage())
+    )
+    artifact = write_prebuilt_demand_table(stale, tmp_path / "stale.json")
     monkeypatch.setattr(
         "sugar_lift_py_tests.authenticated_pytest.authenticated_pandas_corpus",
         lambda: handle,
@@ -88,7 +102,7 @@ def test_worker_refuses_legacy_key_by_name(tmp_path: Path, monkeypatch):
     worker._CONSTRUCTION_CONTEXT = None
     worker._CORPUS_ROOT = None
     with pytest.raises(
-        DemandTableArtifactRefusal, match="legacy shared demand table identity refused"
+        DemandTableSemanticIdentityMismatch, match="semantic identity mismatch"
     ):
         worker._initialize(
             str(root), str(artifact), allow_local_demand_derivation=False

@@ -259,6 +259,25 @@ def demand_table_identity(
 ) -> DemandTableIdentityV1:
     """The content key for the table this corpus and producer would build."""
     manifest_cid, file_count = corpus_manifest_cid(root, paths)
+    return demand_table_identity_for_manifest(
+        manifest_cid, file_count, source_root=source_root, config=config
+    )
+
+
+def demand_table_identity_for_manifest(
+    manifest_cid: str,
+    file_count: int,
+    *,
+    source_root: pathlib.Path,
+    config: Mapping[str, object] | None = None,
+) -> DemandTableIdentityV1:
+    """The content key over an already-authenticated corpus manifest.
+
+    The one derivation of the key: the producer modules' bytes are read here,
+    at use, so an edit to any of them moves the key. A copy of the key written
+    down beside this function is a second answer that goes stale on the next
+    producer edit.
+    """
     identity = DemandTableIdentityV1(
         content_key="",
         corpus_manifest_cid=manifest_cid,
