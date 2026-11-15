@@ -468,10 +468,11 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             owner="LoopRecurrenceSugar", blame=self.site
         )
         from sugar_lift_py_tests.floor import CallSiteValue
+        from sugar_lift_py_tests.floor.generator_value import GeneratorValue
 
         if (
             runtime is not None
-            and not isinstance(iterable, (SymbolicValue, CallSiteValue))
+            and not isinstance(iterable, (SymbolicValue, CallSiteValue, GeneratorValue))
             and not contents_stale(iterable)
         ):
             def first(runtime_ctx, carried):
@@ -490,7 +491,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         # formal, an unknown), a call's result (what the callee returned is
         # its contract's, joined at prove: #7757 steps 5 and 6, so its
         # ``iter`` is the undecided read, ``CallSiteValue.iter_with``, whose
-        # iterator has no item a live loop could step), or a container whose
+        # iterator has no item a live loop could step), a generator pulled
+        # where it is consumed (``GeneratorValue``: its members are not in
+        # hand, and its pull is stated by its ``next``), or a container whose
         # contents are not current (``object_identity.contents_stale``),
         # which has no members in hand -- has an ``iter`` it has not decided
         # either: an undecided

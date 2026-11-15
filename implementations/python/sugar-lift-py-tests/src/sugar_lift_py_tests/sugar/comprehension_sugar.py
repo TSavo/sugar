@@ -158,6 +158,13 @@ class ComprehensionSugar(ConstructedTermSugar):
     # has been consumed at a later call is not decided, no final member is
     # placed, and that call is refused by name (``EvaluationRefSugar``).
     final_member: bool = True
+    # Whether the comprehension's members are pulled in the expression that
+    # makes it.  An eager comprehension's always are.  A generator
+    # expression's are where it is handed to a call
+    # (``GeneratorExp._handed_to_a_call``); anywhere else they are pulled
+    # where a consumer pulls it, and its pull's halts are stated there
+    # (``_pulled_later``, ``GeneratorValue``).
+    pulled_where_made: bool = True
 
     def __post_init__(self) -> None:
         if self.kind not in {
@@ -330,7 +337,9 @@ class ComprehensionSugar(ConstructedTermSugar):
             # refusals and may never reach a completed arm (#7347).
             match decision:
                 case Projected(outcome=outcome):
-                    return outcome
+                    # Every member was pulled here: a generator pulled later
+                    # carries that pull to its consumer (``_generator``).
+                    return self._generator(outcome) if self._pulled_later() else outcome
                 case NotProjected(
                     reason=FiniteProjectionNonSuccessV1.LAWFULLY_INAPPLICABLE
                 ):
@@ -382,9 +391,67 @@ class ComprehensionSugar(ConstructedTermSugar):
                 outer=outer,
             )
 
-        return self._iterated(iterable, ctx, lambda: fold(None))
+        # The outermost iterable's ``iter`` runs where the generator is made;
+        # everything after it is the pull (``_generator``).
+        made = self._generator if index == 0 and self._pulled_later() else None
+        return self._iterated(iterable, ctx, lambda: fold(None), made=made)
 
-    def _iterated(self, iterable, ctx, fold):
+    def _pulled_later(self) -> bool:
+        """Whether this is a generator expression whose members are pulled
+        somewhere other than where it is made.
+
+        An eager comprehension runs whole where it is made.  A generator
+        expression runs when it is consumed: where it is handed to a call
+        (``pulled_where_made``, ``GeneratorExp._handed_to_a_call``), the
+        call that pulls it is the expression that made it, and its halts
+        stand there.  Anywhere else it is pulled where a consumer pulls it."""
+        return self.kind == "py.generatorexp" and not self.pulled_where_made
+
+    def _generator(self, pulled):
+        """The generator a generator expression pulled later is
+        (``_pulled_later``), from ``pulled``: its one pull of a member,
+        reduced here over the symbolic member -- the ``next`` of the
+        outermost iterator (``iterator_operation.stepped``), then every later
+        generator, condition and element.
+
+        Its halts and what it owes are not this expression's: Python runs
+        none of it until a consumer pulls.  The generator completes holding
+        them (``GeneratorValue.pulled``), and they are stated where it is
+        pulled (``GeneratorValue.next_with``); a generator never pulled
+        states none.  A pull that cannot halt and owes nothing has nothing
+        to move: the fold stands as it is.  A pull still waiting on its
+        caller's actuals is not an outcome yet, and stays where it is.
+
+        The generator's term is its fold where every completed face of the
+        pull holds the one fold, else its own coordinate at this
+        occurrence."""
+        from sugar_lift_py_tests.floor.generator_value import GeneratorValue
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import Completed
+
+        if not isinstance(pulled, ExitSet):
+            return pulled
+        if not pulled.halts() and not pulled.owed_items():
+            return pulled
+        folds = []
+        for arm in pulled.exits:
+            if isinstance(arm, Completed) and all(arm.value != seen for seen in folds):
+                folds.append(arm.value)
+        owner = str(self.site)
+        term = (
+            folds[0].to_term(owner=owner)
+            if len(folds) == 1
+            else ctor(
+                "python:generator",
+                [self.occurrence_term(owner=owner)],
+                symbol_kind="coordinate",
+            )
+        )
+        return ExitSet.completed(
+            GeneratorValue(term=term, pulled=pulled, site=self.site)
+        )
+
+    def _iterated(self, iterable, ctx, fold, *, made=None):
         """The symbolic fold (``fold()``) over ``iterable``, run as a ``for``
         runs its recurrence, through the one iterator path both share
         (``iterator_operation.iterated`` and ``stepped``): ``iter`` once
@@ -398,7 +465,11 @@ class ComprehensionSugar(ConstructedTermSugar):
         a face.  No halt is guessed and none is dropped.
 
         An expression's halt offers no record of its own: the statement that
-        runs the comprehension records it (``halts_recorded``)."""
+        runs the comprehension records it (``halts_recorded``).
+
+        ``made``, where given, takes what follows ``iter``'s completion (the
+        ``next`` and the fold) to what the comprehension completes with there:
+        a generator pulled later holds it for its consumer (``_generator``)."""
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
@@ -412,7 +483,8 @@ class ComprehensionSugar(ConstructedTermSugar):
         iteration = iterated(iterable, ctx, owner=owner, site=self.site)
 
         def each(iterator):
-            return stepped(iterable, iterator, ctx, fold, owner=owner, site=self.site)
+            pulled = stepped(iterable, iterator, ctx, fold, owner=owner, site=self.site)
+            return pulled if made is None else made(pulled)
 
         if isinstance(iteration, NativeOperationExitCarrierV1):
             return iteration.and_then(each)

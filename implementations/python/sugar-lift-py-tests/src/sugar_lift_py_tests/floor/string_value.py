@@ -712,6 +712,12 @@ def _fold_string_method(receiver: StringValue, operation):
     if name in {"strip", "lstrip", "rstrip", "splitlines"}:
         return opaque_coordinate() if len(args) == 1 else None
     if name == "join" and len(args) == 1:
+        from sugar_lift_py_tests.floor.generator_value import GeneratorValue
+
+        if isinstance(args[0], GeneratorValue):
+            # ``join`` drains a generator: its pull's halts are this call's
+            # (``GeneratorValue.pull``), never dropped.
+            return args[0].pull(lambda: opaque_coordinate(LanguageCallee.STR_JOIN))
         # An opaque iterable (vendor columns, a symbolic sequence).
         return opaque_coordinate(LanguageCallee.STR_JOIN)
     if name == "split" and 1 <= len(args) <= 2:
