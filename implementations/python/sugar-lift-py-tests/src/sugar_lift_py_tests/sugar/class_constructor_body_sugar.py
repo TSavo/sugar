@@ -837,7 +837,7 @@ class ConstructedInstanceValue(FloorValue):
         from sugar_lift_py_tests.floor.object_identity import contents_current
         from sugar_lift_py_tests.floor.object_value import ObjectValue
         from sugar_lift_py_tests.ir import (
-            String,
+            Int,
             and_,
             atomic,
             ctor,
@@ -878,7 +878,15 @@ class ConstructedInstanceValue(FloorValue):
                 facts.append(
                     forall(
                         _READ_KEY,
-                        String(),
+                        # The key ranges over the sort a site key lowers to
+                        # where it stands: an argument of the
+                        # ``python:attribute`` coordinate, whose string
+                        # constants the SMT backend declares as opaque
+                        # ``Int`` constants (``strlit_*``).  Bound over
+                        # ``String`` the quantified read was another
+                        # function to the solver, and z3 refused the row
+                        # (``unknown constant python:attribute``).
+                        Int(),
                         atomic(
                             "python:attribute.completes",
                             [
