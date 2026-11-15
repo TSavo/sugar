@@ -31,6 +31,10 @@ from sugar_lift_py_tests.sugar.assign_sugar import (
     KeyedStoreSugar,
     UnpackStoreAssignSugar,
 )
+from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+    ContainerMutationStatementSugar,
+    PathContainerCallSugar,
+)
 from sugar_lift_py_tests.sugar.dynamic_unpack_assign_sugar import (
     DynamicUnpackAssignSugar,
 )
@@ -179,7 +183,14 @@ def test_attribute_and_subscript_production_construction() -> None:
     assert isinstance(stmt.targets[0].store, KeyedStoreSugar)
     assert isinstance(stmt.targets[0].store.store, ReceiverFieldStoreSugar)
     assert isinstance(stmt.targets[1], StoreUnpackTarget)
-    assert isinstance(stmt.targets[1].store, SubscriptStoreEffectSugar)
+    # ``d[k] = <member>`` on a name is the leaf's own container mutation
+    # statement: the ``__setitem__`` call through the one container door,
+    # whose receiver's post-state is the store's testimony
+    # (``ContainerMutationStatementSugar``), never a second subscript-store
+    # form beside it.
+    subscript_leaf = stmt.targets[1].store
+    assert isinstance(subscript_leaf, ContainerMutationStatementSugar)
+    assert isinstance(subscript_leaf.evaluated[0], PathContainerCallSugar)
     assert isinstance(stmt.targets[2], StarUnpackTarget)
 
 
