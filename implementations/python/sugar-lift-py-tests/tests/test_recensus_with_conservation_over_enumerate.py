@@ -14,11 +14,9 @@ So these teeth ask it, over the entrance the census actually uses
 (``sugar.enumerate`` -> ``lift_rpc._handle_enumerate``), not
 ``SourceFile.from_path``, which is a different door and proves nothing.
 
-The fixture's context manager is declared IN THE FILE. That is load-bearing: a
-``with`` over a runtime-selected manager refuses at
-``ContextManagerResolutionConstructionGap`` BEFORE the level ever sends, so
-such a fixture answers identically on a healthy and a broken producer and
-discriminates nothing. This one reaches the send.
+The level keys the file's ``with`` items off the tree and constructs nothing;
+what each item's statement built is read off the construction roll by the
+consumer (``with_item_events_off_the_roll``), not off a table (#7757).
 
 Discrimination, measured rather than asserted -- ``KIND`` and ``CONSERVES``
 both pass at c02e41a6d (main) and both FAIL at 904e44075 (the reverted #7380).
@@ -148,13 +146,16 @@ def test_with_items_conserve_through_the_census_enumerate_door(
     """
     path = installed_corpus / "widget" / "holder.py"
     cid = _source_cid(installed_corpus)
-    events, gaps = CONSUMER.demand_context_manager_resolution_events(
+    items, gaps = CONSUMER.demand_context_manager_resolution_events(
         workspace_root=installed_corpus,
         file_rel=FILE_REL,
         source_cid=cid,
         source_workspace_root=installed_corpus,
     )
     assert gaps == [], gaps
+    # The level keys the items; the outcome is read off the roll. With no
+    # roll in hand every item stands unconstructed, and still conserves.
+    events = CONSUMER.with_item_events_off_the_roll(list(items), None)
 
     sites = DRIVER._ast_site_prevalence(path)
     # The denominator is real: with no With items, a partition that drops

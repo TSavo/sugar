@@ -305,30 +305,6 @@ NativeDefinitionCoordinateResolutionV1 = (
 )
 
 
-def effective_context_manager_resolutions_for_source(
-    context: object, *, source_cid: str
-) -> dict[SourceFragmentCoordinateV1, object]:
-    """Project the exact resolution table consumed by With for one source."""
-    return dict(
-        resolutions_for_source(
-            getattr(getattr(context, "contract_refs", None), "by_use_site", None),
-            source_cid,
-        )
-    )
-
-
-def context_manager_resolution_outcome(resolution: object) -> str:
-    """Closed census projection: constructed or unconstructed."""
-    if isinstance(resolution, ContextManagerContractRefV1):
-        return "constructed"
-    if isinstance(resolution, ContextManagerResolutionGapV1):
-        return "unconstructed"
-    raise TypeError(
-        "With resolution table value is neither constructed ref nor gap: "
-        f"{type(resolution).__module__}.{type(resolution).__qualname__}"
-    )
-
-
 class PerSourceResolutionsV1(Mapping):
     """A ``by_use_site`` table derived one source at a time, on first demand.
 

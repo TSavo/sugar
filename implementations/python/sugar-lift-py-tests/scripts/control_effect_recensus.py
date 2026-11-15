@@ -362,78 +362,51 @@ _WITH_RESOLUTION_OUTCOMES = frozenset({"constructed", "cited-opaque", "unconstru
 
 
 def _tally_cm_resolutions(
-    context=None,
     *,
     source_cid: str,
-    resolution_events: list[dict[str, Any]] | None = None,
+    resolution_events: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Emit one canonical coordinate row per With resolution, no name buckets."""
-    from sugar_lift_py_tests.context_manager_resolution import (
-        context_manager_resolution_outcome,
-        effective_context_manager_resolutions_for_source,
-    )
+    """Emit one canonical coordinate row per With item event, no name buckets.
 
+    The events are the consumer's: one per ``with`` item, its outcome read off
+    the construction roll (``with_item_events_off_the_roll``). No table is
+    read here (#7757).
+    """
     if not source_cid:
         raise ValueError(
-            "cm resolution tally requires source_cid so shared contract_refs "
-            "are not multiplied across every file in the census"
+            "cm resolution tally requires source_cid so one file's events are "
+            "never tallied under another's"
         )
 
     rows: list[dict[str, Any]] = []
-    if resolution_events is not None:
-        for event in resolution_events:
-            if not isinstance(event, dict):
-                raise TypeError("With resolution event must be an object")
-            key = event.get("inputKey")
-            outcome = event.get("outcome")
-            observed_type = event.get("observedEventType")
-            if (
-                not isinstance(key, dict)
-                or key.get("sourceCid") != source_cid
-                # The SAME three facts the partition below counts. This gate
-                # runs upstream of `_with_census_partition`, so a value it
-                # rejects never reaches the bucket built for it: #7388 added
-                # `cited-opaque` to the law and to the partition and left this
-                # closed set at two. Every cited row then failed here as a
-                # malformed event and voided its whole file -- 86 instrument
-                # failures in run 31128314243 where the census before had zero.
-                or outcome not in _WITH_RESOLUTION_OUTCOMES
-                or not isinstance(observed_type, str)
-                or "." not in observed_type
-            ):
-                raise TypeError(f"malformed With resolution event: {event}")
-            rows.append(
-                {
-                    "inputKey": dict(key),
-                    "observedEventType": observed_type,
-                    "outcome": outcome,
-                    # Attribution (plan Cut 0): the structural gap kind and the
-                    # authenticated target, so unconstructed rows are
-                    # classifiable from the board without re-reading the corpus.
-                    "kind": event.get("kind"),
-                    "targetSymbol": event.get("targetSymbol"),
-                }
-            )
-    else:
-        if context is None:
-            raise TypeError("With resolution tally requires context or raw events")
-        for coordinate, resolution in effective_context_manager_resolutions_for_source(
-            context, source_cid=source_cid
-        ).items():
-            rows.append(
-                {
-                    "inputKey": coordinate.wire(),
-                    "observedEventType": (
-                        f"{type(resolution).__module__}.{type(resolution).__qualname__}"
-                    ),
-                    "outcome": context_manager_resolution_outcome(resolution),
-                    "kind": getattr(resolution, "kind", None),
-                    "targetSymbol": (
-                        getattr(resolution, "target_symbol", None)
-                        or getattr(resolution, "target_name", None)
-                    ),
-                }
-            )
+    for event in resolution_events:
+        if not isinstance(event, dict):
+            raise TypeError("With resolution event must be an object")
+        key = event.get("inputKey")
+        outcome = event.get("outcome")
+        observed_type = event.get("observedEventType")
+        if (
+            not isinstance(key, dict)
+            or key.get("sourceCid") != source_cid
+            # The SAME three facts the partition below counts. This gate
+            # runs upstream of `_with_census_partition`, so a value it
+            # rejects never reaches the bucket built for it: #7388 added
+            # `cited-opaque` to the law and to the partition and left this
+            # closed set at two. Every cited row then failed here as a
+            # malformed event and voided its whole file -- 86 instrument
+            # failures in run 31128314243 where the census before had zero.
+            or outcome not in _WITH_RESOLUTION_OUTCOMES
+            or not isinstance(observed_type, str)
+            or "." not in observed_type
+        ):
+            raise TypeError(f"malformed With resolution event: {event}")
+        rows.append(
+            {
+                "inputKey": dict(key),
+                "observedEventType": observed_type,
+                "outcome": outcome,
+            }
+        )
     return sorted(rows, key=lambda row: json.dumps(row["inputKey"], sort_keys=True))
 
 

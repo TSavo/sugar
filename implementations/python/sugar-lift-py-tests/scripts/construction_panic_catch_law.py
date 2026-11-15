@@ -506,10 +506,6 @@ except BaseException as error:
     )
     row["constructionPanics"] = [panic]
     row["enumerateConstructionPanics"] = [panic]
-    row["contextManagerResolutionEvents"] = _provisional_resolution_events(
-        contract_refs=contract_refs,
-        source_cid=source_cid,
-    )
     return _attest_terminal_row(
         row,
         file_rel=file_rel,
