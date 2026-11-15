@@ -398,10 +398,17 @@ def test_a_class_conditional_that_is_not_ground_still_refuses() -> None:
     # run (``_module_run``), where its statement bound it.
     with pytest.raises(SugarNotWritten, match="not a ground bool literal"):
         _module_run("    if FLAG:\n        limit = 1\n")
-    # Also when a field before it always raises: the refusal is not traded
-    # for the halt.
-    with pytest.raises(SugarNotWritten, match="not a ground bool literal"):
+
+
+def test_a_class_conditional_after_a_field_that_always_raises_never_runs() -> None:
+    """The class body is a block: ``limit = 1 // 0`` halts it, and the ``if``
+    after it never runs, as in Python.  The class statement halts and no
+    class is built; the ``if``'s test is never taken, so nothing refuses."""
+    completed, halted = _run_faces(
         _module_run("    limit = 1 // 0\n    if FLAG:\n        a = 1\n")
+    )
+    assert completed == 0
+    assert halted >= 1
 
 
 def test_a_field_with_several_completed_values_still_refuses() -> None:

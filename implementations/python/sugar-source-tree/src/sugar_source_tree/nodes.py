@@ -12148,16 +12148,17 @@ class ClassDef(Statement):
             self._method_descriptor_kind(method),
         )
 
-    def _class_method_defaults(self, method, read):
-        """The defaults of the class-body ``def`` statement ``method``,
-        evaluated when the class body runs, as a member of the body in source
-        order: ``(ConstructedClassMethodDefaultsV1,)``, or ``()`` for a
-        statement that evaluates none.
+    def _class_method_defaults(self, method):
+        """The class-body ``def`` statement ``method`` as the class body's
+        block runs it, where it stands in source order: the evaluation of
+        its defaults (``DefinitionDefaultsSugar``), or None for a statement
+        that evaluates none.
 
         Python evaluates a method's defaults when its ``def`` statement runs,
         which is when the class body runs.  The statement is the one
-        def-statement rule's (``_def_statement_sugar``), reading through the
-        class body's ``read``: each default bound under its per-parameter key
+        def-statement rule's (``_def_statement_sugar``), its defaults
+        substituted in the class body's own threading (``method`` is the
+        threaded statement): each default bound under its per-parameter key
         (``_default_evaluation_key``, #8020), which the class value carries
         to every call of the method (``ClassDefinitionValue.method_defaults``,
         ``object_value.bind_method_call``), and to every call of the class
@@ -12170,25 +12171,249 @@ class ClassDef(Statement):
         construct is not evaluated here: a call that omits it finds its key
         unbound and is refused by name (``DefaultValueSugar``), never
         dropped."""
-        from sugar_lift_py_tests.sugar.class_definition_sugar import (
-            ConstructedClassMethodDefaultsV1,
-        )
         from sugar_lift_py_tests.sugar.default_value_sugar import (
             DefinitionDefaultsSugar,
         )
 
         statement = (
-            _def_statement_sugar(method, read=read)
+            _def_statement_sugar(method)
             if call_applies_own_frame(method)
-            else _definition_defaults_sugar(method, read=read)
+            else _definition_defaults_sugar(method)
         )
         if not isinstance(statement, DefinitionDefaultsSugar):
-            return ()
+            return None
+        return statement
+
+    def _require_class_members(self, statements, *, top: bool = True) -> None:
+        """Stop by name (``SugarNotWritten``) a class body holding a
+        statement its namespace is not read for.
+
+        The body is a block: every statement of it is reduced by the one
+        block reducer through its own sugar (``_class_body_block``).  What is
+        admitted is what the class statement can read the namespace of off
+        the state that block leaves: an assignment or annotated assignment
+        to Names, a ``def`` and a ``class`` (in the body itself), ``pass``,
+        the docstring and an ``if`` over the same.  Anything else, and a
+        ``def`` or ``class`` under an ``if`` (an arm's ``def`` is in no
+        method roster, and an arm's class statement binds no key), is
+        refused here, never dropped."""
+        for index, item in enumerate(statements):
+            if isinstance(item, Pass):
+                continue
+            if isinstance(item, If):
+                self._require_class_members(item.body, top=False)
+                self._require_class_members(item.orelse, top=False)
+                continue
+            if (
+                isinstance(item, Assign)
+                and item.targets
+                and all(isinstance(target, Name) for target in item.targets)
+            ):
+                continue
+            if isinstance(item, AnnAssign) and isinstance(item.target, Name):
+                continue
+            if top and (
+                isinstance(item, (FunctionDef, AsyncFunctionDef, ClassDef))
+                or (
+                    index == 0
+                    and isinstance(item, Expr)
+                    and isinstance(item.value, Constant)
+                    and isinstance(item.value.value, str)
+                )
+            ):
+                continue
+            from sugar_source_tree.panic import SugarNotWritten
+
+            if top:
+                raise SugarNotWritten(
+                    blame=item.fragment,
+                    owner="ClassDef._construct_sugar",
+                    observed=f"unsupported class member {item.kind}",
+                    requested="a total source-visible class member construction arm",
+                    fix="add the member's ordinary node Sugar arm or keep the class loud",
+                )
+            raise SugarNotWritten(
+                blame=item.fragment,
+                owner="ClassDef._construct_sugar",
+                observed=f"unsupported conditional class member {item.kind}",
+                requested="a constructed field assignment or pass",
+                fix="add the member's ordinary class-control arm or keep it loud",
+            )
+
+    def _class_body_block(self, body):
+        """The class body as the block the class statement runs:
+        ``(statements, fields, branch_fields, branch_slots, default_keys)``.
+
+        ``body`` is this statement's body, threaded
+        (``_substitute_body``): every assignment carries its evaluation key
+        and every ``if`` its branch slot, as in a function or module body.
+        ``statements`` are the body's statements' own sugars, in source
+        order, through the one statement rule every body uses
+        (``_body_statement_sugar``): an assignment is ``AssignSugar``, an
+        ``if`` is ``IfSugar``, a nested ``class`` the one decorator
+        application bound under its evaluation key.  A ``def`` statement is
+        its defaults' evaluation (``_class_method_defaults``): its descriptor
+        is the class body's descriptor table's, its body runs only at a
+        call.  The docstring and ``pass`` run nothing.
+
+        ``fields`` name what the namespace holds once that block ran: one
+        row per Name a statement binds, with the key the statement's sugar
+        binds its value under (``Assign.target_evaluations``,
+        ``AnnAssign.target_evaluations``, ``_definition_evaluation_key``).
+        The class statement reads each row's value off the state the block
+        leaves (``ClassDefinitionSugar._namespace``); nothing here evaluates
+        a field.  ``branch_fields`` are the indexes of the rows standing in
+        an arm of an ``if`` (bound only where that arm ran);
+        ``branch_slots`` the slot of each ``if`` of the body;
+        ``default_keys`` the key of each method default.  The phi an ``if``
+        splices after itself (``If.substitute``) carries no key and is no
+        row: the arms' own statements are."""
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+        )
+        from sugar_lift_py_tests.floor import ConstructedClassFieldV1
+        from sugar_source_tree.panic import SugarNotWritten
+
+        def binding_occurrence(target):
+            span = target.line_col_span()
+            return SourceFragmentCoordinateV1(
+                target.unit.source_cid,
+                span.start_line,
+                span.start_col,
+                span.end_line,
+                span.end_col,
+            )
+
+        def unkeyed(item, name):
+            raise SugarNotWritten(
+                blame=item.fragment,
+                owner="ClassDef._construct_sugar",
+                observed=(
+                    f"class field {name} whose statement carries no evaluation key"
+                ),
+                requested="the key the field's statement binds its value under",
+                fix="thread the class body before constructing its statements",
+            )
+
+        statements = []
+        fields = []
+        branch_fields = set()
+        branch_slots = []
+        default_keys = []
+
+        def enroll(row, in_branch):
+            if in_branch:
+                branch_fields.add(len(fields))
+            fields.append(row)
+
+        def rows(item, in_branch, after_if) -> bool:
+            # True when ``item`` is an ``if`` or one of the phis spliced
+            # after it.
+            if isinstance(item, If):
+                slot = getattr(item, "branch_result_slot_id", None)
+                if slot is not None:
+                    branch_slots.append(slot)
+                for arm in (item.body, item.orelse):
+                    spliced = False
+                    for child in arm:
+                        spliced = rows(child, True, spliced)
+                return True
+            if isinstance(item, Assign):
+                keys = dict(item.target_evaluations())
+                if not keys and after_if:
+                    return True
+                value_sugar = item.value.sugar()
+                group = item.fragment.seal().cid
+                for target in item.targets:
+                    key = keys.get(target.id)
+                    if key is None:
+                        unkeyed(item, target.id)
+                    enroll(
+                        ConstructedClassFieldV1(
+                            target.id,
+                            target.fragment.seal().cid,
+                            value_sugar,
+                            binding_occurrence(target),
+                            group,
+                            evaluation_key=key,
+                        ),
+                        in_branch,
+                    )
+                return False
+            if isinstance(item, AnnAssign) and item.value is not None:
+                key = dict(item.target_evaluations()).get(item.target.id)
+                if key is None:
+                    unkeyed(item, item.target.id)
+                enroll(
+                    ConstructedClassFieldV1(
+                        item.target.id,
+                        item.fragment.seal().cid,
+                        item.value.sugar(),
+                        binding_occurrence(item.target),
+                        evaluation_key=key,
+                    ),
+                    in_branch,
+                )
+            return False
+
+        after_if = False
+        for index, item in enumerate(body):
+            spliced, after_if = after_if, False
+            if isinstance(item, (FunctionDef, AsyncFunctionDef)):
+                defaults = self._class_method_defaults(item)
+                if defaults is not None:
+                    default_keys.extend(key for key, _at in defaults.evaluations)
+                    statements.append(defaults)
+                continue
+            if isinstance(item, Pass) or (
+                index == 0
+                and isinstance(item, Expr)
+                and isinstance(item.value, Constant)
+                and isinstance(item.value.value, str)
+            ):
+                continue
+            if isinstance(item, ClassDef):
+                # A nested class statement runs where it stands in this
+                # body, through the one decorator application: its run
+                # carries what its own body's callees stored, and its value
+                # is bound under the statement's evaluation key.
+                bound = getattr(item, "decorated_value", None)
+                evaluation = (
+                    getattr(bound, "evaluation", None)
+                    if isinstance(bound, DecoratedDefinitionRef)
+                    else None
+                )
+                keyed = item
+                if not isinstance(evaluation, str):
+                    evaluation = _definition_evaluation_key(item, {})
+                    keyed = _decorated_statement_binding(
+                        item,
+                        {
+                            item.name: _decorated_definition_ref(
+                                item, item.span, evaluation=evaluation
+                            )
+                        },
+                    )
+                enroll(
+                    ConstructedClassFieldV1(
+                        item.name,
+                        item.fragment.seal().cid,
+                        item.sugar(),
+                        binding_occurrence(item.binding_target),
+                        evaluation_key=evaluation,
+                    ),
+                    False,
+                )
+                statements.append(_body_statement_sugar(keyed))
+                continue
+            after_if = rows(item, False, spliced)
+            statements.append(_body_statement_sugar(item))
         return (
-            ConstructedClassMethodDefaultsV1(
-                definition_fragment_cid=method.fragment.seal().cid,
-                defaults=statement,
-            ),
+            tuple(statements),
+            tuple(fields),
+            frozenset(branch_fields),
+            tuple(branch_slots),
+            tuple(default_keys),
         )
 
 
@@ -12285,11 +12510,15 @@ class ClassDef(Statement):
         )
 
     def _construct_sugar(self):
-        """Construct source-visible class structure through body members.
+        """Construct the class statement: its methods, and its body as a block.
 
-        L1b (this door): fields, nested ClassDef, conditional fields.
         Methods (FunctionDef / AsyncFunctionDef) enroll through the FunctionDef
-        construction door — ClassDef does not reimplement method bodies.
+        construction door — ClassDef does not reimplement method bodies.  The
+        body's statements are threaded and constructed as any block's are
+        (``_class_body_block``): the class statement runs them through the
+        one block reducer, an ``if`` among them is ``IfSugar``, and the
+        namespace is read off the state that block leaves
+        (``ClassDefinitionSugar._namespace``).
         """
         if (
             not isinstance(self.binding_target, Name)
@@ -12318,173 +12547,46 @@ class ClassDef(Statement):
                 and isinstance(first.value.value, str)
             ):
                 docstring_cid = first.fragment.seal().cid
-        # Simple Name = <expr> fields (constants and constructed values). The
-        # residual ClassDef mass is non-constant body assigns; Constant-only
-        # was an over-narrow partition that left honest source-visible fields
-        # as unsupported-member gaps.
         annotated_assignments = tuple(
             item
             for item in self.body
             if isinstance(item, AnnAssign) and isinstance(item.target, Name)
         )
-        unsupported = tuple(
-            item
-            for index, item in enumerate(self.body)
-            if not isinstance(item, (FunctionDef, AsyncFunctionDef, ClassDef, If, Pass))
-            and not (
-                index == 0
-                and isinstance(item, Expr)
-                and isinstance(item.value, Constant)
-                and isinstance(item.value.value, str)
-            )
-            and not (
-                isinstance(item, Assign)
-                and item.targets
-                and all(isinstance(target, Name) for target in item.targets)
-            )
-            and not (isinstance(item, AnnAssign) and isinstance(item.target, Name))
-        )
-        if unsupported:
-            from sugar_source_tree.panic import SugarNotWritten
-
-            raise SugarNotWritten(
-                blame=unsupported[0].fragment,
-                owner="ClassDef._construct_sugar",
-                observed=f"unsupported class member {unsupported[0].kind}",
-                requested="a total source-visible class member construction arm",
-                fix="add the member's ordinary node Sugar arm or keep the class loud",
-            )
-        from sugar_lift_py_tests.floor import (
-            ConstructedClassFieldV1,
-            ConstructedClassMethodV1,
-        )
+        self._require_class_members(self.body)
         from sugar_lift_py_tests.context_manager_resolution import (
             SourceFragmentCoordinateV1,
         )
         from sugar_lift_py_tests.sugar.class_definition_sugar import (
             ClassDefinitionSugar,
-            ConstructedClassConditionalFieldsV1,
         )
 
-        references = self._module_name_references()
-
-        def body_read(expression):
-            # A module name this body reads is the module's binding of it
-            # when the class statement ran (``_module_name_references``).
-            if references and any(
-                isinstance(node, Name) and node.id in references
-                for node in expression.walk()
-            ):
-                expression = expression.substitute(references)
-            return expression.sugar()
-
-        def conditional_fields(statements):
-            def binding_occurrence(target):
-                span = target.line_col_span()
-                return SourceFragmentCoordinateV1(
-                    target.unit.source_cid,
-                    span.start_line,
-                    span.start_col,
-                    span.end_line,
-                    span.end_col,
-                )
-
-            fields = []
-            for item in statements:
-                if (
-                    isinstance(item, Assign)
-                    and item.targets
-                    and all(isinstance(target, Name) for target in item.targets)
-                ):
-                    value_sugar = body_read(item.value)
-                    target_keys = dict(item.target_evaluations())
-                    fields.extend(
-                        ConstructedClassFieldV1(
-                            target.id,
-                            target.fragment.seal().cid,
-                            value_sugar,
-                            binding_occurrence(target),
-                            item.fragment.seal().cid,
-                            evaluation_key=target_keys.get(target.id),
-                        )
-                        for target in item.targets
-                    )
-                    continue
-                if isinstance(item, AnnAssign) and isinstance(item.target, Name):
-                    if item.value is not None:
-                        fields.append(
-                            ConstructedClassFieldV1(
-                                item.target.id,
-                                item.fragment.seal().cid,
-                                body_read(item.value),
-                                binding_occurrence(item.target),
-                                evaluation_key=dict(item.target_evaluations()).get(
-                                    item.target.id
-                                ),
-                            )
-                        )
-                    continue
-                if isinstance(item, ClassDef):
-                    # A nested class statement runs where it stands in this
-                    # body: its run (``statement_run``) carries what its own
-                    # body's callees stored, which this body lays in its
-                    # record as it lays any field value's callee stores.
-                    fields.append(
-                        ConstructedClassFieldV1(
-                            item.name,
-                            item.fragment.seal().cid,
-                            item.sugar().statement_run(),
-                            binding_occurrence(item.binding_target),
-                        )
-                    )
-                    continue
-                if isinstance(item, If):
-                    fields.append(
-                        ConstructedClassConditionalFieldsV1(
-                            condition_fragment_cid=item.test.fragment.seal().cid,
-                            condition_sugar=body_read(item.test),
-                            when_true=conditional_fields(item.body),
-                            when_false=conditional_fields(item.orelse),
-                        )
-                    )
-                    continue
-                if isinstance(item, Pass):
-                    continue
-                from sugar_source_tree.panic import SugarNotWritten
-
-                raise SugarNotWritten(
-                    blame=item.fragment,
-                    owner="ClassDef._construct_sugar",
-                    observed=f"unsupported conditional class member {item.kind}",
-                    requested="a constructed field assignment or pass",
-                    fix="add the member's ordinary class-control arm or keep it loud",
-                )
-            return tuple(fields)
-
+        # The body is a block, threaded as every block is (step 5): each
+        # statement binds its names for the statements after it, an
+        # assignment carries its evaluation key and an ``if`` its branch
+        # slot.  A module name this body reads is the module's binding of it
+        # when the class statement ran (``_module_name_references``).  A
+        # method's body runs only at a call and is substituted by its own
+        # frame, never here.
+        threaded, _changed = self._substitute_body(
+            self.body,
+            {
+                **self._module_name_references(),
+                DEFER_DEFINITION_BODY_REFUSAL: True,
+            },
+        )
+        # What the threading made of each statement is still a statement the
+        # namespace is read for; anything else is refused by name.
+        self._require_class_members(threaded)
         constructed = tuple(
             self._construct_class_method_member(method) for method in methods
         )
-        # The body in source order: each field assignment, and each method
-        # statement's defaults (placed before the field it precedes),
-        # evaluated when the class body runs.
-        body_fields = []
-        method_defaults = []
-        for index, item in enumerate(self.body):
-            if isinstance(item, (FunctionDef, AsyncFunctionDef)):
-                method_defaults.extend(
-                    (len(body_fields), defaults)
-                    for defaults in self._class_method_defaults(item, body_read)
-                )
-                continue
-            if isinstance(item, Pass) or (
-                index == 0
-                and isinstance(item, Expr)
-                and isinstance(item.value, Constant)
-                and isinstance(item.value.value, str)
-            ):
-                continue
-            body_fields.extend(conditional_fields((item,)))
-        fields = tuple(body_fields)
+        (
+            body_statements,
+            fields,
+            branch_fields,
+            branch_slots,
+            default_keys,
+        ) = self._class_body_block(threaded)
         base_sugars = ()
         if self.bases:
             self._require_construction_context(owner="ClassDef._construct_sugar")
@@ -12531,7 +12633,10 @@ class ClassDef(Statement):
             base_fragment_cids=tuple(base.fragment.seal().cid for base in self.bases),
             site=self.fragment,
             class_definition=self,
-            method_defaults=tuple(method_defaults),
+            body=body_statements,
+            branch_fields=branch_fields,
+            branch_slots=branch_slots,
+            default_keys=default_keys,
         )
 
 
@@ -25031,12 +25136,12 @@ def _default_value_sugar(definition, index: int):
     )
 
 
-def _definition_default_evaluations(statement, *, read=None) -> tuple:
+def _definition_default_evaluations(statement) -> tuple:
     """``((key, sugar), ...)``: each default of the ``def`` statement or
     lambda ``statement``, left to right, with the per-parameter key its value
     is bound under (``_default_evaluation_key``).  The sugars are the
-    statement's own defaults, substituted in the scope the statement runs in
-    and read through ``read`` (by default each one's own sugar).  The one
+    statement's own defaults, substituted in the scope the statement runs
+    in.  The one
     construction of a definition's defaults: the undecorated statement
     (``_definition_defaults_sugar``), the decorated one
     (``_decorator_application_sugar``) and the lambda expression
@@ -25044,14 +25149,14 @@ def _definition_default_evaluations(statement, *, read=None) -> tuple:
     return tuple(
         (
             _default_evaluation_key(statement, index),
-            param.default.sugar() if read is None else read(param.default),
+            param.default.sugar(),
         )
         for index, param in enumerate(statement.params)
         if param.default is not None
     )
 
 
-def _definition_defaults_sugar(statement, *, read=None):
+def _definition_defaults_sugar(statement):
     """A ``def`` statement's defaults where its decorators apply nothing (an
     undecorated statement in a body, or a class-body method, whose
     descriptor is the class body's): it evaluates each default, left to
@@ -25061,7 +25166,7 @@ def _definition_defaults_sugar(statement, *, read=None):
     The defaults are the statement's own, substituted in the scope the
     statement runs in, so ``x = 1; def f(a=x): ...; x = 2`` binds 1.  A
     statement with no default reduces nothing (``InertSugar``)."""
-    defaults = _definition_default_evaluations(statement, read=read)
+    defaults = _definition_default_evaluations(statement)
     if not defaults:
         from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
 
@@ -25153,13 +25258,12 @@ def _decorated_statement_binding(statement, binding):
     return rewrite_with_leaves(statement, {"decorated_value": bound})
 
 
-def _def_statement_sugar(statement, *, read=None):
+def _def_statement_sugar(statement):
     """THE ``def`` / ``async def`` statement, wherever it stands: a module
     body, a function body (#8014), a class body, the one rule (#7757 item
-    7).  ``read`` is how the enclosing body reads an expression the
-    statement evaluates (a class body reads a module name as the module held
-    it when the class statement ran, ``ClassDef._construct_sugar``); by
-    default the expression's own sugar.
+    7).  Every expression the statement evaluates is read through its own
+    sugar, substituted by the threading of the body the statement stands in
+    (a class body's included, ``ClassDef._construct_sugar``).
 
     The statement builds the function and binds its name; the body runs
     only when the function is called, in the call's frame.  So the
@@ -25177,7 +25281,7 @@ def _def_statement_sugar(statement, *, read=None):
     if not call_applies_own_frame(statement):
         return _decorated_statement_sugar(statement)
     statement.discharge_by_substitution()
-    return _definition_defaults_sugar(statement, read=read)
+    return _definition_defaults_sugar(statement)
 
 
 def _body_statement_sugar(statement):

@@ -1,4 +1,4 @@
-"""L1b: ClassDef body members — fields, nested ClassDef, conditional fields.
+"""L1b: ClassDef body members — fields, nested ClassDef, a class body's if.
 
 Methods enroll through the FunctionDef door (not reimplemented here).
 """
@@ -9,10 +9,8 @@ import pytest
 
 from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_py_tests.floor import ConstructedClassFieldV1
-from sugar_lift_py_tests.sugar.class_definition_sugar import (
-    ClassDefinitionSugar,
-    ConstructedClassConditionalFieldsV1,
-)
+from sugar_lift_py_tests.sugar.class_definition_sugar import ClassDefinitionSugar
+from sugar_lift_py_tests.sugar.if_sugar import IfSugar
 from sugar_source_tree.nodes import ClassDef
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
@@ -61,20 +59,25 @@ def test_l1b_nested_classdef_is_a_field() -> None:
     assert tuple(f.name for f in inner.value_sugar.fields) == ("y",)
 
 
-def test_l1b_conditional_fields_construct() -> None:
+def test_l1b_a_class_body_if_is_the_one_if_statement() -> None:
+    """A class body is a block: its ``if`` is ``IfSugar``, the statement
+    every block runs, and each arm's assignment names a row of the
+    namespace under its own evaluation key, bound only where its arm ran."""
     sugar = _class(
         "class C:\n" "    if True:\n" "        a = 1\n" "    else:\n" "        a = 2\n"
     ).sugar()
-    assert len(sugar.fields) == 1
-    cond = sugar.fields[0]
-    assert isinstance(cond, ConstructedClassConditionalFieldsV1)
-    assert len(cond.when_true) == 1 and len(cond.when_false) == 1
-    assert isinstance(cond.when_true[0], ConstructedClassFieldV1)
-    assert cond.when_true[0].name == "a"
-    assert cond.when_false[0].name == "a"
+    assert isinstance(sugar.body[0], IfSugar)
+    assert tuple(field.name for field in sugar.fields) == ("a", "a")
+    assert all(isinstance(field, ConstructedClassFieldV1) for field in sugar.fields)
+    assert sugar.branch_fields == frozenset({0, 1})
+    keys = {field.evaluation_key for field in sugar.fields}
+    assert None not in keys and len(keys) == 2
+    value = sugar.desugar().completed_value()
+    assert [field.name for field in value.class_fields] == ["a"]
+    assert value.class_fields[0].value.value == 1
 
 
-def test_l1b_elif_chain_is_nested_conditional() -> None:
+def test_l1b_elif_chain_is_a_nested_if() -> None:
     sugar = _class(
         "class C:\n"
         "    if False:\n"
@@ -84,12 +87,14 @@ def test_l1b_elif_chain_is_nested_conditional() -> None:
         "    else:\n"
         "        a = 3\n"
     ).sugar()
-    assert len(sugar.fields) == 1
-    outer = sugar.fields[0]
-    assert isinstance(outer, ConstructedClassConditionalFieldsV1)
-    # orelse of outer is elif → another conditional
-    assert len(outer.when_false) == 1
-    assert isinstance(outer.when_false[0], ConstructedClassConditionalFieldsV1)
+    outer = sugar.body[0]
+    assert isinstance(outer, IfSugar)
+    # the elif is the else arm's own if
+    assert any(isinstance(statement, IfSugar) for statement in outer.else_body)
+    assert tuple(field.name for field in sugar.fields) == ("a", "a", "a")
+    value = sugar.desugar().completed_value()
+    assert [field.name for field in value.class_fields] == ["a"]
+    assert value.class_fields[0].value.value == 2
 
 
 def test_l1b_fields_alongside_sync_method() -> None:

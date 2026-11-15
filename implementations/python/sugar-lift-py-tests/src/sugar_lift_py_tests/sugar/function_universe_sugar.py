@@ -490,11 +490,11 @@ def laid_in_record(entries, outcome, *, halts_only: bool = False):
     after a halt starts from (``resumed``).  A completed arm's record is its
     value -- a block's record (``_ReducedBlock``), a ``BlockValue``'s
     statements, a symbolic ``if``'s faces (``GuardedFaces``: before every
-    face, with the condition's own testimony), a class body's
-    (``class_definition_sugar._ClassBodyV1``), a live ``while``'s test at one
+    face, with the condition's own testimony), a live ``while``'s test at one
     item (``loop_recurrence_sugar._WhileTest``: before the item's body, and
     before the loop's exit where the test is false); a halted arm's is its
-    state.
+    state.  A class body's record is its block's (``_ReducedBlock``,
+    ``ClassDefinitionSugar._class_body``).
     A halted arm with no record of its own is left as it is: its producer
     records it where it halted (``halts_recorded``) before it is laid here.
     A completed value that holds no record is refused by name, never handed
@@ -505,13 +505,12 @@ def laid_in_record(entries, outcome, *, halts_only: bool = False):
     if not entries:
         return outcome
     from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
-    from sugar_lift_py_tests.sugar.class_definition_sugar import _ClassBodyV1
     from sugar_lift_py_tests.sugar.loop_recurrence_sugar import _WhileTest
 
     entries = tuple(entries)
 
     def lay(value):
-        if isinstance(value, (_ReducedBlock, _ClassBodyV1, _WhileTest)):
+        if isinstance(value, (_ReducedBlock, _WhileTest)):
             return ExitSet.completed(
                 replace(value, entries=(*entries, *value.entries))
             )
@@ -537,7 +536,7 @@ def laid_in_record(entries, outcome, *, halts_only: bool = False):
             ),
             requested=(
                 "a completed record (a block's record, a BlockValue, a "
-                "symbolic if's faces, a class body, a while test's item) for "
+                "symbolic if's faces, a while test's item) for "
                 "what the statement carried before it"
             ),
             fix=(

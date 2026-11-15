@@ -82,7 +82,7 @@ class ClassDefinitionValue(GuardStableValue):
     # one constructor frame, however the class is reached.
     class_definition: object = field(default=None, compare=False)
     # ``(key, value)``: each default of each method ``def`` statement, as the
-    # class body evaluated it (``ClassDefinitionSugar._class_body``), under
+    # class body's block bound it (``ClassDefinitionSugar._namespace``), under
     # its per-parameter key (``nodes._default_evaluation_key``).  Python
     # stores the values on the function; every call that omits the formal
     # binds that one object (``object_value.bind_method_call`` passes them
