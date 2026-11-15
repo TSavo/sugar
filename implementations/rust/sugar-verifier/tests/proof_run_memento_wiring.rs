@@ -159,13 +159,14 @@ fn forged_stage_receipt_cid_is_rejected() {
 
     let pool = load_all_proofs::run(&project_root);
 
+    // The CID-indexed reader recomputes every member's CID from its bytes and
+    // refuses the forged key before anything else reads the member.
     assert!(
         pool.load_errors.iter().any(|err| {
             err.proof_path
                 .contains(&sugar_proof_envelope::proof_filename(&bundle_cid))
-                && err.reason.contains("rule 2")
                 && err.reason.contains(&claimed_cid)
-                && err.reason.contains("derives to")
+                && err.reason.contains("recomputes to")
         }),
         "forged stage-receipt member CID must be a load error: {:#?}",
         pool.load_errors
