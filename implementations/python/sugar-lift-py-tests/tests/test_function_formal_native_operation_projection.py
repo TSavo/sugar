@@ -112,4 +112,18 @@ def test_shadowed_function_name_does_not_borrow_module_definition() -> None:
     call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
 
     outcome = call.sugar().desugar(None)
-    assert not isinstance(outcome, ExitSet)
+    # ``compare`` here is ``caller``'s formal: what it calls is not decided
+    # in this frame.  The call is the one undecided call -- it completes or
+    # raises something undetermined -- and nothing of the module's
+    # ``compare`` is read: no ``TypeError`` from ``None < 2`` is named.
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
+    assert isinstance(outcome, ExitSet)
+    (completed,) = (exit_ for exit_ in outcome.exits if isinstance(exit_, Completed))
+    (halted,) = outcome.halts()
+    assert len(outcome.exits) == 2
+    assert "python:unknown_callee_call.completes" in repr(completed.guard)
+    assert type(halted.effect) is UndeterminedRaiseEffect
+    assert halted.effect.producer_node_owner == "UnknownCallee:compare"
+    assert halted.effect.exception_name is None
+    assert "TypeError" not in repr(outcome)
