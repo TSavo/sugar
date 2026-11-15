@@ -6949,6 +6949,22 @@ def _minted_binding_reference(reference):
     return reference
 
 
+def _substituted_recast(statement, scope):
+    """``statement``, a statement the rewrite recast from a source statement
+    (``shadow.recast``: an annotated store's ``Assign``, its annotation's
+    ``Expr``), substituted in ``scope``.
+
+    Where substitution replaces it (the store's one door, a rewritten
+    expression statement), the recast is constructed by nothing: it answers
+    the roll here by the discharge of a node the rewrite replaced, as a
+    child replaced through ``_substitute_field`` does.  Where substitution
+    keeps it, it stands in the block and answers where it is built."""
+    substituted = statement.substitute(scope)
+    if substituted is not statement:
+        statement.discharge_by_substitution()
+    return substituted
+
+
 def _minted_member_read(read):
     """``read``, the item or slice read of an unpacked value the rewrite
     mints to name the object an unpack gives a name (``For._item_of``,
@@ -16985,7 +17001,7 @@ class AnnAssign(Statement):
         from .shadow import rewrite, rewrite_with_leaves
 
         if self.value is not None and isinstance(self.target, (Attribute, Subscript)):
-            store = self._store_assignment().substitute(scope)
+            store = _substituted_recast(self._store_assignment(), scope)
             if not self._evaluates_annotation():
                 return store
             # The annotation runs after the store, in the scope the block
@@ -16996,7 +17012,9 @@ class AnnAssign(Statement):
             after = havoc_after(
                 store, scope, {**scope, **_store_statement_binding(store, scope)}
             )
-            return _Splice((store, self._annotation_statement().substitute(after)))
+            return _Splice(
+                (store, _substituted_recast(self._annotation_statement(), after))
+            )
         if (
             isinstance(self.target, Name)
             and getattr(self, "annotation_spliced", None) is not True
@@ -17029,7 +17047,7 @@ class AnnAssign(Statement):
                 {**scope, **_store_statement_binding(statement, scope)},
             )
             return _Splice(
-                (statement, self._annotation_statement().substitute(after))
+                (statement, _substituted_recast(self._annotation_statement(), after))
             )
         changed = {}
         # A spliced statement's annotation is the expression statement that
@@ -17063,7 +17081,7 @@ class AnnAssign(Statement):
             receiver = rewrite_with_leaves(rewritten, {"annotation_spliced": True})
             after = havoc_after(receiver, scope, dict(scope))
             return _Splice(
-                (receiver, self._annotation_statement().substitute(after))
+                (receiver, _substituted_recast(self._annotation_statement(), after))
             )
         if self.value is None or not isinstance(self.target, Name):
             return rewritten
