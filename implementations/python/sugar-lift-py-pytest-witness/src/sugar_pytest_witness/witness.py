@@ -85,6 +85,52 @@ class Witness:
     cid: str
 
 
+# pytest's exit codes for a run that ran to the end: all passed, some failed,
+# and no test collected (a test file with no test in it). Any other code
+# (interrupted, internal error, usage error, the interpreter has no pytest) is a
+# run that did not witness the file.
+_PYTEST_RAN = (0, 1)
+_PYTEST_NO_TESTS = 5
+
+
+def _run_failure_detail(proc: "subprocess.CompletedProcess[str]") -> str:
+    """The run's own words for why it failed: pytest's first `E ` line, else the
+    last line it wrote to stderr, else the last line of stdout."""
+    out = [line.strip() for line in (proc.stdout or "").splitlines() if line.strip()]
+    err = [line.strip() for line in (proc.stderr or "").splitlines() if line.strip()]
+    for line in out + err:
+        if line.startswith("E "):
+            return line[1:].strip()[:200]
+    if err:
+        return err[-1][:200]
+    if out:
+        return out[-1][:200]
+    return "no output"
+
+
+def _run_failure(
+    proc: "subprocess.CompletedProcess[str]", results: dict
+) -> "str | None":
+    """Name the failure of a witness run that did not record what it ran.
+
+    None when the run is witnessed: pytest ran to the end and recorded outcomes,
+    or it ran to the end over a file with no test in it (an honest empty run,
+    which the verifier states undecided by name), or a recorded outcome already
+    names the failure (a module that failed to collect). Otherwise the run
+    failed to produce outcomes, and that is said by name, never left empty."""
+    rc = proc.returncode
+    if rc in _PYTEST_RAN and results:
+        return None
+    if rc == _PYTEST_NO_TESTS and not results:
+        return None
+    if any(raw not in ("passed", "skipped") for raw in results.values()):
+        return None
+    detail = _run_failure_detail(proc)
+    if rc in _PYTEST_RAN:
+        return f"pytest exited {rc} but recorded no outcome: {detail}"
+    return f"pytest exited {rc}: {detail}"
+
+
 def run_file_witnesses(
     project_dir: str, test_file: str, code_files: List[str]
 ) -> List[Witness]:
@@ -97,6 +143,11 @@ def run_file_witnesses(
     thousands refused the whole file. The ``_witness_collect`` plugin records
     every test's outcome from the single run; mint and verify share THIS
     primitive, so lift and recompute agree on outcome under shared file state.
+
+    A run that fails to produce outcomes (pytest missing, a usage error, an
+    interrupted session with nothing recorded) is never an empty result: it
+    yields one 'failed' witness whose node id names the file and the failure,
+    so the package says the run failed and the verifier reports it.
     """
     import json as _json
     import tempfile
@@ -116,7 +167,7 @@ def run_file_witnesses(
             p for p in (plugin_dir, os.environ.get("PYTHONPATH", "")) if p
         )
         env = dict(os.environ, SUGAR_WITNESS_OUT=out_path, PYTHONPATH=env_pp)
-        subprocess.run(
+        proc = subprocess.run(
             [
                 sys.executable,
                 "-m",
@@ -143,6 +194,10 @@ def run_file_witnesses(
     finally:
         if os.path.exists(out_path):
             os.remove(out_path)
+
+    failure = _run_failure(proc, results)
+    if failure is not None:
+        results[f"{test_file}::<witness run failed: {failure}>"] = "error"
 
     witnesses: List[Witness] = []
     for nodeid, raw in sorted(results.items()):

@@ -5,11 +5,14 @@ version = "0.1.0"
 protocol_version = "sugar-component/1"
 # Only started when the workspace census shows Python evidence.
 languages = ["python"]
+# The kit's src trees go IN FRONT of the caller's PYTHONPATH, never in place of
+# it. This kit runs the project's own tests under pytest; the caller's
+# PYTHONPATH is where the project's imports resolve (a staged vendor module, a
+# sibling package). `env PYTHONPATH=<kit>` replaced it, so every test whose
+# module imports from it failed to collect and the witness run recorded nothing.
 command = [
-    "/usr/bin/env",
-    "PYTHONPATH=implementations/python/sugar-lift-py-pytest-witness/src:implementations/python/sugar-lift-py-tests/src:implementations/python/sugar-lift-python-source/src",
-    "python3",
-    "-m",
-    "sugar_pytest_witness.lift_lsp",
+    "/bin/sh",
+    "-c",
+    'export PYTHONPATH="implementations/python/sugar-lift-py-pytest-witness/src:implementations/python/sugar-lift-py-tests/src:implementations/python/sugar-lift-python-source/src${PYTHONPATH:+:$PYTHONPATH}"; exec python3 -m sugar_pytest_witness.lift_lsp',
 ]
 working_dir = "../../.."

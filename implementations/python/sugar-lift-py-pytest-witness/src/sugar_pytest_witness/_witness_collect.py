@@ -30,6 +30,15 @@ def pytest_runtest_logreport(report):
         _RESULTS.setdefault(nodeid, "error")
 
 
+def pytest_collectreport(report):
+    # A module that fails to collect (an import error, a syntax error) runs no
+    # test, so no runtest report ever names it. Record the failed collector under
+    # its own node id (the file path) so the failure is a witness ('failed'),
+    # never an absence that leaves the package silently empty.
+    if report.failed:
+        _RESULTS[report.nodeid or "<collection>"] = "error"
+
+
 def pytest_sessionfinish(session, exitstatus):
     out = os.environ.get("SUGAR_WITNESS_OUT")
     if out:
