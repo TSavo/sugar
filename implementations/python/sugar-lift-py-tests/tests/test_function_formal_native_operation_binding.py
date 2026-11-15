@@ -106,9 +106,15 @@ def test_positional_keyword_and_default_calls_reach_the_same_binary_demand() -> 
     assert {exit_.effect.exception_type_coordinate for exit_ in halted} == {
         halted[0].effect.exception_type_coordinate
     }
-    assert {exit_.effect.occurrence_id for exit_ in halted} == {
-        halted[0].effect.occurrence_id
+    # One binary operation, reached by three calls: the same ``left + right``
+    # locus, and each call its own evaluation of it (a halt that leaves a
+    # callee is stamped with that call's frame, ``call_owned``).
+    occurrences = [exit_.effect.occurrence_id for exit_ in halted]
+    assert {occurrence.split("@", 1)[0] for occurrence in occurrences} == {
+        "formal_binding.py:2:11"
     }
+    assert all("@call:" in occurrence for occurrence in occurrences)
+    assert len(set(occurrences)) == 3
 
 
 def test_keyword_and_default_calls_can_complete_from_the_existing_floor() -> None:
