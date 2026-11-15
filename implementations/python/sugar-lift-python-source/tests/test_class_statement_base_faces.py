@@ -311,9 +311,15 @@ def test_only_the_builtin_type_binding_is_retained_as_a_base(tmp_path: Path):
 
 
 def test_a_source_base_that_always_raises_is_the_statements_raise(tmp_path: Path):
-    """The class body never runs after a base that raised: its refusal is
-    not reached, and the base's raise is the statement's only face."""
-    class_sugar = _class_sugar(tmp_path, "class W(boom()):\n    x = boom()\n", "W")
+    """The class body never runs after a base that raised: its own raise is
+    not reached, and the base's raise is the statement's only face.
+
+    The base raises through an operation the reduction decides (``1 // 0``,
+    a ground ``ZeroDivisionError``).  A same-file call (``boom()``) is its
+    coordinate and edge since #7757 step 6, two-faced at the reduction
+    whatever ``boom`` runs: its halt is decided at prove, never here, so it
+    cannot state "the base always raises" at this level."""
+    class_sugar = _class_sugar(tmp_path, "class W(1 // 0):\n    x = 1 // 0\n", "W")
     outcome = class_sugar.desugar()
     assert not any(isinstance(face, Completed) for face in outcome.exits)
     assert [type(face.effect).__name__ for face in outcome.exits] == ["RaiseEffect"]
