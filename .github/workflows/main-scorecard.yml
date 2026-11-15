@@ -181,7 +181,7 @@ jobs:
           MAIN_SHA: ${{ needs.resolve.outputs.sha }}
           SHARD: ${{ matrix.shard }}
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           mapfile -t paths < <(
             python3 "$GITHUB_WORKSPACE/tools/python_package_suite_shards.py" \
               --repo-root "$GITHUB_WORKSPACE" \
@@ -267,7 +267,7 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}/tools:${{ env.SUGAR_CHECKOUT_PYTHONPATH }}
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           mapfile -t files < <(
             git grep -l run_source_through_real_solver -- '*/tests/test_*.py'
           )
@@ -351,7 +351,7 @@ jobs:
         env:
           PYTHON_LITERAL_BASE64_VENV: ${{ runner.temp }}/python-literal-base64-venv
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           bash examples/python-base64-federation/run.sh > federation.log 2>&1
           rc=$?
           cat federation.log
@@ -426,7 +426,7 @@ jobs:
           PANDAS_CORPUS: ${{ steps.corpus.outputs.root }}
           SEAT: ${{ matrix.seat }}
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           export SUGAR_HOME="$GITHUB_WORKSPACE/.sugar"
           OUT="$GITHUB_WORKSPACE/board"
           mkdir -p "$OUT"
@@ -498,7 +498,7 @@ jobs:
         env:
           PANDAS_CORPUS: ${{ steps.corpus.outputs.root }}
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           export SUGAR_HOME="$GITHUB_WORKSPACE/.sugar"
           OUT="$GITHUB_WORKSPACE/board"
           mkdir -p "$OUT/join"
@@ -523,7 +523,7 @@ jobs:
         if: always()
         shell: bash
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           line="$(grep -a 'RECENSUS DONE' board/join.log 2>/dev/null | tail -n 1 | tr -d '\r')"
           completed="$(printf '%s' "$line" | sed -n 's/.*files=\([0-9]*\)\/\([0-9]*\).*/\1/p')"
           total="$(printf '%s' "$line" | sed -n 's/.*files=\([0-9]*\)\/\([0-9]*\).*/\2/p')"
@@ -576,7 +576,7 @@ jobs:
           BOARD_LINE: ${{ needs.board-join.outputs.line }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           command -v gh >/dev/null || { echo "::error::gh is not on this runner's PATH"; exit 1; }
 
           python3 - <<'PY'
