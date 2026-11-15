@@ -8,9 +8,10 @@ with `illegal free var(s): np`.
 
 The binding comes from the ONE lexical import pass (reaching definitions in
 ``import_binding``), never from spelling. So the discrimination arm matters as
-much as the positive one: a head that is NOT uniquely import-bound -- a plain
-undeclared global, a shadowed alias -- must still mint its Var and must still
-trip the same panic. A fix that silences that case has broken the detector.
+much as the positive one: a head that is NOT uniquely import-bound is never an
+import coordinate. A name nothing binds halts with ``NameError`` where it is
+read; a shadowed alias is the value that shadowed it. A fix that closes either
+as an import has broken the detector.
 """
 
 from __future__ import annotations
@@ -18,13 +19,9 @@ from __future__ import annotations
 import os
 import tempfile
 
-import pytest
-
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
 
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_py_tests.ir import eq, make_var
 from sugar_lift_py_tests.proofir.formulas import formula_from_ir
 from sugar_lift_py_tests.proofir.scope import ScopedFormula
 from sugar_lift_py_tests.proofir.sorts import UnknownSort
@@ -123,19 +120,20 @@ def test_showcase_shape_binds_through_the_local_assignment() -> None:
     exits = function.sugar().desugar(None)
     halts = [face for face in exits.exits if isinstance(face, Halted)]
     owners = {face.effect.producer_node_owner for face in halts}
-    assert owners == {"CallSiteValue.subscript", "UnknownCallee:numpy.rot90"}
+    # ``r[0]`` reads the call result; ``[0]`` reads that read's symbolic
+    # result. Each undecided read names its own receiver.
+    assert owners == {
+        "CallSiteValue.subscript",
+        "SymbolicValue.subscript",
+        "UnknownCallee:numpy.rot90",
+    }
     completed = [face for face in exits.exits if isinstance(face, Completed)]
     assert len(completed) == 1
     assert _scoped(completed[0].value.post(), ()).formula.free_vars == {"out"}
 
 
-def _method_call_carrier(source: str):
-    """A method call whose receiver or operand is a formal waits for the
-    caller's actual: the ``method_call`` carrier, never a completion."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-
+def _function_outcome(source: str):
+    """The one reduction of the source's first function."""
     directory = tempfile.mkdtemp()
     path = os.path.join(directory, "m.py")
     with open(path, "w", encoding="utf-8") as handle:
@@ -148,22 +146,35 @@ def _method_call_carrier(source: str):
             ).functions()
         )
     )
-    outcome = function.sugar().desugar(None)
+    return function.sugar().desugar(None)
+
+
+def _method_call_carrier(source: str):
+    """A method call whose receiver or operand is a formal waits for the
+    caller's actual: the ``method_call`` carrier, never a completion."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    outcome = _function_outcome(source)
     assert isinstance(outcome, NativeOperationExitCarrierV1)
     assert outcome.demand.operator == "method_call"
     return outcome
 
 
-def test_a_head_that_is_not_import_bound_still_refuses_scope() -> None:
-    # THE DISCRIMINATION. `zz` is bound by nothing: it must still mint a Var
-    # (never an import coordinate), and ScopedFormula must still refuse the
-    # undeclared free var.  The formal operand ``m`` defers the call.
-    carrier = _method_call_carrier("def turn(m):\n    return zz.rot90(m)\n")
-    receiver = carrier.operands[0].to_term(owner="test")
-    assert carrier.demand.operand_coordinate_cids[0] is None
-    assert carrier.operands[1].value == "rot90"
-    with pytest.raises(ConstructionPanic, match="illegal free var.*zz"):
-        _scoped(eq(make_var("out"), receiver), ("m",))
+def test_a_head_that_is_not_import_bound_is_an_unbound_name() -> None:
+    # THE DISCRIMINATION. `zz` is bound by nothing, so it is never an import
+    # coordinate, and it is no free Var either: Python raises ``NameError``
+    # reading it, before the call it heads is made. The function is that one
+    # halt -- no completion, no call, nothing for a scope to refuse.
+    from sugar_lift_py_tests.effect import NameErrorEffect
+
+    outcome = _function_outcome("def turn(m):\n    return zz.rot90(m)\n")
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, NameErrorEffect)
+    assert halt.effect.name == "zz"
+    assert halt.effect.exception_name == "NameError"
 
 
 def test_a_shadowed_import_alias_is_not_import_bound() -> None:
