@@ -173,21 +173,6 @@ def test_demand_enrollment_uses_typed_with_coordinate_without_spelling_authority
     assert rows[0]["useSite"]["sourceCid"].startswith("blake3-512:")
 
 
-def test_kit_has_no_context_manager_admission_declaration_door(monkeypatch):
-    sent = []
-    monkeypatch.setattr(lift_rpc, "_BOUND_CONTRACT_REFS", None)
-    monkeypatch.setattr(lift_rpc, "_ENUMERATION_ACTIVE", False)
-    monkeypatch.setattr(lift_rpc, "_send", sent.append)
-    lift_rpc._handle_enumerate(
-        9,
-        {
-            "level": "contract-declarations",
-            "workspace_root": ".",
-        },
-    )
-    assert sent[-1] == {"jsonrpc": "2.0", "id": 9, "result": {"rows": []}}
-
-
 def test_context_manager_edges_is_not_an_enumeration_level(tmp_path, monkeypatch):
     """Python keeps edge construction; the source-agnostic protocol does not."""
     sent = []

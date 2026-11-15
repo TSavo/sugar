@@ -2302,24 +2302,6 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 }
             )
             return
-        if level == "contract-declarations":
-            _send(
-                {
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "result": {"rows": []},
-                }
-            )
-            return
-        if level == "contract-demands":
-            _send(
-                {
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "result": {"rows": _preconstruction_demand_rows(root)},
-                }
-            )
-            return
         if level == "parameter-contract-link-units":
             _send(
                 {

@@ -95,9 +95,7 @@ fn handle_lift(id: &Value, params: &Value) -> Value {
 /// (#7757).
 const EMPTY_CENSUS_LEVELS: &[&str] = &[
     "exports",
-    "contract-declarations",
     "provider-contract-members",
-    "contract-demands",
     "parameter-contract-resume",
 ];
 
