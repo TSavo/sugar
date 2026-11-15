@@ -257,10 +257,23 @@ def test_guarded_incomplete_arm_becomes_halted_without_running_branch() -> None:
     assert isinstance(outcome, ExitSet)
     assert calls == [step.guard_site]
     assert calls[0] is step.guard_site
-    assert len(outcome.exits) == 1
-    halted = outcome.exits[0]
+    # The guard's value is ``outer ? halting : completing``. Under ``outer``
+    # its truth test raised, so that arm leaves as the one halt with the
+    # test's own effect and the branch never runs there. Under ``not outer``
+    # the truth test completed: that arm is kept, never folded into the halt.
+    from sugar_lift_py_tests.ir import not_
+
+    assert len(outcome.exits) == 2
+    (halted,) = [
+        exit_
+        for exit_ in outcome.exits
+        if getattr(exit_, "effect", None) is inner_effect
+    ]
     assert isinstance(halted, Halted)
-    assert halted.effect is inner_effect
+    assert repr(outer) in repr(halted.guard)
+    assert repr(not_(outer)) not in repr(halted.guard)
+    (kept,) = [exit_ for exit_ in outcome.exits if exit_ is not halted]
+    assert repr(not_(outer)) in repr(kept.guard)
 
 
 def _assert_transition_refusal(raised, step, *, observed: str, requested: str):
