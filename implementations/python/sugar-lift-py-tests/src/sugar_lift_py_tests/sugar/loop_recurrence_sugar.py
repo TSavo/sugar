@@ -467,9 +467,11 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         iterator_operation = IteratorOperation(
             owner="LoopRecurrenceSugar", blame=self.site
         )
+        from sugar_lift_py_tests.floor import CallSiteValue
+
         if (
             runtime is not None
-            and not isinstance(iterable, SymbolicValue)
+            and not isinstance(iterable, (SymbolicValue, CallSiteValue))
             and not contents_stale(iterable)
         ):
             def first(runtime_ctx, carried):
@@ -485,9 +487,13 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             return self._start(runtime, ctx, first)
 
         # An iterable the reduction has not decided -- a symbolic value (a
-        # formal, an unknown), or a container whose contents are not current
-        # (``object_identity.contents_stale``), which has no members in hand
-        # -- has an ``iter`` it has not decided either: an undecided
+        # formal, an unknown), a call's result (what the callee returned is
+        # its contract's, joined at prove: #7757 steps 5 and 6, so its
+        # ``iter`` is the undecided read, ``CallSiteValue.iter_with``, whose
+        # iterator has no item a live loop could step), or a container whose
+        # contents are not current (``object_identity.contents_stale``),
+        # which has no members in hand -- has an ``iter`` it has not decided
+        # either: an undecided
         # operation like every other.  The receiver answers it as it answers
         # ``iter(x)`` (``SymbolicValue.iter_with``, ``ListValue.iter_with``):
         # a formal's is the ``iter`` carrier its caller's actual discharges,
