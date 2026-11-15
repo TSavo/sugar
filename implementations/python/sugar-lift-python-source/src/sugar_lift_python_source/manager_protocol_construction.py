@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
 
 from sugar_lift_py_tests.floor import (
     BlockValue,
@@ -25,7 +24,6 @@ from sugar_lift_py_tests.outcome import Completed
 from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 
 from .canonical import cid_of_json
-from .manager_construction import ConstructedManagerBehaviorV1
 
 
 @dataclass(frozen=True)
@@ -800,80 +798,6 @@ def _apply_receiver_store(
     )
 
 
-@dataclass(frozen=True)
-class ManagerProtocolConstructionGapV1:
-    kind: Literal[
-        "enter-missing",
-        "exit-missing",
-        "method-construction",
-    ]
-    manager_construction_cid: str
-    detail: str
-
-
-def construct_manager_protocol(
-    behavior: ConstructedManagerBehaviorV1,
-    *,
-    exit_face_id: str,
-) -> ConstructedManagerProtocolV1 | ManagerProtocolConstructionGapV1:
-    """Project ``__enter__``/``__exit__`` from Cut C's exact receiver.
-
-    Method bodies were constructed by ``FunctionDef`` and retained by the
-    class-construction arm.  This function only binds the constructed receiver
-    and the typed exit-face operands to those bodies.
-    """
-    receiver = behavior.receiver_state
-    receivers = _completed_object_receivers(receiver)
-    if not receivers:
-        return ManagerProtocolConstructionGapV1(
-            "method-construction",
-            behavior.manager_construction_cid,
-            "constructor partition has no completed receiver face",
-        )
-    # A method the one class-namespace lookup does not decide (``has_method``
-    # None) is no source-visible method either.
-    if any(item.has_method("__enter__") is not True for item in receivers):
-        return ManagerProtocolConstructionGapV1(
-            "enter-missing", behavior.manager_construction_cid, "source-visible method"
-        )
-    if any(item.has_method("__exit__") is not True for item in receivers):
-        return ManagerProtocolConstructionGapV1(
-            "exit-missing", behavior.manager_construction_cid, "source-visible method"
-        )
-    representative = receivers[0]
-    enter, exit_ = _protocol_calls_at_face(representative, exit_face_id)
-    enter_frame_cid = _method_frame_cid(representative, "__enter__")
-    exit_frame_cid = _method_frame_cid(representative, "__exit__")
-    if any(
-        _method_frame_cid(item, "__enter__") != enter_frame_cid
-        or _method_frame_cid(item, "__exit__") != exit_frame_cid
-        for item in receivers[1:]
-    ):
-        return ManagerProtocolConstructionGapV1(
-            "method-construction",
-            behavior.manager_construction_cid,
-            "constructor faces disagree on protocol method frames",
-        )
-    preimage = {
-        "kind": "constructed-manager-protocol",
-        "schemaVersion": "1",
-        "managerConstructionCid": behavior.manager_construction_cid,
-        "enterFrameCid": enter_frame_cid,
-        "exitFrameCid": exit_frame_cid,
-        "exitFaceId": exit_face_id,
-    }
-    return ConstructedManagerProtocolV1(
-        behavior.manager_construction_cid,
-        cid_of_json(preimage),
-        enter,
-        exit_,
-        enter_frame_cid,
-        exit_frame_cid,
-        exit_face_id,
-        receiver,
-    )
-
-
 def _protocol_calls_at_face(representative, exit_face_id: str):
     """``__enter__()`` and ``__exit__(ExitTypeRef(X), …)`` bound on the
     representative receiver, with ``X`` the exit face."""
@@ -891,12 +815,3 @@ def _protocol_calls_at_face(representative, exit_face_id: str):
         blame=exit_face_id,
     )
     return enter, exit_
-
-
-def _method_frame_cid(receiver, name: str) -> str:
-    """The frame of the method the one class-namespace lookup selects for
-    ``name`` on the receiver's type (``ObjectValue.class_member``)."""
-    _decided, method, _value = receiver.class_member(name)
-    if method is None or method.source_call_frame_cid is None:
-        raise ValueError("source-visible method has no authenticated call frame")
-    return method.source_call_frame_cid
