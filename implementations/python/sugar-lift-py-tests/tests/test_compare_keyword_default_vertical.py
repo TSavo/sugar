@@ -175,18 +175,37 @@ def test_helper_alone_is_undischarged_and_all_three_bindings_reach_one_demand() 
     positional_call, keyword_call, default_call, normal_call = (
         _call_term(outcome) for outcome in (positional, keyword, default, normal)
     )
+    # After the actuals ride the classes the caller decides (#8857,
+    # ``receiver_dispatch.class_arguments``): an ``int`` actual's
+    # ``py.class`` keyed by its position or keyword; ``None`` and a default
+    # supply none.
     assert len({positional_call.name, keyword_call.name, default_call.name}) == 1
-    none_actual, two_actual = positional_call.args
+    none_actual, two_actual, two_class = positional_call.args
+    assert two_class == _int_class("1")
     for call, form in ((keyword_call, "py.kwarg"), (default_call, "py.default")):
-        actual, bound = call.args
+        actual, bound = call.args[:2]
         assert actual == none_actual
         assert bound.name == form
         assert bound.args[0] == str_const("right")
+    assert list(keyword_call.args[2:]) == [_int_class("right")]
+    assert len(default_call.args) == 2
     assert keyword_call.args[1].args[1] == two_actual
-    one_actual, keyword_two = normal_call.args
+    one_actual, keyword_two, *classes = normal_call.args
     assert one_actual != none_actual
     assert keyword_two.name == "py.kwarg"
     assert keyword_two.args[1] == two_actual
+    assert classes == [_int_class("0"), _int_class("right")]
+
+
+def _int_class(key: str):
+    """``py.class(<key>, python:builtin("int"))`` (#8857)."""
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.receiver_dispatch import (
+        CLASS_ARGUMENT,
+        builtin_class_term,
+    )
+
+    return ctor(CLASS_ARGUMENT, [str_const(key), builtin_class_term("int")])
 
 
 def test_swapped_ordering_retains_distinct_ordered_coordinates() -> None:

@@ -89,8 +89,24 @@ def test_swapped_actuals_are_carried_in_order_by_each_call() -> None:
     # Each call is its own coordinate: the swapped actuals are carried in
     # order, and each call is its own occurrence.
     assert forward_call.name == swapped_call.name
-    assert tuple(forward_call.args) == tuple(reversed(tuple(swapped_call.args)))
+    # The two actuals, then the class of the ``int`` actual keyed by its
+    # position (#8857, ``receiver_dispatch.class_arguments``): ``None``
+    # supplies none.
+    assert len(forward_call.args) == len(swapped_call.args) == 3
+    assert tuple(forward_call.args[:2]) == tuple(reversed(tuple(swapped_call.args[:2])))
+    assert forward_call.args[2] == _int_class("1")
+    assert swapped_call.args[2] == _int_class("0")
     assert forward_halt.effect.occurrence_id != swapped_halt.effect.occurrence_id
+
+
+def _int_class(key: str):
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.receiver_dispatch import (
+        CLASS_ARGUMENT,
+        builtin_class_term,
+    )
+
+    return ctor(CLASS_ARGUMENT, [str_const(key), builtin_class_term("int")])
 
 
 def test_shadowed_function_name_does_not_borrow_module_definition() -> None:

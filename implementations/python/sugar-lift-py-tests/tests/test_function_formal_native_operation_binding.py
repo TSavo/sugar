@@ -83,19 +83,36 @@ def _call_term(outcome):
     return call
 
 
+def _int_class(key: str):
+    """``py.class(<key>, python:builtin("int"))``: the class of an ``int``
+    actual the caller decides, keyed by the argument it is, after the
+    actuals (#8857, ``receiver_dispatch.class_arguments``).  ``None`` and a
+    default supply none."""
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.receiver_dispatch import (
+        CLASS_ARGUMENT,
+        builtin_class_term,
+    )
+
+    return ctor(CLASS_ARGUMENT, [str_const(key), builtin_class_term("int")])
+
+
 def test_positional_actuals_discharge_through_python_binder() -> None:
     call = _call_term(_call_outcome("left, right", "None, 2"))
-    assert len(call.args) == 2
-    assert not any(str(getattr(arg, "name", "")).startswith("py.") for arg in call.args)
+    assert len(call.args) == 3
+    actuals = call.args[:2]
+    assert not any(str(getattr(arg, "name", "")).startswith("py.") for arg in actuals)
+    assert call.args[2] == _int_class("1")
 
 
 def test_keyword_actuals_discharge_through_python_binder() -> None:
     call = _call_term(_call_outcome("left, right", "left=None, right=2"))
-    assert [arg.name for arg in call.args] == ["py.kwarg", "py.kwarg"]
-    assert [arg.args[0] for arg in call.args] == [
+    assert [arg.name for arg in call.args] == ["py.kwarg", "py.kwarg", "py.class"]
+    assert [arg.args[0] for arg in call.args[:2]] == [
         str_const("left"),
         str_const("right"),
     ]
+    assert call.args[2] == _int_class("right")
 
 
 def test_default_actual_is_keyed_to_its_formal_coordinate() -> None:
@@ -128,10 +145,15 @@ def test_positional_keyword_and_default_calls_reach_the_same_binary_demand() -> 
     )
 
     assert len({positional.name, keyword.name, default.name}) == 1
-    none_actual, two_actual = positional.args
+    none_actual, two_actual, two_class = positional.args
+    assert two_class == _int_class("1")
     assert keyword.args[0] == none_actual == default.args[0]
     assert keyword.args[1].name == "py.kwarg"
     assert keyword.args[1].args[1] == two_actual
+    assert keyword.args[2] == _int_class("right")
+    assert len(keyword.args) == 3
+    # A default's value is the ``def`` statement's; no class rides for it.
+    assert len(default.args) == 2
     assert default.args[1].name == "py.default"
 
 

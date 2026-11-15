@@ -114,6 +114,20 @@ def _default(edge, name: str, value: int):
     return ctor("py.default", [str_const(name), _int(edge, value)])
 
 
+def _int_class(key: str):
+    """``py.class(<key>, python:builtin("int"))``: the class of an ``int``
+    actual the caller decides, keyed by the argument it is (its position, or
+    its keyword), riding after the actuals (#8857,
+    ``receiver_dispatch.class_arguments``).  A default supplies none."""
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.receiver_dispatch import (
+        CLASS_ARGUMENT,
+        builtin_class_term,
+    )
+
+    return ctor(CLASS_ARGUMENT, [str_const(key), builtin_class_term("int")])
+
+
 @dataclass(frozen=True)
 class _FloorSugar(ConstructedTermSugar):
     """A constructed operand: every nested term slot admits only a
@@ -241,12 +255,12 @@ def test_positional_caller_discharges_unary_through_production_binder(
     """Real SourceFile caller — not a hand-built coordinate discharge dict.
     The edge carries the positional actual as written."""
     edge = _call_edge("x", body, actuals)
-    assert _edge_arguments(edge) == [_int(edge, expected)]
+    assert _edge_arguments(edge) == [_int(edge, expected), _int_class("0")]
 
 
 def test_keyword_caller_discharges_unary_neg() -> None:
     edge = _call_edge("x", "return -x", "x=4")
-    assert _edge_arguments(edge) == [_kwarg(edge, "x", 4)]
+    assert _edge_arguments(edge) == [_kwarg(edge, "x", 4), _int_class("x")]
 
 
 def test_default_caller_discharges_unary_neg() -> None:
@@ -263,8 +277,8 @@ def test_positional_keyword_and_default_callers_complete_same_neg_fold() -> None
     positional = _call_edge("x", "return -x", "3")
     keyword = _call_edge("x", "return -x", "x=3")
     default = _call_edge("x=3", "return -x", "")
-    assert _edge_arguments(positional) == [_int(positional, 3)]
-    assert _edge_arguments(keyword) == [_kwarg(keyword, "x", 3)]
+    assert _edge_arguments(positional) == [_int(positional, 3), _int_class("0")]
+    assert _edge_arguments(keyword) == [_kwarg(keyword, "x", 3), _int_class("x")]
     assert _edge_arguments(default) == [_default(default, "x", 3)]
 
 
@@ -272,7 +286,7 @@ def test_discrimination_production_neg_is_not_prior_actual() -> None:
     # The call does not apply the helper's body: no folded ``-3`` stands in
     # the caller's row, only the edge with the actual it supplies.
     edge = _call_edge("x", "return -x", "3")
-    assert _edge_arguments(edge) == [_int(edge, 3)]
+    assert _edge_arguments(edge) == [_int(edge, 3), _int_class("0")]
     assert _int(edge, -3) not in _edge_arguments(edge)
 
 

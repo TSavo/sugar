@@ -145,6 +145,20 @@ def _named(edge, kind: str, name: str, value: int):
     return ctor(kind, [str_const(name), _int(edge, value)])
 
 
+def _int_class(key: str):
+    """``py.class(<key>, python:builtin("int"))``: the class of an ``int``
+    actual the caller decides, keyed by the argument it is, after the
+    actuals (#8857, ``receiver_dispatch.class_arguments``).  A default
+    supplies none."""
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.receiver_dispatch import (
+        CLASS_ARGUMENT,
+        builtin_class_term,
+    )
+
+    return ctor(CLASS_ARGUMENT, [str_const(key), builtin_class_term("int")])
+
+
 def _source_class_and_helper(class_body: str, field: str = "field"):
     """Build a source-defined class + formal store helper in one tree.
 
@@ -421,7 +435,12 @@ def test_positional_caller_halts_with_named_identity_from_setattr() -> None:
     # store halt on a non-object receiver is
     # ``test_tuple_receiver_store_halts_from_setattr_not_boundary``.
     _outcome, edge = _caller_edge("obj, value", "1, 2")
-    assert _coordinate(edge).args == (_int(edge, 1), _int(edge, 2))
+    assert _coordinate(edge).args == (
+        _int(edge, 1),
+        _int(edge, 2),
+        _int_class("0"),
+        _int_class("1"),
+    )
     # The halt prove joins at this call: the helper's own row discharged
     # with what the caller supplies, ``1.field = 2``, is the named
     # AttributeError at the store's site -- the helper's panic locus.
@@ -440,6 +459,8 @@ def test_keyword_caller_reaches_same_demand() -> None:
     assert list(_coordinate(edge).args) == [
         _named(edge, "py.kwarg", "obj", 1),
         _named(edge, "py.kwarg", "value", 2),
+        _int_class("obj"),
+        _int_class("value"),
     ]
 
 
@@ -454,6 +475,7 @@ def test_default_value_caller_reaches_same_demand() -> None:
     assert list(_coordinate(edge).args) == [
         _int(edge, 1),
         _named(edge, "py.default", "value", 2),
+        _int_class("0"),
     ]
 
 
