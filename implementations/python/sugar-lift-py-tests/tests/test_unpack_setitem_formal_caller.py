@@ -175,8 +175,15 @@ def test_source_caller_mutable_receiver_completes() -> None:
     assert len(outcome.exits) == 1
     face = outcome.exits[0]
     assert isinstance(face, Completed)
+    # The callee stored into the caller's list: that write rides the call's
+    # completed value to the caller's statement, as a walrus's rides its
+    # value (``consume_operands``).  The call is the value presented beneath.
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+
+    binds, presented = peel_walrus_binds(face.value)
+    assert binds, "the callee's store on the caller's list must reach the caller"
     # Call presentation carries authenticated actuals for a, i, p, q.
-    assert face.value.arg_values == (
+    assert presented.arg_values == (
         fresh(ListValue, (TermValue(0),)),
         TermValue(0),
         TermValue(1),
