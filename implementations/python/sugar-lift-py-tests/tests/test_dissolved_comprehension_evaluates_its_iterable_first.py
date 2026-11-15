@@ -82,6 +82,20 @@ _PROGRAMS = {
         "1",
         "2",
     ),
+    # A dict comprehension's repeated key: Python evaluates the earlier
+    # pair (its value raises here) before the later one overwrites it.  The
+    # dissolve dropped the earlier pair, so the dict was built and ``ok``
+    # stayed 0.
+    "dict-comprehension-repeated-key": (
+        "    ok = 0\n"
+        "    try:\n"
+        "        d = {0: boom() if x == 0 else x for x in range(2)}\n"
+        "    except ValueError:\n"
+        "        ok = 1\n"
+        "    assert ok == {claim}\n",
+        "1",
+        "0",
+    ),
 }
 
 

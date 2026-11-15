@@ -24316,7 +24316,6 @@ class SetComp(Expression):
             self, iterable, elements, scope
         )
         results = []
-        seen = set()
         for element in elements:
             bindings = self.unit.require_target_pattern(self, gen.target).bindings_for(
                 element
@@ -24331,12 +24330,12 @@ class SetComp(Expression):
                 continue
             new_elt, changed = self._substitute_field(self.elt, inner)
             result = new_elt if changed else self.elt
-            key = ListComp._ground_hash_key(self, result)
-            if key is None:
+            if ListComp._ground_hash_key(self, result) is None:
                 return None
-            if key not in seen:
-                seen.add(key)
-                results.append(result)
+            # Every member is evaluated, in order, an equal one's included:
+            # it collapses into the first as the display is built
+            # (``collection_sugar._built_set``), as the comprehension's does.
+            results.append(result)
         evaluations = ListComp._dissolved_iterable(
             self,
             iterable,
@@ -24444,7 +24443,6 @@ class DictComp(Expression):
             self, iterable, elements, scope
         )
         pairs = []
-        key_indexes = {}
         for element in elements:
             bindings = self.unit.require_target_pattern(self, gen.target).bindings_for(
                 element
@@ -24461,16 +24459,14 @@ class DictComp(Expression):
             value, value_changed = self._substitute_field(self.value, inner)
             result_key = key if key_changed else self.key
             result_value = value if value_changed else self.value
-            hash_key = ListComp._ground_hash_key(self, result_key)
-            if hash_key is None:
+            if ListComp._ground_hash_key(self, result_key) is None:
                 return None
-            pair = (result_key, result_value)
-            prior = key_indexes.get(hash_key)
-            if prior is None:
-                key_indexes[hash_key] = len(pairs)
-                pairs.append(pair)
-            else:
-                pairs[prior] = pair
+            # Every pair is evaluated, in order, a repeated key's included:
+            # the display keeps its first position and takes the last value
+            # as it is built (``collection_sugar._built_dict``), as the
+            # comprehension's does.  Dropping the earlier pair dropped its
+            # key's and value's evaluation.
+            pairs.append((result_key, result_value))
         evaluations = ListComp._dissolved_iterable(
             self,
             iterable,
