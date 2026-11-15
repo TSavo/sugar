@@ -430,36 +430,40 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
     def _desugar_with_iterable(self, iterable, ctx):
         runtime = self.construction.loop_runtime
-        from sugar_lift_py_tests.floor import SymbolicValue
-        from sugar_lift_py_tests.floor.object_identity import contents_stale
+        if iterable is None:
+            # A ``while`` iterates nothing: no ``iter`` runs.
+            return self._recurrence(None, ctx)
 
-        # A container whose contents are not current
-        # (``object_identity.contents_stale``) has no members in hand: the
-        # loop over it is the recurrence, as over a symbolic iterable.
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+        from sugar_lift_py_tests.floor.object_identity import contents_stale
+        from sugar_lift_py_tests.operations.iterator_operation import (
+            IteratorOperation,
+        )
+        from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            halt_record,
+            halts_recorded,
+        )
+
+        # A ``for`` runs ``iter`` on its iterable once, before any item,
+        # whatever the iterable is: the one ``iter`` operation, submitted to
+        # the receiver, which owns the answer.  Its halt carries the record
+        # of where it halted (``halts_recorded``).
+        iterator_operation = IteratorOperation(
+            owner="LoopRecurrenceSugar", blame=self.site
+        )
         if (
-            iterable is not None
-            and runtime is not None
+            runtime is not None
             and not isinstance(iterable, SymbolicValue)
             and not contents_stale(iterable)
         ):
-            from sugar_lift_py_tests.operations.iterator_operation import (
-                IteratorOperation,
-            )
-            from sugar_lift_py_tests.sugar.function_universe_sugar import (
-                halt_record,
-                halts_recorded,
-            )
-
             runtime_ctx, carried, early = self._start(runtime, ctx)
             if early is not None:
                 # A pre-loop value halted before the first item: it carries
                 # the record of where it halted (``halts_recorded``).
                 return halts_recorded(early, halt_record(ctx))
-            # ``iter`` runs before any item: its halt carries the record of
-            # where it halted (``halts_recorded``).
-            iterator_operation = IteratorOperation(
-                owner="LoopRecurrenceSugar", blame=self.site
-            )
             return halts_recorded(
                 iterator_operation.submit(iterable, runtime_ctx), halt_record(ctx)
             ).and_then(
@@ -467,6 +471,41 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                     iterator, runtime, runtime_ctx, entries=(), carried=carried
                 )
             )
+
+        # An iterable the reduction has not decided -- a symbolic value (a
+        # formal, an unknown), or a container whose contents are not current
+        # (``object_identity.contents_stale``), which has no members in hand
+        # -- has an ``iter`` it has not decided either: an undecided
+        # operation like every other.  The receiver answers it as it answers
+        # ``iter(x)`` (``SymbolicValue.iter_with``, ``ListValue.iter_with``):
+        # a formal's is the ``iter`` carrier its caller's actual discharges,
+        # owed as the unanswered operation where there is none; any other is
+        # the one two-faced outcome (``FloorValue.undecided_iteration``).
+        # The loop's recurrence is what follows the face ``iter`` completes
+        # on, under its guard and owing what it owes
+        # (``ExitSet.sequence``); the face it raises on leaves the loop
+        # before any item.  The recurrence stays over the iterable's own
+        # term.
+        iterated = halts_recorded(
+            iterator_operation.submit(iterable, ctx), halt_record(ctx)
+        )
+
+        def after_iter(_iterator):
+            return self._recurrence(iterable, ctx)
+
+        if isinstance(iterated, NativeOperationExitCarrierV1):
+            return iterated.and_then(after_iter)
+        return _require_exit_set(iterated, owner="LoopRecurrenceSugar.iter").sequence(
+            after_iter
+        )
+
+    def _recurrence(self, iterable, ctx):
+        """The loop as its recurrence over ``iterable`` (None: a ``while``):
+        one symbolic item beside the loop exhausted, each name the loop
+        writes its fixed point of the loop's step.  For a ``for`` this is
+        what follows the completed face of the iterable's ``iter``
+        (``_desugar_with_iterable``), never the loop's whole outcome."""
+        runtime = self.construction.loop_runtime
 
         from sugar_lift_py_tests.floor import InvValue
 

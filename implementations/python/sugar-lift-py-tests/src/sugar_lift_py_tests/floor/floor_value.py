@@ -420,8 +420,9 @@ class FloorValue:
         <site>))``, the complement halts with an ``UndeterminedRaiseEffect``
         (producer ``owner``), and both arms owe the ``undecided`` member
         (reason ``unanswered``) at the call's site.  No ``TypeError`` is
-        guessed.  A live ``for`` over a symbolic iterable never reaches here:
-        it is the loop's recurrence (``LoopRecurrenceSugar``).
+        guessed.  A ``for`` over an iterable the reduction has not decided
+        submits the same operation: its recurrence is what follows the
+        completed face (``LoopRecurrenceSugar._desugar_with_iterable``).
         """
         return self._undecided_protocol_faces(
             "iter",

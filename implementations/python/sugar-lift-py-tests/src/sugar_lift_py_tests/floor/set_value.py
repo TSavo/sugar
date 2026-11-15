@@ -144,6 +144,18 @@ class SetValue(GuardStableValue):
             return undecided_length(self, site)
         return ExitSet.completed(TermValue(len(self.elements)))
 
+    def iter_with(self, operation, ctx):
+        """``iter(set)`` over members that are not its contents now
+        (``object_identity.contents_current``) is the undecided iteration, as
+        a list's and a dict's is.  Over its contents now the runtime
+        iteration order is not authenticated (construction order is not it):
+        the traversal stays the construction gap it was."""
+        from .object_identity import contents_current
+
+        if not contents_current(self):
+            return self.undecided_iteration(operation.blame, owner="SetValue.iter")
+        return super().iter_with(operation, ctx)
+
     def slice_assign_iterable_with(self, operation, ctx):
         """Keep runtime set iteration order loud; construction order is not it."""
         del ctx
