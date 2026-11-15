@@ -367,13 +367,31 @@ _SOURCE_TRY_SETITEM = (
 
 
 def test_r2_source_try_helper_alone_still_defers_as_setitem_carrier() -> None:
-    """#6685: helper desugar remains one undischarged setitem carrier (correct)."""
+    """#6685: the helper's store is owed, never decided in its own proof.
+
+    Expected shape changed (#8857): ``a``'s class is an input of
+    ``helper``'s contract, so ``a[i] = q`` is the dispatched ``__setitem__``
+    edge, not a deferred carrier.  Its halt is owed as the member
+    ``python:dispatch:__setitem__``; the ``try`` routes it to ``return 1``
+    under the type test and keeps it under the complement, leaving with the
+    state the store began from (never a fabricated empty one)."""
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
     tree = _tree(_SOURCE_TRY_SETITEM, "r2_try_helper.py")
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-    pending = function.sugar().desugar(None)
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "setitem"
-    assert pending.pre_effect_state is not None
+    outcome = function.sugar().desugar(None)
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    assert "python:dispatch:__setitem__" in {
+        call.symbol for call in owed_calls(outcome)
+    }
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "UnknownCallee:dispatch:__setitem__"
+    ]
+    assert halts, outcome
+    assert all(halt.state is not None for halt in halts)
 
 
 @pytest.mark.parametrize("index", (4, 0))

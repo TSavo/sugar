@@ -15,6 +15,13 @@ the index species:
 
 Literal / ground bounds are the vertical; formal bounds nested inside a slice
 remain a separate open (coordinates do not yet expand into the setitem demand).
+
+Since #8857 a helper that stores into ``obj`` and uses it no other way takes
+``class:obj`` as an input, so its store is the dispatched ``__setitem__`` /
+``__delitem__`` edge, answered at prove by the class each caller binds; a
+caller supplies ``py.class(<key>, python:builtin("list"))`` for a list it
+built.  The Floor's slice assignment is read through the carrier a store on a
+formal with no class input stands as (``_carrier``).
 """
 
 from __future__ import annotations
@@ -58,24 +65,88 @@ def _helper(source: str):
     return function, function.sugar().desugar(None)
 
 
-def _call_outcome(signature: str, body: str, actuals: dict):
-    """The helper's contract row discharged with ``actuals`` (formal name to
-    value): what prove's one binder binds its carrier with at a call that
-    supplies them.
+_ONE_THREE = SliceValue(TermValue(1), TermValue(3), None)
+
+
+def _dispatched_call(outcome, method: str = "__setitem__"):
+    """The dispatched item operation's coordinate in a helper's own proof:
+    ``call:dispatch:<method>(<receiver>, <operands>..., py.class("0",
+    class:<receiver>))``, read off the halt its edge owes (``python:raised(
+    <call term>, <occurrence>)``)."""
+    from sugar_lift_py_tests.call_symbol import call_symbol
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == f"UnknownCallee:dispatch:{method}"
+    ]
+    assert len(halts) == 1, outcome
+    assert f"python:dispatch:{method}" in {
+        call.symbol for call in owed_calls(outcome)
+    }
+    raised = halts[0].effect.raised_by_call
+    assert raised.name == "python:raised", raised
+    call = raised.args[0]
+    assert call.name == call_symbol(f"dispatch:{method}"), call
+    return call
+
+
+def _carrier(function, index, *, delete: bool = False):
+    """The ``setitem`` (or ``delitem``) carrier ``SubscriptStoreEffectSugar.
+    project_setitem`` (``SubscriptDeleteEffectSugar.project_delitem``) mints
+    for a store on a formal whose class is no input of its contract, over
+    ``function``'s own ``obj`` and ``value`` coordinates, with the ground
+    ``index`` the statement builds.  The helpers here take ``class:obj``, so
+    their own store is the dispatched edge (``_dispatched_call``, #8857);
+    the post-state tests read the Floor projector through this carrier."""
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.sugar.delete_effect_sugar import (
+        SubscriptDeleteEffectSugar,
+    )
+
+    coordinates = {
+        coordinate.declared_name: coordinate
+        for coordinate in function.formal_coordinates()
+    }
+    receiver = SymbolicValue(make_var("obj"), coordinates["obj"])
+    site = function.body[0].fragment
+    if delete:
+        return SubscriptDeleteEffectSugar.mint_delitem_carrier(
+            site=site, receiver=receiver, index=index
+        )
+    return SubscriptStoreEffectSugar.mint_setitem_carrier(
+        site=site,
+        receiver=receiver,
+        index=index,
+        value=SymbolicValue(make_var("value"), coordinates["value"]),
+    )
+
+
+def _call_outcome(signature: str, body: str, actuals: dict, *, index=_ONE_THREE):
+    """The store's carrier discharged with ``actuals`` (formal name to
+    value): the Floor projector's answer for them.
 
     A same-file call is its coordinate and edge, joined at prove (#7757
-    steps 5 and 6, #8705): the call no longer discharges the helper's store
-    carrier, and what the callee leaves of the caller's list is no longer
-    carried out of its frame (``caller_visible_values``, deleted by #8739).
-    The store's post-state is read off the helper's own row; the call itself
-    is the edge (``_the_call``)."""
-    function, pending = _helper(f"def helper({signature}):\n    {body}\n")
-    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
+    steps 5 and 6, #8705), and since #8857 the helper's own store on ``obj``
+    (its class an input) is the dispatched edge, answered at prove by the
+    class the caller binds (``list.__setitem__``'s law, #8864).  So the
+    post-state the Floor projector decides is read off the carrier a store on
+    a formal with no class input stands as (``_carrier``), at the ground
+    ``index`` the helper's statement builds; the call itself is the edge
+    (``_the_call``)."""
+    delete = body.startswith("del ")
+    function, outcome = _helper(f"def helper({signature}):\n    {body}\n")
+    _dispatched_call(outcome, "__delitem__" if delete else "__setitem__")
+    pending = _carrier(function, index, delete=delete)
     return pending.discharge(
         None,
         {
             coordinate.coordinate_cid: actuals[coordinate.declared_name]
-            for coordinate in function.sugar().formal_coordinates
+            for coordinate in function.formal_coordinates()
             if coordinate.declared_name in actuals
         },
     )
@@ -125,6 +196,14 @@ def _coordinate(edge):
     return call
 
 
+def _list_class():
+    """``python:builtin("list")``: the class a caller supplies for a list it
+    built (``receiver_dispatch.class_arguments``, #8857)."""
+    from sugar_lift_py_tests.receiver_dispatch import builtin_class_term
+
+    return builtin_class_term("list")
+
+
 def _ints(*values: int) -> ListValue:
     return fresh(ListValue, tuple(TermValue(value) for value in values))
 
@@ -137,6 +216,9 @@ def _stored_list(outcome) -> ListValue:
     assert len(outcome.exits) == 1
     face = outcome.exits[0]
     assert isinstance(face, Completed), type(face)
+    if isinstance(face.value, ListValue):
+        # A carrier with no continuation completes with the projector's post.
+        return face.value
     binds, value = peel_walrus_binds(face.value)
     left = [bind.assigned_value for bind in binds if bind.name == "actual:0"]
     if left:
@@ -549,9 +631,26 @@ def test_production_store_sugar_with_slice_index_completes() -> None:
 
 
 def test_helper_alone_slice_store_is_undischarged_setitem() -> None:
-    """Literal slice bounds; formal receiver and value — setitem demand."""
-    _, pending = _helper("def helper(obj, value):\n    obj[1:3] = value\n")
-    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
+    """Literal slice bounds; formal receiver and value — setitem demand.
+
+    Expected shape changed (#8857): ``obj``'s class is an input of
+    ``helper``'s contract, so the store is the dispatched ``__setitem__``
+    edge over ``obj``, the ground slice and ``value``, then ``py.class("0",
+    class:obj)``, owed; the carrier below stands where the class is no
+    input."""
+    from sugar_lift_py_tests.ir import str_const
+
+    function, outcome = _helper("def helper(obj, value):\n    obj[1:3] = value\n")
+    call = _dispatched_call(outcome)
+    assert call.args[0].name == "obj"
+    assert call.args[1].name == "py.slice"
+    assert call.args[2].name == "value"
+    assert call.args[3].name == "py.class"
+    assert call.args[3].args[0] == str_const("0")
+    assert call.args[3].args[1].name == "class:obj"
+    assert len(call.args) == 4
+
+    pending = _carrier(function, _ONE_THREE)
     assert pending.demand.operator == "setitem"
     # Index is the ground SliceValue — no formal coordinate on the slice itself.
     assert pending.demand.operand_coordinate_cids[1] is None
@@ -593,11 +692,21 @@ def test_keyword_caller_completes_slice_store() -> None:
 
     edge = _the_call("obj, value", "obj[1:3] = value", "obj=[0, 1, 2, 3], value=[8]")
     arguments = _coordinate(edge).args
-    assert [arg.name for arg in arguments] == ["py.kwarg", "py.kwarg"]
+    # Each list the caller built rides its class, keyed by its keyword
+    # (#8857): what ``class:obj`` binds at prove.
+    assert [arg.name for arg in arguments] == [
+        "py.kwarg",
+        "py.kwarg",
+        "py.class",
+        "py.class",
+    ]
     assert [arg.args[0] for arg in arguments] == [
         str_const("obj"),
         str_const("value"),
+        str_const("obj"),
+        str_const("value"),
     ]
+    assert arguments[2].args[1] == _list_class()
     outcome = _call_outcome(
         "obj, value",
         "obj[1:3] = value",
@@ -616,9 +725,13 @@ def test_default_caller_completes_slice_store() -> None:
 
     edge = _the_call("obj, value=[7, 7]", "obj[1:3] = value", "[0, 1, 2, 3]")
     assert edge.arg_values == (_ints(0, 1, 2, 3),)
-    (default,) = _coordinate(edge).args[1:]
+    # The default, then the class of the list the caller built, keyed by
+    # its position (#8857); a default supplies none.
+    default, rides = _coordinate(edge).args[1:]
     assert default.name == "py.default"
     assert default.args[0] == str_const("value")
+    assert rides.name == "py.class"
+    assert list(rides.args) == [str_const("0"), _list_class()]
     outcome = _call_outcome(
         "obj, value=[7, 7]",
         "obj[1:3] = value",
@@ -633,6 +746,7 @@ def test_full_slice_caller_replaces_entire_list() -> None:
         "obj, value",
         "obj[:] = value",
         {"obj": _ints(0, 1), "value": _ints(5, 6, 7)},
+        index=SliceValue(None, None, None),
     )
     stored = _stored_list(outcome)
     assert stored == _ints(5, 6, 7)
@@ -654,7 +768,8 @@ def test_discrimination_production_slice_store_is_not_identity() -> None:
 
 
 def test_wrong_coordinate_cannot_discharge_slice_store() -> None:
-    function, pending = _helper("def helper(obj, value):\n    obj[1:3] = value\n")
+    function, _outcome = _helper("def helper(obj, value):\n    obj[1:3] = value\n")
+    pending = _carrier(function, _ONE_THREE)
     assert isinstance(pending, NativeOperationExitCarrierV1)
     coords = function.formal_coordinates()
     obj_c, value_c = coords[0], coords[1]
@@ -668,8 +783,8 @@ def test_wrong_coordinate_cannot_discharge_slice_store() -> None:
 
 
 def test_missing_actual_does_not_fabricate_completed_slice_store() -> None:
-    _, pending = _helper("def helper(obj, value):\n    obj[1:3] = value\n")
-    _unanswered(pending, {})
+    function, _outcome = _helper("def helper(obj, value):\n    obj[1:3] = value\n")
+    _unanswered(_carrier(function, _ONE_THREE), {})
 
 
 # ---------------------------------------------------------------------------
@@ -763,12 +878,46 @@ def test_a_formal_slice_bound_defers_the_slice_to_the_caller() -> None:
 
 
 def test_a_caller_completes_a_store_through_a_formal_slice_bound() -> None:
-    outcome = _call_outcome(
-        "obj, lo, value",
-        "obj[lo:3] = value",
-        {"obj": _ints(0, 1, 2, 3), "lo": TermValue(1), "value": _ints(9)},
+    """The ``slice`` carrier discharged with ``lo``: the slice the caller
+    decided, then the store on it.
+
+    Expected shape changed (#8857): ``obj``'s class is an input of
+    ``helper``'s contract, so the store the slice continues into is the
+    dispatched ``__setitem__`` edge, answered at prove by the class the
+    caller binds (``list.__setitem__``'s law, #8864), never a list decided
+    here: it completes under its own ``completes`` atom and halts under the
+    complement, both owed.  The slice carrier binds ``lo`` alone."""
+    from sugar_lift_py_tests.outcome import Halted
+
+    function, pending = _helper("def helper(obj, lo, value):\n    obj[lo:3] = value\n")
+    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
+    assert pending.demand.operator == "slice"
+    actuals = {"obj": _ints(0, 1, 2, 3), "lo": TermValue(1), "value": _ints(9)}
+    outcome = pending.discharge(
+        None,
+        {
+            coordinate.coordinate_cid: actuals[coordinate.declared_name]
+            for coordinate in function.formal_coordinates()
+        },
     )
-    stored = _stored_list(outcome)
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert len(outcome.exits) == 2, outcome
+    assert sum(isinstance(face, Completed) for face in outcome.exits) == 1
+    (halted,) = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert halted.effect.producer_node_owner == "UnknownCallee:dispatch:__setitem__"
+
+    # The store's post-state the Floor decides, on the carrier a store on a
+    # formal with no class input stands as, at the slice ``lo`` decides.
+    stored = _stored_list(
+        _carrier(function, SliceValue(TermValue(1), TermValue(3), None)).discharge(
+            None,
+            {
+                coordinate.coordinate_cid: actuals[coordinate.declared_name]
+                for coordinate in function.formal_coordinates()
+                if coordinate.declared_name in ("obj", "value")
+            },
+        )
+    )
     assert stored == _ints(0, 9, 3)
 
 

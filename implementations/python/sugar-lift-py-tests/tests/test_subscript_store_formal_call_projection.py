@@ -73,10 +73,58 @@ _TUPLE_CALLER = (
 )
 
 
+def _carrier(helper):
+    """The ``setitem`` carrier ``SubscriptStoreEffectSugar.project_setitem``
+    mints for a store on a formal whose class is no input of its contract,
+    over ``helper``'s own formal coordinates, at the store's statement.
+    ``helper`` itself takes ``class:obj`` (``obj`` is stored into and used
+    no other way), so its own store is the dispatched edge instead
+    (``_dispatched_call``, #8857)."""
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.sugar.store_effect_sugar import (
+        SubscriptStoreEffectSugar,
+    )
+
+    obj_c, key_c, value_c = helper.formal_coordinates()
+    return SubscriptStoreEffectSugar.mint_setitem_carrier(
+        site=helper.body[0].fragment,
+        receiver=SymbolicValue(make_var("obj"), obj_c),
+        index=SymbolicValue(make_var("key"), key_c),
+        value=SymbolicValue(make_var("value"), value_c),
+    )
+
+
+def _dispatched_call(outcome, method: str = "__setitem__"):
+    """The dispatched item operation's coordinate in a helper's own proof:
+    ``call:dispatch:<method>(<receiver>, <operands>..., py.class("0",
+    class:<receiver>))``, read off the halt its edge owes (``python:raised(
+    <call term>, <occurrence>)``)."""
+    from sugar_lift_py_tests.call_symbol import call_symbol
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == f"UnknownCallee:dispatch:{method}"
+    ]
+    assert len(halts) == 1, outcome
+    assert f"python:dispatch:{method}" in {
+        call.symbol for call in owed_calls(outcome)
+    }
+    raised = halts[0].effect.raised_by_call
+    assert raised.name == "python:raised", raised
+    call = raised.args[0]
+    assert call.name == call_symbol(f"dispatch:{method}"), call
+    return call
+
+
 def _discharged_with_the_callers_actuals(helper):
-    """The helper's row discharged with what ``helper((0,), 0, 9)`` passes:
-    what prove's binder binds its carrier with at that call."""
-    pending = helper.sugar().desugar(None)
+    """The ``setitem`` carrier discharged with what ``helper((0,), 0, 9)``
+    passes: the Floor ``setitem`` projector's answer."""
+    pending = _carrier(helper)
     assert isinstance(pending, NativeOperationExitCarrierV1)
     obj_cid, key_cid, value_cid = pending.demand.operand_coordinate_cids
     return pending.discharge(
@@ -90,11 +138,25 @@ def _discharged_with_the_callers_actuals(helper):
 
 
 def test_helper_alone_retains_setitem_demand_in_projector_order() -> None:
+    # Expected shape changed (#8857): ``obj``'s class is an input of
+    # ``helper``'s contract, so its store is the dispatched ``__setitem__``
+    # edge in the projector's order, then ``py.class("0", class:obj)``; the
+    # carrier in that order stands where the class is no input.
+    from sugar_lift_py_tests.ir import str_const
+
     helper, _calls = _helper_and_calls(
         "def helper(obj, key, value):\n    obj[key] = value\n"
     )
 
-    pending = helper.sugar().desugar(None)
+    call = _dispatched_call(helper.sugar().desugar(None))
+    assert [arg.name for arg in call.args[:3]] == ["obj", "key", "value"]
+    rides = call.args[3]
+    assert rides.name == "py.class"
+    assert rides.args[0] == str_const("0")
+    assert rides.args[1].name == "class:obj"
+    assert len(call.args) == 4
+
+    pending = _carrier(helper)
 
     assert isinstance(pending, NativeOperationExitCarrierV1)
     assert pending.demand.operator == "setitem"

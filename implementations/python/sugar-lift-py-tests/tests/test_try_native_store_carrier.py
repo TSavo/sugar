@@ -1,11 +1,22 @@
-"""Source try/except composes over a deferred formal native store."""
+"""Source try/except composes over a formal's item store.
+
+Since #8857 the helpers below take ``class:a`` as an input of their contract
+(``a`` is stored into and used no other way, ``nodes._receiver_class_parameters``),
+so ``a[i] = q`` is ``type(a).__setitem__(a, i, q)``: the dispatched edge
+(``receiver_dispatch.dispatch_edge_call``), two faces, owed, answered at prove
+by the class each caller binds (``list.__setitem__``'s law, #8864).  It is no
+deferred ``setitem`` carrier, so the ``try`` composes over its two faces at
+once: the completed face falls past the handler, and the halt -- whose type
+the callee's contract states at prove (``python:raised(<call>, <occurrence>)``)
+-- reaches ``except IndexError`` under the type test, and leaves the ``try``
+under its complement.  No face is dropped and no state is fabricated.
+"""
 
 from __future__ import annotations
 
-from frame_fresh import fresh
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor import CallSiteValue, ListValue, TermValue
+from sugar_lift_py_tests.floor import CallSiteValue, TermValue
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
@@ -22,6 +33,8 @@ HELPER = (
 
 PLAIN_STORE = "def helper(a, i, q):\n    a[i] = q\n"
 
+_OWNER = "UnknownCallee:dispatch:__setitem__"
+
 
 def _tree(calls: str = "", helper: str = HELPER) -> SourceFile:
     source = f"{helper}\n{calls}"
@@ -32,10 +45,16 @@ def _tree(calls: str = "", helper: str = HELPER) -> SourceFile:
 
 
 def _helper_outcome(helper: str = HELPER):
+    """``helper``'s own proof: its universe's faces."""
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
     function = next(
         node for node in _tree(helper=helper).nodes() if isinstance(node, FunctionDef)
     )
-    return function.sugar().desugar(None)
+    outcome = function_universe_outcome(function)
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    return outcome
 
 
 def _call_outcome(call: str):
@@ -44,29 +63,27 @@ def _call_outcome(call: str):
     return node.sugar().desugar(None)
 
 
-def _returned(pending, a, i, q) -> TermValue:
-    """The value the helper's row returns, discharged with ``a``, ``i`` and
-    ``q``: what prove's one binder binds its carrier with at a call
-    ``helper(a, i, q)``.
-
-    A same-file call is its coordinate and edge, joined at prove (#7757
-    steps 5 and 6, #8705): the call no longer digs to the floor the
-    followed body returned, so the try's composition over the deferred store
-    is read off the helper's own row."""
+def _returned_values(outcome) -> set:
+    """The ``int`` each completed face of ``helper``'s universe returns."""
     from sugar_lift_py_tests.floor.return_value import ReturnValue
 
-    a_cid, i_cid, q_cid = pending.demand.operand_coordinate_cids
-    outcome = pending.discharge(None, {a_cid: a, i_cid: i, q_cid: q})
-    assert isinstance(outcome, ExitSet)
-    completed = [face for face in outcome.exits if isinstance(face, Completed)]
-    assert len(completed) == 1, outcome
-    returns = [
-        s for s in completed[0].value.record.statements if isinstance(s, ReturnValue)
-    ]
-    assert returns, completed[0].value
-    returned = returns[-1].value
-    assert isinstance(returned, TermValue), returned
-    return returned
+    values = set()
+    for face in outcome.exits:
+        if not isinstance(face, Completed):
+            continue
+        returns = [
+            s for s in face.value.record.statements if isinstance(s, ReturnValue)
+        ]
+        assert returns, face.value
+        returned = returns[-1].value
+        assert isinstance(returned, TermValue), returned
+        values.add(returned.value)
+    return values
+
+
+def _store_halts(outcome) -> list:
+    """The halts of the dispatched store that leave ``helper``."""
+    return [face for face in outcome.halts() if face.effect.producer_node_owner == _OWNER]
 
 
 def _the_call(call: str) -> CallSiteValue:
@@ -81,65 +98,50 @@ def _the_call(call: str) -> CallSiteValue:
 
 
 def test_try_body_retains_formal_store_as_one_deferred_carrier() -> None:
-    pending = _helper_outcome()
+    # Expected shape changed (#8857): the store in the ``try`` body is the
+    # dispatched ``__setitem__`` edge, owed as the one member
+    # ``python:dispatch:__setitem__``, never a deferred carrier.
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
 
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "setitem"
+    outcome = _helper_outcome()
+    assert "python:dispatch:__setitem__" in {
+        call.symbol for call in owed_calls(outcome)
+    }
 
 
 def test_try_store_completion_bypasses_handler() -> None:
-    pending = _helper_outcome()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
+    # Expected shape changed (#8857): no carrier is discharged here.  The
+    # store's completed face runs on to ``return 0``; the caller's edge
+    # carries ``[0], 0, 9`` and prove decides which face the call takes.
+    outcome = _helper_outcome()
     _the_call("helper([0], 0, 9)\n")
 
-    returned = _returned(
-        pending, fresh(ListValue, (TermValue(0),)), TermValue(0), TermValue(9)
-    )
-    assert returned.value == 0
+    assert 0 in _returned_values(outcome)
 
 
 def test_try_store_indexerror_routes_to_handler_without_fabricated_state() -> None:
-    pending = _helper_outcome()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    testimony = pending.pre_effect_state
-    assert testimony is not None
+    # Expected shape changed (#8857): the store's halt names no type here
+    # (its contract types it at prove), so ``except IndexError`` takes it
+    # under the type test and returns 1, and under the complement the halt
+    # leaves the ``try`` as it was -- with the state the store began from,
+    # never a fabricated empty one.  Neither is chosen here.
+    outcome = _helper_outcome()
     _the_call("helper([0], 4, 9)\n")
 
-    returned = _returned(
-        pending, fresh(ListValue, (TermValue(0),)), TermValue(4), TermValue(9)
-    )
-    assert returned.value == 1
-    empty_state = type(testimony.state)((), True, ())
-    assert testimony.state is not None
-    assert testimony.state is not empty_state
-    assert testimony.state != fresh(ListValue, (TermValue(0),))
-    assert testimony.state != fresh(ListValue, (TermValue(9),))
+    assert _returned_values(outcome) == {0, 1}
+    halts = _store_halts(outcome)
+    assert halts, outcome
+    for halt in halts:
+        assert halt.state is not None
 
 
 def test_exitset_consumer_observes_authentic_store_occurrence_and_state() -> None:
-    pending = _helper_outcome(PLAIN_STORE)
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    a_cid, i_cid, q_cid = pending.demand.operand_coordinate_cids
-    observed = []
-
-    def observe(exits):
-        halted = next(exit_ for exit_ in exits.exits if isinstance(exit_, Halted))
-        observed.append((halted.effect, halted.state))
-        return exits
-
-    retained = pending.after_discharge(observe).discharge(
-        None,
-        {
-            a_cid: fresh(ListValue, (TermValue(0),)),
-            i_cid: TermValue(4),
-            q_cid: TermValue(9),
-        },
-    )
-
-    assert any(isinstance(exit_, Halted) for exit_ in retained.exits), retained
-    halted = next(exit_ for exit_ in retained.exits if isinstance(exit_, Halted))
-    assert pending.pre_effect_state is not None
-    assert halted.state is pending.pre_effect_state.state
+    # Expected shape changed (#8857): the plain store's halt is the
+    # dispatched edge's own, keyed by the store's own occurrence and leaving
+    # with the block's state; a store at another line is another occurrence.
+    outcome = _helper_outcome(PLAIN_STORE)
+    (halted,) = _store_halts(outcome)
+    assert halted.state is not None
     assert (
         isinstance(halted.effect.occurrence_id, str)
         and ":" in halted.effect.occurrence_id
@@ -147,20 +149,5 @@ def test_exitset_consumer_observes_authentic_store_occurrence_and_state() -> Non
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {halted.effect.occurrence_id!r}"
     )
-    assert observed == [(halted.effect, halted.state)]
-    foreign = _helper_outcome("\n" + PLAIN_STORE)
-    assert isinstance(foreign, NativeOperationExitCarrierV1)
-    foreign_a, foreign_i, foreign_q = foreign.demand.operand_coordinate_cids
-    foreign_halt = next(
-        exit_
-        for exit_ in foreign.discharge(
-            None,
-            {
-                foreign_a: fresh(ListValue, (TermValue(0),)),
-                foreign_i: TermValue(4),
-                foreign_q: TermValue(9),
-            },
-        ).exits
-        if isinstance(exit_, Halted)
-    )
+    (foreign_halt,) = _store_halts(_helper_outcome("\n" + PLAIN_STORE))
     assert halted.effect.occurrence_id != foreign_halt.effect.occurrence_id
