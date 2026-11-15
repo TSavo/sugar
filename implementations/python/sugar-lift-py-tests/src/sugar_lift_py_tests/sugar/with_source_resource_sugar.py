@@ -145,15 +145,19 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
             entered = enter_face.value
             enter_value = _returned_value(entered.enter_value)
             enter_facts = ()
+            body_ctx = ctx
             if resource.enter_slot_id is not None and enter_value is not None:
-                enter_facts = EnterResultBinding(
-                    resource.enter_slot_id, enter_value
-                ).to_facts(site=resource.site)
+                binding = EnterResultBinding(resource.enter_slot_id, enter_value)
+                enter_facts = binding.to_facts(site=resource.site)
+                # The body reads ``as x`` as the value ``__enter__`` returned.
+                body_ctx = binding.bound_in(ctx)
             # The exit is routed per body face: a body whose carrier
             # ``sequence`` composed is refused by name here.
             body_es = _require_exit_set(
                 ExitSet((enter_face,)).sequence(
-                    lambda _entered: reduce_block_to_exitset(resource.body, ctx)
+                    lambda _entered, body_ctx=body_ctx: reduce_block_to_exitset(
+                        resource.body, body_ctx
+                    )
                 ),
                 owner="WithReducedManagerSugar.body",
             )

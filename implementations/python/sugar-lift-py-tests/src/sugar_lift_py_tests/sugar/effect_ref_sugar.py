@@ -97,11 +97,16 @@ class ObservationRefSugar(ConstructedTermSugar):
             return ExitSet.completed(
                 ExceptionInfoCoordinate(slot_id=self.slot_id, site=self.site)
             )
-        if self.projection == "enter_result":
-            from sugar_lift_py_tests.floor.manager_coordinate import (
-                EnterResultCoordinate,
-            )
+        from sugar_lift_py_tests.context_manager_contract import ENTER_RESULT
 
-            return ExitSet.completed(EnterResultCoordinate(slot_id=self.slot_id, site=self.site))
+        if self.projection == ENTER_RESULT:
+            # ``with m as x``: ``x`` is the value ``__enter__`` returned, which
+            # the ``with`` deposited for its body (``EnterResultBinding
+            # .bound_in``).  A read the deposit does not reach is the slot's
+            # coordinate, which the ``with``'s record states.
+            reader = getattr(ctx, "observed_effect_for", None)
+            entered = reader(self.slot_id) if reader is not None else None
+            if entered is not None:
+                return ExitSet.completed(entered)
         # warning_observation / effect: pure coordinate until binding facts exist
         return ExitSet.completed(EffectCoordinate(slot_id=self.slot_id, site=self.site))

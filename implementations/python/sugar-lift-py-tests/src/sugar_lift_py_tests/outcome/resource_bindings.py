@@ -36,14 +36,30 @@ class ManagerBinding:
 class EnterResultBinding:
     """Slot E is authenticated by the completed ``__enter__`` result.
 
-    The fact is stated on the one term the body reads ``as x`` through: the
-    slot's coordinate (``EffectCoordinate``, ``python:effect_slot(E)``).  A
-    fact on any other name for the slot binds nothing the body reads, so a
-    claim on ``x`` would be decided over a free value.
+    The body reads ``as x`` (``ObservationRef(E, enter-result)``) as the very
+    value ``__enter__`` completed with: the ``with`` reduces its body in the
+    context ``bound_in`` deposits it in, as an ``except ... as e`` handler
+    reads the effect its arm matched.  A value is a value wherever it goes:
+    returned out of the frame, it means in the caller what it meant here.  A
+    coordinate's meaning is a fact in this frame's record alone, and a caller
+    never reads it.
+
+    The fact is stated on the slot's coordinate (``EffectCoordinate``,
+    ``python:effect_slot(E)``), the term a read the deposit does not reach
+    (a nested function's body, reduced in its own call's context) projects.
     """
 
     slot_id: str
     enter_value: object  # FloorValue
+
+    def bound_in(self, ctx):
+        """``ctx`` with the enter result deposited under its slot: the context
+        the ``with`` reduces its body in, so the body's read of ``as x`` is
+        ``enter_value`` itself (``ObservationRefSugar``)."""
+        from sugar_lift_py_tests.context import ReduceContext
+
+        base = ReduceContext.root(owner="EnterResultBinding") if ctx is None else ctx
+        return base.with_observed_effect(self.slot_id, self.enter_value)
 
     def to_facts(self, site=None) -> tuple:
         from sugar_lift_py_tests.floor.effect_coordinate import EffectCoordinate
