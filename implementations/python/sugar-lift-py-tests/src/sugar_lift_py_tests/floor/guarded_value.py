@@ -222,6 +222,26 @@ class GuardedValue(FloorValue):
         ``operand`` is the predicate's first operand, which an arm answering
         no formula is compared to (``FloorValue.equals``).
         """
+        true_outcome = operate(self.when_true)
+        false_outcome = operate(self.when_false)
+        if _deferred(true_outcome) or _deferred(false_outcome):
+            return _beside(self.guard, true_outcome, false_outcome)
+        if _all_halt(true_outcome) or _all_halt(false_outcome):
+            return _siblings(self.guard, true_outcome, false_outcome)
+        return self._rejoined_predicate(
+            true_outcome,
+            false_outcome,
+            operation=operation,
+            operand=operand,
+            blame=blame,
+            ctx=ctx,
+        )
+
+    def _rejoined_predicate(
+        self, true_outcome, false_outcome, *, operation: str, operand, blame, ctx
+    ):
+        """Both arms' single predicate outcomes rejoined into one formula
+        under this value's guard (:meth:`_predicate`)."""
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import and_, implies, not_
         from sugar_lift_py_tests.outcome import ExitSet
@@ -235,12 +255,6 @@ class GuardedValue(FloorValue):
         from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
 
         owner = f"GuardedValue._predicate({operation})"
-        true_outcome = operate(self.when_true)
-        false_outcome = operate(self.when_false)
-        if _deferred(true_outcome) or _deferred(false_outcome):
-            return _beside(self.guard, true_outcome, false_outcome)
-        if _all_halt(true_outcome) or _all_halt(false_outcome):
-            return _siblings(self.guard, true_outcome, false_outcome)
         true_outcome = require_single_value(
             true_outcome, owner=owner, blame=blame, arm="when_true"
         )
@@ -637,8 +651,34 @@ class GuardedValue(FloorValue):
         )
 
     def truth(self, site):
-        return self._predicate(
-            lambda arm: arm.truth(site), operation="truth", operand=site, blame=site
+        """``bool`` of the value each branch selects: each arm's truth taken
+        through the one truth rule (``bool_op_sugar.truth_of``).
+
+        Two decided truths rejoin into one formula under the guard
+        (:meth:`_rejoined_predicate`).  An arm whose truth is not one value
+        -- every arm halts, or the arm's truth is not decided here and is
+        its two faces -- keeps its faces under its own polarity, beside the
+        other arm's (:func:`_siblings`): neither the halt nor the other
+        arm's truth is dropped.  An arm whose truth waits on its caller's
+        actual is carried beside the other (:func:`_beside`)."""
+        from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
+
+        true_truth = truth_of(self.when_true, site, owner="GuardedValue.truth")
+        false_truth = truth_of(self.when_false, site, owner="GuardedValue.truth")
+        if _deferred(true_truth) or _deferred(false_truth):
+            return _beside(self.guard, true_truth, false_truth)
+        if (
+            true_truth.completed_value() is None
+            or false_truth.completed_value() is None
+        ):
+            return _siblings(self.guard, true_truth, false_truth)
+        return self._rejoined_predicate(
+            true_truth,
+            false_truth,
+            operation="truth",
+            operand=site,
+            blame=site,
+            ctx=None,
         )
 
     def equals(self, other, site, ctx):

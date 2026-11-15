@@ -123,22 +123,16 @@ class IfExpSugar(ConstructedTermSugar):
     def _join(self, cond_value, ctx) -> ExitSet:
         # The guard is the test's TRUTHINESS as a predicate, taken through
         # the one truth rule (``bool_op_sugar.truth_of``): a predicate test
-        # (`5 if a == b else 6`) stands as its formula; an undecided call
-        # result or bare symbolic test (`5 if c else 6`) is its two faces,
-        # each completed truth face selecting the arms under its own guard
-        # and a halted truth halting the expression before either arm ran.
+        # (`5 if a == b else 6`) stands as its formula; a test whose truth is
+        # not decided here (`5 if c else 6`) is its two faces, each completed
+        # truth face selecting the arms under its own guard and a halted
+        # truth halting the expression before either arm ran.
         from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             plain_completed_value,
         )
 
-        truth = truth_of(
-            cond_value,
-            self.site,
-            operator="if-expression",
-            owner="IfExpSugar.test",
-            floor="truth_exception_floor",
-        )
+        truth = truth_of(cond_value, self.site, owner="IfExpSugar.test")
         if isinstance(truth, ExitSet) and plain_completed_value(truth) is None:
             return truth.sequence(
                 lambda truth_value: self._join_on(

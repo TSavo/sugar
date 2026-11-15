@@ -3297,12 +3297,15 @@ class GeneratorConstructionV1:
     def _guard_truth(self, guard: object):
         """The guard's typed truth outcome, or None if it cannot stand.
 
-        A branch guard is not the operand -- it is the operand's truth, which
-        is exactly what `FloorValue.truth` already states for every value that
-        can answer it. Reading the operand's type directly would be a second,
-        weaker copy of that law: `NoneValue.truth` is False, a container's is
-        its non-emptiness, and a symbolic value's is a predicate. Routing
-        through `truth` keeps one owner for the question.
+        A branch guard is not the operand -- it is the operand's truth, taken
+        through the one truth rule (``bool_op_sugar.truth_of``), as every
+        other truth question takes it. Reading the operand's type directly
+        would be a second, weaker copy of that law: `NoneValue.truth` is
+        False, a container's is its non-emptiness, and a value whose truth is
+        not decided here is its two faces (its truth completes under its
+        ``python:truth.completes`` guard or halts undetermined, owing the
+        undecided member). The truth is keyed on this instance's coordinate,
+        so two live generators over one branch never share it.
 
         Guard Sugar is reduced under :meth:`_guard_evaluation_context` so
         BindingCoordinateRefSugar resolves binder Floors at the exact
@@ -3327,13 +3330,16 @@ class GeneratorConstructionV1:
                 # A halt, a split, or an owing arm: the caller reads the arms.
                 return outcome
             value = outcome.completed_value()
-        truth = getattr(value, "truth", None)
-        if truth is None:
+        if not hasattr(value, "truth"):
             return None
+        from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
+
         # ConstructionPanic is BaseException by design so ordinary Exception
         # handlers cannot silence it. Do not catch BaseException here — that
         # would reclassify incomplete floors as undecided suspension gaps.
-        outcome = truth(self.instance_coordinate)
+        outcome = truth_of(
+            value, self.instance_coordinate, owner="GeneratorConstructionV1.guard"
+        )
         if isinstance(outcome, (ExitSet, NativeOperationExitCarrierV1)):
             return outcome
         return None

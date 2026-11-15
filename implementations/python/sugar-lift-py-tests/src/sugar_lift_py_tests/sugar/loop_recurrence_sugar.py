@@ -2122,8 +2122,8 @@ class _WhileItemTestV1:
         """The test's value's truth, taken through the one truth rule
         (``bool_op_sugar.truth_of``), as ``_WhileTest`` faces.
 
-        A plain truth is one face whose guard is its formula.  An undecided
-        call result or bare symbolic value is its two faces: each completed
+        A plain truth is one face whose guard is its formula.  A value whose
+        truth is not decided here is its two faces: each completed
         truth face is a ``_WhileTest`` under its own guard, and a halted truth
         halted where this item began, so it carries that record
         (``halts_recorded``), as a halt of the test itself does.  A truth that
@@ -2138,13 +2138,7 @@ class _WhileItemTestV1:
         from sugar_lift_py_tests.sugar.if_sugar import truth_formula
 
         scope = value.extend_scope(ctx)
-        truth = truth_of(
-            value,
-            self.site,
-            operator="while",
-            owner="LoopRecurrenceSugar.while-test",
-            floor="truth_exception_floor",
-        )
+        truth = truth_of(value, self.site, owner="LoopRecurrenceSugar.while-test")
         if not isinstance(truth, ExitSet):
             return ExitSet.completed(_WhileTest(None, scope))
         if plain_completed_value(truth) is not None:

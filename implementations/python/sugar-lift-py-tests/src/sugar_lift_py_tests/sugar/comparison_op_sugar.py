@@ -69,12 +69,6 @@ _LAW_BY_OP: dict[str, CompareLaw] = {
     "IsNot": CompareLaw.IDENTITY,
 }
 
-# The negated comparisons whose result's truth is negated (``_negated_truth``).
-_NEGATED_OPERATOR_SPELLING = {
-    "NotEq": "!=",
-    "NotIn": "not in",
-}
-
 _DISPATCH_RAISE_COORDINATE = {
     "Eq": "python.eq_dispatch_raises",
     "NotEq": "python.eq_dispatch_raises",
@@ -483,11 +477,7 @@ class ComparisonOpSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.sugar.bool_op_sugar import negated_truth_of
 
         return negated_truth_of(
-            result,
-            self.site,
-            operator=_NEGATED_OPERATOR_SPELLING[self.op_kind],
-            owner=f"ComparisonOpSugar.{self.op_kind}",
-            floor="comparison_operation_exception_floor",
+            result, self.site, owner=f"ComparisonOpSugar.{self.op_kind}"
         )
 
     def _apply(self, left, right, ctx):
