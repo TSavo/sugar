@@ -360,6 +360,11 @@ struct ConsistencyCandidate {
     /// the group solve below never has to touch the pool again to answer
     /// "whose fact is this" -- the CONSTRUCTED label, not an inference.
     spoken_by_vendor: bool,
+    /// Each `global:<name>` input the row's claims read that its contract
+    /// states no value for (`bind_own_inputs_with_unstated`): a free
+    /// variable of the row, over every value of which the row is decided
+    /// (`decide_over_unstated_inputs`).
+    unstated_inputs: Vec<String>,
 }
 
 /// Does this contract carry asserted axioms that must be checked for
@@ -4412,20 +4417,36 @@ pub(crate) fn bind_call_arguments(
 /// an input the contract does not state (the module's run left it
 /// undecided). Its claims are not decided on a value nobody gave.
 fn bind_own_inputs(body: &Json) -> Result<Json, Vec<String>> {
+    let (instance, unstated) = bind_own_inputs_with_unstated(body);
+    if unstated.is_empty() {
+        Ok(instance)
+    } else {
+        Err(unstated)
+    }
+}
+
+/// The row bound through the one binder (`bind_own_inputs`), with each
+/// `global:<name>` input its claims still read after the binding: an input
+/// the contract states no value for (the module's run left it undecided).
+/// That input stays in the instance as itself, a free variable of the row
+/// (the compiler declares it as a free constant, as it declares a
+/// parameter); the consistency check decides the row over every value of it
+/// (`decide_over_unstated_inputs`).
+fn bind_own_inputs_with_unstated(body: &Json) -> (Json, Vec<String>) {
     let Some(formals) = body.get("formals").and_then(Json::as_array).and_then(|formals| {
         formals
             .iter()
             .map(|formal| formal.as_str().map(str::to_string))
             .collect::<Option<Vec<_>>>()
     }) else {
-        return Ok(body.clone());
+        return (body.clone(), Vec::new());
     };
     let globals: Vec<&String> = formals
         .iter()
         .filter(|formal| formal.starts_with(GLOBAL_INPUT_PREFIX))
         .collect();
     if globals.is_empty() {
-        return Ok(body.clone());
+        return (body.clone(), Vec::new());
     }
     let stated = stated_input_values(body);
     let parameters: Vec<Json> = formals
@@ -4450,32 +4471,97 @@ fn bind_own_inputs(body: &Json) -> Result<Json, Vec<String>> {
         .filter(|formal| formula_reads_var(&inv, formal))
         .cloned()
         .collect();
-    if unbound.is_empty() {
-        Ok(instance)
-    } else {
-        Err(unbound)
+    (instance, unbound)
+}
+
+/// A row whose claims read a module global input its contract states no
+/// value for (`bind_own_inputs_with_unstated`), decided over every value of
+/// that input (step 9). The consistency check has already solved the row
+/// with the input as a free constant:
+///
+/// - the claim unsatisfiable (`Unsatisfied`): false for every value of the
+///   input, refuted, as it stands;
+/// - the claim satisfiable (`Discharged`): satisfiable for SOME value only.
+///   It is discharged only when its negation is unsatisfiable too
+///   (`holds_for_every_value`: the claim holds whatever the input is);
+///   otherwise whether it holds depends on a value nobody gave, and the row
+///   is undecidable by name -- never sat on a value the solver chose;
+/// - anything else (a refusal, an encoding stop, a timeout): as it stands.
+fn decide_over_unstated_inputs(
+    result: &mut ConsistencyResult,
+    unstated: &[String],
+    holds_for_every_value: impl FnOnce() -> bool,
+) {
+    if result.verdict != ObligationVerdict::Discharged {
+        return;
+    }
+    let inputs = unstated.join(", ");
+    if holds_for_every_value() {
+        result.reason = format!(
+            "{} [holds for every value of the module global input(s) {inputs}, whose value the module's run leaves undecided]",
+            result.reason
+        );
+        return;
+    }
+    result.verdict = ObligationVerdict::Undecidable;
+    result.reason = format!(
+        "consistency check undecidable: `{}` reads the module global input(s) {inputs} whose value the module's run leaves undecided, and whether it holds depends on that value",
+        result.property_name
+    );
+    result.effect = None;
+    if let Some(VerificationDetail::Solver { final_verdict, .. }) = result.verification.as_mut() {
+        *final_verdict = ObligationVerdict::Undecidable.as_str().to_string();
     }
 }
 
-/// The row of a function whose claims read a module global its contract
-/// does not state (`bind_own_inputs`): undecidable, by name. Never decided
-/// on the free input, which would let a lying claim be satisfied.
-fn unstated_input_refusal(cid: String, body: &Json, unbound: &[String]) -> ConsistencyResult {
-    let property_name = contract_property_name(body).to_string();
-    ConsistencyResult {
-        contract_cid: cid,
-        property_name: property_name.clone(),
-        verdict: ObligationVerdict::Undecidable,
-        reason: format!(
-            "consistency check undecidable: `{property_name}` reads the module global input(s) {} whose value the module's run leaves undecided",
-            unbound.join(", ")
-        ),
-        effect: None,
-        witnessed: false,
-        locus: None,
-        verification: None,
-        dropped_ambient_posts: Vec::new(),
+/// Does the claim of the contract `body` hold for every value of its free
+/// inputs: is its negation unsatisfiable, conjoined with the row's own post
+/// (where the claim reads the result) and what the contracts joined to its
+/// calls state (the one join, `linked_ambient_post_instances_for_inv`, with
+/// the raised types and the stated ancestry it reads)? Peer claims (ambient
+/// ground facts, ambient universals) are not conjoined: they are claims, not
+/// what a joined contract states, and the row's own claims among them would
+/// refute its own negation. A dropped join answer, an undecodable goal or any
+/// solver answer but `unsat` is `false`: the claim is not shown to hold.
+fn claim_holds_for_every_value(
+    body: &Json,
+    ambient: &[AmbientPost],
+    exception_ancestry: &ExceptionAncestry,
+    plan: &SolverPlan,
+    registry: &HashMap<SolverSeat, SolverHandle>,
+    compilers: &CompilerRegistry,
+) -> bool {
+    let Some(inv) = body.get("inv").filter(|inv| inv.is_object()) else {
+        return false;
+    };
+    let mut operands = vec![IrFormula::Not(inv.clone()).to_value()];
+    if let Some(post) = body.get("post").filter(|post| post.is_object()) {
+        if formula_reads_var(inv, contract_out_binding(body)) {
+            operands.push(post.clone());
+        }
     }
+    let counter = canonicalize_formula_json(&IrFormula::And(operands).to_value());
+    let mut conjuncts = Vec::new();
+    if !ambient.is_empty() {
+        let partition = linked_ambient_post_instances_for_inv(&counter, ambient);
+        if !partition.dropped.is_empty() {
+            return false;
+        }
+        conjuncts.extend(partition.kept.iter().map(|post| post.instantiated_post.clone()));
+    }
+    let mut operands = Vec::with_capacity(conjuncts.len() + 1);
+    operands.push(counter);
+    operands.extend(conjuncts);
+    let counter = with_raised_types(IrFormula::And(operands).to_value(), ambient);
+    let counter = with_exception_ancestry(counter, exception_ancestry);
+    let counter = fold_decided_python_atoms(&counter);
+    joined_goal_has_verdict(
+        IrFormula::Not(counter).to_value(),
+        ObligationVerdict::Discharged,
+        plan,
+        registry,
+        compilers,
+    )
 }
 
 /// `formula` with each formal replaced by its binding at once: every formal
@@ -6576,14 +6662,11 @@ fn collect_consistency_candidates(
         }
         // The row's own claims are read over its inputs bound as a caller
         // after import binds them (`bind_own_inputs`, the one binder): each
-        // module global at the value the contract states for it.
-        let body = match bind_own_inputs(&body) {
-            Ok(bound) => bound,
-            Err(unbound) => {
-                provenance_refusals.push(unstated_input_refusal(cid.to_string(), &body, &unbound));
-                continue;
-            }
-        };
+        // module global at the value the contract states for it. An input
+        // the contract states no value for stays a free variable of the row,
+        // and the row is decided over every value of it
+        // (`decide_over_unstated_inputs`), never refused for reading it.
+        let (body, unstated_inputs) = bind_own_inputs_with_unstated(&body);
         match contract_provenance_kind(member, &body) {
             Ok(provenance_kind) => {
                 if let Some(reason) = witness_provenance_kind_error(&body, provenance_kind)
@@ -6608,6 +6691,7 @@ fn collect_consistency_candidates(
                         body,
                         provenance_kind,
                         spoken_by_vendor,
+                        unstated_inputs,
                     });
                 }
             }
@@ -7150,6 +7234,28 @@ fn process_consistency_group(
             }
             result.dropped_ambient_posts = dropped_ambient_posts;
             refuse_dropped_answers(&mut result);
+            // The conjunction holds for every value of the members' unstated
+            // inputs when each member's claim does.
+            let mut unstated: Vec<String> = inv_candidates
+                .iter()
+                .flat_map(|candidate| candidate.unstated_inputs.iter().cloned())
+                .collect();
+            unstated.sort();
+            unstated.dedup();
+            if !unstated.is_empty() {
+                decide_over_unstated_inputs(&mut result, &unstated, || {
+                    inv_candidates.iter().all(|candidate| {
+                        claim_holds_for_every_value(
+                            &candidate.body,
+                            ambient_posts,
+                            exception_ancestry,
+                            plan,
+                            registry,
+                            compilers,
+                        )
+                    })
+                });
+            }
             out.push(result);
         } else {
             for candidate in &inv_candidates {
@@ -7215,6 +7321,18 @@ fn process_consistency_group(
                 }
                 result.dropped_ambient_posts = dropped_ambient_posts;
                 refuse_dropped_answers(&mut result);
+                if !candidate.unstated_inputs.is_empty() {
+                    decide_over_unstated_inputs(&mut result, &candidate.unstated_inputs, || {
+                        claim_holds_for_every_value(
+                            &candidate.body,
+                            ambient_posts,
+                            exception_ancestry,
+                            plan,
+                            registry,
+                            compilers,
+                        )
+                    });
+                }
                 if !suppress_standalone_support_vacuity(
                     property_name,
                     candidate,
@@ -12562,6 +12680,39 @@ mod tests {
             "inv": eqf(var("global:X"), int(4)),
         });
         assert_eq!(bind_own_inputs(&unstated), Err(vec!["global:X".to_string()]));
+        // The candidate keeps it as a free variable of the row.
+        let (instance, inputs) = bind_own_inputs_with_unstated(&unstated);
+        assert_eq!(instance["inv"], eqf(var("global:X"), int(4)));
+        assert_eq!(inputs, vec!["global:X".to_string()]);
+    }
+
+    #[test]
+    fn a_row_over_an_unstated_input_is_decided_for_every_value_or_open() {
+        let solved = |verdict: ObligationVerdict| ConsistencyResult {
+            contract_cid: "cid".to_string(),
+            property_name: "python:m.test_x".to_string(),
+            verdict,
+            reason: "solved".to_string(),
+            effect: None,
+            witnessed: false,
+            locus: None,
+            verification: None,
+            dropped_ambient_posts: Vec::new(),
+        };
+        let inputs = vec!["global:X".to_string()];
+        // Refuted with the input free: false for every value, as it stands.
+        let mut refuted = solved(ObligationVerdict::Unsatisfied);
+        decide_over_unstated_inputs(&mut refuted, &inputs, || unreachable!());
+        assert_eq!(refuted.verdict, ObligationVerdict::Unsatisfied);
+        // Satisfiable for some value, and its negation too: open, never sat.
+        let mut depends = solved(ObligationVerdict::Discharged);
+        decide_over_unstated_inputs(&mut depends, &inputs, || false);
+        assert_eq!(depends.verdict, ObligationVerdict::Undecidable);
+        assert!(depends.reason.contains("global:X"), "{}", depends.reason);
+        // Holds for every value: discharged.
+        let mut holds = solved(ObligationVerdict::Discharged);
+        decide_over_unstated_inputs(&mut holds, &inputs, || true);
+        assert_eq!(holds.verdict, ObligationVerdict::Discharged);
     }
 
     #[test]

@@ -99,6 +99,16 @@ class NameSugar(ConstructedTermSugar):
             builtin = self._builtin_floor_value()
             if builtin is not None:
                 return ExitSet.completed(builtin)
+            # A module global only a star import may bind is the function's
+            # free ``global:<name>`` input with no stated value: its contract
+            # entry bound the global's undecided key to that input
+            # (``call_site_sugar.bind_global_inputs``), as for a global the
+            # module's run leaves undecided (#8802).
+            held = self._star_import_global_value(temporal)
+            if held is not None:
+                from sugar_lift_py_tests.floor.object_identity import arrived
+
+                return ExitSet.completed(arrived(held, self.site))
         # A name nothing binds -- not local, not a parameter, not module-level,
         # not imported, not a builtin -- is no free variable: reading it raises
         # NameError, and that halt is its meaning.  A name only a star import
@@ -114,6 +124,32 @@ class NameSugar(ConstructedTermSugar):
                     NameErrorEffect.at(name=self.name, site=self.site)
                 )
         return ExitSet.completed(SymbolicValue(make_var(self.name)))
+
+    def _star_import_global_value(self, temporal):
+        """The value bound under the undecided key of the module global this
+        read reads, when only a star import may bind it
+        (``SourceUnit.star_import_global_read``), else None.
+
+        The tree keeps the read as this name, so an exception class read
+        through it stays the undecided citation; its value is read through
+        the one key an undecided global is read through
+        (``nodes.undecided_module_binding_key``), which a function's own
+        contract binds at its entry to its free ``global:<name>`` input
+        (``call_site_sugar.bind_global_inputs``).  Where nothing bound the
+        key (a read outside a function's own contract), None: the read stays
+        the free name, as before."""
+        from sugar_source_tree.nodes import Name, undecided_module_binding_key
+
+        node = getattr(self.site, "node", None)
+        unit = getattr(self.site, "unit", None)
+        if unit is None or not isinstance(node, Name) or node.id != self.name:
+            return None
+        star_import_global_read = getattr(unit, "star_import_global_read", None)
+        if star_import_global_read is None or not star_import_global_read(
+            node.id, node.line_col_span()
+        ):
+            return None
+        return temporal.value_if_bound(undecided_module_binding_key(unit, self.name))
 
     def _builtin_floor_value(self):
         """The builtin floor's value this read is bound to, else None.
