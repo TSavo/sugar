@@ -13,6 +13,7 @@ iadd carrier, and successful binding update through the production path.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -118,7 +119,22 @@ def _returned_value(outcome):
     return value
 
 
-def _caller_returned(source: str):
+def _workspace_tree(tmp_path: Path, source: str, name: str) -> SourceFile:
+    """``source`` seated as ``name`` under the workspace ``tmp_path``: each
+    definition names its join symbol (``bridge_source_symbol``), as every
+    lifted file's does."""
+    from sugar_lift_py_tests.lift_rpc import tree_construction_context_for_workspace
+    from sugar_lift_python_source.source_oracle import workspace_path_source
+
+    path = tmp_path / name
+    path.write_text(source, encoding="utf-8")
+    return SourceFile(
+        workspace_path_source(str(path), root=str(tmp_path)),
+        construction_context=tree_construction_context_for_workspace(tmp_path),
+    )
+
+
+def _caller_returned(source: str, tree: SourceFile | None = None):
     """What the first function of ``source`` returns on the face where its
     call of the helper completes, reduced as its own universe.  The call is
     its coordinate and edge (#8705): it completes under its ``completes``
@@ -127,7 +143,8 @@ def _caller_returned(source: str):
     from sugar_lift_py_tests.floor.universe_value import UniverseValue
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
-    tree = _tree(source, "caller_reads_after.py")
+    if tree is None:
+        tree = _tree(source, "caller_reads_after.py")
     caller = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     outcome = function_universe_outcome(caller)
     completed = [face for face in outcome.exits if isinstance(face, Completed)]
@@ -534,30 +551,57 @@ def test_a_caller_name_keeps_its_immutable_value_after_the_call() -> None:
         assert returned == TermValue(5)
 
 
-def test_a_caller_name_reads_the_list_its_helper_extended_in_place() -> None:
+_EXTENDS_IN_PLACE = (
+    "def f():\n"
+    "    acc = [1]\n"
+    "    g(acc)\n"
+    "    return acc\n"
+    "def g(x):\n"
+    "    x += [2]\n"
+)
+
+
+def test_a_caller_name_reads_the_list_its_helper_extended_in_place(
+    tmp_path: Path,
+) -> None:
     """The same helper shape on a list: the caller's ``acc`` is the object
     the helper's ``x += [2]`` changes.
 
     Expected value changed (#7757 steps 5 and 6, #8705): it was ``[1, 2]``,
     read off the followed body.  On the call's completed face the list reads
     as the formal ``g``'s binder bound it to, after the call
-    (``python:after(<call result>, "x")``, keyed on the call, #7757 step 7),
-    never the ``[1]`` before it; prove decides it once the callee's contract
-    states what ``x += [2]`` left in ``x``."""
+    (``python:after(<call result>, "x")``, keyed on the call, #7757 step 7,
+    #8796: ``g(acc)`` is a simple statement that runs the call once), never
+    the ``[1]`` before it; prove decides it once the callee's contract
+    states what ``x += [2]`` left in ``x``.  The file is seated under a
+    workspace so ``g`` names its join symbol: the record of what the call
+    left is bound only for a callee the edge joins
+    (``lambda_callable.definition_edge_call``'s ``after_labels``)."""
     from sugar_lift_py_tests.floor import SymbolicValue
 
     returned = _caller_returned(
-        "def f():\n"
-        "    acc = [1]\n"
-        "    g(acc)\n"
-        "    return acc\n"
-        "def g(x):\n"
-        "    x += [2]\n"
+        _EXTENDS_IN_PLACE,
+        _workspace_tree(tmp_path, _EXTENDS_IN_PLACE, "caller_reads_after.py"),
     )
     assert isinstance(returned, SymbolicValue), returned
     assert returned.term.name == "python:after", returned
     assert returned.term.args[0].name == "python:call_result", returned
     assert returned.term.args[1].value == "x", returned
+    assert returned != fresh(ListValue, (TermValue(1),))
+
+
+def test_a_caller_name_after_a_helper_no_edge_joins_stays_undecided() -> None:
+    """With no workspace root ``g`` names no join symbol: its call joins no
+    contract (``definition_edge_call``: no symbol, no ``after_labels``), so
+    nothing can state what it left in ``acc``.  The list is the undecided
+    value after the call (``python:receiver_after_call``, #7757 step 7,
+    #8796), never the ``[1]`` before it."""
+    from sugar_lift_py_tests.floor import SymbolicValue
+
+    returned = _caller_returned(_EXTENDS_IN_PLACE)
+    assert isinstance(returned, SymbolicValue), returned
+    assert returned.term.name == "python:receiver_after_call", returned
+    assert returned.term.args[1].value == "acc", returned
     assert returned != fresh(ListValue, (TermValue(1),))
 
 
