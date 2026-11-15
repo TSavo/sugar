@@ -368,7 +368,13 @@ def test_incompatible_ordering_method_call_halts_with_named_typeerror() -> None:
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _identity("TypeError")
-    assert halted.effect.occurrence_id == str(site)
+    # The TypeError is raised where Python raises it: at ``left < right`` in
+    # the method body (line 3, column 11), in the frame this call entered.
+    # Its occurrence is that address, then the call it was reached through
+    # (``occurrence_key``) -- content, never the call value's repr.
+    raised_at, separator, path = halted.effect.occurrence_id.partition("@")
+    assert raised_at == "compare_if_method_caller.py:3:11"
+    assert separator == "@" and path.startswith("call:")
     # Honest instrument for codex-1: state must be non-None after lossless fix.
     assert halted.state is not None, (
         "bound-method producer_outcome TypeError halt lacks pre-effect state "
