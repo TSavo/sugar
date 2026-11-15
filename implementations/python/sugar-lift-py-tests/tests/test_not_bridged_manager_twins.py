@@ -23,14 +23,16 @@ another symbol and joined nothing.)
 * the truthful claim with no imported proof: the call is owed and the row
   stays open (never ``unsat`` from a fabricated fact, never dropped).
 
-Staged, the consumer's source still owes one thing: the ``==`` applied to the
-call's result.  At lift that result is a value whose type the lifter does not
-have, so the operation is the one two-faced outcome and owes a member with no
-symbol at its own site (``unanswered_calls``); nothing joins a member with no
-symbol, so it stays owed after the call is answered.  A source that owes
-anything is never ``sat`` as a whole (step 8), so the truthful half reads
-``open`` through ``prove_verdict`` with its claim row discharged: the twin
-states both, and names the one member behind the ``open``.
+The consumer's source owes a second member: the ``==`` applied to the call's
+result.  At lift that result is a value whose type the lifter does not have,
+so the operation is the one two-faced outcome and owes a member with no symbol
+at its own site (``unanswered_calls``).  No contract answers it by name.
+Staged, the vendor's post states what the call returned (``out = n + n`` at
+``n = 3``, an ``int``), so at prove the solver decides that the ``==``
+completes: the member is answered by the joined contract, reported
+``discharged`` (``answered: ...``), and nothing is owed (step 9, #7766).  The
+truthful half is ``sat``.  Unstaged nothing decides the operand, and it stays
+owed beside the call.
 
 The second pair is a ``with`` head the lifter does not have: ``_thread`` is
 authenticated by no artifact, and ``tempfile`` is pure-Python stdlib off the
@@ -70,8 +72,8 @@ _VENDOR = (
 # The consumer's call is owed under this symbol until a proof answers it.
 _CALL_OWED = "undecided:python:nb_vendor.twice"
 # The ``==`` on the call's result, on the consumer's line 5: no symbol, so
-# prove names it by file and line.
-_OPERATION_OWED = "undecided:test_witness.py:5"
+# prove names its member by file and line.
+_OPERATION = "undecided:test_witness.py:5"
 
 
 def _consumer(claim: int) -> str:
@@ -115,12 +117,30 @@ def _claim_statuses(prove_doc: dict) -> set[str]:
     }
 
 
+def _member_rows(prove_doc: dict) -> list[dict]:
+    """This project's ``undecided`` member rows: owed, or answered at prove."""
+    return [
+        row
+        for row in prove_doc.get("rows") or []
+        if str(row.get("property") or "").startswith("undecided:")
+    ]
+
+
 def _owed(prove_doc: dict) -> set[str]:
     """The name of every member this project owes."""
     return {
         str(row["property"])
-        for row in prove_doc.get("rows") or []
-        if str(row.get("property") or "").startswith("undecided:")
+        for row in _member_rows(prove_doc)
+        if row["status"] != "discharged"
+    }
+
+
+def _answered(prove_doc: dict) -> dict[str, str]:
+    """Every member prove answered: its name and the reason it gives."""
+    return {
+        str(row["property"]): str(row["reason"])
+        for row in _member_rows(prove_doc)
+        if row["status"] == "discharged"
     }
 
 
@@ -136,14 +156,26 @@ def test_not_bridged_call_binds_to_an_imported_proof(tmp_path: Path) -> None:
     assert _claim_statuses(truthful) == {"discharged"}
     assert _claim_statuses(lying) == {"unsatisfied"}
     assert prove_verdict(lying) == "unsat"
-    # What the truthful source still owes is the ``==`` on the arrived
-    # result, and only that: the source as a whole reads ``open``.
-    assert _owed(truthful) == {_OPERATION_OWED}
-    assert prove_verdict(truthful) == "open"
+    # The ``==`` on the arrived result is answered by the joined contract:
+    # the vendor's post pins the result to an int, so the solver decides the
+    # comparison completes.  Nothing is owed and the source reads ``sat``.
+    assert _owed(truthful) == set()
+    assert truthful["owed"] == 0
+    answered = _answered(truthful)
+    assert set(answered) == {_OPERATION}
+    assert answered[_OPERATION].startswith("answered: ")
+    assert "python:nb_vendor.twice" in answered[_OPERATION]
+    assert "python:compare.completes" in answered[_OPERATION]
+    assert prove_verdict(truthful) == "sat"
+    # The lying half's ``==`` completes too (it returns False): its member is
+    # answered, and the claim's own row carries the refutation.
+    assert set(_answered(lying)) == {_OPERATION}
 
-    # No proof answers the symbol: the call is owed, the claim is not
-    # discharged and never refuted.
-    assert _CALL_OWED in _owed(unstaged)
+    # No proof answers the symbol: the call is owed, the ``==`` on its
+    # result is owed beside it, and the claim is not discharged and never
+    # refuted.
+    assert {_CALL_OWED, _OPERATION} <= _owed(unstaged)
+    assert _answered(unstaged) == {}
     assert "discharged" not in _claim_statuses(unstaged)
     assert prove_verdict(unstaged) == "open"
 

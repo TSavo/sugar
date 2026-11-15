@@ -3999,9 +3999,40 @@ fn py_value_is(decided: &PyDecided, undecided: &str) -> String {
     }
 }
 
+/// When Python completes `left <operator> right`, as an SMT condition over the
+/// operands' builtin types. `==` and `!=` between a `str` or `int` and a `str`
+/// or `int` always complete: `str.__eq__` / `int.__eq__` answer or decline, and
+/// the fallback is identity, which never raises. A decided operand is its own
+/// `holds`; an undecided one is guarded by its exact builtin type
+/// (`python:value.is_str` / `python:value.is_int`), which only a joined
+/// contract's `=` states. `None` for an operator not written here and for two
+/// undecided operands, as for `py.eq`: the completes atom then stays the
+/// uninterpreted application, and the comparison's member stays owed.
+fn py_compare_completes(operator: &str, left: &Term, right: &Term) -> Option<String> {
+    if !matches!(operator, "Eq" | "NotEq") {
+        return None;
+    }
+    let builtin = |side: PySide| match side {
+        PySide::Decided(decided) => decided.holds(),
+        PySide::Undecided(undecided) => {
+            let (is_str, is_int) = py_type_guards(&undecided);
+            format!("(or {is_str} {is_int})")
+        }
+    };
+    match (py_side(left)?, py_side(right)?) {
+        (PySide::Undecided(_), PySide::Undecided(_)) => None,
+        (left, right) => {
+            let left = builtin(left);
+            let right = builtin(right);
+            Some(smt_and(&[left.as_str(), right.as_str()]))
+        }
+    }
+}
+
 /// The Python-value reading of an atom (see the section header): a decided
-/// operation's completes atom, `py.eq`, or an `=` with a decided operation on
-/// one side. `None` leaves the atom to `emit_atomic`.
+/// operation's completes atom, an undecided comparison's completes atom,
+/// `py.eq`, or an `=` with a decided operation on one side. `None` leaves the
+/// atom to `emit_atomic`.
 fn emit_python_value_atomic(name: &str, args: &[Term]) -> Result<Option<String>, CompileError> {
     if let [Term::Ctor {
         name: protocol,
@@ -4017,6 +4048,20 @@ fn emit_python_value_atomic(name: &str, args: &[Term]) -> Result<Option<String>,
                 if let Some(decided) = py_decided_operation(operation, operands) {
                     let atom = emit_atomic(name, args)?;
                     return Ok(Some(smt_ite(&decided.ready, &decided.law, &atom)));
+                }
+            }
+            // An undecided comparison names its operator and its operands:
+            // `python:compare(<operator>, <left>, <right>, <key>)`.
+            if let [Term::Const {
+                value: serde_json::Value::String(operator),
+                ..
+            }, left, right, _key] = protocol_args.as_slice()
+            {
+                if protocol.as_str() == "python:compare" {
+                    if let Some(completes) = py_compare_completes(operator, left, right) {
+                        let atom = emit_atomic(name, args)?;
+                        return Ok(Some(smt_ite(&completes, "true", &atom)));
+                    }
                 }
             }
         }

@@ -258,7 +258,8 @@ def _publish_undecided_dispatch_edges(
     # ``__contains__`` (and their reflections), which this frame did not look
     # at, so the comparison may raise anything -- the #7585 law.  It completes
     # with the undecided comparison predicate only under
-    # ``python:compare.completes(python:compare(op, site))`` and halts with an
+    # ``python:compare.completes(python:compare(op, left, right, site))`` and
+    # halts with an
     # ``UndeterminedRaiseEffect`` (owner ``UndecidedCompare:<op>``) under the
     # complement.  No exception type is named: the halt is undetermined.
     return undecided_dispatch_faces(predicate, site, op_kind)
@@ -277,7 +278,17 @@ def undecided_dispatch_faces(predicate, site, op_kind: str):
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
     key = occurrence_key(site)
-    dispatch = ctor("python:compare", (str_const(op_kind), str_const(key)))
+    # The completes atom names the operation it is about -- its operator and
+    # the operand terms of the comparison the predicate states -- as every
+    # undecided operation's does (``python:binary_op(<result>, <key>)``,
+    # ``python:subscript(<term>, <key>)``): where a joined contract decides
+    # the operands' types at prove, the solver reads whether Python completes
+    # the comparison, and the member this operation owes is answered there
+    # (#7766).  Where nothing decides them it stays the opaque atom it was.
+    dispatch = ctor(
+        "python:compare",
+        (str_const(op_kind), *compared_terms(predicate), str_const(key)),
+    )
     completes = atomic("python:compare.completes", [dispatch])
     return ExitSet.two_faced(
         predicate,
@@ -290,6 +301,24 @@ def undecided_dispatch_faces(predicate, site, op_kind: str):
         guard=completes,
         site=site,
     )
+
+
+def compared_terms(predicate) -> tuple:
+    """The operand terms of the one comparison ``predicate`` states: the
+    arguments of its atom (``py.eq(l, r)``, ``py.lt(l, r)``, ``py.in(item,
+    container)``), in the atom's own order.
+
+    A predicate that is not one atom (a comparison the floor answered with a
+    connective) names no operand pair: its completes atom then names only the
+    operator and the site, nothing at prove decides it, and its member stays
+    owed.
+    """
+    from sugar_lift_py_tests.ir import _Atomic
+
+    formula = predicate.formula
+    if isinstance(formula, _Atomic):
+        return tuple(formula.args)
+    return ()
 
 
 _ORDERING_BY_OPERATOR: dict[str, tuple[str, str]] = {
@@ -306,7 +335,8 @@ def undecided_ordering_faces(left, right, site, *, operator: str):
     The same law as undecided ``==``: the rich method (and its reflection)
     Python selects is one this frame did not look at, so the comparison
     completes with the undecided ``py.lt/le/gt/ge`` predicate only under
-    ``python:compare.completes(python:compare(op, site))`` and halts with an
+    ``python:compare.completes(python:compare(op, left, right, site))`` and
+    halts with an
     ``UndeterminedRaiseEffect`` (owner ``UndecidedCompare:<op>``) under the
     complement.  Nothing is folded and no ``TypeError`` is invented.
     """

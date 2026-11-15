@@ -183,8 +183,18 @@ pub fn derive_linker_inputs(pool: &MementoPool) -> Result<LinkerInputs, Malforme
     let known_contract_cids: HashSet<&str> =
         contracts.iter().map(|c| c.contract_cid.as_str()).collect();
 
+    // The link surface is the project's own call sites, the ones whose rows
+    // the report counts (step 9; `Runner`'s callsite fold reads the same two
+    // rules). An imported contract's callsite (its halt loci, its own calls)
+    // is that import's state, never this project's edge. A callsite of a
+    // contract the join binds has no row of its own: the consistency row
+    // decides it, the joined contract's halts included.
     let call_edges: Vec<LinkerCallEdge> = enumerate_callsites::run(pool)
         .into_iter()
+        .filter(|cs| {
+            !sugar_verifier::report::callsite_is_imported(cs, pool)
+                && !sugar_verifier::runner::callsite_row_is_owned_by_consistency(cs, pool)
+        })
         .map(|cs| {
             // A callsite with NO attributed contract body must still derive
             // an edge (gitar on #3866): dropping it here would re-open the

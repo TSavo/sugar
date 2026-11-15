@@ -191,6 +191,12 @@ fn push_bridge(graph: &mut ProofGraph, target_contract_cid: &str) {
 /// Self-load `graph` through the SAME loader every `.proof` consumer uses
 /// (mirrors `sugar_compiler::orchestrate`'s own self-load round trip).
 fn load_into_pool(graph: &ProofGraph) -> MementoPool {
+    load_into_pool_as(graph, Speaker::consumer("seam-3857-fixture"))
+}
+
+/// The same self-load, spoken by `speaker`: the project's own proof
+/// (`Speaker::consumer`) or a staged import (`Speaker::vendor`).
+fn load_into_pool_as(graph: &ProofGraph, speaker: Speaker) -> MementoPool {
     let proof_input = ProofEnvelopeInput {
         name: "seam-3857-fixture".to_string(),
         version: "1.0.0".to_string(),
@@ -208,7 +214,7 @@ fn load_into_pool(graph: &ProofGraph) -> MementoPool {
         "seam-3857-fixture",
         sealed.cid.clone(),
         sealed.bytes,
-        Speaker::consumer("seam-3857-fixture"),
+        speaker,
     )
     .expect("stage self-sealed fixture proof bytes");
     load_proof_bytes_into_pool(&[proof_bytes], &mut pool);
@@ -293,6 +299,42 @@ fn unresolved_callee_is_vacuous_in_verify_consistency_but_link_error_via_derivat
              (frontier-masked green): {v:?}"
         ),
     }
+}
+
+/// Step 9: an imported proof's own unbridged callsite (a halt locus, a call
+/// of its own) is that import's state, never an edge of the importing
+/// project's link surface. The same contract spoken by the project itself
+/// still derives its unresolved edge (the arm above).
+#[test]
+fn an_imported_contracts_unbridged_callsite_is_not_the_importers_edge() {
+    let mut graph = ProofGraph::new();
+    push_caller_contract(&mut graph, "seam7766::caller#imported");
+
+    let own = load_into_pool(&graph);
+    let own_links = derive_linker_inputs(&own).expect("well-formed pool must derive");
+    assert!(
+        own_links
+            .call_edges
+            .iter()
+            .any(|e| e.target_symbol.to_string() == CALLEE_SYMBOL
+                && e.target_contract_cid.is_none()),
+        "the project's own unbridged callsite is its unresolved edge: {own_links:?}"
+    );
+
+    let imported = load_into_pool_as(&graph, Speaker::vendor("seam-7766-import"));
+    let imported_links = derive_linker_inputs(&imported).expect("well-formed pool must derive");
+    assert_eq!(
+        imported_links.contracts.len(),
+        own_links.contracts.len(),
+        "the imported contract is still in the contract union"
+    );
+    assert!(
+        imported_links
+            .call_edges
+            .iter()
+            .all(|e| e.target_symbol.to_string() != CALLEE_SYMBOL),
+        "an imported contract's callsite derives no edge here: {imported_links:?}"
+    );
 }
 
 /// Seal `graph` through the production envelope path and write it as a

@@ -133,23 +133,29 @@ def test_undecidable_ordering_legs_keep_exact_guards_and_occurrences() -> None:
     # Each undecided leg is the one two-faced outcome: it completes under its
     # own site-keyed ``python:compare.completes`` atom and halts, with an
     # undetermined raise, under that atom's complement
-    # (``comparison_op_sugar.undecided_dispatch_faces``). The second leg runs
-    # only where the first completed and was true.
-    def completes(site):
+    # (``comparison_op_sugar.undecided_dispatch_faces``). The atom names the
+    # leg's operation: its operator, its two operand terms, then its site key
+    # (#7766). The second leg runs only where the first completed and was true.
+    def completes(site, left, right):
         return atomic(
             "python:compare.completes",
             [
                 ctor(
                     "python:compare",
-                    (str_const("Lt"), str_const(_undecided_occurrence(site))),
+                    (
+                        str_const("Lt"),
+                        left,
+                        right,
+                        str_const(_undecided_occurrence(site)),
+                    ),
                 )
             ],
         )
 
-    a, b = make_var("a"), make_var("b")
+    a, b, c = make_var("a"), make_var("b"), make_var("c")
     first_site, second_site = (value.site for value in sugar.values)
-    first_completes = completes(first_site)
-    second_completes = completes(second_site)
+    first_completes = completes(first_site, a, b)
+    second_completes = completes(second_site, b, c)
     first_true = atomic("py.lt", [a, b])
     halted = tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
     assert {exit_.guard for exit_ in halted} == {
