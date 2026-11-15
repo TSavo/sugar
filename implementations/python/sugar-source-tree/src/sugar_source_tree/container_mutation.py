@@ -3206,7 +3206,7 @@ def _followed_body(definition, node_scope):
     return net
 
 
-def _answered_where_minted(source, followed) -> None:
+def _answered_where_minted(source, followed, kept=()) -> None:
     """Answer the roll for every node the follow of a helper's body minted.
 
     ``followed`` is ``source`` (the helper's body) substituted with its
@@ -3219,8 +3219,15 @@ def _answered_where_minted(source, followed) -> None:
     one door) is no source occurrence: minting registered it, so it answers
     here, as every binding a rewrite mints does
     (``nodes._minted_binding_reference``).  A source node the body holds as
-    written answers where the helper is built, and is not touched here."""
-    written = {id(_handle(node)) for statement in source for node in statement.walk()}
+    written answers where the helper is built, and is not touched here; nor
+    is a node of ``kept`` (what a construction goes on to build: a live
+    loop's last round, ``For._discard_round``), which answers there, built
+    or refused."""
+    written = {
+        id(_handle(node))
+        for statement in (*source, *kept)
+        for node in statement.walk()
+    }
     for statement in followed:
         for node in statement.walk():
             if id(_handle(node)) not in written:

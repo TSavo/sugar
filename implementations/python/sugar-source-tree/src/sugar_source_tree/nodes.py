@@ -17849,6 +17849,7 @@ class For(Statement):
                 # object it denotes (``_loop_header_bindings``' ``kept``).
                 rebound = frozenset(bound)
                 targets = _loop_target_bindings(self, target_names, scope)
+                discarded: list = []
                 while True:
                     bs = (
                         {k: v for k, v in scope.items() if k not in bound}
@@ -17889,8 +17890,10 @@ class For(Statement):
                     )
                     if not written and not else_written:
                         break
+                    discarded.append(((), suites))
                     bound = bound | written
                     else_bound = else_bound | bound | else_written
+                For._answer_discarded_rounds(self, (), discarded, ((), suites))
                 changed = {}
                 if iter_changed:
                     changed["iter"] = new_iter
@@ -17901,6 +17904,36 @@ class For(Statement):
                     return self
                 rewritten = rewrite(self, **changed)
                 return rewritten
+
+    def _answer_discarded_rounds(self, sources, rounds, last) -> None:
+        """Answer the roll for what the discarded rounds of a live loop's
+        substitution minted.
+
+        A live loop (``For``, ``While``) substitutes its suites until no
+        round finds a name the body writes that it did not yet carry
+        (``written``); every round but the last is discarded, and the next
+        one reads those names through the loop's header.  What a discarded
+        round's rewrite made -- a read of a formal re-spanned to its site
+        (``match`` in ``re.search(match, ...)``, before the call's exposure
+        of it was found written, ``_testing/_warnings.py:181``), a statement
+        recast through the one door -- is built by nothing.  It answers
+        here, where it was minted (``container_mutation.
+        _answered_where_minted``).
+
+        ``rounds`` are the discarded ``(headers, suites)`` and ``last`` the
+        kept one: ``headers`` a ``while`` test as the round substituted it
+        (``sources``: as written), ``suites`` the round's ``(suite,
+        changed)`` per field.  A source node, and a node the last round
+        holds too, answers where the loop is built, built or refused."""
+        from .container_mutation import _answered_where_minted
+
+        last_headers, last_suites = last
+        for headers, suites in rounds:
+            _answered_where_minted(sources, headers, last_headers)
+            for field, (suite, _changed) in suites.items():
+                _answered_where_minted(
+                    getattr(self, field), suite, last_suites[field][0]
+                )
 
     def _header_scope(self, scope, subst_iter):
         """The state after the loop's header, ``subst_iter`` (the iterable
@@ -18663,6 +18696,7 @@ class While(Statement):
         # writes only through a mutation of the object it denotes
         # (``_loop_header_bindings``' ``kept``).
         rebound = frozenset(bound)
+        discarded: list = []
         while True:
             bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
             kept = (bound | else_bound) - rebound
@@ -18708,8 +18742,12 @@ class While(Statement):
             else_written = For._stmts_bound_names(suites["orelse"][0]) - else_bound
             if not written and not else_written:
                 break
+            discarded.append(((new_test,), suites))
             bound = bound | written
             else_bound = else_bound | bound | else_written
+        For._answer_discarded_rounds(
+            self, (self.test,), discarded, ((new_test,), suites)
+        )
         for f, (new, d) in suites.items():
             if d:
                 changed[f] = new
