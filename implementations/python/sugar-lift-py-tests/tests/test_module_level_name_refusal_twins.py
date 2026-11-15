@@ -110,27 +110,43 @@ def _claim(prove_doc: dict, function: str) -> str | None:
     return "open"
 
 
+_CALLEE = "python:test_witness.f"
+
+
 def _assert_read_not_refused(
     project: Path, result, decided: set[str], half: str, operation_line: int
 ) -> list[dict]:
     """No function is refused for the name; every claim is decided by Python.
 
     The only member a source may owe is ``f``'s own operation on its formal
-    (#8176): one ``unanswered`` row, symbol ``None``, at that line.
+    (#8176): one ``unanswered`` row, symbol ``None``, at that line.  A call
+    of ``f`` is its coordinate and an edge joined at prove (#7757 step 5):
+    the lift states it as a member with ``f``'s join symbol, and an
+    operation on its result as a member with none; prove joins ``f``'s
+    contract and answers both, so neither is owed.  Returns the members
+    the source owes after prove.
     """
     members = _members(result.lift_doc)
-    assert len(members) <= 1, members
     for member in members:
         assert member["reason"] == {"unanswered": {}}, member
-        assert member["symbol"] is None, member
         assert member["site"]["file"], member
-        assert member["site"]["startLine"] == operation_line, member
-    owed = _owed_rows(result.prove_doc)
-    assert len(owed) == len(members), result.prove_doc.get("rows")
+        assert member["symbol"] in (None, _CALLEE), member
+    own = [
+        member
+        for member in members
+        if member["symbol"] is None and member["site"]["startLine"] == operation_line
+    ]
+    assert len(own) <= 1, members
+    owed = [row for row in _owed_rows(result.prove_doc) if row["status"] != "discharged"]
+    assert len(owed) == len(own), result.prove_doc.get("rows")
     for row in owed:
         assert row["status"] == "undecidable", row
         assert row["reason"].startswith("owed: no contract for "), row
-    assert result.prove_doc["owed"] == len(members)
+        assert row["line"] == operation_line, row
+    for row in _owed_rows(result.prove_doc):
+        if row["status"] == "discharged":
+            assert row["reason"].startswith("answered: "), row
+    assert result.prove_doc["owed"] == len(own)
     expected = "sat" if half == "truthful" else "unsat"
     for function in decided:
         assert _claim(result.prove_doc, function) == expected, (
@@ -139,14 +155,14 @@ def _assert_read_not_refused(
         )
     (proof,) = tuple(project.glob("*.proof"))
     assert _DELETED_REFUSAL not in proof.read_bytes(), "no name is refused"
-    return members
+    return owed
 
 
-def _file_verdict(members: list[dict], half: str) -> str:
+def _file_verdict(owed: list[dict], half: str) -> str:
     """Owed is never green; a lying claim is unsat whatever is owed."""
     if half == "lying":
         return "unsat"
-    return "open" if members else "sat"
+    return "open" if owed else "sat"
 
 
 def test_control_without_a_module_level_name(tmp_path: Path) -> None:
