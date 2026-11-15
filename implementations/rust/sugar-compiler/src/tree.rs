@@ -571,13 +571,10 @@ fn resume_rpc(
     resolution_set: &Value,
 ) -> Result<(), EnumerateError> {
     let plugin = conn.surface.clone();
-    let mut resume_options = json!({
+    let resume_options = json!({
         "linkUnitCid": link_unit_cid,
         "resolutionSet": resolution_set,
     });
-    for (key, value) in bound_generation_options(conn)? {
-        resume_options[key.as_str()] = value;
-    }
     let response = conn
         .transport
         .request(&json!({
@@ -624,9 +621,6 @@ fn enumerate_rpc_with_extra(
         });
     }
     let mut options = json!({});
-    for (key, value) in bound_generation_options(conn)? {
-        options[key.as_str()] = value;
-    }
     for (key, value) in extra_options {
         options[*key] = value.clone();
     }
@@ -701,43 +695,12 @@ fn decode_enumerate_result(
     Ok((nodes, gaps))
 }
 
-/// The ref generations bound into this connection, as request options. ONE
-/// place stamps them: every `sugar.enumerate` request carries the generation
-/// the kit holds, and the kit refuses a request that does not. With nothing
-/// bound this is empty and the request is unchanged.
-fn bound_generation_options(conn: &KitConn) -> Result<Vec<(String, Value)>, EnumerateError> {
-    let unavailable = |error: String| EnumerateError::Unavailable {
-        plugin: conn.surface.clone(),
-        reason: error,
-    };
-    let mut options = Vec::new();
-    if let Some((catalog_cid, table_cid)) = conn
-        .transport
-        .contract_ref_generation()
-        .map_err(|error| unavailable(error.to_string()))?
-    {
-        options.push((
-            "contractRefs".to_string(),
-            json!({"catalogCid": catalog_cid, "tableCid": table_cid}),
-        ));
-    }
-    Ok(options)
-}
-
 fn preconstruction_rows_rpc(conn: &KitConn, level: Level) -> Result<Vec<Value>, EnumerateError> {
     let plugin = conn.surface.clone();
-    let mut request = json!({
+    let request = json!({
         "level": level.wire(),
         "workspace_root": conn.workspace_root.display().to_string(),
     });
-    let generation = bound_generation_options(conn)?;
-    if !generation.is_empty() {
-        let mut options = serde_json::Map::new();
-        for (key, value) in generation {
-            options.insert(key, value);
-        }
-        request["options"] = Value::Object(options);
-    }
     let response =
         conn.transport
             .request(&request)
