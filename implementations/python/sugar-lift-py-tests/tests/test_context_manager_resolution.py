@@ -1,4 +1,3 @@
-from dataclasses import FrozenInstanceError
 from types import MappingProxyType
 
 import pytest
@@ -6,46 +5,24 @@ import pytest
 from sugar_lift_py_tests import lift_rpc
 from sugar_lift_py_tests.context_manager_resolution import (
     ContractRefProtocolError,
-    OpaqueSourceCallObligationV1,
-    ResolvedContractRefsV1,
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
     _hash_json,
     decode_resolved_contract_refs,
-    opaque_source_call_roster_of,
 )
-
-
-def test_opaque_source_call_obligation_is_frozen_and_inspectable():
-    coordinate = SourceFragmentCoordinateV1(
-        "blake3-512:" + "a" * 128,
-        7,
-        8,
-        7,
-        19,
-    )
-    owner_cid = "blake3-512:" + "b" * 128
-    obligation = OpaqueSourceCallObligationV1(coordinate, "func", owner_cid)
-    roster = opaque_source_call_roster_of(obligation)
-
-    assert roster.obligations == (obligation,)
-    assert roster.owner(owner_cid) is obligation
-    assert obligation.coordinate == coordinate
-    assert obligation.target_name == "func"
-    assert obligation.resolved_object_cid == owner_cid
-    with pytest.raises(FrozenInstanceError):
-        obligation.target_name = "other"
 
 
 def test_the_construction_context_holds_no_table_a_pre_pass_fills():
     """A ``with``'s manager is what its head reduces to (#7757): the context
-    carries no table of managers, non-managers or opaque calls read off
-    callee bodies at file open."""
+    carries no table of managers, non-managers, opaque calls or call frames
+    read off callee bodies at file open.  A call applies its own
+    definition's frame."""
     context = TreeConstructionContextV1.for_source_call_construction()
     for name in (
         "source_derived_contract_refs",
         "source_non_manager_heads",
         "opaque_source_call_obligations",
+        "source_call_frames",
     ):
         assert not hasattr(context, name), name
 

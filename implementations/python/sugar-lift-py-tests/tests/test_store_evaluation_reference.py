@@ -70,9 +70,6 @@ from pathlib import Path
 from frame_fresh import fresh
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import ListValue, ObjectValue, TermValue
-from sugar_lift_py_tests.floor.formal_selected_manager import (
-    FormalSelectedManagerHeadSugar,
-)
 from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.outcome import Completed, ExitSet
@@ -105,7 +102,6 @@ from sugar_source_tree.nodes import (
     ReceiverFieldStoreState,
     ReceiverFieldStoreStatement,
     Return,
-    With,
     _occurrence_testimony,
     ground_subscript_key,
 )
@@ -166,8 +162,6 @@ PLACE = (
     "    x += 1\n"
     "    return box.size\n"
 )
-# 6. A call result a name holds, the head of a ``with``.
-OPAQUE_HEAD = "def f(p, q):\n    cm = p.open(q)\n    return cm\n"
 # 7. The whole object read after a field store, its operand rebound after it.
 PLACE_OBJECT = (
     "class Box:\n"
@@ -562,24 +556,6 @@ def test_an_object_place_read_after_a_rebind_is_the_old_value(
 ) -> None:
     returned = _returned(_outcome(tmp_path, PLACE, "place"))
     assert returned == [ONE], returned
-
-
-# ---------------------------------------------------------------------------
-# 6. ``cm = p.open(q)``; ``with cm:``: the head reads the assignment's key.
-# ---------------------------------------------------------------------------
-
-
-def test_an_opaque_with_head_reads_its_assignments_key() -> None:
-    body = _function(OPAQUE_HEAD).substitute({}).body
-    head = body[-1].value
-    assert isinstance(head, OpaqueObjectStateV1)
-    selected = With._formal_head_with_operands(
-        FormalSelectedManagerHeadSugar("p.open", "site", None), head
-    )
-    # ``q`` ran at the assignment: the ``with`` never evaluates it again.
-    assert selected.operands == ()
-    assert isinstance(selected.bound, EvaluationRefSugar)
-    assert selected.bound.evaluation == head.evaluation
 
 
 # ---------------------------------------------------------------------------

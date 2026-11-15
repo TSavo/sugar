@@ -17,7 +17,6 @@ import pytest
 from sugar_lift_py_tests.claim.sugar_catalog import SugarCatalog
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import (
-    SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.floor.predicate_value import PredicateValue
@@ -96,16 +95,6 @@ def _production_machine(source: str, actual: ConstructedTermSugar):
         call.args,
         tuple((kw.arg, kw.value) for kw in call.keywords if kw.arg is not None),
     )
-    span = call.line_col_span()
-    construction.source_call_frames[
-        SourceFragmentCoordinateV1(
-            call.unit.source_cid,
-            span.start_line,
-            span.start_col,
-            span.end_line,
-            span.end_col,
-        )
-    ] = frame
     outcome = CallSiteSugar(
         target_name=function.name,
         args=(actual,),

@@ -1,13 +1,14 @@
 """TWO-HOP SOURCE-RETURN TRANSPORT.
 
 outer → inner → returned Floor → operation binds through both source frames,
-preserves both call occurrences, rejects swapped inner/outer testimony.
+preserves both call occurrences.
 
 No recursion-by-name, no borrowed expected exception identity, no local
 CallSiteValue adaptation.
 
-Authentication: each use-site enrolls its callee's source_visible_call_frame
-by exact fragment coordinate (not name lookup at dig time).
+Authentication: each use-site applies its callee's own
+source_visible_call_frame through its lexical row (not name lookup at dig
+time).
 
 Producer reds → **codex-3** (same general source-return dig projection as
 test_source_return_operation_generalization). Nested dig must recurse
@@ -19,7 +20,6 @@ from __future__ import annotations
 import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import (
-    SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.floor import (
@@ -37,24 +37,13 @@ from sugar_source_tree.tree import SourceFile
 
 CODEX3_OWNER = (
     "codex-3 two-hop source-return transport: outer→inner dig must project "
-    "the returned Floor through both authenticated source frames, preserve "
-    "both call occurrences, and refuse swapped inner/outer testimony. "
+    "the returned Floor through both authenticated source frames and "
+    "preserve both call occurrences. "
     "No recursion-by-name; no local CallSiteValue adaptation."
 )
 
 
-def _coordinate(node) -> SourceFragmentCoordinateV1:
-    span = node.line_col_span()
-    return SourceFragmentCoordinateV1(
-        node.unit.source_cid,
-        span.start_line,
-        span.start_col,
-        span.end_line,
-        span.end_col,
-    )
-
-
-def _tree(source: str, *, bind: frozenset[str] | None = None, name: str = "nested.py"):
+def _tree(source: str, *, name: str = "nested.py"):
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = SourceFile(
         (source, name, blake3_512_of(source.encode())),
@@ -63,18 +52,7 @@ def _tree(source: str, *, bind: frozenset[str] | None = None, name: str = "neste
     functions = {
         node.name: node for node in tree.nodes() if isinstance(node, FunctionDef)
     }
-    for call in tree.nodes():
-        if not isinstance(call, Call):
-            continue
-        callee = getattr(call.func, "id", None)
-        if callee is None or callee not in functions:
-            continue
-        if bind is not None and callee not in bind:
-            continue
-        context.source_call_frames[_coordinate(call)] = functions[
-            callee
-        ].source_visible_call_frame()
-    return tree, context, functions
+    return tree, functions
 
 
 def _calls_named(tree, name: str) -> list[Call]:
@@ -85,19 +63,18 @@ def _calls_named(tree, name: str) -> list[Call]:
     ]
 
 
-def _carried_frame(call: Call, enrolled):
-    """The frame ``call`` carries, checked against the frame ``enrolled`` at
-    its coordinate.
+def _carried_frame(call: Call, declared):
+    """The frame ``call`` carries, checked against its callee's ``declared``
+    frame.
 
-    ``Call._construct_call_sugar`` reads a lexical call's frame once, at
-    construction -- the frame seated at the call's coordinate, its actuals
-    bound (``bind_node_actuals``) -- and carries it as ``source_call_frame``;
-    desugar never reads it out of the table again (#8210).  A bound frame is
-    its own frame, with its own CID, whose declaration is the enrolled frame
-    (``declaration_frame_cid``)."""
+    ``Call._construct_sugar`` reads a lexical call's frame once, at
+    construction -- its definition's own frame, its actuals bound
+    (``bind_node_actuals``) -- and carries it as ``source_call_frame``.  A
+    bound frame is its own frame, with its own CID, whose declaration is the
+    definition's frame (``declaration_frame_cid``)."""
     frame = call.sugar().source_call_frame
     assert frame is not None, call
-    assert frame.declaration_frame_cid == enrolled.frame_cid
+    assert frame.declaration_frame_cid == declared.frame_cid
     return frame
 
 
@@ -110,27 +87,26 @@ NESTED = "def inner():\n" "    return 3\n" "def outer():\n" "    return inner()\
 
 
 def test_inner_alone_projects_return_floor() -> None:
-    tree, context, functions = _tree(NESTED + "\ninner()\n", bind=frozenset({"inner"}))
+    tree, functions = _tree(NESTED + "\ninner()\n")
     call = _calls_named(tree, "inner")[0]
-    frame = context.source_call_frames[_coordinate(call)]
+    frame = functions["inner"].source_visible_call_frame()
     outcome = call.sugar().desugar(None)
     assert outcome.completed_value() is not None
     assert isinstance(outcome.completed_value(), CallSiteValue)
     assert outcome.completed_value().body is not None
     # Authenticated source call: coordinate is the CID of the frame the call
-    # carries -- the one enrolled at its coordinate -- not bare spelling.
+    # carries -- its definition's own -- not bare spelling.
     carried = _carried_frame(call, frame)
     assert outcome.completed_value().source_call_frame_cid == carried.frame_cid
     floor = outcome.completed_value().force_floor(None, owner="inner-alone", project_callsite=False)
     assert isinstance(floor.statements[0], ReturnValue)
     assert floor.statements[0].value == TermValue(3)
-    del functions
 
 
 def test_outer_alone_carries_inner_call_in_body() -> None:
-    tree, context, _ = _tree(NESTED + "\nouter()\n", bind=frozenset({"outer", "inner"}))
+    tree, functions = _tree(NESTED + "\nouter()\n")
     call = _calls_named(tree, "outer")[0]
-    frame = context.source_call_frames[_coordinate(call)]
+    frame = functions["outer"].source_visible_call_frame()
     outcome = call.sugar().desugar(None)
     assert outcome.completed_value() is not None
     assert isinstance(outcome.completed_value(), CallSiteValue)
@@ -140,126 +116,38 @@ def test_outer_alone_carries_inner_call_in_body() -> None:
     # Outer body reduces; dig may surface CallSiteValue(inner) or BlockValue.
     dug = outcome.completed_value()._dig_floor_or_none(None, owner="outer-alone")
     assert dug is not None
-    # Occurrence of outer is this call site's enrolled frame, not inner's.
+    # Occurrence of outer is this call site's frame, not inner's.
     assert outcome.completed_value().site is not None
     assert (
         outcome.completed_value().source_call_frame_cid
-        != context.source_call_frames[
-            _coordinate(_calls_named(tree, "inner")[0])
-        ].frame_cid
-    )
-
-
-def test_both_call_occurrences_are_distinct_coordinates() -> None:
-    """Inner use-site and outer use-site are different fragment coordinates."""
-    tree, context, functions = _tree(
-        NESTED + "\nouter()\n",
-        bind=frozenset({"outer", "inner"}),
-    )
-    outer_call = _calls_named(tree, "outer")[0]
-    # Inner call lives inside outer's body — find Call nodes named inner.
-    inner_calls = _calls_named(tree, "inner")
-    assert inner_calls, "inner() use-site must exist in the tree"
-    inner_call = inner_calls[0]
-    outer_coord = _coordinate(outer_call)
-    inner_coord = _coordinate(inner_call)
-    assert outer_coord != inner_coord
-    # Frames enrolled under distinct coordinates.
-    assert outer_coord in context.source_call_frames
-    assert inner_coord in context.source_call_frames
-    assert (
-        context.source_call_frames[outer_coord].frame_cid
-        != context.source_call_frames[inner_coord].frame_cid
-    )
-    del functions
-
-
-# ---------------------------------------------------------------------------
-# GREEN: swapped inner/outer testimony refused
-# ---------------------------------------------------------------------------
-
-
-def test_swapped_inner_outer_frame_testimony_is_not_truthful() -> None:
-    """Enrolling outer's frame at the inner use-site (and vice versa) tampers.
-
-    Dig of the outer call must not silently equal the authentic two-hop
-    return when frames are swapped by coordinate.
-    """
-    context = TreeConstructionContextV1.for_source_call_construction()
-    source = NESTED + "\nouter()\n"
-    tree = SourceFile(
-        (source, "swap.py", blake3_512_of(source.encode())),
-        construction_context=context,
-    )
-    functions = {n.name: n for n in tree.nodes() if isinstance(n, FunctionDef)}
-    outer_call = _calls_named(tree, "outer")[0]
-    inner_call = _calls_named(tree, "inner")[0]
-    outer_frame = functions["outer"].source_visible_call_frame()
-    inner_frame = functions["inner"].source_visible_call_frame()
-    # SWAP: outer use-site gets inner's frame; inner use-site gets outer's.
-    context.source_call_frames[_coordinate(outer_call)] = inner_frame
-    context.source_call_frames[_coordinate(inner_call)] = outer_frame
-
-    # Truthful enrollment for comparison.
-    truth_ctx = TreeConstructionContextV1.for_source_call_construction()
-    truth_tree = SourceFile(
-        (source, "truth.py", blake3_512_of(source.encode())),
-        construction_context=truth_ctx,
-    )
-    truth_fns = {n.name: n for n in truth_tree.nodes() if isinstance(n, FunctionDef)}
-    truth_outer = _calls_named(truth_tree, "outer")[0]
-    truth_inner = _calls_named(truth_tree, "inner")[0]
-    truth_ctx.source_call_frames[_coordinate(truth_outer)] = truth_fns[
-        "outer"
-    ].source_visible_call_frame()
-    truth_ctx.source_call_frames[_coordinate(truth_inner)] = truth_fns[
-        "inner"
-    ].source_visible_call_frame()
-
-    swapped = outer_call.sugar().desugar(None)
-    truthful = truth_outer.sugar().desugar(None)
-    assert swapped.completed_value() is not None
-    assert truthful.completed_value() is not None
-    # Bodies differ: swapped outer carries inner's frame body (return 3)
-    # without the inner() call hop — not isomorphic to truthful outer.
-    assert swapped.completed_value().body != truthful.completed_value().body or (
-        swapped.completed_value().parameters != truthful.completed_value().parameters
-        or swapped.completed_value().source_call_frame_cid != truthful.completed_value().source_call_frame_cid
-    )
-    # Frame CIDs on the CallSiteValue must not match the truthful outer frame
-    # when testimony was swapped.
-    assert (
-        swapped.completed_value().source_call_frame_cid != truthful.completed_value().source_call_frame_cid
-        or swapped.completed_value().body != truthful.completed_value().body
+        != functions["inner"].source_visible_call_frame().frame_cid
     )
 
 
 def test_recursion_by_name_is_not_the_transport() -> None:
-    """Transport is coordinate-enrolled frames, not callee-name re-lookup.
+    """Transport is the definition's own frame, not callee-name re-lookup.
 
-    Two different helpers with the same local spelling pattern enroll under
-    different coordinates; dig does not re-resolve by target_name string.
+    Two different helpers carry different frames; dig does not re-resolve by
+    target_name string.
     """
-    tree, context, functions = _tree(
+    tree, functions = _tree(
         "def alpha():\n"
         "    return 1\n"
         "def beta():\n"
         "    return 2\n"
         "alpha()\n"
         "beta()\n",
-        bind=frozenset({"alpha", "beta"}),
     )
     alpha_call = _calls_named(tree, "alpha")[0]
     beta_call = _calls_named(tree, "beta")[0]
-    assert _coordinate(alpha_call) != _coordinate(beta_call)
     a = alpha_call.sugar().desugar(None).completed_value()
     b = beta_call.sugar().desugar(None).completed_value()
     # Frame CIDs distinguish alpha vs beta — not target_name spelling.
     alpha_frame = _carried_frame(
-        alpha_call, context.source_call_frames[_coordinate(alpha_call)]
+        alpha_call, functions["alpha"].source_visible_call_frame()
     )
     beta_frame = _carried_frame(
-        beta_call, context.source_call_frames[_coordinate(beta_call)]
+        beta_call, functions["beta"].source_visible_call_frame()
     )
     assert a.source_call_frame_cid == alpha_frame.frame_cid
     assert b.source_call_frame_cid == beta_frame.frame_cid
@@ -271,7 +159,6 @@ def test_recursion_by_name_is_not_the_transport() -> None:
     # Cross: alpha call site still digs 1 even if a beta name exists.
     with pytest.raises(AssertionError):
         assert af.statements[0].value == TermValue(2)
-    del functions
 
 
 # ---------------------------------------------------------------------------
@@ -283,8 +170,8 @@ def test_two_hop_return_feeds_binop_through_both_frames() -> None:
     """outer() + 1 where outer returns inner() returning 3 → isomorphic to 3+1."""
     helper_src = NESTED + "\nouter() + 1\n"
     direct_src = "3 + 1\n"
-    helper_tree, _, _ = _tree(helper_src, bind=frozenset({"outer", "inner"}))
-    direct_tree, _, _ = _tree(direct_src, bind=frozenset())
+    helper_tree, _ = _tree(helper_src)
+    direct_tree, _ = _tree(direct_src)
     direct = (
         next(n for n in direct_tree.nodes() if isinstance(n, BinOp))
         .sugar()
@@ -321,24 +208,19 @@ def test_two_hop_preserves_outer_and_inner_occurrences_on_dig_path() -> None:
     """Dig path must not erase either call occurrence into a bare TermValue only.
 
     After codex-3: dig yields TermValue(3) for the *operation operand*, while
-    CallSiteValue coordinates for outer/inner remain on the enrolled frames
+    CallSiteValue coordinates for outer/inner remain on their own frames
     (frame CIDs and sites still distinct). This test pins frame identity
     survival regardless of dig depth.
     """
-    tree, context, _ = _tree(
-        NESTED + "\nouter()\n",
-        bind=frozenset({"outer", "inner"}),
-    )
+    tree, functions = _tree(NESTED + "\nouter()\n")
     outer_call = _calls_named(tree, "outer")[0]
-    inner_call = _calls_named(tree, "inner")[0]
     outer_cs = outer_call.sugar().desugar(None).completed_value()
     assert outer_cs.source_call_frame_cid is not None
     outer_frame = _carried_frame(
-        outer_call, context.source_call_frames[_coordinate(outer_call)]
+        outer_call, functions["outer"].source_visible_call_frame()
     )
     assert outer_cs.source_call_frame_cid == outer_frame.frame_cid
-    # Inner frame remains enrolled under its own coordinate after outer desugar.
-    inner_frame = context.source_call_frames[_coordinate(inner_call)]
+    inner_frame = functions["inner"].source_visible_call_frame()
     assert inner_frame.frame_cid != outer_cs.source_call_frame_cid
     assert inner_frame.frame_cid.startswith("blake3-512:")
 
@@ -349,10 +231,7 @@ def test_two_hop_dig_must_not_stop_at_outer_block_without_return_floor() -> None
     Today dig of outer may stop at BlockValue(ReturnValue(CallSiteValue(inner)))
     or similar — not the scalar Floor ops need. codex-3 owns the projection.
     """
-    tree, _, _ = _tree(
-        NESTED + "\nouter()\n",
-        bind=frozenset({"outer", "inner"}),
-    )
+    tree, _ = _tree(NESTED + "\nouter()\n")
     outer_cs = _calls_named(tree, "outer")[0].sugar().desugar(None).completed_value()
     dug = outer_cs._dig_floor_or_none(None, owner="two-hop-dig-ceiling")
     assert dug is not None

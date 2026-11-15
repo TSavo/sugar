@@ -1,4 +1,4 @@
-"""Source-derived ProtocolResource routing over constructed protocol testimony."""
+"""A ``with`` whose manager is the value its head reduced to."""
 
 from __future__ import annotations
 
@@ -6,43 +6,6 @@ from dataclasses import dataclass, field
 
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-
-
-@dataclass(frozen=True)
-class WithSourceResourceSugar(Sugar):
-    manager: Sugar
-    enter: Sugar
-    exit: Sugar
-    protocol: object
-    summary: object
-    body: tuple[Sugar, ...]
-    manager_slot_id: str
-    enter_slot_id: str | None
-    exit_face_id: str
-    enter_definition: object
-    exit_definition: object
-    site: object = field(compare=False, default=None)
-
-    def __post_init__(self) -> None:
-        from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
-
-        for call, definition, slot in (
-            (self.enter, self.enter_definition, "context-enter"),
-            (self.exit, self.exit_definition, "context-exit"),
-        ):
-            if not isinstance(call, MethodCallSugar):
-                raise TypeError(f"source resource {slot} must be a MethodCallSugar")
-            if call.native_definition_coordinate != definition:
-                raise ValueError(
-                    f"{slot} call is not authenticated by its definition coordinate"
-                )
-
-    @classmethod
-    def witnesses(cls):
-        return ()
-
-    def desugar(self, ctx: object = None) -> ExitSet:
-        return _route_manager_faces(self, ctx)
 
 
 @dataclass(frozen=True)
@@ -103,27 +66,17 @@ class WithReducedManagerSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
-        from sugar_lift_py_tests.context_manager_contract import (
-            ReturnTruthinessDispositionV1,
-        )
-
-        return _route_manager_faces(
-            self, ctx, disposition=ReturnTruthinessDispositionV1()
-        )
+        return _route_manager_faces(self, ctx)
 
 
-def _route_manager_faces(
-    resource, ctx: object = None, *, disposition=None
-) -> ExitSet:
+def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
     """Enter every manager face under its guard; union the exits (8.5).
 
     The enter runs beneath its manager face and the body beneath its enter
     face, each composed onto that face by ``ExitSet.sequence``: it takes the
     face's guard and faces and owes what the face owes. The exit routing
-    carries a body face's debts onto every arm it leaves through.
-
-    ``disposition`` is the exit's disposition; without one it is the
-    resource's summary's.
+    carries a body face's debts onto every arm it leaves through, under
+    Python's own disposition: the truth of what ``__exit__`` returns.
     """
     from sugar_lift_py_tests.outcome.exit_set import Halted, _require_exit_set
     from sugar_lift_py_tests.outcome.resource_bindings import (
@@ -144,7 +97,7 @@ def _route_manager_faces(
         # A body halt the exit suppresses goes on after the ``with`` from the
         # one record a continuation after a halt starts from (``resumed``).
         return resumed(
-            state, ctx, owner="WithSourceResourceSugar.suppressed", blame=resource.site
+            state, ctx, owner="WithReducedManagerSugar.suppressed", blame=resource.site
         )
 
     # The manager, its enter and its exit are each routed face by face here:
@@ -162,7 +115,7 @@ def _route_manager_faces(
     if headed is not None:
         return headed
     manager_out = _require_exit_set(
-        manager_out, owner="WithSourceResourceSugar.manager"
+        manager_out, owner="WithReducedManagerSugar.manager"
     )
     manager_es = halts_recorded(
         manager_out.sequence(lambda value: _project_manager_receiver(value, ctx)),
@@ -180,7 +133,7 @@ def _route_manager_faces(
             lambda manager: halts_recorded(
                 _require_exit_set(
                     resource.protocol.enter_resource_outcome_for(manager, ctx),
-                    owner="WithSourceResourceSugar.enter",
+                    owner="WithReducedManagerSugar.enter",
                 ),
                 halt_record(ctx),
             )
@@ -202,7 +155,7 @@ def _route_manager_faces(
                 ExitSet((enter_face,)).sequence(
                     lambda _entered: reduce_block_to_exitset(resource.body, ctx)
                 ),
-                owner="WithSourceResourceSugar.body",
+                owner="WithReducedManagerSugar.body",
             )
             concrete_exit = getattr(resource.protocol, "exit_outcome_for_body", None)
             # Generator protocols have a linear resume: retain their single
@@ -212,7 +165,7 @@ def _route_manager_faces(
                 if concrete_exit is not None
                 else _require_exit_set(
                     resource.protocol.exit_outcome_for(entered, ctx),
-                    owner="WithSourceResourceSugar.exit",
+                    owner="WithReducedManagerSugar.exit",
                 )
             )
             for body_face in body_es.exits:
@@ -223,7 +176,7 @@ def _route_manager_faces(
                 # face's record (``halts_recorded``).
                 record = face_record(
                     body_face,
-                    owner="WithSourceResourceSugar.exit",
+                    owner="WithReducedManagerSugar.exit",
                     blame=resource.site,
                 )
                 exit_es = halts_recorded(
@@ -235,11 +188,11 @@ def _route_manager_faces(
                                 resumed(
                                     record,
                                     ctx,
-                                    owner="WithSourceResourceSugar.exit",
+                                    owner="WithReducedManagerSugar.exit",
                                     blame=resource.site,
                                 ).context,
                             ),
-                            owner="WithSourceResourceSugar.exit",
+                            owner="WithReducedManagerSugar.exit",
                         )
                         if concrete_exit is not None
                         else abstract_exit
@@ -249,56 +202,40 @@ def _route_manager_faces(
                 face_facts = ExitFaceBinding.from_body_exit(
                     resource.exit_face_id, body_face
                 ).to_facts(site=resource.site, guard=body_face.guard)
-                face_disposition = (
-                    disposition
-                    if disposition is not None
-                    else resource.summary.semantics.exit.disposition
-                )
                 from sugar_lift_py_tests.context_manager_contract import (
-                    ReturnTruthinessDispositionV1,
+                    NeverSuppressesDispositionV1,
+                )
+                from sugar_lift_py_tests.effect import (
+                    GroupedRaiseEffect,
+                    RaiseEffect,
+                )
+                from sugar_lift_py_tests.effect.raise_effect import (
+                    UndeterminedRaiseEffect,
                 )
 
-                if isinstance(face_disposition, ReturnTruthinessDispositionV1):
-                    from sugar_lift_py_tests.context_manager_contract import (
-                        NeverSuppressesDispositionV1,
-                    )
-                    from sugar_lift_py_tests.effect import (
-                        GroupedRaiseEffect,
-                        RaiseEffect,
-                    )
-                    from sugar_lift_py_tests.effect.raise_effect import (
-                        UndeterminedRaiseEffect,
-                    )
-
-                    # An exception (a leaf or a group) is suppressed by a
-                    # true exit result; loop control and return are not
-                    # exceptions, so the exit result is ignored for them.
-                    # A RuntimeEffect is not an exception either: it is the
-                    # lift's boundary at an operation whose dispatch exists
-                    # only at runtime (it may complete or raise anything).
-                    # Every exception Python raises from a decided operation
-                    # (``1/0``, ``{}[k]``, a NameError) is a RaiseEffect and
-                    # takes the truth split; handing a boundary to exit as a
-                    # raise would invent one, so it stays the With's residue.
-                    if isinstance(body_face, Halted) and not isinstance(
-                        body_face.effect,
-                        (RaiseEffect, GroupedRaiseEffect, UndeterminedRaiseEffect),
-                    ):
-                        routed = ExitSet((body_face,)).and_exit(
-                            exit_es,
-                            disposition=NeverSuppressesDispositionV1(),
-                            resume=resume,
-                        )
-                    else:
-                        routed = ExitSet((body_face,)).and_exit_truthiness(
-                            _exit_return_values(exit_es),
-                            site=resource.site,
-                            resume=resume,
-                        )
-                else:
+                # An exception (a leaf or a group) is suppressed by a
+                # true exit result; loop control and return are not
+                # exceptions, so the exit result is ignored for them.
+                # A RuntimeEffect is not an exception either: it is the
+                # lift's boundary at an operation whose dispatch exists
+                # only at runtime (it may complete or raise anything).
+                # Every exception Python raises from a decided operation
+                # (``1/0``, ``{}[k]``, a NameError) is a RaiseEffect and
+                # takes the truth split; handing a boundary to exit as a
+                # raise would invent one, so it stays the With's residue.
+                if isinstance(body_face, Halted) and not isinstance(
+                    body_face.effect,
+                    (RaiseEffect, GroupedRaiseEffect, UndeterminedRaiseEffect),
+                ):
                     routed = ExitSet((body_face,)).and_exit(
                         exit_es,
-                        disposition=face_disposition,
+                        disposition=NeverSuppressesDispositionV1(),
+                        resume=resume,
+                    )
+                else:
+                    routed = ExitSet((body_face,)).and_exit_truthiness(
+                        _exit_return_values(exit_es),
+                        site=resource.site,
                         resume=resume,
                     )
                 parts.append(
@@ -311,7 +248,7 @@ def _route_manager_faces(
 
         raise SugarNotWritten(
             blame=resource.site,
-            owner="WithSourceResourceSugar.desugar",
+            owner="WithReducedManagerSugar.desugar",
             observed="constructed manager protocol produced no face",
             requested="one completed or halted source-derived manager face",
             fix="keep empty protocol testimony loud",
@@ -333,8 +270,8 @@ def _project_manager_receiver(value, ctx, seen=frozenset()):
 
     if id(value) in seen:
         raise SugarNotWritten(
-            blame="WithSourceResourceSugar.manager",
-            owner="WithSourceResourceSugar.manager",
+            blame="WithReducedManagerSugar.manager",
+            owner="WithReducedManagerSugar.manager",
             observed="cycle in retained manager return projections",
             requested="an acyclic constructed manager receiver",
             fix="retain the source call-graph cycle as a construction gap",
@@ -353,9 +290,9 @@ def _project_manager_receiver(value, ctx, seen=frozenset()):
 
     projected = _require_exit_set(
         value.project_operation_receiver_outcome(
-            ctx, owner="WithSourceResourceSugar.manager"
+            ctx, owner="WithReducedManagerSugar.manager"
         ),
-        owner="WithSourceResourceSugar.manager",
+        owner="WithReducedManagerSugar.manager",
     )
     return projected.sequence(
         lambda receiver: (
@@ -376,7 +313,7 @@ def _returned_value(value):
     return value
 
 
-def _exit_return_values(exit_es, *, owner="WithSourceResourceSugar.exit-return"):
+def _exit_return_values(exit_es, *, owner="WithReducedManagerSugar.exit-return"):
     """Project native returns, retaining guards and refusing untransported state.
 
     A constructed conditional return is GuardedReturn, not a truthy BlockValue.

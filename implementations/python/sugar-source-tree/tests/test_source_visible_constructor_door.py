@@ -65,7 +65,6 @@ def test_source_visible_zero_parameter_call_carries_the_ordinary_body() -> None:
     function = next(node for node in source.nodes() if isinstance(node, FunctionDef))
     call = next(node for node in source.nodes() if isinstance(node, Call))
     frame = function.source_visible_call_frame()
-    context.source_call_frames[_coordinate(call)] = frame
 
     outcome = call.sugar().desugar()
 
@@ -92,9 +91,7 @@ def test_renamed_generator_call_allocates_without_eager_body_reduction() -> None
         "arbitrarily_renamed()\n",
         context=context,
     )
-    function = next(node for node in source.nodes() if isinstance(node, FunctionDef))
     call = next(node for node in source.nodes() if isinstance(node, Call))
-    context.source_call_frames[_coordinate(call)] = function.source_visible_call_frame()
 
     outcome = call.sugar().desugar()
 
@@ -116,10 +113,7 @@ def test_parameterized_source_frame_projects_the_exact_actual_by_coordinate() ->
     )
     function = next(node for node in source.nodes() if isinstance(node, FunctionDef))
     call = next(node for node in source.nodes() if isinstance(node, Call))
-    context.source_call_frames[_coordinate(call)] = function.source_visible_call_frame()
-
     frame = function.source_visible_call_frame()
-    context.source_call_frames[_coordinate(call)] = frame
 
     outcome = call.sugar().desugar()
 
@@ -150,9 +144,6 @@ def test_class_definition_constructs_methods_but_receiver_state_awaits_coordinat
     )
     class_node = next(node for node in source.nodes() if isinstance(node, ClassDef))
     call = next(node for node in source.nodes() if isinstance(node, Call))
-    context.source_call_frames[_coordinate(call)] = (
-        class_node.source_visible_constructor_frame()
-    )
 
     outcome = class_node.sugar().desugar()
 
@@ -191,15 +182,12 @@ def test_repeated_initializer_uses_the_last_class_binding() -> None:
     )
     class_node = next(node for node in source.nodes() if isinstance(node, ClassDef))
     call = next(node for node in source.nodes() if isinstance(node, Call))
-    context.source_call_frames[_coordinate(call)] = (
-        class_node.source_visible_constructor_frame()
-    )
     initializers = tuple(
         item
         for item in class_node.body
         if isinstance(item, FunctionDef) and item.name == "__init__"
     )
-    frame = context.source_call_frames[_coordinate(call)]
+    frame = class_node.source_visible_constructor_frame()
 
     assert frame.formal_declaration_sites == (
         initializers[-1].params[1].fragment.seal().to_dict(),
@@ -405,16 +393,7 @@ def test_source_frame_binds_constructed_defaults_and_variadics() -> None:
         "renamed_variadic(1, 2, 3, label=4)\n",
         context=context,
     )
-    functions = {
-        node.name: node for node in source.nodes() if isinstance(node, FunctionDef)
-    }
     calls = [node for node in source.nodes() if isinstance(node, Call)]
-    context.source_call_frames[_coordinate(calls[0])] = functions[
-        "renamed_default"
-    ].source_visible_call_frame()
-    context.source_call_frames[_coordinate(calls[1])] = functions[
-        "renamed_variadic"
-    ].source_visible_call_frame()
 
     default_call = calls[0].sugar().desugar().completed_value()
     default_block = default_call.force_floor(
@@ -494,7 +473,6 @@ def test_yield_from_only_function_allocates_a_generator_not_an_eager_call() -> N
     function = next(node for node in source.nodes() if isinstance(node, FunctionDef))
     call = next(node for node in source.nodes() if isinstance(node, Call))
     frame = function.source_visible_call_frame()
-    context.source_call_frames[_coordinate(call)] = frame
 
     assert frame.generator_steps is not None
 
@@ -520,9 +498,7 @@ def test_yield_from_tuple_delegates_each_value_then_returns_to_the_generator() -
         "arbitrarily_renamed()\n",
         context=context,
     )
-    function = next(node for node in source.nodes() if isinstance(node, FunctionDef))
     call = next(node for node in source.nodes() if isinstance(node, Call))
-    context.source_call_frames[_coordinate(call)] = function.source_visible_call_frame()
 
     machine = call.sugar().desugar().completed_value()
     first = machine.resume()
@@ -581,12 +557,7 @@ _ENGINE_PICKING_NEW = (
 def _construct_last_class_call(source_text: str):
     context = TreeConstructionContextV1.for_source_call_construction()
     source = _source_file(source_text, context=context)
-    classes = {node.name: node for node in source.nodes() if isinstance(node, ClassDef)}
     call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
-    called = classes[call.func.id]
-    context.source_call_frames[_coordinate(call)] = (
-        called.source_visible_constructor_frame()
-    )
     return call.sugar().desugar().completed_value().force_floor(
         None, owner="class-call-with-source-new", project_callsite=False
     )

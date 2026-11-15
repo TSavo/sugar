@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from types import MappingProxyType, SimpleNamespace
+from types import MappingProxyType
 from dataclasses import replace
 import inspect
 
@@ -31,19 +31,16 @@ from sugar_lift_py_tests.context_manager_resolution import (
     ImportSignatureV2,
     NativeProtocolSlot,
     ResolvedContractRefsV1,
-    SourceDerivedContextManagerRefV1,
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
     _hash_json,
 )
 from sugar_lift_py_tests.ir import PrimitiveSort
-from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 from sugar_lift_py_tests.effect import ExpectationNotMetEffect, RaiseEffect
 from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBoundarySugar
 from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
-from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
@@ -172,78 +169,6 @@ def _native_protocol_definitions(use_site):
             _cid("x"), 20, 4, 22, 20
         ),
     }
-
-
-class _InjectedSourceProtocol:
-    """Task-2 stand-in: lifecycle testimony only, never coordinate authority."""
-
-    def enter_resource_outcome_for(self, manager, ctx=None):
-        del manager, ctx
-        return ExitSet.completed(SimpleNamespace(enter_value=TermValue(7)))
-
-    def exit_outcome_for(self, entered, ctx=None):
-        del entered, ctx
-        return ExitSet.completed(TermValue(False))
-
-
-def _source_derived(use_site):
-    return SourceDerivedContextManagerRefV1(
-        use_site=use_site,
-        summary_cid=_cid("s"),
-        semantics=ProtocolResourceSemanticsV1(
-            enter=EnterResultContractV1(sort=PrimitiveSort("Value")),
-            exit=ExitContractV1(disposition=ReturnTruthinessDispositionV1()),
-        ),
-        import_signature=ImportSignatureV2(()),
-        protocol=_InjectedSourceProtocol(),
-    )
-
-
-def test_source_derived_resource_consumes_exactly_two_injected_definition_coordinates():
-    source = (
-        "from dependency import option_context\n"
-        "def f(value):\n"
-        "    with option_context('mode.key', value) as entered:\n"
-        "        return entered\n"
-    )
-    first = SourceFile((source, "injected-source-resource.py", _cid("q")))
-    use_site = _coordinate(
-        next(node for node in first.nodes() if node.kind == "With")
-        .items[0]
-        .context_expr
-    )
-    enter = SourceFragmentCoordinateV1(_cid("e"), 10, 4, 11, 20)
-    exit_ = SourceFragmentCoordinateV1(_cid("x"), 20, 4, 22, 20)
-    tree, recording, _ = _source_with_recording_refs(
-        (source, "injected-source-resource.py", _cid("q")),
-        _source_derived,
-        {
-            (use_site, NativeProtocolSlot.CONTEXT_ENTER): enter,
-            (use_site, NativeProtocolSlot.CONTEXT_EXIT): exit_,
-        },
-    )
-
-    function = next(tree.functions()).sugar()
-    resource = next(
-        statement
-        for statement in function.statements
-        if isinstance(statement, WithSourceResourceSugar)
-    )
-
-    assert recording.calls == [
-        (use_site, NativeProtocolSlot.CONTEXT_ENTER),
-        (use_site, NativeProtocolSlot.CONTEXT_EXIT),
-    ]
-    assert resource.enter.native_definition_coordinate == enter
-    assert resource.exit.native_definition_coordinate == exit_
-    assert resource.body[0].value.slot_id == resource.enter_slot_id
-    assert resource.body[0].value.projection == "enter-result"
-
-    def authority_lookup_after_construction(*args, **kwargs):
-        raise AssertionError(f"desugar authority lookup: {args!r} {kwargs!r}")
-
-    recording.require_native_definition = authority_lookup_after_construction
-    assert resource.desugar() is not None
 
 
 def test_native_resource_requires_both_authenticated_definition_coordinates():

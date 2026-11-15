@@ -259,16 +259,8 @@ class CallSiteSugar(ConstructedTermSugar):
     exception_type_coordinate: Any = dataclass_field(default=None, compare=False)
     exception_type_mro: tuple | None = dataclass_field(default=None, compare=False)
     source_call_frame: Any = dataclass_field(default=None, compare=False)
-    # Lookup aid for testimony only: whether a frame was seated at
-    # ``source_call_frame_coordinate`` (testified) for a lexical call, whose
-    # frame's owner is ``expected_source_call_frame_owner`` (testified).  The
-    # call's frame is ``source_call_frame``, read once at construction; it is
-    # never read out of this table at desugar.  The table itself is never
-    # testimony (see ConstructedValueV2's lookup rule).
-    source_call_frame_table: Any = dataclass_field(
-        default=None, compare=False, metadata={"testimony": "lookup"}
-    )
-    source_call_frame_coordinate: Any = dataclass_field(default=None, compare=False)
+    # A lexical call's frame is owned by its lexical row's definition
+    # (testified); ``_NO_LEXICAL_SOURCE_CALL_ROW`` for every other call.
     expected_source_call_frame_owner: DefinitionOccurrenceReconciliationV1 = (
         dataclass_field(default=_NO_LEXICAL_SOURCE_CALL_ROW, compare=False)
     )
@@ -322,14 +314,6 @@ class CallSiteSugar(ConstructedTermSugar):
             raise TypeError(
                 "CallSiteSugar.expected_definition_ref cannot claim absence "
                 "when source_call_frame is present"
-            )
-        if isinstance(
-            self.expected_source_call_frame_owner,
-            DefinitionOccurrenceAbsentV1,
-        ) and self.source_call_frame_table is not None:
-            raise TypeError(
-                "CallSiteSugar.expected_source_call_frame_owner cannot claim "
-                "absence when source_call_frame_table is present"
             )
 
     @staticmethod
@@ -738,7 +722,10 @@ class CallSiteSugar(ConstructedTermSugar):
                 or (
                     isinstance(receiver, LambdaCallable)
                     and self.source_call_frame is None
-                    and self.source_call_frame_table is None
+                    and isinstance(
+                        self.expected_source_call_frame_owner,
+                        DefinitionOccurrenceAbsentV1,
+                    )
                     and self.formal_function_sugar is None
                 )
             ):
@@ -777,13 +764,13 @@ class CallSiteSugar(ConstructedTermSugar):
                 "builtin" if self._builtin_reference() is not None else "coordinate"
             ),
         )
-        # The frame is the one construction read (``Call._construct_call_sugar``:
-        # the frame seated at the call coordinate, else the lexical row's
-        # definition's own), carried as ``source_call_frame``.  It is never
-        # read out of the table again here: a nested def's frame, read from its
-        # definition, is seated in no table, and a second read found nothing.
+        # The frame is the one construction read (``Call._construct_sugar``:
+        # the lexical row's definition's own), carried as
+        # ``source_call_frame``.
         source_call_frame = self.source_call_frame
-        if self.source_call_frame_table is not None:
+        if not isinstance(
+            self.expected_source_call_frame_owner, DefinitionOccurrenceAbsentV1
+        ):
             from sugar_source_tree.panic import SugarNotWritten
 
             # A lexical call: the frame it carries is owned by the lexical

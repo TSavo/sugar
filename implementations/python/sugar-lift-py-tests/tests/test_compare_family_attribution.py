@@ -3,8 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from sugar_lift_py_tests.context_manager_resolution import (
-
-    SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.no_call_body_attribution import (
@@ -15,21 +13,11 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     run_authenticated_attribution,
 )
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.nodes import Call, Compare, FunctionDef, Name
+from sugar_source_tree.nodes import Compare
 from sugar_source_tree.tree import SourceFile
 
 
 from sugar_lift_py_tests.repo_root import resolve_repo_root
-
-def _coordinate(node: Call) -> SourceFragmentCoordinateV1:
-    span = node.line_col_span()
-    return SourceFragmentCoordinateV1(
-        node.unit.source_cid,
-        span.start_line,
-        span.start_col,
-        span.end_line,
-        span.end_col,
-    )
 
 
 def test_call_operand_raise_is_owned_by_call_not_compare_root() -> None:
@@ -45,21 +33,6 @@ def test_call_operand_raise_is_owned_by_call_not_compare_root() -> None:
     tree = SourceFile(
         (source, "compare_call_owner.py", blake3_512_of(source.encode())),
         construction_context=context,
-    )
-    fail_definition = next(
-        node
-        for node in tree.nodes()
-        if isinstance(node, FunctionDef) and node.name == "fail"
-    )
-    fail_call = next(
-        node
-        for node in tree.nodes()
-        if isinstance(node, Call)
-        and isinstance(node.func, Name)
-        and node.func.id == "fail"
-    )
-    context.source_call_frames[_coordinate(fail_call)] = (
-        fail_definition.source_visible_call_frame()
     )
     compare = next(node for node in tree.nodes() if isinstance(node, Compare))
 

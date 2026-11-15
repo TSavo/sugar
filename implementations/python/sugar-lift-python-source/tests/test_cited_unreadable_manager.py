@@ -27,7 +27,6 @@ import pytest
 from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
     WithReducedManagerSugar,
 )
-from sugar_source_tree.formal_manager_head import runtime_selected_manager_head
 from sugar_source_tree.nodes import With
 
 from test_contextlib_suppress_source_exit_faces import _corpus, _open
@@ -136,45 +135,6 @@ def test_a_source_class_without_the_protocol_raises_type_error(tmp_path):
     _consumer, rows = _lifted(tmp_path, template, "pass")
     assert ("halt", "TypeError") in rows
     assert ("return", 7) not in rows
-
-
-def _unit(source: str):
-    """The typed unit of ``source``: the head reader asks it how names bind."""
-    from sugar_lift_py_tests.context_manager_resolution import (
-        TreeConstructionContextV1,
-    )
-    from sugar_lift_python_source.canonical import blake3_512_of
-    from sugar_source_tree.tree import SourceFile
-
-    return SourceFile(
-        (source, "e.py", blake3_512_of(source.encode("utf-8"))),
-        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
-    ).unit
-
-
-def test_only_a_run_time_string_selection_qualifies():
-    def head(source, line=3):
-        return runtime_selected_manager_head(_unit(source), line, 9)
-
-    picked = "def f(m, n):\n    k = getattr(m, n)\n    with k(1):\n        pass\n"
-    assert head(picked) == "k(1)"
-    # A constant attribute name is a known attribute, read through its owner.
-    assert head("def f(m):\n    k = getattr(m, 'A')\n    with k(1):\n        pass\n") is None
-    # Bound from anything else, or bound twice, or after the with.
-    assert head("def f(m):\n    k = make(m)\n    with k(1):\n        pass\n") is None
-    assert (
-        head("def f(m, n):\n    k = getattr(m, n)\n    with k(1):\n        pass\n    k = 2\n")
-        is None
-    )
-    assert head("def f(m, n):\n    with k(1):\n        pass\n    k = getattr(m, n)\n", 2) is None
-    # A module that binds its own ``getattr`` is not the builtin.
-    assert head("getattr = g\n" + picked, 4) is None
-    # Nor is a function's own ``getattr`` parameter: the binding decides, not
-    # the spelling.
-    assert (
-        head("def f(m, n, getattr):\n    k = getattr(m, n)\n    with k(1):\n        pass\n")
-        is None
-    )
 
 
 _NOT_BRIDGED_HEADS = {

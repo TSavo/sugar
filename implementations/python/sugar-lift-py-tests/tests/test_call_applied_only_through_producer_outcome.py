@@ -15,7 +15,6 @@ import pytest
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.context_manager_resolution import (
-    SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.effect import RaiseEffect
@@ -221,17 +220,6 @@ def test_call_without_a_frame_never_reduces_the_callee_universe(applications) ->
     assert halt.effect.producer_node_owner == "UnknownCallee:consume"
 
 
-def _source_coordinate(node) -> SourceFragmentCoordinateV1:
-    span = node.line_col_span()
-    return SourceFragmentCoordinateV1(
-        node.unit.source_cid,
-        span.start_line,
-        span.start_col,
-        span.end_line,
-        span.end_col,
-    )
-
-
 def test_frame_native_operation_is_applied_by_producer_outcome(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -252,9 +240,6 @@ def test_frame_native_operation_is_applied_by_producer_outcome(
         node
         for node in tree.nodes()
         if isinstance(node, Call) and getattr(node.func, "id", None) == "helper"
-    )
-    context.source_call_frames[_source_coordinate(call)] = (
-        function.source_visible_call_frame()
     )
     sugar = call.sugar()
     assert isinstance(sugar, CallSiteSugar)

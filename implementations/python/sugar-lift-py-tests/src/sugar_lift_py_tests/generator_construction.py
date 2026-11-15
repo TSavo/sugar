@@ -742,79 +742,6 @@ class IfStepV1:
         _require_constructed_term(self.guard, owner="IfStepV1.guard")
 
 
-@dataclass(frozen=True)
-class NestedCitedOpaqueManagerStepV1:
-    """Nested ``with`` over a cited-opaque manager, not a source-defined generator.
-
-    Python's ``with`` law holds: enter is attempted; the body runs only if
-    enter completed; exit runs over every outgoing body edge. The manager's
-    own enter and exit stay open per-occurrence coordinates — the same law
-    as ``WithOpaqueCitedManagerSugar``. This step does not invent that
-    ``__enter__`` completed, and does not invent what it projected.
-    """
-
-    manager: ConstructedTermSugar
-    contract_ref: object = field(compare=False, repr=False)
-    body_steps: tuple
-    fragment_cid: str
-    occurrence_cid: str
-    site: object = field(compare=False)
-    as_name: str | None = None
-
-    def __post_init__(self) -> None:
-        _require_constructed_term(
-            self.manager, owner="NestedCitedOpaqueManagerStepV1.manager"
-        )
-        from sugar_lift_py_tests.context_manager_resolution import (
-            OpaqueCitedContextManagerRefV1,
-            PartitionedOpaqueCitedContextManagerRefV1,
-        )
-
-        if type(self.contract_ref) not in (
-            OpaqueCitedContextManagerRefV1,
-            PartitionedOpaqueCitedContextManagerRefV1,
-        ):
-            raise ValueError(
-                "NestedCitedOpaqueManagerStepV1 requires an authenticated "
-                "OpaqueCitedContextManagerRefV1; a cited manager is never "
-                "inferred from the absence of a contract"
-            )
-
-
-@dataclass(frozen=True)
-class NestedCitedOpaqueExitStepV1:
-    """Exit the cited-opaque manager entered by NestedCitedOpaqueManagerStepV1."""
-
-    occurrence_cid: str
-    contract_ref: object = field(compare=False, repr=False)
-    manager_value: object = field(compare=False, repr=False)
-    site: object = field(compare=False)
-
-
-# Statements that may follow a halting statement inside a flattened nested
-# with body and are skipped by that halt. Handler and other-manager exit steps
-# are deliberately absent: a halt does not skip past them to a later exit.
-_BODY_REMAINDER_STEPS = (
-    YieldStepV1,
-    YieldAssignStepV1,
-    _ResumeAssignStepV1,
-    YieldFromStepV1,
-    TermStepV1,
-    AssignStepV1,
-    DefinitionDefaultsStepV1,
-    AttributeAssignStepV1,
-    AssertStepV1,
-    ImportStepV1,
-    ImportFromStepV1,
-    IfStepV1,
-    ForStepV1,
-    WhileStepV1,
-    ReturnStepV1,
-    RaiseStepV1,
-    OpaqueStepV1,
-)
-
-
 GeneratorStepV1 = (
     YieldStepV1
     | YieldAssignStepV1
@@ -837,8 +764,6 @@ GeneratorStepV1 = (
     | _ForIteratorStepV1
     | _YieldFromIteratorStepV1
     | IfStepV1
-    | NestedCitedOpaqueManagerStepV1
-    | NestedCitedOpaqueExitStepV1
 )
 
 
@@ -882,13 +807,6 @@ def _generator_value_testimony(value: object, *, owner: str) -> dict:
         else:
             payload["fragmentCid"] = value.fragment_cid
         return payload
-    if isinstance(value, NestedCitedOpaqueEnteredBindingV1):
-        return {
-            "kind": "nested-cited-opaque-entered-binding",
-            "occurrenceCid": value.occurrence_cid,
-            "targetName": getattr(value.contract_ref, "target_name", ""),
-            "asName": value.as_name,
-        }
     # Sealed BindingEntryV1: require producer-minted ConstructedValueTestimonyV1.
     # Consumer never fabricates testimony; unsealed entries refuse here.
     from sugar_source_tree.binding_state import BindingEntryV1
@@ -1157,23 +1075,6 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
                 _generator_step_testimony(item, owner=owner) for item in step.else_steps
             ],
         }
-    if isinstance(step, NestedCitedOpaqueManagerStepV1):
-        return {
-            "kind": "nested-cited-opaque-manager",
-            "fragmentCid": step.fragment_cid,
-            "occurrenceCid": step.occurrence_cid,
-            "targetName": getattr(step.contract_ref, "target_name", ""),
-            "asName": step.as_name,
-            "manager": _generator_value_testimony(step.manager, owner=owner),
-            "bodySteps": [
-                _generator_step_testimony(item, owner=owner) for item in step.body_steps
-            ],
-        }
-    if isinstance(step, NestedCitedOpaqueExitStepV1):
-        return {
-            "kind": "nested-cited-opaque-exit",
-            "occurrenceCid": step.occurrence_cid,
-        }
     raise TypeError(
         f"{owner} cannot content-address step of type {type(step).__name__}"
     )
@@ -1251,17 +1152,6 @@ class GeneratorLoopBindingV1:
                 "GeneratorLoopBindingV1 requires exactly one of "
                 "demand_cid or fragment_cid"
             )
-
-
-@dataclass(frozen=True)
-class NestedCitedOpaqueEnteredBindingV1:
-    """Cited-opaque manager entered while executing NestedCitedOpaqueManagerStepV1."""
-
-    occurrence_cid: str
-    as_name: str | None
-    contract_ref: object = field(compare=False, repr=False)
-    manager_value: object = field(compare=False, repr=False)
-    site: object = field(compare=False)
 
 
 @dataclass(frozen=True)
@@ -1582,18 +1472,6 @@ class GeneratorConstructionV1:
         ):
             return self._throw_into_except_arms(self.steps[self.cursor], effect)
         if self.cursor < len(self.steps) and isinstance(
-            self.steps[self.cursor], NestedCitedOpaqueExitStepV1
-        ):
-            step = self.steps[self.cursor]
-            past_exit = replace(self, cursor=self.cursor + 1)
-            incoming = ExitSet.halted(effect, state=past_exit._left_here())
-            # A face the exit suppressed completes with the halt's record
-            # (``ExitSet.and_exit_truthiness``); what runs on is the frame
-            # inside it, past the exit step.
-            return self._exit_nested_cited_opaque(
-                step, requested="throw", incoming=incoming
-            ).sequence(lambda record: ExitSet.completed(record.frame))
-        if self.cursor < len(self.steps) and isinstance(
             self.steps[self.cursor], FinallyStepV1
         ):
             step = self.steps[self.cursor]
@@ -1617,12 +1495,6 @@ class GeneratorConstructionV1:
             ):
                 return self._gap("close", "except arm may catch GeneratorExit")
             return replace(self, cursor=self.cursor + 1).close()
-        if self.cursor < len(self.steps) and isinstance(
-            self.steps[self.cursor], NestedCitedOpaqueExitStepV1
-        ):
-            return self._exit_nested_cited_opaque(
-                self.steps[self.cursor], requested="close"
-            )
         if self.cursor < len(self.steps) and isinstance(
             self.steps[self.cursor], FinallyStepV1
         ):
@@ -1826,13 +1698,7 @@ class GeneratorConstructionV1:
                     routed.append(_guard_exits(resumed_es, face))
                     continue
                 cleanup_ahead = any(
-                    isinstance(
-                        later,
-                        (
-                            FinallyStepV1,
-                            NestedCitedOpaqueExitStepV1,
-                        ),
-                    )
+                    isinstance(later, FinallyStepV1)
                     for later in self.steps[self.cursor + 1 :]
                 )
                 if len(returned) == 1 and not cleanup_ahead:
@@ -1929,9 +1795,7 @@ class GeneratorConstructionV1:
             if not isinstance(outcome, ExitSet):
                 return self._gap(requested, f"assert returned {type(outcome).__name__}")
             if outcome.exits and outcome.halts() == outcome.exits:
-                return self._fold_pending_cited_opaque_exits(
-                    self._halted_here(outcome)
-                )
+                return self._halted_here(outcome)
             if outcome.completed_value() is None or outcome.owed_items():
                 return self._gap(requested, f"assert returned {type(outcome).__name__}")
             machine = replace(self, cursor=self.cursor + 1)
@@ -1963,9 +1827,7 @@ class GeneratorConstructionV1:
             if not isinstance(guard_outcome, ExitSet):
                 return self._gap(requested, "While guard is not ground")
             if guard_outcome.exits and guard_outcome.halts() == guard_outcome.exits:
-                return self._fold_pending_cited_opaque_exits(
-                    self._halted_here(guard_outcome)
-                )
+                return self._halted_here(guard_outcome)
             if guard_outcome.completed_value() is None or guard_outcome.owed_items():
                 return self._gap(requested, "While guard is not ground")
             decided = self._decide_guard(guard_outcome.completed_value())
@@ -1982,9 +1844,7 @@ class GeneratorConstructionV1:
                 and outcome.exits
                 and outcome.halts() == outcome.exits
             ):
-                return self._fold_pending_cited_opaque_exits(
-                    self._halted_here(outcome)
-                )
+                return self._halted_here(outcome)
             return self._gap(
                 requested, f"raise did not halt ({type(outcome).__name__})"
             )
@@ -2013,10 +1873,6 @@ class GeneratorConstructionV1:
             return self._transition_yield_from(step, requested)
         if isinstance(step, _YieldFromIteratorStepV1):
             return self._transition_yield_from_iterator(step, requested)
-        if isinstance(step, NestedCitedOpaqueManagerStepV1):
-            return self._transition_nested_cited_opaque(step, requested)
-        if isinstance(step, NestedCitedOpaqueExitStepV1):
-            return self._exit_nested_cited_opaque(step, requested=requested)
         if isinstance(step, FinallyStepV1):
             # Structured cleanup_steps already reduce through a sub-machine in
             # _reduce_finally; do not leave a gap that hides that composition.
@@ -2076,9 +1932,7 @@ class GeneratorConstructionV1:
                 return value
 
             def transition_return(resolved_value):
-                return self._fold_pending_cited_opaque_exits(
-                    GeneratorTerminationV1(resolved_value, self.binding_state)
-                )
+                return GeneratorTerminationV1(resolved_value, self.binding_state)
 
             def continue_return(resolved_value):
                 from sugar_source_tree.panic import SugarNotWritten
@@ -2104,12 +1958,8 @@ class GeneratorConstructionV1:
             )
 
             if _halts_with_a_raise(value):
-                # The value raised: the step halts with the machine's state and
-                # still runs any already-written cited exit (as the attribute
-                # store, assert and term steps do for their halts).
-                return self._fold_pending_cited_opaque_exits(
-                    self._halted_here(value)
-                )
+                # The value raised: the step halts with the machine's state.
+                return self._halted_here(value)
             if isinstance(value, (ExitSet, NativeOperationExitCarrierV1)):
                 return value.and_then(continue_return)
             return transition_return(value)
@@ -2157,12 +2007,8 @@ class GeneratorConstructionV1:
         )
 
         if _halts_with_a_raise(value):
-            # The value raised: the step halts with the machine's state and
-            # still runs any already-written cited exit (as the attribute
-            # store, assert and term steps do for their halts).
-            return self._fold_pending_cited_opaque_exits(
-                self._halted_here(value)
-            )
+            # The value raised: the step halts with the machine's state.
+            return self._halted_here(value)
         if isinstance(value, (ExitSet, NativeOperationExitCarrierV1)):
             return value.and_then(continue_yield)
         return transition_yield(value)
@@ -2174,9 +2020,7 @@ class GeneratorConstructionV1:
         if not isinstance(iterable, ExitSet):
             return self._gap(requested, type(iterable).__name__)
         if iterable.exits and iterable.halts() == iterable.exits:
-            return self._fold_pending_cited_opaque_exits(
-                self._halted_here(iterable)
-            )
+            return self._halted_here(iterable)
         if iterable.completed_value() is None or iterable.owed_items():
             return self._gap(requested, type(iterable).__name__)
         iterator = IteratorOperation(
@@ -2186,9 +2030,7 @@ class GeneratorConstructionV1:
         if not isinstance(iterator, ExitSet):
             return self._gap(requested, type(iterator).__name__)
         if iterator.exits and iterator.halts() == iterator.exits:
-            return self._fold_pending_cited_opaque_exits(
-                self._halted_here(iterator)
-            )
+            return self._halted_here(iterator)
         if iterator.completed_value() is None or iterator.owed_items():
             return self._gap(requested, type(iterator).__name__)
         runtime = _ForIteratorStepV1(
@@ -2396,9 +2238,7 @@ class GeneratorConstructionV1:
         if not isinstance(iterable, ExitSet):
             return self._gap(requested, type(iterable).__name__)
         if iterable.exits and iterable.halts() == iterable.exits:
-            return self._fold_pending_cited_opaque_exits(
-                self._halted_here(iterable)
-            )
+            return self._halted_here(iterable)
         if iterable.completed_value() is None or iterable.owed_items():
             return self._gap(requested, type(iterable).__name__)
         if isinstance(iterable.completed_value(), GeneratorConstructionV1):
@@ -2416,9 +2256,7 @@ class GeneratorConstructionV1:
         if not isinstance(iterator, ExitSet):
             return self._gap(requested, type(iterator).__name__)
         if iterator.exits and iterator.halts() == iterator.exits:
-            return self._fold_pending_cited_opaque_exits(
-                self._halted_here(iterator)
-            )
+            return self._halted_here(iterator)
         if iterator.completed_value() is None or iterator.owed_items():
             return self._gap(requested, type(iterator).__name__)
         runtime = _YieldFromIteratorStepV1(
@@ -2538,9 +2376,7 @@ class GeneratorConstructionV1:
             outcome = delegate.resume()
         if isinstance(outcome, ExitSet):
             if outcome.exits and outcome.halts() == outcome.exits:
-                return self._fold_pending_cited_opaque_exits(
-                    self._halted_here(outcome)
-                )
+                return self._halted_here(outcome)
             if outcome.completed_value() is None or outcome.owed_items():
                 return self._gap(
                     requested,
@@ -2698,162 +2534,13 @@ class GeneratorConstructionV1:
             return kept
         return kept._transition(requested)
 
-    def _transition_nested_cited_opaque(
-        self, step: NestedCitedOpaqueManagerStepV1, requested: str
-    ):
-        """Enter a cited-opaque nested with: both enter faces stay open."""
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
-        from sugar_lift_py_tests.sugar.with_opaque_cited_manager_sugar import (
-            WithOpaqueCitedManagerSugar,
-        )
-        from sugar_source_tree.panic import SugarNotWritten
-
-        manager_value = self._reduce_value(step.manager, requested)
-        if isinstance(manager_value, GeneratorTransitionGapV1):
-            return manager_value
-
-        def continue_with_manager(resolved_manager):
-            law = WithOpaqueCitedManagerSugar(
-                manager=step.manager,
-                body=(),
-                contract_ref=step.contract_ref,
-                site=step.site,
-            )
-            # The enter halts in this frame, here: its halt carries the
-            # record this frame left (``_left_here``).
-            enter_es = law._enter_exitset(resolved_manager, self._left_here())
-
-            def continue_enter(enter_value):
-                binding = NestedCitedOpaqueEnteredBindingV1(
-                    occurrence_cid=step.occurrence_cid,
-                    as_name=step.as_name,
-                    contract_ref=step.contract_ref,
-                    manager_value=resolved_manager,
-                    site=step.site,
-                )
-                bindings = [binding]
-                if step.as_name is not None:
-                    bindings.append(
-                        GeneratorAssignBindingV1(
-                            step.as_name, enter_value, step.fragment_cid
-                        )
-                    )
-                steps = (
-                    *self.steps[: self.cursor],
-                    *step.body_steps,
-                    NestedCitedOpaqueExitStepV1(
-                        occurrence_cid=step.occurrence_cid,
-                        contract_ref=step.contract_ref,
-                        manager_value=resolved_manager,
-                        site=step.site,
-                    ),
-                    *self.steps[self.cursor + 1 :],
-                )
-                machine = replace(
-                    self,
-                    steps=steps,
-                    binding_state=(*self.binding_state, *bindings),
-                )
-                result = machine._transition(requested)
-                if isinstance(result, GeneratorTransitionGapV1):
-                    raise SugarNotWritten(
-                        owner="GeneratorConstructionV1.transition",
-                        blame=step,
-                        observed=result.observed,
-                        requested=result.requested,
-                        fix=(
-                            "implement that next transition before deferred "
-                            "normalization"
-                        ),
-                    )
-                if isinstance(result, (ExitSet, NativeOperationExitCarrierV1)):
-                    return result
-                return ExitSet.completed(result)
-
-            return enter_es.and_then(continue_enter)
-
-        if isinstance(manager_value, (ExitSet, NativeOperationExitCarrierV1)):
-            return manager_value.and_then(continue_with_manager)
-        return continue_with_manager(manager_value)
-
-    def _exit_nested_cited_opaque(
-        self,
-        step: NestedCitedOpaqueExitStepV1,
-        *,
-        requested: str,
-        incoming: ExitSet | None = None,
-    ):
-        """Apply open cited-opaque exit over the continuation or a thrown effect."""
-        from sugar_lift_py_tests.sugar.with_opaque_cited_manager_sugar import (
-            WithOpaqueCitedManagerSugar,
-        )
-        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
-            TrueBoolLiteralSugar,
-        )
-
-        law = WithOpaqueCitedManagerSugar(
-            manager=TrueBoolLiteralSugar(site=step.site),
-            body=(),
-            contract_ref=step.contract_ref,
-            site=step.site,
-        )
-        # The exit halts in this frame, at its exit step: its halt carries the
-        # record this frame left there (``_left_here``).
-        exit_es = law._exit_exitset(step.manager_value, self._left_here())
-        if incoming is not None:
-            from sugar_lift_py_tests.sugar.function_universe_sugar import resumed
-
-            # A halt the exit suppresses goes on from the one record a
-            # continuation after a halt starts from (``resumed``): the frame
-            # it carries stays inside it.
-            return incoming.and_exit_truthiness(
-                exit_es,
-                site=step.site,
-                resume=lambda state: resumed(
-                    state,
-                    None,
-                    owner="GeneratorConstructionV1.suppressed",
-                    blame=step.site,
-                ),
-            )
-        # The body reached the end of this ``with``: its exit runs on that
-        # completion NOW, and only a completed exit continues to the steps
-        # after it. Applying this exit over the continuation instead would
-        # wrap every later step -- an enclosing ``with``'s exit, a later
-        # raise -- inside this one, letting it "suppress" what runs after it.
-        from sugar_lift_py_tests.outcome.exit_set import Completed
-
-        advanced = replace(self, cursor=self.cursor + 1)
-        exited = ExitSet.completed(advanced).and_exit_truthiness(
-            exit_es, site=step.site
-        )
-        parts = []
-        for face in exited.exits:
-            if not isinstance(face, Completed):
-                parts.append(ExitSet((face,)))
-                continue
-            if requested == "close":
-                continued = face.value.close()
-            else:
-                continued = face.value._transition(requested)
-            if isinstance(continued, GeneratorTransitionGapV1):
-                return continued
-            if not isinstance(continued, ExitSet):
-                continued = ExitSet.completed(continued)
-            parts.append(_guard_exits(continued, face))
-        return parts[0].union(*parts[1:])
-
-
     def _transition_term_exitset(
         self, step, outcome, requested: str, keep=None, advanced=None
     ):
         """An expression statement whose value is two-faced (may complete or raise).
 
         A halted face leaves the machine HERE: its pre-halt record is the one
-        this frame left (``_left_here``, this machine inside it), and an
-        already-written cited-opaque exit folds over it. A
+        this frame left (``_left_here``, this machine inside it). A
         completed face discards the value and the machine advances past the
         statement under that face's guard. Returning the call's own ExitSet
         would hand its value (a call result) to the consumer as if it were the
@@ -2875,11 +2562,7 @@ class GeneratorConstructionV1:
         completed = tuple(face for face in outcome.exits if not isinstance(face, Halted))
         parts = []
         if outcome.halts():
-            parts.append(
-                self._fold_pending_cited_opaque_exits(
-                    self._halted_here(ExitSet(outcome.halts()))
-                )
-            )
+            parts.append(self._halted_here(ExitSet(outcome.halts())))
         if completed:
             machine = (
                 replace(self, cursor=self.cursor + 1) if advanced is None else advanced
@@ -2966,76 +2649,6 @@ class GeneratorConstructionV1:
             result = result.union(ExitSet(completed).and_then(continue_after))
         return result
 
-    def _fold_pending_cited_opaque_exits(self, outgoing):
-        """Apply already-written cited-opaque exit over an outgoing body edge.
-
-        Python's with law runs ``__exit__`` on every outgoing body edge,
-        including a return, a raise, or a body halt such as a failed
-        attribute store.
-        The step producer's ``compose_finally`` seats cleanup before a return
-        or raise and also on fall-through, so the remaining steps after
-        that terminal include a finally copy and then
-        ``NestedCitedOpaqueExitStepV1``. A return or raise must not skip
-        that exit. This reuses ``_exit_nested_cited_opaque(..., incoming=)``,
-        the same fold ``throw`` already applies when the cursor is already
-        on the exit step. It does not invent that exit swallowed the
-        termination. Cleanup that itself halts still returns before this
-        fold, so a finally raise keeps the still-open enter face.
-        """
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        pending = []
-        last = None
-        for index, step in enumerate(
-            self.steps[self.cursor + 1 :], start=self.cursor + 1
-        ):
-            if isinstance(step, (FinallyStepV1, InertStepV1)):
-                continue
-            if isinstance(step, NestedCitedOpaqueExitStepV1):
-                pending.append(step)
-                last = index
-                continue
-            if not pending and isinstance(step, _BODY_REMAINDER_STEPS):
-                # The rest of the flattened with body (a later statement, a
-                # yield not yet reached): a halt leaves the body, so it never
-                # runs, and the enclosing exit still does. Only a flattened
-                # body is spliced before its exit step, so that exit encloses
-                # this cursor.
-                continue
-            break
-        if not pending:
-            return outgoing
-        if isinstance(outgoing, ExitSet):
-            # A halted edge leaves THIS machine at this cursor: whatever
-            # record a reduced helper carried, the generator's pre-halt
-            # record is the one this frame left (the machine inside it).
-            incoming = self._halted_here(outgoing)
-        else:
-            incoming = ExitSet.completed(outgoing)
-        result = incoming
-        for step in pending:
-            result = self._exit_nested_cited_opaque(
-                step,
-                requested="pending cited-opaque exit",
-                incoming=result,
-            )
-        # A face the exit SUPPRESSED completes carrying the pre-halt record --
-        # the one this frame left, this machine inside it, still poised on
-        # the raise. Python continues after the ``with`` statement, so that
-        # face's successor is the machine past the last exit step, never the
-        # raise again. It continues as that machine beneath itself
-        # (``sequence``), keeping its guard, faces and owed.
-        from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
-
-        after_with = replace(self, cursor=last + 1)
-        return result.sequence(
-            lambda value: ExitSet.completed(
-                after_with
-                if isinstance(value, _ReducedBlock) and value.frame is self
-                else value
-            )
-        )
-
     def _left_here(self):
         """The record a halt raised in this frame, here, carries.
 
@@ -3043,8 +2656,7 @@ class GeneratorConstructionV1:
         is its own (``binding_state``), read through the frame. So the record
         holds no entries of the caller's and carries this machine at this
         cursor inside it (``halt_record(..., frame=)``) -- never in its
-        place. A cited-opaque exit that suppresses the halt continues that
-        frame; the ``with`` the halt reaches re-seats it in its own record
+        place. The ``with`` the halt reaches re-seats it in its own record
         (``GeneratorWithSugar``).
         """
         from sugar_lift_py_tests.sugar.function_universe_sugar import halt_record
@@ -3198,9 +2810,7 @@ class GeneratorConstructionV1:
             and guard_outcome.exits
             and guard_outcome.halts() == guard_outcome.exits
         ):
-            return self._fold_pending_cited_opaque_exits(
-                self._halted_here(guard_outcome)
-            )
+            return self._halted_here(guard_outcome)
         if (
             isinstance(guard_outcome, ExitSet)
             and guard_outcome.completed_value() is not None
@@ -3505,9 +3115,7 @@ class GeneratorConstructionV1:
             return ExitSet.completed(result)
 
         if _halts_with_a_raise(value):
-            return self._fold_pending_cited_opaque_exits(
-                self._halted_here(value)
-            )
+            return self._halted_here(value)
         if isinstance(value, (ExitSet, NativeOperationExitCarrierV1)):
             return value.and_then(continue_step)
         return then(value)

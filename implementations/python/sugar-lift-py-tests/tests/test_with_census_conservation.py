@@ -189,8 +189,6 @@ def test_known_constructed_with_item_shows_constructed_gt_zero(tmp_path: Path):
     file.
     """
     module = _load()
-    from types import SimpleNamespace
-
     from sugar_lift_py_tests.context_manager_contract import (
         EnterResultContractV1,
         ExitContractV1,
@@ -199,8 +197,7 @@ def test_known_constructed_with_item_shows_constructed_gt_zero(tmp_path: Path):
         ReturnTruthinessDispositionV1,
     )
     from sugar_lift_py_tests.context_manager_resolution import (
-        SourceDerivedContextManagerRefV1,
-        SourceFragmentCoordinateV1,
+        ContextManagerContractRefV1,
     )
     from sugar_lift_py_tests.ir import PrimitiveSort
     from sugar_lift_py_tests.lift_rpc import (
@@ -208,7 +205,6 @@ def test_known_constructed_with_item_shows_constructed_gt_zero(tmp_path: Path):
         provisional_contract_refs_from_demands,
         tree_construction_context_for_workspace,
     )
-    from sugar_lift_py_tests.outcome import ExitSet
 
     path = tmp_path / "consumer.py"
     path.write_text(
@@ -224,33 +220,41 @@ def test_known_constructed_with_item_shows_constructed_gt_zero(tmp_path: Path):
     assert len(refs.by_use_site) == 1
     use_site = next(iter(refs.by_use_site))
 
-    class _Protocol:
-        def enter_resource_outcome_for(self, _manager, _ctx=None):
-            return ExitSet.completed(SimpleNamespace(enter_value=None))
-
-        def exit_outcome_for(self, _entered, _ctx=None):
-            return ExitSet.completed(False)
-
     from types import MappingProxyType
 
     from sugar_lift_py_tests.context_manager_resolution import ResolvedContractRefsV1
 
+    cid = "blake3-512:" + ("a" * 128)
     planted = ResolvedContractRefsV1(
         refs.catalog_cid,
         refs.table_cid,
         MappingProxyType(
             {
-                use_site: SourceDerivedContextManagerRefV1(
+                use_site: ContextManagerContractRefV1(
+                    resolution_cid=cid,
+                    demand_cid=cid,
                     use_site=use_site,
-                    summary_cid="blake3-512:" + ("a" * 128),
+                    use_site_cid=cid,
+                    authenticated_import_use_cid=cid,
+                    import_binding_cid=cid,
+                    construction_context_generation_cid=cid,
+                    contract_cid=cid,
+                    payload_cid=cid,
+                    provenance_cid=cid,
+                    distribution_artifact_cid=cid,
+                    dependency_artifact_graph_cid=cid,
+                    module_source_cid=cid,
+                    resolved_definition_cid=cid,
+                    manager_construction_cid=cid,
+                    enter_testimony_cid=cid,
+                    exit_testimony_cid=cid,
+                    import_signature=ImportSignatureV2(()),
                     semantics=ProtocolResourceSemanticsV1(
                         enter=EnterResultContractV1(sort=PrimitiveSort("Value")),
                         exit=ExitContractV1(
                             disposition=ReturnTruthinessDispositionV1()
                         ),
                     ),
-                    import_signature=ImportSignatureV2(()),
-                    protocol=_Protocol(),
                 )
             }
         ),

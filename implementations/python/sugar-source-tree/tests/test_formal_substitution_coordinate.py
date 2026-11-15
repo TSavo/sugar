@@ -19,7 +19,6 @@ from __future__ import annotations
 import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import (
-    SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.floor import (
@@ -50,17 +49,6 @@ def _source_file(source: str, *, context=None) -> SourceFile:
     )
 
 
-def _coordinate(node) -> SourceFragmentCoordinateV1:
-    span = node.line_col_span()
-    return SourceFragmentCoordinateV1(
-        node.unit.source_cid,
-        span.start_line,
-        span.start_col,
-        span.end_line,
-        span.end_col,
-    )
-
-
 def _tree(source: str):
     """Parse, and return (context, {name: FunctionDef}, [Call, ...])."""
     context = TreeConstructionContextV1.for_source_call_construction()
@@ -73,9 +61,11 @@ def _tree(source: str):
 
 
 def _install(context, call, function):
-    frame = function.source_visible_call_frame()
-    context.source_call_frames[_coordinate(call)] = frame
-    return frame
+    """The frame ``call`` applies: its definition's own, which
+    ``Call._construct_sugar`` reads through the call's lexical row.  Nothing
+    is seated on the context."""
+    del context, call
+    return function.source_visible_call_frame()
 
 
 def _coordinate_refs(sugar) -> list[BindingCoordinateRefSugar]:
@@ -243,7 +233,7 @@ def test_substitution_reuses_the_actual_and_reconstructs_no_sugar() -> None:
 
 
 def test_shadowed_inner_formal_does_not_consume_the_outer_binding() -> None:
-    context, functions, calls = _tree(
+    _context, functions, calls = _tree(
         "def shadow_outer(value):\n"
         "    def shadow_inner(value):\n"
         "        return value\n"
@@ -257,7 +247,6 @@ def test_shadowed_inner_formal_does_not_consume_the_outer_binding() -> None:
     assert outer.formal_coordinates[0].cid != inner.formal_coordinates[0].cid
 
     outer_call = calls[-1]
-    context.source_call_frames[_coordinate(outer_call)] = outer
     constructed = (
         outer_call.sugar()
         .desugar()

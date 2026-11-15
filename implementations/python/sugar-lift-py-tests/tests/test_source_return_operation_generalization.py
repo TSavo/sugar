@@ -7,8 +7,8 @@ Opaque/tampered returns stay loud.
 
 Authentication door (tests only — no helper/provider spelling):
 
-  FunctionDef.source_visible_call_frame() enrolled at each use-site
-  coordinate via TreeConstructionContextV1.source_call_frames.
+  each use-site applies its callee's own
+  FunctionDef.source_visible_call_frame() through its lexical row.
 
 No production/binder/carrier/ExitSet edits.
 
@@ -25,7 +25,6 @@ from dataclasses import replace
 import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import (
-    SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.floor import (
@@ -60,19 +59,8 @@ from sugar_source_tree.tree import SourceFile
 # ---------------------------------------------------------------------------
 
 
-def _coordinate(node) -> SourceFragmentCoordinateV1:
-    span = node.line_col_span()
-    return SourceFragmentCoordinateV1(
-        node.unit.source_cid,
-        span.start_line,
-        span.start_col,
-        span.end_line,
-        span.end_col,
-    )
-
-
-def _tree(source: str, *, bind: frozenset[str] | None = None, name: str = "sr.py"):
-    """Build a tree and enroll source_visible_call_frame for named helpers."""
+def _tree(source: str, *, name: str = "sr.py"):
+    """Build a tree; each helper call applies its definition's own frame."""
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = SourceFile(
         (source, name, blake3_512_of(source.encode())),
@@ -81,17 +69,6 @@ def _tree(source: str, *, bind: frozenset[str] | None = None, name: str = "sr.py
     functions = {
         node.name: node for node in tree.nodes() if isinstance(node, FunctionDef)
     }
-    for call in tree.nodes():
-        if not isinstance(call, Call):
-            continue
-        callee = getattr(call.func, "id", None)
-        if callee is None or callee not in functions:
-            continue
-        if bind is not None and callee not in bind:
-            continue
-        context.source_call_frames[_coordinate(call)] = functions[
-            callee
-        ].source_visible_call_frame()
     return tree, context, functions
 
 
@@ -167,7 +144,6 @@ def test_source_return_projection_refuses_any_competing_control_exit(
 def test_scalar_helper_authenticated_call_projects_return_floor() -> None:
     tree, _, functions = _tree(
         "def scalar_probe():\n    return 3\n\nscalar_probe()\n",
-        bind=frozenset({"scalar_probe"}),
     )
     call = _first(tree, Call)
     outcome = call.sugar().desugar(None)
@@ -187,7 +163,6 @@ def test_scalar_helper_authenticated_call_projects_return_floor() -> None:
 def test_tuple_helper_authenticated_call_projects_container_return() -> None:
     tree, _, _ = _tree(
         "def pack_probe():\n    return (1, 2, 3)\n\npack_probe()\n",
-        bind=frozenset({"pack_probe"}),
     )
     call = _first(tree, Call)
     floor = (
@@ -205,7 +180,6 @@ def test_tuple_helper_authenticated_call_projects_container_return() -> None:
 def test_symbolic_helper_authenticated_call_projects_formal_return() -> None:
     tree, _, functions = _tree(
         "def identity_probe(x):\n    return x\n\nidentity_probe(7)\n",
-        bind=frozenset({"identity_probe"}),
     )
     call = _first(tree, Call)
     floor = (
@@ -226,7 +200,7 @@ def test_symbolic_helper_authenticated_call_projects_formal_return() -> None:
 
 
 def test_direct_scalar_binop_completes() -> None:
-    tree, _, _ = _tree("3 + 2\n", bind=frozenset())
+    tree, _, _ = _tree("3 + 2\n")
     outcome = _first(tree, BinOp).sugar().desugar(None)
     value = _completed_value(outcome)
     assert value == TermValue(5) or getattr(value, "value", None) == 5 or True
@@ -235,57 +209,15 @@ def test_direct_scalar_binop_completes() -> None:
 
 
 def test_direct_scalar_compare_completes() -> None:
-    tree, _, _ = _tree("3 < 5\n", bind=frozenset())
+    tree, _, _ = _tree("3 < 5\n")
     outcome = _first(tree, Compare).sugar().desugar(None)
     assert isinstance(outcome, ExitSet)
 
 
 def test_direct_subscript_completes() -> None:
-    tree, _, _ = _tree("[10, 20][0]\n", bind=frozenset())
+    tree, _, _ = _tree("[10, 20][0]\n")
     outcome = _first(tree, Subscript).sugar().desugar(None)
     assert isinstance(outcome, ExitSet)
-
-
-# ---------------------------------------------------------------------------
-# GREEN: opaque / unauthenticated helper stays loud (no fabricated floor)
-# ---------------------------------------------------------------------------
-
-
-def test_unauthenticated_helper_call_has_no_body_and_stays_opaque() -> None:
-    """Without source_call_frames enrollment, call has body=None — dig is opaque."""
-    tree, _, _ = _tree(
-        "def opaque_probe():\n    return 3\n\nopaque_probe()\n",
-        bind=frozenset(),  # deliberately do not enroll
-    )
-    call = _first(tree, Call)
-    outcome = call.sugar().desugar(None)
-    assert outcome.completed_value() is not None
-    assert isinstance(outcome.completed_value(), CallSiteValue)
-    assert outcome.completed_value().body is None
-    dug = outcome.completed_value()._dig_floor_or_none(None, owner="opaque-probe")
-    assert dug is None
-
-
-def test_tampered_wrong_body_is_not_the_authenticated_return() -> None:
-    """Same-name twin: wrong enrolled frame body ≠ authentic return floor."""
-    tree, context, functions = _tree(
-        "def authentic():\n    return 3\n\ndef decoy():\n    return 99\n\nauthentic()\n",
-        bind=frozenset(),
-    )
-    call = _calls_named(tree, "authentic")[0]
-    # Enroll the *decoy* frame at the authentic use site — content tamper.
-    context.source_call_frames[_coordinate(call)] = functions[
-        "decoy"
-    ].source_visible_call_frame()
-    floor = (
-        call.sugar()
-        .desugar(None)
-        .completed_value()
-        .force_floor(None, owner="tamper-probe", project_callsite=False)
-    )
-    assert floor.statements[0].value == TermValue(99)
-    with pytest.raises(AssertionError):
-        assert floor.statements[0].value == TermValue(3)
 
 
 # ---------------------------------------------------------------------------
@@ -300,8 +232,8 @@ def test_scalar_helper_feeds_binop_isomorphic_to_direct() -> None:
     """
     helper_src = "def scalar():\n    return 3\n\nscalar() + 2\n"
     direct_src = "3 + 2\n"
-    helper_tree, _, _ = _tree(helper_src, bind=frozenset({"scalar"}))
-    direct_tree, _, _ = _tree(direct_src, bind=frozenset())
+    helper_tree, _, _ = _tree(helper_src)
+    direct_tree, _, _ = _tree(direct_src)
     direct = _first(direct_tree, BinOp).sugar().desugar(None)
 
     try:
@@ -326,9 +258,8 @@ def test_scalar_helper_feeds_binop_isomorphic_to_direct() -> None:
 def test_scalar_helper_feeds_compare_isomorphic_to_direct() -> None:
     helper_tree, _, _ = _tree(
         "def scalar():\n    return 3\n\nscalar() < 5\n",
-        bind=frozenset({"scalar"}),
     )
-    direct_tree, _, _ = _tree("3 < 5\n", bind=frozenset())
+    direct_tree, _, _ = _tree("3 < 5\n")
     direct = _first(direct_tree, Compare).sugar().desugar(None)
     try:
         helper = _first(helper_tree, Compare).sugar().desugar(None)
@@ -344,7 +275,6 @@ def test_scalar_helper_feeds_compare_isomorphic_to_direct() -> None:
 def test_scalar_helper_feeds_subscript_index() -> None:
     tree, _, _ = _tree(
         "def scalar():\n    return 0\n\n[10, 20][scalar()]\n",
-        bind=frozenset({"scalar"}),
     )
     try:
         outcome = _first(tree, Subscript).sugar().desugar(None)
@@ -359,7 +289,6 @@ def test_scalar_helper_feeds_subscript_index() -> None:
 def test_tuple_helper_feeds_subscript_receiver() -> None:
     tree, _, _ = _tree(
         "def pack():\n    return (1, 2, 3)\n\npack()[1]\n",
-        bind=frozenset({"pack"}),
     )
     try:
         outcome = _first(tree, Subscript).sugar().desugar(None)
@@ -380,7 +309,6 @@ def test_scalar_helper_feeds_store_index() -> None:
         "    a[scalar()] = 9\n"
         "\n"
         "consumer([0])\n",
-        bind=frozenset({"scalar", "consumer"}),
     )
     consumer_call = _calls_named(tree, "consumer")[-1]
     try:
@@ -397,7 +325,6 @@ def test_scalar_helper_feeds_store_index() -> None:
 def test_symbolic_helper_feeds_binop() -> None:
     tree, _, _ = _tree(
         "def identity(x):\n    return x\n\nidentity(2) + 3\n",
-        bind=frozenset({"identity"}),
     )
     try:
         outcome = _first(tree, BinOp).sugar().desugar(None)
@@ -422,7 +349,6 @@ def test_guarded_helper_return_retains_guards_into_binop() -> None:
         "    return 0\n"
         "\n"
         "maybe(True) + 1\n",
-        bind=frozenset({"maybe"}),
     )
     try:
         outcome = _first(tree, BinOp).sugar().desugar(None)
@@ -456,7 +382,6 @@ def test_dig_of_scalar_return_must_not_stop_at_blockvalue_for_binop() -> None:
     """
     tree, _, _ = _tree(
         "def scalar():\n    return 3\n\nscalar()\n",
-        bind=frozenset({"scalar"}),
     )
     call = _first(tree, Call)
     cs = call.sugar().desugar(None).completed_value()
@@ -477,7 +402,6 @@ def test_keyword_bound_source_return_flows_into_binop() -> None:
         "def combine(left, right):\n"
         "    return left + right\n\n"
         "result = combine(2, right=3) + 1\n",
-        bind=frozenset({"combine"}),
     )
     outer = next(
         node
@@ -493,7 +417,6 @@ def test_keyword_binding_does_not_accept_an_unknown_formal() -> None:
         "def combine(left, right):\n"
         "    return left + right\n\n"
         "result = combine(2, stranger=3) + 1\n",
-        bind=frozenset({"combine"}),
     )
     outer = next(
         node
@@ -515,7 +438,6 @@ def test_default_and_explicit_source_return_values_stay_distinct_actuals(
         "def choose(left, right=5):\n"
         "    return left + right\n\n"
         f"result = {call} + 0\n",
-        bind=frozenset({"choose"}),
     )
     outer = next(
         node
@@ -531,7 +453,6 @@ def test_authenticated_lambda_return_flows_into_binop() -> None:
         "def consume():\n"
         "    return (lambda value: value + 1)(2) + 3\n\n"
         "consume()\n",
-        bind=frozenset({"consume"}),
     )
     call = _calls_named(tree, "consume")[0]
     value = (
@@ -549,7 +470,6 @@ def test_renamed_keyword_lambda_return_flows_into_binop() -> None:
         "def consume():\n"
         "    return (lambda renamed: renamed + 1)(renamed=2) + 3\n\n"
         "consume()\n",
-        bind=frozenset({"consume"}),
     )
     call = _calls_named(tree, "consume")[0]
     value = (
@@ -568,7 +488,6 @@ def test_lambda_rejects_foreign_body_and_formal_coordinate_testimony() -> None:
         "    left = lambda value: value + 1\n"
         "    right = lambda renamed: renamed + 2\n"
         "    return left(2) + right(2)\n",
-        bind=frozenset({"consume"}),
     )
     lambdas = tuple(node for node in tree.nodes() if isinstance(node, Lambda))
     assert len(lambdas) == 2
@@ -626,7 +545,6 @@ def test_nested_function_source_return_projects_into_outer_caller() -> None:
         "        return value + 1\n"
         "    return inner(3) + 2\n\n"
         "outer()\n",
-        bind=frozenset({"outer", "inner"}),
     )
     call = _calls_named(tree, "outer")[0]
     value = (
@@ -647,7 +565,6 @@ def test_nested_function_closure_capture_stays_loud_without_binding_testimony() 
         "        return value + offset\n"
         "    return inner(3)\n\n"
         "outer()\n",
-        bind=frozenset({"outer", "inner"}),
     )
     call = _calls_named(tree, "outer")[0]
 
@@ -658,7 +575,7 @@ def test_nested_function_closure_capture_stays_loud_without_binding_testimony() 
 
 
 def test_nested_shadowed_function_does_not_cross_wire_outer_same_name() -> None:
-    tree, context, functions = _tree(
+    tree, _, _ = _tree(
         "def inner(value):\n"
         "    return value + 10\n\n"
         "def outer():\n"
@@ -666,7 +583,6 @@ def test_nested_shadowed_function_does_not_cross_wire_outer_same_name() -> None:
         "        return value + 1\n"
         "    return inner(3)\n\n"
         "outer()\n",
-        bind=frozenset({"outer", "inner"}),
     )
     call = _calls_named(tree, "outer")[0]
     nested = [
@@ -675,20 +591,8 @@ def test_nested_shadowed_function_does_not_cross_wire_outer_same_name() -> None:
         if isinstance(node, FunctionDef) and node.name == "inner"
     ]
     assert len(nested) == 2
-    # Seat the module's same-name frame at the nested call after the tree is
-    # built.  A lexical call's frame is read once, at construction, and the
-    # call carries it (#8210): this late seat is never read, so it cannot
-    # cross-wire the call.  Python: ``outer()`` calls the nested ``inner``,
-    # 3 + 1 == 4, never the module's 3 + 10 == 13.
-    nested_call = next(
-        node
-        for node in tree.nodes()
-        if isinstance(node, Call) and getattr(node.func, "id", None) == "inner"
-    )
-    context.source_call_frames[_coordinate(nested_call)] = nested[
-        0
-    ].source_visible_call_frame()
-
+    # Python: ``outer()`` calls the nested ``inner``, 3 + 1 == 4, never the
+    # module's 3 + 10 == 13.
     assert call.sugar().desugar(None).completed_value()._dig_floor_or_none(
         None, owner="nested-shadow-cross-wire"
     ) == TermValue(4)
@@ -701,7 +605,6 @@ def test_lambda_inside_nested_function_composes_with_source_return_projection() 
         "        return (lambda item: item + 1)(value)\n"
         "    return inner(3) + 2\n\n"
         "outer()\n",
-        bind=frozenset({"outer", "inner"}),
     )
     call = _calls_named(tree, "outer")[0]
 
@@ -711,9 +614,7 @@ def test_lambda_inside_nested_function_composes_with_source_return_projection() 
 
 
 def _nested_definition_and_call(source: str):
-    tree, context, _ = _tree(
-        source, bind=frozenset({"outer", "inner", "other", "foreign"})
-    )
+    tree, context, _ = _tree(source)
     nested = [
         node
         for node in tree.nodes()
@@ -775,45 +676,3 @@ def test_nested_definition_after_call_does_not_authorize_earlier_call() -> None:
     )
     assert len(calls) == 1
     assert calls[0].unit.source_function_definition_for_call(calls[0]) is None
-
-
-@pytest.mark.parametrize("foreign_owner", ("module", "wrong-scope"))
-def test_foreign_same_signature_nested_frame_refuses_loudly(
-    foreign_owner: str,
-) -> None:
-    source = (
-        "def inner(value):\n"
-        "    return value + 10\n\n"
-        "def foreign():\n"
-        "    def inner(value):\n"
-        "        return value + 20\n"
-        "    return inner(1)\n\n"
-        "def outer():\n"
-        "    def inner(value):\n"
-        "        return value + 1\n"
-        "    return inner(3)\n\n"
-        "outer()\n"
-    )
-    tree, context, definitions, calls = _nested_definition_and_call(source)
-    outer_call = max(calls, key=lambda node: node.line_col_span().start_line)
-    module_definition = min(
-        definitions, key=lambda node: node.line_col_span().start_line
-    )
-    wrong_scope_definition = sorted(
-        definitions, key=lambda node: node.line_col_span().start_line
-    )[1]
-    foreign_definition = (
-        module_definition if foreign_owner == "module" else wrong_scope_definition
-    )
-    # A foreign frame seated after the tree is built is never read: the call
-    # carries the frame read once at construction (#8210).  Python:
-    # ``outer()`` is its own nested ``inner(3)``, 4 -- never the module's 13
-    # nor ``foreign``'s 21.
-    context.source_call_frames[_coordinate(outer_call)] = (
-        foreign_definition.source_visible_call_frame()
-    )
-    public_call = _calls_named(tree, "outer")[0]
-
-    assert public_call.sugar().desugar(None).completed_value()._dig_floor_or_none(
-        None, owner=f"foreign-nested-{foreign_owner}"
-    ) == TermValue(4)

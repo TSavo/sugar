@@ -4,8 +4,8 @@ A call's occurrence is a pure function of ``(unit.source_cid, line_col_span())``
 It takes no construction context as input and both mint sites in
 ``Call._construct_sugar`` computed it identically. But it was minted only under
 ``isinstance(context, TreeConstructionContextV1)``, and downstream code then
-read ``coordinate is not None`` as "there is a context" -- the comment at the
-``source_call_frame_table`` argument said so in writing.
+read ``coordinate is not None`` as "there is a context" -- a comment at the
+call's frame-table argument said so in writing.
 
 So one field carried two answers:
 

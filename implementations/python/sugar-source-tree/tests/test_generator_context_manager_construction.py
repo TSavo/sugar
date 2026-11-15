@@ -1,13 +1,12 @@
 import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import (
-    SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.ir import ctor, eq, num, str_const
-from sugar_source_tree.nodes import Call, FunctionDef, With, _Splice
+from sugar_source_tree.nodes import Call, With, _Splice
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
@@ -18,17 +17,6 @@ def _source_file(source: str, context) -> SourceFile:
     return SourceFile(
         (source, "renamed_generator_manager.py", blake3_512_of(source.encode())),
         construction_context=context,
-    )
-
-
-def _coordinate(node) -> SourceFragmentCoordinateV1:
-    span = node.line_col_span()
-    return SourceFragmentCoordinateV1(
-        node.unit.source_cid,
-        span.start_line,
-        span.start_col,
-        span.end_line,
-        span.end_col,
     )
 
 
@@ -57,13 +45,9 @@ def _with_sugar(
         f"{with_body}\n",
         context,
     )
-    function = next(node for node in source.nodes() if isinstance(node, FunctionDef))
     with_node = next(node for node in source.nodes() if isinstance(node, With))
     manager_call = with_node.items[0].context_expr
     assert isinstance(manager_call, Call)
-    context.source_call_frames[_coordinate(manager_call)] = (
-        function.source_visible_call_frame()
-    )
     substituted = with_node.substitute({})
     if isinstance(substituted, _Splice):
         # The with publishes what its body left (``With._published``).

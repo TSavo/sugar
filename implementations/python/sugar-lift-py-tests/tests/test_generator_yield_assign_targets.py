@@ -38,7 +38,6 @@ Residue of #7991 (#7757):
 from __future__ import annotations
 
 from sugar_lift_py_tests.context_manager_resolution import (
-    SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.effect import RaiseEffect
@@ -253,33 +252,15 @@ def test_a_yield_from_a_list_binds_its_return_value_none() -> None:
     assert terminated.return_value == NoneValue()
 
 
-def _coordinate(node) -> SourceFragmentCoordinateV1:
-    span = node.line_col_span()
-    return SourceFragmentCoordinateV1(
-        node.unit.source_cid,
-        span.start_line,
-        span.start_col,
-        span.end_line,
-        span.end_col,
-    )
-
-
 def _outer_generator(source: str) -> GeneratorConstructionV1:
-    """The generator ``outer()`` (the last call in ``source``) allocates, with
-    every call in ``source`` seated on its source-visible frame."""
+    """The generator ``outer()`` (the last call in ``source``) allocates; every
+    call in ``source`` applies its own definition's frame."""
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = SourceFile(
         (source, "yield_from_delegate.py", blake3_512_of(source.encode())),
         construction_context=context,
     )
-    functions = {
-        node.name: node for node in tree.nodes() if isinstance(node, FunctionDef)
-    }
     calls = [node for node in tree.nodes() if isinstance(node, Call)]
-    for call in calls:
-        context.source_call_frames[_coordinate(call)] = functions[
-            call.func.id
-        ].source_visible_call_frame()
     outer = next(call for call in calls if call.func.id == "outer")
     machine = outer.sugar().desugar().completed_value()
     assert isinstance(machine, GeneratorConstructionV1)
