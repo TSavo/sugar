@@ -3614,6 +3614,12 @@ fn emit_grounded_int_bitwise(name: &str, args: &[Term]) -> Option<String> {
 // type is not decided (a formal, a call's result) leaves the term and its
 // completes atom exactly the uninterpreted application they were: no operation
 // is decided on an undecided operand, and its undecided member stays owed.
+// The one exception is a binary operation (`python:binary_result`): an
+// undecided operand there is read at a builtin type under that type's guard
+// (`py_stated`), the same `python:value.is_int` / `is_str` that `py.eq` reads,
+// so where a joined contract's `=` states the operand's type and value the
+// operation is decided, and where nothing states it the `ite` falls back to
+// the uninterpreted application.
 //
 // A decided operation carries four SMT parts: `ready` (its operands completed
 // with values this backend holds), `law` (Python completes the operation on
@@ -3892,10 +3898,10 @@ fn py_decided_operation(name: &str, args: &[Term]) -> Option<PyDecided> {
                 ..
             }, left_term, right_term, _key],
         ) => {
-            let left = py_decided(left_term)?;
-            let right = py_decided(right_term)?;
+            let (left, right) = py_binary_operands(left_term, right_term)?;
             // `x OP= y` (the kit spells the operator `OP=`,
-            // `_INPLACE_OPERATOR_COORDINATE`) over a builtin `int` or `str`:
+            // `_INPLACE_OPERATOR_COORDINATE`) over a builtin `int` or `str`
+            // (decided, or stated exactly by its guard, `py_stated`):
             // neither type defines an in-place method, so Python runs the
             // binary operator (#7757 step 7). Over any other operand the
             // term stays the uninterpreted application it was.
@@ -3912,6 +3918,61 @@ fn py_decided_operation(name: &str, args: &[Term]) -> Option<PyDecided> {
         }
         _ => None,
     }
+}
+
+/// The two operands of a binary operation, each read at a builtin type.
+///
+/// A decided operand is its own (`py_decided`). An undecided Int-universe
+/// operand (a call's result, a formal) is read at the type of the other
+/// operand where that one is decided, and at `int` where neither is
+/// (`py_stated`): its value is used only where its stated type is exactly
+/// that one, which only a literal or a joined contract's `=` states
+/// (`py_value_is`). So `x + 1` with `x` a joined call's result whose post is
+/// `out = 2` is the SMT integer `2 + 1`, and where nothing states `x`'s type
+/// the operation and its completes atom stay the uninterpreted application
+/// they were (the `ite` in `py_universe_value` and in the completes reading).
+/// An operand of a type no pair here is written for (`"a" * x` read at `str`)
+/// leaves the pair unwritten in `py_binary`: undecided, as before.
+fn py_binary_operands(left: &Term, right: &Term) -> Option<(PyDecided, PyDecided)> {
+    match (py_decided(left), py_decided(right)) {
+        (Some(left), Some(right)) => Some((left, right)),
+        (Some(left), None) => {
+            let right = py_stated(right, left.ty)?;
+            Some((left, right))
+        }
+        (None, Some(right)) => {
+            let left = py_stated(left, right.ty)?;
+            Some((left, right))
+        }
+        (None, None) => Some((py_stated(left, PyType::Int)?, py_stated(right, PyType::Int)?)),
+    }
+}
+
+/// An undecided Int-universe operand read at builtin type `ty`: ready exactly
+/// where its stated type is `ty` (`python:value.is_int` / `python:value.is_str`,
+/// the same guards `py.eq` reads), its value the operand itself for an `int`
+/// and its `str` content for a `str`. `None` for an operand outside the Int
+/// universe.
+fn py_stated(term: &Term, ty: PyType) -> Option<PyDecided> {
+    let undecided = match py_side(term)? {
+        PySide::Decided(_) => return None,
+        PySide::Undecided(undecided) => undecided,
+    };
+    let (is_str, is_int) = py_type_guards(&undecided);
+    let (ready, value) = match ty {
+        PyType::Int => (format!("(and {is_int} (not {is_str}))"), undecided),
+        PyType::Str => (
+            format!("(and {is_str} (not {is_int}))"),
+            format!("({PY_VALUE_STR} {undecided})"),
+        ),
+    };
+    Some(PyDecided {
+        ty,
+        ready,
+        law: "true".to_string(),
+        defined: "true".to_string(),
+        value,
+    })
 }
 
 /// `(type, law, defined, value)` of `left <operator> right` over decided
