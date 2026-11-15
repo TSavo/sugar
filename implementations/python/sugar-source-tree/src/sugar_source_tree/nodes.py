@@ -24040,8 +24040,49 @@ class Compare(Expression):
 
     def substitute(self, scope):
         """A comparison binds nothing: recurse into its operands (the operators
-        are leaves, carried through)."""
-        return self._substitute_children(scope)
+        are leaves, carried through).
+
+        A chained comparison carries each leg's operator interval, read off
+        its source operands (``leg_gaps``): a substituted operand is a read
+        of a binding, whose node may stand at another span (a reference to
+        the store it reads), and no longer bounds the operator it sits
+        beside in the source (``_comparison_leg_site``)."""
+        substituted = self._substitute_children(scope)
+        if (
+            substituted is self
+            or len(self.ops) < 2
+            or getattr(self, "leg_gaps", None) is not None
+        ):
+            return substituted
+        operands = (self.left, *self.comparators)
+        gaps = tuple(self._leg_gap(index, operands) for index in range(len(self.ops)))
+        if any(gap is None for gap in gaps):
+            return substituted
+        from .shadow import rewrite_with_leaves
+
+        # The same occurrence of the same comparison: it answers the roll at
+        # this coordinate as the one it replaces does.
+        return rewrite_with_leaves(
+            substituted,
+            {"leg_gaps": tuple((gap.start, gap.end) for gap in gaps)},
+        )
+
+    def _leg_gap(self, index: int, operands: tuple) -> "Optional[Span]":
+        """The operator interval between leg ``index``'s operands, where
+        their spans bound a non-empty interval inside this comparison in
+        source order; None where they do not."""
+        left = operands[index]
+        right = operands[index + 1]
+        if not (
+            self.span.start <= left.span.start < left.span.end
+            and left.span.end < right.span.start
+            and right.span.end <= self.span.end
+        ):
+            return None
+        gap = Span(left.span.end, right.span.start)
+        if not gap.slice(self.unit.source).strip():
+            return None
+        return gap
 
     def _comparison_leg_site(self, index: int, operands: tuple[Expression, ...]):
         """Return the enumerated operator occurrence for one chained leg.
@@ -24049,31 +24090,34 @@ class Compare(Expression):
         The operator token, not operand content or the enclosing Compare span,
         distinguishes adjacent operations.  Authenticate that token against
         the two operands it separates before allowing it to become an effect
-        occurrence coordinate.
+        occurrence coordinate: the source operands, whose intervals
+        substitution carried (``leg_gaps``), or these operands where the
+        comparison was never substituted.
         """
-        left = operands[index]
-        right = operands[index + 1]
-
-        def reject():
+        carried = getattr(self, "leg_gaps", None)
+        if carried is not None:
+            start, end = carried[index]
+            gap = Span(start, end)
+        else:
+            gap = self._leg_gap(index, operands)
+        if gap is None:
             from sugar_source_tree.panic import SugarNotWritten
 
+            left = operands[index]
+            right = operands[index + 1]
             raise SugarNotWritten(
                 blame=self.fragment,
                 owner="Compare._comparison_leg_site",
-                observed=(index, left.span, right.span),
+                observed=(
+                    f"chained comparison leg {index}: its operands at "
+                    f"{left.span.start}-{left.span.end} ({left.kind}) and "
+                    f"{right.span.start}-{right.span.end} ({right.kind}) bound "
+                    "no operator interval inside the comparison at "
+                    f"{self.span.start}-{self.span.end}"
+                ),
                 requested="the source-authenticated operator interval between adjacent operands",
                 fix="preserve each Compare leg's adjacent operand spans in source order",
             )
-
-        if not (
-            self.span.start <= left.span.start < left.span.end
-            and left.span.end < right.span.start
-            and right.span.end <= self.span.end
-        ):
-            reject()
-        gap = Span(left.span.end, right.span.start)
-        if not gap.slice(self.unit.source).strip():
-            reject()
         from .fragment import SourceFragment
 
         # Comparison operators have no backend node of their own.  The exact
