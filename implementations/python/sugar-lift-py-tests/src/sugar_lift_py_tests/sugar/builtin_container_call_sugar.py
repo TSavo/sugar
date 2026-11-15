@@ -137,7 +137,7 @@ def _immutable(value, depth=0) -> bool:
     return False
 
 
-def _may_change(value, method, pure, sharer) -> bool:
+def _may_change(value, method, pure, sharer, held=None) -> bool:
     """Whether a call may have changed ``value``, the value it met.
 
     ``method`` names the receiver's method when the value is the receiver
@@ -147,13 +147,41 @@ def _may_change(value, method, pure, sharer) -> bool:
 
     An object of a source class (``ObjectValue``) is changed by whatever
     code reaches it -- a method of its own, or an opaque call it is handed --
-    as a parameter's or a display's object is: it may have changed."""
+    as a parameter's or a display's object is: it may have changed.
+
+    The one field store (``container_mutation.field_store_method``:
+    ``value`` is its receiver) is ``type(receiver).__setattr__``, which the
+    receiver's class decides (``ObjectValue.field_store_route``).  The store
+    changes the object itself, and whatever holds it.  It reaches what the
+    receiver shares, and what the caller holds beyond it, only when it runs
+    code: an instance whose class takes ``object``'s ``__setattr__`` and
+    binds no data descriptor for the name runs none; one whose class binds a
+    ``__setattr__`` or a descriptor's ``__set__``, or whose lookup does not
+    decide, does or may; a builtin container's or an immutable value's own
+    floor answers the store and runs none; any other receiver (a formal with
+    no actual, an undecided value) may run any.  An operand the store hands
+    that code (its rule's ``operand``; ``held`` its own value) may have
+    changed when the store runs code and the operand is one a call it is
+    handed to changes."""
     from sugar_lift_py_tests.floor import builtin_container_method as law
     from sugar_lift_py_tests.floor.object_value import ObjectValue
     from sugar_lift_py_tests.source_call_resolution import builtin_typed_value
+    from sugar_source_tree.container_mutation import (
+        field_store_method,
+        field_store_rule,
+    )
 
     if _immutable(value):
         return False
+    store = field_store_rule(method)
+    if store is not None:
+        attr, operand = store
+        if operand:
+            return _may_change(value, field_store_method(attr), False, True) and (
+                held is None or _may_change(held, "", False, False)
+            )
+        if isinstance(value, ObjectValue):
+            return not sharer or value.field_store_runs_code(attr)
     kind = law.container_kind(value)
     if sharer:
         return kind is None
@@ -268,6 +296,10 @@ class ReceiverAfterCallSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             plain_completed_value,
         )
+        from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
+            floored_receiver,
+        )
+        from sugar_source_tree.container_mutation import field_store_rule
 
         unknown = ExitSet.completed(_unknown_after(self.site, self.label))
         if self.prior is None or not self.rules:
@@ -287,7 +319,15 @@ class ReceiverAfterCallSugar(ConstructedTermSugar):
                     met[subject] = plain_completed_value(
                         self.subjects[subject].desugar(ctx)
                     )
-            if met[subject] is None or _may_change(met[subject], method, pure, sharer):
+            met_value = met[subject]
+            if met_value is not None and field_store_rule(method) is not None:
+                # The one field store decides by its receiver as the store
+                # read it: an object read through its constructor call's key
+                # is that call's floor (``floored_receiver``).
+                met_value = floored_receiver(met_value, ctx)
+            if met_value is None or _may_change(
+                met_value, method, pure, sharer, held=value
+            ):
                 return unknown
         return held
 

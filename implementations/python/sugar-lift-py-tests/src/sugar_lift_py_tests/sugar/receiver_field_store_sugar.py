@@ -17,14 +17,33 @@ class ReceiverFieldStoreSugar(Sugar):
 
     - an instance of a source class (``ObjectValue``), made in this frame or
       arrived -- a formal's actual, a class call's coordinate receiver, a
-      value read off a binding -- takes its own store (``setattr``: a
-      property refuses with ``AttributeError``, an undecided class member
-      refuses by name); the statement records the store
-      (``ReceiverFieldStoreValue``), which advances every binding of the
-      object (``extend_scope``) and is what a call carries to its caller
-      (``caller_visible_stores``).  The field is then known on the object
-      even where it arrived (``ObjectValue.stored_fields``); the rest of it
-      stays as its currency says.
+      value read off a binding -- is decided by the one class lookup on its
+      type (``ObjectValue.field_store_route``: the store is
+      ``type(receiver).__setattr__``):
+
+      - a class that takes ``object``'s ``__setattr__`` and binds no data
+        descriptor for the name takes the plain store (``setattr``; a
+        property with no setter this lookup selects refuses with
+        ``AttributeError``); the statement records the store
+        (``ReceiverFieldStoreValue``), which advances every binding of the
+        object (``extend_scope``) and is what a call carries to its caller
+        (``caller_visible_stores``).  The field is then known on the object
+        even where it arrived (``ObjectValue.stored_fields``); the rest of
+        it stays as its currency says.
+      - a class whose lookup selects a source ``__setattr__``, or a source
+        descriptor's ``__set__`` for the name, runs that function: the store
+        is that call (``ObjectValue.field_store_call``), applied like any
+        call, its halts the store's and its value recorded as a call in
+        statement position is (``record_statement_value``: what it did to
+        what this frame sees rides it, ``caller_visible_values``).
+      - a class whose lookup does not decide (an unread base, a builtin
+        base with a ``__setattr__`` of its own, a member not decided) is the
+        one unanswered call: two faces, owed.
+
+      A store that ran code leaves the receiver as that call states it
+      (``ObjectValue.after_field_store_call``: unknown where it states
+      nothing, so no field of it is decided), bound under ``after``, the key
+      the receiver's post-state reads it through.
     - any other value takes the ordinary store
       (``store_effect_sugar.project_setattr``): a formal with no
       actual is the undischarged ``setattr_named`` demand, a decided runtime
@@ -40,6 +59,10 @@ class ReceiverFieldStoreSugar(Sugar):
     value: Sugar
     attr: str
     site: object = field(compare=False)
+    # The key a store that ran code binds the receiver after it under
+    # (``nodes._receiver_field_store``); None for a statement never
+    # substituted, whose receiver no post-state reads.
+    after: str | None = field(default=None, compare=False)
     # Nothing binds before a halt of the value, the receiver or the store:
     # its pre-halt record is the block's prefix.
     halts_at_statement_head: ClassVar[bool] = True
@@ -70,13 +93,84 @@ class ReceiverFieldStoreSugar(Sugar):
         from sugar_lift_py_tests.sugar.store_effect_sugar import project_setattr
 
         receiver = floored_receiver(receiver, ctx)
-        if isinstance(receiver, ObjectValue):
+        if not isinstance(receiver, ObjectValue):
+            return project_setattr(receiver, self.attr, value, self.site, ctx)
+        if not receiver.field_store_runs_code(self.attr):
             return receiver.setattr(self.attr, value, self.site, ctx).and_then(
                 lambda _after: ExitSet.completed(
                     ReceiverFieldStoreValue(receiver, self.attr, value)
                 )
             )
-        return project_setattr(receiver, self.attr, value, self.site, ctx)
+        # The store is a call: the one the class lookup selected, or the
+        # unanswered one.
+        outcome = receiver.field_store_call(self.attr, value, self.site, ctx)
+        if not isinstance(outcome, ExitSet):
+            # A deferred native operation of the body: the caller's to
+            # discharge, as for any call.
+            return outcome
+        return outcome.and_then(lambda result: self._ran(receiver, result, ctx))
+
+    def _ran(self, receiver, result, ctx) -> ExitSet:
+        """The record of a store that ran code and completed with ``result``
+        (the call's value): the call, recorded as a call in statement
+        position is (``record_statement_value``: the stores it carries to
+        this frame are laid in the record), carrying the receiver after it
+        (``ObjectValue.after_field_store_call``) as a write under ``after``,
+        where the receiver's post-state reads it
+        (``ReceiverFieldStoreStateSugar``).  Every binding that names the
+        object holds it as the call left it from here
+        (``advanced_bindings``, the one alias advance of a field store):
+        never the object as it was before the store."""
+        from dataclasses import replace
+
+        from sugar_lift_py_tests.context import ReduceContext
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            NamedExpressionValue,
+            carry_walrus_binds,
+            peel_walrus_binds,
+        )
+        from sugar_lift_py_tests.floor.receiver_field_store_value import (
+            advanced_bindings,
+        )
+        from sugar_lift_py_tests.sugar.expr_statement_sugar import (
+            record_statement_value,
+        )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            statement_record,
+        )
+
+        if ctx is None:
+            ctx = ReduceContext.root(owner="ReceiverFieldStoreSugar")
+        after = receiver.after_field_store_call(result, self.site)
+        binds, call = peel_walrus_binds(result)
+        if self.after is not None:
+            binds = (
+                *binds,
+                NamedExpressionValue(
+                    self.attr, after(receiver), evaluation=self.after
+                ),
+            )
+
+        def advanced(block):
+            # The record the statement leaves, in the context the call's
+            # record leaves (``statement_record``), with the object's
+            # bindings advanced.
+            record = statement_record(block, ctx)
+            return ExitSet.completed(
+                replace(
+                    record,
+                    context=advanced_bindings(
+                        record.context,
+                        receiver,
+                        after,
+                        owner="ReceiverFieldStoreSugar",
+                    ),
+                )
+            )
+
+        return record_statement_value(carry_walrus_binds(binds, call), ctx).and_then(
+            advanced
+        )
 
 
 def floored_receiver(receiver, ctx):

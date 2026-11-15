@@ -68,6 +68,18 @@ receiver an active ``__init__`` constructs):
   to each cell it declares ``nonlocal``: each name of the caller bound to
   such an object reads the value the call carried for it
   (``source_helper_actual_states``, ``call_site_value.caller_visible_values``).
+- **A field store** (``o.f = v``, ``nodes.ReceiverFieldStoreStatement``) is
+  ``type(o).__setattr__``: one operation more (``_FieldStore``).  The
+  receiver's value decides at reduce what it runs
+  (``field_store_method``, ``ObjectValue.field_store_route``): an instance
+  whose class takes ``object``'s ``__setattr__`` and binds no data descriptor
+  for the name stores the field and changes the object only; a source
+  ``__setattr__`` or descriptor ``__set__`` is that function's call; a
+  class lookup that does not decide, or a receiver that is no source
+  instance, is a call the caller does not follow.  Where it runs code, what
+  the object shares (``holder_states``), the stored value's objects
+  (``_call_targets``) and what the caller holds beyond them
+  (``_ambient_targets``) are exposed as at any such call.
 
 The same door serves a mutation through a path (``path_mutation_statement``,
 ``path_item_statement``: ``a.b.append(x)``, ``a[i][j] = v``, ``d['k'][0] +=
@@ -386,6 +398,15 @@ def _walk_values(node, *, kept_only=True):
         if denoted is not current and isinstance(denoted, Node):
             # A read of an assigned name holds what its assignment was given.
             stack.append(denoted)
+            continue
+        if getattr(current, "kind", None) == "ReceiverAfterCall":
+            # A value a call may have changed is the value it was (``prior``)
+            # or an unknown.  The reads that decide which (``subjects``) are
+            # not values it holds: a name exposed at a store on ``o`` does
+            # not hold ``o`` by that.
+            prior = getattr(current, "prior", None)
+            if isinstance(prior, Node):
+                stack.append(prior)
             continue
         for _name, _index, child in current._child_edges():
             if isinstance(child, Node):
@@ -1378,6 +1399,14 @@ def _call_targets(call, scope, bound_refs):
         return [
             (node, _OPERAND_RULES, None) for node in _exposed(call.value, bound_refs)
         ]
+    if call.kind == "FieldStore":
+        # The stored value is handed to the code the store runs, as an
+        # operand is to a call: the receiver's value decides whether it runs
+        # any (``_field_store_rules``).
+        if builtin_typed(call.receiver, scope):
+            return []
+        rules, subject = _field_store_rules(call, operand=True)
+        return [(node, rules, subject) for node in _exposed(call.value, bound_refs)]
     if not isinstance(call, Call):
         return []
     targets = []
@@ -2247,12 +2276,12 @@ def holder_states(
     method,
     tags,
     skip=(),
-    ordinary=True,
 ):
     """``[(name, state)]``: the one holder rule, for every operation that
     changes the object ``root`` denotes -- the one door's mutation
     (``name_mutation_statement``) and a field store on it
-    (``nodes.ReceiverFieldStoreStatement``).  The names bound to the object
+    (``nodes.ReceiverFieldStoreStatement``, ``method`` its
+    ``field_store_method``).  The names bound to the object
     itself read its post-state (the caller's); every other name ``scope``
     binds (``skip`` excepted) whose value may see the change is rebound to
     its value after the operation, which the value decides at reduce
@@ -2266,16 +2295,23 @@ def holder_states(
       (``a, b = g()``), an item the source does not say (``r[i]``) -- may be
       any object the value it was read from reaches: a name sharing one may
       hold it, never only share with it.
-    - ``ordinary``: the operation may be an ordinary call -- code that
-      reaches whatever the object holds (``sharer``), which its value
-      decides at reduce.  A builtin container's cited mutation changes the
-      container only; a field store is the plain store of one field
-      (``ReceiverFieldStoreStateSugar``), which changes the object only.
-      Neither reaches a name that merely shares something with the object."""
+    - The operation may be an ordinary call -- code that reaches whatever
+      the object holds (``sharer``) -- which the receiver's value decides at
+      reduce, for the one door's mutation and for a field store alike.  A
+      builtin container's cited mutation changes the container only, and a
+      field store whose receiver's class takes ``object``'s ``__setattr__``
+      and binds no data descriptor for the name changes the object only:
+      neither reaches a name that merely shares something with the object.
+      A field store that runs a ``__setattr__`` or a descriptor's
+      ``__set__``, or whose class lookup does not decide, does
+      (``ObjectValue.field_store_runs_code``).  Where no read of the
+      receiver decides it (``_reads_again``: a temporary, a path), a sharer
+      is exposed as an operand handed to a call is (``_OPERAND_RULES``)."""
     from .nodes import Node
 
     undecided = _undecided_member(root)
-    graph = _graph(root) if ordinary or undecided else set()
+    graph = _graph(root)
+    decides = _reads_again(receiver)
     found = []
     for alias, value in scope.items():
         if not isinstance(alias, str) or alias in skip:
@@ -2287,7 +2323,11 @@ def holder_states(
             continue
         shares = bool(graph) and bool(_graph(state) & graph)
         holds = alias in containing or (undecided and shares)
-        if holds or (ordinary and shares):
+        if holds or shares:
+            if holds or decides:
+                conditions = [(receiver, (method, False, not holds))]
+            else:
+                conditions = [(None, _OPERAND_RULES[0])]
             found.append(
                 (
                     alias,
@@ -2296,11 +2336,57 @@ def holder_states(
                         alias,
                         tags,
                         prior=_read_of(value),
-                        conditions=[(receiver, (method, False, not holds))],
+                        conditions=conditions,
                     ),
                 )
             )
     return found
+
+
+# The method a rule names for the one field store (``_may_change``), and for
+# an operand that store hands the code it runs.  No Python identifier holds
+# ``:``, so no method a source spells is read as one.
+_FIELD_STORE_METHOD = "__setattr__:"
+_FIELD_STORE_OPERAND = "__setattr__:value:"
+
+
+def field_store_method(attr: str, *, operand: bool = False) -> str:
+    """The method a rule names for the one field store ``o.<attr> = v``
+    (``nodes.ReceiverFieldStoreStatement``): ``type(o).__setattr__`` with the
+    stored name, which the receiver's value needs to decide what the store
+    runs (``field_store_rule``, ``ObjectValue.field_store_route``).
+    ``operand``: the rule is for an object the stored value hands the code
+    the store runs."""
+    return f"{_FIELD_STORE_OPERAND if operand else _FIELD_STORE_METHOD}{attr}"
+
+
+def field_store_rule(method) -> "tuple[str, bool] | None":
+    """``(attr, operand)`` of a field store's rule (``field_store_method``),
+    or None for any other method."""
+    if not isinstance(method, str):
+        return None
+    if method.startswith(_FIELD_STORE_OPERAND):
+        return method[len(_FIELD_STORE_OPERAND) :], True
+    if method.startswith(_FIELD_STORE_METHOD):
+        return method[len(_FIELD_STORE_METHOD) :], False
+    return None
+
+
+def _reads_again(node) -> bool:
+    """Whether evaluating ``node`` again after its statement runs nothing: a
+    read of a value an earlier evaluation made (``_READ_KINDS``), the
+    receiver an active ``__init__`` constructs, an object place, or one of
+    those after field stores (``ReceiverFieldStoreState``, whose stored
+    value is a key's read).  Only such a read is a rule's subject at reduce
+    (``_havoc``): a temporary (``f().x = v``) or a path (``a.b.x = v``) is
+    evaluated once, by its statement."""
+    seen = 0
+    while getattr(node, "kind", None) == "ReceiverFieldStoreState" and seen < 64:
+        node = node.receiver
+        seen += 1
+    return getattr(node, "kind", None) in _READ_KINDS or getattr(
+        node, "kind", None
+    ) in ("ConstructedReceiverRef", "ObjectPlaceStateV1")
 
 
 def name_mutation_statement(
@@ -3538,6 +3624,35 @@ class _Operated(NamedTuple):
     kind: str = "Operated"
 
 
+class _FieldStore(NamedTuple):
+    """The one field store ``<receiver>.<attr> = <value>`` a statement makes
+    (``nodes.ReceiverFieldStoreStatement``): ``type(receiver).__setattr__``,
+    which runs code when the receiver's class binds a ``__setattr__`` of its
+    own or a data descriptor for ``attr``, and may when its class lookup
+    does not decide.  The receiver's value decides it at reduce
+    (``_field_store_rules``)."""
+
+    receiver: object
+    value: object
+    attr: str
+    kind: str = "FieldStore"
+
+
+def _field_store_rules(site, *, operand=False):
+    """``(rules, subject)`` for what the code the field store ``site`` runs
+    may change (``_rebind``): the receiver's read decides at reduce whether
+    the store runs code at all (``_may_change`` under ``field_store_method``,
+    ``sharer``: a plain store reaches nothing beyond the object).
+    ``operand``: the object is one the stored value hands that code, changed
+    as an operand handed to a call is.  Where no read of the receiver
+    decides it (``_reads_again``), the operand rule (``_OPERAND_RULES``), no
+    subject."""
+    if _reads_again(site.receiver):
+        method = field_store_method(site.attr, operand=operand)
+        return ((method, False, True),), site.receiver
+    return _OPERAND_RULES, None
+
+
 # Expressions whose own evaluation runs a dunder of its operands' values:
 # ``a + b``, ``-a``, ``a and b`` (``__bool__``), ``x if t else y``
 # (``__bool__``), ``a == b``/``x in y`` (``__eq__``, ``__contains__``),
@@ -3610,6 +3725,11 @@ def _sites_at(node, headers=()):
         yield _Operated(node.iter)
         for condition in node.ifs:
             yield _Operated(condition)
+    elif node.kind == "ReceiverFieldStoreStatement":
+        # The one field store is ``type(receiver).__setattr__``: an
+        # operation that may run code, as an item store is.
+        state = node.post_state
+        yield _FieldStore(state.receiver, node.value, state.attr)
 
 
 def _import_member(node) -> bool:
@@ -3639,6 +3759,8 @@ def _site_operands(site):
     kind = site.kind
     if kind == "Operated":
         return (site.node,)
+    if kind == "FieldStore":
+        return (site.receiver, site.value)
     if kind == "BinOp":
         return (site.left, site.right)
     if kind == "UnaryOp":
@@ -3756,6 +3878,15 @@ def _code_subjects(call, scope):
 
     if call.kind in _SUSPENSION_KINDS:
         return None
+    if call.kind == "FieldStore":
+        # The one field store: a builtin receiver runs none (its floor
+        # answers the store); any other receiver's value decides by its
+        # class (``_field_store_rules``), and where no read of it decides,
+        # it may run any.
+        if builtin_typed(call.receiver, scope):
+            return []
+        rules, subject = _field_store_rules(call)
+        return None if subject is None else [(subject, rules)]
     if call.kind == "FormattedValue":
         operands = (call.value,)
     elif isinstance(call, PathContainerCall):
