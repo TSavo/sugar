@@ -638,18 +638,16 @@ class CallSiteSugar(ConstructedTermSugar):
             # (``written_by``: ``f((a := 1), a)``), inside its door, which
             # lays its stores in their halts; a later actual's halt is
             # recorded where it was evaluated, after every earlier actual's
-            # writes (``inside``, ``evaluated_after``).
+            # writes (``inside``, ``evaluated_after``).  The actual is
+            # collected as evaluated: it is converted to the operation
+            # receiver it is once, where the call is applied (``_applied``).
             return evaluated_after((), head, actual_ctx, inside=inside).and_then(
                 lambda value: consume_operands(
-                    lambda presented: presented.project_operation_receiver_outcome(
-                        actual_ctx, owner="CallSiteSugar positional actual"
-                    ).and_then(
-                        lambda actual: self._collect(
-                            tuple(rest),
-                            accumulated + (actual,),
-                            written_by(value, ctx),
-                            (*inside, value),
-                        )
+                    lambda presented: self._collect(
+                        tuple(rest),
+                        accumulated + (presented,),
+                        written_by(value, ctx),
+                        (*inside, value),
                     ),
                     value,
                 )
@@ -676,68 +674,119 @@ class CallSiteSugar(ConstructedTermSugar):
             # Same order as the positional actuals (``_collect``).
             return evaluated_after((), sugar, actual_ctx, inside=inside).and_then(
                 lambda value: consume_operands(
-                    lambda presented: presented.project_operation_receiver_outcome(
-                        actual_ctx, owner="CallSiteSugar keyword actual"
-                    ).and_then(
-                        lambda actual: self._collect_kwargs(
-                            tuple(rest),
-                            kw_values + ((name, actual),),
-                            positional,
-                            written_by(value, ctx),
-                            (*inside, value),
-                        )
+                    lambda presented: self._collect_kwargs(
+                        tuple(rest),
+                        kw_values + ((name, presented),),
+                        positional,
+                        written_by(value, ctx),
+                        (*inside, value),
                     ),
                     value,
                 )
             )
-        if ctx is not None:
-            from sugar_lift_py_tests.callable_application import CallableApplication
-            from sugar_lift_py_tests.floor import (
-                BuiltinSemanticCallable,
-                ClassDefinitionValue,
-                LambdaCallable,
-            )
+        return self._applied(positional, kw_values, ctx)
 
-            # A builtin's semantics (``len``, ``isinstance``, ``set``,
-            # ``tuple``, ...) apply only when the callee's binding is the
-            # builtin namespace (``_builtin_floor_value``), never because the
-            # temporal floor holds a builtin under the call's spelling: under
-            # ``from m import *`` or ``len = f`` the call is not the builtin's.
-            receiver = self._builtin_floor_value()
-            if not isinstance(receiver, BuiltinSemanticCallable):
-                receiver = ctx.temporal.value_if_bound(self.target_name)
-                if isinstance(receiver, BuiltinSemanticCallable):
-                    receiver = None
-            # A name bound to a lambda value (``key(item)`` in a function
-            # given ``key=lambda v: ...``) calls that lambda: its own frame,
-            # the one binder and the one application.
-            if (
-                isinstance(receiver, BuiltinSemanticCallable)
-                or (
-                    isinstance(receiver, ClassDefinitionValue)
-                    and self.source_call_frame is None
-                    and not positional
-                    and not kw_values
+    def _applied(self, positional: tuple, kw_values: tuple, ctx: object) -> ExitSet:
+        """The call over its actuals as evaluated (``_collect``), each
+        converted to the operation receiver it is exactly once
+        (``as_operation_receivers``): by the one application of a
+        function's value when the name is bound to one
+        (``LambdaCallable.callable_application_with``), else here, before
+        any other callee is applied (``_applied_to_receivers``)."""
+        from sugar_lift_py_tests.callable_application import CallableApplication
+        from sugar_lift_py_tests.floor import LambdaCallable
+        from sugar_lift_py_tests.floor.lambda_callable import as_operation_receivers
+
+        receiver = self._value_callee(positional, kw_values, ctx)
+        names = tuple(name for name, _ in kw_values)
+        actuals = positional + tuple(value for _, value in kw_values)
+        if isinstance(receiver, LambdaCallable):
+            # A name bound to a function's value (``key(item)`` in a
+            # function given ``key=lambda v: ...``) calls that value: its
+            # own frame, the one binder and the one application, which
+            # converts each actual.
+            return receiver.callable_application_with(
+                CallableApplication(
+                    actuals, names, self.site, call_occurrence=self.call_occurrence
+                ),
+                ctx,
+            )
+        count = len(positional)
+        return as_operation_receivers(
+            actuals,
+            ctx,
+            lambda converted: self._applied_to_receivers(
+                receiver,
+                converted[:count],
+                tuple(zip(names, converted[count:])),
+                ctx,
+            ),
+            owner="CallSiteSugar actual",
+        )
+
+    def _value_callee(self, positional: tuple, kw_values: tuple, ctx: object):
+        """The value this call applies through its own application, or None:
+        the builtin its binding is, a class statement's value called with no
+        actual, or a function's value a name is bound to with no source frame
+        seated at the call."""
+        if ctx is None:
+            return None
+        from sugar_lift_py_tests.floor import (
+            BuiltinSemanticCallable,
+            ClassDefinitionValue,
+            LambdaCallable,
+        )
+
+        # A builtin's semantics (``len``, ``isinstance``, ``set``,
+        # ``tuple``, ...) apply only when the callee's binding is the
+        # builtin namespace (``_builtin_floor_value``), never because the
+        # temporal floor holds a builtin under the call's spelling: under
+        # ``from m import *`` or ``len = f`` the call is not the builtin's.
+        receiver = self._builtin_floor_value()
+        if not isinstance(receiver, BuiltinSemanticCallable):
+            receiver = ctx.temporal.value_if_bound(self.target_name)
+            if isinstance(receiver, BuiltinSemanticCallable):
+                receiver = None
+        if (
+            isinstance(receiver, BuiltinSemanticCallable)
+            or (
+                isinstance(receiver, ClassDefinitionValue)
+                and self.source_call_frame is None
+                and not positional
+                and not kw_values
+            )
+            or (
+                isinstance(receiver, LambdaCallable)
+                and self.source_call_frame is None
+                and isinstance(
+                    self.expected_source_call_frame_owner,
+                    DefinitionOccurrenceAbsentV1,
                 )
-                or (
-                    isinstance(receiver, LambdaCallable)
-                    and self.source_call_frame is None
-                    and isinstance(
-                        self.expected_source_call_frame_owner,
-                        DefinitionOccurrenceAbsentV1,
-                    )
-                    and self.formal_function_sugar is None
-                )
-            ):
-                return receiver.callable_application_with(
-                    CallableApplication(
-                        positional + tuple(value for _, value in kw_values),
-                        tuple(name for name, _ in kw_values),
-                        self.site,
-                        call_occurrence=self.call_occurrence,
-                    ),
-                    ctx,
-                )
+                and self.formal_function_sugar is None
+            )
+        ):
+            return receiver
+        return None
+
+    def _applied_to_receivers(
+        self, receiver, positional: tuple, kw_values: tuple, ctx: object
+    ) -> ExitSet:
+        """``_applied`` for a callee other than a function's value, over its
+        actuals as operation receivers: the builtin's or the class value's
+        own application (``receiver``), else the call by name through its
+        seated frame or as its bodiless coordinate."""
+        if receiver is not None:
+            from sugar_lift_py_tests.callable_application import CallableApplication
+
+            return receiver.callable_application_with(
+                CallableApplication(
+                    positional + tuple(value for _, value in kw_values),
+                    tuple(name for name, _ in kw_values),
+                    self.site,
+                    call_occurrence=self.call_occurrence,
+                ),
+                ctx,
+            )
         from sugar_lift_py_tests.ir import ctor, str_const
 
         owner = str(self.site)
