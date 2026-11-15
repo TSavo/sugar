@@ -20,106 +20,17 @@ later residual that is *not* ``SymbolicValue.attribute`` on the exception name.
 from __future__ import annotations
 
 from pathlib import Path
-from types import MappingProxyType
 
 import pytest
 
-from sugar_lift_py_tests.context_manager_contract import (
-    CallParameterV1,
-    EffectBoundarySemanticsV1,
-    ExceptionInfoBindingV1,
-    ExpectsModeV1,
-    FormalArgumentProjectionV1,
-    KeywordOnlyV1,
-    LiteralDefaultV1,
-    NoDefaultV1,
-    OptionalFormalArgumentProjectionV1,
-    PositionalOrKeywordV1,
-    RaiseEffectKindV1,
-)
-from sugar_lift_py_tests.context_manager_resolution import (
-    ContextManagerContractRefV1,
-    ImportSignatureV2,
-    SourceFragmentCoordinateV1,
-    TreeConstructionContextV1,
-    _hash_json,
-)
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
     AuthenticatedExceptionTypeValue,
 )
 from sugar_lift_py_tests.floor.exception_class_value import ExceptionClassValue
-from sugar_lift_py_tests.ir import PrimitiveSort, ctor, str_const
-from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBoundarySugar
+from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
-
-SIGNATURE = ImportSignatureV2(
-    (
-        CallParameterV1(
-            "expected",
-            PrimitiveSort("Value"),
-            PositionalOrKeywordV1(),
-            True,
-            NoDefaultV1(),
-        ),
-        CallParameterV1(
-            "match",
-            PrimitiveSort("String"),
-            KeywordOnlyV1(),
-            False,
-            LiteralDefaultV1({"kind": "ctor", "name": "None", "args": []}),
-        ),
-    )
-)
-
-
-def _cid(char: str) -> str:
-    return "blake3-512:" + char * 128
-
-
-def _coordinate(node) -> SourceFragmentCoordinateV1:
-    span = node.line_col_span()
-    return SourceFragmentCoordinateV1(
-        node.unit.source_cid,
-        span.start_line,
-        span.start_col,
-        span.end_line,
-        span.end_col,
-    )
-
-
-def _raise_semantics():
-    return EffectBoundarySemanticsV1(
-        ExpectsModeV1(),
-        RaiseEffectKindV1(),
-        FormalArgumentProjectionV1(0),
-        OptionalFormalArgumentProjectionV1(1),
-        ExceptionInfoBindingV1(),
-    )
-
-
-def _ref(use_site, salt: str) -> ContextManagerContractRefV1:
-    return ContextManagerContractRefV1(
-        resolution_cid=_cid(salt),
-        demand_cid=_cid("d"),
-        use_site=use_site,
-        use_site_cid=_hash_json(use_site.wire()),
-        authenticated_import_use_cid=_cid("u"),
-        import_binding_cid=_cid("i"),
-        construction_context_generation_cid=_cid("g"),
-        contract_cid=_cid("m"),
-        payload_cid=_cid("p"),
-        provenance_cid=_cid("v"),
-        distribution_artifact_cid=_cid("a"),
-        dependency_artifact_graph_cid=_cid("b"),
-        module_source_cid=_cid("s"),
-        resolved_definition_cid=_cid("f"),
-        manager_construction_cid=_cid("n"),
-        enter_testimony_cid=_cid("1"),
-        exit_testimony_cid=_cid("2"),
-        import_signature=SIGNATURE,
-        semantics=_raise_semantics(),
-    )
 
 
 def _attribute(tree: SourceFile, attr: str):

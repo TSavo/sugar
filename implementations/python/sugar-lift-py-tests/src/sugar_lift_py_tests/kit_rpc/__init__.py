@@ -14,10 +14,6 @@ from .factory_walk_row_dto import (
 )
 from .implication_dto import ImplicationDto
 from .lift_report_payload_dto import LiftReportPayloadDto
-from .context_manager_edge_dto import (
-    ContextManagerEdgeDtoV1,
-    ContextManagerEdgeTransportError,
-)
 from .open_lane_dto import (
     CallEdgeDto,
     DiagnosticDto,
@@ -64,8 +60,6 @@ __all__ = [
     "ImplicationDto",
     "LiftReportPayloadDto",
     "PanicLocusDto",
-    "ContextManagerEdgeDtoV1",
-    "ContextManagerEdgeTransportError",
     "PlanAtomDto",
     "RecoveredAuditDto",
     "RecoveredEffectDto",

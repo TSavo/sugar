@@ -15,9 +15,6 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.context_manager_resolution import (
-    ContextManagerResolutionGapV1,
-)
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.generator_manager_exit import observed_exit_refusals

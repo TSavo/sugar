@@ -1,15 +1,11 @@
 """Floor: raw-AST exit-disposition side door is gone.
 
-Construction admits NeverSuppresses only via authenticated
-``ContextManagerContractRefV1`` (prebound contract-ref table). Re-parsing
-foreign modules with ``ast.walk`` / ``parsed_tree`` to invent
-``NeverSuppresses`` from foreign ``__exit__`` is poison — not a construction
-authority.
+A ``with``'s manager is what its head reduces to (#7757); suppression is the
+truth of what that manager's ``__exit__`` returns. Re-parsing foreign modules
+with ``ast.walk`` / ``parsed_tree`` to invent ``NeverSuppresses`` from foreign
+``__exit__`` is poison — not a construction authority.
 
-This module pins the side door's absence. Behavioral honest-loud residuals
-(``RuntimeSelectedContextManager`` / ``ContextManagerResolutionConstructionGap``)
-for unauthenticated managers live under sugar-source-tree
-(``test_with_resource_disposition`` / ``test_with_authenticated_contract_ref``).
+This module pins the side door's absence.
 """
 
 from __future__ import annotations
@@ -59,7 +55,7 @@ def test_exit_disposition_proof_module_is_gone():
     """R_exit_disposition_raw_ast_module: module file must not exist."""
     assert not PROOF_MODULE.exists(), (
         f"raw-AST exit disposition side door still present: {PROOF_MODULE}. "
-        "NeverSuppresses admission is only via authenticated ContextManagerContractRefV1."
+        "Suppression is read off the manager the head reduces to."
     )
     assert (
         importlib.util.find_spec("sugar_lift_py_tests.exit_disposition_proof") is None
@@ -109,21 +105,22 @@ def test_production_roots_have_zero_exit_disposition_side_door_imports():
     )
 
 
-def test_with_only_admits_never_suppresses_via_authenticated_disposition_type():
-    """NeverSuppresses on the With arm is the authenticated disposition type only.
-
-    Replacement architecture: ``ContextManagerContractRefV1`` +
-    ``NeverSuppressesDispositionV1`` from the prebound table. No manager-expr
-    reparse, no foreign ``__exit__`` return walk.
-    """
+def test_with_constructs_from_its_head_and_reads_no_contract():
+    """The With arm decides suppression from the manager its head reduces to
+    (``_reduced_manager_sugar``): no prebound contract ref, no injected
+    disposition, no manager-expr reparse, no foreign ``__exit__`` walk."""
     text = WITH_NODES.read_text(encoding="utf-8")
     start = text.find("class With(Statement):")
     end = text.find("\nclass AsyncWith", start)
     with_body = text[start:end] if end != -1 else text[start:]
-    assert "NeverSuppressesDispositionV1" in with_body
-    assert "ContextManagerContractRefV1" in with_body
-    assert "RuntimeSelectedContextManager" in with_body
-    # Greening authority is the injected table, not a source proof helper.
-    assert "_require_narrow_cm_ref" in with_body
+    assert "_reduced_manager_sugar" in with_body
+    for gone in (
+        "ContextManagerContractRefV1",
+        "NeverSuppressesDispositionV1",
+        "RuntimeSelectedContextManager",
+        "_require_narrow_cm_ref",
+        "contract_refs",
+    ):
+        assert gone not in with_body, gone
     assert "prove_exit" not in with_body
     assert "DefinitionMemento" not in with_body

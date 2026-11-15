@@ -27,8 +27,6 @@ Temporal choice 1 (#7661), inventory item 7 (#7757), after #7886 (``x += e``),
 
 from __future__ import annotations
 
-import pytest
-
 from sugar_lift_py_tests.context_manager_contract import ENTER_RESULT
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.sugar.dynamic_unpack_assign_sugar import (
@@ -50,7 +48,6 @@ from sugar_source_tree.nodes import (
     With,
     _Splice,
 )
-from sugar_source_tree.panic import ContextManagerResolutionConstructionGap
 from sugar_source_tree.shadow import rewrite
 from sugar_source_tree.tree import SourceFile
 
@@ -282,11 +279,6 @@ def test_a_with_in_an_unrolled_loop_has_two_exit_faces_and_two_slots() -> None:
     assert len(set(slots)) == 2
     assert source.items[0]._exit_face_id() not in faces
     assert source.items[0]._manager_slot_id() not in slots
-    # Each copy's parametric exit arguments name that copy's face.
-    for item, face in zip(items, faces, strict=True):
-        assert item._make_exit_type_ref().face_id == face
-        assert item._make_exit_value_ref().face_id == face
-        assert item._make_exit_traceback_ref().face_id == face
 
 
 # ---------------------------------------------------------------------------
@@ -341,11 +333,10 @@ def test_a_generator_manager_tuple_target_reads_its_projections(
         assert binding[name].evaluation == projection_key(store.evaluation, name)
 
 
-def test_an_unseated_tuple_target_lowers_its_store_and_construction_refuses() -> None:
-    # Nobody seated a row for ``m``.  Substitution does not ask the require
-    # door: the store is lowered onto the enter result, as a simple ``as``
-    # name is bound to it, and ``a``/``b`` read its projections after the
-    # with.  Constructing the with asks the door and refuses by name.
+def test_a_formal_manager_tuple_target_lowers_its_store_and_constructs() -> None:
+    # No row is read for ``m`` (#7757): the store is lowered onto the enter
+    # result, as a simple ``as`` name is bound to it, ``a``/``b`` read its
+    # projections after the with, and the with constructs from its head.
     function = _function(WITH_TUPLE_FORMAL)
     with_node = _with(_node(function, With).substitute({}))
     assert isinstance(with_node, With)
@@ -358,9 +349,7 @@ def test_an_unseated_tuple_target_lowers_its_store_and_construction_refuses() ->
     for name in ("a", "b"):
         assert isinstance(binding[name], EvaluationRef)
         assert binding[name].evaluation == projection_key(store.evaluation, name)
-    with pytest.raises(ContextManagerResolutionConstructionGap) as refused:
-        function.sugar()
-    assert refused.value.owner == "With._construct_sugar"
+    function.sugar()
 
 
 def test_a_generator_manager_store_is_lowered_once(monkeypatch) -> None:

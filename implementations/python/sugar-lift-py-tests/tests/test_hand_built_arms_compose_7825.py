@@ -39,29 +39,6 @@ def test_prepended_facts_keep_a_non_block_completions_faces() -> None:
     assert out.value.entries == ("fact",)
 
 
-def test_a_warning_boundary_body_runs_beneath_the_manager_face() -> None:
-    # The body was restricted by the manager face's guard alone, so every
-    # body arm dropped what the manager face testified and owed.
-    from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
-        _route_no_warning_boundary,
-    )
-
-    side, _other = partition(("test:manager-face", 7825))
-    guard = atomic("test:manager:7825", [])
-    manager = Completed(guard, TermValue(0), frozenset({side}), ("debt:manager",))
-    (arm,) = _route_no_warning_boundary(
-        body=(),
-        ctx=None,
-        manager_exit=manager,
-        mode=None,
-        site="test:warning-site:7825",
-    ).exits
-    assert isinstance(arm, Completed)
-    assert arm.guard == guard
-    assert side in arm.faces
-    assert arm.owed == ("debt:manager",)
-
-
 def test_the_one_join_takes_every_sibling_at_once() -> None:
     condition = atomic("test:join:7825", [])
     left = ExitSet((Completed(condition, TermValue(1), owed=("debt:left",)),))
