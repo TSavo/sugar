@@ -5234,13 +5234,24 @@ class SourceUnit:
         through the door that binds its tree.
 
         Which class the callee denotes is the one resolver's
-        (``module_definition_denoted_by``), whatever form the callee's read
-        takes after the rewrite: the callee's spelling never decides the
-        allocation.
+        (``module_definition_denoted_by``).  Only a ``Name`` callee is asked,
+        as ``decorated_definition_for_call`` asks only one: a callee the
+        rewrite already made the read of the class statement's key
+        (``DecoratedDefinitionRef``, #7757 item 21) is a call of the class
+        value that statement's run built (``Call._construct_sugar``'s
+        computed call), never the class statement read again at the call.
+        Its result is the call's own value, read through the assignment's
+        key (``OpaqueObjectStateV1``).  Minting a source allocation for it
+        (#8535) gave every copy of one constructor call in an unrolled loop
+        one object coordinate (the call's fragment and offset), and one
+        iteration's method call on its instance went unapplied
+        (``test_assignment_evaluated_once``, ``unrolled-loop-object``).
         """
         self._require_typed_module(
             "SourceUnit.source_allocation_definition_for_call", blame=self.filename
         )
+        if not isinstance(call.func, Name):
+            return None
         span = call.line_col_span()
         definition = self.module_definition_denoted_by(call.func, span)
         if not isinstance(definition, ClassDef):
