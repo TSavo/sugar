@@ -165,12 +165,22 @@ def _assert_completed_call(outcome) -> CallSiteValue:
     The list is made at the call, and ``obj`` is that actual with the
     caller's currency (#8249): the container law reads its contents, so an
     in-range index is decided -- one completion, no halt beside it.
+
+    The Call's value carries to its caller what the callee's frame left of
+    each object the two share (``caller_visible_values``), as a walrus's
+    write rides its value: here the list actual, under ``actual:1``, as the
+    store left it.  The Call coordinate is what those writes present.
     """
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+
     assert isinstance(outcome, ExitSet), outcome
     (face,) = outcome.exits
     assert isinstance(face, Completed), outcome
-    value = face.value
+    carried, value = peel_walrus_binds(face.value)
     assert isinstance(value, CallSiteValue), value
+    stored = [write.assigned_value for write in carried if write.name == "actual:1"]
+    assert len(stored) == 1, carried
+    assert isinstance(stored[0], ListValue), stored
     return value
 
 
@@ -222,7 +232,15 @@ def test_bound_self_does_not_shift_obj_key_value_coordinates() -> None:
     assert callsite.arg_values[1] == fresh(ListValue, (TermValue(0), TermValue(1)))
     assert callsite.arg_values[2] == TermValue(0)
     assert callsite.arg_values[3] == TermValue(9)
-    _assert_completed_call(callsite.producer_outcome(None))
+    outcome = callsite.producer_outcome(None)
+    _assert_completed_call(outcome)
+    # The store landed in ``obj`` (the list), at ``key`` 0, never in ``self``:
+    # the caller reads the list actual as ``[9, 1]`` after the call.
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+
+    carried, _call = peel_walrus_binds(outcome.exits[0].value)
+    (after,) = [write.assigned_value for write in carried if write.name == "actual:1"]
+    assert after == fresh(ListValue, (TermValue(9), TermValue(1)))
 
 
 def test_discrimination_self_is_not_the_setitem_receiver_slot() -> None:
