@@ -164,6 +164,66 @@ def refuse_unrun_source_new(definition, *, new_method, runs_new, site, owner):
     )
 
 
+def halts_where_its_asserts_fail(block, constructed) -> ExitSet:
+    """``constructed`` (the object one completed face of ``__init__`` left)
+    beneath each ``assert`` that face stated, as Python runs it: an
+    ``assert`` whose test is false raises ``AssertionError`` there, so the
+    class call never returns the object (#7757: a halt is never dropped).
+
+    A symbolic ``assert`` states its test as a fact (``InvValue``), the
+    claim of the function whose body it is; it has no failing arm in that
+    function's reduction (``AssertSugar``).  A class call returns the
+    object, never ``__init__``'s claims, so a fact left in the
+    initializer's record and never stated was a halt of the construction
+    dropped: the class contract states no panic locus for it, and prove's
+    completion fact (``completes <-> and(not g_i)``) read ``C(-1)`` as
+    completing over ``assert n > 0``.  Each fact, in the order the face
+    stated them, is the split it is: the construction halts with
+    ``AssertionError`` at the ``assert`` (``ground_assertion_error``, the
+    exit a test stated False takes) under
+    the fact's complement, and goes on under the fact to the next one, then
+    to ``constructed``.  Each halt is a halted arm of the class's one
+    reduction, so its contract states it as a panic locus
+    (``tree_enumerate.halt_locus``), as every other ``__init__`` raise.
+
+    Only an ``assert`` statement's fact is one: the fact is sited at the
+    ``assert`` (``AssertSugar.site``), as ``tree_enumerate.
+    halted_assertion_sites`` reads it.  Any other fact a record holds (a
+    loop's recurrence, a resource binding) states what a value is, never a
+    test that can fail."""
+    from sugar_lift_py_tests.floor.ground_assertion_error import (
+        ground_assertion_error,
+    )
+    from sugar_lift_py_tests.floor.inv_value import InvValue
+    from sugar_lift_py_tests.outcome.exit_set import (
+        _is_true,
+        complement_guard,
+        partition,
+    )
+    from sugar_source_tree.nodes import Assert
+
+    # A test the reduction decided true states the fact ``true``: it cannot
+    # fail, so it is no split.
+    facts = tuple(
+        statement
+        for statement in block.statements
+        if isinstance(statement, InvValue)
+        and isinstance(getattr(statement.site, "node", None), Assert)
+        and not _is_true(statement.formula)
+    )
+    outcome = constructed
+    for fact in reversed(facts):
+        fails, holds = partition(
+            ("ClassConstructorBodySugar.assert", fact.site, fact.formula)
+        )
+        outcome = (
+            ground_assertion_error(site=fact.site)
+            .guarded(complement_guard(fact.formula), fails)
+            .union(outcome.guarded(fact.formula, holds))
+        )
+    return outcome
+
+
 @dataclass(frozen=True)
 class ClassConstructorBodySugar(Sugar):
     # The class statement this is the constructor of: its sugar, the body's
@@ -311,7 +371,7 @@ class ClassConstructorBodySugar(Sugar):
             from sugar_lift_py_tests.floor import EllipsisValue
             from sugar_lift_py_tests.sugar.function_universe_sugar import (
                 _ReducedBlock,
-                block_values,
+                block_record,
                 reduce_block_to_exitset,
             )
             from sugar_source_tree.panic import SugarNotWritten
@@ -330,7 +390,18 @@ class ClassConstructorBodySugar(Sugar):
                 self.initializer_body.statements, initializer_ctx
             )
             if isinstance(records, NativeOperationExitCarrierV1):
-                return block_values(records)
+                # Each face it completes on is the suite's record
+                # (``block_values``), beneath the asserts it stated: an
+                # ``assert`` over a formal waits on the caller's actual like
+                # any operation on it, and still halts the construction where
+                # it fails (``halts_where_its_asserts_fail``).
+                def recorded(state):
+                    block = block_record(state)
+                    return halts_where_its_asserts_fail(
+                        block, ExitSet.completed(block)
+                    )
+
+                return records.and_then(recorded)
             # One unconditional completed face is the whole initializer; only
             # then does an ellipsis-only body mean a stub constructor.
             sole = records.completed_value() is not None
@@ -375,8 +446,12 @@ class ClassConstructorBodySugar(Sugar):
                     # whatever the state ``__new__`` returned carried.
                     from dataclasses import replace
 
-                    return ExitSet.completed(replace(returned, **self._made()))
-                return self._receiver_where_it_ends(record, initializer_ctx)
+                    return halts_where_its_asserts_fail(
+                        block, ExitSet.completed(replace(returned, **self._made()))
+                    )
+                return halts_where_its_asserts_fail(
+                    block, self._receiver_where_it_ends(record, initializer_ctx)
+                )
 
             # ``Cls(x)`` is a call: the initializer's halted faces are the
             # call's halted faces, each completed face its own receiver, under

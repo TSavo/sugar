@@ -402,15 +402,17 @@ def test_a_field_a_base_method_stores_through_super_is_read_by_the_receivers_key
     as after a dispatched call (``receiver_dispatch.receiver_after_dispatch``),
     and prove pairs the key with ``fill``'s ``self`` (#7757 step 7).
 
-    The ``assert self.n == 6`` is a claim of ``__init__``'s own row only:
-    the class row states none of its constructor's assertions
-    (``tree_enumerate.class_contract_rows``, ``definition=None``), and in
+    The ``assert self.n == 6`` is a claim of ``__init__``'s own row; the
+    class row states no claim of it, only its halt (below).  In
     ``__init__``'s own proof the receiver arrived by binding, so its
     ``super().fill`` is unanswered (and since #8895 joined to no contract by
     site alone).  Neither half is decided: the truth is never ``unsat`` and
-    the lie never ``sat``.  Refuting the lie needs the class row to state
-    the assertions its constructor runs on the allocated receiver, listed
-    on #7661."""
+    the lie never ``sat``.  The class row states the ``assert`` as the
+    construction's ``AssertionError`` panic locus
+    (``class_constructor_body_sugar.halts_where_its_asserts_fail``), so on
+    the lie ``Child()`` halts at prove; ``test_child`` states no claim of
+    its own after the call, so nothing there is refuted and the lie reads
+    no stronger than ``open``."""
     t = run_source_through_real_solver(
         tmp_path / "super-store-truthful", _SUPER_STORE.format(expected=5)
     )
