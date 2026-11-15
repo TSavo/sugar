@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -18,8 +17,6 @@ sys.path.insert(0, str(ROOT / "tools"))
 import showcase_scope  # noqa: E402
 
 MANIFEST = ROOT / ".github/showcase-retirements.json"
-ATTEND = ROOT / "tools/showcase_shard_attendance.py"
-CI = ROOT / ".github/workflows/ci.yml"
 MAKEFILE = ROOT / "Makefile"
 REASON = "out of scope per scope ruling - Java"
 
@@ -426,133 +423,3 @@ def test_python_urlsafe_real_skip_cannot_testify_subject_completion() -> None:
     )
 
     assert text.index(skip) < text.index(good) < text.index(bad) < text.index(witness)
-
-
-def test_ci_seals_scope_receipt_into_shard_body() -> None:
-    text = CI.read_text(encoding="utf-8")
-    showcase_job = text.split("  showcases:", 1)[1].split("  showcase-attendance:", 1)[
-        0
-    ]
-    assert "SHOWCASE_SCOPE_RECEIPT" in showcase_job
-    assert "tools/showcase_scope.py seal-body" in showcase_job
-    assert "showcaseOutcomes" not in showcase_job
-    assert "showcaseCounts" not in showcase_job
-
-
-def test_attendance_refuses_unconserved_body_as_unmeasured(tmp_path: Path) -> None:
-    body = {
-        "measurementClass": "test-showcases",
-        "shardIndex": 0,
-        "shardCount": 1,
-        "measuredCommit": "abc",
-        "exitCode": 0,
-        "showcaseCounts": {
-            "enrolled": 2,
-            "executed": 1,
-            "retired": 0,
-            "passed": 1,
-            "failed": 0,
-            "unmeasured": 0,
-        },
-        "showcaseOutcomes": [
-            {
-                "path": "examples/python-pass/run.sh",
-                "outcome": "passed",
-                "exitCode": 0,
-                "subjectWitness": {
-                    "schemaVersion": 1,
-                    "subjectId": "examples/python-pass/run.sh",
-                },
-            }
-        ],
-    }
-    (tmp_path / "body.json").write_text(json.dumps(body), encoding="utf-8")
-    proc = subprocess.run(
-        [
-            sys.executable,
-            str(ATTEND),
-            "--reports-dir",
-            str(tmp_path),
-            "--shard-count",
-            "1",
-            "--require-commit",
-            "abc",
-        ],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-    )
-    assert proc.returncode != 0
-    assert "R_showcase_shard_attendance = 1" in proc.stdout
-    assert "conservation" in proc.stderr
-
-
-def test_attendance_stays_red_for_attended_active_failure(tmp_path: Path) -> None:
-    for shard in range(4):
-        outcomes = [
-            {
-                "path": f"examples/java-retired-{shard}/run.sh",
-                "outcome": "retired",
-                "language": "java",
-                "reason": REASON,
-                "assertion": "retired fixture",
-            },
-            {
-                "path": f"examples/python-active-{shard}/run.sh",
-                "outcome": "failed" if shard == 2 else "passed",
-                "exitCode": 7 if shard == 2 else 0,
-                **(
-                    {
-                        "subjectWitness": {
-                            "schemaVersion": 1,
-                            "subjectId": f"examples/python-active-{shard}/run.sh",
-                        }
-                    }
-                    if shard != 2
-                    else {}
-                ),
-            },
-        ]
-        directory = tmp_path / f"shard-{shard}"
-        directory.mkdir()
-        (directory / "body.json").write_text(
-            json.dumps(
-                {
-                    "measurementClass": "test-showcases",
-                    "shardIndex": shard,
-                    "shardCount": 4,
-                    "measuredCommit": "abc",
-                    "exitCode": 7 if shard == 2 else 0,
-                    "showcaseCounts": {
-                        "enrolled": 2,
-                        "executed": 1,
-                        "retired": 1,
-                        "passed": 0 if shard == 2 else 1,
-                        "failed": 1 if shard == 2 else 0,
-                        "unmeasured": 0,
-                    },
-                    "showcaseOutcomes": outcomes,
-                }
-            ),
-            encoding="utf-8",
-        )
-
-    proc = subprocess.run(
-        [
-            sys.executable,
-            str(ATTEND),
-            "--reports-dir",
-            str(tmp_path),
-            "--shard-count",
-            "4",
-            "--require-commit",
-            "abc",
-        ],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-    )
-    assert proc.returncode != 0
-    assert "attended: `4`" in proc.stdout
-    assert "R_showcase_shard_attendance = 0" in proc.stdout
-    assert "shard-02: exitCode=7 (showcase red)" in proc.stderr

@@ -118,9 +118,6 @@ own artifact as `leaseRecord`, so there is one schema, not two:
   share a lock `inode`, and their intervals must not overlap. This is what
   stops the lease from being per-container theatre: if the runner containers
   do not share the lease path, the inodes differ and this goes red.
-* `tools/heavy_measurement_attendance.py --commit SHA` — the roll call. Roster
-  minus attended is `R_attendance`; those instruments did not report, and their
-  silence is not a clean floor.
 
 ## Known limitation: no dedicated heavy runner label
 

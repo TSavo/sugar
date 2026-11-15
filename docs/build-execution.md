@@ -108,13 +108,12 @@ Docker commands default to networking available because they have no declared
 dependency closure.
 `examples-gate` declares required networking because its acceptance examples
 exercise dependency and language ecosystems that are not an offline contract.
-`rust-unit` and `restored-suite-scoreboard` also require networking because
-their Cargo commands consume the locked dependency graph and the managed image
-does not vendor the Cargo registry.
+`rust-unit` also requires networking because its Cargo command consumes the
+locked dependency graph and the managed image does not vendor the Cargo
+registry.
 
 Current task names are `python-unit`, `python-lift`, `rust-unit`,
-`examples-gate`, `pandas-wall`, `numpy-wall`, and
-`restored-suite-scoreboard`. Query the checked-in contract rather than copying
+`examples-gate`, `pandas-wall`, and `numpy-wall`. Query the checked-in contract rather than copying
 their capability lists into wrappers.
 
 To add or update a managed capability:

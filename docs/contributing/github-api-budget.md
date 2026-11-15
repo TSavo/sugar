@@ -115,11 +115,8 @@ multiplier. Prefer:
    control-effect-recensus already is) — not on every push.
 3. **Batch merges** during a train: fewer tips, fewer identical suite starts.
 4. **Do not** reintroduce GitHub `concurrency:` that **drops pending runs** on
-   `main` (evidence loss — see `ci.yml` comment). Coalesce by **not starting**
-   redundant work, not by discarding queued evidence.
-
-`ci.yml` may use `paths-ignore: ['docs/**']` so documentation-only tips do not
-consume a full core matrix; product paths still always run.
+   `main` (evidence loss). Coalesce by **not starting** redundant work, not by
+   discarding queued evidence.
 
 ## Unstoppable workflow runs (delete, do not cancel)
 

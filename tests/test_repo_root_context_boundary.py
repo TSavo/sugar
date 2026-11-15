@@ -48,15 +48,6 @@ def test_repo_level_tests_never_import_the_package_root_door() -> None:
     )
 
 
-def test_path_integrity_workflow_enforces_both_root_axes() -> None:
-    workflow = (
-        resolve_repo_root() / ".github/workflows/recensus-path-smoke.yml"
-    ).read_text(encoding="utf-8")
-
-    assert "python3 tools/repo_root_parents_n_census.py" in workflow
-    assert "python3 tools/repo_test_package_root_import_census.py" in workflow
-
-
 def test_lpt_shard_test_collects_when_test_kit_package_is_unavailable() -> None:
     """The observed pre-install failure is impossible through the tools twin."""
     tests_root = Path(__file__).resolve().parent

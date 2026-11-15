@@ -29,7 +29,6 @@ false green — R=0 on kit while the corpus is never entered.
 | Axis | Owner | Difference |
 | --- | --- | --- |
 | ``Unmeasured`` / SHELF_UNMEASURED | commit_measurement / shelf | Measurement *of* measurement: no reading was taken |
-| Heavy attendance absent-artifact | heavy_measurement_attendance | Job never ran / no artifact |
 | Gap / ConstructionPanic held | roll call ``unresolved`` | Instrument engaged; unfinished is classified |
 | R_silent | **this module** | Disk locus never appeared on the roll call |
 

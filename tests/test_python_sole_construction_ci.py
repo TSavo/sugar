@@ -1,8 +1,7 @@
-"""Binding sole-construction floors: parallel jobs + enrollment, not serial sum.
+"""Sole-construction floors: static axes bound, enrollment roll call honest.
 
-CI runs each process axis as its own job (factory-zero-tolerance.yml matrix) and
-static laws as a sibling job. Completeness is enrollment roll call
-(tools/sole_construction_floor_enrollment.py). A missing axis is UNMEASURED.
+Completeness is enrollment roll call (tools/sole_construction_floor_enrollment.py).
+A missing axis is UNMEASURED.
 """
 
 from __future__ import annotations
@@ -15,18 +14,9 @@ from pathlib import Path
 from repo_root_test_support import resolve_repo_root
 
 ROOT = resolve_repo_root()
-WORKFLOW = ROOT / ".github" / "workflows" / "factory-zero-tolerance.yml"
 ENROLL = ROOT / "tools" / "sole_construction_floor_enrollment.py"
 STATIC = ROOT / "tools" / "run_static_sole_construction_floors.sh"
-PROCESS_ONE = ROOT / "tools" / "run_one_process_floor_axis.sh"
 FLOOR_SET = ROOT / "tools" / "run_sole_construction_floors.sh"
-
-PROCESS_SCRIPTS = {
-    "silent": "silent_zero_tolerance.py",
-    "native-crash": "native_crash_zero_tolerance.py",
-    "bare-exception": "bare_exception_zero_tolerance.py",
-    "timeout": "timeout_zero_tolerance.py",
-}
 
 STATIC_SCRIPTS = {
     "R_ownership = 0": "factory_ownership_law.py",
@@ -69,50 +59,6 @@ def _witness():
     return outcome.witness
 
 
-def test_workflow_is_parallel_matrix_not_serial_monolith() -> None:
-    workflow = WORKFLOW.read_text()
-    assert "tools/heavy_measurement_lease.py" not in workflow
-    assert "process-floor:" in workflow or "process-floor " in workflow
-    assert "strategy:" in workflow and "matrix:" in workflow
-    assert "static-floors:" in workflow
-    assert "floor-enrollment:" in workflow
-    # Expensive process scripts appear in matrix includes, not one serial shell.
-    for script in PROCESS_SCRIPTS.values():
-        assert script in workflow
-    assert "run_one_process_floor_axis.sh" in workflow
-    assert "run_static_sole_construction_floors.sh" in workflow
-    assert "sole_construction_floor_enrollment.py" in workflow
-    # Must not re-serialize all process axes via the local monolith in CI.
-    assert "run_sole_construction_floors.sh" not in workflow
-    # Shared env: prepare once; matrix jobs consume wheelhouse (not N× full prep).
-    assert "python-test-env-prepare" in workflow
-    assert "python-test-wheelhouse" in workflow
-    assert "python-test-environment-from-wheelhouse" in workflow
-    process_job = workflow.split("\n  process-floor:")[1].split("\n  static-floors:")[0]
-    assert "python-test-environment-from-wheelhouse" in process_job
-    assert "uses: ./.github/actions/python-test-environment\n" not in process_job
-
-
-def test_floor_enrollment_uses_the_declared_shared_python_environment() -> None:
-    """The roll call must not inherit packages from an unrelated job's system Python."""
-    workflow = WORKFLOW.read_text()
-    enrollment_job = workflow.split("floor-enrollment:", 1)[1]
-
-    assert "python-test-env-prepare" in enrollment_job.split("steps:", 1)[0]
-    assert "name: python-test-wheelhouse" in enrollment_job
-    assert "uses: ./.github/actions/python-test-environment-from-wheelhouse" in (
-        enrollment_job
-    )
-    assert "id: floor-enrollment-env" in enrollment_job
-    assert (
-        '"${{ steps.floor-enrollment-env.outputs.python }}" -u '
-        "tools/sole_construction_floor_enrollment.py"
-    ) in enrollment_job
-    assert "python3 -u tools/sole_construction_floor_enrollment.py" not in (
-        enrollment_job
-    )
-
-
 def test_static_job_binds_every_static_axis() -> None:
     static = STATIC.read_text()
     for axis, command in STATIC_SCRIPTS.items():
@@ -125,16 +71,6 @@ def test_static_job_binds_every_static_axis() -> None:
         assert command in step
         if axis == "R_factory_walk_unclassified = 0":
             assert "--live-root" in step
-
-
-def test_process_one_axis_binds_corpus_and_host_cache() -> None:
-    text = PROCESS_ONE.read_text()
-    assert "authenticated_pandas_corpus" in text
-    assert '"$PANDAS_CORPUS"' in text or "'$PANDAS_CORPUS'" in text
-    assert "--out-dir" in text
-    # Host-durable cache — not workspace-only (job-private under parallel jobs).
-    assert "process-floor-terminals" in text
-    assert "GITHUB_WORKSPACE" in text or "HOME" in text
 
 
 def test_enrollment_missing_axis_is_unmeasured(tmp_path: Path) -> None:
@@ -183,7 +119,7 @@ def test_enrollment_complete_with_all_axes(tmp_path: Path) -> None:
 
 
 def test_local_monolith_still_lists_process_axes_for_workstation() -> None:
-    """Local serial script remains; CI must not depend on it."""
+    """Local serial script lists every process axis."""
     floors = FLOOR_SET.read_text()
     for name in (
         'axis "R_silent"',

@@ -11,8 +11,7 @@ into a singleton report (a shared identity hub). Completeness is enrollment:
     R_suite_shard_attendance = |roster \\ attended|
 
 A missing shard is UNMEASURED, not a smaller pass count. Silence is not a
-clean suite. Same shape as ``tools/heavy_measurement_attendance.py`` for heavy
-measurement classes: enrollment is existence.
+clean suite: enrollment is existence.
 
 Usage:
     python3 tools/python_package_suite_shard_attendance.py \\

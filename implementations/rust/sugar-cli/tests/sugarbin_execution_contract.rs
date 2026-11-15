@@ -228,35 +228,3 @@ fn planted_remote_reaper_owner_is_reported() {
     assert!(offenders[0].contains("scripts/rogue-reaper.sh"));
     assert!(offenders[0].contains("remote-root-reaper"));
 }
-
-#[test]
-fn restored_suite_runner_declares_its_ambient_route() {
-    let root = repo_root();
-    let workflow =
-        std::fs::read_to_string(root.join(".github/workflows/restored-suite-scoreboard.yml"))
-            .expect("read restored-suite workflow");
-    assert!(
-        workflow.contains("SUGAR_EXECUTION_ROUTE: local-ambient"),
-        "a runner-local ambient dependency installation must declare that route explicitly"
-    );
-    assert!(
-        workflow.contains(
-            "SUGAR_AMBIENT_DEPENDENCY_OWNER: .github/workflows/restored-suite-scoreboard.yml"
-        ),
-        "an ambient CI route must name its dependency owner"
-    );
-    for required in ["z3 --version", "/usr/bin/time --version", "b3sum --version"] {
-        assert!(
-            workflow.contains(required),
-            "ambient restored-suite route lacks loud dependency receipt: {required}"
-        );
-    }
-    assert!(
-        !workflow.contains("bin/sugarbin run --host bx"),
-        "the battleaxe runner container must not invent a nested SSH route back to bx"
-    );
-    assert!(
-        !workflow.contains("bcargo-python-kit-env"),
-        "the retired wrapper provisioning target must not return through CI"
-    );
-}

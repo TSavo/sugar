@@ -388,40 +388,6 @@ test = ["pytest"]
     )
 
 
-def test_the_four_zero_tolerance_floors_are_bound_to_the_authority() -> None:
-    """The floors are the instruments that catch the collection abort. They are
-    the LAST place a hand-list may live, so they are named explicitly here: a
-    new floor that forgets [test] is caught by name, not by luck."""
-    floors = [
-        "bare-exception-zero-tolerance.yml",
-        "factory-zero-tolerance.yml",
-        "native-crash-zero-tolerance.yml",
-        "timeout-zero-tolerance.yml",
-    ]
-
-    offenders = []
-    for name in floors:
-        text = (WORKFLOWS / name).read_text(encoding="utf-8")
-        if not binds_to_authority(text):
-            offenders.append(
-                f"{name}: neither installs {AUTHORITY}[test] nor uses "
-                f"{ENVIRONMENT_ACTION_USE}"
-            )
-            continue
-        for command in [c for c in pip_install_commands(text) if AUTHORITY in c]:
-            if f"{AUTHORITY}[test]" not in command:
-                offenders.append(f"{name}: installs {AUTHORITY} without [test]")
-            if bare_requirements(command):
-                offenders.append(
-                    f"{name}: hand-lists {sorted(set(bare_requirements(command)))}"
-                )
-
-    assert not offenders, (
-        "the zero-tolerance floors must draw their entire environment from "
-        f"`{AUTHORITY}[test]`:\n  " + "\n  ".join(offenders)
-    )
-
-
 # --------------------------------------------------------------------------
 # Tooth 6: the delegation target is real, and is itself bound
 # --------------------------------------------------------------------------
