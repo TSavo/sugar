@@ -15,12 +15,19 @@ The same holds for a ``finally`` beneath a completed body and beneath a
 ``return``: it continues from the record that arrives at it, and the exit it
 let through is re-emitted after it (a pending ``return`` follows the
 ``finally``'s entries, and is discarded when the ``finally`` returns itself).
-A halt raised inside a called function reaches the caller in the caller's
-record at the call (``call_site_value.at_the_call``): a name the callee binds
-never shadows the caller's, and what the callee did to an object the caller
-can see before it raised reaches the caller as it does on completion. The halt
-names the call it left through, so the caller's ``try`` reads which statement
-raised it.
+
+A call of a same-file function is its coordinate and edge, joined at prove
+(#7757 steps 5 and 6, the owner's ruling "Edge, join at prove", #8705; the
+application of a callee body at lift and the projection of its halt and
+effects into the caller are deleted, #8739, #8751).  The call completes under
+its ``completes`` atom and halts under the complement, so a ``try`` around it
+has a completed face for each: the body's and the handler's.  The halt
+reaches the handler in the caller's record at the call: a name the callee
+binds never shadows the caller's.  What the callee did to an object it can
+reach (an actual, a cell, a module global) is the one exposure rule's read
+after the call (``python:receiver_after_call``, or the ``global:`` input);
+its value is the post-call object state, joined at prove from the callee's
+contract (step 7, not merged), so these tests expect that read today.
 """
 
 from __future__ import annotations
@@ -85,6 +92,41 @@ def _returned_value(outcome):
         if isinstance(entry, ReturnValue)
     ]
     return returned.value
+
+
+def _returns(outcome) -> list:
+    """What every completed face of ``outcome`` returns: a ``try`` around a
+    same-file call has the body's face and the handler's (the call's two
+    faces, #8705)."""
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+
+    found = []
+    for exit_ in outcome.exits:
+        if not isinstance(exit_, Completed):
+            continue
+        record = getattr(exit_.value, "record", None)
+        found.extend(
+            entry.value
+            for entry in getattr(record, "statements", ()) or ()
+            if isinstance(entry, ReturnValue)
+        )
+    return found
+
+
+def _term_name(value):
+    term = getattr(value, "term", None)
+    return getattr(term, "name", None)
+
+
+def _after_call(value) -> bool:
+    """The one exposure rule's read of an object after a call that may
+    change it: its value is the post-call object state (step 7)."""
+    return _term_name(value) == "python:receiver_after_call"
+
+
+def _global_input(value, name: str) -> bool:
+    """The module global read as the contract's free input (#8704)."""
+    return _term_name(value) == f"global:{name}"
 
 
 _ONE = fresh(ListValue, (TermValue(1),))
@@ -240,20 +282,22 @@ def test_a_handler_after_a_loop_that_raised_carries_what_the_items_did() -> None
     # Item 0 appended 1 and went on; item 1 appended 2 and raised.  The raise
     # leaves the loop with both items' appends (#8089), and the handler that
     # catches it continues after that record: the try leaves with both.
+    # The iterable is the display itself: it used to be ``g()`` with
+    # ``def g(): return (1, 2)``, whose body the call applied.  A same-file
+    # call is its coordinate and edge (#8705), so a loop over its result is
+    # the one undecided iteration (#8775) and its items are decided at prove.
     outcome = function_universe_outcome(
         _function(
             "def f():\n"
             "    acc = []\n"
             "    try:\n"
-            "        for x in g():\n"
+            "        for x in (1, 2):\n"
             "            acc.append(x)\n"
             "            if x == 2:\n"
             "                raise ValueError()\n"
             "    except ValueError:\n"
             "        return acc\n"
             "    return None\n"
-            "def g():\n"
-            "    return (1, 2)\n"
         )
     )
     records = _records(outcome)
@@ -318,6 +362,8 @@ def test_a_return_the_body_took_follows_a_finally_that_falls_through() -> None:
 def test_a_handler_reads_the_callers_name_not_the_callees() -> None:
     # ``g`` binds its own local ``x = 2`` and raises: the halt reaches ``f``
     # at the call, in ``f``'s record there, so the handler returns ``f``'s 1.
+    # (The body's own completed face, the call's other face, returns
+    # nothing; whether ``g`` raises is decided at prove.)
     outcome = function_universe_outcome(
         _function(
             "def f():\n"
@@ -331,13 +377,27 @@ def test_a_handler_reads_the_callers_name_not_the_callees() -> None:
             "    raise ValueError()\n"
         )
     )
-    assert _returned_value(outcome) == TermValue(1)
+    returns = _returns(outcome)
+    assert TermValue(1) in returns, outcome
+    assert TermValue(2) not in returns
+
+
+def _handler_reads_after_call(outcome) -> None:
+    """The handler's read of an object the raising callee could reach: the
+    exposure rule's read after the call, never the value before it and
+    never a value read off the callee's body.  What the callee did to it
+    before it raised is the post-call object state, joined at prove (step
+    7, not merged); it used to be ``[1]``, the body's append followed at the
+    call."""
+    returns = _returns(outcome)
+    assert any(_after_call(value) for value in returns), returns
+    assert _EMPTY not in returns
+    assert _ONE not in returns
 
 
 def test_a_handler_reads_what_the_callee_did_to_the_callers_list() -> None:
     # ``g`` appends to the caller's own list and raises: the append is not
-    # rolled back, so the halt reaches ``f`` with ``acc`` as the completed
-    # path would leave it (``[1]``), never the ``[]`` it held at the call.
+    # rolled back, so the handler never reads the ``[]`` it held at the call.
     outcome = function_universe_outcome(
         _function(
             "def f():\n"
@@ -351,13 +411,12 @@ def test_a_handler_reads_what_the_callee_did_to_the_callers_list() -> None:
             "    raise ValueError()\n"
         )
     )
-    assert _returned_value(outcome) == _ONE
+    _handler_reads_after_call(outcome)
 
 
 def test_a_handler_reads_the_callers_list_wherever_the_call_sits() -> None:
-    # The call is an assignment's value, not a statement alone: the halt
-    # leaving ``g`` carries ``acc`` as ``g`` left it, ``[1]``, wherever the
-    # call sits (``call_site_value.caller_visible_values``).
+    # The call is an assignment's value, not a statement alone: the handler
+    # reads ``acc`` after the call wherever the call sits.
     outcome = function_universe_outcome(
         _function(
             "def f():\n"
@@ -371,13 +430,15 @@ def test_a_handler_reads_the_callers_list_wherever_the_call_sits() -> None:
             "    raise ValueError()\n"
         )
     )
-    assert _returned_value(outcome) == _ONE
+    _handler_reads_after_call(outcome)
 
 
 def test_a_callee_appending_to_a_module_list_is_seen_after_it_completes() -> None:
-    # ``g`` appends to the module's list, which ``f`` reads too: the caller
-    # holds the object the callee reaches (``_callee_reach``), so
-    # ``f`` reads it as ``g`` left it, never the ``[]`` the module bound.
+    # ``g`` appends to the module's list, which ``f`` reads too.  ``f``'s
+    # contract reads ``L`` as its free input ``global:L`` (#8704): the
+    # object, never the ``[]`` the module bound.  Its contents after ``g``
+    # are the post-call object state, joined at prove (step 7, not merged);
+    # this used to be ``[1]``, ``g``'s append followed at the call.
     outcome = function_universe_outcome(
         _function(
             "def f():\n"
@@ -388,12 +449,15 @@ def test_a_callee_appending_to_a_module_list_is_seen_after_it_completes() -> Non
             "    L.append(1)\n"
         )
     )
-    assert _returned_value(outcome) == _ONE
+    returned = _returned_value(outcome)
+    assert _global_input(returned, "L"), returned
+    assert returned != _EMPTY and returned != _ONE
 
 
 def test_a_callee_appending_to_a_module_list_is_seen_after_it_raises() -> None:
-    # The same append, then a raise: the halt leaving ``g`` carries the
-    # module list as the completed arm does.
+    # The same append, then a raise: the handler reads the module list as
+    # the completed path does, the input ``global:L`` (step 7 decides its
+    # contents at prove).
     outcome = function_universe_outcome(
         _function(
             "def f():\n"
@@ -407,13 +471,25 @@ def test_a_callee_appending_to_a_module_list_is_seen_after_it_raises() -> None:
             "    raise ValueError()\n"
         )
     )
-    assert _returned_value(outcome) == _ONE
+    returns = _returns(outcome)
+    assert any(_global_input(value, "L") for value in returns), returns
+    assert _EMPTY not in returns and _ONE not in returns
+
+
+def _reads_after_call(outcome) -> None:
+    """``f`` reads ``acc`` after ``g(acc, ...)``: the exposure rule's read
+    after the call.  Which list ``g`` leaves (by its branch, its early
+    return) is the post-call object state, joined at prove from ``g``'s
+    contract under the call's actuals (step 7, not merged).  These used to
+    read ``[1]`` or ``[]`` off ``g``'s body followed at the call."""
+    returned = _returned_value(outcome)
+    assert _after_call(returned), returned
+    assert returned != _EMPTY and returned != _ONE
 
 
 def test_a_callee_appending_under_an_if_is_seen_where_the_branch_ran() -> None:
-    # ``g`` appends only under ``if c``: its frame joins the list over both
-    # branches, the arm that reaches the end carries the join read there,
-    # and ``f``, which passed ``True``, reads ``[1]`` (#7757).
+    # ``g`` appends only under ``if c``; ``f`` passed ``True`` (Python:
+    # ``[1]``, decided at prove).
     outcome = function_universe_outcome(
         _function(
             "def f():\n"
@@ -425,12 +501,11 @@ def test_a_callee_appending_under_an_if_is_seen_where_the_branch_ran() -> None:
             "        a.append(1)\n"
         )
     )
-    assert _returned_value(outcome) == _ONE
+    _reads_after_call(outcome)
 
 
 def test_a_callee_appending_under_an_if_is_not_seen_where_it_did_not_run() -> None:
-    # The same callee handed ``False``: the join reads the list as it came
-    # in, so ``f`` reads ``[]``.
+    # The same callee handed ``False`` (Python: ``[]``, decided at prove).
     outcome = function_universe_outcome(
         _function(
             "def f():\n"
@@ -442,14 +517,12 @@ def test_a_callee_appending_under_an_if_is_not_seen_where_it_did_not_run() -> No
             "        a.append(1)\n"
         )
     )
-    assert _returned_value(outcome) == _EMPTY
+    _reads_after_call(outcome)
 
 
 def test_an_early_return_before_the_append_leaves_the_list_as_it_was() -> None:
-    # ``g`` returns before its append when ``c`` holds: the arm leaving by
-    # that ``return`` carries the list read where the ``return`` stands
-    # (``FrameReturn``), never the read after the append, so ``f`` reads
-    # ``[]`` (#7757).
+    # ``g`` returns before its append when ``c`` holds (Python: ``[]``,
+    # decided at prove).
     outcome = function_universe_outcome(
         _function(
             "def f():\n"
@@ -462,12 +535,11 @@ def test_an_early_return_before_the_append_leaves_the_list_as_it_was() -> None:
             "    a.append(1)\n"
         )
     )
-    assert _returned_value(outcome) == _EMPTY
+    _reads_after_call(outcome)
 
 
 def test_an_early_return_not_taken_leaves_the_append() -> None:
-    # The same callee handed ``False``: the arm that goes on to the end
-    # carries the list after the append, so ``f`` reads ``[1]``.
+    # The same callee handed ``False`` (Python: ``[1]``, decided at prove).
     outcome = function_universe_outcome(
         _function(
             "def f():\n"
@@ -480,7 +552,7 @@ def test_an_early_return_not_taken_leaves_the_append() -> None:
             "    a.append(1)\n"
         )
     )
-    assert _returned_value(outcome) == _ONE
+    _reads_after_call(outcome)
 
 
 def test_a_module_list_a_callee_may_change_unfollowed_is_not_its_old_value() -> None:
@@ -547,8 +619,10 @@ def test_a_lambda_call_then_a_read_of_a_module_list_is_not_stale() -> None:
 
 def test_a_nested_append_to_a_cell_is_seen_by_the_enclosing_function() -> None:
     # ``inner`` appends to the enclosing ``acc`` it reads as a closure cell:
-    # the call is followed as a source helper, the cell as the caller's
-    # object (``_callee_reach``), so ``f`` reads ``[1]``.
+    # the call carries the cell (``py.closure``) on its edge, and ``f``
+    # reads ``acc`` after the call, never the ``[]`` it bound.  The list
+    # ``inner`` leaves is the post-call state of the cell (step 7, not
+    # merged); this used to be ``[1]``, ``inner``'s body followed.
     outcome = function_universe_outcome(
         _function(
             "def f():\n"
@@ -559,12 +633,14 @@ def test_a_nested_append_to_a_cell_is_seen_by_the_enclosing_function() -> None:
             "    return acc\n"
         )
     )
-    assert _returned_value(outcome) == _ONE
+    returned = _returned_value(outcome)
+    assert _after_call(returned), returned
+    assert returned != _EMPTY and returned != _ONE
 
 
 def test_a_nested_append_to_a_cell_then_a_raise_is_seen_at_the_handler() -> None:
-    # The same append, then a raise: the halt leaving ``inner`` carries the
-    # cell as the completed arm does.
+    # The same append, then a raise: the handler reads the cell after the
+    # call, as the completed path does (step 7 decides its contents).
     outcome = function_universe_outcome(
         _function(
             "def f():\n"
@@ -578,7 +654,7 @@ def test_a_nested_append_to_a_cell_then_a_raise_is_seen_at_the_handler() -> None
             "        return acc\n"
         )
     )
-    assert _returned_value(outcome) == _ONE
+    _handler_reads_after_call(outcome)
 
 
 def test_a_nested_nonlocal_append_is_never_the_old_list() -> None:
@@ -614,10 +690,11 @@ def test_a_nested_nonlocal_rebind_is_never_the_old_value() -> None:
 
 def test_a_nested_nonlocal_increment_is_read_by_the_enclosing_function() -> None:
     # ``bump`` reads and writes the enclosing ``n`` through its cell: the call
-    # binds the cell's value at the call (``Call._closure_cells``), the body
-    # writes it, and the enclosing function reads the write the call carried
-    # out of the frame (``call_site_value.caller_visible_values``): ``n + 1``,
-    # never the ``4`` bound before and never a refusal.
+    # carries the cell's value at the call (``py.closure``), and the
+    # enclosing function reads ``n`` after the call, never the ``4`` bound
+    # before and never a refusal.  The value ``bump`` writes (5) is the
+    # post-call state of the cell, joined at prove (step 7, not merged);
+    # this used to be read off ``bump``'s body at the call.
     outcome = function_universe_outcome(
         _function(
             "def f():\n"
@@ -629,7 +706,9 @@ def test_a_nested_nonlocal_increment_is_read_by_the_enclosing_function() -> None
             "    return n\n"
         )
     )
-    assert _returned_value(outcome) == TermValue(5)
+    returned = _returned_value(outcome)
+    assert _after_call(returned), returned
+    assert returned not in (TermValue(4), TermValue(5))
 
 
 def test_an_operator_on_a_source_object_then_a_module_list_is_not_stale() -> None:
@@ -830,14 +909,17 @@ def test_a_callee_local_is_not_carried_beside_the_callers_list() -> None:
             "    raise ValueError()\n"
         )
     )
-    assert _returned_value(outcome) == _ONE
+    _handler_reads_after_call(outcome)
+    assert fresh(ListValue, (TermValue(9),)) not in _returns(outcome)
 
 
 def test_a_handler_reads_the_state_of_the_call_that_raised() -> None:
     # Two body statements may halt with different ``x``: ``h()`` before
-    # ``x = 2`` and ``g()`` after it.  The raise inside ``g`` leaves it
-    # stamped with the call it left through (``call_site_value.call_owned``),
-    # so the handler's ``try`` grounds its edge to ``g()`` and reads 2.
+    # ``x = 2`` and ``g()`` after it.  Each call halts under the complement
+    # of its own ``completes`` atom, and the handler's ``try`` grounds the
+    # halt of ``g()`` to its edge, where ``x`` is 2.  (The face where ``h()``
+    # halts reads 1; ``h``'s contract states no halt, so prove refutes that
+    # face, step 7, #8749.)
     outcome = function_universe_outcome(
         _function(
             "def f():\n"
@@ -854,7 +936,7 @@ def test_a_handler_reads_the_state_of_the_call_that_raised() -> None:
             "    return 0\n"
         )
     )
-    assert _returned_value(outcome) == TermValue(2)
+    assert TermValue(2) in _returns(outcome), outcome
 
 
 def _read_after(source: str):
@@ -905,7 +987,10 @@ def test_a_global_the_callee_stored_before_its_raise_is_read_as_on_completion() 
 
 def test_a_call_halt_keeps_what_the_caller_did_before_the_call() -> None:
     # The caller appended before the call; the callee binds a list of its own
-    # under the same name.  The handler reads the caller's ``acc``.
+    # under the same name.  The handler reads the caller's ``acc``: ``g()`` is
+    # handed nothing and reaches no cell, so ``acc`` is not exposed to it.
+    # (The body's own completed face, the call's other face, returns
+    # nothing.)
     outcome = function_universe_outcome(
         _function(
             "def f():\n"
@@ -920,5 +1005,7 @@ def test_a_call_halt_keeps_what_the_caller_did_before_the_call() -> None:
             "    raise ValueError()\n"
         )
     )
-    assert _returned_value(outcome) == _ONE
+    returns = _returns(outcome)
+    assert _ONE in returns, outcome
+    assert fresh(ListValue, (TermValue(9),)) not in returns
     assert _holds(_records(outcome), _ONE), _records(outcome)
