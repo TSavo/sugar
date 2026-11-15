@@ -337,7 +337,14 @@ def test_a_same_file_call_rhs_is_a_callsite_unpack(tmp_path: Path) -> None:
     can raise is decided at prove, where ``pair``'s contract joins the edge.
     The call's own halt (the unanswered call's complement face) stands
     beside it.
+
+    The obligation is read off the guard's terms, never its ``repr`` (which
+    elides long terms): the unpack destructures the call's result,
+    ``python:call_result(call:<target>(p, q), <occurrence>)`` (#7808,
+    #8753), whose call term carries ``A``'s formals as written.
     """
+    from sugar_lift_py_tests.ir import make_var
+
     source = (
         "def pair(p, q):\n"
         "    return p, q\n"
@@ -349,5 +356,35 @@ def test_a_same_file_call_rhs_is_a_callsite_unpack(tmp_path: Path) -> None:
     outcome = _outcome(tmp_path, source, "callsite_display")
     halt = _callsite_unpack_halt(outcome)
     assert halt.effect.exception_type_coordinate is None
-    assert "python:unpack.destructure" in str(halt.guard)
-    assert "call:" in str(halt.guard) and "pair" in str(halt.guard)
+    destructures = [
+        term
+        for term in _guard_terms(halt.guard)
+        if getattr(term, "name", None) == "python:unpack.destructure"
+    ]
+    assert destructures, halt.guard
+    operands = {destructure.args[0] for destructure in destructures}
+    assert len(operands) == 1, operands
+    (result,) = operands
+    assert result.name == "python:call_result", result
+    call = result.args[0]
+    assert call.name.startswith("call:"), call
+    assert list(call.args[:2]) == [make_var("p"), make_var("q")], call
+
+
+def _guard_terms(formula) -> list:
+    """Every term under ``formula``'s atoms, nested terms included."""
+    found = []
+    stack = [formula]
+    while stack:
+        item = stack.pop()
+        operands = getattr(item, "operands", None)
+        if operands is not None:
+            stack.extend(operands)
+            continue
+        args = getattr(item, "args", None)
+        if args is None:
+            continue
+        if not hasattr(item, "kind"):
+            found.append(item)
+        stack.extend(args)
+    return found

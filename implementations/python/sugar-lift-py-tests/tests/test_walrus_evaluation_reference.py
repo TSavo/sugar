@@ -1055,15 +1055,20 @@ def test_a_called_closure_reads_the_arguments_walrus() -> None:
     # call.  The call is now its coordinate and edge, joined at prove (#7757
     # steps 5 and 6, #8705); the edge carries the captured cell as
     # `py.closure("y", <value>)`, the binding the call read after its
-    # argument's walrus wrote it.
+    # argument's walrus wrote it.  The value the call completes with is
+    # `python:call_result(<call term>, <occurrence>)` (#7808, #8753): the
+    # cell is an operand of the call term inside it.
     from sugar_lift_py_tests.ir import ctor, str_const
 
     edge = _edge_call(_call_outcome(_CAPTURED_REBOUND_BY_ARGUMENT + "\nf()\n"))
     assert _presented(edge.arg_values) == [TermValue(2)]
     owner = str(edge.site)
+    assert edge.term.name == "python:call_result", edge.term
+    call_term = edge.term.args[0]
+    assert call_term.name.startswith("call:"), call_term
     assert ctor(
         "py.closure", [str_const("y"), TermValue(2).to_term(owner=owner)]
-    ) in list(edge.term.args)
+    ) in list(call_term.args)
 
 
 def test_a_live_loop_starts_a_carried_name_from_its_iterables_walrus() -> None:

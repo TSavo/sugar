@@ -208,8 +208,16 @@ def test_the_stopping_leg_of_a_joined_name_reaches_the_return() -> None:
 
 
 def _within_dedent_completion(guard):
-    """The face stands where ``textwrap.dedent`` completed: its first atom."""
+    """The face stands where ``textwrap.dedent`` completed: its first atom.
+
+    The completion is stated over the call's result, ``python:call_result(
+    call:textwrap.dedent(...), <occurrence>)`` (#7757 step 5, #8753), no
+    longer over the bare callee name."""
+    from sugar_lift_py_tests.call_symbol import call_target
+
     assert guard.kind == "and", guard
     completion = guard.operands[0]
     assert completion.name == "python:unknown_callee_call.completes"
-    assert completion.args[0].args[0].value == "textwrap.dedent"
+    (result,) = completion.args
+    assert result.name == "python:call_result", result
+    assert call_target(result.args[0].name) == "textwrap.dedent", result

@@ -125,9 +125,19 @@ def test_a_call_without_a_site_is_loud_where_it_would_become_a_member() -> None:
 
 
 class _ImportedCall:
-    """A call the import door authenticated, with its target symbol."""
+    """A call the import door authenticated, with its target symbol.
+
+    A call value states its call term: the call's completion is stated over
+    ``python:call_result(<call term>, <occurrence>)``, read or discarded
+    (#7757 step 5, #8753), so the faces read it."""
 
     authenticated_target_symbol = "python:zlib.crc32"
+
+    def to_term(self, *, owner: str):
+        del owner
+        from sugar_lift_py_tests.ir import ctor
+
+        return ctor("call:zlib.crc32", [])
 
 
 def test_an_unanswered_call_is_owed_by_both_arms() -> None:
