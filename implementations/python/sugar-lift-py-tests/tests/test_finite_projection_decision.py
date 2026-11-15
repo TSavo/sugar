@@ -341,11 +341,21 @@ def test_a_genuinely_unbounded_comprehension_still_completes_symbolically():
         if candidate.kind == "SetComp"
     )
 
-    outcome = node.sugar().desugar(None)
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_py_tests.tree_enumerate import as_its_own_proof_states
 
-    assert outcome.completed_value() is not None
-    assert isinstance(outcome.completed_value(), ComprehensionValue)
-    assert outcome.completed_value().finite_elements is None
+    # ``iter(items)`` is not decided here: the fold completes on the face it
+    # completes on, and the face it raises on is kept (as for a ``for``).
+    outcome = as_its_own_proof_states(node.sugar().desugar(None), None)
+
+    (done,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert outcome.halts(), outcome
+    assert all(
+        type(face.effect) is UndeterminedRaiseEffect for face in outcome.halts()
+    ), outcome
+    assert isinstance(done.value, ComprehensionValue)
+    assert done.value.finite_elements is None
 
 
 def test_the_listcomp_retention_control_still_projects_finite_elements():

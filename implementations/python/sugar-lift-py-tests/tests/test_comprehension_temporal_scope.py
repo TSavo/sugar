@@ -85,9 +85,38 @@ def _source_file(source: str):
     )
 
 
+def _own_proof(outcome):
+    """A function's outcome as its own proof states it: ``iter`` over a
+    formal waits on the caller's actual, and the function's own proof has
+    none (``as_its_own_proof_states``)."""
+    from sugar_lift_py_tests.tree_enumerate import as_its_own_proof_states
+
+    return as_its_own_proof_states(outcome, None)
+
+
 def _source_outcome(source: str):
     function = next(_source_file(source).functions())
-    return function.sugar().desugar()
+    return _own_proof(function.sugar().desugar())
+
+
+def _the_completed_value(outcome):
+    """The one completed arm's value: ``iter`` of an undecided iterable
+    completes only under its own completes atom, beside its halt."""
+    (done,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    return done.value
+
+
+def _iteration_halt(face) -> bool:
+    """``face`` is the halt of ``iter`` of the comprehension's undecided
+    iterable (``ComprehensionSugar._iterated``)."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
+    return (
+        isinstance(face, Halted)
+        and type(face.effect) is UndeterminedRaiseEffect
+        and face.effect.producer_node_owner
+        in ("SymbolicValue.iter", "UnansweredNativeOperation:iter")
+    )
 
 
 def test_completed_element_builds_fold_without_exporting_target_binding():
@@ -95,8 +124,12 @@ def test_completed_element_builds_fold_without_exporting_target_binding():
         ExitSet.completed(SymbolicValue(make_var("outer_x")))
     ).desugar()
 
-    assert result.completed_value() is not None
-    term = result.completed_value().to_term(owner="test")
+    # ``iter(outer_xs)`` is not decided here: the fold follows the face it
+    # completes on, and the face it raises on is kept.
+    assert isinstance(result, ExitSet)
+    (halted,) = result.halts()
+    assert _iteration_halt(halted), halted
+    term = _the_completed_value(result).to_term(owner="test")
     assert term.name == "py.listcomp"
     assert term.args[0] == make_var("outer_xs")
     assert term.args[1].body == make_var("outer_x")
@@ -113,9 +146,15 @@ def test_halted_element_bypasses_fold_and_retains_exact_outer_state():
     result = _comprehension(incoming).desugar()
 
     assert isinstance(result, ExitSet)
-    assert len(result.exits) == 1
-    halted = result.exits[0]
-    assert isinstance(halted, Halted)
+    # Two halts: ``iter`` of the undecided iterable, and the element's, on
+    # the face ``iter`` completes on.  Nothing completes.
+    assert len(result.exits) == 2
+    assert sum(1 for face in result.exits if _iteration_halt(face)) == 1
+    (halted,) = [
+        face
+        for face in result.exits
+        if isinstance(face, Halted) and not _iteration_halt(face)
+    ]
     assert halted.effect is effect
     assert halted.state is outer_state
     assert halted.state is not fabricated_state
@@ -130,8 +169,8 @@ def test_real_source_comprehension_keeps_the_enclosing_x_binding():
         "    return x\n"
     )
 
-    assert outcome.completed_value() is not None
-    assert outcome.completed_value().post().args[1] == make_var("outer")
+    assert any(_iteration_halt(face) for face in outcome.exits), outcome
+    assert _the_completed_value(outcome).post().args[1] == make_var("outer")
 
 
 def test_real_source_element_halt_keeps_exact_pre_comprehension_state():
@@ -183,9 +222,8 @@ def test_comprehension_target_coordinate_cannot_escape_into_enclosing_x():
     function = next(_source_file(source).functions()).sugar()
     # TRUTHFUL: the comprehension's ``x`` stays inside it; the tuple's ``x``
     # is the enclosing binding, ``outer``.
-    told = function.desugar()
-    assert told.completed_value() is not None
-    assert told.completed_value().post().args[1].args[0] == make_var("outer")
+    told = _own_proof(function.desugar())
+    assert _the_completed_value(told).post().args[1].args[0] == make_var("outer")
 
     # ``result`` is read in the ``return`` through its assignment's key: the
     # fold is built by the ``result = [...]`` statement, where it runs.
@@ -211,13 +249,15 @@ def test_comprehension_target_coordinate_cannot_escape_into_enclosing_x():
     with pytest.raises(
         ConstructionPanic, match="comprehension member `x` read with its coordinate"
     ):
-        replace(
-            function,
-            statements=tuple(
-                mutated_assign if statement is assign else statement
-                for statement in function.statements
-            ),
-        ).desugar()
+        _own_proof(
+            replace(
+                function,
+                statements=tuple(
+                    mutated_assign if statement is assign else statement
+                    for statement in function.statements
+                ),
+            ).desugar()
+        )
 
 
 def test_finite_comprehension_refuses_swapped_tuple_target_coordinates():

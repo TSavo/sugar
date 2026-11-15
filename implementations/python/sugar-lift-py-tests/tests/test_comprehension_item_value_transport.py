@@ -159,7 +159,15 @@ def test_nonfinite_iterable_with_undecided_filter_owes_the_filter_read() -> None
     ``python:attribute.completes`` atom, halts with an undetermined raise under
     the complement, and both arms owe the ``undecided`` member at the read's
     site (step 8's one member kind).  Still loud, by that member: the filter
-    is undecided, nothing is projected, and no exception is named."""
+    is undecided, nothing is projected, and no exception is named.
+
+    The iterable is a list that arrived by binding, whose contents are not
+    current (``object_identity.contents_stale``): no finite container, so
+    the fold runs ``iter`` on it first, the one undecided iteration
+    (``ListValue.iter_with``), as a ``for`` over it does.  (Until the
+    comprehension ran ``iter`` this used a class-less ``ObjectValue``,
+    whose ``iter`` -- its class's ``__iter__``, which no class binds -- is
+    refused by name.)"""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
     from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
@@ -168,20 +176,25 @@ def test_nonfinite_iterable_with_undecided_filter_owes_the_filter_read() -> None
 
     source = "def build(items):\n    return [item for item in items if item.keep]\n"
     comprehension = _source_list_comprehension(source)
+    first, second = _objects()
 
     outcome = comprehension.desugar(
         _context_with_items(
-            source, ObjectValue("UnknownIterable", (), allocation=FRAME_FRESH)
+            source,
+            ListValue((first, second), allocation=None, arrival="arrived-items"),
         )
     )
 
     assert isinstance(outcome, ExitSet), outcome
     (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
     halts = [arm for arm in outcome.exits if isinstance(arm, Halted)]
-    # The filter read may raise: its halt is kept, naming no exception.
-    assert halts, outcome
+    # ``iter`` of the iterable and the filter read may each raise: both
+    # halts are kept, naming no exception.
+    assert len(halts) >= 2, outcome
     assert all(type(arm.effect) is UndeterminedRaiseEffect for arm in halts), outcome
-    # The completed arm stands only under the read's completes atom.
+    assert any(arm.effect.producer_node_owner == "ListValue.iter" for arm in halts)
+    # The completed arm stands only under both completes atoms.
+    assert "python:iter.completes" in repr(done.guard), done.guard
     assert "python:attribute.completes" in repr(done.guard), done.guard
     # Nothing is projected: the value is the symbolic fold, the filter a guard
     # over the undecided read.
