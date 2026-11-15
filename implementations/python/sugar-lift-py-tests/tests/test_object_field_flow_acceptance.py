@@ -224,7 +224,50 @@ def test_unauthenticated_object_field_flow_stays_typed_loud(case):
     path = FIXTURES / case["file"]
     for function_name in (case["canonical"], case["renamed"]):
         result = _outcome_or_panic(path, function_name)
-        assert _is_typed_loud(result), result
+        assert _claims_no_field_value(result), result
+
+
+def _returned_values(result) -> list:
+    """Every value a completed arm of ``result`` returns, guarded or not."""
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.outcome import Completed
+
+    values = []
+    for exit_ in result.exits:
+        if not isinstance(exit_, Completed):
+            continue
+        record = getattr(exit_.value, "record", exit_.value)
+        values.extend(
+            entry.value
+            for entry in getattr(record, "statements", ())
+            if isinstance(entry, (ReturnValue, GuardedReturn))
+        )
+    return values
+
+
+def _claims_no_field_value(result) -> bool:
+    """The read of a field no construction authenticates is answered with
+    no value for it: refused by name or typed loud (``_is_typed_loud``); an
+    undischarged demand waiting on the caller's actual
+    (``NativeOperationExitCarrierV1``: a formal receiver, a formal key --
+    never a completion); or completed arms that each return an undecided
+    value -- never the stored constant, which an opaque call or an opaque
+    alias may have changed (``mutator(item)``, ``alias_factory(original)``)."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+
+    if _is_typed_loud(result) or isinstance(result, NativeOperationExitCarrierV1):
+        return True
+    if not isinstance(result, ExitSet):
+        return False
+    returned = _returned_values(result)
+    return bool(returned) and not any(
+        isinstance(peel_walrus_binds(value)[1], TermValue) for value in returned
+    )
 
 
 def _object_states(path: Path, function_name: str):
@@ -543,7 +586,9 @@ def test_symbolic_subscript_key_stays_typed_loud(tmp_path):
         "    item[key] = 7\n"
         "    return item[key]\n"
     )
-    assert _is_typed_loud(_outcome_or_panic(path, "boundary"))
+    # Never a completion that stores the item: an undischarged demand on the
+    # formal ``key`` is no answer at all.
+    assert _claims_no_field_value(_outcome_or_panic(path, "boundary"))
 
 
 def test_unhashable_subscript_key_stays_typed_loud(tmp_path):
