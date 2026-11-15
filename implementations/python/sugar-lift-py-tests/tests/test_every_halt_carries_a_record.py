@@ -316,7 +316,8 @@ def _holds(entries, value) -> bool:
     return False
 
 
-def _returned_value(outcome):
+def _returned_value(outcome, *, under_a_decided_test: bool = False):
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
     from sugar_lift_py_tests.floor.return_value import ReturnValue
     from sugar_lift_py_tests.floor.universe_value import UniverseValue
 
@@ -328,11 +329,15 @@ def _returned_value(outcome):
     # suite the reduction decided (``if (a := 1) and 2:``) records its
     # suite's block, and what follows it, nested (``_holds`` reads the same
     # nesting).  Exactly one: a second return on the arm is a wrong record.
+    # Nested under the decided ``if``, what follows it is guarded by the
+    # test's truth (``BlockValue.guarded``), so its ``return`` is a
+    # ``GuardedReturn``; ``under_a_decided_test`` reads that one too.
+    kinds = (ReturnValue, GuardedReturn) if under_a_decided_test else (ReturnValue,)
     returns = []
     pending = list(universe.record.statements)
     while pending:
         entry = pending.pop()
-        if isinstance(entry, ReturnValue):
+        if isinstance(entry, kinds):
             returns.append(entry)
         elif isinstance(entry, BlockValue):
             pending.extend(entry.statements)
@@ -863,10 +868,14 @@ def test_a_handler_sees_the_walrus_a_statements_test_bound_before_it_raised(
 ) -> None:
     # ``if (a := 1) and int("x"):``, which raises: ``a`` is bound before
     # ``int("x")`` runs, and the handler returns it as the completed twin
-    # does.
+    # does.  With ``2`` the ``if`` test is decided at the reduction, and the
+    # ``return a`` after the ``try`` is recorded nested under it, guarded by
+    # the test's truth (a ``GuardedReturn``); the value is the same ``a``.
     def returned(second: str):
         source = _walrus_test(statement, second)
-        return _returned_value(function_universe_outcome(_function(source)))
+        return _returned_value(
+            function_universe_outcome(_function(source)), under_a_decided_test=True
+        )
 
     assert returned(_RAISE) == returned("2")
 
