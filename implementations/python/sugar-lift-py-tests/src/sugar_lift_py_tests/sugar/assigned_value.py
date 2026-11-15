@@ -241,9 +241,7 @@ def evaluate_assignment_values(
     value completes, before the next value is evaluated, so every later
     value, every later halt and the completed path carry it: a container
     mutation's pair, which the receiver's post-state, every holder's and
-    a later call on the call's value read (``ContainerMutationStatementSugar``),
-    and a class body's field, a statement of its own that every later field
-    statement of the body reads (``ClassDefinitionSugar``).
+    a later call on the call's value read (``ContainerMutationStatementSugar``).
     """
     from sugar_lift_py_tests.context import ReduceContext
     from sugar_lift_py_tests.floor.block_value import BlockValue

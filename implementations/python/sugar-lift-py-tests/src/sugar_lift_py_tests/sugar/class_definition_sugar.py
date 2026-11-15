@@ -16,45 +16,6 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 
 
-@dataclass(frozen=True)
-class ConstructedClassConditionalFieldsV1:
-    condition_fragment_cid: str
-    condition_sugar: Sugar = field(compare=False)
-    when_true: tuple[object, ...] = ()
-    when_false: tuple[object, ...] = ()
-
-
-@dataclass(frozen=True)
-class ConstructedClassMethodDefaultsV1:
-    """A class-body ``def`` statement's defaults: Python evaluates them when
-    the class body runs, in source order with the fields.  ``defaults`` is
-    the one def-statement rule's ``DefinitionDefaultsSugar``
-    (``nodes._def_statement_sugar``): each default's sugar and the
-    per-parameter key its value is bound under.  The method's definition
-    (``methods``, by its fragment) already names them, so they are no part
-    of the class definition's identity."""
-
-    definition_fragment_cid: str
-    defaults: Sugar = field(compare=False)
-
-
-@dataclass(frozen=True)
-class _ClassBodyV1:
-    """A completed class body: its fields, and each method default's
-    ``(key, value)`` the class value carries to its method calls.
-    ``entries``: the body's record -- the stores a callee its field values
-    called made on objects the class statement's frame sees
-    (``CallerStoreValue``), laid by the one door
-    (``function_universe_sugar.laid_in_record``) as an assignment lays them;
-    the class statement's run carries them on the class it built
-    (``ClassDefinitionSugar.statement_run``), and the statement lays them in
-    its block's record.  The class value holds none of them."""
-
-    fields: tuple
-    method_defaults: tuple = field(compare=False)
-    entries: tuple = ()
-
-
 def _written_initializer(value):
     """The ``__init__`` method a class statement's own body wrote (``value``:
     its sugar or its class value): the last one, Python's live class
@@ -71,7 +32,11 @@ class ClassDefinitionSugar(Sugar):
     source_identity_cid: str
     definition_fragment_cid: str
     methods: tuple[ConstructedClassMethodV1, ...]
-    fields: tuple[ConstructedClassFieldV1 | ConstructedClassConditionalFieldsV1, ...]
+    # One row per Name a statement of the body binds, in source order, an
+    # ``if``'s arms included: the name, and the key the statement's sugar
+    # binds its value under (``nodes.ClassDef._class_body_block``).  The
+    # rows name the namespace; the body's block (``body``) evaluates it.
+    fields: tuple[ConstructedClassFieldV1, ...]
     docstring_cid: str | None
     annotation_cids: tuple[str, ...]
     decorator_cids: tuple[str, ...]
@@ -84,10 +49,19 @@ class ClassDefinitionSugar(Sugar):
     # The class statement itself: its constructor frame is the one ``Cls(x)``
     # applies, whether the class is called by name or as a value.
     class_definition: object = field(default=None, compare=False)
-    # ``(position, ConstructedClassMethodDefaultsV1)``: each method
-    # statement's defaults, evaluated before the top-level field at
-    # ``position`` (after every field where it is ``len(fields)``).
-    method_defaults: tuple = field(default=(), compare=False)
+    # The class body's statements' own sugars, in source order: the block
+    # the class statement runs through the one block reducer, as a function
+    # body or a module body runs (``_class_body``).  An ``if`` among them is
+    # ``IfSugar``; a method's ``def`` statement is its defaults' evaluation.
+    body: tuple = field(default=(), compare=False)
+    # The indexes in ``fields`` of the rows that stand in an arm of an
+    # ``if`` of the body: bound only on a face where that arm ran.
+    branch_fields: frozenset = field(default=frozenset(), compare=False)
+    # The branch slot of each ``if`` of the body.
+    branch_slots: tuple = field(default=(), compare=False)
+    # The key of each default of each method ``def`` statement
+    # (``nodes._default_evaluation_key``), in source order.
+    default_keys: tuple = field(default=(), compare=False)
     # True on the class statement's run (``statement_run``): each completed
     # face is the class carrying what its body's callees stored
     # (``CallerStoreValue``), for the statement to lay in its record.  False
@@ -105,18 +79,11 @@ class ClassDefinitionSugar(Sugar):
     @property
     def preimage(self):
         def encode_field(item):
-            if isinstance(item, ConstructedClassFieldV1):
-                return {
-                    "name": item.name,
-                    "definitionFragmentCid": item.definition_fragment_cid,
-                    "bindingTargetOccurrence": item.binding_target_occurrence.wire(),
-                    "evaluationGroupCid": item.evaluation_group_cid,
-                }
             return {
-                "kind": "conditional",
-                "conditionFragmentCid": item.condition_fragment_cid,
-                "whenTrue": [encode_field(child) for child in item.when_true],
-                "whenFalse": [encode_field(child) for child in item.when_false],
+                "name": item.name,
+                "definitionFragmentCid": item.definition_fragment_cid,
+                "bindingTargetOccurrence": item.binding_target_occurrence.wire(),
+                "evaluationGroupCid": item.evaluation_group_cid,
             }
 
         return {
@@ -335,37 +302,46 @@ class ClassDefinitionSugar(Sugar):
             # authority or behavior here; its faces were already carried by
             # the fold.
         def construct_class(body):
-            if not isinstance(body, _ClassBodyV1):
-                # A completed body has one form, its record (``_class_body``).
-                # Any other completed value is one the assignment routine
-                # handed back because its rest does not run
-                # (``evaluate_assignment_values``): the body did not run to
-                # its end, so no class is built from it (#7799).
+            from sugar_lift_py_tests.sugar.function_universe_sugar import (
+                _ReducedBlock,
+            )
+
+            if not isinstance(body, _ReducedBlock) or not body.can_fall_through:
+                # A completed body has one form: the record its block left
+                # (``_class_body``), run to its end.  Any other completed
+                # value is one whose rest does not run: the body did not run
+                # to its end, so no class is built from it (#7799).
                 from sugar_source_tree.panic import SugarNotWritten
 
                 raise SugarNotWritten(
                     blame=self.site,
                     owner="ClassDefinitionSugar.desugar",
                     observed=(
-                        f"class body completed with a {type(body).__name__}, "
-                        "which is not the body's record"
+                        f"class body completed with a {type(body).__name__}"
+                        + (
+                            " that does not fall through"
+                            if isinstance(body, _ReducedBlock)
+                            else ""
+                        )
+                        + ", which is not the body's record"
                     ),
-                    requested="the class body's record of its fields",
+                    requested="the record the class body's block left at its end",
                     fix="keep a class body that did not run to its end loud",
                 )
+            fields, method_defaults = self._namespace(body)
             value = ClassDefinitionValue(
                 self.class_name,
                 self.class_definition_cid,
                 self.methods,
                 None,
                 self.binding_target_occurrence,
-                body.fields,
+                fields,
                 self.docstring_cid,
                 self.annotation_cids,
                 self.decorator_cids,
                 tuple(base_values),
                 class_definition=self.class_definition,
-                method_defaults=body.method_defaults,
+                method_defaults=method_defaults,
             )
             # The ``__init__`` a call of the class runs is the one the one
             # class-namespace lookup selects (``initializer_class``: this
@@ -391,127 +367,36 @@ class ClassDefinitionSugar(Sugar):
         return class_body().and_then(construct_class)
 
     def _class_body(self, ctx):
-        """The body's outcome: on each completed face, the class's fields and
-        each method default's ``(key, value)`` (``method_defaults``).
+        """The body's run: the record its block leaves on each completed
+        face, every halt of it kept.
 
-        A class field is an assignment.  Its right-hand side is evaluated by
-        the routine every other assignment uses, in source order: a halt of a
-        right-hand side is the body's halt and no later field runs under it.
-        A method's ``def`` statement evaluates its defaults the same way,
-        where it stands in the body (``nodes._def_statement_sugar``).
+        A class body is a block.  Its statements (``body``) run through the
+        one block reducer (``reduce_block_to_exitset``), as a function body
+        or a module body runs: each statement's own sugar evaluates it, in
+        source order, a halt of one is the body's halt and no later
+        statement runs under it, and an ``if`` is ``IfSugar`` -- its test
+        taken by the one truth rule, the arm it selects reduced as the suite
+        it is.  Nothing here decides a statement.
         """
-        from sugar_lift_py_tests.floor import ObjectField
-        from sugar_lift_py_tests.sugar.assigned_value import (
-            evaluate_assignment_values,
-        )
-
-        selected = []
-
-        def select(item):
-            if not isinstance(item, ConstructedClassConditionalFieldsV1):
-                selected.append(item)
-                return
-            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
-                FalseBoolLiteralSugar,
-            )
-            from sugar_lift_py_tests.sugar.function_universe_sugar import (
-                plain_completed_value,
-            )
-            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
-                TrueBoolLiteralSugar,
-            )
-
-            condition = plain_completed_value(item.condition_sugar.desugar(ctx))
-            if not isinstance(
-                condition, (TrueBoolLiteralSugar, FalseBoolLiteralSugar)
-            ):
-                from sugar_source_tree.panic import SugarNotWritten
-
-                raise SugarNotWritten(
-                    blame=self.site,
-                    owner="ClassDefinitionSugar.desugar",
-                    observed="class conditional guard is not a ground bool literal",
-                    requested=(
-                        "one constructed TrueBoolLiteralSugar or "
-                        "FalseBoolLiteralSugar"
-                    ),
-                    fix="keep symbolic or effectful class-body control loud",
-                )
-            for child in (
-                item.when_true
-                if isinstance(condition, TrueBoolLiteralSugar)
-                else item.when_false
-            ):
-                select(child)
-
-        defaults_at: dict[int, list] = {}
-        for position, defaults in self.method_defaults:
-            defaults_at.setdefault(position, []).append(defaults)
-        for position, item in enumerate(self.fields):
-            selected.extend(defaults_at.get(position, ()))
-            select(item)
-        selected.extend(defaults_at.get(len(self.fields), ()))
-        # ``a = b = e`` is one statement: its right-hand side is one value.
-        values = []
-        value_index = []
-        groups = {}
-        field_items = []
-        default_keys = []
-        for item in selected:
-            if isinstance(item, ConstructedClassMethodDefaultsV1):
-                statement = item.defaults
-                default_keys.extend(
-                    (key, len(values) + at) for key, at in statement.evaluations
-                )
-                values.extend(statement.values)
-                continue
-            field_items.append(item)
-            index = groups.get(item.evaluation_group_cid)
-            if item.evaluation_group_cid is None or index is None:
-                index = len(values)
-                values.append(item.value_sugar)
-                if item.evaluation_group_cid is not None:
-                    groups[item.evaluation_group_cid] = index
-            value_index.append(index)
-
-        def bind_fields(active, completed):
-            del active
-            return ExitSet.completed(
-                _ClassBodyV1(
-                    tuple(
-                        ObjectField(item.name, completed[index])
-                        for item, index in zip(field_items, value_index)
-                    ),
-                    tuple((key, completed[index]) for key, index in default_keys),
-                )
-            )
-
-        # A field is read after it through its own key (``y = x + 1; z =
-        # y``): each field is a statement of its own, which assigns its
-        # targets before the next field statement runs, so its key is bound
-        # as soon as its value completes (``as_completed``).
-        evaluations = tuple(
-            (item.evaluation_key, index)
-            for item, index in zip(field_items, value_index)
-            if getattr(item, "evaluation_key", None) is not None
-        )
-        outcome = evaluate_assignment_values(
-            tuple(values), ctx, tail=bind_fields, as_completed=evaluations
-        )
         from sugar_lift_py_tests.outcome.exit_set import Completed
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            reduce_block_to_exitset,
+        )
 
+        outcome = reduce_block_to_exitset(self.body, ctx)
         if (
             isinstance(outcome, ExitSet)
             and sum(isinstance(face, Completed) for face in outcome.exits) > 1
         ):
-            # A field whose right-hand side has several completed values would
-            # build one class per value.  That stays refused, as it always was
-            # (no such class has been traced through a reader of the class
-            # value).  The routine does not say which right-hand side it was,
-            # so the refusal names the body's fields.
+            # A body with several completed faces (a field whose right-hand
+            # side has several completed values) would build one class per
+            # face.  That stays refused, as it always was (no such class has
+            # been traced through a reader of the class value).  The block
+            # does not say which statement it was, so the refusal names the
+            # body's fields.
             from sugar_source_tree.panic import SugarNotWritten
 
-            names = ", ".join(dict.fromkeys(item.name for item in field_items))
+            names = ", ".join(dict.fromkeys(item.name for item in self.fields))
             raise SugarNotWritten(
                 blame=self.site,
                 owner="ClassDefinitionSugar.desugar",
@@ -520,3 +405,90 @@ class ClassDefinitionSugar(Sugar):
                 fix="keep effectful or unresolved class initializers loud",
             )
         return outcome
+
+    def _namespace(self, record) -> tuple:
+        """``(fields, method defaults)``: the class's namespace, read off
+        the state the body's block left (``record``, its completed record).
+
+        Each row of ``fields`` names a Name one statement of the body binds
+        and the key that statement's sugar bound its value under; the
+        namespace holds the value the state binds under that key, in source
+        order, a later binding of a name after an earlier one (the class
+        value reads the last).  A row in an arm of an ``if``
+        (``branch_fields``) is bound exactly on a face where that arm ran:
+        unbound, its statement did not run and the namespace holds nothing
+        of it.  A row of the body itself whose key the state does not hold
+        is refused by name, never dropped.  Each method default is the value
+        the state binds under its key (``default_keys``); one the state does
+        not hold is not carried, and a call that omits it is refused by name
+        (``DefaultValueSugar``).
+
+        An ``if`` the one truth rule did not decide on this face reduced
+        both arms into one record, each under its branch guard
+        (``IfSugar``): the record carries that ``if``'s branch-result
+        authentication.  A name such an arm binds is bound under a guard the
+        namespace's rows do not carry, so the namespace is not read from
+        that state: refused by name, as an undecided class conditional
+        always was.
+        """
+        from sugar_lift_py_tests.floor import ObjectField
+        from sugar_lift_py_tests.floor.branch_result_coordinate import (
+            BranchResultAuthentication,
+        )
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
+            evaluation_read_here,
+        )
+        from sugar_source_tree.panic import SugarNotWritten
+
+        if any(
+            isinstance(entry, BranchResultAuthentication)
+            and entry.slot.slot_id in self.branch_slots
+            for entry in record.entries
+        ):
+            raise SugarNotWritten(
+                blame=self.site,
+                owner="ClassDefinitionSugar.desugar",
+                observed="class conditional guard is not a ground bool literal",
+                requested=(
+                    "a class-body if whose test the truth rule decides on the "
+                    "face the class is built on"
+                ),
+                fix=(
+                    "read a name bound under an undecided branch as the "
+                    "guarded binding it is, or keep the class loud"
+                ),
+            )
+        temporal = getattr(record.context, "temporal", None)
+
+        def bound(key):
+            if temporal is None or key is None:
+                return None
+            return temporal.value_if_bound(evaluation_read_here(temporal, key))
+
+        fields = []
+        for index, row in enumerate(self.fields):
+            value = bound(row.evaluation_key)
+            if value is None:
+                if index in self.branch_fields:
+                    # The arm holding this statement did not run on this face.
+                    continue
+                raise SugarNotWritten(
+                    blame=self.site,
+                    owner="ClassDefinitionSugar.desugar",
+                    observed=(
+                        f"class field {row.name} is not bound in the state "
+                        "its body's block left"
+                    ),
+                    requested=(
+                        "the value the field's statement bound under its "
+                        "evaluation key"
+                    ),
+                    fix="bind every class-body assignment under its key",
+                )
+            fields.append(ObjectField(row.name, value))
+        defaults = tuple(
+            (key, value)
+            for key, value in ((key, bound(key)) for key in self.default_keys)
+            if value is not None
+        )
+        return tuple(fields), defaults

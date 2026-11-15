@@ -143,22 +143,24 @@ def _raised():
     return RaiseEffect.for_builtin("ValueError", blame="statement_leaves.py:3:4")
 
 
-def test_a_class_body_field_lays_its_callee_store_in_the_body_record() -> None:
-    """``class C: y = g(box)`` where ``g`` stored ``box.x``: the class body's
-    record carries the store, which the class statement lays before the
-    class (``ClassDefinitionValue.body_stores``)."""
+def test_an_assignment_tail_lays_its_callee_store_in_the_block_record() -> None:
+    """``y = g(box)`` where ``g`` stored ``box.x``, its tail completing with
+    a block's record (a class body's record is its block's): the record
+    carries the store, which the class statement lays before the class."""
     from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.sugar.assigned_value import evaluate_assignment_values
-    from sugar_lift_py_tests.sugar.class_definition_sugar import _ClassBodyV1
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
     ctx, store, _stored = _caller_holding_a_receiver()
     outcome = evaluate_assignment_values(
         (_carrying(store),),
         ctx,
-        tail=lambda active, completed: ExitSet.completed(_ClassBodyV1((), ())),
+        tail=lambda active, completed: ExitSet.completed(
+            _ReducedBlock((), True, ())
+        ),
     )
     body = outcome.completed_value()
-    assert isinstance(body, _ClassBodyV1)
+    assert isinstance(body, _ReducedBlock)
     assert body.entries == (store,)
 
 
@@ -356,9 +358,16 @@ def _class_statement(store, site=None):
         SourceFragmentCoordinateV1,
     )
     from sugar_lift_py_tests.floor import ConstructedClassFieldV1
+    from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
     from sugar_lift_py_tests.sugar.class_definition_sugar import ClassDefinitionSugar
+    from sugar_lift_py_tests.temporal.temporal_context import (
+        EVALUATION_PREFIX,
+        projection_key,
+    )
 
     occurrence = SourceFragmentCoordinateV1("statement_leaves.py", 2, 4, 2, 5)
+    value = _carrying(store)
+    key = projection_key(EVALUATION_PREFIX + "field-x", "x")
     return ClassDefinitionSugar(
         class_name="C",
         source_identity_cid="statement_leaves.py",
@@ -368,10 +377,13 @@ def _class_statement(store, site=None):
             ConstructedClassFieldV1(
                 "x",
                 "field-x",
-                _carrying(store),
+                value,
                 SourceFragmentCoordinateV1("statement_leaves.py", 3, 4, 3, 5),
+                evaluation_key=key,
             ),
         ),
+        # The body is a block: its one statement binds ``x`` under its key.
+        body=(AssignSugar(name="x", value=value, site=site, evaluations=(("x", key),)),),
         docstring_cid=None,
         annotation_cids=(),
         decorator_cids=(),

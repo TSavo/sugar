@@ -74,7 +74,7 @@ def test_classdef_ground_false_body_does_not_invent_its_field(tmp_path: Path) ->
     assert [field.name for field in value.class_fields] == ["y"]
 
 
-def test_classdef_conditional_fields_preserve_source_override_order(
+def test_classdef_if_arm_and_later_field_preserve_source_override_order(
     tmp_path: Path,
 ) -> None:
     sf = _file(
@@ -87,11 +87,23 @@ def test_classdef_conditional_fields_preserve_source_override_order(
     assert value.class_fields[-1].value.value == 2
 
 
-def test_classdef_symbolic_body_stays_loud(tmp_path: Path) -> None:
+def test_classdef_if_reading_an_unbound_name_halts_with_name_error(
+    tmp_path: Path,
+) -> None:
+    """``if choose:`` reads a name nothing binds: the class body's ``if`` is
+    the one ``IfSugar``, whose test halts with ``NameError`` before either
+    arm runs, so the class statement halts and no class is built -- as
+    Python raises at the class statement."""
+    from sugar_lift_py_tests.effect import NameErrorEffect
+    from sugar_lift_py_tests.outcome import Completed, Halted
+
     sf = _file(tmp_path, "class C:\n    if choose:\n        x = 1\n")
     class_def = next(n for n in sf.nodes() if type(n).__name__ == "ClassDef")
-    with pytest.raises(SugarNotWritten, match="class conditional"):
-        class_def.sugar().desugar()
+    outcome = class_def.sugar().desugar()
+    assert not any(isinstance(face, Completed) for face in outcome.exits)
+    (effect,) = (face.effect for face in outcome.exits if isinstance(face, Halted))
+    assert isinstance(effect, NameErrorEffect)
+    assert effect.name == "choose"
 
 
 # --- NamedExpr ---

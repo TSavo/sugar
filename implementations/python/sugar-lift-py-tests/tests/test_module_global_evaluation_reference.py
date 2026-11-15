@@ -872,9 +872,15 @@ def test_a_class_body_reads_the_binding_its_statement_saw() -> None:
 
 def test_a_name_the_class_body_binds_is_not_read_from_the_module() -> None:
     tree = _source("x = 1\nx += 1\nclass C:\n    x = 2\n    y = x\n")
+    module_keys = set(_module_evaluations(tree))
     definition = next(node for node in tree.nodes() if isinstance(node, ClassDef))
     fields = {field.name: field for field in definition.sugar().fields}
-    assert not isinstance(fields["y"].value_sugar, EvaluationRefSugar)
+    # The class body is a block: ``y = x`` reads the body's own ``x = 2``
+    # through that statement's key, never the module's ``x``.
+    read = fields["y"].value_sugar
+    assert isinstance(read, EvaluationRefSugar)
+    assert read.evaluation == fields["x"].evaluation_key
+    assert read.evaluation not in module_keys
 
 
 def test_a_class_statement_nested_in_a_module_if_reads_the_binding_it_saw() -> None:
