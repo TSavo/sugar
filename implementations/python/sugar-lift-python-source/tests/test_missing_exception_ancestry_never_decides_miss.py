@@ -73,11 +73,38 @@ def _is_split_by_retained_type_test(exits) -> bool:
     )
 
 
+def _split_survives_beside_the_read(exits) -> bool:
+    """A dotted read off an imported module (``json.JSONDecodeError``) is the
+    two-faced read (``ImportMemberValue.read_faces``): its halt is carried,
+    and on its completing face the match is still the retained type test --
+    the caught return under the test, the escaping raise under its
+    complement and the read's completes atom."""
+    completed = [face for face in exits.exits if isinstance(face, Completed)]
+    halted = [
+        face
+        for face in exits.exits
+        if isinstance(face, Halted) and isinstance(face.effect, RaiseEffect)
+    ]
+    read_halts = [
+        face
+        for face in exits.exits
+        if isinstance(face, Halted)
+        and getattr(face.effect, "producer_node_owner", None)
+        == "ImportMemberValue.read"
+    ]
+    return (
+        bool(read_halts)
+        and any("adt.is_python_type" in repr(face.guard) for face in completed)
+        and len(halted) == 1
+        and "adt.is_python_type" in repr(halted[0].guard)
+        and "python:attribute.completes" in repr(halted[0].guard)
+    )
+
+
 @pytest.mark.parametrize(
     "prelude, raise_line",
     [
         ("from json import JSONDecodeError\n", "raise JSONDecodeError"),
-        ("import json\n", "raise json.JSONDecodeError"),
         (
             "from json import JSONDecodeError\nclass E(JSONDecodeError):\n    pass\n",
             'raise E("m", "d", 0)',
@@ -87,11 +114,18 @@ def _is_split_by_retained_type_test(exits) -> bool:
             'raise E("m", "d", 0)',
         ),
     ],
-    ids=["imported-name", "imported-attribute", "local-sub-of-imported", "local-sub-of-dotted"],
+    ids=["imported-name", "local-sub-of-imported", "local-sub-of-dotted"],
 )
 def test_unauthenticated_ancestry_retains_the_match(tmp_path, prelude, raise_line) -> None:
     exits = _exits(tmp_path, _try(raise_line, "ValueError", prelude))
     assert _is_split_by_retained_type_test(exits)
+
+
+def test_dotted_raised_class_retains_the_match_beside_the_read(tmp_path) -> None:
+    exits = _exits(
+        tmp_path, _try("raise json.JSONDecodeError", "ValueError", "import json\n")
+    )
+    assert _split_survives_beside_the_read(exits)
 
 
 @pytest.mark.parametrize(
@@ -135,13 +169,13 @@ def test_import_handler_coordinate_never_settles_a_miss(tmp_path) -> None:
     exits = _exits(
         tmp_path, _try("raise ValueError()", "json.JSONDecodeError", "import json\n")
     )
-    assert _is_split_by_retained_type_test(exits)
+    assert _split_survives_beside_the_read(exits)
 
 
 def test_import_alias_of_the_raised_builtin_is_not_a_miss(tmp_path) -> None:
     # ``socket.error is OSError``: main lifted this as always raising.
     exits = _exits(tmp_path, _try("raise OSError()", "socket.error", "import socket\n"))
-    assert _is_split_by_retained_type_test(exits)
+    assert _split_survives_beside_the_read(exits)
 
 
 def _class_name(source_file, name: str):
