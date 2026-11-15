@@ -22,7 +22,9 @@ def _site():
 
 def test_name_error_effect_is_a_deterministic_incomplete_halt() -> None:
     site = _site()
-    effect = NameErrorEffect(name="name", site=site)
+    # The one constructor: it reads the builtin (NameError here: the read is
+    # at module scope, outside any function body) and the locus off the site.
+    effect = NameErrorEffect.at(name="name", site=site)
 
     outcome = ExitSet.halted(effect)
 
@@ -33,5 +35,5 @@ def test_name_error_effect_is_a_deterministic_incomplete_halt() -> None:
     assert effect_kind(effect) == "RaiseEffect"
     assert "unbound name 'name'" in effect_reason(effect)
     assert effect.exception_name == "NameError"
-    assert effect.occurrence == f"{site.filename}:{site.line}:{site.col}"
+    assert effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
     assert not hasattr(effect, "runtime_operand")
