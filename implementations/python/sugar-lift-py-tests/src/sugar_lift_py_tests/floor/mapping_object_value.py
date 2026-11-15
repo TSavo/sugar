@@ -189,6 +189,11 @@ class MappingObjectValue(ObjectValue):
         selects: the method applied under the store statement's context, and
         the receiver it leaves read off its one receiver-owned mutation.
 
+        The applied call's value carries the stores the method made on objects
+        its caller sees (``CallerStoreValue``); it is read through the one
+        operand door (``consume_operands``), so the body is read off the Call
+        beneath them and every store rides on to the statement.
+
         The method's ``__class__`` cell (PEP 3135) is the class whose body
         defines it, bound where every method application binds it
         (``object_value.bind_method_call``: ``lexical_defining_class``) --
@@ -205,6 +210,10 @@ class MappingObjectValue(ObjectValue):
                 requested="the store statement's context",
                 fix="thread the caller context; zero-arg super requires its __class__ cell",
             )
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+        )
+
         return (
             super()
             .call_method_value(
@@ -215,8 +224,11 @@ class MappingObjectValue(ObjectValue):
                 ctx=ctx,
             )
             .and_then(
-                lambda callsite: callsite.retained_source_completion_outcome().and_then(
-                    self._project_setitem_receiver
+                lambda applied: consume_operands(
+                    lambda callsite: callsite.retained_source_completion_outcome().and_then(
+                        self._project_setitem_receiver
+                    ),
+                    applied,
                 )
             )
         )

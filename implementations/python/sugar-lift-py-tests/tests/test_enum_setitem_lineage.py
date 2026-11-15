@@ -87,9 +87,19 @@ def test_source_setitem_runs_then_super_returns_none_with_updated_receiver() -> 
         "        super().__setitem__(key, value)\n"
     )
 
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        CallerStoreValue,
+        peel_walrus_binds,
+    )
+
     outcome = _source_method_outcome(receiver, context)
-    updated = outcome.completed_value()
-    assert updated is not None
+    carried = outcome.completed_value()
+    assert carried is not None
+    # ``self.seen = key`` is a store on an object the caller sees: it rides
+    # the store statement's value to the statement, never dropped, and the
+    # receiver the method left is the value beneath it.
+    stores, updated = peel_walrus_binds(carried)
+    assert stores and all(isinstance(store, CallerStoreValue) for store in stores)
 
     assert updated.identity == receiver.identity
     assert updated.entries == ((StringValue("member"), TermValue(7)),)

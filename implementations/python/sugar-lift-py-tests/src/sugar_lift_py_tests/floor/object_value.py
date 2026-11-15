@@ -271,10 +271,23 @@ class ObjectValue(FloorValue):
                 )
             return returned(block.statements[0].value)
 
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+        )
+
+        # The applied call's value carries the stores the method made on
+        # objects its caller sees (``CallerStoreValue``): the body is read off
+        # the Call beneath them, through the one operand door, and each store
+        # rides on.
         return self.call_member(
             dunder, method, (other,), owner=owner, blame=site, ctx=ctx
         ).and_then(
-            lambda call: call.retained_source_completion_outcome().and_then(completed)
+            lambda applied: consume_operands(
+                lambda call: call.retained_source_completion_outcome().and_then(
+                    completed
+                ),
+                applied,
+            )
         )
 
     def matrix_multiply(self, other, site, ctx):
