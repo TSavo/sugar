@@ -157,11 +157,19 @@ def _subscript_sequence(
     blame: object,
     observed_name: str,
 ) -> ExitSet:
-    from sugar_lift_py_tests.floor import BoolValue, TermValue
+    from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+        TrueBoolLiteralSugar,
+    )
 
     index = _unwrap_index(index)
-    if isinstance(index, BoolValue):
-        index = TermValue(1 if index.value else 0)
+    # ``bool`` is an ``int``: ``t[True]`` is ``t[1]`` and ``t[False]`` is
+    # ``t[0]``. A decided boolean is one of the two literal values.
+    if type(index) in (TrueBoolLiteralSugar, FalseBoolLiteralSugar):
+        index = TermValue(1 if type(index) is TrueBoolLiteralSugar else 0)
     if isinstance(index, TermValue) and type(index.value) is int:
         item_index = index.value
         if item_index < 0:
