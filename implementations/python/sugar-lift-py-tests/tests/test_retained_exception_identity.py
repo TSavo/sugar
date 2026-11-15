@@ -36,8 +36,10 @@ tester atom does not appear at all.
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-from sugar_lift_py_tests.outcome import ExitSet
+from sugar_lift_py_tests.effect.raise_effect import (
+    RaiseEffect,
+    UndeterminedRaiseEffect,
+)
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
@@ -55,38 +57,25 @@ def _universe(source: str):
 
 
 def _residual_raises(source: str) -> tuple[str, ...]:
-    """Every raise that survived the `try` -- the effects still on the wall."""
+    """Every raise that survived the `try` -- the effects still on the wall.
+
+    A raise survives only as a halted arm of the function's one reduction. A
+    completed arm's record may hold the caught halt the handler resumed from;
+    that raise was caught, not survived (as ``test_builtin_exception_ancestry``
+    reads it, #8254). ``raise exc`` on a formal has no authenticated type, so
+    it halts with an ``UndeterminedRaiseEffect`` (#6965) -- still a raise on
+    the wall, read by the name its statement wrote.
+    """
     exit_set = _universe(source)
-    names: list[str] = []
-    seen: set[int] = set()
-
-    def walk(value: object) -> None:
-        if value is None or isinstance(value, (str, int, bool, float, bytes)):
-            return
-        key = id(value)
-        if key in seen:
-            return
-        seen.add(key)
-        if isinstance(value, ExitSet) and value.halts() == value.exits:
-            names.extend(
-                halt.effect.exception_name
-                for halt in value.halts()
-                if isinstance(halt.effect, RaiseEffect)
-            )
-        effect = getattr(value, "effect", None)
-        if isinstance(effect, RaiseEffect):
-            names.append(effect.exception_name)
-        for attribute in ("statements", "record", "value", "exits", "entries"):
-            child = getattr(value, attribute, None)
-            if isinstance(child, tuple):
-                for item in child:
-                    walk(item)
-            else:
-                walk(child)
-
-    for face in exit_set.exits:
-        walk(face)
-    return tuple(sorted(set(names)))
+    return tuple(
+        sorted(
+            {
+                halted.effect.exception_name
+                for halted in exit_set.halts()
+                if isinstance(halted.effect, (RaiseEffect, UndeterminedRaiseEffect))
+            }
+        )
+    )
 
 
 def _tester_atom_count(source: str) -> int:
