@@ -46,7 +46,9 @@ def _post(source: str):
 
 def _completed(outcome):
     """The one completed face's value.  A call of a module member the import
-    door did not cite may raise (``UnknownCallee:<target>``)."""
+    door did not cite may raise (``UnknownCallee:<target>``), and so may a
+    dotted read of one (``ImportMemberValue.read``: the member may be absent,
+    and the lifter holds no module's namespace)."""
     from sugar_lift_py_tests.outcome import Completed, Halted
 
     exits = outcome.exits
@@ -54,6 +56,7 @@ def _completed(outcome):
     assert len(completed) == 1, exits
     assert all(
         face.effect.producer_node_owner.startswith("UnknownCallee:")
+        or face.effect.producer_node_owner == "ImportMemberValue.read"
         for face in exits
         if isinstance(face, Halted)
     )

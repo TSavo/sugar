@@ -7,6 +7,12 @@ with a target symbol is spelled by it (``call:<target_symbol>``), never by the
 local alias, whatever the callee's shape; every import-member value read is a
 closed reference ``ref:<target_symbol>``, never a free variable. A bare module
 alias is not a member and keeps its name.
+
+A dotted read (``idn.CONST``) runs ``getattr`` where it is read and the lifter
+holds no module's namespace, so it is the two-faced undecided read: the
+reference under its completes atom, an undetermined raise under the
+complement, and the ``undecided`` member owed under the same target symbol. A
+name ``from idn import CONST`` bound is read by name and cannot raise there.
 """
 
 from __future__ import annotations
@@ -16,7 +22,12 @@ import pytest
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.import_binding import authenticated_import_uses
 
-from test_import_bound_callee_is_closed import _application, _post, _scoped
+from test_import_bound_callee_is_closed import (
+    _application,
+    _function_outcome,
+    _post,
+    _scoped,
+)
 
 
 def _value(post):
@@ -92,6 +103,63 @@ def test_an_import_member_value_read_is_a_closed_reference(source, reference) ->
     assert value.name == reference
     assert value.args == ()
     assert _scoped(post, ()).formula.free_vars == {"out"}
+
+
+@pytest.mark.parametrize(
+    ("source", "symbol"),
+    [
+        ("import idn\n\n\ndef f():\n    return idn.CONST\n", "python:idn.CONST"),
+        (
+            "import numpy as np\n\n\ndef f():\n    return np.float64\n",
+            "python:numpy.float64",
+        ),
+        (
+            "from pkg import sub as s\n\n\ndef f():\n    return s.CONST\n",
+            "python:pkg.sub.CONST",
+        ),
+    ],
+    ids=["module-member", "aliased-module-member", "from-import-head"],
+)
+def test_a_dotted_member_read_may_raise_and_owes_its_target_symbol(
+    source, symbol
+) -> None:
+    """Truthful: Python can raise at ``module.attr`` (the member may be
+    absent), and nothing here holds the module's namespace.  The read is the
+    two faces: it completes with the reference only under its own
+    ``python:attribute.completes`` atom, the complement halts with an
+    undetermined raise (no ``AttributeError`` is named), and what is not
+    decided here is stated once, by the ``undecided`` member under the import
+    table's target symbol."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    outcome = _function_outcome(source)
+    (halt,) = outcome.halts()
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.effect.producer_node_owner == "ImportMemberValue.read"
+    assert halt.effect.exception_name is None
+    assert "python:attribute.completes" in repr(halt.guard)
+    (completed,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert "python:attribute.completes" in repr(completed.guard)
+    owed = owed_calls(outcome)
+    assert [call.symbol for call in owed] == [symbol]
+    assert owed[0].site is not None
+
+
+def test_a_name_a_from_import_bound_cannot_raise_at_its_read() -> None:
+    """Lying: "every import member read may raise".  ``from idn import CONST``
+    ran before the read (an absent member raises there, at the import); the
+    read of the name it bound runs nothing.  One completed arm, no halt,
+    nothing owed."""
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    outcome = _function_outcome(
+        "from idn import CONST\n\n\ndef f():\n    return CONST\n"
+    )
+    assert not outcome.halts()
+    assert len(outcome.exits) == 1
+    assert owed_calls(outcome) == ()
 
 
 def test_a_member_read_as_an_operand_is_a_reference_not_a_free_variable() -> None:

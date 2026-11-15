@@ -11,7 +11,11 @@ from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 @dataclass(frozen=True)
 class ImportMemberSugar(ConstructedTermSugar):
-    """``import M as h; h.a.b`` as the closed coordinate ``M.a.b``."""
+    """``import M as h; h.a.b`` as the closed coordinate ``M.a.b``.
+
+    The dotted read is two-faced (it may raise where it is read); a name a
+    ``from`` import bound is the one completed arm (``desugar``).
+    """
 
     qualified_name: str
     receipt: object = dataclass_field(compare=False, repr=False)
@@ -52,6 +56,19 @@ class ImportMemberSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
+        """The read of the import-bound reference at ``site``.
+
+        A dotted read (``np.nan``, ``pd.util.foo``: the use's own member path
+        is not empty) runs ``getattr`` where it is read, which may raise, and
+        the lifter holds no module's namespace: it is the two-faced undecided
+        read (``ImportMemberValue.read_faces``), the reference under its
+        completes atom and an undetermined raise under the complement, owing
+        the ``undecided`` member under the import's target symbol.
+
+        A name ``from m import x`` bound (the use's member path is empty; the
+        path is the binding's) is read by name: the import statement already
+        ran, nothing runs at the read, so it is the one completed arm.
+        """
         del ctx
         from sugar_lift_py_tests.floor.import_member_value import (
             _mint_import_member_value,
@@ -60,7 +77,9 @@ class ImportMemberSugar(ConstructedTermSugar):
         value = _mint_import_member_value(self.receipt)
         if value.qualified_name != self.qualified_name:
             raise ValueError("ImportMemberSugar receipt target mismatch")
-        return ExitSet.completed(value)
+        if not self.receipt.use.get("exportedMemberPath"):
+            return ExitSet.completed(value)
+        return value.read_faces(self.site)
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.floor.import_member_value import (

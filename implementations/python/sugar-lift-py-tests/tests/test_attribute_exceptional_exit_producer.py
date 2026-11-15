@@ -247,8 +247,10 @@ def test_import_member_path_read_is_the_closed_reference() -> None:
     ``ref:pandas.util.foo``.  The alias is never an opaque symbolic receiver
     asked for a member (the deleted second way this row used to pin as
     ``SymbolicValue.attribute``), and no ``AttributeError`` is named here.
-    This pins the value the read completes with; it states nothing about
-    whether the read can halt.
+    The read can raise where it is read and the lifter holds no module's
+    namespace, so it is the one two-faced unanswered read
+    (``ImportMemberValue.read_faces``): the reference under its completes
+    atom, an undetermined raise under the complement, the read owed.
     """
     from sugar_lift_py_tests.floor.import_member_value import ImportMemberValue
     from sugar_lift_py_tests.outcome import Completed
@@ -260,6 +262,7 @@ def test_import_member_path_read_is_the_closed_reference() -> None:
 
     outcome = node.sugar().desugar(None)
 
+    _assert_two_faced_read(outcome, "ImportMemberValue.read")
     (member,) = [arm.value for arm in outcome.exits if isinstance(arm, Completed)]
     assert isinstance(member, ImportMemberValue)
     assert member.qualified_name == "pandas.util.foo"

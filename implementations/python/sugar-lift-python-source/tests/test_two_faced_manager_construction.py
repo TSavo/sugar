@@ -6,7 +6,9 @@ an import member whose runtime value is not projected, so the subscript used
 to refuse (``ImportMemberValue.subscript``: undecided receiver runtime type)
 and voided the manager.  It is now the #7587 opaque-subscript law: it
 completes under ``python:subscript.completes(...)`` and halts with an
-``UndeterminedRaiseEffect`` under the complement.
+``UndeterminedRaiseEffect`` under the complement.  The dotted read
+``sys.modules`` before it is two-faced as well
+(``ImportMemberValue.read_faces``): one more halt, of the same kind.
 
 A two-faced constructor leaves a receiver-state partition, not one receiver.
 The ``with`` used to hand that partition to ``__enter__`` as if it were the
@@ -40,7 +42,11 @@ def _rows(tmp_path, init: str, body: str = "pass"):
 
 
 def test_import_member_subscript_in_construction_is_two_faced(tmp_path):
+    # Two undecided operations, each its own halt: the dotted read
+    # ``sys.modules`` (the member may be absent; no module's namespace is
+    # held), then the subscript of what it read.
     assert _rows(tmp_path, "self.m = sys.modules['os']") == [
+        ("halt", None),
         ("halt", None),
         ("return", 7),
     ]
