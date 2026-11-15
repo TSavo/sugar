@@ -60,14 +60,15 @@ class IfExpSugar(ConstructedTermSugar):
 
     @classmethod
     def witnesses(cls):
-        # A conditional over the local `z`, asserted in the test itself: the
-        # truthful twin asserts the `z == 1` arm's 10, the lying twin 11.
+        # A conditional over the local `z = 5`, asserted in the test itself:
+        # `z == 1` is false, so the truthful twin asserts the else arm's 20,
+        # the lying twin the arm not taken, 10.
         return _expression_pair(
             name="ifexp_conditional_return",
             owner_sugar="IfExpSugar",
             body="10 if z == 1 else 20",
-            truthful="10",
-            lying="11",
+            truthful="20",
+            lying="10",
         )
 
     def to_term(self, *, owner: str):

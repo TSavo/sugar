@@ -193,8 +193,8 @@ class JoinedStrSugar(ConstructedTermSugar):
             name="fstring_return",
             owner_sugar="JoinedStrSugar",
             statements="z = 5",
-            truthful="f'n={z}' == '5'",
-            lying="f'n={z}' == '6'",
+            truthful="f'n={z}' == 'n=5'",
+            lying="f'n={z}' == 'n=6'",
         )
 
     def to_term(self, *, owner: str):

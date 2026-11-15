@@ -39,13 +39,24 @@ class ComputedExceptionTypeSugar(ConstructedTermSugar):
 
     @classmethod
     def witnesses(cls):
-        from sugar_lift_py_tests.sugar.witnesses import _call_pair
+        from sugar_lift_py_tests.sugar.witnesses import _assertion_pair
 
-        return _call_pair(
+        # The arm's type is a name bound to a value (``excs``), read when the
+        # raise reaches the arm: the tuple holds ``ValueError``, so the arm
+        # matches and binds `z`.
+        return _assertion_pair(
             name="computed_exception_type",
             owner_sugar="ComputedExceptionTypeSugar",
-            truthful="def f(x):\n    return x\n",
-            lying="def f(x):\n    return 0\n",
+            statements=(
+                "z = 5\n"
+                "excs = (KeyError, ValueError)\n"
+                "try:\n"
+                "    raise ValueError\n"
+                "except excs:\n"
+                "    z = 6"
+            ),
+            truthful="z == 6",
+            lying="z == 5",
         )
 
     def to_term(self, *, owner: str):

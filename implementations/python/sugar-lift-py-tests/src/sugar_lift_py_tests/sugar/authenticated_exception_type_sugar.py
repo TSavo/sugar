@@ -23,13 +23,25 @@ class AuthenticatedExceptionTypeSugar(ConstructedTermSugar):
 
     @classmethod
     def witnesses(cls):
-        from sugar_lift_py_tests.sugar.witnesses import _call_pair
+        from sugar_lift_py_tests.sugar.witnesses import _assertion_pair
 
-        return _call_pair(
+        # Two arms named by builtin exception classes: the raised
+        # ``ValueError`` passes the ``KeyError`` arm and is taken by the
+        # ``ValueError`` one, so only the matching identity's arm binds `z`.
+        return _assertion_pair(
             name="authenticated_exception_type",
             owner_sugar="AuthenticatedExceptionTypeSugar",
-            truthful="def f(x):\n    return x\n",
-            lying="def f(x):\n    return 0\n",
+            statements=(
+                "z = 5\n"
+                "try:\n"
+                "    raise ValueError\n"
+                "except KeyError:\n"
+                "    z = 7\n"
+                "except ValueError:\n"
+                "    z = 6"
+            ),
+            truthful="z == 6",
+            lying="z == 7",
         )
 
     def _identity_term(self):
