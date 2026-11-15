@@ -6927,6 +6927,18 @@ pub fn members_answered_at_prove(
         return answered;
     }
     let ambient = collect_ambient_posts(pool);
+    // The laws every obligation conjoins (`claim_holds_for_every_value`, the
+    // consistency pass): each is true of every object, so the context reads
+    // them as the claim it answers for does. Without them a joined post that
+    // states `out == python:isinstance(..)` never decides a comparison over
+    // `out`, though the consistency row over the same claim is decided.
+    let exception_ancestry = collect_exception_ancestry(pool);
+    let class_namespaces = collect_class_namespaces(pool);
+    let with_laws = |context: Json| {
+        let context = with_raised_types(context, &ambient);
+        let context = with_exception_ancestry(context, &exception_ancestry);
+        with_isinstance_law(context, &class_namespaces)
+    };
     let mut owed: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for (_cid, member) in pool.contract_members() {
         let Some(body) = pool
@@ -6965,14 +6977,16 @@ pub fn members_answered_at_prove(
         // row's own inputs were bound, the bound operation alone (an atom
         // over the stated values is proved or refuted by itself, or nothing
         // is answered).
-        let context = joined_context(&claim, &ambient, plan, registry, compilers).or_else(|| {
-            binds_own_inputs.then(|| {
-                (
-                    IrFormula::And(Vec::new()).to_value(),
-                    vec!["the row's own stated inputs".to_string()],
-                )
+        let context = joined_context(&claim, &ambient, plan, registry, compilers)
+            .or_else(|| {
+                binds_own_inputs.then(|| {
+                    (
+                        IrFormula::And(Vec::new()).to_value(),
+                        vec!["the row's own stated inputs".to_string()],
+                    )
+                })
             })
-        });
+            .map(|(joined, symbols)| (with_laws(joined), symbols));
         for (member_cid, atoms) in reads {
             let reason = match &context {
                 Some((joined, symbols))
