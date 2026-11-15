@@ -16877,13 +16877,10 @@ class For(Statement):
         for index, (element, binding) in enumerate(
             zip(elements, bindings, strict=True)
         ):
-            # A display that did not destructure stays loud; a ``*xs`` member
-            # of the iterable display is no one item.
-            if element.kind == "Starred" or (
-                destructures
-                and binding is None
-                and element.kind in ("Tuple", "List")
-            ):
+            # A display that did not destructure stays loud.  (A ``*xs``
+            # member never reaches here: ``_concrete_elements`` leaves its
+            # display live.)
+            if destructures and binding is None and element.kind in ("Tuple", "List"):
                 unpacks.append(None)
                 resolved.append(binding)
                 continue
@@ -17260,6 +17257,15 @@ class For(Statement):
             ]
         if iterable.kind in ("List", "Tuple"):
             elements = list(iterable.elts)
+            if any(element.kind == "Starred" for element in elements):
+                # ``[self, *dtypes]`` has one item per item of ``dtypes``
+                # besides ``self``: a ``*xs`` member is no one item, and the
+                # display decides how many items there are only where each
+                # member is one (``core/dtypes/dtypes.py:974``, whose
+                # comprehension dissolved into ``cast(D, *dtypes).base`` as
+                # its second member).  The loop or comprehension stays live,
+                # as over any iterable no display decides (#7757).
+                return None
             if any(For._is_ground_zero_division(self, element) for element in elements):
                 # A ground ZeroDivisionError is an effect, not a concrete
                 # element -- the same refusal _concrete_int already makes for
@@ -22343,7 +22349,7 @@ class ListComp(Expression):
         read = []
         members = []
         for element in elements:
-            if element.kind == "Starred" or not _evaluates_code(element):
+            if not _evaluates_code(element):
                 read.append(element)
                 continue
             key = _item_evaluation_key(Statement._evaluation_key(element, scope))
