@@ -399,7 +399,13 @@ def test_incompatible_operands_method_call_halts_with_named_typeerror() -> None:
     a completed sum is the silent-wrong twin. When sole Halted surfaces,
     pre-effect state is required (#6659).
     """
-    site = _method_callsite(METHOD_BODY + "\nAdder().combine(None, 2)\n")
+    # The call stands in a function called after import: in the module body
+    # ``None + 2`` raises, the module's one run completes on no arm, and the
+    # read of ``Adder`` -- a module class's name, read through its
+    # statement's key in that run (#7757 item 21) -- has no class to read.
+    site = _method_callsite(
+        METHOD_BODY + "\n\ndef caller():\n    Adder().combine(None, 2)\n"
+    )
     _assert_bound_self_first(site)
     assert site.arg_values[1] == NoneValue()
     assert site.arg_values[2] == TermValue(2)
