@@ -8,9 +8,22 @@ name: Main scorecard
 # - the pandas board ran only by hand (/home/tsavo/sugar-pass-kit/run.sh);
 # - the solver twins and examples/python-base64-federation/run.sh ran nowhere.
 #
-# This workflow measures the tip of main once an hour and posts one row of
-# numbers. Its concurrency group is its own and is never cancelled by a push,
-# so every run that starts finishes. Every measuring job runs even when an
+# This workflow measures the tip of main on every merge (push to main), once
+# an hour, and on demand, and posts one row of numbers. Its concurrency group
+# is its own with cancel-in-progress false: one run measures while the newest
+# trigger waits (GitHub keeps only the newest pending run). A run measures the
+# tip of main when it starts, so each row covers every merge since the
+# previous row, and the row names those PRs.
+#
+# Regression alarm: the scorecard job reads the previous row from the
+# "Main scorecard" issue and compares suite passed, twins passed, board
+# completed, board cpanic and federation PASS/FAIL. Any number that got worse
+# (or that was measured before and is unmeasured now) makes the comment start
+# with REGRESSION: and turns the job red. Otherwise the comment starts with OK.
+#
+# Every measuring job (8 suite shards, twins, federation, 4 board seats)
+# depends only on resolve and env-prepare, so they run in parallel; the board
+# join seals the seats' checkpoints. Every measuring job runs even when an
 # earlier one fails, so the scorecard always posts.
 #
 # It reuses the existing setup (python-test-environment wheelhouse, sugarbin,
@@ -18,6 +31,8 @@ name: Main scorecard
 # not change the gating of any other workflow.
 
 on:
+  push:
+    branches: [main]
   schedule:
     - cron: "0 * * * *"
   workflow_dispatch:
@@ -33,6 +48,7 @@ permissions:
 env:
   PYTHONUNBUFFERED: "1"
   SUITE_SHARD_COUNT: "8"
+  # Must match the board-seat matrix below.
   BOARD_SEATS: "4"
   # Per-seat and join caps for the pandas board (seconds).
   BOARD_SEAT_CAP_S: "10800"
@@ -354,19 +370,21 @@ jobs:
 
   # ----------------------------------------------------- (4) pandas board
   # The pass kit's shape (run.sh): BOARD_SEATS seats of --slice i/K, each with
-  # its own checkpoint, joined, then --aggregate-only. pandas is pinned to
-  # 3.0.3 by sugar-lift-py-tests[test] and docs/ledgers/pins/pandas-3.0.3.pin.json.
-  board:
-    name: pandas board
+  # its own checkpoint, joined, then --aggregate-only. Each seat is its own
+  # job so the seats run in parallel with the suite, twins and federation.
+  # pandas is pinned to 3.0.3 by sugar-lift-py-tests[test] and
+  # docs/ledgers/pins/pandas-3.0.3.pin.json.
+  board-seat:
+    name: pandas board seat ${{ matrix.seat }}
     needs: [resolve, env-prepare]
     if: always()
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 240
-    outputs:
-      completed: ${{ steps.parse.outputs.completed }}
-      total: ${{ steps.parse.outputs.total }}
-      cpanic: ${{ steps.parse.outputs.cpanic }}
-      line: ${{ steps.parse.outputs.line }}
+    # BOARD_SEAT_CAP_S (180 min) plus setup.
+    timeout-minutes: 210
+    strategy:
+      fail-fast: false
+      matrix:
+        seat: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -401,7 +419,80 @@ jobs:
           python tools/bx_corpus_pin_gate.py \
             --expected-pin docs/ledgers/pins/pandas-3.0.3.pin.json \
             --corpus-root "$PANDAS_CORPUS"
-      - name: Seats + join + aggregate
+      - name: Seat ${{ matrix.seat }}
+        shell: bash
+        working-directory: implementations/python/sugar-lift-py-tests
+        env:
+          PANDAS_CORPUS: ${{ steps.corpus.outputs.root }}
+          SEAT: ${{ matrix.seat }}
+        run: |
+          set -uo pipefail
+          export SUGAR_HOME="$GITHUB_WORKSPACE/.sugar"
+          OUT="$GITHUB_WORKSPACE/board"
+          mkdir -p "$OUT"
+          timeout -s KILL "$BOARD_SEAT_CAP_S" \
+            python -u scripts/control_effect_recensus.py "$PANDAS_CORPUS" \
+              --corpus-root "$PANDAS_CORPUS" \
+              --slice "$SEAT/$BOARD_SEATS" \
+              --out-dir "$OUT/s$SEAT" \
+              > "$OUT/s$SEAT.log" 2>&1
+          rc=$?
+          echo "$rc" > "$OUT/s$SEAT.rc"
+          echo "seat s$SEAT rc=$rc"
+      - name: Upload seat checkpoint
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-scorecard-board-seat-${{ matrix.seat }}
+          path: |
+            board/s${{ matrix.seat }}.log
+            board/s${{ matrix.seat }}.rc
+            board/s${{ matrix.seat }}/checkpoint.jsonl
+          if-no-files-found: warn
+
+  board-join:
+    name: pandas board join
+    needs: [resolve, env-prepare, board-seat]
+    if: always()
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 30
+    outputs:
+      completed: ${{ steps.parse.outputs.completed }}
+      total: ${{ steps.parse.outputs.total }}
+      cpanic: ${{ steps.parse.outputs.cpanic }}
+      line: ${{ steps.parse.outputs.line }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve.outputs.sha || 'main' }}
+      - name: Download shared third-party wheelhouse
+        uses: actions/download-artifact@v4
+        with:
+          name: main-scorecard-wheelhouse
+          path: ${{ runner.temp }}/python-test-wheelhouse
+      - name: Install from shared wheelhouse (no network resolve)
+        uses: ./.github/actions/python-test-environment-from-wheelhouse
+        with:
+          wheelhouse-path: ${{ runner.temp }}/python-test-wheelhouse
+      - name: Set up Rust toolchain
+        uses: ./.github/actions/setup-rust-cache
+      - name: Resolve authenticated pandas corpus
+        id: corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$(
+            python -c 'from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus; print(authenticated_pandas_corpus().root)'
+          )"
+          echo "root=$root" >> "$GITHUB_OUTPUT"
+          echo "pandas corpus: $root"
+      - name: Download seat checkpoints
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: main-scorecard-board-seat-*
+          path: board/seats
+      - name: Join + aggregate
         shell: bash
         working-directory: implementations/python/sugar-lift-py-tests
         env:
@@ -413,21 +504,12 @@ jobs:
           mkdir -p "$OUT/join"
           K="$BOARD_SEATS"
           for i in $(seq 0 $((K - 1))); do
-            (
-              timeout -s KILL "$BOARD_SEAT_CAP_S" \
-                python -u scripts/control_effect_recensus.py "$PANDAS_CORPUS" \
-                  --corpus-root "$PANDAS_CORPUS" \
-                  --slice "$i/$K" \
-                  --out-dir "$OUT/s$i" \
-                  > "$OUT/s$i.log" 2>&1
-              echo $? > "$OUT/s$i.rc"
-            ) &
+            seat_dir="$OUT/seats/main-scorecard-board-seat-$i"
+            echo "seat s$i rc=$(cat "$seat_dir/s$i.rc" 2>/dev/null || echo missing)"
+            cp "$seat_dir/s$i.log" "$OUT/s$i.log" 2>/dev/null || true
+            cp "$seat_dir/s$i.rc" "$OUT/s$i.rc" 2>/dev/null || true
           done
-          wait
-          for i in $(seq 0 $((K - 1))); do
-            echo "seat s$i rc=$(cat "$OUT/s$i.rc" 2>/dev/null || echo missing)"
-          done
-          cat "$OUT"/s*/checkpoint.jsonl > "$OUT/join/checkpoint.jsonl" 2>/dev/null
+          cat "$OUT"/seats/*/s*/checkpoint.jsonl > "$OUT/join/checkpoint.jsonl" 2>/dev/null
           timeout -s KILL "$BOARD_JOIN_CAP_S" \
             python -u scripts/control_effect_recensus.py "$PANDAS_CORPUS" \
               --corpus-root "$PANDAS_CORPUS" \
@@ -465,7 +547,7 @@ jobs:
   # ------------------------------------------------------- (5) scorecard
   scorecard:
     name: scorecard
-    needs: [resolve, suite, twins, federation, board]
+    needs: [resolve, suite, twins, federation, board-join]
     if: always()
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
@@ -488,79 +570,243 @@ jobs:
           TWINS_FAILED: ${{ needs.twins.outputs.failed }}
           FED_VERDICT: ${{ needs.federation.outputs.verdict }}
           FED_LAST_FAIL: ${{ needs.federation.outputs.last_fail }}
-          BOARD_COMPLETED: ${{ needs.board.outputs.completed }}
-          BOARD_TOTAL: ${{ needs.board.outputs.total }}
-          BOARD_CPANIC: ${{ needs.board.outputs.cpanic }}
-          BOARD_LINE: ${{ needs.board.outputs.line }}
+          BOARD_COMPLETED: ${{ needs.board-join.outputs.completed }}
+          BOARD_TOTAL: ${{ needs.board-join.outputs.total }}
+          BOARD_CPANIC: ${{ needs.board-join.outputs.cpanic }}
+          BOARD_LINE: ${{ needs.board-join.outputs.line }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -uo pipefail
           command -v gh >/dev/null || { echo "::error::gh is not on this runner's PATH"; exit 1; }
 
-          # Suite: sum the shard reports that exist; name the missing shards.
-          suite_line="$(python3 - <<'PY'
-          import json, os
+          python3 - <<'PY'
+          """Post one scorecard row and compare it with the previous row.
+
+          Comment shape (first line, then the machine-readable row):
+            OK ... | REGRESSION: <each number that dropped> | PRs <range>
+            sha=<s> prev=<p> suite=<pass>/<total> twins=<pass>/<total> federation=<PASS|FAIL> board=<done>/<total> cpanic=<n> issues=<n> prs=<#a,#b,...>
+          A value that could not be measured is written "?". The job exits 1
+          when any compared number got worse than the previous row.
+          """
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
           from pathlib import Path
 
-          count = int(os.environ["SUITE_SHARD_COUNT"])
-          passed = failed = collected = 0
+          env = os.environ
+          repo = env["GH_REPO"]
+          sha = env.get("MAIN_SHA") or "?"
+          when = env.get("MAIN_TIME") or "?"
+          title = env["SCORECARD_ISSUE_TITLE"]
+          run_url = env["RUN_URL"]
+
+          ROW = re.compile(
+              r"^sha=(?P<sha>\S+) prev=(?P<prev>\S+) "
+              r"suite=(?P<suite>\S+)/(?P<suite_total>\S+) "
+              r"twins=(?P<twins>\S+)/(?P<twins_total>\S+) "
+              r"federation=(?P<federation>\S+) "
+              r"board=(?P<board>\S+)/(?P<board_total>\S+) "
+              r"cpanic=(?P<cpanic>\S+) issues=(?P<issues>\S+) prs=(?P<prs>\S*)$"
+          )
+
+
+          def gh(*args):
+              """Run gh; return its stdout, or None when it fails (printed)."""
+              r = subprocess.run(["gh", *args], capture_output=True, text=True)
+              if r.returncode != 0:
+                  print(f"::warning::gh {' '.join(args[:2])} failed: {r.stderr.strip()[:300]}")
+                  return None
+              return r.stdout.strip()
+
+
+          def num(value):
+              value = (value or "").strip()
+              return value if value.isdigit() else "?"
+
+
+          # Suite: sum the shard reports that exist; name the missing shards.
+          count = int(env["SUITE_SHARD_COUNT"])
+          s_passed = s_failed = s_total = 0
           missing = []
           for i in range(count):
               p = Path("suite") / f"main-scorecard-suite-shard-{i}" / "suite-report.json"
-              if not p.is_file():
-                  missing.append(i)
+              try:
+                  c = json.loads(p.read_text()).get("counts", {})
+              except (OSError, ValueError):
+                  missing.append(str(i))
                   continue
-              c = json.loads(p.read_text()).get("counts", {})
-              passed += int(c.get("passed") or 0)
-              failed += int(c.get("failed") or 0) + int(c.get("error") or 0) + int(c.get("collectionError") or 0)
-              collected += int(c.get("collected") or 0)
-          print(f"{passed} {failed} {collected} {','.join(map(str, missing))}")
-          PY
-          )"
-          read -r SUITE_PASSED SUITE_FAILED SUITE_TOTAL SUITE_MISSING <<< "$suite_line"
-          SUITE_MISSING="${SUITE_MISSING:-}"
+              s_passed += int(c.get("passed") or 0)
+              s_failed += (
+                  int(c.get("failed") or 0)
+                  + int(c.get("error") or 0)
+                  + int(c.get("collectionError") or 0)
+              )
+              s_total += int(c.get("collected") or 0)
+          measured = len(missing) < count
+          suite_pass = str(s_passed) if measured else "?"
+          suite_total = str(s_total) if measured else "?"
 
-          open_issues="$(gh issue list --state open --limit 10000 --json number --jq length || echo '?')"
-          s7757="$(gh issue view 7757 --json state --jq .state || echo '?')"
-          s7766="$(gh issue view 7766 --json state --jq .state || echo '?')"
+          twins_pass = num(env.get("TWINS_PASSED"))
+          twins_total = num(env.get("TWINS_TOTAL"))
+          if twins_total in ("?", "0"):
+              # No junit XML: the twins job did not run to the end.
+              twins_pass = twins_total = "?"
+          fed = env.get("FED_VERDICT") or ""
+          fed = fed if fed in ("PASS", "FAIL") else "?"
+          board_done = num(env.get("BOARD_COMPLETED"))
+          board_total = num(env.get("BOARD_TOTAL"))
+          cpanic = num(env.get("BOARD_CPANIC"))
 
-          short="${MAIN_SHA:0:9}"
-          suite_cell="${SUITE_PASSED}/${SUITE_TOTAL}"
-          [ -n "$SUITE_MISSING" ] && suite_cell="$suite_cell (shards missing: $SUITE_MISSING)"
-          twins_cell="${TWINS_PASSED:-?}/${TWINS_TOTAL:-?}"
-          fed_cell="${FED_VERDICT:-not run}"
-          board_cell="${BOARD_COMPLETED:-?}/${BOARD_TOTAL:-?} cpanic=${BOARD_CPANIC:-?}"
-
-          {
-            echo "### Main scorecard"
-            echo
-            echo "| measure | value |"
-            echo "| --- | --- |"
-            echo "| main SHA | \`${MAIN_SHA:-unresolved}\` |"
-            echo "| time | ${MAIN_TIME:-?} |"
-            echo "| package suite passed/collected | $suite_cell (failed+error ${SUITE_FAILED}) |"
-            echo "| solver twins passed/total | $twins_cell (failed+error ${TWINS_FAILED:-?}) |"
-            echo "| python-base64-federation | $fed_cell |"
-            echo "| federation last FAIL line | \`${FED_LAST_FAIL:-none}\` |"
-            echo "| pandas board completed/total | ${BOARD_COMPLETED:-?}/${BOARD_TOTAL:-?} |"
-            echo "| pandas board cpanic | ${BOARD_CPANIC:-?} |"
-            echo "| board line | \`${BOARD_LINE:-no RECENSUS DONE line}\` |"
-            echo "| open issues | $open_issues |"
-            echo "| #7757 | $s7757 |"
-            echo "| #7766 | $s7766 |"
-          } >> "$GITHUB_STEP_SUMMARY"
+          issues = num(gh("issue", "list", "--state", "open", "--limit", "10000",
+                          "--json", "number", "--jq", "length"))
+          s7757 = gh("issue", "view", "7757", "--json", "state", "--jq", ".state") or "?"
+          s7766 = gh("issue", "view", "7766", "--json", "state", "--jq", ".state") or "?"
 
           # Tracking issue: found by exact title; created and pinned if missing.
-          issue="$(gh issue list --state open --search "\"$SCORECARD_ISSUE_TITLE\" in:title" \
-            --json number,title \
-            --jq "map(select(.title == \"$SCORECARD_ISSUE_TITLE\")) | .[0].number // empty")"
-          if [ -z "$issue" ]; then
-            url="$(gh issue create --title "$SCORECARD_ISSUE_TITLE" \
-              --body "One row per hourly run of .github/workflows/main-scorecard.yml: SHA, time, package suite passed/collected, solver twins passed/total, python-base64-federation, pandas board completed/total and cpanic, open issues.")"
-            issue="${url##*/}"
-            gh issue pin "$issue" || echo "::warning::could not pin issue #$issue"
-          fi
+          issue = gh("issue", "list", "--state", "open",
+                     "--search", f'"{title}" in:title', "--json", "number,title",
+                     "--jq", f'map(select(.title == "{title}")) | .[0].number // empty')
+          if issue is None:
+              sys.exit("::error::could not list issues to find the scorecard issue")
+          if not issue:
+              url = gh("issue", "create", "--title", title, "--body",
+                       "One row per run of .github/workflows/main-scorecard.yml "
+                       "(every push to main, hourly, on demand). Each comment "
+                       "starts with OK or REGRESSION:, then one machine-readable "
+                       "line: sha= prev= suite= twins= federation= board= "
+                       "cpanic= issues= prs=.")
+              if url is None:
+                  sys.exit("::error::could not create the scorecard issue")
+              issue = url.rsplit("/", 1)[-1]
+              if gh("issue", "pin", issue) is None:
+                  print(f"::warning::could not pin issue #{issue}")
 
-          row="\`$short\` $MAIN_TIME | suite $suite_cell | twins $twins_cell | federation $fed_cell | board $board_cell | open issues $open_issues | [run]($RUN_URL)"
-          gh issue comment "$issue" --body "$row"
-          echo "posted to #$issue: $row"
+          # Previous row: the newest comment on the issue that carries a
+          # machine-readable row (older free-form rows and human comments are
+          # skipped).
+          owner, name = repo.split("/", 1)
+          query = (
+              "query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r)"
+              "{issue(number:$n){comments(last:50){nodes{body}}}}}"
+          )
+          raw = gh("api", "graphql", "-f", f"query={query}",
+                   "-f", f"o={owner}", "-f", f"r={name}", "-F", f"n={issue}")
+          prev = None
+          prev_error = raw is None
+          if raw is not None:
+              nodes = json.loads(raw)["data"]["repository"]["issue"]["comments"]["nodes"]
+              for node in reversed(nodes):
+                  for line in (node.get("body") or "").splitlines():
+                      m = ROW.match(line.strip())
+                      if m:
+                          prev = m.groupdict()
+                          break
+                  if prev:
+                      break
+          prev_sha = prev["sha"] if prev else "none"
+
+          # PRs merged between the previous row's SHA and this one: the
+          # "(#NNNN)" in each commit subject of the compare range.
+          prs = []
+          prs_known = True
+          if prev and prev_sha != "?" and sha != "?" and prev_sha != sha:
+              out = gh("api", "--paginate", f"repos/{repo}/compare/{prev_sha}...{sha}",
+                       "--jq", r'.commits[].commit.message | split("\n")[0]')
+              if out is None:
+                  prs_known = False
+              else:
+                  for subject in out.splitlines():
+                      for n in re.findall(r"\(#(\d+)\)", subject):
+                          if f"#{n}" not in prs:
+                              prs.append(f"#{n}")
+          elif not prev or prev_sha == "?" or sha == "?":
+              prs_known = prev is None and not prev_error
+          prs_cell = ",".join(prs) if prs_known else "?"
+
+          # Regression alarm.
+          drops = []
+
+
+          def higher_is_better(label, cur, before):
+              if not before.isdigit():
+                  return
+              if not cur.isdigit():
+                  drops.append(f"{label} unmeasured (was {before})")
+              elif int(cur) < int(before):
+                  drops.append(f"{label} {before} -> {cur}")
+
+
+          if prev:
+              higher_is_better("suite passed", suite_pass, prev["suite"])
+              higher_is_better("twins passed", twins_pass, prev["twins"])
+              higher_is_better("board completed", board_done, prev["board"])
+              if prev["cpanic"].isdigit():
+                  if not cpanic.isdigit():
+                      drops.append(f"board cpanic unmeasured (was {prev['cpanic']})")
+                  elif int(cpanic) > int(prev["cpanic"]):
+                      drops.append(f"board cpanic {prev['cpanic']} -> {cpanic}")
+              if prev["federation"] == "PASS" and fed != "PASS":
+                  drops.append(f"federation PASS -> {fed if fed != '?' else 'unmeasured'}")
+
+          range_txt = f"PRs {prs_cell or 'none'} ({prev_sha[:9]}..{sha[:9]})"
+          if prev_error:
+              status = f"UNCOMPARED: the previous row could not be read | {range_txt}"
+          elif prev is None:
+              status = "OK first machine-readable row, nothing to compare"
+          elif drops:
+              status = "REGRESSION: " + "; ".join(drops) + f" | {range_txt}"
+          else:
+              status = f"OK all held or improved | {range_txt}"
+
+          row = (
+              f"sha={sha} prev={prev_sha} suite={suite_pass}/{suite_total} "
+              f"twins={twins_pass}/{twins_total} federation={fed} "
+              f"board={board_done}/{board_total} cpanic={cpanic} "
+              f"issues={issues} prs={prs_cell}"
+          )
+          suite_note = f" (shards missing: {','.join(missing)})" if missing else ""
+          details = (
+              f"`{sha[:9]}` {when} | suite {suite_pass}/{suite_total}{suite_note} "
+              f"failed+error {s_failed} | twins {twins_pass}/{twins_total} "
+              f"failed+error {env.get('TWINS_FAILED') or '?'} | federation {fed} | "
+              f"board {board_done}/{board_total} cpanic={cpanic} | "
+              f"open issues {issues} | [run]({run_url})"
+          )
+          body = f"{status}\n\n{row}\n\n{details}\n"
+
+          with open(env["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("\n".join([
+                  "### Main scorecard",
+                  "",
+                  status,
+                  "",
+                  f"`{row}`",
+                  "",
+                  "| measure | value |",
+                  "| --- | --- |",
+                  f"| main SHA | `{sha}` |",
+                  f"| previous row SHA | `{prev_sha}` |",
+                  f"| PRs since previous row | {prs_cell or 'none'} |",
+                  f"| time | {when} |",
+                  f"| package suite passed/collected | {suite_pass}/{suite_total}{suite_note} (failed+error {s_failed}) |",
+                  f"| solver twins passed/total | {twins_pass}/{twins_total} (failed+error {env.get('TWINS_FAILED') or '?'}) |",
+                  f"| python-base64-federation | {fed} |",
+                  f"| federation last FAIL line | `{env.get('FED_LAST_FAIL') or 'none'}` |",
+                  f"| pandas board completed/total | {board_done}/{board_total} |",
+                  f"| pandas board cpanic | {cpanic} |",
+                  f"| board line | `{env.get('BOARD_LINE') or 'no RECENSUS DONE line'}` |",
+                  f"| open issues | {issues} |",
+                  f"| #7757 | {s7757} |",
+                  f"| #7766 | {s7766} |",
+                  "",
+              ]))
+
+          if gh("issue", "comment", issue, "--body", body) is None:
+              sys.exit(f"::error::could not comment on #{issue}")
+          print(f"posted to #{issue}:\n{body}")
+          if drops or prev_error:
+              print(f"::error::{status}")
+              sys.exit(1)
+          PY
