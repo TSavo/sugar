@@ -27,11 +27,6 @@ instead of it:
                      content-addressable -- a per-call runtime identity
     both             reproducible AND non-conflating
 
-``GeneratorConstructionV1.instance_coordinate`` is minted by ``cid_of_json``
-over allocation + frame + steps, so it is content-addressed rather than
-allocation-based and can serve as that discriminator without breaking
-addressing.
-
 The loop carrier already states this law and pins it -- ``targetCid`` is the
 producer OCCURRENCE, and ``test_two_occurrences_with_identical_faces_are_different_states``
 says so directly. This file states it as a property of the KEY rather than of

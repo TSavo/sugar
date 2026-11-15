@@ -25,7 +25,6 @@ _MANAGER_MODULES = (
     "sugar_lift_python_source.manager_protocol_construction",
     "sugar_lift_py_tests.context_manager_contract",
     "sugar_lift_py_tests.context_manager_resolution",
-    "sugar_lift_py_tests.generator_construction",
     "sugar_lift_py_tests.sugar.with_source_resource_sugar",
 )
 

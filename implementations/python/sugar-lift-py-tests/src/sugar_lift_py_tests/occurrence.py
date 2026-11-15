@@ -81,31 +81,6 @@ def entered(segment: str):
         yield
 
 
-@contextmanager
-def within(segments: tuple[str, ...]):
-    """Reduce under the path running now with ``segments`` after it
-    (``extended_path``): an evaluation minted inside those segments and
-    reduced later, outside their extent, is still that evaluation.  No
-    segments reduce under the path running now, untouched."""
-    if not segments:
-        yield
-        return
-    with occurrence_path(extended_path(_PATH.get(), tuple(segments))):
-        yield
-
-
-# A generator instance's segment: every evaluation inside that instance's
-# body is one occurrence of it (``GeneratorConstructionV1``).  No ``/`` or
-# ``@``, and neither ``call:`` nor ``loop:``, so it is read as neither a
-# callee frame nor a live iteration.
-_GENERATOR_INSTANCE = "generator:"
-
-
-def generator_instance_segment(instance_coordinate: str) -> str:
-    """The occurrence segment of one generator instance's body."""
-    return f"{_GENERATOR_INSTANCE}{instance_coordinate}"
-
-
 # A live loop iteration's segment (``LoopRecurrenceSugar`` enters one per
 # item).  An unrolled copy's segment is spelled ``loop[start,end)#i``
 # (``shadow.iteration_segment``) and a callee frame's ``call:...``, so this

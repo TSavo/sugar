@@ -7,7 +7,9 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 @dataclass(frozen=True)
 class YieldSuspensionSugar(Sugar):
-    """A source yield boundary; only GeneratorConstructionV1 may consume it."""
+    """A source yield boundary.  No reduction consumes it: a generator call is
+    its definition's coordinate and edge, joined at prove (#7757 step 6), and
+    what iterating it yields is undecided and owed."""
 
     value: Sugar | None
     site: object = field(compare=False)
@@ -19,7 +21,7 @@ class YieldSuspensionSugar(Sugar):
         return NotVerdictBearing(
             sugar_name=cls.__name__,
             floor_name="YieldEffect",
-            reason="yield is consumed only by GeneratorConstructionV1",
+            reason="yield is consumed by no reduction (#7757 step 6)",
         )
 
     def desugar(self, ctx=None):
@@ -30,6 +32,6 @@ class YieldSuspensionSugar(Sugar):
             blame=self.site,
             owner="YieldSuspensionSugar.desugar",
             observed="yield suspension reached eager expression reduction",
-            requested="GeneratorConstructionV1 transition consumption",
+            requested="the generator call as its coordinate and edge, joined at prove",
             fix="keep generator bodies suspended and resume through their instance coordinate",
         )

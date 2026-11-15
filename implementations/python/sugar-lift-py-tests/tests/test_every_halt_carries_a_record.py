@@ -125,20 +125,6 @@ def test_a_halt_is_built_from_a_record_or_from_none() -> None:
     assert Halted(atomic("test.none", []), _effect(), None).state is None
 
 
-def test_a_generator_frame_lives_inside_its_halts_record() -> None:
-    # Whatever else a halt must carry (a generator frame) lives inside its
-    # record, never in its place; it is a lookup aid, out of equality.
-    ctx = ReduceContext.root(owner="every-halt-record.frame")
-    frame = object()
-    record = halt_record(ctx, frame=frame)
-    assert isinstance(record, _ReducedBlock)
-    assert record.frame is frame
-    assert record.context is ctx
-    assert record == halt_record(ctx)
-    (halt,) = ExitSet.halted(_effect(), state=record).exits
-    assert halt.state.frame is frame
-
-
 def test_a_suite_resumes_from_the_records_entries_and_context_without_its_returns() -> (
     None
 ):

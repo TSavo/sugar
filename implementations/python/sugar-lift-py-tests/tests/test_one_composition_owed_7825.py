@@ -289,34 +289,6 @@ def test_a_flattened_receiver_face_owes_its_enclosing_face_debt() -> None:
     ]
 
 
-# --- generator machine: exits continue beneath a routing face
-
-
-def _routing_faces():
-    route = atomic("test:route:7825", [])
-    completed_face = Completed(route, TermValue(0), owed=("debt:face",))
-    halted_face = Halted(
-        complement_guard(route),
-        _raise("test:route-halt:7825"),
-        None,
-        owed=("debt:halt",),
-    )
-    inner = ExitSet((Completed(true_guard(), TermValue(1), owed=("debt:inner",)),))
-    return inner, completed_face, halted_face
-
-
-def test_a_generator_routing_face_debt_rides_every_exit_beneath_it() -> None:
-    from sugar_lift_py_tests.generator_construction import _guard_exits
-
-    inner, completed_face, halted_face = _routing_faces()
-    assert [arm.owed for arm in _guard_exits(inner, completed_face).exits] == [
-        ("debt:face", "debt:inner")
-    ]
-    assert [arm.owed for arm in _guard_exits(inner, halted_face).exits] == [
-        ("debt:halt", "debt:inner")
-    ]
-
-
 # --- owed_calls: a deferred carrier is read once it is a set of arms (#7766)
 
 

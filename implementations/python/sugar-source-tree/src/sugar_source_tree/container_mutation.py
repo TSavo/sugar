@@ -3595,8 +3595,7 @@ _OPERATION_KINDS = frozenset(
 # resumes.  No operand's value decides what that code is (``_code_subjects``
 # answers None), and the yielded value is handed to it as an operand is
 # (``_call_targets``): the generator's frame, at the yield, is exposed as a
-# caller is at an unfollowed call.  The frame's own writes are released at
-# the same yield by the machine (``generator_construction.YieldEffect``).
+# caller is at an unfollowed call.
 _SUSPENSION_KINDS = frozenset({"Yield", "YieldFrom"})
 # Comparisons that run no dunder; and those whose value is a ``bool`` whatever
 # a dunder returns.

@@ -26,10 +26,7 @@ class BindingCoordinateRefSugar(ConstructedTermSugar):
             value = ctx.temporal.value_if_bound(self.coordinate.cid)
             if value is not None:
                 # The caller's actual, with the caller's currency: the formal
-                # is that actual (``object_identity.contents_current``).  A
-                # frame that runs after its call -- a generator's -- holds its
-                # formals arrived from where it installs them
-                # (``GeneratorConstructionV1._guard_evaluation_context``).
+                # is that actual (``object_identity.contents_current``).
                 return ExitSet.completed(value)
         from sugar_source_tree.panic import SugarNotWritten
 

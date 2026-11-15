@@ -571,7 +571,7 @@ def find_expression_mint_not_term_gaps(
             # Only construction-currency mints: names that claim nested term
             # testimony (Constructed*, *Place*, *Receiver*). Effect/suspension
             # sugars (YieldSuspensionSugar, YieldFromSugar, …) intentionally
-            # sit outside CTS — GeneratorConstructionV1 only. Flagging them as
+            # sit outside CTS — no reduction consumes them. Flagging them as
             # "promote" is a lie; they are refuse-named by design.
             if not _claims_construction_currency(minted):
                 continue

@@ -9,8 +9,7 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_lift_py_tests.generator_construction import _generator_value_testimony
-from sugar_lift_py_tests.ir import _term_content_cid, ctor, str_const
+from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.loop_construction import LoopWireError
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.outcome.resource_bindings import ManagerBinding
@@ -59,7 +58,6 @@ class _CountingIterableSugar(ConstructedTermSugar):
 
 
 _OLD_TERM_CONSUMERS = (
-    "GeneratorConstructionV1 payload testimony",
     "ManagerBinding fact testimony",
 )
 
@@ -138,16 +136,6 @@ def test_loop_term_occurrence_migration_reaches_every_existing_consumer(
     assert new_term.args[3:] == old_term.args[2:]
 
     observed_consumers = []
-
-    generator_testimony = _generator_value_testimony(
-        loop, owner="LoopRecurrence migration"
-    )
-    assert generator_testimony == {
-        "kind": "term-cid",
-        "contentCid": _term_content_cid(new_term),
-    }
-    assert generator_testimony["contentCid"] != _term_content_cid(old_term)
-    observed_consumers.append("GeneratorConstructionV1 payload testimony")
 
     (manager_fact,) = ManagerBinding("loop-manager", loop).to_facts()
     assert manager_fact.formula.args[1] == new_term

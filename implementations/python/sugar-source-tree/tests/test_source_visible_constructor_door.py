@@ -17,12 +17,6 @@ from sugar_lift_py_tests.floor import (
     TupleValue,
 )
 from sugar_lift_py_tests.outcome import ExitSet
-from sugar_lift_py_tests.generator_construction import (
-    GeneratorConstructionV1,
-    GeneratorTerminationV1,
-    GeneratorTransitionGapV1,
-    YieldEffect,
-)
 from sugar_source_tree.nodes import Call, ClassDef, FunctionDef
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
@@ -80,29 +74,6 @@ def test_source_visible_zero_parameter_call_carries_the_ordinary_body() -> None:
     assert len(constructed.statements) == 1
     assert isinstance(constructed.statements[0], ReturnValue)
     assert constructed.statements[0].value == TermValue(7)
-
-
-def test_renamed_generator_call_allocates_without_eager_body_reduction() -> None:
-    context = TreeConstructionContextV1.for_source_call_construction()
-    source = _source_file(
-        "def arbitrarily_renamed():\n"
-        "    yield 7\n"
-        "    return 9\n\n"
-        "arbitrarily_renamed()\n",
-        context=context,
-    )
-    call = next(node for node in source.nodes() if isinstance(node, Call))
-
-    outcome = call.sugar().desugar()
-
-    assert outcome.completed_value() is not None
-    assert isinstance(outcome.completed_value(), GeneratorConstructionV1)
-    yielded = outcome.completed_value().resume()
-    assert isinstance(yielded, YieldEffect)
-    assert yielded.value == TermValue(7)
-    terminated = yielded.machine.resume()
-    assert isinstance(terminated, GeneratorTerminationV1)
-    assert terminated.return_value == TermValue(9)
 
 
 def test_parameterized_source_frame_projects_the_exact_actual_by_coordinate() -> None:
@@ -454,72 +425,29 @@ def test_class_body_chained_assign_constructs_each_exact_binding(monkeypatch) ->
     assert calls == [(attribute, None)]
 
 
-def test_yield_from_only_function_allocates_a_generator_not_an_eager_call() -> None:
+def test_yield_from_only_function_owns_its_suspension() -> None:
     """TRUTHFUL FACE: `yield from` owns the suspension boundary just as `yield` does.
 
-    Ownership recognized only `Yield`, so a `yield from`-only function built an
-    ordinary eager call frame: the call completed as a plain `CallSiteValue`
-    and the boundary escaped as an ordinary value. Both constructors of the
-    boundary must make the function a generator.
+    Ownership recognized only `Yield`, so a `yield from`-only function was
+    read as an ordinary function. Both constructors of the boundary make the
+    function a generator (``FunctionDef._owns_yield``).
     """
-    context = TreeConstructionContextV1.for_source_call_construction()
     source = _source_file(
-        "def arbitrarily_renamed():\n"
-        "    yield from (1, 2)\n"
-        "    return 9\n\n"
-        "arbitrarily_renamed()\n",
-        context=context,
+        "def arbitrarily_renamed():\n    yield from (1, 2)\n    return 9\n"
     )
     function = next(node for node in source.nodes() if isinstance(node, FunctionDef))
-    call = next(node for node in source.nodes() if isinstance(node, Call))
-    frame = function.source_visible_call_frame()
 
-    assert frame.generator_steps is not None
-
-    outcome = call.sugar().desugar()
-
-    assert outcome.completed_value() is not None
-    assert isinstance(outcome.completed_value(), GeneratorConstructionV1)
-    assert not isinstance(outcome.completed_value(), CallSiteValue)
-
-
-def test_yield_from_tuple_delegates_each_value_then_returns_to_the_generator() -> None:
-    """A constructed ``yield from`` delegates in order, then resumes its tail.
-
-    The direct-``yield`` test above is the discrimination arm: both suspension
-    kinds reach the same generator consumer, while only this one must retain a
-    delegated iterator across resumes.
-    """
-    context = TreeConstructionContextV1.for_source_call_construction()
-    source = _source_file(
-        "def arbitrarily_renamed():\n"
-        "    yield from (1, 2)\n"
-        "    return 9\n\n"
-        "arbitrarily_renamed()\n",
-        context=context,
-    )
-    call = next(node for node in source.nodes() if isinstance(node, Call))
-
-    machine = call.sugar().desugar().completed_value()
-    first = machine.resume()
-    assert isinstance(first, YieldEffect)
-    assert first.value == TermValue(1)
-    second = first.machine.resume()
-    assert isinstance(second, YieldEffect)
-    assert second.value == TermValue(2)
-    terminated = second.machine.resume()
-    assert isinstance(terminated, GeneratorTerminationV1)
-    assert terminated.return_value == TermValue(9)
+    assert FunctionDef._owns_yield(function.body)
 
 
 def test_census_door_refuses_both_yield_constructors_with_no_call_site() -> None:
     """CLASSIFICATION PIN: the census door's yield refusals are accounted semantics.
 
     `functions() -> sugar -> desugar` reduces a function body with no call, so
-    no call frame and therefore no generator instance can exist. Only
-    `GeneratorConstructionV1` may consume a suspension boundary, so BOTH
-    constructors must refuse here — permanently, for every implementation of
-    the generator machine. These occurrences are correct output, not owed work,
+    no call frame and therefore no generator instance can exist. No reduction
+    consumes a suspension boundary (a generator call is its definition's
+    coordinate and edge, joined at prove: #7757 step 6), so BOTH constructors
+    refuse here, by name. These occurrences are correct output, not owed work,
     and no fix at any layer drains them.
     """
     from sugar_source_tree.panic import SugarNotWritten

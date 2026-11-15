@@ -43,15 +43,6 @@ class _ReducedBlock:
     context: object = dataclass_field(
         default=None, compare=False, repr=False, metadata={"testimony": "lookup"}
     )
-    # The generator frame a halt raised inside a generator's machinery left
-    # (``GeneratorConstructionV1`` at the step it halted on), carried INSIDE
-    # the record the halt carries (``halt_record(..., frame=)``), never in its
-    # place: a cited-opaque ``__exit__`` that suppresses the halt continues
-    # that frame. Like ``context`` it is a lookup aid, never testimony, so it
-    # is out of equality. ``None`` on every record a block reduced.
-    frame: object = dataclass_field(
-        default=None, compare=False, repr=False, metadata={"testimony": "lookup"}
-    )
 
 
 def statement_record(value, ctx) -> _ReducedBlock:
@@ -280,7 +271,7 @@ def _require_recorded_halts(outcome, statement, prefix=None) -> None:
     )
 
 
-def halt_record(ctx, *, frame=None) -> _ReducedBlock:
+def halt_record(ctx) -> _ReducedBlock:
     """The record a halt carries where nothing of its producer ran before
     it: no entries, in ``ctx``, the context it halted in.
 
@@ -294,12 +285,8 @@ def halt_record(ctx, *, frame=None) -> _ReducedBlock:
     subject, a ``match`` pattern, equality or guard, a ``class`` statement's
     bases and body (``halts_recorded``) -- since nothing of the statement
     ran before it.
-
-    ``frame``: a halt raised inside a generator's machinery carries the
-    generator frame it left inside its record
-    (``GeneratorConstructionV1._left_here``), never in its place.
     """
-    return _ReducedBlock((), False, (), context=ctx, frame=frame)
+    return _ReducedBlock((), False, (), context=ctx)
 
 
 def require_halt_record(state, *, owner: str) -> None:
@@ -313,10 +300,9 @@ def require_halt_record(state, *, owner: str) -> None:
     composition) before it leaves the statement: the block reducer refuses
     a statement whose halt still offers none (``_require_recorded_halts``),
     so ``None`` exists only inside an expression's evaluation. Any other
-    state -- a bare context, a generator's machine,
-    a value, any other payload -- is stopped here by name, never carried
-    in place of a record: whatever else a halt must carry lives inside its
-    record (a generator frame: ``halt_record(..., frame=)``).
+    state -- a bare context, a value, any other payload -- is stopped here
+    by name, never carried in place of a record: whatever else a halt must
+    carry lives inside its record.
     """
     if state is None or isinstance(state, _ReducedBlock):
         return
@@ -335,8 +321,7 @@ def require_halt_record(state, *, owner: str) -> None:
         ),
         fix=(
             "build the record at the producer (halt_record, halts_recorded, "
-            "face_record); carry anything else inside it (a generator frame: "
-            "halt_record(..., frame=)), never in its place"
+            "face_record); carry anything else inside it, never in its place"
         ),
     )
 

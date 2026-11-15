@@ -497,40 +497,9 @@ def test_a_list_this_frame_built_still_folds(tmp_path, body, value):
     assert halts == []
 
 
-def test_a_list_a_generator_yielded_is_not_current_when_it_resumes():
-    # The consumer holds the yielded list and may change it before the
-    # generator resumes: the generator's own binding of it is released at the
-    # yield, so a read after the resume never takes the contents it yielded.
-    from sugar_lift_py_tests.floor.object_identity import contents_current
-    from sugar_lift_py_tests.generator_construction import (
-        GeneratorAssignBindingV1,
-        GeneratorConstructionV1,
-        YieldEffect,
-    )
-
-    from test_generator_pre_yield_assign_execution import _steps
-
-    steps = _steps("def g():\n    xs = [1]\n    yield xs\n    return len(xs)\n")
-    yielded = GeneratorConstructionV1.allocate(
-        allocation_coordinate="enter:yielded-list",
-        frame_coordinate="frame:yielded-list",
-        binding_state=(),
-        steps=steps,
-    ).resume()
-    assert isinstance(yielded, YieldEffect)
-    assert not contents_current(yielded.value)
-    (held,) = [
-        binding
-        for binding in yielded.machine.binding_state
-        if isinstance(binding, GeneratorAssignBindingV1) and binding.name == "xs"
-    ]
-    assert held.value == fresh(ListValue, (TermValue(1),))
-    assert not contents_current(held.value)
-
-
 # The residue of #8117: truth, a slice assignment's right-hand side, item
-# stores and deletes outside the one door, ``match`` patterns, and a
-# generator's walrus bindings each read through ``contents_current``.
+# stores and deletes outside the one door, and ``match`` patterns each read
+# through ``contents_current``.
 
 
 def _stale_containers():
@@ -925,30 +894,6 @@ def test_a_stale_object_nothing_names_refuses_by_name():
     }
 
 
-def test_two_bindings_released_at_one_yield_are_two_objects():
-    from dataclasses import dataclass
-
-    from sugar_lift_py_tests.generator_construction import (
-        GeneratorAssignBindingV1,
-        _released_at_yield,
-    )
-
-    @dataclass(frozen=True)
-    class _Frame:
-        binding_state: tuple
-
-    made = ListValue((TermValue(1),), allocation="made-here")
-    frame = _Frame(
-        (
-            GeneratorAssignBindingV1("xs", made, "fragment-xs"),
-            GeneratorAssignBindingV1("ys", made, "fragment-ys"),
-        )
-    )
-    first, second = _released_at_yield(frame, "yield-at").binding_state
-    assert first.value.arrival == "yield-at/0"
-    assert second.value.arrival == "yield-at/1"
-
-
 def test_a_path_store_through_a_stale_root_finds_no_position():
     from sugar_lift_py_tests.floor import DictValue
     from sugar_lift_py_tests.floor.object_identity import arrived
@@ -989,63 +934,6 @@ def test_a_helper_storing_through_the_dict_it_arrived_with_never_reads_it(
 
     returns, _halts = _returns(tmp_path, source)
     assert not any(type(value) is DictValue for value in returns)
-
-
-def test_a_generators_walrus_binding_is_not_current_when_it_resumes():
-    from dataclasses import dataclass
-
-    from sugar_lift_py_tests.floor.named_expression_value import (
-        NamedExpressionValue,
-    )
-    from sugar_lift_py_tests.floor.object_identity import contents_current
-    from sugar_lift_py_tests.generator_construction import (
-        GeneratorWalrusBindingV1,
-        _released_at_yield,
-    )
-
-    @dataclass(frozen=True)
-    class _Frame:
-        binding_state: tuple
-
-    made, _stale = _made_and_arrived()
-    walrus = NamedExpressionValue("xs", made, evaluation="walrus-key")
-    frame = _Frame((GeneratorWalrusBindingV1(walrus),))
-    (held,) = _released_at_yield(frame, "yield-at").binding_state
-    assert held.name == "xs" and held.evaluation == "walrus-key"
-    assert held.bind.assigned_value == made
-    assert not contents_current(held.bind.assigned_value)
-    assert not contents_current(held.bind.presented_value)
-    # Released at the yield, each is named by the yield's occurrence and its
-    # place in the frame's writes.
-    assert held.bind.assigned_value.arrival == "yield-at/0/assigned"
-    assert held.bind.presented_value.arrival == "yield-at/0/presented"
-
-
-def test_a_list_a_generators_walrus_yielded_is_not_current_when_it_resumes():
-    from sugar_lift_py_tests.floor.object_identity import contents_current
-    from sugar_lift_py_tests.generator_construction import (
-        GeneratorConstructionV1,
-        GeneratorWalrusBindingV1,
-        YieldEffect,
-    )
-
-    from test_generator_pre_yield_assign_execution import _steps
-
-    steps = _steps("def g():\n    yield (xs := [1])\n    return len(xs)\n")
-    yielded = GeneratorConstructionV1.allocate(
-        allocation_coordinate="enter:walrus-yielded-list",
-        frame_coordinate="frame:walrus-yielded-list",
-        binding_state=(),
-        steps=steps,
-    ).resume()
-    assert isinstance(yielded, YieldEffect)
-    (held,) = [
-        binding
-        for binding in yielded.machine.binding_state
-        if isinstance(binding, GeneratorWalrusBindingV1) and binding.name == "xs"
-    ]
-    assert held.bind.assigned_value == fresh(ListValue, (TermValue(1),))
-    assert not contents_current(held.bind.assigned_value)
 
 
 # No default ``allocation`` (#7757, after #8117): a default that said
