@@ -308,8 +308,9 @@ class EvaluationRefSugar(ConstructedTermSugar):
         bound = temporal.key_read(key) if temporal is not None else None
         if bound is not None:
             # A carried name's header inside a live loop's symbolic item or
-            # its ``else`` suite holds the recurrence's value, which nothing
-            # decides: the read owes (``read_of_bound_value``, #7757).
+            # its ``else`` suite holds the recurrence's value, and the target's
+            # key inside that item holds its symbolic item; nothing decides
+            # either: the read owes (``read_of_bound_value``, #7757).
             from sugar_lift_py_tests.sugar.loop_recurrence_sugar import (
                 read_of_bound_value,
             )
