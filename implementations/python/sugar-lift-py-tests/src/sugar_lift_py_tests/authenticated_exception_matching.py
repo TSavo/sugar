@@ -30,6 +30,32 @@ def matches_raise_effect(effect, expected) -> "MessageVerdict":
     return _matches_single_raise_effect(effect, expected)
 
 
+def matches_any_raise_effect(effect, members) -> "MessageVerdict":
+    """A tuple classinfo: the disjunction of its members' verdicts.
+
+    Python's isinstance/issubclass classinfo rule (also used by exception
+    handlers and pytest.raises) accepts any member, not the tuple as a single
+    type: https://docs.python.org/3/library/functions.html#issubclass
+    A member that matches decides the tuple.  Open members keep their
+    predicates; no open edge is assumed false.  The miss is decided here, by
+    the one matcher, only when every member's verdict was its decided miss
+    (an empty tuple matches nothing): no other module settles a miss.
+    """
+    from sugar_lift_py_tests.ir import or_
+
+    retained = []
+    for member in members:
+        verdict = matches_raise_effect(effect, member)
+        if isinstance(verdict, MatchDecided):
+            if verdict.value:
+                return verdict
+        else:
+            retained.append(verdict.obligation)
+    if retained:
+        return MatchRetained(retained[0] if len(retained) == 1 else or_(retained))
+    return MatchDecided(False)
+
+
 def _matches_single_raise_effect(effect, expected) -> "MessageVerdict":
     """Match by constructed exception coordinates and authenticated ancestry.
 
