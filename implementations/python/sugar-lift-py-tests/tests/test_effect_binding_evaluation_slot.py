@@ -2,7 +2,7 @@
 
 Temporal choice 1 (#7661), row-7 map item 5 (#7757): a read of ``e`` is a
 reference to its statement's evaluation. Substitution already rewrites it to
-the handler's ``EffectRef`` or the boundary's ``ObservationRef``; a statement
+the handler's ``EffectRef`` or the with item's enter result; a statement
 evaluated more than once (a loop iteration's copy, a duplicated ``finally``'s
 exit-path copy) now gives each evaluation its own slot, so a read of one
 evaluation's ``e`` is never a sibling's effect.
@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from sugar_lift_py_tests.context_manager_contract import ExceptionInfoBindingV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import (
@@ -130,19 +129,19 @@ def test_a_duplicated_statement_is_keyed() -> None:
     assert keyed._evaluation_slot("slot") != "slot"
 
 
-def test_each_evaluation_of_a_with_observes_its_own_slot() -> None:
+def test_each_evaluation_of_a_with_reads_its_own_slot() -> None:
+    # A with constructs from its head alone (#8491): the effect-boundary
+    # observation slot is gone, and what ``as e`` reads is the item's
+    # manager slot (its enter result is ``<slot>#enter_result``).  Each
+    # evaluation of a duplicated with keys that slot, never a sibling's.
     with_node = _node(_function(WITH), With)
-    ref = SimpleNamespace(semantics=SimpleNamespace(binding=ExceptionInfoBindingV1()))
-    source_slot, _ = with_node._effect_boundary_binding(with_node.items[0], ref)
+    source_slot = with_node.items[0]._manager_slot_id()
     slots = []
     for key in ("evaluation:one", "evaluation:two"):
         # With.substitute keys the item with the with's evaluation; the
-        # observation slot is read off the keyed item.
+        # slot is read off the keyed item.
         item = rewrite_with_leaves(with_node.items[0], {"evaluation": key})
-        keyed = rewrite_with_leaves(with_node, {"evaluation": key}, items=(item,))
-        slot, _ = keyed._effect_boundary_binding(keyed.items[0], ref)
-        assert slot.endswith("#observation")
-        slots.append(slot)
+        slots.append(item._manager_slot_id())
     assert slots[0] != slots[1]
     assert source_slot not in slots
 
