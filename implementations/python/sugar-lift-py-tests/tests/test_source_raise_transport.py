@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import pytest
 
-from frame_fresh import fresh
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
     EffectBoundaryDisposition,
@@ -39,9 +38,11 @@ from sugar_lift_py_tests.context_manager_resolution import (
 from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
+from sugar_lift_py_tests.effect.name_error_effect import NameErrorEffect
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor import ListValue, TermValue
 from sugar_lift_py_tests.ir import ctor, str_const
+from sugar_lift_py_tests.occurrence import call_frame_path
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -175,12 +176,12 @@ def test_store_indexerror_raise_helper_carries_named_type_and_occurrence() -> No
     halted = _call_halt(tree, "raiser")
     assert halted.effect.exception_name == "IndexError"
     assert halted.effect.exception_type_coordinate == _identity("IndexError")
-    assert (
-        isinstance(halted.effect.occurrence, str) and ":" in halted.effect.occurrence
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {halted.effect.occurrence!r}"
-    )
+    # The locus is the store's own ``file:line:col`` (``a[5] = 1``, line 3,
+    # column 4; ``AuthenticatedRaiseLocus.of``), stamped with the call frame it
+    # was raised in where it crossed the call (``call_site_value.call_owned``).
+    call = _calls_named(tree, "raiser")[-1]
+    frame = "/".join(call_frame_path(call.fragment, ()))
+    assert halted.effect.occurrence_id == f"raise_transport.py:3:4@{frame}"
     assert halted.effect.producer_node_owner == "Call"
     assert halted.state is not None
 
@@ -205,10 +206,17 @@ def test_distinct_helpers_preserve_distinct_raise_occurrences() -> None:
     assert ha.effect is not hb.effect
 
 
-def test_prior_store_survives_in_pre_effect_state_across_call_boundary() -> None:
-    """Earlier binding/store in the helper body is present on the call halt state.
+def test_a_callee_local_store_stays_behind_at_the_call() -> None:
+    """The halt's record at the call is the caller's, never the callee's.
 
-    ``a[0]=9`` then ``raise ValueError`` → halt state carries ListValue([9]).
+    ``a = [0]; a[0] = 9; raise ValueError``: ``a`` is the helper's own local.
+    A halt raised in a callee reaches its caller at the call
+    (``call_site_value.at_the_call``), carrying only what the callee did to
+    objects the caller can see (``caller_visible_values``, #8136, #8257);
+    the callee's locals and keys stay behind. The list was never the
+    caller's, so the record at the call holds no ``ListValue`` -- the
+    callee's ``[9]`` on it was the callee frame leaking into the caller.
+    The method twin is ``test_method_raise_transport`` (#8266).
     """
     tree, _, _ = _tree(
         "def raiser():\n"
@@ -222,9 +230,10 @@ def test_prior_store_survives_in_pre_effect_state_across_call_boundary() -> None
     halted = _call_halt(tree, "raiser")
     assert halted.state is not None, f"{CODEX1}: halt dropped pre-effect state"
     lists = [e for e in halted.state.entries if isinstance(e, ListValue)]
-    assert lists == [
-        fresh(ListValue, (TermValue(9),))
-    ], f"{CODEX1}: earlier store not in halt state entries={halted.state.entries!r}"
+    assert lists == [], (
+        f"{CODEX1}: a callee local reached the caller's record "
+        f"entries={halted.state.entries!r}"
+    )
 
 
 # ===========================================================================
@@ -279,8 +288,17 @@ def test_caller_try_does_not_fabricate_completed_on_wrong_type_twin() -> None:
 # ===========================================================================
 
 
-def test_helper_raise_under_guard_keeps_guard_on_halt_face() -> None:
-    """``if flag: raise ValueError`` with undecided flag → factored guarded halt."""
+def test_an_actual_nothing_binds_raises_before_the_helper_is_entered() -> None:
+    """``maybe(x)`` where nothing binds ``x``: ``NameError`` at the actual.
+
+    A name nothing binds is no undecided flag: Python evaluates the actual
+    before the call, the read raises ``NameError`` (``NameSugar.desugar``),
+    and ``maybe`` is never entered. So the call is that one halt: no
+    ``ValueError`` arm from the helper's ``if flag: raise``, and no completed
+    arm. This row used to read the free ``x`` as an undecided flag and expect
+    the helper's guarded raise beside a completion, a value the lifter never
+    receives at this call.
+    """
     tree, _, _ = _tree(
         "def maybe(flag):\n"
         "    if flag:\n"
@@ -294,22 +312,13 @@ def test_helper_raise_under_guard_keeps_guard_on_halt_face() -> None:
     outcome = call.sugar().desugar(None)
     assert isinstance(
         outcome, ExitSet
-    ), f"{CODEX3}: guarded raise expected ExitSet, got {type(outcome).__name__}"
-    halted = [e for e in outcome.exits if isinstance(e, Halted)]
-    completed = [e for e in outcome.exits if isinstance(e, Completed)]
-    assert len(halted) == 1, f"{CODEX3}: need one halt arm, got {outcome.exits!r}"
-    assert len(completed) == 1, f"{CODEX3}: need one completed arm under not(guard)"
-    halt = halted[0]
-    assert halt.effect.exception_name == "ValueError"
-    # Guard is non-trivial (not bare True / empty and).
-    guard_s = str(halt.guard)
-    assert (
-        "py.truthy" in guard_s or "truthy" in guard_s or "branch" in guard_s
-    ), f"{CODEX3}: guard dropped on raise face: {halt.guard!r}"
-    # Completed arm is the complementary not(guard).
-    assert "not" in str(completed[0].guard).lower() or str(completed[0].guard) != str(
-        halt.guard
-    )
+    ), f"{CODEX3}: unbound actual expected ExitSet, got {type(outcome).__name__}"
+    assert len(outcome.exits) == 1, outcome.exits
+    halt = outcome.exits[0]
+    assert isinstance(halt, Halted), outcome.exits
+    assert isinstance(halt.effect, NameErrorEffect), halt.effect
+    assert halt.effect.exception_name == "NameError"
+    assert halt.effect.name == "x"
 
 
 def test_helper_raise_under_true_guard_collapses_to_sole_halt() -> None:
@@ -355,8 +364,10 @@ def test_helper_raise_through_with_never_suppresses_preserves_state() -> None:
     assert isinstance(surviving, Halted)
     assert surviving.effect is halted.effect
     assert surviving.state is halted.state
+    # ``a`` is the helper's local: the record at the call never holds it
+    # (``at_the_call``; see the callee-local twin above).
     lists = [e for e in surviving.state.entries if isinstance(e, ListValue)]
-    assert lists == [fresh(ListValue, (TermValue(7),))]
+    assert lists == []
 
 
 def test_helper_raise_through_with_does_not_fabricate_completed_twin() -> None:
@@ -418,29 +429,6 @@ def test_wrong_exception_observation_is_not_the_helper_effect() -> None:
         assert halted.effect is foreign
     with pytest.raises(AssertionError):
         assert str(halted.effect.occurrence) == foreign.occurrence
-
-
-def test_fabricated_empty_state_is_not_pre_effect_when_store_preceded_raise() -> None:
-    """Bite: halt state with prior store is not an empty fabricated block."""
-    tree, _, _ = _tree(
-        "def raiser():\n"
-        "    a = [0]\n"
-        "    a[0] = 3\n"
-        "    raise ValueError\n"
-        "\n"
-        "raiser()\n",
-        bind=frozenset({"raiser"}),
-    )
-    halted = _call_halt(tree, "raiser")
-    fabricated = _ReducedBlock((), True, ())
-    assert halted.state is not None
-    assert (
-        halted.state != fabricated or halted.state.entries
-    ), f"{CODEX1}: state collapsed to empty fabricated block"
-    with pytest.raises(AssertionError):
-        assert halted.state is fabricated
-    # Positive: prior store present.
-    assert any(isinstance(e, ListValue) for e in halted.state.entries)
 
 
 def test_handler_value_is_not_fabricated_fresh_block_twin() -> None:
