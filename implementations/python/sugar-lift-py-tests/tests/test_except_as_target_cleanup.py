@@ -230,8 +230,10 @@ def test_handler_return_plus_finally_read_e_nameerror_supersedes_return():
     # Not a completed return 99 — NameError is the terminal face.
     assert outcome.completed_value() is None, outcome
     effect = _name_error(outcome, name="e")
-    # No return 99 surviving as the primary outcome.
-    assert getattr(effect, "exception_name", None) == "NameError"
+    # No return 99 surviving as the primary outcome.  ``e`` is a local of
+    # ``f`` (the ``as`` target binds it), so the read of the cleared local
+    # raises the NameError subclass Python raises there: UnboundLocalError.
+    assert getattr(effect, "exception_name", None) == "UnboundLocalError"
 
 
 def test_handler_halt_plus_finally_read_e_keeps_handler_exception_as_context():
@@ -258,12 +260,12 @@ def test_handler_halt_plus_finally_read_e_keeps_handler_exception_as_context():
     # Handler exception retained as authenticated implicit context — not lost.
     assert isinstance(effect.context_effect, RaiseEffect), effect.context_effect
     assert effect.context_effect.exception_name == "RuntimeError"
-    # Primary is NameError for e, not the handler RuntimeError alone.
-    assert effect.exception_name == "NameError"
-    assert (
-        isinstance(effect.context_effect.occurrence, str)
-        and ":" in effect.context_effect.occurrence
-    ), (
+    # Primary is the NameError for e (the cleared local: UnboundLocalError),
+    # not the handler RuntimeError alone.
+    assert effect.exception_name == "UnboundLocalError"
+    # The context's locus is the authenticated one, read through its one id.
+    locus = effect.context_effect.occurrence_id
+    assert isinstance(locus, str) and ":" in locus, (
         "authenticated raise locus must be a file:line:col occurrence id, "
         f"not presence-only; got {effect.context_effect.occurrence!r}"
     )
