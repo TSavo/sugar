@@ -2081,10 +2081,12 @@ fn count_top_level_constraints(inv: &Json) -> usize {
 /// the `=` case draws: interpreted+ground universe decides; uninterpreted operand
 /// does not.
 fn lone_fact_has_covering_universe(inv: &Json) -> bool {
-    // A claim with no atom is a propositional constant: connectives over the
-    // empty conjunction (the IR's truth). It names no symbol the solver could
-    // leave uninterpreted, so the solver's answer is forced and substantive.
-    if is_atom_free(inv) {
+    // A claim whose only atoms are equalities of two literals of one sort is a
+    // closed claim over interpreted values: connectives over the empty
+    // conjunction (the IR's truth) and `=(<literal>, <literal>)`. It names no
+    // symbol the solver could leave uninterpreted, so the solver's answer is
+    // forced and substantive.
+    if is_closed_literal_formula(inv) {
         return true;
     }
     // Unwrap a single-operand `and([...])` (the lifter conjoins a contract's atoms,
@@ -2100,19 +2102,48 @@ fn lone_fact_has_covering_universe(inv: &Json) -> bool {
     is_ground_regex_membership(node) || is_ground_string_theory_predicate(node)
 }
 
-/// True when `inv` is built from connectives alone: every leaf is an operand-less
-/// `and`/`or`. Such a claim has no atom, term or binder, so no solver theory can
-/// read any part of it as uninterpreted. A ground ATOM is deliberately not this:
-/// `py.eq(6, 7)` is closed, but the SMT encoding leaves `py.eq` uninterpreted and
-/// a solver satisfies it, so a lone ground atom still needs a covering universe.
-fn is_atom_free(inv: &Json) -> bool {
+/// True when `inv` is built from connectives whose every leaf is an operand-less
+/// `and`/`or` or a literal equality ([`is_literal_equality`]). Such a claim has
+/// no free variable, no binder and no symbol any solver theory reads as
+/// uninterpreted, so whether it holds is its satisfiability. A ground atom over
+/// an uninterpreted symbol is deliberately not this: `py.eq(6, 7)` is closed,
+/// but the SMT encoding leaves `py.eq` uninterpreted and a solver satisfies it,
+/// so it still needs a covering universe.
+fn is_closed_literal_formula(inv: &Json) -> bool {
     match inv.get("kind").and_then(|k| k.as_str()) {
         Some("and" | "or" | "not" | "implies") => inv
             .get("operands")
             .and_then(|v| v.as_array())
-            .is_some_and(|operands| operands.iter().all(is_atom_free)),
+            .is_some_and(|operands| operands.iter().all(is_closed_literal_formula)),
+        Some("atomic") => is_literal_equality(inv),
         _ => false,
     }
+}
+
+/// `=(a, b)` with `a` and `b` literal constants of one sort. The lifter states
+/// a Python `==` of two decided values of one sort this way (a string equality
+/// is a fact, never a lift-time fold: `StringValue` has no `equals` override,
+/// `resolve_equality_atom` states `=` for a same-sort pair). FOL `=` over two
+/// literals of an interpreted sort is decided by the theory itself: two string
+/// literals are equal exactly when they are the same string. So
+/// `=("YWJj", "YWJj")` is true and `=("YWJj", "AAAA")` is false, with no
+/// model to choose.
+fn is_literal_equality(node: &Json) -> bool {
+    if node.get("name").and_then(|v| v.as_str()) != Some("=") {
+        return false;
+    }
+    let Some([left, right]) = node
+        .get("args")
+        .and_then(|v| v.as_array())
+        .map(Vec::as_slice)
+    else {
+        return false;
+    };
+    let is_literal = |term: &Json| term.get("kind").and_then(|k| k.as_str()) == Some("const");
+    is_literal(left)
+        && is_literal(right)
+        && left.get("sort").is_some()
+        && left.get("sort") == right.get("sort")
 }
 
 /// A `str.in-regex(subject, R)` membership atom whose SUBJECT is a pinned ground
@@ -7537,6 +7568,68 @@ mod tests {
         );
     }
 
+    /// The federation vendor's own test (`examples/python-base64-federation`):
+    /// `assert encodeBase64("abc") == "YWJj"` calls a function in its own
+    /// module, the floor follows the body, and the call completes with the
+    /// decided string. A string `==` is stated, never folded (`StringValue`
+    /// has no `equals`): the row is `=(<decided str>, <claimed str>)`, one
+    /// constraint over two literals. The theory decides it: the truthful
+    /// vendor discharges and a lying vendor is refuted, never refused as
+    /// vacuous.
+    #[test]
+    fn a_lone_equality_of_two_string_literals_is_decided_not_vacuous() {
+        let (plan, reg) = z3_plan_and_registry();
+        let row = |claimed: &str| {
+            json!({
+                "kind": "and",
+                "operands": [{
+                    "kind": "atomic",
+                    "name": "=",
+                    "args": [str_const("YWJj"), str_const(claimed)]
+                }]
+            })
+        };
+        let verdict = |claimed: &str| {
+            let mut pool = MementoPool::default();
+            insert_contract(&mut pool, "blake3-512:vendor-own-test", "test_vendor", row(claimed));
+            let res = verify_consistency(
+                &pool,
+                &plan,
+                &reg,
+                &test_compilers(),
+                std::path::Path::new("."),
+            );
+            assert_eq!(res.len(), 1, "one row for the vendor's test: {res:?}");
+            res[0].clone()
+        };
+        let truthful = verdict("YWJj");
+        assert_eq!(
+            truthful.verdict,
+            ObligationVerdict::Discharged,
+            "encodeBase64(\"abc\") == \"YWJj\" is true: {truthful:?}"
+        );
+        let lying = verdict("AAAA");
+        assert_eq!(
+            lying.verdict,
+            ObligationVerdict::Unsatisfied,
+            "encodeBase64(\"abc\") == \"AAAA\" is false: {lying:?}"
+        );
+        // An equality with a call operand still names a symbol the solver may
+        // interpret freely: it stays vacuous without a joined contract.
+        let call = json!({"kind": "ctor", "name": "call:encodeBase64", "args": [str_const("abc")]});
+        assert!(!is_literal_equality(&json!({
+            "kind": "atomic", "name": "=", "args": [call, str_const("YWJj")]
+        })));
+        // Two literals of different sorts are not one theory's equality.
+        assert!(!is_literal_equality(&json!({
+            "kind": "atomic", "name": "=", "args": [str_const("1"), int(1)]
+        })));
+        // `py.eq` is uninterpreted in the SMT encoding: not a literal equality.
+        assert!(!is_literal_equality(&json!({
+            "kind": "atomic", "name": "py.eq", "args": [str_const("a"), str_const("a")]
+        })));
+    }
+
     /// MIXED-OPERATOR SAME-TERM, number sort universe. Two facts about the SAME
     /// left-operand call term but DIFFERENT operators must JOIN and let the number
     /// sort decide. `enc(5) < 10 ∧ enc(5) > 20` has no Int model -> UNSAT -> REFUSED.
@@ -9278,9 +9371,11 @@ mod tests {
     /// propositional constant names no symbol, so satisfiable means true and
     /// unsatisfiable means false. Twin: the constant and its negation.
     ///
-    /// The boundary is pinned too: a lone ground ATOM stays refused. `py.eq` is
-    /// uninterpreted in the SMT encoding, so admitting `py.eq(6, 7)` would come
-    /// back satisfiable and discharge a false claim.
+    /// The boundary is pinned too: a lone ground atom over an uninterpreted
+    /// symbol stays refused. `py.eq` is uninterpreted in the SMT encoding, so
+    /// admitting `py.eq(6, 7)` would come back satisfiable and discharge a
+    /// false claim. (FOL `=` of two literals of one sort is interpreted:
+    /// `a_lone_equality_of_two_string_literals_is_decided_not_vacuous`.)
     #[test]
     fn lone_atom_free_claim_reaches_the_solver_and_a_ground_atom_does_not() {
         let truth = json!({"kind":"and","operands":[]});
@@ -9308,7 +9403,7 @@ mod tests {
             assert_eq!(results.len(), 1, "{name}: exactly one candidate");
             assert_eq!(
                 results[0].verdict, expected,
-                "{name}: only a claim with no atom passes the vacuity guard alone: {}",
+                "{name}: only a claim with no uninterpreted atom passes the vacuity guard alone: {}",
                 results[0].reason
             );
         }

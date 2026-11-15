@@ -57,6 +57,53 @@ def test_a_decided_assertion_reaches_the_solver(tmp_path: Path) -> None:
     assert lying.verdict == "unsat"
 
 
+_VENDOR = (
+    "def encodeBase64(value):\n"
+    '    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"\n'
+    "    b0 = ord(value[0])\n"
+    "    b1 = ord(value[1])\n"
+    "    b2 = ord(value[2])\n"
+    "    return (\n"
+    "        alphabet[b0 >> 2]\n"
+    "        + alphabet[((b0 & 3) << 4) | (b1 >> 4)]\n"
+    "        + alphabet[((b1 & 15) << 2) | (b2 >> 6)]\n"
+    "        + alphabet[b2 & 63]\n"
+    "    )\n"
+    "\n"
+    "\n"
+    "def test_vendor():\n"
+    '    assert encodeBase64("abc") == {claim}\n'
+)
+
+
+def test_a_same_module_string_claim_is_decided(tmp_path: Path) -> None:
+    """The federation vendor's own test (``examples/python-base64-federation``).
+
+    The floor follows ``encodeBase64("abc")`` into its body and the call
+    completes with the decided string. A string ``==`` is stated, never folded
+    (``StringValue`` has no ``equals``): the row is ``=(<str>, <str>)``, one
+    constraint over two literals, which the solver's theory decides. It was
+    refused at prove as vacuous (a lone constraint); the truthful vendor's
+    row is discharged and the lying vendor's is unsatisfied. Read on the
+    test function's consistency row alone: ``encodeBase64``'s own proof has no
+    caller and owes its operations over ``value``, which is not this row."""
+
+    def row_status(claim: str) -> str:
+        doc = run_source_through_real_solver(
+            tmp_path / claim.strip('"'), _VENDOR.format(claim=claim)
+        ).prove_doc
+        rows = [
+            row
+            for row in doc.get("rows") or []
+            if row.get("property") == "consistency:test_vendor"
+        ]
+        assert len(rows) == 1, doc.get("rows")
+        return rows[0].get("status")
+
+    assert row_status('"YWJj"') == "discharged"
+    assert row_status('"AAAA"') == "unsatisfied"
+
+
 _UNBOUND = (
     "from double import double\n"
     "\n"
