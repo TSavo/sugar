@@ -43,7 +43,14 @@ from sugar_lift_py_tests.temporal.temporal_context import (
 )
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_source_tree.nodes import Assign, EvaluationRef, FunctionDef, Return
+from sugar_source_tree.nodes import (
+    Assign,
+    EvaluationRef,
+    FunctionDef,
+    Name,
+    Return,
+    Tuple_,
+)
 from sugar_source_tree.tree import SourceFile
 
 KEY = EVALUATION_PREFIX + "blake3-512:test-unpack-evaluation"
@@ -150,23 +157,46 @@ def test_a_name_beside_a_store_leaf_references_its_projection() -> None:
     assert ret.value.evaluation == projection_key(assign.evaluation, "a")
 
 
+def _unpacks(body) -> list:
+    """The unpacking assignments of ``body``: every binding statement now
+    carries its own key (``a = q`` and an unrolled ``for``'s target among
+    them), so the unpack is picked by its tuple target, never by position."""
+    return [
+        node
+        for node in body
+        if isinstance(node, Assign) and isinstance(node.targets[0], Tuple_)
+    ]
+
+
 def test_an_earlier_binding_of_the_name_is_not_read() -> None:
     # Before, the read substituted to the stale `a = q`: the unpack's own
     # member was never what `return a` read.
-    assign, ret = _assign_and_return(EARLIER)
+    body = _body(EARLIER)
+    (earlier,) = [
+        node
+        for node in body
+        if _carries_evaluation(node) and isinstance(node.targets[0], Name)
+    ]
+    (unpack,) = _unpacks(body)
+    ret = body[-1]
+    assert isinstance(ret, Return)
+    assert isinstance(ret.value, EvaluationRef)
+    assert ret.value.evaluation == projection_key(unpack.evaluation, "a")
+    assert ret.value.evaluation != projection_key(earlier.evaluation, "a")
+
+
+def test_a_display_unpack_binds_each_member_under_its_projection() -> None:
+    # Each Name leaf of a display unpack is keyed like any other binding
+    # (``Assign._keyed_names``): the read references its projection of the
+    # statement's one evaluation, never the right-hand side inlined.
+    assign, ret = _assign_and_return(DISPLAY)
     assert isinstance(ret.value, EvaluationRef)
     assert ret.value.evaluation == projection_key(assign.evaluation, "a")
 
 
-def test_a_display_unpack_still_binds_its_members() -> None:
-    body = _body(DISPLAY)
-    assert not isinstance(body[-1].value, EvaluationRef)
-    assert not any(_carries_evaluation(node) for node in body)
-
-
 def test_each_unrolled_iteration_is_its_own_evaluation() -> None:
     body = _body(UNROLLED)
-    assigns = [node for node in body if isinstance(node, Assign)]
+    assigns = _unpacks(body)
     assert len(assigns) == 2
     assert assigns[0].evaluation != assigns[1].evaluation
     ret = body[-1]
