@@ -23,14 +23,25 @@ _CID = "blake3-512:" + ("ab" * 64)
 _CID2 = "blake3-512:" + ("cd" * 64)
 
 
-class _Site:
-    def __str__(self) -> str:
-        return "site:undecided_sweep.py:1:1"
+def _pinned(tmp_path, monkeypatch, source: str, kind: str, node_type):
+    """A pin of the module binding ``G`` and the real source fragment of the
+    first ``node_type`` node that reads it: what the lifter hands the floor
+    (a site that names its source coordinate), never a stand-in."""
+    from sugar_lift_py_tests.lift_rpc import _open_at_seat
+    from sugar_source_tree.nodes import Name
 
-    source_cid = _CID
-
-    def is_within_annotation(self) -> bool:
-        return False
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "undecided_sweep.py"
+    path.write_text(source)
+    tree = _open_at_seat(path, root=tmp_path)
+    binding = next(
+        node.fragment
+        for node in tree.nodes()
+        if isinstance(node, Name) and node.fragment.text == "G"
+    )
+    site = next(node for node in tree.nodes() if isinstance(node, node_type)).fragment
+    pin = MutableGlobalValue("G", kind, binding.source_cid, binding.seal())
+    return pin, site
 
 
 def _mutable(*, kind: str = "list") -> MutableGlobalValue:
@@ -63,22 +74,31 @@ def _assert_undecided_membership_faces(outcome) -> None:
     assert halted.effect.producer_node_owner == "UndecidedCompare:In"
 
 
-def test_mutable_global_non_dict_contains_is_undecided_not_write_more_floor() -> None:
+def test_mutable_global_non_dict_contains_is_undecided_not_write_more_floor(
+    tmp_path, monkeypatch
+) -> None:
     """kind!=dict used super().contains → write more Floor: implement MutableGlobalValue.contains."""
-    v = _mutable(kind="list")
-    site = _Site()
+    from sugar_source_tree.nodes import Compare
+
+    v, site = _pinned(
+        tmp_path, monkeypatch, "G = []\nfound = 0 in G\n", "list", Compare
+    )
     assert v.runtime_type_is_decided() is False
     from sugar_lift_py_tests.floor.term_value import TermValue
 
     _assert_undecided_membership_faces(v.contains(TermValue(0), site))
 
 
-def test_mutable_global_attribute_is_undecided_not_write_more_floor() -> None:
+def test_mutable_global_attribute_is_undecided_not_write_more_floor(
+    tmp_path, monkeypatch
+) -> None:
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.outcome import Completed, Halted
+    from sugar_source_tree.nodes import Attribute
 
-    v = _mutable(kind="dict")
-    site = _Site()
+    v, site = _pinned(
+        tmp_path, monkeypatch, "G = {}\nkeys = G.keys\n", "dict", Attribute
+    )
     outcome = v.attribute("keys", site, None)
     (halt,) = [arm for arm in outcome.exits if isinstance(arm, Halted)]
     (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
