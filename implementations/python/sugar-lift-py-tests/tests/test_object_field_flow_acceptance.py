@@ -308,9 +308,19 @@ def test_branch_join_with_one_unproved_field_face_stays_loud(tmp_path):
     ("class_name", "left_name", "right_name", "field"),
     [("Vessel", "left", "right", "payload"), ("Capsule", "first", "second", "marker")],
 )
-def test_opaque_call_invalidates_only_the_exposed_object(
+def test_opaque_call_leaves_every_object_of_a_reachable_class_undecided(
     tmp_path, class_name, left_name, right_name, field
 ):
+    """``mutator(left)`` runs code the caller does not follow.  That code
+    reaches ``left``'s class -- ``type(left)``, and the module global the
+    class statement bound -- and may bind a data descriptor for the field on
+    it (``Vessel.payload = property(lambda self: 0)``), which wins over the
+    instance ``__dict__`` for ``right`` too (``object.__getattribute__``).
+    So ``right.payload`` after the call is not decided to be the 11 its
+    store left: both reads after the call are the object as the call left
+    it (``ReceiverAfterCall``, the one exposure rule
+    ``container_mutation._ambient_targets``), which the value decides at
+    reduce.  The two objects keep distinct identities."""
     path = tmp_path / f"selective_{class_name}.py"
     path.write_text(
         f"class {class_name}:\n    pass\n\n"
@@ -331,23 +341,19 @@ def test_opaque_call_invalidates_only_the_exposed_object(
             )
         }
     )
+    from sugar_source_tree.container_mutation import _identity
+
     returned = next(node for node in substituted.walk() if node.kind == "Return")
-    # The other object's read is the object as its store left it: the one
-    # receiver field store's post-state, holding the store's key.
+    # The other object's read is its value after the call too: the call may
+    # have changed its class.
     assert returned.value.kind == "Attribute"
-    stored = returned.value.value
-    assert stored.kind == "ReceiverFieldStoreState"
-    assert stored.value.kind == "EvaluationRef"
-    assert stored.value.place is True
+    assert _identity(returned.value.value).kind == "ReceiverAfterCall"
     states = [node for node in substituted.walk() if node.kind == "ObjectPlaceStateV1"]
     assert len({state.object_identity_cid for state in states}) == 2
     # The exposed object's name is rebound by the one exposure rule
     # (``container_mutation.havoc_after``): its later read is its value after
-    # the call, which the value decides at reduce; the other object's read
-    # is still its store's post-state (above).  No place has its own
+    # the call, which the value decides at reduce.  No place has its own
     # invalidation.
-    from sugar_source_tree.container_mutation import _identity
-
     observed = next(
         node
         for node in substituted.walk()
