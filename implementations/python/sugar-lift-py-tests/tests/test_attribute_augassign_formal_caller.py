@@ -513,14 +513,22 @@ def test_authenticated_discharge_get_iadd_setattr_updates_field() -> None:
         assert stores[-1].value == TermValue(11)
 
 
-def test_enum_attribute_augassign_uses_one_authenticated_read_op_store(
-    monkeypatch,
-) -> None:
-    """Production path: CPython ``enum.py:292`` retains the exact operation chain."""
+def test_enum_attribute_augassign_owner_is_refused_for_its_undecided_global() -> None:
+    """CPython ``enum.py:292`` (``enum_class._flag_mask_ |= value``) sits in
+    ``_proto_member.__set_name__``, which reads the module global ``Flag``.
+
+    ``enum.py`` binds ``Flag`` twice (``Flag = None``, then ``class Flag``),
+    and the module body's threading does not decide which binding stands
+    where ``__set_name__`` runs.  A name the module body does not decide is
+    never read by name in its place (``_bound_module_references``), so
+    building the function is refused by name.  This row used to expect the
+    function to reduce and to observe a read/operate/store chain at line 292:
+    a completion for a function the lifter does not build.  The chain itself
+    is asserted on a source it does build
+    (``test_unrelated_source_attribute_augassign_uses_the_same_projection``).
+    """
     from sugar_lift_python_source.dependency_artifact import DependencyArtifactGraph
-    from sugar_lift_py_tests.sugar import augassign_sugar as aug_module
-    from sugar_lift_py_tests.sugar import store_effect_sugar as store_module
-    from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
+    from sugar_source_tree.panic import SugarNotWritten
 
     graph = DependencyArtifactGraph.authenticate_stdlib_module("enum")
     module = graph.modules["enum"]
@@ -539,48 +547,11 @@ def test_enum_attribute_augassign_uses_one_authenticated_read_op_store(
         key=lambda node: node.line_col_span().end_line
         - node.line_col_span().start_line,
     )
-    events = []
-    original_read = AttributeSugar.project_attribute
-    original_op = aug_module.project_augmented
-    original_store = store_module.project_setattr
+    with pytest.raises(SugarNotWritten) as refused:
+        owner.sugar()
 
-    def at_target(site) -> bool:
-        return site.line_col_span().start_line == 292
-
-    def read(receiver, member, site, ctx):
-        if at_target(site):
-            events.append(("read", receiver, member, site))
-        return original_read(receiver, member, site, ctx)
-
-    def operate(left, right, *, operator, projector, site, ctx):
-        if at_target(site):
-            events.append(("operate", left, operator, site))
-        return original_op(
-            left,
-            right,
-            operator=operator,
-            projector=projector,
-            site=site,
-            ctx=ctx,
-        )
-
-    def store(receiver, member, value, site, ctx):
-        if at_target(site):
-            events.append(("store", receiver, member, site))
-        return original_store(receiver, member, value, site, ctx)
-
-    monkeypatch.setattr(AttributeSugar, "project_attribute", staticmethod(read))
-    monkeypatch.setattr(aug_module, "project_augmented", operate)
-    monkeypatch.setattr(store_module, "project_setattr", store)
-
-    owner.sugar().desugar(None)
-
-    assert tuple(event[0] for event in events) == ("read", "operate", "store")
-    read_event, op_event, store_event = events
-    assert read_event[1] is store_event[1]
-    assert read_event[2] == store_event[2] == "_flag_mask_"
-    assert op_event[2] == "ior"
-    assert len({event[3].source_cid for event in events}) == 1
+    assert refused.value.owner == "FunctionDef._module_global_references"
+    assert "undecided module binding of `Flag`" in refused.value.observed
 
 
 def test_unrelated_source_attribute_augassign_uses_the_same_projection() -> None:
