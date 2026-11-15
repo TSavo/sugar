@@ -18704,14 +18704,24 @@ class _HaltEdgeJoin:
         self.edges.setdefault(edge, None)
         return _HaltEdgeState(state, edge=edge, join=self)
 
-    def arm_halt_state(self, handler, index, handler_net, scope):
-        """The state a halt raised inside arm ``index`` carries to ``finally``."""
-        changed = [
-            name
-            for name, entry in handler_net.items()
-            if name != handler.name and scope.get(name) is not entry
-        ]
-        state = dict(handler_net)
+    def arm_halt_state(self, handler, index, handler_net, scope, at_halt=None):
+        """The state a halt raised inside arm ``index`` carries to ``finally``.
+
+        ``at_halt`` is the state in effect at the one arm statement that can
+        halt, when the arm has exactly one (``Try.substitute``): the halt
+        leaves from it, as a body halt leaves from its own statement's state.
+        Otherwise the arm may have halted after any of its stores, and every
+        name it changed is unknown."""
+        changed = (
+            []
+            if at_halt is not None
+            else [
+                name
+                for name, entry in handler_net.items()
+                if name != handler.name and scope.get(name) is not entry
+            ]
+        )
+        state = dict(handler_net if at_halt is None else at_halt)
         if changed:
             from .container_mutation import _havoc
             from .shadow import occurrence_tags_of
@@ -18856,6 +18866,7 @@ class Try(Statement):
         body_completion = {**body_net, **else_net}
 
         handler_nets = []
+        handler_halts = []
         new_handlers = []
         for handler_index, handler in enumerate(Try._keyed_handlers(self, scope)):
             handler_changed = {}
@@ -18873,8 +18884,11 @@ class Try(Statement):
                 handler_scope[handler.name] = handler._make_effect_ref(
                     handler._effect_slot_id()
                 )
+            handler_edge_states: list = []
             new_handler_body, body_changed, handler_net = (
-                handler._substitute_body_tracked(handler.body, handler_scope)
+                handler._substitute_body_tracked(
+                    handler.body, handler_scope, edge_states=handler_edge_states
+                )
             )
             if body_changed:
                 handler_changed["body"] = new_handler_body
@@ -18882,13 +18896,24 @@ class Try(Statement):
                 handler if not handler_changed else rewrite(handler, **handler_changed)
             )
             new_handlers.append(rewritten)
+            # The same law, one layer in: a halt the arm itself raises leaves
+            # from the state in effect at the arm statement that halted.  When
+            # exactly one statement of the arm can halt, that state is the
+            # arm's halt state; with several, which one halted is not keyed
+            # here (``_HaltEdgeJoin.arm_halt_state`` havocs what the arm
+            # changed).
+            handler_edge_states.append((None, {**handler_scope, **handler_net}))
+            arm_edges = self._body_halt_edges(handler_edge_states, handler_scope)
+            arm_halt = None
+            if len({state.edge for _identity, _mro, state in arm_edges}) == 1:
+                arm_halt = {**incoming, **arm_edges[0][2]}
             if handler.name:
-                handler_net = {
-                    **handler_net,
-                    handler.name: UnboundBinding(
-                        name=handler.name, cause=handler.fragment
-                    ),
-                }
+                # Python clears the ``as`` target however the clause exits.
+                cleared = UnboundBinding(name=handler.name, cause=handler.fragment)
+                handler_net = {**handler_net, handler.name: cleared}
+                if arm_halt is not None:
+                    arm_halt[handler.name] = cleared
+            handler_halts.append(arm_halt)
             # The handler edge leaves the try carrying the state it arrived
             # with, updated by the handler's own threading -- same law, one
             # layer in.
@@ -18918,7 +18943,29 @@ class Try(Statement):
             scope, completion_routes, site_id=site_id
         )
         final_scope = {**scope, **merged}
+        # What the completion copy of ``finally`` reads.  It runs beneath
+        # every completed face (``TrySugar``), and a face that left an arm by
+        # ``return`` is one: the return is pending while the ``finally``
+        # runs.  So an arm that never falls through but can return is a route
+        # into the ``finally`` too, carrying what the arm bound; the tail
+        # after the try still joins the fall-through routes only (``merged``).
+        finally_scope = final_scope
         if self.finalbody:
+            returning = [
+                (handler_index, handler_net)
+                for handler_index, (handler, handler_net) in enumerate(
+                    zip(self.handlers, handler_nets)
+                )
+                if handler_index in routed
+                and not self._block_has_completed_fallthrough(handler.body)
+                and self._block_holds_return(handler.body)
+            ]
+            if returning:
+                reached, reached_minted = self._merge_completion_nets(
+                    scope, [*completion_routes, *returning], site_id=site_id
+                )
+                finally_scope = {**scope, **reached}
+                minted = minted or reached_minted
             # ``finally`` also runs on every body halt no arm surely catches,
             # beginning from that halt's own state -- never the pre-try state.
             escaping = [
@@ -18930,14 +18977,20 @@ class Try(Statement):
                 )
             ]
             # An arm may itself raise (or re-raise) after its own stores: that
-            # halt reaches ``finally`` with every name the arm changed unknown.
+            # halt reaches ``finally`` from the state at the arm statement
+            # that halted when there is one such statement, else with every
+            # name the arm changed unknown.
             for handler_index, (handler, handler_net) in enumerate(
                 zip(self.handlers, handler_nets)
             ):
                 if handler_index not in routed:
                     continue
                 arm_state = join.arm_halt_state(
-                    handler, handler_index, handler_net, scope
+                    handler,
+                    handler_index,
+                    handler_net,
+                    scope,
+                    at_halt=handler_halts[handler_index],
                 )
                 if arm_state is not None:
                     escaping.append(arm_state)
@@ -18945,7 +18998,7 @@ class Try(Statement):
         else:
             halted_entries = {}
         new_finalbody, d, final_net = self._substitute_body_tracked(
-            self.finalbody, _exit_path_scope(self, "completion", final_scope)
+            self.finalbody, _exit_path_scope(self, "completion", finally_scope)
         )
         if d:
             changed["finalbody"] = new_finalbody
@@ -18959,9 +19012,14 @@ class Try(Statement):
         # one always gets its halted copy, or the halted faces would reduce
         # the completion copy and bind its key a second time.
         finalbody_halted = None
-        if any(
-            final_scope.get(name) is not entry for name, entry in halted_entries.items()
-        ) or _holds_evaluation(new_finalbody):
+        if (
+            any(
+                final_scope.get(name) is not entry
+                for name, entry in halted_entries.items()
+            )
+            or finally_scope is not final_scope
+            or _holds_evaluation(new_finalbody)
+        ):
             finalbody_halted, _d = self._substitute_body(
                 self.finalbody,
                 _exit_path_scope(self, "halt", {**final_scope, **halted_entries}),
@@ -19381,6 +19439,24 @@ class Try(Statement):
                 ):
                     return False
         return True
+
+    def _block_holds_return(self, statements) -> bool:
+        """Whether a ``return`` of this frame stands anywhere in the block: a
+        ``return`` inside a nested definition leaves that definition's frame,
+        never this one."""
+        stack = list(statements)
+        while stack:
+            node = stack.pop()
+            if isinstance(node, Return):
+                return True
+            if isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef, Lambda)):
+                continue
+            stack.extend(
+                child
+                for _name, _index, child in node._child_edges()
+                if isinstance(child, Node)
+            )
+        return False
 
     def _merge_completion_nets(self, scope, routes, *, site_id):
         """Join each name over the routes the try can complete by (a
