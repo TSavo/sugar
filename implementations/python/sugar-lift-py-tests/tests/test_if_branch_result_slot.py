@@ -196,9 +196,17 @@ def test_duplicated_branch_result_slot_panics_at_the_exact_if_occurrence() -> No
     assert "if-branch-result-slot.py:1:0" in message
 
 
-def test_symbolic_ternary_result_uses_its_authenticated_branch_slot() -> None:
+def test_symbolic_ternary_result_is_guarded_by_its_tests_truth() -> None:
+    """Was ``test_symbolic_ternary_result_uses_its_authenticated_branch_slot``.
+    A slot minted from a ternary's test (``branch_result_slot``) was
+    confirmed by nothing: an ``if`` states ``BranchResultAuthentication``
+    for its own slot, a ternary stated none.  The arms stood under a free
+    atom, so a caller joined at prove (#7757 step 5) could read either arm
+    whatever its actual decided.  The guard is the test's own truth, the
+    formula ``predicate_formula`` reads off the test's value."""
     from sugar_lift_py_tests.floor.branch_result_coordinate import branch_result_guard
     from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
 
     tree = _tree("def choose(a, b):\n    return 10 if a is b else 20\n")
     ternary = next(node for node in tree.nodes() if isinstance(node, IfExp))
@@ -206,7 +214,9 @@ def test_symbolic_ternary_result_uses_its_authenticated_branch_slot() -> None:
 
     value = outcome.completed_value()
     assert isinstance(value, GuardedValue), outcome
-    assert value.guard == branch_result_guard(
+    test_value = ternary.test.sugar().desugar(None).completed_value()
+    assert value.guard == predicate_formula(test_value, ternary.fragment)
+    assert value.guard != branch_result_guard(
         branch_result_slot(ternary.test), ternary.fragment
     )
 

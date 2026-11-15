@@ -38,6 +38,9 @@ class IfExpSugar(ConstructedTermSugar):
     body: ConstructedTermSugar  # the then-value
     orelse: ConstructedTermSugar  # the else-value
     site: object = dataclass_field(compare=False, default=None)
+    # The slot a phi's test already is (an ``if``'s branch result, a
+    # ``try``'s route), confirmed by its owner; None for any other test,
+    # whose own truth is the guard.
     branch_slot: object = None
     # ``(evaluation, name, prior)`` for each walrus in an arm whose name was
     # bound before the expression (``IfExp.substitute``): ``prior`` is the

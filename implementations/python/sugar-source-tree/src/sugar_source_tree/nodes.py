@@ -22167,11 +22167,16 @@ class IfExp(Expression):
             # ``try``'s route): the expression is guarded by that slot itself,
             # the one its owner confirms.  Minting a second slot from the
             # reference's span left the joined value under a coordinate
-            # nothing authenticates.
+            # nothing authenticates.  Any other test is guarded by its own
+            # truth (``IfExpSugar._join_on``): no statement confirms a slot
+            # minted from a ternary's test (an ``if`` states
+            # ``BranchResultAuthentication`` for its own; a ternary stated
+            # none), so the arms stood under a free atom and a joined caller
+            # could read either arm whatever its actual decided (#7757).
             branch_slot=(
                 BranchResultSlot(self.test.slot_id)
                 if isinstance(self.test, BranchResultRef)
-                else branch_result_slot(self.test)
+                else None
             ),
             walrus_priors=tuple(
                 (evaluation, name, prior.sugar())
