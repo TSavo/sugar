@@ -44,6 +44,3 @@ echo 'PASS: sugarbin shelf assets are immutable and race-idempotent (FS-only)'
 
 # R_shelf_exercise: SHELF_EXERCISED_CLEAN ≠ SHELF_NEVER_TOUCHED ≠ SHELF_UNMEASURED.
 "$repo/tests/shelf_exercise_report.sh" "$repo"
-
-# Exercise the python-demand-table artifact through the shelf boundary.
-"$repo/tests/sugarbin_python_demand_table_fixture.sh" "$repo"

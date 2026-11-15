@@ -48,7 +48,7 @@ grep -Fq 'write_filesystem_shelf_stamp_ref' <<<"$publish_body" || {
   echo 'publish does not write stamp→content ref' >&2
   exit 1
 }
-pull_body="$(sed -n '/^pull_from_filesystem_shelf()/,/^write_payload_artifact_manifest()/p' "$sugarbin")"
+pull_body="$(sed -n '/^pull_from_filesystem_shelf()/,/^override_profile_evidence()/p' "$sugarbin")"
 grep -Fq 'read_filesystem_shelf_stamp_ref' <<<"$pull_body" || {
   echo 'pull does not resolve stamp→content ref' >&2
   exit 1
