@@ -140,21 +140,19 @@ def halt_locus(arm, *, formals, def_memento, blame):
 class OwnerReduction:
     """One reduction of a function (or module) and what it recorded.
 
-    ``outcome`` is the reduction's outcome; ``asserts`` is every
-    ``(coordinate, outcome)`` an assert inside it reduced to, in reduction
-    order. Its unanswered calls are owed by the outcome's own arms
-    (``unanswered_calls.owed_calls``). ``ends`` is, for a module, each
-    completed arm of its run holding the context it ended with, under the
-    arm's guard and faces (``ModuleBlockSugar.run``); a function's
-    reduction has none.
+    ``outcome`` is the reduction's outcome: an assert inside it reaches the
+    proof only through the outcome's rows. Its unanswered calls are owed by
+    the outcome's own arms (``unanswered_calls.owed_calls``). ``ends`` is,
+    for a module, each completed arm of its run holding the context it ended
+    with, under the arm's guard and faces (``ModuleBlockSugar.run``); a
+    function's reduction has none.
     """
 
-    __slots__ = ("unit", "outcome", "asserts", "ends")
+    __slots__ = ("unit", "outcome", "ends")
 
-    def __init__(self, unit, outcome, asserts, ends=()):
+    def __init__(self, unit, outcome, ends=()):
         self.unit = unit
         self.outcome = outcome
-        self.asserts = asserts
         self.ends = ends
 
 
@@ -189,7 +187,6 @@ def owner_reduction(owner, sf: Optional[SourceFile] = None) -> OwnerReduction:
     ``module_end_contexts`` or not, without running the module again.  A
     row computed inside the run that read the marker still records it.
     """
-    from sugar_lift_py_tests import assert_reductions
     from sugar_source_tree.construction_cache import (
         abandon_row,
         close_row,
@@ -208,17 +205,16 @@ def owner_reduction(owner, sf: Optional[SourceFile] = None) -> OwnerReduction:
     computation = open_row()
     try:
         ends = ()
-        with assert_reductions.collecting() as asserts:
-            if owner is not None:
-                outcome = function_universe_outcome(owner)
-            else:
-                outcome, ends = _module_run(node.unit, sf)
+        if owner is not None:
+            outcome = function_universe_outcome(owner)
+        else:
+            outcome, ends = _module_run(node.unit, sf)
     except BaseException:
         # A refusal is not kept: what the reduction read and said belongs
         # to the computation around it.
         abandon_row(computation)
         raise
-    held = OwnerReduction(node.unit, outcome, tuple(asserts), ends)
+    held = OwnerReduction(node.unit, outcome, ends)
     close_row(_OWNER_REDUCTIONS, key, computation, node.reporter, value=held)
     return held
 
