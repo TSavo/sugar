@@ -12529,12 +12529,20 @@ class ClassDef(Statement):
                     default_keys.extend(key for key, _at in defaults.evaluations)
                     statements.append(defaults)
                 continue
-            if isinstance(item, Pass) or (
+            if isinstance(item, Pass):
+                continue
+            if (
                 index == 0
                 and isinstance(item, Expr)
                 and isinstance(item.value, Constant)
                 and isinstance(item.value.value, str)
             ):
+                # The docstring runs nothing here: the class statement reads
+                # it as ``docstring_cid``, never as a statement.  It answers
+                # the roll inert, with its constant, where this body
+                # consumed it.
+                item.discharge_by_substitution()
+                item.value.discharge_by_substitution()
                 continue
             if isinstance(item, ClassDef):
                 # A nested class statement runs where it stands in this
