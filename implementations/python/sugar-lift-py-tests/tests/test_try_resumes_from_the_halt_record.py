@@ -575,6 +575,30 @@ def test_exec_of_a_constant_string_runs_code_then_a_module_list_is_not_stale() -
     assert _read_after(source) != _EMPTY
 
 
+def test_a_builtin_exception_class_by_its_binding_runs_no_code() -> None:
+    # ``ValueError()`` bound to the builtin class stores its actuals as
+    # ``args`` (``BaseException_new``) and runs no code: it reaches nothing
+    # beyond its operands (``_code_subjects`` is ``[]``).  A module class
+    # spelled ``ValueError`` is source code: no read decides it (None).
+    from sugar_source_tree.container_mutation import _code_subjects
+    from sugar_source_tree.nodes import Call
+
+    for source, expected in (
+        ("def f():\n    raise ValueError()\n", []),
+        (
+            "def f():\n"
+            "    raise ValueError()\n"
+            "L = []\n"
+            "class ValueError(Exception):\n"
+            "    def __init__(self):\n"
+            "        L.append(1)\n",
+            None,
+        ),
+    ):
+        (call,) = [node for node in _function(source).walk() if isinstance(node, Call)]
+        assert _code_subjects(call, {}) == expected, source
+
+
 def test_exec_in_a_function_reaches_the_object_a_local_list_is() -> None:
     # ``exec`` handed no globals mapping runs in the frame's namespaces: its
     # code reads ``xs`` from the frame's ``locals()`` snapshot, the very list
