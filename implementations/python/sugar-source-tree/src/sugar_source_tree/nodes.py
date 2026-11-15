@@ -5234,24 +5234,20 @@ class SourceUnit:
         through the door that binds its tree.
 
         Which class the callee denotes is the one resolver's
-        (``module_definition_denoted_by``).  Only a ``Name`` callee is asked,
-        as ``decorated_definition_for_call`` asks only one: a callee the
-        rewrite already made the read of the class statement's key
-        (``DecoratedDefinitionRef``, #7757 item 21) is a call of the class
-        value that statement's run built (``Call._construct_sugar``'s
-        computed call), never the class statement read again at the call.
-        Its result is the call's own value, read through the assignment's
-        key (``OpaqueObjectStateV1``).  Minting a source allocation for it
-        (#8535) gave every copy of one constructor call in an unrolled loop
-        one object coordinate (the call's fragment and offset), and one
-        iteration's method call on its instance went unapplied
-        (``test_assignment_evaluated_once``, ``unrolled-loop-object``).
+        (``module_definition_denoted_by``), whatever form the callee's read
+        takes after the rewrite (a ``Name``, or the read of the class
+        statement's key, ``DecoratedDefinitionRef``, #7757 item 21): the
+        callee's spelling never decides the allocation.
+
+        The allocation definition is not the object's identity.  Which
+        object a construction made is the evaluation that made it
+        (``Assign._object_place_state``: the assignment's evaluation key), so
+        two evaluations of this one call -- two unrolled iterations, two
+        calls of the enclosing function -- make two objects.
         """
         self._require_typed_module(
             "SourceUnit.source_allocation_definition_for_call", blame=self.filename
         )
-        if not isinstance(call.func, Name):
-            return None
         span = call.line_col_span()
         definition = self.module_definition_denoted_by(call.func, span)
         if not isinstance(definition, ClassDef):
@@ -5678,23 +5674,6 @@ class SourceUnit:
         return SourceUnit.source_class_has_authenticated_default_attribute_behavior(
             definition
         ) or SourceUnit.source_class_has_plain_source_body(definition)
-
-    def construction_generation(self, node: "Node") -> int:
-        """The source-authenticated generation of this exact occurrence.
-
-        The byte offset is stable across shadow rewrites of the same occurrence
-        and differs for distinct occurrences. It comes from the oracle-sealed
-        construction fragment, never a binding owner or process counter.
-        """
-        if not isinstance(node, Call):
-            raise SourceTreePanic(
-                blame=node.fragment,
-                owner="SourceUnit.construction_generation",
-                observed=type(node).__name__,
-                requested="one exact Call construction occurrence",
-                fix="mint object identity only at the sole Call boundary",
-            )
-        return node.fragment.seal().start
 
     @staticmethod
     def _module_statement_bound_names(statement: "Node") -> set[str]:
@@ -16115,6 +16094,14 @@ class Assign(Statement):
         reference = unwrap_binding_state(entry.state)
         if not isinstance(reference, EvaluationRef):
             return None
+        # The object's identity is the evaluation that made it: this
+        # statement's evaluation key, as the name's reference reads it.  It
+        # carries the loop iterations, exit paths and occurrence copies this
+        # statement was substituted for (``Statement._evaluation_key``), so
+        # two evaluations of one source call -- two unrolled iterations, two
+        # calls of the enclosing function -- make two objects, never one
+        # keyed by the call's fragment.
+        evaluation = reference.evaluation
         definition = self.unit.source_allocation_definition_for_call(self.value)
         if definition is None:
             from .backend import Child, Leaf, materialize
@@ -16123,7 +16110,7 @@ class Assign(Statement):
 
             coordinate = OpaqueObjectCoordinateV1.mint(
                 call_occurrence=self.value.fragment,
-                construction_generation=self.unit.construction_generation(self.value),
+                construction_evaluation=evaluation,
                 source_cid=self.unit.source_cid,
                 artifact_cid=self.unit.source_cid,
             )
@@ -16145,10 +16132,10 @@ class Assign(Statement):
             definition
         ):
             return None
-        # The object's identity is the right-hand side the name was given
-        # (the reference's ``of``): the constructor call at this statement,
-        # never its value computed here.  The statement evaluates the call
-        # once, at reduce; every read of the object reads its key.
+        # The construction testimony names the right-hand side the name was
+        # given (the reference's ``of``): the constructor call at this
+        # statement, never its value computed here.  The statement evaluates
+        # the call once, at reduce; every read of the object reads its key.
         constructor = getattr(reference, "of", None)
         if not isinstance(constructor, Node):
             return None
@@ -16158,7 +16145,7 @@ class Assign(Statement):
         object_coordinate = SourceObjectCoordinateV1.mint(
             allocation_definition=definition.fragment,
             call_occurrence=self.value.fragment,
-            construction_generation=self.unit.construction_generation(self.value),
+            construction_evaluation=evaluation,
             source_cid=self.unit.source_cid,
             artifact_cid=self.unit.source_cid,
         )
@@ -24513,7 +24500,9 @@ class ObjectPlaceStateV1(Expression):
 
     This is a constructed Node value, not a binding resolver or heap.  Its sole
     identity source is ``object_coordinate.cid``, authenticated from the exact
-    construction occurrence.
+    construction occurrence and the evaluation that made it (the
+    assignment's evaluation key): two evaluations of one call are two
+    objects.
 
     ``construction_testimony`` names the constructor call (``base``, the
     reference's ``of``): its source fragment and node shape, never a value

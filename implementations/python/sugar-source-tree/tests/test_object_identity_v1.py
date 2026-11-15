@@ -20,11 +20,11 @@ def _calls():
     return [node.fragment for node in function.walk() if node.kind == "Call"]
 
 
-def _source(site, generation=0):
+def _source(site, evaluation="evaluation:fixture/left"):
     return SourceObjectCoordinateV1.mint(
         allocation_definition=site,
         call_occurrence=site,
-        construction_generation=generation,
+        construction_evaluation=evaluation,
         source_cid=site.source_cid,
         artifact_cid=cid_of_json({"artifact": "fixture"}),
     )
@@ -39,11 +39,31 @@ def test_object_identity_is_call_occurrence_not_binding_or_shape():
     assert decode_object_coordinate_v1(first.wire()) == first
 
 
+def test_two_evaluations_of_one_call_are_two_objects():
+    # One allocation per evaluation: the same call evaluated twice (two
+    # unrolled iterations, two calls of its function) makes two objects.
+    site, _ = _calls()
+    first = _source(site, "evaluation:iteration-0/b")
+    second = _source(site, "evaluation:iteration-1/b")
+    assert first.cid != second.cid
+    assert _source(site, "evaluation:iteration-0/b").cid == first.cid
+    opaque = [
+        OpaqueObjectCoordinateV1.mint(
+            call_occurrence=site,
+            construction_evaluation=evaluation,
+            source_cid=site.source_cid,
+            artifact_cid=cid_of_json({"artifact": "native"}),
+        )
+        for evaluation in ("evaluation:iteration-0/b", "evaluation:iteration-1/b")
+    ]
+    assert opaque[0].cid != opaque[1].cid
+
+
 def test_opaque_result_proves_only_occurrence_identity_and_aliasing():
     first_site, _ = _calls()
     opaque = OpaqueObjectCoordinateV1.mint(
         call_occurrence=first_site,
-        construction_generation=3,
+        construction_evaluation="evaluation:fixture/opaque",
         source_cid=first_site.source_cid,
         artifact_cid=cid_of_json({"artifact": "native"}),
     )
