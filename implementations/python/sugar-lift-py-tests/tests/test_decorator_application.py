@@ -902,15 +902,19 @@ def test_local():
     assert _raises(lying, "AssertionError") != []
 
 
-def test_a_local_class_receiver_is_read_only_through_its_class_statement() -> None:
-    """The receiver is the class statement only where ``C`` is the
-    enclosing function's local and the binding standing at the call is that
-    undecorated statement (``_local_class_receiver``): a module class, a
-    rebound name and a plain receiver are not."""
+def test_a_local_class_statement_binds_its_name_under_its_evaluation_key() -> None:
+    """An undecorated local ``class C`` binds ``C`` as an assignment binds
+    its target: to the statement's value under its evaluation key
+    (``DecoratedDefinitionRef``), the one read of the name for a call, a
+    method receiver, an attribute, a base and a decorator alike.  The class
+    statement never stands for the name, and the receiver-only second read
+    is gone."""
+    import sugar_source_tree.nodes as nodes
     from sugar_source_tree.nodes import (
         _LEXICALLY_BOUND_NAMES,
-        Attribute,
-        _local_class_receiver,
+        _definition_evaluation_key,
+        _local_definition_binding,
+        call_applies_own_frame,
     )
 
     tree = _tree(
@@ -923,24 +927,54 @@ def test_a_local_class_receiver_is_read_only_through_its_class_statement() -> No
         "    C.m()\n"
     )
     (class_def,) = tuple(node for node in tree.nodes() if isinstance(node, ClassDef))
-    call = next(
+    assert not call_applies_own_frame(class_def)
+    scope = {_LEXICALLY_BOUND_NAMES: frozenset({"C"})}
+    binding = _local_definition_binding(class_def, scope)
+    assert binding is not None
+    bound = binding["C"]
+    assert isinstance(bound, DecoratedDefinitionRef)
+    assert bound.evaluation == _definition_evaluation_key(class_def, scope)
+    assert not hasattr(nodes, "_local_class_receiver")
+
+
+def test_a_module_reader_binds_an_undecorated_class_to_its_statements_value() -> (
+    None
+):
+    """A module ``class C`` a function reads is the module run's value of
+    ``C`` under the statement's key (``DecoratedDefinitionRef``), which a
+    frame called after import binds to that value (``ModuleFinalValue``),
+    never the class statement run again in the caller's frame."""
+    from sugar_lift_py_tests.sugar.call_site_sugar import (
+        _collect_final_evaluations,
+    )
+
+    tree = _tree(
+        """\
+x = 1
+
+
+class C:
+    def __init__(self, a=x):
+        self.a = a
+
+
+def f():
+    return C()
+""",
+        TreeConstructionContextV1.for_source_call_construction(),
+    )
+    function = next(
         node
         for node in tree.nodes()
-        if isinstance(node, Call) and isinstance(node.func, Attribute)
+        if isinstance(node, FunctionDef) and node.name == "f"
     )
-    local = frozenset({"C"})
-    scope = {_LEXICALLY_BOUND_NAMES: local, "C": class_def}
-    assert _local_class_receiver(call.func, scope) is class_def
-    # Not a lexical local of the function (a module name): not this read.
-    assert _local_class_receiver(call.func, {"C": class_def}) is None
-    # Rebound after the statement: the binding is no class statement.
-    assert _local_class_receiver(call.func, {_LEXICALLY_BOUND_NAMES: local}) is None
-    assert (
-        _local_class_receiver(
-            call.func, {_LEXICALLY_BOUND_NAMES: local, "C": call.func.value}
-        )
-        is None
-    )
+    final = function.unit.module_bindings_at(None, {"C"})["C"]
+    assert isinstance(final, DecoratedDefinitionRef)
+    assert final.definition_name == "C"
+    assert _module_reference_state(final) is final
+    evaluations: list = []
+    _collect_final_evaluations(final, evaluations, [])
+    assert evaluations == [final.evaluation]
 
 
 def test_an_init_default_is_the_binding_at_its_class_statement() -> None:

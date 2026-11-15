@@ -1595,18 +1595,21 @@ def _module_end_decision(ends, slot_id):
 def _collect_final_evaluations(state, evaluations: list, decisions: list) -> None:
     """Every key a module-final binding ``state`` reads through
     (``evaluations``), and every slot a phi of it selects its arm by
-    (``decisions``): an evaluation reference's key, a decorated
-    ``def``/``class`` statement's value (``DecoratedDefinitionRef``: the key
+    (``decisions``): an evaluation reference's key, a decorated ``def``'s
+    or any ``class`` statement's value (``DecoratedDefinitionRef``: the key
     its statement bound the decorators' result under, whose function
-    carries the defaults the statement evaluated), a live loop's own key of
+    carries the defaults the statement evaluated; for a class, decorated or
+    not, the class its body's run built in the module run, carrying its
+    methods' defaults, so a frame called after import never runs the class
+    body again where no module key is bound), a live loop's own key of
     a name it carries (``LoopBindingRef.post_key``, each face of its
     ``LoopProjectedBinding``), each arm of the phi the module block built
     over a module ``if`` or ``try`` route (``IfExp`` on a
     ``BranchResultRef``, whose slot is collected), and each arm of a binding
     joined over a slot (``GuardedBinding``: a live loop's write slot over
     its post-loop key, ``nodes._live_loop_publication``).  An undecorated
-    definition, an import's row, an effect slot or an unbound state reads
-    no key."""
+    ``def``, an import's row, an effect slot or an unbound state reads no
+    key."""
     from sugar_source_tree.binding_state import (
         GuardedBinding,
         LoopProjectedBinding,
