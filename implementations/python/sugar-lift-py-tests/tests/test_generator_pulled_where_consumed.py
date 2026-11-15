@@ -41,12 +41,21 @@ def _outcome(source: str, name: str):
 
 
 def _element_halts(outcome) -> list:
-    """The halts the element's call of ``h`` left by."""
-    return [
-        halt
-        for halt in outcome.halts()
-        if str(getattr(halt.effect, "producer_node_owner", "")).endswith(".h")
-    ]
+    """The halts the element's call of ``h`` left by: the one unanswered
+    call's halt, owner ``UnknownCallee:<target>``.  The target is ``h``'s
+    join symbol without its ``python:`` namespace (``test_witness.h``) where
+    a workspace names one, and the call's spelling (``h``) where none does,
+    as here (``for_test_without_workspace``:
+    ``lambda_callable.definition_edge_call``'s ``fallback_target``).  An
+    owner read as ending in ``.h`` matched no halt in this context, so a
+    halt the pull states read as dropped (the scorecard at d95c22a49)."""
+    found = []
+    for halt in outcome.halts():
+        owner = str(getattr(halt.effect, "producer_node_owner", ""))
+        prefix, _, target = owner.partition(":")
+        if prefix == "UnknownCallee" and target.rsplit(".", 1)[-1] == "h":
+            found.append(halt)
+    return found
 
 
 _H = "def h(x):\n    raise ValueError(x)\n\n\n"
