@@ -214,6 +214,14 @@ class ComputedCallSugar(ConstructedTermSugar):
         # edge, joined at prove (#7757 step 6).  Its body is never applied
         # here; the frame ``Call._construct_sugar`` seated only names the
         # closure cells the call reads (``captured``).
+        #
+        # A same-file definition's edge carries, on its completed face, what
+        # it names of what it was handed (its cells, its actuals, the globals
+        # it declares), under this call's key, exactly as a call by name does
+        # (``CallSiteSugar._collect_kwargs``): the exposure rule reads each
+        # object it may have changed there, ``python:after(<call result>,
+        # <formal>)`` (#7757 step 7).
+        from sugar_lift_py_tests.floor.call_site_value import bind_after_call
 
         def unanswered():
             callsite = CallSiteValue(
@@ -233,17 +241,20 @@ class ComputedCallSugar(ConstructedTermSugar):
             name = callee_term.name if type(callee_term) is _Var else "py.call"
             return UnknownCalleeCallV1(name).faces(callsite, self.site)
 
-        return apply_callee(
-            callee,
-            positional,
-            kw_values,
+        return bind_after_call(
+            apply_callee(
+                callee,
+                positional,
+                kw_values,
+                self.site,
+                ctx,
+                unanswered,
+                exception_type_coordinate=self.exception_type_coordinate,
+                exception_type_mro=self.exception_type_mro,
+                captured=captured_values,
+                call_occurrence=self.call_occurrence,
+            ),
             self.site,
-            ctx,
-            unanswered,
-            exception_type_coordinate=self.exception_type_coordinate,
-            exception_type_mro=self.exception_type_mro,
-            captured=captured_values,
-            call_occurrence=self.call_occurrence,
         )
 
 
