@@ -418,9 +418,17 @@ def test_production_store_halt_preserves_prior_state_without_fabricated_completi
 
 
 class _CountingList(ListValueCls):
-    def __init__(self, elements, box=None):
+    """A ``ListValue`` that counts its reads and stores.
+
+    A store's post-state is the same object (``replace(self, elements=...)``:
+    it keeps its ``allocation``), so the constructor takes the dataclass's own
+    fields, as ``ListValue``'s does.
+    """
+
+    def __init__(self, elements, box=None, *, allocation=FRAME_FRESH, arrival=None):
         object.__setattr__(self, "elements", tuple(elements))
-        object.__setattr__(self, "allocation", FRAME_FRESH)
+        object.__setattr__(self, "allocation", allocation)
+        object.__setattr__(self, "arrival", arrival)
         object.__setattr__(
             self, "_box", box if box is not None else {"get": 0, "set": 0}
         )
@@ -461,9 +469,12 @@ def test_production_getitem_before_rhs_order() -> None:
     order: list[str] = []
 
     class _OrderList(ListValueCls):
-        def __init__(self, elements):
+        # The store's post-state is this same object rebuilt through the
+        # dataclass's own fields (``replace``), so the constructor takes them.
+        def __init__(self, elements, *, allocation=FRAME_FRESH, arrival=None):
             object.__setattr__(self, "elements", tuple(elements))
-            object.__setattr__(self, "allocation", FRAME_FRESH)
+            object.__setattr__(self, "allocation", allocation)
+            object.__setattr__(self, "arrival", arrival)
 
         def subscript(self, index, site_):
             order.append("get")
@@ -497,7 +508,12 @@ def test_production_getitem_before_rhs_order() -> None:
     out = call.desugar(None)
     assert out.completed_value() is not None
     assert order == ["get", "rhs", "op", "set"]
-    assert _post(out) == fresh(ListValue, (TermValue(7),))
+    # The post-state is the receiver itself after the store: the same kind of
+    # object, the same allocation, holding 3 + 4.
+    post = _post(out)
+    assert isinstance(post, _OrderList)
+    assert post.elements == (TermValue(7),)
+    assert post.allocation == FRAME_FRESH
 
 
 def test_discrimination_wrong_order_rhs_before_get() -> None:
