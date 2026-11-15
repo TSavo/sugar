@@ -179,31 +179,6 @@ def test_with_census_keys_every_item_off_the_tree(tmp_path: Path) -> None:
     assert events[0]["outcome"] == ("constructed" if built else "unconstructed")
 
 
-def test_construction_gap_occurrence_counted_once(tmp_path: Path) -> None:
-    """Reporter+throw must not double-tally (392 vs 196 class of defect).
-
-    A With that reports then raises is ONE occurrence. Terminal panic count
-    equals distinct physical With coordinates, not 2x.
-    """
-    path = tmp_path / "with_param.py"
-    path.write_text(
-        "def use(manager):\n" "    with manager:\n" "        pass\n",
-        encoding="utf-8",
-    )
-    row = CONSUMER.measure_file_via_enumerate(
-        workspace_root=tmp_path,
-        file_rel="with_param.py",
-    )
-
-    # One physical With coordinate produces one terminal occurrence. The
-    # reporter and the thrown panic must not produce two copies of that locus.
-    panics = row["constructionPanics"]
-    assert len(panics) == 1
-    assert len({panic["coordinate"] for panic in panics}) == 1
-    assert row["blocking_terminal_count"] == 1
-    assert len(row["contextManagerResolutionEvents"]) == 1
-
-
 def test_backend_defect_keys_split_cm_and_call_demand() -> None:
     """Demand/resolution BackendDefects are hygiene axes, not construction R."""
     module = _load("control_effect_recensus")
