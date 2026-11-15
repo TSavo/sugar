@@ -167,12 +167,20 @@ def _may_change(value, method, pure, sharer, held=None) -> bool:
     from sugar_lift_py_tests.floor.object_value import ObjectValue
     from sugar_lift_py_tests.source_call_resolution import builtin_typed_value
     from sugar_source_tree.container_mutation import (
+        FIELD_DELETE_METHOD,
         field_store_method,
         field_store_rule,
     )
 
     if _immutable(value):
         return False
+    if getattr(value, "constructed_by_edge", False):
+        # A same-file class call's result is the instance as its
+        # construction left it, whose fields the class's contract states
+        # (``CallSiteValue.constructed_by_edge``, #7757 step 7): any code it
+        # is handed to, any store or delete on it, may change it, and the
+        # value after is not that state.
+        return True
     store = field_store_rule(method)
     if store is not None:
         attr, operand = store
@@ -183,6 +191,12 @@ def _may_change(value, method, pure, sharer, held=None) -> bool:
         if isinstance(value, ObjectValue):
             return not sharer or value.field_store_runs_code(attr)
     kind = law.container_kind(value)
+    if method == FIELD_DELETE_METHOD:
+        # ``del o.<attr>`` (``container_mutation._call_targets``): a source
+        # instance's delete is answered by its own floor
+        # (``ObjectValue.delattr``) and a builtin container's raises; any
+        # other value is changed by it, whatever it was.
+        return not isinstance(value, ObjectValue) and kind is None
     if sharer:
         return kind is None
     if isinstance(value, ObjectValue):

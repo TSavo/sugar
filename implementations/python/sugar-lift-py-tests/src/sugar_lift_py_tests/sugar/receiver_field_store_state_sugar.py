@@ -96,6 +96,16 @@ class ReceiverFieldStoreStateSugar(ConstructedTermSugar):
                 # after it is its floor's, as the store statement had it (a
                 # floor that does not answer stays loud).
                 return receiver.setattr(self.attr, value, self.site, ctx)
+            if getattr(receiver, "constructed_by_edge", False):
+                # A same-file class call's result names the instance as its
+                # construction left it, whose fields the class's contract
+                # states (#7757 step 7): after a store it is not that state,
+                # so it is the object after code this read does not see.
+                from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+                    _unknown_after,
+                )
+
+                return ExitSet.completed(_unknown_after(self.site, f".{self.attr}"))
             # A formal with no actual, or an undecided value: the object it
             # is, every field read undecided.
             return ExitSet.completed(receiver)
