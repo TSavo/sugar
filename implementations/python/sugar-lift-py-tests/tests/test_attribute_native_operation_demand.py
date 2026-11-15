@@ -190,8 +190,18 @@ def test_total_attribute_actual_never_acquires_exceptional_edge() -> None:
     assert all(isinstance(face, Completed) for face in exits.exits)
 
 
-def test_authenticated_attribute_family_has_a_closed_nonzero_exit_split() -> None:
+def test_authenticated_attribute_family_has_a_closed_exit_split() -> None:
+    """Every enrolled body ends on one arm, and no arm is a panic.
+
+    Each probe reduces its ``with`` body's attribute read with no context, so
+    the receiver is undecided, and an attribute read on an undecided receiver
+    is the one two-faced undecided read (#8175): it completes, or it raises an
+    exception whose type nothing here decides.  That raise is never dropped
+    and never named a type it is not: the body is undischarged, and its
+    nameless face is stated by name in the identity list.  No count of
+    authenticated exits is demanded."""
     from sugar_lift_py_tests.no_call_body_attribution import (
+        AttributionOutcome,
         ProducerFamily,
         run_authenticated_attribution,
     )
@@ -204,10 +214,20 @@ def test_authenticated_attribute_family_has_a_closed_nonzero_exit_split() -> Non
 
     print(report.render())
     assert row.enrolled == 53
-    assert row.authenticated_exceptional_exits > 0
-    assert row.authenticated_exceptional_exits + row.named_refusals == 53
+    assert row.outcome_total == 53
     assert row.construction_panics == 0
     assert report.discrepancies == ()
+    assert report.conservation_shortfall == 0
+    undischarged = {
+        body.body_id
+        for body in report.bodies
+        if body.outcome is AttributionOutcome.UNDISCHARGED
+    }
+    assert len(undischarged) == row.undischarged
+    assert {
+        discrepancy.body_id
+        for discrepancy in report.exceptional_exit_identity_discrepancies
+    } == undischarged
 
 
 def test_attribute_construction_has_no_vendor_exception_name_arm() -> None:
