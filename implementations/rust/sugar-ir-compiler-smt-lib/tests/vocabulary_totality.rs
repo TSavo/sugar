@@ -28,6 +28,10 @@ use sugar_ir_compiler_smt_lib::{SmtLibCompiler, DIALECT};
 // `path_config_true`, `producer_pre`, ctor `answer`, `call:encode_len`). Two
 // rows entered after it, read from the literal JSON fixtures the verifier's
 // consistency tests carry: atom `g`/0 and ctor `call:m.other`/0.
+// Re-pinned to the rust lane's measurement at bcd90bc01 (run 43762077803):
+// one row entered, ctor `call:Box`/0, read from the literal JSON fixture the
+// verifier's site-and-symbol join test carries (#8895). It compiles as
+// uninterpreted, so it is a red row.
 const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("atom", "<predicate>", 1),
     ("atom", "CategoryTheory.Functor.map_id", 0),
@@ -101,6 +105,7 @@ const EXPECTED_RED: &[(&str, &str, usize)] = &[
     ("ctor", "c:callresult_enc_a1", 1),
     ("ctor", "call:A", 0),
     ("ctor", "call:A", 1),
+    ("ctor", "call:Box", 0),
     ("ctor", "call:__call__", 2),
     ("ctor", "call:_cmp", 0),
     ("ctor", "call:abs", 1),
