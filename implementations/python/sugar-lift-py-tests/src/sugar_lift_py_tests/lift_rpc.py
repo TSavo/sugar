@@ -2277,6 +2277,32 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     if rows is None:
                         continue  # an effect, not a contract
                     scan_rows.extend((def_memento.to_rpc(), row) for row in rows)
+                # Every class's constructor contract (#7757 step 6), named by
+                # its join symbol: a call of the class is joined to it at
+                # prove as a call of a ``def`` is. Its refusal by name is the
+                # class's `undecided` row, by the rule a function's follows.
+                for cls in _tree.classes_with_contracts(sf):
+                    try:
+                        class_memento, rows = _tree.class_contract_rows(
+                            cls, file_rel
+                        )
+                        calls = _unanswered.owed_calls(
+                            _tree.owner_reduction(cls).outcome
+                        )
+                    except BackendDefect:
+                        raise
+                    except LifterRefusal as refusal:
+                        scan_rows.append(
+                            (
+                                _tree.class_memento(cls, file_rel).to_rpc(),
+                                _tree.refused_class_row(cls, file_rel, refusal),
+                            )
+                        )
+                        continue
+                    record_calls(class_memento.to_rpc(), calls)
+                    if rows is None:
+                        continue
+                    scan_rows.extend((class_memento.to_rpc(), row) for row in rows)
                 # The module body's one run owes what its arms left unanswered
                 # exactly as a function's reduction does (step 8): a
                 # module-level call nothing here answers is stated whether or

@@ -12605,13 +12605,64 @@ class ClassDef(Statement):
     def bridge_source_symbol(self) -> Optional[str]:
         """This class's one join symbol (``SourceUnit.definition_symbol``):
         ``python:m.C`` for a module-level class, the symbol a consumer's
-        ``from m import C`` and a call ``C(...)`` will be joined by. The
-        constructor contract stated under it is a later step (#7757); the
-        symbol is the definition's now, by the rule every ``def`` follows
-        (``FunctionDef.bridge_source_symbol``)."""
+        ``from m import C`` and a call ``C(...)`` are joined by. The
+        constructor contract is stated under it
+        (``tree_enumerate.class_universe_outcome``, #7757 step 6), by the
+        rule every ``def`` follows (``FunctionDef.bridge_source_symbol``)."""
         return _definition_bridge_source_symbol(
             self, owner="ClassDef.bridge_source_symbol"
         )
+
+    def contract_name(self) -> str:
+        """The name this class's constructor contract row is stated under:
+        its join symbol, as a ``def``'s is (``FunctionDef.contract_name``)."""
+        return _definition_contract_name(self, owner="ClassDef.contract_name")
+
+    def constructor_definition(self):
+        """The ``def`` whose formals after its first a call of this class
+        binds (``source_visible_constructor_frame``): the source
+        ``__init__``, else the source ``__new__`` whose shape the constructor
+        reads, else the ``__new__`` whose result the call returns as it is
+        (``returned_new``).  None when no source ``def`` states the call's
+        signature (a dataclass's generated ``__init__``, an inherited
+        exception constructor, ``object``'s)."""
+        initializer = self._source_initializer()
+        if initializer is not None:
+            return initializer
+        new_shape = self._authenticated_new_constructor_shape()
+        if new_shape is not None:
+            return new_shape[0]
+        return self.returned_new()
+
+    def constructor_is_read(self) -> bool:
+        """Whether this class statement decides what a call of the class
+        runs (``ClassDefinitionValue.callable_application_with``,
+        ``tree_enumerate.class_universe_outcome``): a ``dataclass`` whose
+        ``__new__`` is a builtin's (``dataclass_new_entry``); else a
+        ``__new__`` the one lookup decides (``new_entry``) and either a source
+        ``__new__`` shape the constructor reads or an MRO that constructs by
+        the laws the lifter reads (``construction_order``) with an
+        ``__init__`` the lookup decides (``initializer_entry``).  Where it is
+        False the call is the one unanswered call and no constructor
+        contract is stated."""
+        if self._dataclass_generated_init_fields() is not None:
+            new_decided, own_new = self.dataclass_new_entry()
+            return new_decided and own_new is None
+        if not self.new_entry()[0]:
+            return False
+        return self._authenticated_new_constructor_shape() is not None or (
+            self.construction_order() is not None
+            and self.initializer_entry() is not None
+        )
+
+    def contract_inputs(self) -> tuple:
+        """What this class's constructor contract takes beside the call's
+        formals: those of the ``def`` that states its signature
+        (``constructor_definition``, ``FunctionDef.contract_inputs``): each
+        captured cell, each default, each module global its body reads.
+        None stated where no source ``def`` states the signature."""
+        constructor = self.constructor_definition()
+        return () if constructor is None else constructor.contract_inputs()
 
     def __post_init__(self):
         # A NODE OFF THE ROLL. `Node.__post_init__` is where registration
@@ -14408,18 +14459,14 @@ class ClassDef(Statement):
 
         initializer = self._source_initializer()
         new_shape = self._authenticated_new_constructor_shape()
+        # The ``def`` whose signature the call binds (``constructor_definition``).
         # A ``def __new__`` whose result the call returns as it is
         # (``returned_new``): the call's formals are its formals after
         # ``cls``, and the body runs it (``ClassConstructorBodySugar``).
+        constructor = self.constructor_definition()
         returned_new = (
-            self.returned_new() if initializer is None and new_shape is None else None
+            constructor if initializer is None and new_shape is None else None
         )
-        if initializer is not None:
-            constructor = initializer
-        elif new_shape is not None:
-            constructor = new_shape[0]
-        else:
-            constructor = returned_new
         owner_cid = self.fragment.seal().cid
         span = self.line_col_span()
         site = SourceFragmentCoordinateV1(
