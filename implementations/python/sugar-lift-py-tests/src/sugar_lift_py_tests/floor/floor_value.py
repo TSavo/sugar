@@ -1429,6 +1429,30 @@ def _siteless_undecided_read(owner: str, read: str, node: str) -> NoReturn:
     )
 
 
+def undecided_binary_terms(operator: str, left_term, right_term, key: str):
+    """The one form of an undecided ``left <operator> right``: its result
+    term ``python:binary_result(op, left, right, <key>)`` and its completes
+    atom ``python:binary_op.completes(python:binary_op(<result>, <key>))``.
+
+    The completes atom names the operation it is about -- its result term,
+    operands and all -- as every undecided protocol read's does
+    (``python:subscript(<term>, <key>)``): where a joined actual decides the
+    operands' types, the solver reads whether Python completes it and what
+    it returns (#7763).
+    """
+    from sugar_lift_py_tests.ir import atomic, ctor, str_const
+
+    term = ctor(
+        "python:binary_result",
+        (str_const(operator), left_term, right_term, str_const(key)),
+    )
+    completes = atomic(
+        "python:binary_op.completes",
+        [ctor("python:binary_op", (term, str_const(key)))],
+    )
+    return term, completes
+
+
 def undecided_binary_faces(left, right, site, operator: str):
     """Two faces for ``left <operator> right`` over an undecided operand type.
 
@@ -1441,33 +1465,19 @@ def undecided_binary_faces(left, right, site, operator: str):
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.floor.object_identity import identity_term
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-    from sugar_lift_py_tests.ir import atomic, ctor, str_const
     from sugar_lift_py_tests.occurrence import occurrence_key
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
     key = occurrence_key(site)
     owner = f"python:binary_op {operator} at {site}"
-    result = SymbolicValue(
-        ctor(
-            "python:binary_result",
-            (
-                str_const(operator),
-                identity_term(left, site, "left", owner=owner),
-                identity_term(right, site, "right", owner=owner),
-                str_const(key),
-            ),
-        )
-    )
-    # The completes atom names the operation it is about -- its result term,
-    # operands and all -- as every undecided protocol read's does
-    # (``python:subscript(<term>, <key>)``): where a joined actual decides the
-    # operands' types, the solver reads whether Python completes it (#7763).
-    completes = atomic(
-        "python:binary_op.completes",
-        [ctor("python:binary_op", (result.term, str_const(key)))],
+    term, completes = undecided_binary_terms(
+        operator,
+        identity_term(left, site, "left", owner=owner),
+        identity_term(right, site, "right", owner=owner),
+        key,
     )
     return ExitSet.two_faced(
-        result,
+        SymbolicValue(term),
         UndeterminedRaiseEffect(
             blame=str(site),
             occurrence=key,

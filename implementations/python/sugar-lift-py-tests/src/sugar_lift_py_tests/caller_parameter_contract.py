@@ -959,15 +959,16 @@ class NativeOperationExitCarrierV1:
         (``ExitSet.two_faced``). Both faces owe the operation as an
         ``undecided`` member (``reason: unanswered``) at its site, and the
         halt leaves from the reducer's pre-effect state when one was enrolled.
-        The terms name the operator and the occurrence, never a formal of the
-        callee, which is not in the caller's scope.
 
-        A subscript is the exception: its unanswered position is the one form
-        every undecided subscript takes (``FloorValue.undecided_subscript``),
-        ``py.subscript(<receiver>, <index>)`` completing under
-        ``python:subscript.completes(python:subscript(<term>, <key>))``, over
-        the demand's own operand terms. A formal with no actual is reduced
-        only in its function's own proof (``FormalRefSugar.desugar``), whose
+        A subscript and a binary operation each take the one form every
+        undecided operation of theirs takes, over the demand's own operand
+        terms: ``py.subscript(<receiver>, <index>)`` completing under
+        ``python:subscript.completes(python:subscript(<term>, <key>))``
+        (``FloorValue.undecided_subscript``), and
+        ``python:binary_result(op, left, right, <key>)`` completing under
+        ``python:binary_op.completes`` (``undecided_binary_terms``). Any other
+        operator names only the operator and the occurrence. A formal with
+        no actual is reduced only in its function's own proof (``FormalRefSugar.desugar``), whose
         formals are the proof's own, so the post states the read over the
         formal, and a caller's actual joined on it (step 9) decides it where
         its type is decided (#7763).
@@ -980,15 +981,29 @@ class NativeOperationExitCarrierV1:
         """
         from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
         from sugar_lift_py_tests.floor import SymbolicValue
+        from sugar_lift_py_tests.floor.floor_value import (
+            _BINARY_OPERATOR_COORDINATE,
+            undecided_binary_terms,
+        )
         from sugar_lift_py_tests.occurrence import occurrence_key, occurrence_term
         from sugar_lift_py_tests.outcome import ExitSet
 
         site = self.demand.source_node
+        binary = _BINARY_OPERATOR_COORDINATE.get(self.demand.operator)
         if self.demand.operator == "subscript":
             value = ctor("py.subscript", self.demand.operand_terms)
             guard = atomic(
                 "python:subscript.completes",
                 [ctor("python:subscript", (value, str_const(occurrence_key(site))))],
+            )
+        elif binary is not None and len(self.demand.operand_terms) == 2:
+            # A binary operation takes the one undecided form every binary
+            # operation takes (``undecided_binary_terms``), over the demand's
+            # own operand terms: the formals of this proof, so a caller's
+            # actual joined on them decides the operation (step 9, #7763).
+            left, right = self.demand.operand_terms
+            value, guard = undecided_binary_terms(
+                binary, left, right, occurrence_key(site)
             )
         else:
             operation = ctor(
