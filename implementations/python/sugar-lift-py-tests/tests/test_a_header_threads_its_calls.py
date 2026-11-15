@@ -10,7 +10,12 @@ thread_header``): the statement's substitution threads it before its body, and
 the block threads it before the rest of the statement's calls
 (``havoc_after``, ``threaded_header``).  A ``return`` operand's call is
 threaded by the block after the statement, so a caller of the function sees
-what the call did to its actual.
+that the call may have changed its actual.
+
+A call of a same-file function is joined at prove (#7757 step 5): no body is
+followed to learn what it did, so the body reads the object as a call may
+have left it (``ReceiverAfterCall``, the one exposure rule), never as it
+stood before the header ran.
 """
 
 from __future__ import annotations
@@ -35,10 +40,10 @@ def _function(source: str) -> FunctionDef:
 
 
 def _reads_after_the_helper(node) -> bool:
-    """Whether some read under ``node`` denotes an object as a source helper
-    left it (``SourceCallActualAfter``)."""
+    """Whether some read under ``node`` denotes an object as a call of a
+    source helper may have left it (``ReceiverAfterCall``)."""
     return any(
-        getattr(_identity(child), "kind", None) == "SourceCallActualAfter"
+        getattr(_identity(child), "kind", None) == "ReceiverAfterCall"
         for child in node.walk()
     )
 
@@ -95,12 +100,16 @@ def test_a_comprehension_element_reads_what_its_iterables_call_did() -> None:
     assert _reads_after_the_helper(comprehension.elt)
 
 
+_EMPTY = fresh(ListValue, ())
 _ONE = fresh(ListValue, (TermValue(1),))
 
 
 def test_a_caller_sees_what_a_returned_call_did_to_its_actual() -> None:
-    # ``h`` returns ``g(a)``: what ``g`` did to ``a`` is the state ``h``
-    # leaves its actual in, so ``f`` reads ``acc`` as ``[1]``.
+    # ``h(acc)`` may change ``acc``: ``f`` never reads it as the ``[]`` it
+    # held before the call.  Before step 5 (#7757) ``g``'s and ``h``'s bodies
+    # were followed and ``f`` read ``[1]``; the callees' contracts do not yet
+    # state their effects on their actuals (step 7), so the value is not
+    # decided here.
     from sugar_lift_py_tests.floor.return_value import ReturnValue
     from sugar_lift_py_tests.floor.universe_value import UniverseValue
 
@@ -121,4 +130,5 @@ def test_a_caller_sees_what_a_returned_call_did_to_its_actual() -> None:
     (returned,) = [
         entry for entry in universe.record.statements if isinstance(entry, ReturnValue)
     ]
-    assert returned.value == _ONE
+    assert returned.value != _EMPTY
+    assert returned.value != _ONE

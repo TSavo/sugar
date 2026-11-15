@@ -255,6 +255,26 @@ _PROGRAMS = {
     ),
 }
 
+# A call of a same-file function is its coordinate and edge, joined at prove
+# (#7757 step 5): the reduction never applies the callee's body, so the value
+# of a program over such calls is not decided at the reduction.  Decided here
+# before step 5, by following the body; each is now a value the reduction
+# does not decide (``_UNDECIDED``'s test).  The join decides the ones the
+# solver tests read (``_SOLVER_PROGRAMS``).
+_JOINED_AT_PROVE = {
+    name: _PROGRAMS.pop(name)
+    for name in (
+        "function-with-a-loop-called-twice",
+        "callee-twice-in-one-expression",
+        "callee-of-callee",
+        "callee-with-a-local-applied-twice",
+        "callee-with-a-local-assigned-twice",
+        "same-call-at-two-sites",
+        "rebind",
+        "rebind-read-between",
+    )
+}
+
 # An assert INSIDE the loop body reads the accumulator at iteration time, when
 # every lookup is made in the current iteration's dynamic extent.  (An assert
 # after the loop reads it when nothing is in an iteration, and substitution
@@ -435,7 +455,7 @@ def test_a_claim_inside_the_loop_reads_each_iteration_s_own_values(name: str) ->
     assert halted >= 1
 
 
-@pytest.mark.parametrize("name", sorted(_UNDECIDED))
+@pytest.mark.parametrize("name", sorted({**_UNDECIDED, **_JOINED_AT_PROVE}))
 def test_a_value_the_lifter_does_not_decide_today_has_the_same_faces_for_both_claims(
     name: str,
 ) -> None:
@@ -453,7 +473,7 @@ def test_a_value_the_lifter_does_not_decide_today_has_the_same_faces_for_both_cl
     was written and three on main 17672f48f."""
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
-    body, truthful, lying = _UNDECIDED[name]
+    body, truthful, lying = {**_UNDECIDED, **_JOINED_AT_PROVE}[name]
     seen = []
     for claim in (truthful, lying):
         _source, function = _function(body.format(claim=claim))
@@ -518,25 +538,15 @@ def _reductions_of(body: str, needle: str, monkeypatch) -> int:
 
 # name -> (program, the callee's return statement, calls Python makes,
 #          applications measured today)
+#
+# Only method calls remain (step 6): a call of a same-file function applies
+# no body any more (step 5), so its entries (``same-call-at-two-sites``,
+# ``callee-twice-in-one-expression``, ``callee-of-callee``,
+# ``callee-with-a-local-assigned-twice``, ``rebind``,
+# ``rebind-read-between``) were deleted with the application they measured.
 _APPLICATIONS = {
     "box-get": ("box-get", "return self.n + k", 1, 2),
     "box-get-read-twice": ("box-get-read-twice", "return self.n + k", 1, 3),
-    "same-call-at-two-sites": ("same-call-at-two-sites", "return a + 1", 2, 4),
-    "callee-twice-in-one-expression": (
-        "callee-twice-in-one-expression",
-        "return a + 1",
-        2,
-        4,
-    ),
-    "callee-of-callee": ("callee-of-callee", "return a + 1", 2, 4),
-    "callee-with-a-local-assigned-twice": (
-        "callee-with-a-local-assigned-twice",
-        "return t * 2",
-        2,
-        4,
-    ),
-    "rebind": ("rebind", "return a + 1", 2, 5),
-    "rebind-read-between": ("rebind-read-between", "return a + 1", 2, 10),
     "unrolled-loop-object": ("unrolled-loop-object", "return self.n + k", 2, 7),
 }
 

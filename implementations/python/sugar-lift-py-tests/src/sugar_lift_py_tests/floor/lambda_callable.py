@@ -124,26 +124,21 @@ class LambdaCallable(FloorValue):
         )
 
     def callable_application_with(self, operation, ctx):
-        """Call the lambda where a value of it is called: a callback.
+        """Call the function where a value of it is called.
 
-        ``key(item)`` inside a function given ``key=lambda v: ...``, or
-        ``fs[0](x)`` over a list of lambdas, is the same call as a lambda
-        called where it is written: the frame is entered
-        (``enter_source_frame``), the actuals are bound by the one binder
-        (``bind_call``) and the body is applied by
-        ``CallSiteValue.producer_outcome``, so every face of the body --
-        its raises among them -- is this call's.  The closure the value
-        carries is bound before the body reduces, and so is each enclosing
-        binding Python reads from a cell when the body runs: the one the
-        call read at the call (``operation.captured``: a call where the
-        function's enclosing scope stands, ``Call._closure_cells``), else
-        the one the value carries from the call it was passed to
-        (``captured``).  The call's occurrence is stamped on the bound call
-        (``call_occurrence``), and what the body did to objects the caller
-        sees reaches the caller through the one projection
-        (``CallSiteValue.project_producer_outcome``,
-        ``caller_visible_values``): the application a call by name of a
-        ``def`` made, through the function's value.
+        A call of a same-file function value -- a module ``def``, a local
+        ``def``, a lambda, a same-file decorator's result -- by name, through
+        a name bound to it or as a callback (``key(item)`` inside a function
+        given ``key=lambda v: ...``), is its coordinate and an edge, joined
+        at prove exactly as an imported call is (the owner's ruling of
+        2026-11-15, #7757 step 5).  Its body is never applied here: the
+        frame is entered and the actuals bound by the one binder
+        (``bind_call``) only to read what the call supplies, and the call is
+        the one unanswered call (``UnknownCalleeCallV1``: two faces, owed)
+        whose edge carries the callee's join symbol (``_edge_call``).  What
+        the callee may do to the caller's objects takes the one exposure rule
+        every unanswered call takes.  A generator function's or an ``async
+        def``'s value keeps its frame's own application (``_applied_body``).
         """
         from sugar_source_tree.panic import SugarNotWritten
 
@@ -220,6 +215,7 @@ class LambdaCallable(FloorValue):
         # (``with_captured_values``), never read at the bindings the function
         # was made under.
         captured = operation.captured or self.captured
+        caller_ctx = ctx
         ctx, module_halt = enter_source_frame(
             frame,
             ctx,
@@ -232,19 +228,194 @@ class LambdaCallable(FloorValue):
         )
         if module_halt is not None:
             return module_halt
-        return bind_source_frame_call(
+        if _applies_its_own_frame(frame):
+            return bind_source_frame_call(
+                "py.call",
+                tuple(positional),
+                keywords,
+                frame=frame,
+                ctx=ctx,
+                owner=owner,
+                blame=operation.site,
+                term=term,
+                closure=self.closure,
+                defaults=self.defaults,
+                call_occurrence=operation.call_occurrence,
+            ).producer_outcome(ctx)
+        # The one binder binds the call (a call that does not fit the
+        # signature is refused by name there), and each formal the call
+        # omits reads the default its ``def`` statement or lambda expression
+        # bound: what the edge supplies as ``py.default``.  No body is bound.
+        from sugar_lift_py_tests.floor.object_value import bind_call
+
+        bound = bind_call(
             "py.call",
             tuple(positional),
             keywords,
             frame=frame,
+            parameters=frame.parameters,
+            body=None,
+            frame_cid=frame.frame_cid,
+            formal_coordinate_cids=tuple(
+                item.cid for item in frame.formal_coordinates
+            ),
             ctx=ctx,
             owner=owner,
             blame=operation.site,
+            refuse=_refuse,
             term=term,
-            closure=self.closure,
             defaults=self.defaults,
+        )
+        return self._edge_call(
+            operation, positional, keywords, captured, bound, frame, caller_ctx
+        )
+
+    def _edge_call(
+        self, operation, positional, keywords, captured, bound, frame, caller_ctx
+    ):
+        """The call of this function value as its coordinate and edge
+        (#7757 step 5): ``call:<target>(<actuals>, py.kwarg(...),
+        py.closure(...), py.default(...), py.global(...))``, ``<target>`` the
+        callee's join symbol without its ``python:`` namespace, carrying
+        exactly what prove's one binder binds the callee's contract with:
+
+        - each positional actual and each keyword actual as written (every
+          formal by name, ``py.kwarg``, when the function takes ``*args`` or
+          ``**kwargs``: its formal is the packed value the call binds);
+        - ``py.closure(<name>, <value>)`` for each captured name, the
+          binding the call read (``CallSiteSugar._captured_values``);
+        - ``py.default(<param>, <value>)`` for each defaulted formal the
+          call omits, the value the ``def`` statement bound under its key;
+        - ``py.global(<name>, <value>)`` for each ``global:`` input of the
+          callee's contract, the binding where the call runs
+          (``global_value_at_call``).
+
+        Sent down the path an imported call takes: the one unanswered call
+        (``UnknownCalleeCallV1.faces``: completes under its ``completes``
+        atom, halts under the complement, both arms owe it), whose edge and
+        ``undecided`` member carry the join symbol.  A callee with no join
+        symbol (no workspace root) is the same call with no symbol: owed,
+        joined to nothing."""
+        from sugar_lift_py_tests.call_symbol import call_symbol
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
+        from sugar_lift_py_tests.sugar.call_site_sugar import (
+            _global_inputs,
+            global_value_at_call,
+        )
+        from sugar_source_tree.nodes import current_module_execution_site
+
+        site = operation.site
+        owner_name = str(site)
+        definition = frame.owner
+        parameters = tuple(frame.parameters)
+        actuals = tuple(bound.arg_values)
+        packed = (
+            self.vararg_parameter is not None or self.kwarg_parameter is not None
+        )
+        if packed:
+            # A formal ``*args`` / ``**kwargs`` is the packed value the call
+            # binds, never one positional actual: every formal by name.
+            arguments = [
+                ctor("py.kwarg", [str_const(name), value.to_term(owner=owner_name)])
+                for name, value in zip(parameters, actuals)
+            ]
+        else:
+            supplied = set(parameters[: len(positional)]) | {
+                name for name, _value in keywords
+            }
+            defaulted = {
+                parameter.name
+                for parameter in getattr(definition, "params", ())
+                if getattr(parameter, "default", None) is not None
+            }
+            arguments = (
+                [value.to_term(owner=owner_name) for value in positional]
+                + [
+                    ctor(
+                        "py.kwarg",
+                        [str_const(name), value.to_term(owner=owner_name)],
+                    )
+                    for name, value in keywords
+                ]
+                + [
+                    ctor(
+                        "py.default",
+                        [str_const(name), value.to_term(owner=owner_name)],
+                    )
+                    for name, value in zip(parameters, actuals)
+                    if name not in supplied and name in defaulted
+                ]
+            )
+        arguments += [
+            ctor("py.closure", [str_const(name), value.to_term(owner=owner_name)])
+            for name, _cid, value in captured
+        ]
+        module_site = current_module_execution_site()
+        arguments += [
+            ctor(
+                "py.global",
+                [
+                    str_const(item.coordinate.name),
+                    global_value_at_call(
+                        definition,
+                        item.coordinate.name,
+                        caller_ctx,
+                        module_site=module_site,
+                        call_site=site,
+                    ),
+                ],
+            )
+            for item in _global_inputs(definition)
+        ]
+        symbol = definition.bridge_source_symbol()
+        target = (
+            symbol[len(_PYTHON_NAMESPACE) :]
+            if symbol is not None and symbol.startswith(_PYTHON_NAMESPACE)
+            else self.construction_identity
+        )
+        callsite = CallSiteValue(
+            target_name=target,
+            arg_values=tuple(positional) + tuple(value for _n, value in keywords),
+            parameters=(),
+            term=ctor(call_symbol(target), arguments, symbol_kind="coordinate"),
+            body=None,
+            keyword_names=tuple(name for name, _value in keywords),
+            site=site,
             call_occurrence=operation.call_occurrence,
-        ).producer_outcome(ctx)
+            authenticated_target_symbol=symbol,
+        )
+        return UnknownCalleeCallV1(target).faces(callsite, site)
+
+
+# The namespace a join symbol is spelled under (``SourceUnit.definition_symbol``).
+_PYTHON_NAMESPACE = "python:"
+
+
+def _applies_its_own_frame(frame) -> bool:
+    """A generator function's or an ``async def``'s value: its call builds a
+    generator or a coroutine, which the one application of a frame still
+    builds (``CallSiteSugar._apply_bound``, ``producer_outcome``); step 5
+    switches only the functions whose call runs their body."""
+    from sugar_source_tree.nodes import AsyncFunctionDef
+
+    return (
+        getattr(frame, "generator_steps", None) is not None
+        or isinstance(getattr(frame, "owner", None), AsyncFunctionDef)
+    )
+
+
+def _refuse(*, owner, blame, observed, requested, fix):
+    from sugar_source_tree.panic import SugarNotWritten
+
+    raise SugarNotWritten(
+        owner=owner,
+        blame=blame,
+        observed=observed,
+        requested=requested,
+        fix=fix,
+    )
 
 
 def as_operation_receivers(values, ctx, then, *, owner: str):
