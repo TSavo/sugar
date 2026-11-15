@@ -45,6 +45,7 @@ from sugar_lift_py_tests.floor import (
     ReturnValue,
     TermValue,
 )
+from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -203,13 +204,20 @@ def _store_value_actual(outcome) -> object:
     The list is made at the call, and ``obj`` is that actual with the
     caller's currency (#8249): ``obj[0] = value`` on ``[0]`` is decided, so
     the call completes alone, as Python's does, and the actuals it bound ride
-    that one face."""
+    that one face.
+
+    The face's value is the Call carrying what ``store`` did to the list its
+    caller passed, as a write the caller's statement applies
+    (``CallSiteValue.project_producer_outcome``, ``carry_walrus_binds``): the
+    Call is read beneath those writes, and the call carries at least one."""
     if isinstance(outcome, ExitSet) and len(outcome.exits) == 1:
         face = outcome.exits[0]
-        if isinstance(face, Completed) and isinstance(face.value, CallSiteValue):
-            args = face.value.arg_values
-            assert len(args) == 3, args
-            return args[2]
+        if isinstance(face, Completed):
+            writes, call = peel_walrus_binds(face.value)
+            if writes and isinstance(call, CallSiteValue):
+                args = call.arg_values
+                assert len(args) == 3, args
+                return args[2]
     raise AssertionError(
         f"{CODEX3_GENERAL_PRODUCER} — setitem store face has no value actual: "
         f"{type(outcome).__name__} {outcome!r:.200}"
