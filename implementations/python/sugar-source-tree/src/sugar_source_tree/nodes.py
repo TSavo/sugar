@@ -1246,6 +1246,49 @@ def _binds_name(body, name: str) -> bool:
     return False
 
 
+def _returns_only_last(body) -> bool:
+    """Whether every ``return`` of ``body`` -- not one of a function, lambda
+    or class nested in it -- is its last top-level statement: the scope
+    after the body's last statement is then the one every completed arm
+    leaves with."""
+    last = body[-1] if body else None
+    seen: set[int] = set()
+    stack: list = list(body)
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, Node) or id(node) in seen:
+            continue
+        seen.add(id(node))
+        if isinstance(node, Return) and node is not last:
+            return False
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
+            continue
+        stack.extend(child for _name, _index, child in node._child_edges())
+    return True
+
+
+# The suites a compound statement holds.
+_SUITE_FIELDS = ("body", "orelse", "handlers", "finalbody", "cases")
+
+
+def _rebound_at_the_top_only(body, name: str) -> bool:
+    """Whether every binding of ``name`` in ``body`` is made by a simple
+    statement of its top level itself (an assignment, an augmented
+    assignment, the ``nonlocal`` declaration): none inside a compound
+    statement, an expression (a walrus), a comprehension or a nested scope's
+    declaration.  The read of ``name`` where the body ends is then the one
+    such statement's key, bound on every arm that completes."""
+    for statement in body:
+        children = tuple(child for _name, _index, child in statement._child_edges())
+        if _binds_name(children, name):
+            return False
+        if name in statement.names_bound_here() and any(
+            getattr(statement, field, None) for field in _SUITE_FIELDS
+        ):
+            return False
+    return True
+
+
 def _initializer_returns(body) -> tuple:
     """``(extent, exits)`` for each of ``body``'s own ``return`` statements
     -- not one of a function, lambda or class nested in it -- wherever it
@@ -10522,15 +10565,60 @@ class FunctionDef(Statement):
         substitution of the body (step 5).  A block holding the ``def`` asks
         ``substitute_in_block``, which never substitutes the body.
         """
+        return FunctionDef._substituted_to_end(self, scope)[0]
+
+    def _substituted_to_end(self, scope):
+        """``substitute``, and the scope standing after the body's last
+        statement (``_substitute_body_to_end``): ``(node, final_scope)``.
+        The function's universe reads what the body left in its cells there
+        (``_cells_where_the_body_ends``)."""
         from .shadow import rewrite
 
         changed = self._substituted_signature(scope)
-        new_body, body_diff = self._substitute_body(self.body, self._body_scope(scope))
+        new_body, body_diff, final = FunctionDef._substitute_body_to_end(
+            self, self.body, self._body_scope(scope)
+        )
         if body_diff:
             changed["body"] = new_body
         if not changed:
-            return self
-        return rewrite(self, **changed)
+            return self, final
+        return rewrite(self, **changed), final
+
+    def _cells_where_the_body_ends(self, final) -> tuple:
+        """``((formal, read), ...)``: for each closure cell this ``def``
+        declares ``nonlocal``, its contract input ``cell:<name>`` and the
+        sugar of the cell's read where the body ends, in ``final`` (the scope
+        ``_substituted_to_end`` left): what the body left in the cell, which
+        the universe states over ``python:after(out, "cell:<name>")`` on each
+        completed arm (``UniverseValue.after``, #7757 step 7).
+
+        Read only where that scope is the scope every completed arm leaves
+        with and the read is bound on every one: a plain ``def`` (a generator
+        or an ``async def`` runs nothing at its call) whose ``return``, if
+        any, is its last statement, and whose every binding of the cell is a
+        simple statement of the body's own top level
+        (``_rebound_at_the_top_only``).  Anywhere else nothing is read, and a
+        caller's cell after the call stays undecided."""
+        if type(self) is not FunctionDef or FunctionDef._owns_yield(self.body):
+            return ()
+        names, _coordinates = self._captured_bindings()
+        if not names or not _returns_only_last(self.body):
+            return ()
+        table = self.unit.function_symtable(self.name, self.line_col_span().start_line)
+        rebound = {
+            symbol.get_name() for symbol in table.get_symbols() if symbol.is_nonlocal()
+        }
+        from sugar_lift_py_tests.contract_input import CELL_INPUT, input_formal
+
+        found = []
+        for name in names:
+            if name not in rebound or not _rebound_at_the_top_only(self.body, name):
+                continue
+            read = _name_read(self, name, final)
+            if read is None:
+                continue
+            found.append((input_formal(CELL_INPUT, name), read.sugar()))
+        return tuple(found)
 
     def substitute_in_block(self, scope):
         """The ``def`` statement where a block threads it: Python evaluates
@@ -10926,14 +11014,15 @@ class FunctionDef(Statement):
                         for statement in self.body
                         for node in statement.walk()
                     )
-                    substituted = self.substitute(
+                    substituted, final = FunctionDef._substituted_to_end(
+                        self,
                         {
                             _SCOPE_OWNER_CID: scope_owner_cid,
                             _SUBSTITUTION_TRACE_BUILDER: trace_builder,
                             _BINDING_ENTRY_FACTORY: RuntimeBindingEntryFactoryV1(
                                 scope_owner_cid
                             ),
-                        }
+                        },
                     )
                 with reduction_span(sugar="Construct", role="construction", site=where):
                     from .backend import materialize
@@ -10994,6 +11083,9 @@ class FunctionDef(Statement):
                         substitution_trace=substitution_trace,
                         formal_coordinates=self.formal_coordinates(),
                         inputs=self.contract_inputs(),
+                        cells_after=FunctionDef._cells_where_the_body_ends(
+                            self, final
+                        ),
                     )
         finally:
             _FRAMES_UNDER_CONSTRUCTION.discard(definition_cid)

@@ -999,13 +999,20 @@ class NativeOperationExitCarrierV1:
         from sugar_lift_py_tests.floor import SymbolicValue
         from sugar_lift_py_tests.floor.floor_value import (
             _BINARY_OPERATOR_COORDINATE,
+            _INPLACE_OPERATOR_COORDINATE,
             undecided_binary_terms,
         )
         from sugar_lift_py_tests.occurrence import occurrence_key, occurrence_term
         from sugar_lift_py_tests.outcome import ExitSet
 
         site = self.demand.source_node
-        binary = _BINARY_OPERATOR_COORDINATE.get(self.demand.operator)
+        # An in-place operator (``x += y``) takes the same one form, spelled
+        # ``+=`` (``_INPLACE_OPERATOR_COORDINATE``): its result names its
+        # operands, so a contract stating it states a value its inputs
+        # determine (#7757 step 7).
+        binary = _BINARY_OPERATOR_COORDINATE.get(
+            self.demand.operator
+        ) or _INPLACE_OPERATOR_COORDINATE.get(self.demand.operator)
         if self.demand.operator == "subscript":
             value = ctor("py.subscript", self.demand.operand_terms)
             guard = atomic(

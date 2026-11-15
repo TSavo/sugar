@@ -12,13 +12,22 @@ class UniverseValue(FloorValue):
     """A function body lowered to its universe: name, formals, record. The
     slots are PROJECTIONS of the record -- each entry answers for itself
     (inv_contribution / post_contribution), the universe just concatenates.
-    invs are the stated facts; post is `out == <exit term>`."""
+    invs are the stated facts; post is `out == <exit term>`.
+
+    ``after`` -- ``((formal, value), ...)`` -- is what this arm left in each
+    closure cell the body rebinds (``FunctionUniverseSugar.cells_after``):
+    the post states it as ``python:after(out, <formal>) == <value>``, the one
+    term a caller reads the cell by after the call (#7757 step 7), where the
+    value is one the contract's own inputs determine
+    (``stated_by_its_inputs``); otherwise it states nothing and the caller's
+    cell stays undecided."""
 
     name: str
     formals: tuple[str, ...]
     record: object  # the body's BlockValue
     bridge_source_symbol: str | None = None
     formal_coordinates: tuple = ()
+    after: tuple = ()
 
     def guarded(self, formula):
         """Ride under a branch by guarding every body record entry.
@@ -57,11 +66,14 @@ class UniverseValue(FloorValue):
         )
 
     def post(self) -> Formula:
+        from sugar_lift_py_tests.ir import and_
+
         exits = tuple(
             formula
             for entry in self.record.statements
             for formula in entry.post_contribution()
         )
+        after = self.after_facts()
         if not exits:
             # A universe is built only on a completed arm, and a completed
             # record holds no halt (#7826): a raise-only body has no completed
@@ -69,19 +81,34 @@ class UniverseValue(FloorValue):
             from sugar_lift_py_tests.floor.none_value import NoneValue
             from sugar_lift_py_tests.ir import eq, make_var
 
-            return eq(
+            returned = eq(
                 make_var("out"),
                 NoneValue().to_term(owner="UniverseValue.post"),
             )
+            return and_([returned, *after]) if after else returned
         post = exits[0] if len(exits) == 1 else None
-        from sugar_lift_py_tests.ir import and_
-
         if post is None:
             post = and_(list(exits))
-        companions = self.derived_companions()
+        companions = (*self.derived_companions(), *after)
         if not companions:
             return post
         return and_([post, *companions])
+
+    def after_facts(self) -> tuple:
+        """``python:after(out, <formal>) == <value>`` for each cell this arm
+        left (``after``) whose value the contract's inputs determine
+        (``stated_by_its_inputs``): what a caller reads the cell by after
+        the call, joined at prove with ``out`` the caller's call result
+        (#7757 step 7)."""
+        from sugar_lift_py_tests.ir import eq, make_var
+        from sugar_lift_py_tests.source_call_resolution import object_after_call
+
+        facts = []
+        for formal, value in self.after:
+            term = value.to_term(owner="UniverseValue.after")
+            if stated_by_its_inputs(term, self.formals):
+                facts.append(eq(object_after_call(make_var("out"), formal), term))
+        return tuple(facts)
 
     def call_edges(self):
         # The record entries project their own call edges (CallSiteValue direct,
@@ -128,6 +155,48 @@ class UniverseValue(FloorValue):
                 formals=self.formals,
             ),
         )
+
+
+# Terms that name a state no input determines: an object after an operation
+# nothing decided, keyed on that operation's occurrence alone
+# (``builtin_container_call_sugar._unknown_after``, ``_opaque_pair``,
+# ``NativeOperationExitCarrierV1._unanswered_exits``).  A contract instantiated
+# at two calls would state one such term for both, so it never states one.
+_UNDETERMINED_STATES = frozenset(
+    {
+        "python:receiver_after_call",
+        "python:builtin_method",
+        "python:native_operation_result",
+        "python:unanswered_native_operation",
+    }
+)
+
+
+def stated_by_its_inputs(term, formals) -> bool:
+    """Whether ``term`` is a value a contract over ``formals`` (its
+    parameters and inputs) determines: every variable one of its formals, no
+    object identity (``py.object.*``: no two calls share one), no lambda, and
+    no state keyed on an operation's occurrence alone
+    (``_UNDETERMINED_STATES``).  A value the callee does not determine is
+    never stated: it stays undecided by name (#7757 step 7)."""
+    from sugar_lift_py_tests.ir import _Ctor, _Lambda, _Var
+
+    formals = set(formals)
+    pending = [term]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, _Var):
+            if current.name not in formals:
+                return False
+        elif isinstance(current, _Lambda):
+            return False
+        elif isinstance(current, _Ctor):
+            if current.name in _UNDETERMINED_STATES or current.name.startswith(
+                "py.object"
+            ):
+                return False
+            pending.extend(current.args)
+    return True
 
 
 def _stated_formal_sorts(formals, formal_coordinates):
