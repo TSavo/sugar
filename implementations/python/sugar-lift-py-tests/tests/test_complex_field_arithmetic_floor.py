@@ -258,7 +258,8 @@ def test_an_integer_plus_a_symbolic_operand_retains_both_dispatch_faces() -> Non
     assert {type(exit_) for exit_ in outcome.exits} == {Completed, Halted}
     halted = next(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
     assert halted.effect.exception_name is None
-    assert halted.effect.producer_node_owner == "BinOp"
+    # The one undecided-binary law names its own halt, per operator.
+    assert halted.effect.producer_node_owner == "UndecidedBinary:+"
 
 
 # -- the field coordinate is read from the value, not from a name -------------
