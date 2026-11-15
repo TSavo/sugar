@@ -1034,8 +1034,8 @@ class _ProbeProtocol:
         self._enter = enter
         self._exit_probe = exit_probe
 
-    def enter_resource_outcome(self, ctx=None):
-        del ctx
+    def enter_resource_outcome_for(self, manager, ctx=None):
+        del manager, ctx
         return self._enter
 
     def exit_outcome_for(self, entered, ctx=None):

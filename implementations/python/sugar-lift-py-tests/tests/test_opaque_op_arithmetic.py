@@ -21,9 +21,13 @@ from sugar_source_tree.panic import SugarNotWritten
     ),
 )
 def test_opaque_operator_arithmetic_cites_coordinates(method, operator) -> None:
+    from sugar_lift_py_tests.outcome.exit_set import sole_completed_value
+
     value = OpaqueOpCallsite("len", TermValue(9), computed=None)
     outcome = getattr(value, method)(TermValue(2), "t.py:1", None)
-    assert outcome.value.to_term(owner="test") == ctor(
+    # The success face cites the coordinates; an undecided operand's halted
+    # face (if any) is the other arm, not discarded by this read.
+    assert sole_completed_value(outcome).to_term(owner="test") == ctor(
         operator, [ctor("call:len", [num(9)]), num(2)]
     )
 

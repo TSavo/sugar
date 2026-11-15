@@ -177,8 +177,8 @@ def _native_protocol_definitions(use_site):
 class _InjectedSourceProtocol:
     """Task-2 stand-in: lifecycle testimony only, never coordinate authority."""
 
-    def enter_resource_outcome(self, ctx=None):
-        del ctx
+    def enter_resource_outcome_for(self, manager, ctx=None):
+        del manager, ctx
         return ExitSet.completed(SimpleNamespace(enter_value=TermValue(7)))
 
     def exit_outcome_for(self, entered, ctx=None):
