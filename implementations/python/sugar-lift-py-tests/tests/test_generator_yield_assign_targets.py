@@ -40,7 +40,7 @@ from __future__ import annotations
 from sugar_lift_py_tests.context_manager_resolution import (
     TreeConstructionContextV1,
 )
-from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.floor.list_value import ListValue
 from sugar_lift_py_tests.floor.none_value import NoneValue
@@ -57,7 +57,7 @@ from sugar_lift_py_tests.generator_construction import (
     YieldFromStepV1,
 )
 from sugar_lift_py_tests.outcome import ExitSet
-from sugar_lift_py_tests.outcome.exit_set import Halted
+from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 from sugar_lift_py_tests.sugar.assign_sugar import (
     ChainedAssignSugar,
     DynamicUnpackStoreAssignSugar,
@@ -471,20 +471,35 @@ def test_a_store_on_a_local_list_stores_the_sent_value() -> None:
     yielded = _machine("list_store", steps).resume()
     assert isinstance(yielded, YieldEffect)
     assert yielded.value == TermValue(5)
-    # The read of ``xs`` after the store reads the pair the mutation bound.
-    terminated = yielded.machine.send(TermValue(7))
-    assert isinstance(terminated, GeneratorTerminationV1)
-    assert isinstance(terminated.return_value, ListValue)
-    assert terminated.return_value.elements == (TermValue(0), TermValue(7))
+    _the_store_after_the_yield_is_undecided(yielded.machine.send(TermValue(7)))
+
+
+def _the_store_after_the_yield_is_undecided(resumed) -> None:
+    """``xs[k] = <sent>`` on a list the frame held across a ``yield``.
+
+    The one currency rule (#8117): a ``yield`` releases every container the
+    generator's frame holds, because the consumer ran code this frame does
+    not see (``YieldEffect``, ``_released_at_yield``).  After the resume the
+    list's contents are not read as current, so the store on it is the one
+    undecided operation: it completes under its own
+    ``python:builtin_method.completes`` atom, or ``list.__setitem__`` raises
+    something undetermined.  Neither the stored pair nor a certain
+    ``IndexError`` is stated from contents that are not current."""
+    assert isinstance(resumed, ExitSet), resumed
+    (completed,) = (face for face in resumed.exits if isinstance(face, Completed))
+    (halted,) = resumed.halts()
+    assert completed.guard.name == "python:builtin_method.completes"
+    assert isinstance(halted.effect, UndeterminedRaiseEffect)
+    assert halted.effect.producer_node_owner == "BuiltinMethodCall:list.__setitem__"
 
 
 def test_a_store_out_of_a_local_lists_range_halts_at_the_resume() -> None:
     steps = _steps("def g():\n    xs = [0]\n    xs[3] = yield 5\n    return xs\n")
     yielded = _machine("list_store_range", steps).resume()
     assert isinstance(yielded, YieldEffect)
-    halted = yielded.machine.send(TermValue(7))
-    assert isinstance(halted, ExitSet)
-    assert halted.exits and halted.halts() == halted.exits
+    # The halt is the store's own undetermined raise: the released list's
+    # length is not read, so the index is not decided out of range.
+    _the_store_after_the_yield_is_undecided(yielded.machine.send(TermValue(7)))
 
 
 # ---------------------------------------------------------------------------
