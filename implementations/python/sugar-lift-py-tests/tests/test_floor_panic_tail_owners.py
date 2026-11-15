@@ -181,8 +181,10 @@ def test_an_unguarded_needle_still_takes_the_receivers_own_law() -> None:
 
     hay = StringValue("renamed_haystack")
     assert isinstance(
-        hay.contains(StringValue("renamed"), "site").value, TrueBoolLiteralSugar
+        hay.contains(StringValue("renamed"), "site").completed_value(),
+        TrueBoolLiteralSugar,
     )
     assert isinstance(
-        hay.contains(StringValue("no_such_part"), "site").value, FalseBoolLiteralSugar
+        hay.contains(StringValue("no_such_part"), "site").completed_value(),
+        FalseBoolLiteralSugar,
     )

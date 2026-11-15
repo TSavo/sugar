@@ -32,15 +32,17 @@ def test_bv32_attribute_mutations_have_exact_owner_occurrences(
         if operation == "setattr"
         else value.delattr("attr", site, None)
     )
-    assert outcome.value.effect.exception_name == "AttributeError"
-    assert outcome.value.effect.producer_node_owner == owner
-    assert outcome.value.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert halt.effect.exception_name == "AttributeError"
+    assert halt.effect.producer_node_owner == owner
+    assert halt.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
 
 def test_bv32_attribute_mutations_reject_wrong_site(tmp_path):
     store_site, delete_site = _sites(tmp_path)
     value = Bv32Value(num(1))
-    store = value.setattr("attr", TermValue(7), store_site, None)
-    delete = value.delattr("attr", delete_site, None)
-    assert store.value.effect.occurrence_id != f"{delete_site.filename}:{delete_site.line}:{delete_site.col}"
-    assert delete.value.effect.occurrence_id != f"{store_site.filename}:{store_site.line}:{store_site.col}"
+    (store,) = value.setattr("attr", TermValue(7), store_site, None).halts()
+    (delete,) = value.delattr("attr", delete_site, None).halts()
+    assert store.effect.occurrence_id != f"{delete_site.filename}:{delete_site.line}:{delete_site.col}"
+    assert delete.effect.occurrence_id != f"{store_site.filename}:{store_site.line}:{store_site.col}"
