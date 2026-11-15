@@ -414,7 +414,7 @@ def definition_edge_call(
         authenticated_target_symbol=symbol,
         **testimony,
     )
-    return UnknownCalleeCallV1(target).faces(callsite, site, names_its_raise=True)
+    return UnknownCalleeCallV1(target).faces(callsite, site)
 
 
 # The namespace a join symbol is spelled under (``SourceUnit.definition_symbol``).
