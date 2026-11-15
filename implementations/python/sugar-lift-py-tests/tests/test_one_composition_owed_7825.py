@@ -189,8 +189,10 @@ def test_a_decided_raise_resolution_owes_what_the_projector_halt_owed(
         _NATIVE_OPERATION_PROJECTORS,
     )
 
-    def owing_raise(left, right, site):
-        del left, right, site
+    # A projector's parameters are its operands, then the site and the
+    # caller's context (``_native_operation_projector_arity``).
+    def owing_raise(left, right, site, ctx):
+        del left, right, site, ctx
         return ExitSet(
             (
                 Halted(
@@ -205,7 +207,8 @@ def test_a_decided_raise_resolution_owes_what_the_projector_halt_owed(
     monkeypatch.setitem(_NATIVE_OPERATION_PROJECTORS, "add", owing_raise)
     carrier, left, right = _carrier()
     exits = carrier.discharge(
-        {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
+        None,
+        {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)},
     )
     assert exits.halts() and exits.halts() == exits.exits, exits.exits
     assert all(halt.owed == ("debt:op",) for halt in exits.halts()), exits.exits
