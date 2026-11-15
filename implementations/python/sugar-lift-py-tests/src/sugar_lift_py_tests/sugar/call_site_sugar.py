@@ -1347,8 +1347,12 @@ def with_module_final_globals(ctx, readers, *, site):
     completed arm bound the key, it has none either: each such read is
     refused by name, naming the key (``EvaluationRefSugar._unbound``).  A slot they decided differently, or
     that none decided, reads as undecided.  A global the module body does not
-    decide was refused by name when the body was constructed.  The name is
-    never bound.
+    decide is read through its undecided key
+    (``nodes.undecided_module_binding_key``), which no run binds: it is
+    never bound here, so a read nothing else bound it for is refused by
+    name, naming the key (``EvaluationRefSugar._unbound``), and a function's
+    own contract binds it to the free input (``bind_global_inputs``).  The
+    name is never bound.
 
     Called while the reader's own module body runs, the body reads the
     binding standing at ``site``, whose key that run bound: nothing is
@@ -1358,6 +1362,7 @@ def with_module_final_globals(ctx, readers, *, site):
     from sugar_source_tree.nodes import (
         module_final_default_keys,
         module_final_global_references,
+        undecided_module_binding_key,
     )
 
     finals = []
@@ -1365,9 +1370,13 @@ def with_module_final_globals(ctx, readers, *, site):
     for reader in readers:
         evaluations = []
         decisions = []
-        for _name, state in sorted(
+        for name, state in sorted(
             module_final_global_references(reader, site).items()
         ):
+            if getattr(state, "evaluation", None) == undecided_module_binding_key(
+                reader.unit, name
+            ):
+                continue
             _collect_final_evaluations(state, evaluations, decisions)
         finals.extend(ModuleFinalValue(reader.unit, key) for key in evaluations)
         # The reader's own defaults, which its module ``def`` statement
@@ -1672,15 +1681,20 @@ def global_input_keys(unit, name: str, site=None) -> tuple:
     where a function of ``unit`` is called at the module execution ``site``
     (None: after import, the module's final binding): each key
     ``_collect_final_evaluations`` collects off the binding
-    (``SourceUnit.module_bindings_at``).  Empty where the module does not
-    decide the binding there."""
-    from sugar_source_tree.nodes import UNDECIDED_MODULE_BINDING
+    (``SourceUnit.module_bindings_at``).  Where the module does not decide
+    the binding there, the one key a reader reads it through
+    (``nodes.undecided_module_binding_key``), which no statement of the
+    module's run binds."""
+    from sugar_source_tree.nodes import (
+        UNDECIDED_MODULE_BINDING,
+        undecided_module_binding_key,
+    )
 
     state = unit.module_bindings_at(site, frozenset({name})).get(
         name, UNDECIDED_MODULE_BINDING
     )
     if state is UNDECIDED_MODULE_BINDING:
-        return ()
+        return (undecided_module_binding_key(unit, name),)
     evaluations: list = []
     decisions: list = []
     _collect_final_evaluations(state, evaluations, decisions)
@@ -1740,11 +1754,19 @@ def stated_global_values(definition) -> tuple:
     after import, pytest's call of a test function).  An input whose final
     binding reads through more than one key (a branch merge, a loop's
     faces), or that the run leaves undecided, owing, or not one completed
-    value, is not stated: a claim that reads it is not decided."""
+    value, is not stated: a claim that reads it is not decided.  One the
+    module body does not decide (read through its undecided key,
+    ``nodes.undecided_module_binding_key``) is never stated, and the run is
+    not asked for it."""
+    from sugar_source_tree.nodes import undecided_module_binding_key
+
     stated = []
     for item in _global_inputs(definition):
-        keys = global_input_keys(definition.unit, item.coordinate.name)
+        name = item.coordinate.name
+        keys = global_input_keys(definition.unit, name)
         if len(keys) != 1:
+            continue
+        if keys[0] == undecided_module_binding_key(definition.unit, name):
             continue
         read = ModuleFinalValue(definition.unit, keys[0]).read()
         if read is None or read.owed_items():

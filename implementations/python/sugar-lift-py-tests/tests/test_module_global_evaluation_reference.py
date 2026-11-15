@@ -13,8 +13,9 @@ statement ran (``ClassDef._module_name_references``).  Neither reads the name,
 so ``x += e`` no longer writes the name for them: it binds only its
 evaluation, except for a name a live loop carries, which the recurrence reads
 through the temporal.  A walrus's write is read through its evaluation too;
-a binding the module body does not decide at the read is cited ``undecided``
-by name, never read by name.
+a binding the module body does not decide at the read is read through its
+undecided key, the function's free ``global:`` input with no stated value
+(#8704), never read by name and never a refusal of the file.
 
 An implicit call (an operator's ``__add__``, a subscript's ``__getitem__``, a
 property getter) is a call site too: its node's sugar is stamped with its
@@ -167,6 +168,20 @@ def _returned_at(call: Call, function: FunctionDef):
     return construct_at_module_execution_site(site, lambda: _returned(function))
 
 
+def _assert_undecided(read, name: str) -> None:
+    """``read`` is the read of the module global ``name`` where the module
+    body does not decide its binding: a reference to its undecided key
+    (``undecided_module_binding_key``), which no statement of the module's
+    run binds and a function's own contract binds to its free
+    ``global:<name>`` input with no stated value (#8704).  The reader's tree
+    is built; the file is never refused for it."""
+    from sugar_source_tree.nodes import undecided_module_binding_key
+
+    assert isinstance(read, EvaluationRef), read
+    assert read.name == name
+    assert read.evaluation == undecided_module_binding_key(read.unit, name)
+
+
 # -- a function reads a module global ------------------------------------------
 
 
@@ -261,8 +276,7 @@ def test_an_annotated_global_reads_its_key() -> None:
 def test_a_global_unbound_at_the_module_call_is_undecided() -> None:
     tree = _source("def f():\n    return X\ny = f()\nX = 1\n")
     (call,) = _calls(tree)
-    with pytest.raises(SugarNotWritten, match="undecided module binding of `X`"):
-        _returned_at(call, _function(tree))
+    _assert_undecided(_returned_at(call, _function(tree)), "X")
 
 
 EXPOSED_BY_A_MODULE_CALL = (
@@ -273,14 +287,36 @@ EXPOSED_BY_A_MODULE_CALL = (
 def test_a_global_a_module_call_may_change_is_undecided_after_it() -> None:
     # ``add()`` changes the list ``X = []`` built: the readers' threading
     # takes the one exposure rule, so after the call ``X`` is the list as the
-    # call left it, which no key decides.  ``f`` reads it undecided by name,
-    # never the list before the call (#7757).
+    # call left it, which no key decides.  ``f`` is built: it reads ``X``
+    # through its undecided key, which no statement of the module's run
+    # binds, never the list before the call and never the name (#7757).
+    # Its contract binds that key to the free ``global:X`` input and states
+    # no value for it, so a claim that reads it is undecidable by name at
+    # prove (#8704); the file is never refused for it.
+    from sugar_lift_py_tests.sugar.call_site_sugar import (
+        bind_global_inputs,
+        global_input_keys,
+        stated_global_values,
+    )
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_source_tree.nodes import undecided_module_binding_key
+
     tree = _source(EXPOSED_BY_A_MODULE_CALL)
     function = _function(tree)
     unit = function.unit
     assert unit.module_bindings_at(None, {"X"})["X"] is UNDECIDED_MODULE_BINDING
-    with pytest.raises(SugarNotWritten, match="undecided module binding of `X`"):
-        _returned(function)
+    key = undecided_module_binding_key(unit, "X")
+    read = _returned(function)
+    assert isinstance(read, EvaluationRef)
+    assert read.name == "X"
+    assert read.evaluation == key
+    assert global_input_keys(unit, "X") == (key,)
+    assert [item.formal for item in function.contract_inputs()] == ["global:X"]
+    entry = bind_global_inputs(None, function, owner="test")
+    assert entry is not None
+    bound = entry.temporal.value_if_bound(key)
+    assert getattr(bound, "term", None) == make_var("global:X")
+    assert stated_global_values(function) == ()
     # Where ``add()`` runs, before it changed anything, ``X`` is still the
     # assignment's key: the call reads its global there.
     (call,) = _calls(tree, "add")
@@ -420,8 +456,7 @@ def test_an_except_star_name_bound_before_stays_undecided() -> None:
         "eg = None\ndef f():\n    return eg\n"
         "try:\n    pass\nexcept* ValueError as eg:\n    pass\n"
     )
-    with pytest.raises(SugarNotWritten, match="undecided module binding of `eg`"):
-        _returned(_function(tree))
+    _assert_undecided(_returned(_function(tree)), "eg")
 
 
 # -- a match joins what its cases bind, as an if joins its arms (#7757 item 7) -
@@ -896,10 +931,8 @@ def test_a_star_import_leaves_every_global_undecided_from_it_on() -> None:
     # After the module body, the star import may have rebound both.
     assert unit.module_bindings_at(None, {"X"})["X"] is UNDECIDED_MODULE_BINDING
     assert unit.module_bindings_at(None, {"Y"})["Y"] is UNDECIDED_MODULE_BINDING
-    with pytest.raises(SugarNotWritten, match="undecided module binding of `X`"):
-        _returned(_function(tree))
-    with pytest.raises(SugarNotWritten, match="undecided module binding of `Y`"):
-        _returned(_function(tree, "g"))
+    _assert_undecided(_returned(_function(tree)), "X")
+    _assert_undecided(_returned(_function(tree, "g")), "Y")
 
 
 @pytest.mark.parametrize(
@@ -937,16 +970,14 @@ def test_a_name_bound_after_a_star_import_is_decided_again() -> None:
 def test_a_dynamic_global_writer_leaves_every_global_undecided() -> None:
     tree = _source("X = 1\nglobals()['X'] = 2\ndef f():\n    return X\n")
     assert _function(tree).unit.module_unthreaded_names() == frozenset({"X"})
-    with pytest.raises(SugarNotWritten, match="undecided module binding of `X`"):
-        _returned(_function(tree))
+    _assert_undecided(_returned(_function(tree)), "X")
 
 
 def test_a_global_a_function_writes_is_undecided() -> None:
     tree = _source(
         "X = None\ndef put():\n    global X\n    X = 1\ndef f():\n    return X\n"
     )
-    with pytest.raises(SugarNotWritten, match="undecided module binding of `X`"):
-        _returned(_function(tree))
+    _assert_undecided(_returned(_function(tree)), "X")
 
 
 def test_only_names_a_nested_scope_reads_are_threaded() -> None:
@@ -1076,8 +1107,7 @@ def test_a_walrus_in_the_calling_statement_leaves_the_binding_undecided() -> Non
         "x = 1\nx += 1\ndef f():\n    return x\ny = [(x := 5), f()]\nx += 1\n"
     )
     (call,) = _calls(tree)
-    with pytest.raises(SugarNotWritten, match="undecided module binding of `x`"):
-        _returned_at(call, _function(tree))
+    _assert_undecided(_returned_at(call, _function(tree)), "x")
 
 
 # -- a reader reached while the module is threaded (item 2) -------------------
@@ -1537,12 +1567,20 @@ def test_a_final_binding_to_a_list_display_is_the_module_runs_list() -> None:
     )
 
 
-def test_an_undecided_global_still_refuses_a_function_reduced_on_its_own() -> None:
+def test_an_undecided_global_is_the_free_input_of_a_function_reduced_on_its_own() -> (
+    None
+):
+    # The function is reduced, never refused: it returns its free
+    # ``global:X`` input, for which its row states no value (#8704), so a
+    # claim that reads it is undecidable by name at prove.
+    from sugar_lift_py_tests.sugar.call_site_sugar import stated_global_values
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
     tree = _source("X = 1\nglobals()['X'] = 2\ndef f():\n    return X\n")
-    with pytest.raises(SugarNotWritten, match="undecided module binding of `X`"):
-        function_universe_outcome(_function(tree))
+    outcome = function_universe_outcome(_function(tree))
+    assert any(isinstance(exit_, Completed) for exit_ in outcome.exits), outcome
+    assert "global:X" in repr(outcome)
+    assert stated_global_values(_function(tree)) == ()
 
 
 def test_an_augmented_final_binding_reads_the_module_runs_value() -> None:

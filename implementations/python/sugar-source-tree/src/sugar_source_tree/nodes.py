@@ -8006,38 +8006,60 @@ def _evaluation_reference_kind(node) -> Optional[str]:
     return "member" if "member" in kinds else "evaluation"
 
 
-def _bound_module_references(reader, bindings: dict, *, owner: str) -> dict:
+def undecided_module_binding_key(unit, name: str) -> str:
+    """The key a reader of ``unit``'s module global ``name`` reads it
+    through where the module body does not decide its binding
+    (``UNDECIDED_MODULE_BINDING``): a later module-level call may have
+    changed the object it names, a ``global`` writer or a star import may
+    have rebound it, a module ``if`` or ``try`` route left it joined.
+
+    No statement of the module's run binds this key.  A function's own
+    contract binds it at the entry to its free ``global:<name>`` input, as
+    it binds every key a global is read through
+    (``call_site_sugar.bind_global_inputs``); its row states no value for
+    the input (``stated_global_values``), so a claim that reads it is
+    undecidable by name at prove (#8704).  A call made while the module
+    runs supplies no value for it (``global_value_at_call``: a variable no
+    contract binds, so the join stays open), and a read nothing bound it
+    for (a class body the module run reduces) is refused by name, naming
+    the key (``EvaluationRefSugar._unbound``).  The name is never read in
+    its place, and no value is ever stated for it."""
+    from sugar_lift_python_source.canonical import cid_of_json
+    from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
+
+    return EVALUATION_PREFIX + cid_of_json(
+        {
+            "kind": "python-undecided-module-binding-v1",
+            "sourceCid": unit.source_cid,
+            "name": name,
+        }
+    )
+
+
+def _bound_module_references(reader, bindings: dict) -> dict:
     """``bindings`` (``SourceUnit.module_bindings_at``) as the scope a
     reader of module names substitutes its body in: each name bound to the
     reference to the evaluation that binds it where the reader runs.  A
-    name the module body does not decide there through a key is cited
-    ``undecided`` by name; it is never read by name in its place."""
+    name the module body does not decide there through a key is read
+    through its undecided key (``undecided_module_binding_key``): the
+    reader's tree is built, and the read is the function's free
+    ``global:<name>`` input with no stated value (#8704), never the name
+    read in its place and never a refusal of the whole file."""
     references = {}
-    reader_name = reader.name if not isinstance(reader, Lambda) else "lambda"
     for name in sorted(bindings):
         binding = bindings[name]
         if binding is UNDECIDED_MODULE_BINDING:
-            raise SugarNotWritten(
-                owner=owner,
-                blame=reader.fragment,
-                observed=(
-                    f"undecided module binding of `{name}` where "
-                    f"`{reader_name}` reads it"
-                ),
-                requested=(
-                    "the module binding the module body decides where this "
-                    "read runs"
-                ),
-                fix=(
-                    "decide the binding at the read's point of the module "
-                    "body; never read the name in its place"
-                ),
+            binding = _evaluation_ref(
+                reader,
+                reader.span,
+                undecided_module_binding_key(reader.unit, name),
+                name,
             )
         references[name] = binding
     return references
 
 
-def _module_references_where_called(reader, reads, *, owner: str) -> dict:
+def _module_references_where_called(reader, reads) -> dict:
     """The module's binding of each global in ``reads`` that the body of
     function ``reader`` (a ``def`` or a lambda) reads, where the function
     is called (``_bound_module_references``).  Called while the module body
@@ -8047,9 +8069,7 @@ def _module_references_where_called(reader, reads, *, owner: str) -> dict:
     module globals for every function body."""
     unit = reader.unit
     site = _site_where_called(unit, _MODULE_EXECUTION_SITE.get())
-    return _bound_module_references(
-        reader, unit.module_bindings_at(site, reads), owner=owner
-    )
+    return _bound_module_references(reader, unit.module_bindings_at(site, reads))
 
 
 def _site_where_called(unit, site):
@@ -10745,9 +10765,11 @@ class FunctionDef(Statement):
         an enclosing function binds is not one.  Every global the module
         body binds through a key (``SourceUnit.module_threaded_names``) is
         read through it; none is read by name.  One the module body does not
-        decide there through a key is cited ``undecided`` by name
-        (``SourceUnit.module_bindings_at``).  A ``class`` statement binds
-        its name through its evaluation key, so a module class is read
+        decide there through a key (``SourceUnit.module_bindings_at``) is
+        read through its undecided key (``undecided_module_binding_key``):
+        the free ``global:`` input with no stated value.  A ``class``
+        statement binds its name through its evaluation key, so a module
+        class is read
         through it too (``DecoratedDefinitionRef``).  A global bound only by
         a ``def`` or ``import`` statement is not the module threading's: its
         read resolves the definition or the import.
@@ -10755,9 +10777,7 @@ class FunctionDef(Statement):
         reads = self._module_globals_read()
         if not reads:
             return {}
-        return _module_references_where_called(
-            self, reads, owner="FunctionDef._module_global_references"
-        )
+        return _module_references_where_called(self, reads)
 
     def _module_globals_read(self) -> frozenset:
         """The module globals this body reads that the module threading
@@ -12010,11 +12030,7 @@ class ClassDef(Statement):
         site = unit.module_execution_site(self)
         if site is None:
             return {}
-        return _bound_module_references(
-            self,
-            unit.module_bindings_at(site, reads),
-            owner="ClassDef._module_name_references",
-        )
+        return _bound_module_references(self, unit.module_bindings_at(site, reads))
 
     def _construct_sugar(self):
         """Construct the class statement: its methods, and its body as a block.
@@ -21617,9 +21633,7 @@ class Lambda(Expression):
         reads = self._module_globals_read()
         if not reads:
             return {}
-        return _module_references_where_called(
-            self, reads, owner="Lambda._module_global_references"
-        )
+        return _module_references_where_called(self, reads)
 
     def _enclosing_locals_read(self, excluded) -> tuple:
         """The names the body reads (other than ``excluded``: the formals,
@@ -25418,7 +25432,8 @@ class Name(Expression):
             # The module threading carried no binding of the name past some
             # statement (``_module_uncarried_names``): its own copy of a
             # module read keeps the name, as with no binding at all; a
-            # reader outside the module block is cited undecided instead.
+            # reader outside the module block reads its undecided key
+            # instead (``undecided_module_binding_key``).
             return self
         if isinstance(bound, (FunctionDef, AsyncFunctionDef, TypeAlias)):
             # A ``def`` whose statement binds itself (an ``async def``, a

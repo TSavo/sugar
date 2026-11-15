@@ -18,11 +18,13 @@ read ``X = []``'s key, whose value in the module run is the empty list
 before the call. The lying claim came back ``sat``.
 
 The readers' threading now takes the same exposure rule. After ``add()``,
-``X`` is the list as the call left it, which no key decides, so a reader's
-reference to it is ``undecided`` (``UNDECIDED_MODULE_BINDING``), never the
-stale value: ``test_f`` is refused by name for it, its proof owes one
-``undecided`` member, and the file is ``open`` for both halves. A lying claim
-is never ``sat``; a truthful one is never ``unsat``.
+``X`` is the list as the call left it, which no key decides
+(``UNDECIDED_MODULE_BINDING``), never the stale value. ``test_f`` is built:
+it reads ``X`` through its undecided key, its contract's free ``global:X``
+input, for which the row states no value (#8704), so its claim is
+undecidable by name at prove and ``open`` for both halves. ``test_f`` is
+never refused for it. A lying claim is never ``sat``; a truthful one is
+never ``unsat``.
 
 Each half goes through ``run_source_through_real_solver``: real ``sugar
 mint`` then real ``sugar prove``.
@@ -30,6 +32,7 @@ mint`` then real ``sugar prove``.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -76,9 +79,9 @@ def test_a_global_a_module_call_changed_is_never_read_stale(
     result = run_source_through_real_solver(
         tmp_path / half, _SOURCE.format(claim=_HALVES[half])
     )
-    (refusal,) = _refusals_of_test_f(result.lift_doc)
-    observed = refusal["reason"]["refused"]["observed"]
-    assert "undecided module binding of `X`" in observed, refusal
+    # Built, never refused: the read is the free ``global:X`` input.
+    assert _refusals_of_test_f(result.lift_doc) == [], result.lift_doc
+    assert "global:X" in json.dumps(result.lift_doc)
     verdict = claim_verdict(result.prove_doc, claims_from_line=_TEST_F_LINE)
     whole = prove_verdict(result.prove_doc)
     if half == "lying":
