@@ -818,3 +818,101 @@ def constructor_defaults(value) -> tuple:
     if not isinstance(value, ClassDefinitionValue):
         return ()
     return value.constructor_defaults()
+
+
+@dataclass(frozen=True)
+class ConstructedInstanceValue(FloorValue):
+    """What a class's constructor contract returns on one completed arm
+    (``tree_enumerate.class_universe_outcome``, #7757 step 6): the instance
+    the class call makes, as its construction left it (``instance``).
+
+    The post states what the construction left, never which object it is:
+    each call makes a fresh object, so ``out`` is never equated to the one
+    receiver this reduction allocated (``post_formula``).  It states each
+    field the construction set (``attr:<name>(out) == <value>``) whose value
+    names no object of this reduction: a field holding an object made here
+    (the receiver itself, another instance) is not stated, since that
+    object's identity is fresh per call as well."""
+
+    instance: FloorValue
+
+    def to_term(self, *, owner: str):
+        return self.instance.to_term(owner=owner)
+
+    def guarded(self, formula):
+        del formula
+        return self
+
+    def post_formula(self, out):
+        """``attr:<name>(out) == <value>`` for each field the construction
+        left on the instance where it is the instance's field now
+        (``object_identity.contents_current``, or a store of this frame),
+        the last binding of each name, in field order; truth where none
+        is stated."""
+        from sugar_lift_py_tests.floor.object_identity import contents_current
+        from sugar_lift_py_tests.floor.object_value import ObjectValue
+        from sugar_lift_py_tests.ir import and_, ctor, eq
+
+        instance = self.instance
+        if not isinstance(instance, ObjectValue):
+            return and_([])
+        current = contents_current(instance)
+        latest = {}
+        for item in instance.fields:
+            latest[item.name] = item.value
+        facts = []
+        for name, value in latest.items():
+            if not current and name not in instance.stored_fields:
+                continue
+            if name in instance.deleted_instance_fields:
+                continue
+            term = value.to_term(owner="ConstructedInstanceValue.post")
+            if _names_an_object(term):
+                continue
+            facts.append(
+                eq(ctor(f"attr:{name}", [out], symbol_kind="method-coordinate"), term)
+            )
+        return and_(facts)
+
+
+def _names_an_object(term) -> bool:
+    """Whether ``term`` mentions an object's identity
+    (``py.object.*``): a value no two calls share."""
+    from sugar_lift_py_tests.ir import _Ctor
+
+    pending = [term]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, _Ctor):
+            if current.name.startswith("py.object"):
+                return True
+            pending.extend(current.args)
+    return False
+
+
+@dataclass(frozen=True)
+class ConstructedInstanceSugar(Sugar):
+    """The class call's constructor (``constructor``: the
+    ``ClassConstructorBodySugar`` entered on the class value) as its
+    contract returns it: each completed arm the instance its construction
+    left (``ConstructedInstanceValue``), each halt the constructor's own.
+    Read only by the class's own contract
+    (``tree_enumerate.class_universe_outcome``)."""
+
+    constructor: Sugar
+    site: object = field(compare=False, default=None)
+
+    @classmethod
+    def witnesses(cls):
+        from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
+
+        return NotVerdictBearing(
+            sugar_name=cls.__name__,
+            floor_name="ConstructedInstanceValue",
+            reason="a class's contract states what its constructor leaves",
+        )
+
+    def desugar(self, ctx: object = None) -> ExitSet:
+        return self.constructor.desugar(ctx).and_then(
+            lambda value: ExitSet.completed(ConstructedInstanceValue(value))
+        )

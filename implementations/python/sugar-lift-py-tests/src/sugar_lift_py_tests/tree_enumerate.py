@@ -285,7 +285,13 @@ def owner_reduction(owner, sf: Optional[SourceFile] = None) -> OwnerReduction:
     try:
         ends = ()
         if owner is not None:
-            outcome = function_universe_outcome(owner)
+            from sugar_source_tree.nodes import ClassDef
+
+            outcome = (
+                class_universe_outcome(owner)
+                if isinstance(owner, ClassDef)
+                else function_universe_outcome(owner)
+            )
         else:
             outcome, ends = _module_run(node.unit, sf)
     except BaseException:
@@ -837,8 +843,17 @@ def function_universe_outcome(fn):
     )
     from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
 
+    # The initializer's contract is stated over its global inputs as every
+    # function's is (``bind_global_inputs``), before the definition keys and
+    # defaults are bound.
     entry = with_module_final_globals(
-        ReduceContext.root(owner="function_universe_outcome"), (fn,), site=site
+        bind_global_inputs(
+            ReduceContext.root(owner="function_universe_outcome"),
+            fn,
+            owner="function_universe_outcome",
+        ),
+        (fn,),
+        site=site,
     )
 
     def on_its_class(read):
@@ -861,6 +876,141 @@ def function_universe_outcome(fn):
         )
 
     return owner.statement_value_ref().sugar().desugar(entry).and_then(on_its_class)
+
+
+def class_universe_outcome(cls):
+    """A class's constructor contract (#7757 step 6): the universe of
+    ``return Cls(<formals>)``, named by the class's join symbol
+    (``ClassDef.bridge_source_symbol``, ``python:<module>.<Class>``), which a
+    call of the class is joined to at prove as a call of a ``def`` is.
+
+    Its formals are the constructor frame's (``ClassDef.
+    source_visible_constructor_frame``: the formals after the first of the
+    ``def`` that states the call's signature), each standing free as a
+    ``def``'s does, then its inputs (``ClassDef.contract_inputs``: the cells,
+    defaults and module globals of that ``def``).  The body is the one
+    constructor every class call ran (``ClassConstructorBodySugar``),
+    entered on the class the statement bound, read through the statement's
+    key in the state the module's one run left, as an ``__init__``'s own
+    universe reads it (``function_universe_outcome``); the instance it makes
+    is allocated by this construction (``call_site``: the class statement).
+    Each completed arm returns the instance as its construction left it
+    (``ConstructedInstanceValue``: the fields it set, never its identity);
+    each halt of the constructor is a halted arm (its panic locus).
+
+    The module globals the signature's ``def`` reads are free inputs, bound
+    at the entry (``bind_global_inputs``) before the definition keys and
+    defaults (``with_module_final_globals``)."""
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.floor.call_site_value import _ctx_with_curried_args
+    from sugar_lift_py_tests.floor.class_definition_value import (
+        ClassDefinitionValue,
+    )
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.sugar.call_site_sugar import (
+        bind_global_inputs,
+        with_module_final_globals,
+    )
+    from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
+        ConstructedInstanceSugar,
+    )
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        FunctionUniverseSugar,
+    )
+    from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
+    from sugar_source_tree.nodes import current_module_execution_site
+    from sugar_source_tree.panic import SugarNotWritten
+
+    if not cls.constructor_is_read():
+        # A call of the class is the one unanswered call
+        # (``ClassDefinitionValue.callable_application_with``): no contract
+        # states what it runs, so none is stated here.
+        raise SugarNotWritten(
+            owner="class_universe_outcome",
+            blame=cls.fragment,
+            observed=f"the constructor {cls.name}'s call runs is not read",
+            requested="a __new__ and __init__ the one class-namespace lookup decides",
+            fix="state the class's contract where its constructor is read",
+        )
+    frame = cls.source_visible_constructor_frame()
+    constructor = cls.constructor_definition()
+    readers = () if constructor is None else (constructor,)
+    entry = ReduceContext.root(owner="class_universe_outcome")
+    if constructor is not None:
+        entry = bind_global_inputs(entry, constructor, owner="class_universe_outcome")
+    entry = with_module_final_globals(
+        entry, readers, site=current_module_execution_site()
+    )
+    parameters = tuple(frame.parameters)
+    # Each formal as its own proof reads it: free, carrying the formal
+    # coordinate of the signature's ``def`` where that ``def`` states it, as
+    # a ``def``'s ``FormalRefSugar`` does.
+    declared = _class_contract_formal_coordinates(cls, frame)
+    formals = tuple(
+        SymbolicValue(
+            make_var(name),
+            formal_coordinate=coordinate
+            if hasattr(coordinate, "declared_name")
+            else None,
+        )
+        for name, coordinate in zip(parameters, declared, strict=True)
+    )
+    entered = _ctx_with_curried_args(
+        entry,
+        parameters,
+        formals,
+        tuple(coordinate.cid for coordinate in frame.formal_coordinates),
+    )
+    site = cls.fragment
+
+    def on_its_class(read):
+        value = peel_walrus_binds(read)[1]
+        if not isinstance(value, ClassDefinitionValue):
+            raise SugarNotWritten(
+                owner="class_universe_outcome",
+                blame=site,
+                observed=(
+                    f"the class statement's key holds a {type(value).__name__}"
+                ),
+                requested="the class the statement built, whose call this contract states",
+                fix="state the constructor contract on the class its statement bound",
+            )
+        body = replace(frame.body, class_value=value, call_site=frame.body.site)
+        universe = FunctionUniverseSugar(
+            name=cls.contract_name(),
+            formals=parameters,
+            statements=(
+                ReturnSugar(
+                    value=ConstructedInstanceSugar(body, site=site), site=site
+                ),
+            ),
+            site=site,
+            bridge_source_symbol=cls.bridge_source_symbol(),
+            formal_coordinates=declared,
+            inputs=cls.contract_inputs(),
+        )
+        return as_its_own_proof_states(universe.desugar(entered), entered)
+
+    return cls.statement_value_ref().sugar().desugar(entry).and_then(on_its_class)
+
+
+def _class_contract_formal_coordinates(cls, frame) -> tuple:
+    """The coordinates of a class contract's formals (the constructor
+    frame's): the formal coordinates of the ``def`` that states the call's
+    signature after its first (``ClassDef.constructor_definition``), where
+    they are the frame's formals by name; else the frame's own."""
+    parameters = tuple(frame.parameters)
+    constructor = cls.constructor_definition()
+    declared = (
+        () if constructor is None else tuple(constructor.formal_coordinates())[1:]
+    )
+    if tuple(getattr(item, "declared_name", None) for item in declared) == parameters:
+        return declared
+    return tuple(frame.formal_coordinates)
 
 
 def reduction_rows(outcome, *, owner, blame, def_memento, definition):
@@ -990,6 +1140,88 @@ def function_contract_rows(fn, file_rel: str):
 
         rows = [dataclasses.replace(row, input_values=stated) for row in rows]
     return def_memento, rows
+
+
+def classes_with_contracts(sf: SourceFile) -> tuple:
+    """Every class statement whose constructor contract this file states
+    (``class_contract_rows``): each class of the module body and, in turn,
+    each class a class body holds, in source order.  A class a function body
+    holds is made by each run of that body; no module run binds it, so its
+    calls stay owed by its join symbol."""
+    from sugar_source_tree.nodes import ClassDef
+
+    found = []
+    pending = list(reversed(tuple(sf.unit.typed_module.body)))
+    while pending:
+        statement = pending.pop()
+        if isinstance(statement, ClassDef):
+            found.append(statement)
+            pending.extend(reversed(tuple(statement.body)))
+    return tuple(found)
+
+
+def class_memento(cls, file_rel: str, parameters: tuple = ()):
+    """The class's own SourceMemento: its statement under its name
+    (``statement_memento``), with the formals a call of it binds."""
+    import dataclasses
+
+    return dataclasses.replace(
+        statement_memento(cls, cls.name, file_rel), param_names=list(parameters)
+    )
+
+
+def refused_class_row(cls, file_rel: str, refusal) -> UndecidedRow:
+    """The ``undecided`` row for a class whose constructor contract the
+    lifter refuses by name, cited by its join symbol, by the rule a refused
+    function follows (``refused_function_row``)."""
+    return _refused_row(
+        class_memento(cls, file_rel), cls.bridge_source_symbol(), refusal, file_rel
+    )
+
+
+def class_contract_rows(cls, file_rel: str):
+    """A class's constructor contract rows (#7757 step 6), read off every arm
+    of its one reduction (``class_universe_outcome``) by the one row path a
+    function's are (``reduction_rows``): the post over each completed arm
+    (the fields the construction left), one panic locus per halted arm.
+    Each module global input the signature's ``def`` reads states the value
+    the module's run left (``stated_global_values``), as a function's row
+    does."""
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        FunctionUniverseSugar,
+    )
+
+    frame = cls.source_visible_constructor_frame()
+    memento = class_memento(cls, file_rel, tuple(frame.parameters))
+    # What the row states its name, formals and symbol by when no arm of the
+    # construction completes (``reduction_rows``' ``owner``).
+    stated_by = FunctionUniverseSugar(
+        name=cls.contract_name(),
+        formals=tuple(frame.parameters),
+        statements=(),
+        site=cls.fragment,
+        bridge_source_symbol=cls.bridge_source_symbol(),
+        formal_coordinates=_class_contract_formal_coordinates(cls, frame),
+    )
+    # No ``definition``: the class statement's own body runs where the class
+    # statement stands, never at a call of the class, so none of its
+    # ``assert`` statements is this contract's.
+    rows = reduction_rows(
+        owner_reduction(cls).outcome,
+        owner=stated_by,
+        blame=cls.fragment,
+        def_memento=memento,
+        definition=None,
+    )
+    constructor = cls.constructor_definition()
+    from sugar_lift_py_tests.sugar.call_site_sugar import stated_global_values
+
+    stated = () if constructor is None else stated_global_values(constructor)
+    if rows is not None and stated:
+        import dataclasses
+
+        rows = [dataclasses.replace(row, input_values=stated) for row in rows]
+    return memento, rows
 
 
 def _roll_call_identity(entry) -> tuple:

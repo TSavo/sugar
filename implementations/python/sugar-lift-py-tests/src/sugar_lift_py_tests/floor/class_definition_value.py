@@ -158,19 +158,7 @@ class ClassDefinitionValue(GuardStableValue):
             if keyword_count
             else ()
         )
-        generated = definition._dataclass_generated_init_fields()
-        if generated is not None:
-            new_decided, own_new = definition.dataclass_new_entry()
-            unanswered = not new_decided or own_new is not None
-        else:
-            unanswered = not definition.new_entry()[0] or (
-                definition._authenticated_new_constructor_shape() is None
-                and (
-                    definition.construction_order() is None
-                    or definition.initializer_entry() is None
-                )
-            )
-        if unanswered:
+        if not definition.constructor_is_read():
             return self._unanswered_call(
                 self.class_name, positional, keywords, operation.site
             )
