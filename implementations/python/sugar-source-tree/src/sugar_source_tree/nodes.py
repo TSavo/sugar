@@ -4050,15 +4050,21 @@ class SourceUnit:
         binds, as it runs at import, through a statement the threading
         rebinds it at -- ``y = e`` (any target shape), ``y: T = e``, ``x +=
         e``, ``(x := e)`` (in a comprehension too), a ``for`` target, a
-        ``with ... as`` target, a ``match`` capture -- that some function,
-        lambda or class body
+        ``with ... as`` target, a ``match`` capture, a ``class`` statement
+        (which binds its name under its evaluation key,
+        ``_decorated_statement_sugar``) -- that some function, lambda or
+        class body
         reads as a global (CPython's ``symtable``).  A name no such body
         reads is never threaded for a reader: the threading records only
-        these (``module_binding_states``).
+        these (``module_binding_states``).  So every read of a module
+        class's name outside the module block -- a call, a bare read
+        (``b = Box``), an argument (``isinstance(x, Box)``), an attribute
+        (``Box.attr``) -- is the class statement's key, the one read
+        (``DecoratorApplicationSugar``, #7757 item 21).
 
-        A name bound only by a ``def``, ``class`` or ``import`` statement
-        (which bind no key) is not one: its reader resolves the definition
-        or the import.  Every other statement that binds a threaded name
+        A name bound only by a ``def`` or ``import`` statement (which bind
+        no key) is not one: its reader resolves the definition or the
+        import.  Every other statement that binds a threaded name
         carries its binding in the threading too (``module_binding_states``):
         a ``def`` or ``class`` binds the definition, an ``import`` the one
         import table's row for that binding (``import_binding_reference``),
@@ -4102,6 +4108,11 @@ class SourceUnit:
                 keyed.update(node.names_bound_here())
             elif isinstance(node, (For, AsyncFor, WithItem)):
                 loop_bound.update(node.names_bound_here())
+            elif isinstance(node, ClassDef):
+                # A class statement binds its name under its evaluation key
+                # (``_decorated_statement_sugar``), as an assignment binds
+                # its target: every read of the name is that key's read.
+                keyed.add(node.name)
             if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
                 continue
             stack.extend(child for _name, _index, child in node._child_edges())
@@ -11449,9 +11460,11 @@ class FunctionDef(Statement):
         body binds through a key (``SourceUnit.module_threaded_names``) is
         read through it; none is read by name.  One the module body does not
         decide there through a key is cited ``undecided`` by name
-        (``SourceUnit.module_bindings_at``).  A global bound only by a
-        ``def``, ``class`` or ``import`` statement is not the module
-        threading's: its read resolves the definition or the import.
+        (``SourceUnit.module_bindings_at``).  A ``class`` statement binds
+        its name through its evaluation key, so a module class is read
+        through it too (``DecoratedDefinitionRef``).  A global bound only by
+        a ``def`` or ``import`` statement is not the module threading's: its
+        read resolves the definition or the import.
         """
         reads = self._module_globals_read()
         if not reads:
