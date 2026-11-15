@@ -151,22 +151,22 @@ class AttributeAugAssignSugar(Sugar):
     (An item target, ``receiver[index] OP= rhs``, is the one mutation door's
     read-modify-store: ``PathContainerCallSugar._read_modify_store``.)
 
-      1. ``receiver`` is the read of the receiver the statement evaluated
-         once, first, and bound under its key (``KeyedStoreSugar``)
-      2. ``current`` is the field's read, the one attribute lookup
-         (``AttributeSugar.project_attribute``), **before** the RHS
-      3. Evaluate ``rhs``
-      4. ``result = current OP rhs`` via ``project_augmented`` / inplace edge
+      1. ``current`` is the field's read **before** the RHS: the one
+         attribute lookup (``AttributeSugar``) off the read of the receiver
+         the statement evaluated once, first, and bound under its key
+         (``KeyedStoreSugar``) -- or, for ``o.x OP= yield v`` in a
+         generator, the read of the key the field's value was bound under
+         before the suspension (``ReceiverFieldStoreStatement.keyed_store``)
+      2. Evaluate ``rhs``
+      3. ``result = current OP rhs`` via ``project_augmented`` / inplace edge
 
     Composition is outcome/carrier ``and_then`` only — no control-kind ladder.
     """
 
-    receiver: Sugar
-    attr: str
+    current: Sugar
     rhs: Sugar
     operator: str
     operation: Callable
-    get_site: object = dataclass_field(compare=False)
     op_site: object = dataclass_field(compare=False)
     site: object = dataclass_field(compare=False)
     # Every halt (the read, the RHS, the inplace operation) is before the
@@ -178,22 +178,16 @@ class AttributeAugAssignSugar(Sugar):
         return ()
 
     def desugar(self, ctx: object = None) -> ExitSet:
-        # Ordering: receiver (its key) → producer-owned get → RHS → inplace.
-        from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
-
-        return self.receiver.desugar(ctx).and_then(
-            lambda receiver: AttributeSugar.project_attribute(
-                receiver, self.attr, self.get_site, ctx
-            ).and_then(
-                lambda current: self.rhs.desugar(ctx).and_then(
-                    lambda right: project_augmented(
-                        current,
-                        right,
-                        operator=self.operator,
-                        projector=self.operation,
-                        site=self.op_site,
-                        ctx=ctx,
-                    )
+        # Ordering: the field's read (off the receiver's key) → RHS → inplace.
+        return self.current.desugar(ctx).and_then(
+            lambda current: self.rhs.desugar(ctx).and_then(
+                lambda right: project_augmented(
+                    current,
+                    right,
+                    operator=self.operator,
+                    projector=self.operation,
+                    site=self.op_site,
+                    ctx=ctx,
                 )
             )
         )

@@ -214,6 +214,15 @@ class KeyedStoreSugar(Sugar):
     under ``receiver_evaluation`` as soon as it completes: the field's read
     in ``value``, the store and every later read of the object read it
     there, never the receiver evaluated again.
+
+    ``writes`` are ``(state, keys)``: the state after the store of the names
+    the store rebinds (``ReceiverFieldStoreStatement.written_keys``), each
+    evaluated once with the statement and bound under every key in ``keys``
+    once the store completed -- a store that halts writes nothing.  A live
+    loop carries them from item to item, as it carries the one mutation
+    door's writes (``ContainerMutationStatementSugar.result_evaluations``).
+    The states read the keys the statement binds (the value's, the
+    receiver's), so the value's is bound as soon as it completes.
     """
 
     value: Sugar
@@ -222,6 +231,7 @@ class KeyedStoreSugar(Sugar):
     site: object = dataclass_field(compare=False)
     receiver: Sugar | None = None
     receiver_evaluation: str | None = None
+    writes: tuple = ()
     halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
@@ -246,16 +256,33 @@ class KeyedStoreSugar(Sugar):
             del completed
             return _reduce_targets((self.store,), active, ctx)
 
-        if self.receiver is None:
+        values = (self.value,)
+        receiver = ()
+        if self.receiver is not None:
+            values = (self.receiver, self.value)
+            receiver = ((self.receiver_evaluation, 0),)
+        value_key = (self.evaluation, len(values) - 1)
+        if not self.writes:
             return evaluate_assignment_values(
-                (self.value,), ctx, tail=store, evaluations=((self.evaluation, 0),)
+                values,
+                ctx,
+                tail=store,
+                evaluations=(value_key,),
+                as_completed=receiver,
             )
+        # The states are evaluated with the statement, reading the keys it
+        # bound; the store runs, then each state is bound under its keys
+        # (``AssignedNames``), so a halted store writes none of them.
+        written = tuple(
+            (key, len(values) + index)
+            for index, (_state, keys) in enumerate(self.writes)
+            for key in keys
+        )
         return evaluate_assignment_values(
-            (self.receiver, self.value),
+            (*values, *(state for state, _keys in self.writes)),
             ctx,
-            tail=store,
-            evaluations=((self.evaluation, 1),),
-            as_completed=((self.receiver_evaluation, 0),),
+            as_completed=(*receiver, value_key),
+            targets=(self.store, *written),
         )
 
 

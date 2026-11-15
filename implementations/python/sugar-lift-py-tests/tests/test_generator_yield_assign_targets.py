@@ -784,3 +784,63 @@ def test_an_object_place_yield_store_is_the_keyed_field_store() -> None:
     # ``ReceiverFieldStoreStatement.keyed_store``: the one field store.
     assert isinstance(step.store.store, ReceiverFieldStoreSugar)
     assert step.store.evaluation == step.store_evaluation
+
+
+# ---------------------------------------------------------------------------
+# ``o.x += yield v``: the field is read before the suspension
+# ---------------------------------------------------------------------------
+
+PLACE_AUG_YIELD = (
+    "class Box:\n"
+    "    pass\n"
+    "\n"
+    "def g():\n"
+    "    box = Box()\n"
+    "    box.size = yield 5\n"
+    "    box.size += yield 6\n"
+    "    return box.size\n"
+)
+
+
+def test_a_read_modify_store_of_a_yield_reads_the_field_then_suspends() -> None:
+    from sugar_lift_py_tests.generator_construction import DefinitionDefaultsStepV1
+    from sugar_lift_py_tests.sugar.augassign_sugar import AttributeAugAssignSugar
+
+    # Python evaluates ``box``, reads ``box.size``, then suspends at ``yield
+    # 6``; the in-place add and the store run at the resume.  So the
+    # statement is two steps: the receiver and the field's read bound under
+    # their keys, then the suspension whose resume stores the in-place
+    # result through the one field store, reading the field's key -- never
+    # the field read again after the resume.
+    steps = _steps(PLACE_AUG_YIELD)
+    assert not any(isinstance(item, OpaqueStepV1) for item in steps)
+    before, step = steps[2], steps[3]
+    assert isinstance(before, DefinitionDefaultsStepV1)
+    receiver_key, read_key = before.evaluations
+    assert isinstance(step, YieldAssignStepV1)
+    assert isinstance(step.store, KeyedStoreSugar)
+    assert isinstance(step.store.store, ReceiverFieldStoreSugar)
+    # The receiver is not evaluated again at the resume.
+    assert step.store.receiver is None
+    value = step.store.value
+    assert isinstance(value, AttributeAugAssignSugar)
+    assert isinstance(value.current, EvaluationRefSugar)
+    assert value.current.evaluation == read_key
+    assert isinstance(value.rhs, EvaluationRefSugar)
+    assert value.rhs.evaluation == step.store_evaluation
+    # The result the store binds is what the later read of the field reads.
+    assert step.store_keeps == (step.store.evaluation,)
+    assert receiver_key != read_key
+
+
+def test_a_read_modify_store_of_a_yield_adds_the_sent_value() -> None:
+    steps = _steps(PLACE_AUG_YIELD)
+    yielded = _machine("aug_store", steps).resume()
+    assert isinstance(yielded, YieldEffect)
+    assert yielded.value == TermValue(5)
+    # ``box.size = 7``, then ``box.size`` (7) is read before ``yield 6``.
+    second = yielded.machine.send(TermValue(7))
+    assert isinstance(second, YieldEffect)
+    assert second.value == TermValue(6)
+    # ``box.size += 3``: 7 + 3.
+    assert TermValue(10) in _returned_values(second.machine.send(TermValue(3)))
