@@ -28,7 +28,8 @@ None of them reaches the producer as a value: the call they make is a
 ``CallSiteValue`` that is never reduced (a lambda's ``py.call``, ``h(g)``
 with ``g`` symbolic, ``Box()`` with no body), so the raise is never
 evaluated at all.  That is a different defect from the two representations,
-and this change does not reach it.
+and this change does not reach it.  The lambda call is reduced since: at the
+reduction level its lying half halts, and is pinned green.
 """
 
 from __future__ import annotations
@@ -217,8 +218,23 @@ def test_the_truthful_half_of_each_of_the_five_completes(shape: str) -> None:
     assert _faces(_function(_FIVE[shape].format(x=truthful))) == (1, ())
 
 
-@pytest.mark.xfail(strict=True, reason=_NOT_REDUCED)
-@pytest.mark.parametrize("shape", sorted(_FIVE))
+# A lambda bound to a local name and called (``g = lambda: 1 // 0; g()``) is
+# reduced now: the call runs the lambda's body, which raises, so the call
+# halts with no completion, as Python does.
+_FIVE_REDUCED = {"lambda-call"}
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        shape
+        if shape in _FIVE_REDUCED
+        else pytest.param(
+            shape, marks=pytest.mark.xfail(strict=True, reason=_NOT_REDUCED)
+        )
+        for shape in sorted(_FIVE)
+    ],
+)
 def test_the_lying_half_of_each_of_the_five_halts(shape: str) -> None:
     _truthful, lying = _FIVE_HALVES[shape]
 

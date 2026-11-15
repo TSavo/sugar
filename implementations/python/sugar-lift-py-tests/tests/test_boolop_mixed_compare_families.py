@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
+from sugar_lift_py_tests.occurrence import call_frame_path
 from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -49,18 +51,29 @@ def test_false_ordering_short_circuits_membership_and_returns_first_operand() ->
     assert str(outcome.completed_value().site) != str(comparisons[1].sugar().site)
 
 
+def _locus(compare: Compare, call: Call | None = None) -> str:
+    """The raise locus of a ``TypeError`` raised at ``compare``: its
+    ``file:line:col`` (``AuthenticatedRaiseLocus.of``, never the fragment's
+    repr, #7808), stamped with the call frame it was raised in when it crossed
+    ``call`` (``call_site_value.call_owned``)."""
+    locus = AuthenticatedRaiseLocus.of(compare.sugar().site).value
+    if call is None:
+        return locus
+    return f"{locus}@{'/'.join(call_frame_path(call.fragment, ()))}"
+
+
 def test_truthful_ordering_evaluates_membership_exception_at_second_site() -> None:
     outcome, comparisons = _expression("1 < 2 and None in 3")
 
-    assert _raise_occurrence(outcome) == str(comparisons[1].sugar().site)
-    assert _raise_occurrence(outcome) != str(comparisons[0].sugar().site)
+    assert _raise_occurrence(outcome) == _locus(comparisons[1])
+    assert _raise_occurrence(outcome) != _locus(comparisons[0])
 
 
 def test_ordering_exception_bypasses_membership_and_keeps_first_site() -> None:
     outcome, comparisons = _expression("None < 1 and 1 in [1]")
 
-    assert _raise_occurrence(outcome) == str(comparisons[0].sugar().site)
-    assert _raise_occurrence(outcome) != str(comparisons[1].sugar().site)
+    assert _raise_occurrence(outcome) == _locus(comparisons[0])
+    assert _raise_occurrence(outcome) != _locus(comparisons[1])
 
 
 def _atom_names(formula) -> set[str]:
@@ -105,12 +118,20 @@ def test_swapping_families_swaps_laws_without_collapsing_occurrences() -> None:
     }
 
 
-def _caller_outcomes(calls: str):
+def _caller_tree(calls: str) -> SourceFile:
     source = "def mixed(a, b, c, d):\n" "    return a < b and c in d\n" f"\n{calls}"
-    tree = SourceFile(
+    return SourceFile(
         (source, "boolop-mixed-caller.py", blake3_512_of(source.encode())),
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )
+
+
+def _calls_of(calls: str) -> tuple[Call, ...]:
+    return tuple(node for node in _caller_tree(calls).nodes() if isinstance(node, Call))
+
+
+def _caller_outcomes(calls: str):
+    tree = _caller_tree(calls)
     comparisons = tuple(node for node in tree.nodes() if isinstance(node, Compare))
     outcomes = tuple(
         node.sugar().desugar(None) for node in tree.nodes() if isinstance(node, Call)
@@ -132,16 +153,16 @@ def _formal_occurrence(compare: Compare) -> str:
 
 
 def test_first_leg_halt_blocks_toxic_and_safe_membership_with_exact_state() -> None:
-    (toxic, safe), comparisons = _caller_outcomes(
-        "mixed(None, 1, None, 3)\n" "mixed(None, 1, 1, [1])\n"
-    )
+    source_calls = "mixed(None, 1, None, 3)\n" "mixed(None, 1, 1, [1])\n"
+    (toxic, safe), comparisons = _caller_outcomes(source_calls)
+    toxic_call, safe_call = _calls_of(source_calls)
     toxic_halt = _only_halted(toxic)
     safe_halt = _only_halted(safe)
 
-    first_occurrence = str(comparisons[0].sugar().site)
-    assert toxic_halt.effect.occurrence_id == first_occurrence
-    assert safe_halt.effect.occurrence_id == first_occurrence
-    assert toxic_halt.effect.occurrence_id != _formal_occurrence(comparisons[1])
+    # Each call raises at the first leg, stamped with its own call frame.
+    assert toxic_halt.effect.occurrence_id == _locus(comparisons[0], toxic_call)
+    assert safe_halt.effect.occurrence_id == _locus(comparisons[0], safe_call)
+    assert toxic_halt.effect.occurrence_id != _locus(comparisons[1], toxic_call)
     assert toxic_halt.state is not None
     assert safe_halt.state is not None
     assert toxic_halt.state == safe_halt.state

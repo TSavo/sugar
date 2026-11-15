@@ -8,7 +8,9 @@ from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 from sugar_lift_py_tests.ir import and_, atomic, make_var, not_
+from sugar_lift_py_tests.occurrence import call_frame_path, occurrence_key
 from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
@@ -44,6 +46,21 @@ def _pair_sites(tree: SourceFile):
 
 def _occurrence(site) -> str:
     return str(site)
+
+
+def _raise_locus(site, call: Call) -> str:
+    """A ``TypeError`` raised at ``site`` inside ``call``: its ``file:line:col``
+    locus (``AuthenticatedRaiseLocus.of``, never the fragment's repr, #7808),
+    stamped with the call frame it was raised in where it crossed the call
+    (``call_site_value.call_owned``)."""
+    locus = AuthenticatedRaiseLocus.of(site).value
+    return f"{locus}@{'/'.join(call_frame_path(call.fragment, ()))}"
+
+
+def _undecided_occurrence(site) -> str:
+    """An undecided comparison's halt names its occurrence by the site's
+    coordinate CID (``comparison_op_sugar.undecided_dispatch_faces``)."""
+    return occurrence_key(site, ())
 
 
 def _only(outcome, kind):
@@ -98,11 +115,12 @@ def test_named_type_error_keeps_the_evaluated_leg_occurrence(
     tree = _tree("chain()\n", _helper(expression))
     sites = _pair_sites(tree)
     (outcome,) = _calls(tree)
+    call = next(node for node in tree.nodes() if isinstance(node, Call))
 
     halted = _only(outcome, Halted)
     assert halted.effect.exception_type_coordinate == _type_error_identity()
-    assert halted.effect.occurrence_id == _occurrence(sites[leg])
-    assert halted.effect.occurrence_id != _occurrence(sites[1 - leg])
+    assert halted.effect.occurrence_id == _raise_locus(sites[leg], call)
+    assert halted.effect.occurrence_id != _raise_locus(sites[1 - leg], call)
 
 
 def test_undecidable_ordering_legs_keep_exact_guards_and_occurrences() -> None:
@@ -127,25 +145,31 @@ def test_undecidable_ordering_legs_keep_exact_guards_and_occurrences() -> None:
 
 
 @pytest.mark.parametrize(
-    ("expression", "raise_atoms", "identity_first"),
+    ("expression", "raising_legs", "identity_first"),
     (
         (
             "a < b == c",
-            {"python.lt_dispatch_raises", "python.eq_dispatch_raises"},
+            {"UndecidedCompare:Lt", "UndecidedCompare:Eq"},
             False,
         ),
-        ("a is b < c", {"python.lt_dispatch_raises"}, True),
+        ("a is b < c", {"UndecidedCompare:Lt"}, True),
         (
             "a in b < c",
-            {"python.contains_dispatch_raises", "python.lt_dispatch_raises"},
+            {"UndecidedCompare:In", "UndecidedCompare:Lt"},
             False,
         ),
     ),
     ids=("ordering-equality", "identity-ordering", "membership-ordering"),
 )
 def test_mixed_chain_legs_retain_separate_exception_laws(
-    expression: str, raise_atoms: set[str], identity_first: bool
+    expression: str, raising_legs: set[str], identity_first: bool
 ) -> None:
+    """Each leg whose operands' types are undecided may raise by its own
+    law: the rich method (``__lt__`` / ``__eq__`` / ``__contains__``) Python
+    selects was not looked at, so the leg completes under
+    ``python:compare.completes`` or halts at its own site with the undecided
+    member (``UndecidedCompare:<op>``).  ``is`` runs no user code and never
+    halts."""
     tree = _tree("", f"def f(a, b, c):\n    return {expression}\n")
     compare = next(node for node in tree.nodes() if isinstance(node, Compare))
     sugar = compare.sugar()
@@ -154,25 +178,14 @@ def test_mixed_chain_legs_retain_separate_exception_laws(
 
     halted = tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
 
-    def atoms(formula):
-        name = getattr(formula, "name", None)
-        if isinstance(name, str):
-            yield formula
-        for operand in getattr(formula, "operands", ()):
-            yield from atoms(operand)
-
-    observed = {
-        atom.name
-        for exit_ in halted
-        for atom in atoms(exit_.guard)
-        if getattr(atom, "name", "").endswith("dispatch_raises")
-    }
-    assert observed == raise_atoms
+    assert {exit_.effect.producer_node_owner for exit_ in halted} == raising_legs
     occurrences = {exit_.effect.occurrence_id for exit_ in halted}
     if identity_first:
-        assert occurrences == {_occurrence(sugar.values[1].site)}
+        assert occurrences == {_undecided_occurrence(sugar.values[1].site)}
     else:
-        assert occurrences == {_occurrence(value.site) for value in sugar.values}
+        assert occurrences == {
+            _undecided_occurrence(value.site) for value in sugar.values
+        }
 
 
 def test_identity_first_leg_is_not_a_native_operation_carrier() -> None:

@@ -87,15 +87,10 @@ def _through_assertion_boundary(outcome: ExitSet, expected: str) -> ExitSet:
 def _returned_term(completed: Completed) -> TermValue:
     value = completed.value
     if isinstance(value, CallSiteValue):
+        # The dug floor is the value the call returned
+        # (``_project_authenticated_source_return``), not the callee's block.
         value = value._dig_floor_or_none(None, owner="test_compare_through_if_sugar")
         assert value is not None
-        returns = tuple(
-            entry
-            for entry in value.statements
-            if isinstance(entry, (ReturnValue, GuardedReturn))
-        )
-        assert len(returns) == 1
-        value = returns[0]
     if isinstance(value, GuardedReturn):
         value = value.value
     if isinstance(value, ReturnValue):

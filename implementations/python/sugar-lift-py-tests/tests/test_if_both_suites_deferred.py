@@ -46,13 +46,15 @@ def _helper_outcome(source: str):
 
 
 def _guarded_returns(exits):
-    # ``textwrap`` is not enrolled: its call's may-raise face returns nothing.
+    # ``textwrap`` is not enrolled: its call may raise, and ``bool()`` of the
+    # object it returns (no decided type) may raise at the ``if``
+    # (``IfSugar.test``, the one truth rule).  Neither halt returns anything.
     (face,) = [face for face in exits.exits if isinstance(face, Completed)]
-    assert [
+    assert sorted(
         other.effect.producer_node_owner
         for other in exits.exits
         if other is not face
-    ] == ["UnknownCallee:textwrap.dedent"]
+    ) == ["IfSugar.test", "UnknownCallee:textwrap.dedent"]
     return [
         entry
         for entry in face.value.record.statements
