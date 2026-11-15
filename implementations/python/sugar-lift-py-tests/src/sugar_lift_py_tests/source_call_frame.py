@@ -5,135 +5,8 @@ from sugar_lift_python_source.canonical import cid_of_json
 from sugar_source_tree.binding_provenance import BindingCoordinateV1
 from sugar_source_tree.binding_provenance import BoundBindingStateV1
 from sugar_source_tree.binding_state import BindingEntryV1
-from sugar_source_tree.fragment import SourceMemento
 
 from .context_manager_resolution import SourceFragmentCoordinateV1
-
-
-def _term_as_semantic_value(value: object, *, path: str) -> object:
-    """A wire-shaped term, respelled as the VALUE it already is.
-
-    ``MutableGlobalBindingV1.term`` is carried into constructed-value testimony
-    through ``SourceVisibleCallFrameV1.mutable_global_bindings`` ->
-    ``CallSiteSugar.source_call_frame``.  The wire dialect spells a ctor's fixed
-    argument sequence ``list`` -- and ConstructedValueV2 refuses to snapshot a
-    mutable container, correctly, because a snapshot of one authenticates a
-    moment rather than a value.  The sequence cannot move: it arrives as a
-    ``*args`` tuple and nothing appends to it.
-
-    The respelling happens HERE, at the carrier, and not in the wire builders:
-    the verification dialect reads these same terms through ``isinstance(args,
-    list)`` guards, so retagging them at the source would turn a loud refusal
-    into a silently-skipped branch.  Only the copy that becomes testimony is
-    respelled; the wire keeps its wire shape, and ``cid_of_json`` encodes a
-    tuple and a list identically, so no CID moves.
-
-    Categories are CLOSED.  An unrecognised member is a loud refusal, never a
-    reflective guess -- a term carrying something genuinely mutable must still
-    refuse, which is the whole content of the category law being honored.
-    """
-    if isinstance(value, dict):
-        frozen = {}
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise SourceCallBindingGap(
-                    f"mutable global binding term at {path} carries a "
-                    f"non-string key {type(key).__name__}"
-                )
-            frozen[key] = _term_as_semantic_value(item, path=f"{path}.{key}")
-        return frozen
-    if isinstance(value, (list, tuple)):
-        return tuple(
-            _term_as_semantic_value(item, path=f"{path}[{index}]")
-            for index, item in enumerate(value)
-        )
-    if value is None or isinstance(value, (str, bool, int, float)):
-        return value
-    raise SourceCallBindingGap(
-        f"mutable global binding term at {path} carries "
-        f"{type(value).__name__}, which is not a wire term value"
-    )
-
-
-@dataclass(frozen=True)
-class MutableGlobalBindingV1:
-    source_cid: str
-    binding_occurrence: SourceMemento
-    name: str
-    kind: str
-    term: object = field(compare=False)
-    line: int
-    col: int
-    cid: str = field(init=False)
-
-    def __post_init__(self) -> None:
-        if self.binding_occurrence.source_cid != self.source_cid:
-            raise ValueError("mutable global binding occurrence/source CID mismatch")
-        if not self.name or self.kind not in {"dict", "list", "set"}:
-            raise ValueError("mutable global binding requires a closed mutable kind")
-        # Respell FIRST so an unrecognised member is a typed refusal naming its
-        # path, not `cid_of_json`'s bare TypeError -- but hash the wire spelling
-        # below, because `cid_of_json` admits a list and refuses a tuple. The
-        # slot carried into testimony is the value; the coordinate is the wire.
-        semantic_term = _term_as_semantic_value(self.term, path="term")
-        object.__setattr__(
-            self,
-            "cid",
-            cid_of_json(
-                {
-                    "kind": "mutable-global-binding",
-                    "schemaVersion": "1",
-                    "sourceCid": self.source_cid,
-                    "bindingOccurrence": self.binding_occurrence.to_dict(),
-                    "name": self.name,
-                    "mutableKind": self.kind,
-                    "term": self.term,
-                    "line": self.line,
-                    "col": self.col,
-                }
-            ),
-        )
-        object.__setattr__(self, "term", semantic_term)
-
-
-@dataclass(frozen=True)
-class ImmutableGlobalBindingV1:
-    """One admitted module value pin, carried into a frame of that module.
-
-    ``value_pins`` admits a module binding only when its value is immutable by
-    construction and the module never rebinds the name; the pinned term is the
-    value at every use site.  A function or class body of that module reads
-    the name as that value, exactly as the same literal written inline -- not
-    as a free symbolic name.  ``value`` is the constructed ground Floor of the
-    binding's own right-hand side; ``term`` is the pin's wire term.
-    """
-
-    source_cid: str
-    name: str
-    term: object
-    line: int
-    value: object = field(compare=False)
-    cid: str = field(init=False)
-
-    def __post_init__(self) -> None:
-        if not self.name or "." in self.name:
-            raise SourceCallBindingGap(
-                "immutable global binding requires one module-level name"
-            )
-        object.__setattr__(
-            self,
-            "cid",
-            cid_of_json(
-                {
-                    "kind": "immutable-global-binding",
-                    "schemaVersion": "1",
-                    "sourceCid": self.source_cid,
-                    "name": self.name,
-                    "term": self.term,
-                    "line": self.line,
-                }
-            ),
-        )
 
 
 def _reauthenticate_binding_coordinates(coordinates: tuple) -> None:
@@ -451,12 +324,6 @@ class SourceVisibleCallFrameV1:
     )
     generator_steps: tuple | None = field(default=None, compare=False, repr=False)
     generator_step_fragment_cids: tuple[str, ...] = ()
-    mutable_global_bindings: tuple[MutableGlobalBindingV1, ...] = field(
-        default=(), compare=False
-    )
-    immutable_global_bindings: tuple[ImmutableGlobalBindingV1, ...] = field(
-        default=(), compare=False
-    )
     #: ``X = 1 // 0`` at module level: the module never finishes importing,
     #: so a call into any frame of it is that halt.  The one ``Halted`` arm
     #: of the first such constant in source order, reduced once per module.
@@ -505,20 +372,6 @@ class SourceVisibleCallFrameV1:
     frame_cid: str = field(init=False)
 
     def __post_init__(self) -> None:
-        if any(
-            binding.source_cid != self.source_identity_cid
-            for binding in self.mutable_global_bindings
-        ):
-            raise SourceCallBindingGap(
-                "mutable global binding source does not match source frame identity"
-            )
-        if any(
-            binding.source_cid != self.source_identity_cid
-            for binding in self.immutable_global_bindings
-        ):
-            raise SourceCallBindingGap(
-                "immutable global binding source does not match source frame identity"
-            )
         if self.constructed_new_method is not None:
             from sugar_lift_py_tests.floor.class_definition_value import (
                 ConstructedClassMethodV1,
@@ -570,18 +423,11 @@ class SourceVisibleCallFrameV1:
             "parameterKinds": list(self.parameter_kinds),
             "defaultFragmentCids": list(self.default_fragment_cids),
             "generatorStepFragmentCids": list(self.generator_step_fragment_cids),
-            "mutableGlobalBindingCids": [
-                item.cid for item in self.mutable_global_bindings
-            ],
             # A decorated module name is bound by the one decorator
             # application (``DecoratedDefinitionRef``), never by a frame; the
             # preimage keeps its constant slot so no frame CID moves.
             "decoratedClassBindingCids": [],
         }
-        if self.immutable_global_bindings:
-            preimage["immutableGlobalBindingCids"] = [
-                item.cid for item in self.immutable_global_bindings
-            ]
         if self.module_halt is not None:
             effect = self.module_halt.effect
             preimage["moduleHalt"] = {

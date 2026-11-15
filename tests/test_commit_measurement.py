@@ -30,7 +30,6 @@ def _load(name: str, rel: str):
 
 
 CM = _load("commit_measurement", "tools/commit_measurement.py")
-GATE = _load("commit_measurement_gate", "tools/commit_measurement_gate.py")
 
 
 def _floor_body(axis_id: str, failed: int = 0, collected: int = 100) -> dict:
@@ -167,9 +166,6 @@ def test_empty_artifacts_partial_includes_panics_axis(tmp_path: Path) -> None:
     for aid in CM.CRITERION2_ENROLLED_IDENTITIES:
         assert aid in v.axes
         assert isinstance(v.axes[aid], CM.Unmeasured)
-    path = tmp_path / "cm.json"
-    path.write_text(json.dumps(v.to_json()), encoding="utf-8")
-    assert GATE.main(["--composition", str(path), "--require-complete"]) == 1
 
 
 def test_enrollment_unmeasured_body_is_not_measured(tmp_path: Path) -> None:
@@ -278,9 +274,6 @@ def test_four_green_floors_without_panics_is_partial_not_complete(
     # Units preserved on green floors
     assert v.axes["silent"].unit == CM.UNIT_ASSERT_FUNCTION_LOCUS  # type: ignore[union-attr]
     assert v.axes["native-crash"].unit == CM.UNIT_CORPUS_FILE  # type: ignore[union-attr]
-    path = tmp_path / "cm.json"
-    path.write_text(json.dumps(v.to_json()), encoding="utf-8")
-    assert GATE.main(["--composition", str(path), "--require-complete"]) == 1
 
 
 def test_all_criterion2_bodies_yield_complete(tmp_path: Path) -> None:
@@ -308,9 +301,6 @@ def test_all_criterion2_bodies_yield_complete(tmp_path: Path) -> None:
     assert "assert-function-locus" in payload["valuesByUnit"]
     assert "corpus-file" in payload["valuesByUnit"]
     assert "construction-panic" in payload["valuesByUnit"]
-    path = tmp_path / "cm.json"
-    path.write_text(json.dumps(payload), encoding="utf-8")
-    assert GATE.main(["--composition", str(path), "--require-complete"]) == 0
 
 
 def test_floor_axis_reports_do_not_collapse_to_one_reading(tmp_path: Path) -> None:

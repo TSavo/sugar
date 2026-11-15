@@ -145,8 +145,6 @@ class SourceResolutionSession:
     __slots__ = (
         "enabled",
         "enrolled_distributions",
-        "export_resolutions",
-        "export_terminals",
         "dependency_graphs",
     )
 
@@ -165,13 +163,6 @@ class SourceResolutionSession:
         # MaterializeModule. An empty set is authoritative emptiness; there is
         # no unknown/None state that can silently admit every distribution.
         self.enrolled_distributions = enrolled_distributions
-        # (distribution_artifact_cid, module_name, exported_name) -> pure-entry
-        # resolution (includes module-structural reexport warrants; no path
-        # import_binding_cid).
-        self.export_resolutions: dict[tuple[str, str, str], Any] = {}
-        # Same key -> definition/gap only (no warrants). Shared by reexport hops
-        # that carry path warrants and cannot use export_resolutions.
-        self.export_terminals: dict[tuple[str, str, str], Any] = {}
         # top_level -> DependencyArtifactGraph for this session (and walk). Call
         # sites used to mint a fresh ``dependency_graphs={}`` per frame /
         # prefix / populate path, re-entering authenticate_dependency_top_level
@@ -182,22 +173,6 @@ class SourceResolutionSession:
         # context) — process-resident top-level cache remains legal; this
         # table deletes the path-local re-ask disease.
         self.dependency_graphs: dict[str, Any] = {}
-
-    # -- export resolution memo ------------------------------------------
-
-    def export_hit(self, key: tuple[str, str, str]) -> Any | None:
-        return self.export_resolutions.get(key) if self.enabled else None
-
-    def remember_export(self, key: tuple[str, str, str], result: Any) -> None:
-        if self.enabled:
-            self.export_resolutions[key] = result
-
-    def export_terminal_hit(self, key: tuple[str, str, str]) -> Any | None:
-        return self.export_terminals.get(key) if self.enabled else None
-
-    def remember_export_terminal(self, key: tuple[str, str, str], result: Any) -> None:
-        if self.enabled:
-            self.export_terminals[key] = result
 
 
 def session_or_new(

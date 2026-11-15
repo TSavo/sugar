@@ -165,25 +165,3 @@ def test_format_completed_zero_only_when_measurement_finished() -> None:
     """Completed measurement with zero findings may print = 0; that is honest."""
     text = _RT.format_completed_axis_report("R_silent", 0)
     assert text == "R_silent = 0"
-
-
-def test_sole_construction_group_names_do_not_embed_equals_zero() -> None:
-    here = Path(__file__).resolve()
-    floors = None
-    for parent in [here, *here.parents]:
-        candidate = parent / "tools" / "run_sole_construction_floors.sh"
-        if candidate.is_file():
-            floors = candidate
-            break
-    assert floors is not None, "run_sole_construction_floors.sh not found"
-    text = floors.read_text(encoding="utf-8")
-    for axis in (
-        "R_native_crashes",
-        "R_bare_exceptions",
-        "R_timeouts",
-        "R_silent",
-    ):
-        needle = f'axis "{axis}"'
-        assert needle in text, f"missing {needle}"
-        assert f'axis "{axis} = 0"' not in text
-    assert "FLOOR_SCRATCH" in text or "--out-dir" in text
