@@ -143,9 +143,9 @@ def callsite(monkeypatch):
     seen = []
     project = CallSiteValue.project_producer_outcome
 
-    def spy(self, outcome, **kwargs):
+    def spy(self, outcome, ctx):
         seen.append(self)
-        return project(self, outcome, **kwargs)
+        return project(self, outcome, ctx)
 
     monkeypatch.setattr(CallSiteValue, "project_producer_outcome", spy)
     _function(_CALLEE + "def test_f():\n    a = f()\n    return 3\n")
