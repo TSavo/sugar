@@ -6564,9 +6564,9 @@ def _ground_value(node) -> "Optional[Node]":
 def ground_subscript_key(node) -> "Optional[object]":
     """The ``int``/``str`` a key expression's ground value is, or None.
 
-    The one way a store, a read or a dict display decides which field (or
-    member) a key names (``ObjectPlaceStateV1._subscript_coordinate``,
-    ``container_mutation.path_steps``, ``container_mutation._display_member``):
+    The one way a store, a read or a dict display decides which member a
+    key names (``container_mutation.path_steps``,
+    ``container_mutation._display_member``):
     the key expression's ground value (``_ground_value``: a literal, ``-``
     over a ground int, ground int arithmetic, or a key reference whose
     ``of`` is ground), as a shape is decided; ``o[-1]`` names the field
@@ -10187,8 +10187,9 @@ class FunctionDef(Statement):
 
             One store target (``o.x = ...``, ``o.x: T = ...``, ``d[k] =
             ...``) is the store the statement's own sugar is, built by the
-            one store ladder (``_valued_store_target_sugar``; a local
-            receiver's ``ReceiverFieldStoreStatement.keyed_store``) with its
+            one store ladder (``_valued_store_target_sugar``; a field store
+            on a receiver a name holds is its
+            ``ReceiverFieldStoreStatement.keyed_store``) with its
             value read through the statement's evaluation key: the resume
             binds the resumed value there and runs the store
             (``KeyedStoreSugar`` for a keyed place).
@@ -13656,8 +13657,9 @@ def _threaded_store_targets(statement, scope, store_for, *, rewrite_targets=Fals
     ``target = <its value read through a key>`` substituted by
     ``Assign.substitute`` (``Assign._store_target_statement``), or None for
     a target list no store statement is built for.  That statement's
-    binding (``_store_target_binding``, a ``ReceiverFieldStoreStatement``'s
-    post-state, a ``ContainerMutationStatement``'s aliases) is threaded
+    binding (a ``ReceiverFieldStoreStatement``'s post-state, a coordinate
+    receiver's field projection, a ``ContainerMutationStatement``'s
+    aliases) is threaded
     into the scope every later target is evaluated in, and into the
     statement's binding, exactly as the block threads a single store's.  So
     ``a = a[0] = v`` stores into the new ``a``, ``a[0] = a = v`` into the
@@ -13725,33 +13727,22 @@ def _valued_store_target_sugar(target, value_sugar, site, evaluation=None):
     ``o.x = v`` and ``o.x: T = v`` are the SAME runtime store — an annotation
     is never checked at runtime, so it states nothing and may not move the
     store to a different arm: ``o.x: T = v`` is the statement ``o.x = v``
-    (``AnnAssign._store_assignment``).  An authenticated object place's field
-    is a place assign, a constructed receiver is a receiver field store, and
-    any other receiver is the typed runtime store effect.  A subscript store
-    on a name or a path from one never reaches here: it is the one
-    container-mutation door's statement (``Assign._container_mutation``).
-    Returns ``None`` for a target this ladder does not own, so the caller
-    stays loud.
+    (``AnnAssign._store_assignment``).  A field store on a receiver a name
+    holds -- an object a constructor call built included -- is never here:
+    it is the one receiver field store (``Assign._receiver_field_store_state``,
+    ``ReceiverFieldStoreStatement``).  A coordinate receiver is a receiver
+    field store sugar, and any other receiver is the typed runtime store
+    effect.  A subscript store on a name or a path from one never reaches
+    here: it is the one container-mutation door's statement
+    (``Assign._container_mutation``).  Returns ``None`` for a target this
+    ladder does not own, so the caller stays loud.
 
     ``evaluation`` is the statement's key when a later read of the place
     reads it (``_store_evaluation``): the store then evaluates ``v`` once,
     binds it under the key, and stores the value read through it
     (``KeyedStoreSugar``).
     """
-    from sugar_lift_py_tests.sugar.place_assign_sugar import PlaceAssignSugar
-
     if isinstance(target, Attribute):
-        if isinstance(target.value, ObjectPlaceStateV1):
-            return _keyed_place_assign_sugar(
-                PlaceAssignSugar,
-                receiver=target.value.store_receiver_sugar(),
-                selector_kind="attribute",
-                selector=target.attr,
-                value_sugar=value_sugar,
-                site=site,
-                evaluation=evaluation,
-                label=f".{target.attr}",
-            )
         if isinstance(target.value, (BindingCoordinateRef, ConstructedReceiverRef)):
             from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
                 ReceiverFieldStoreSugar,
@@ -13801,112 +13792,19 @@ def _valued_store_target_sugar(target, value_sugar, site, evaluation=None):
     return None
 
 
-def _keyed_place_assign_sugar(
-    place_assign,
-    *,
-    receiver,
-    selector_kind,
-    selector,
-    value_sugar,
-    site,
-    evaluation,
-    label,
-):
-    """A store on an authenticated object place.  With the statement's key
-    (``_store_evaluation``) the statement evaluates the value once, binds it
-    under the key, and stores the value read through it
-    (``KeyedStoreSugar``); a later read of the field reads the same key."""
-    if evaluation is None:
-        return place_assign(
-            receiver=receiver,
-            selector_kind=selector_kind,
-            selector=selector,
-            value=value_sugar,
-            site=site,
-        )
-    from sugar_lift_py_tests.sugar.assign_sugar import KeyedStoreSugar
-
-    return KeyedStoreSugar(
-        value=value_sugar,
-        store=place_assign(
-            receiver=receiver,
-            selector_kind=selector_kind,
-            selector=selector,
-            value=_place_read_sugar(evaluation, label, site),
-            site=site,
-        ),
-        evaluation=evaluation,
-        site=site,
-    )
-
-
-def _store_target_binding(statement, target, scope):
-    """Thread an authenticated object place forward across a field store.
-
-    Every name bound to that exact object identity carries the stored field
-    onward. A receiver that is not an authenticated place threads nothing —
-    the store is an effect, not a lexical binding.  An item store
-    (``o[k] = v``, ``o[k]: T = v``) is never here: it is the one
-    container-mutation door's statement, whose binding rebinds every holder
-    of the object (``Assign._container_mutation``).
-
-    The store carries its statement's key (``_store_evaluation``): the
-    statement evaluates the value once and binds it there, and a later read
-    of the field reads that key (``ObjectPlaceStateV1.attribute_read``).  A
-    statement never substituted carries no key and threads nothing.
-    """
-    if not isinstance(target, Attribute) or not isinstance(
-        target.value, ObjectPlaceStateV1
-    ):
-        return None
-    evaluation = _store_evaluation(statement, target)
-    if evaluation is None:
-        return None
-    stored = statement.value
-    if isinstance(stored, (Yield, YieldFrom)):
-        stored = _resumed_place_value(statement, target, evaluation)
-    updated = target.value.with_attribute_store(
-        target.attr, stored, statement.fragment, evaluation
-    )
-    if updated is None:
-        return None
-    return {
-        name: replace(entry, state=updated)
-        for name, entry in scope.items()
-        if isinstance(name, str)
-        and isinstance(entry, BindingEntryV1)
-        and isinstance(entry.state, ObjectPlaceStateV1)
-        and entry.state.object_identity_cid == target.value.object_identity_cid
-    }
-
-
-def _resumed_place_value(statement, target, evaluation):
-    """What ``o.x = yield v`` on an object place puts in the field: the
-    value the resume brings, which the yield-assign step binds under this
-    store statement's key (``YieldAssignStepV1``), read through that key
-    (``place``) as every later read of the field reads it.  Never the yield
-    node itself: threaded into the place, it would ride every later read of
-    ``o`` (the field's ``of``, the object's ``values``) as a suspension that
-    statement does not own."""
-    return _evaluation_ref(
-        statement, statement.value.span, evaluation, f".{target.attr}", place=True
-    )
-
-
 def _keyed_store_target(target) -> bool:
     """Whether substitution threads a store to ``target`` into later reads
     of the same place: ``o.attr`` on a coordinate receiver
-    (``_receiver_field_projection_binding``) or on an authenticated object
-    place (``_store_target_binding``).  Such a store carries its statement's
-    evaluation key, and every later read of the place is a reference to it.
-    An item store is the one container-mutation door's statement, keyed by
-    that door (``Assign._container_mutation``)."""
+    (``_receiver_field_projection_binding``).  Such a store carries its
+    statement's evaluation key, and every later read of the place is a
+    reference to it.  A field store on a receiver a name holds is the one
+    receiver field store, whose post-state every later read of the object
+    reads (``ReceiverFieldStoreStatement``); an item store is the one
+    container-mutation door's statement, keyed by that door
+    (``Assign._container_mutation``)."""
     if not isinstance(target, Attribute):
         return False
-    return (
-        isinstance(target.value, ObjectPlaceStateV1)
-        or _receiver_coordinate_cid(target.value) is not None
-    )
+    return _receiver_coordinate_cid(target.value) is not None
 
 
 def _store_evaluation(statement, target):
@@ -13927,7 +13825,6 @@ def _receiver_field_projection_binding(statement, target, scope):
     evaluation = _store_evaluation(statement, target)
     receiver_coordinate_cid = _receiver_coordinate_cid(target.value)
     if evaluation is None or receiver_coordinate_cid is None:
-        # No key, or an object place (``_store_target_binding`` threads it).
         return None
     prior = scope.get(_RECEIVER_FIELD_PROJECTIONS)
     projections = dict(prior) if isinstance(prior, dict) else {}
@@ -14089,9 +13986,10 @@ class Assign(Statement):
         <its value read through that key>`` (``_store_target_statement``),
         substituted by this same ``substitute`` in the scope the targets
         before it left (``_threaded_store_targets``): a store on a decided
-        local list/dict/set is its ``ContainerMutationStatement``, on a local
-        receiver its ``ReceiverFieldStoreStatement``, on an object place or
-        a coordinate receiver its keyed store.  There is no second store
+        local list/dict/set is its ``ContainerMutationStatement``, on a
+        receiver a name holds (an object a constructor call built included)
+        its ``ReceiverFieldStoreStatement``, on a coordinate receiver its
+        keyed store.  There is no second store
         door: the state a store leaves for later reads of the object is the
         state ``o.x = v`` alone leaves.  The store statements ride the
         statement as ``stores``; its sugar runs each after the value, left to
@@ -14476,6 +14374,13 @@ class Assign(Statement):
     def _receiver_field_store_state(self, scope, new_value):
         """Thread ``name.attr = value`` into later reads of that exact name.
 
+        The one field store on a receiver a name holds, whatever it was
+        given: an object a constructor call built (``ObjectPlaceStateV1``), a
+        join of objects, any other value.  Every later read of the object, or
+        of one of its fields, reads the receiver's post-state
+        (``ReceiverFieldStoreState``); no state of the object keeps a field
+        of its own.
+
         Python evaluates ``value`` before the target, so the receiver is the
         name read as the value left it (``_scope_after``): a call on it in
         the value (``self.y = 1 + super().m()``) has run, and the store
@@ -14505,7 +14410,7 @@ class Assign(Statement):
         # (``KeyedStoreSugar``).  ``o.x = yield v`` puts the value the resume
         # brings there (``YieldAssignStepV1``), read through the same key:
         # never the yield node, which would ride every later read of ``o`` as
-        # a suspension this statement does not own (``_resumed_place_value``).
+        # a suspension this statement does not own.
         evaluation = self._evaluation_key(scope)
         stored = _evaluation_ref(
             self,
@@ -15012,11 +14917,6 @@ class Assign(Statement):
             if isinstance(target, Name):
                 return {target.id: self.value}
             if isinstance(target, (Attribute, Subscript)):
-                threaded = _store_target_binding(self, target, scope)
-                if threaded is not None:
-                    return threaded
-                if isinstance(target.value, ObjectPlaceStateV1):
-                    return None
                 projected = _receiver_field_projection_binding(self, target, scope)
                 if projected is not None:
                     return projected
@@ -15130,7 +15030,7 @@ class Assign(Statement):
             source_cid=self.unit.source_cid,
             artifact_cid=self.unit.source_cid,
         )
-        from .backend import Child, Children, Leaf, materialize
+        from .backend import Child, Leaf, materialize
         from .shadow import ShadowNode, _handle_of
 
         return materialize(
@@ -15144,55 +15044,14 @@ class Assign(Statement):
                     ("construction_testimony", Leaf(testimony)),
                     ("object_identity_cid", Leaf(object_coordinate.cid)),
                     ("base", Child(_handle_of(constructor))),
-                    ("selectors", Leaf(())),
-                    ("values", Children(())),
-                    ("value_testimonies", Leaf(())),
-                    ("version_cids", Leaf(())),
-                    ("version_records", Leaf(())),
-                    ("prior_version_cids", Leaf(())),
-                    ("store_occurrence_cids", Leaf(())),
-                    ("invalidated_by_opaque_call", Leaf(False)),
                     # The testimony above names the call; a read of the
                     # object reads this assignment's key.
                     ("evaluation", Leaf(reference.evaluation)),
                     ("name", Leaf(reference.name)),
-                    ("store_evaluations", Leaf(())),
                 ),
             ),
             self.reporter,
         )
-
-    def post_binding_statement(self, binding):
-        # ``o = C()`` keeps its call: the statement evaluates it here, once,
-        # and binds what it completed with under its key, which every read of
-        # ``o`` (``ObjectPlaceStateV1``) reads.  ``o.x = v`` keeps ``v``: the
-        # statement evaluates it once and binds it under its key, which every
-        # later read of ``o.x`` reads (``ObjectPlaceStateV1.attribute_read``).
-        # ``o[k] = v`` is the one container-mutation door's statement, never
-        # an ``Assign`` with an item target (``_container_mutation``).
-        if len(self.targets) != 1 or not isinstance(self.targets[0], Attribute):
-            return self
-        prior = self.targets[0].value
-        if not isinstance(prior, ObjectPlaceStateV1):
-            return self
-        updated = next(
-            (
-                entry.state
-                for entry in binding.values()
-                if isinstance(entry, BindingEntryV1)
-                and isinstance(entry.state, ObjectPlaceStateV1)
-                and entry.state.object_identity_cid == prior.object_identity_cid
-            ),
-            None,
-        )
-        if updated is None:
-            return self
-        from .shadow import rewrite
-
-        target = self.targets[0]
-        if updated.attribute_field(target.attr) is None:
-            return self
-        return rewrite(self, targets=(rewrite(target, value=updated),))
 
     def chained_store_sugar(self, value_sugar):
         """``a = o.x = d[k] = <rhs>``: the one chained assignment of
@@ -15695,7 +15554,13 @@ class AnnAssign(Statement):
         are.  There is no annotated store of its own.  Python evaluates the
         annotation of such a target only in a module or class body, after the
         store, and never stores it; in a function body it is not evaluated at
-        all, so the store is the whole statement.
+        all, so the store is the whole statement.  In a module body
+        (``_evaluates_annotation``) the statement is the store, then the
+        annotation evaluated as an expression statement
+        (``_annotation_statement``) in the scope the store leaves, spliced
+        into the block (``_Splice``): the annotation may run code, and every
+        face of it is the statement's.  A class body refuses a non-Name
+        annotated target.
 
         A Name target with a value is ``y = e``: the statement evaluates ``e``
         once, here, and carries its key, so every later read of ``y`` is a
@@ -15704,7 +15569,18 @@ class AnnAssign(Statement):
         from .shadow import rewrite, rewrite_with_leaves
 
         if self.value is not None and isinstance(self.target, (Attribute, Subscript)):
-            return self._store_assignment().substitute(scope)
+            store = self._store_assignment().substitute(scope)
+            if not self._evaluates_annotation():
+                return store
+            # The annotation runs after the store, in the scope the block
+            # threads past it: the store's binding, then every object its
+            # calls may have changed (``container_mutation.havoc_after``).
+            from .container_mutation import havoc_after
+
+            after = havoc_after(
+                store, scope, {**scope, **_store_statement_binding(store, scope)}
+            )
+            return _Splice((store, self._annotation_statement().substitute(after)))
         changed = {}
         for fld in ("annotation", "value"):
             new, d = self._substitute_field(getattr(self, fld), scope)
@@ -15761,6 +15637,34 @@ class AnnAssign(Statement):
 
         return recast(self, "Assign", targets=(self.target,), value=self.value)
 
+    def _annotation_statement(self):
+        """The annotation as the expression statement Python evaluates after
+        the store in a module body (``_evaluates_annotation``): its value is
+        discarded, never stored, and every face of it is this statement's.
+        The same occurrence (``shadow.recast``)."""
+        from .shadow import recast
+
+        return recast(self, "Expr", value=self.annotation)
+
+    def _evaluates_annotation(self) -> bool:
+        """Whether Python evaluates this statement's annotation when it
+        runs: an attribute/subscript target with a value, in a module body
+        (no class, function or lambda body holds it, ``scope_holding``), in
+        a module that does not postpone its annotations (``from __future__
+        import annotations``).  A function body never evaluates it; a class
+        body refuses a non-Name annotated target."""
+        if self.value is None or not isinstance(self.target, (Attribute, Subscript)):
+            return False
+        unit = self.unit
+        if unit.scope_holding(self.line_col_span()) is not None:
+            return False
+        return not any(
+            isinstance(statement, ImportFrom)
+            and statement.module == "__future__"
+            and any(alias.name == "annotations" for alias in statement.names)
+            for statement in unit.typed_module.body
+        )
+
     def substitution_binding(self, scope):
         # Only an annotated assignment WITH a value binds; a bare `x: int` is a
         # declaration and binds nothing. A Name target binds to its own
@@ -15795,9 +15699,12 @@ class AnnAssign(Statement):
         passes through, never a stated post. A valued attribute/subscript
         target is the store ``Assign`` (``_store_assignment``): substitution
         makes it that statement, and never substituted its sugar is that
-        statement's.  A bare Attribute reuses the ordinary
-        expression-statement path for its receiver only.  Other bare non-Name
-        annotations stay loud."""
+        statement's.  In a module body it is the store and then the
+        annotation's evaluation (``_evaluates_annotation``), which only
+        substitution splices into the block: never substituted there, it
+        refuses by name rather than drop the annotation's evaluation.  A bare
+        Attribute reuses the ordinary expression-statement path for its
+        receiver only.  Other bare non-Name annotations stay loud."""
         if isinstance(self.target, Name) and self.value is not None:
             from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
 
@@ -15821,6 +15728,20 @@ class AnnAssign(Statement):
                 site=self.fragment,
             )
         if self.value is not None and isinstance(self.target, (Attribute, Subscript)):
+            if self._evaluates_annotation():
+                raise SugarNotWritten(
+                    blame=self.fragment,
+                    owner="AnnAssign._construct_sugar",
+                    observed=(
+                        "a module-body annotated store target constructed "
+                        "without substitution"
+                    ),
+                    requested=(
+                        "the store, then the annotation's evaluation, spliced "
+                        "into the module block by substitution"
+                    ),
+                    fix="construct the statement through its block's substitution",
+                )
             return self._store_assignment().sugar()
         return super()._construct_sugar()
 
@@ -23964,24 +23885,25 @@ class OpaqueObjectStateV1(Expression):
 
 
 class ObjectPlaceStateV1(Expression):
-    """Immutable field versions carried only inside runtime BindingEntryV1.
+    """The object a constructor call built, carried only inside runtime
+    BindingEntryV1.
 
     This is a constructed Node value, not a binding resolver or heap.  Its sole
     identity source is ``object_coordinate.cid``, authenticated from the exact
     construction occurrence.
 
     ``construction_testimony`` names the constructor call (``base``, the
-    reference's ``of``) and each of ``value_testimonies`` names a stored
-    expression (``values``): their source fragments and node shapes, never a
-    value computed for them at substitution (``_occurrence_testimony``).
+    reference's ``of``): its source fragment and node shape, never a value
+    computed for it at substitution (``_occurrence_testimony``).
 
-    A read of the object reads its latest state: the value its constructor
-    call completed with at the assignment, through the assignment's key
-    (``evaluation``, the reference the name was bound to), after every field
-    store on it so far, each stored value read through its store statement's
-    key (``store_evaluations``, parallel to ``selectors``).  A read of one
-    field reads that store's key (``attribute_read``, ``subscript_read``).
-    Nothing is evaluated again at a read.
+    A read of the object reads the value its constructor call completed with
+    at the assignment, through the assignment's key (``evaluation``, the
+    reference the name was bound to).  It keeps no fields of its own: a
+    field store on the object is the one receiver field store
+    (``Assign._receiver_field_store_state``), and every later read of the
+    object, or of one of its fields, reads the receiver's post-state
+    (``ReceiverFieldStoreState``) over this state.  Nothing is evaluated
+    again at a read.
     """
 
     object_coordinate: object
@@ -23989,17 +23911,9 @@ class ObjectPlaceStateV1(Expression):
     construction_testimony: object
     object_identity_cid: str
     base: Expression
-    selectors: Tuple[object, ...]
-    values: Tuple[Expression, ...]
-    value_testimonies: Tuple[object, ...]
-    version_cids: Tuple[str, ...]
-    version_records: Tuple[object, ...]
-    prior_version_cids: Tuple[Optional[str], ...]
-    store_occurrence_cids: Tuple[str, ...]
-    invalidated_by_opaque_call: bool
     evaluation: str
     name: str
-    _child_fields = ("base", "values")
+    _child_fields = ("base",)
 
     def substitute(self, scope):
         del scope
@@ -24007,52 +23921,7 @@ class ObjectPlaceStateV1(Expression):
 
     def _construct_sugar(self):
         self.validate_identity()
-        if self.invalidated_by_opaque_call:
-            # A call that may have run code holding this object came between
-            # its construction and this read: its fields are unknown, never
-            # the constructed (pre-call) value.
-            from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
-                ReceiverAfterCallSugar,
-            )
-
-            return ReceiverAfterCallSugar(
-                label=f"object:{self.object_identity_cid}", site=self.fragment
-            )
-        # The object as its constructor call left it, then each field store
-        # on it so far: the field set to the value its store completed with,
-        # read through that store's key.  Distinct fields commute, and each
-        # field holds its latest store only.
-        from sugar_lift_py_tests.sugar.receiver_field_store_state_sugar import (
-            ReceiverFieldStoreStateSugar,
-        )
-        from .object_identity import AttributeFieldCoordinateV1
-
-        state = self._object_sugar()
-        for selector, evaluation in zip(self.selectors, self._store_evaluations()):
-            if not isinstance(selector, AttributeFieldCoordinateV1) or not isinstance(
-                evaluation, str
-            ):
-                raise SugarNotWritten(
-                    blame=self.fragment,
-                    owner="ObjectPlaceStateV1",
-                    observed=(
-                        "a read of the whole object after a subscript store on "
-                        "it, or a store with no key"
-                    ),
-                    requested="the object's state after every store on it",
-                    fix=(
-                        "construct the object's item store state; never read "
-                        "the object as it was before the store"
-                    ),
-                )
-            attr = selector.attribute_name
-            state = ReceiverFieldStoreStateSugar(
-                state,
-                _place_read_sugar(evaluation, f".{attr}", self.fragment),
-                attr,
-                self.fragment,
-            )
-        return state
+        return self._object_sugar()
 
     def _object_sugar(self):
         """The value the constructor call completed with at its assignment,
@@ -24065,28 +23934,6 @@ class ObjectPlaceStateV1(Expression):
         return EvaluationRefSugar(
             evaluation=self.evaluation, name=self.name, site=self.fragment
         )
-
-    def store_receiver_sugar(self):
-        """The receiver of a store on this object (``o.x = v``, ``o[k] = v``):
-        which object the store writes into, read through its assignment's
-        key, or unknown after a call that may have changed it.  The store
-        target's state already holds the store itself
-        (``Assign.post_binding_statement``), so the receiver is the object,
-        never its fields read before the store."""
-        self.validate_identity()
-        if self.invalidated_by_opaque_call:
-            return self.sugar()
-        return self._object_sugar()
-
-    def _store_evaluations(self) -> tuple:
-        """The key of the store statement that put each field there,
-        parallel to ``selectors``."""
-        evaluations = getattr(self, "store_evaluations", None)
-        if not isinstance(evaluations, tuple) or len(evaluations) != len(
-            self.selectors
-        ):
-            return (None,) * len(self.selectors)
-        return evaluations
 
     def validate_identity(self) -> None:
         from .binding_provenance import (
@@ -24101,250 +23948,6 @@ class ObjectPlaceStateV1(Expression):
             raise BindingProvenanceGap("object construction testimony mismatch")
         if coordinate.cid != self.object_identity_cid:
             raise BindingProvenanceGap("object place identity CID mismatch")
-
-    def version(self, selector) -> Optional[str]:
-        try:
-            return self.version_cids[self.selectors.index(selector)]
-        except ValueError:
-            return None
-
-    def with_attribute_store(self, name, value, occurrence, evaluation):
-        from .object_identity import AttributeFieldCoordinateV1
-
-        return self._with_store(
-            AttributeFieldCoordinateV1.mint(self.object_coordinate, name),
-            value,
-            occurrence,
-            evaluation,
-        )
-
-    def _subscript_coordinate(self, key):
-        """The field ``o[key]`` names, or None.  Decided by the key
-        expression's ground value (``ground_subscript_key``), never by
-        reducing the key: a key that is not ground names no known field.
-        The coordinate names the literal itself (its type and value), so
-        every occurrence of the same key names the same field."""
-        ground = ground_subscript_key(key)
-        if ground is None:
-            return None
-        from sugar_lift_python_source.canonical import cid_of_json
-        from .object_identity import (
-            SubscriptFieldCoordinateV1,
-            SubscriptKeyCoordinateV1,
-        )
-
-        literal_cid = cid_of_json(
-            {
-                "kind": "python-ground-subscript-key",
-                "schemaVersion": "1",
-                "type": type(ground).__name__,
-                "value": str(ground),
-            }
-        )
-        # A ground literal is its own testimony: nothing was constructed.
-        key_coordinate = SubscriptKeyCoordinateV1.mint(
-            constructed_value_cid=literal_cid,
-            construction_testimony_cid=literal_cid,
-        )
-        return SubscriptFieldCoordinateV1.mint(self.object_coordinate, key_coordinate)
-
-    def _with_store(self, selector, value, occurrence, evaluation):
-        """The state after the store statement ``occurrence`` (keyed
-        ``evaluation``) put ``value`` in ``selector``.  The stored
-        expression's testimony (``_occurrence_testimony``: the expression,
-        never its value computed here) versions the field; a later read of
-        the field, or of the object, reads ``evaluation``.
-
-        After a call that may have changed the object
-        (``invalidated_by_opaque_call``) its fields are unknown, and a store
-        does not make them known again: the state stays unknown (None)."""
-        self.validate_identity()
-        if self.invalidated_by_opaque_call:
-            return None
-        testimony = _occurrence_testimony(value)
-        from .object_identity import (
-            AttributeFieldCoordinateV1,
-            AttributeFieldVersionV1,
-            SubscriptFieldVersionV1,
-        )
-
-        prior = self.version(selector)
-        version_type = (
-            AttributeFieldVersionV1
-            if isinstance(selector, AttributeFieldCoordinateV1)
-            else SubscriptFieldVersionV1
-        )
-        version = version_type.mint(
-            owner=self.object_coordinate,
-            field=selector,
-            store_occurrence=occurrence,
-            construction_generation=self.object_coordinate.construction_generation
-            + len(self.version_cids)
-            + 1,
-            stored_value_testimony_cid=testimony.cid,
-            prior_version_cid=prior,
-        )
-        occurrence_memento = occurrence.seal().to_dict()
-        selectors = list(self.selectors)
-        values = list(self.values)
-        testimonies = list(self.value_testimonies)
-        versions = list(self.version_cids)
-        records = list(self.version_records)
-        priors = list(self.prior_version_cids)
-        occurrences = list(self.store_occurrence_cids)
-        evaluations = list(self._store_evaluations())
-        if selector in selectors:
-            index = selectors.index(selector)
-            values[index] = value
-            testimonies[index] = testimony
-            versions[index] = version.cid
-            records[index] = version
-            priors[index] = prior
-            occurrences[index] = occurrence_memento
-            evaluations[index] = evaluation
-        else:
-            selectors.append(selector)
-            values.append(value)
-            testimonies.append(testimony)
-            versions.append(version.cid)
-            records.append(version)
-            priors.append(prior)
-            occurrences.append(occurrence_memento)
-            evaluations.append(evaluation)
-        return self._replace_state(
-            span=occurrence.node.span,
-            selectors=tuple(selectors),
-            values=tuple(values),
-            value_testimonies=tuple(testimonies),
-            version_cids=tuple(versions),
-            version_records=tuple(records),
-            prior_version_cids=tuple(priors),
-            store_occurrence_cids=tuple(occurrences),
-            store_evaluations=tuple(evaluations),
-            invalidated=False,
-        )
-
-    def attribute_field(self, name: str):
-        from .object_identity import AttributeFieldCoordinateV1
-
-        return self.field(AttributeFieldCoordinateV1.mint(self.object_coordinate, name))
-
-    def attribute_read(self, name: str, read):
-        """``read`` (``o.name``) of a field a store put there: a reference to
-        that store statement's key, or None."""
-        from .object_identity import AttributeFieldCoordinateV1
-
-        return self._field_read(
-            AttributeFieldCoordinateV1.mint(self.object_coordinate, name),
-            read,
-            f".{name}",
-        )
-
-    def subscript_read(self, key, read):
-        """``read`` (``o[key]``) of a field a store put there: a reference to
-        that store statement's key, or None."""
-        selector = self._subscript_coordinate(key)
-        return None if selector is None else self._field_read(selector, read, "[]")
-
-    def _field_read(self, selector, read, label):
-        """The value the store that put ``selector`` there completed with,
-        read through its statement's key at ``read``'s site (``place``): the
-        stored expression is never inlined and evaluated again.  It rides
-        the reference as the object it denotes (``of``).  None where no
-        authenticated store put it there."""
-        stored = self.field(selector)
-        if stored is None:
-            return None
-        evaluation = self._store_evaluations()[self.selectors.index(selector)]
-        if not isinstance(evaluation, str):
-            return None
-        return _evaluation_ref(read, read.span, evaluation, label, place=True, of=stored)
-
-    def field(self, selector):
-        self.validate_identity()
-        if self.invalidated_by_opaque_call:
-            return None
-        try:
-            index = self.selectors.index(selector)
-        except ValueError:
-            return None
-        from .binding_provenance import (
-            BindingProvenanceGap,
-            ConstructedValueTestimonyV1,
-        )
-        from .object_identity import (
-            AttributeFieldCoordinateV1,
-            AttributeFieldVersionV1,
-            SubscriptFieldVersionV1,
-        )
-
-        testimony = self.value_testimonies[index]
-        ConstructedValueTestimonyV1.decode(testimony.wire())
-        stored = self.values[index]
-        # The testimony names the stored expression itself.
-        if not isinstance(stored, Node) or (
-            _occurrence_testimony(stored).cid != testimony.cid
-        ):
-            raise BindingProvenanceGap("field value testimony mismatch")
-        version_type = (
-            AttributeFieldVersionV1
-            if isinstance(selector, AttributeFieldCoordinateV1)
-            else SubscriptFieldVersionV1
-        )
-        version = version_type.decode(self.version_records[index].wire())
-        if (
-            version.cid != self.version_cids[index]
-            or version.owner.cid != self.object_coordinate.cid
-            or version.field != selector
-            or version.stored_value_testimony_cid != testimony.cid
-            or version.prior_version_cid != self.prior_version_cids[index]
-        ):
-            raise BindingProvenanceGap("field version CID mismatch")
-        return stored
-
-    def _replace_state(
-        self,
-        *,
-        span,
-        selectors,
-        values,
-        value_testimonies,
-        version_cids,
-        version_records,
-        prior_version_cids,
-        store_occurrence_cids,
-        store_evaluations,
-        invalidated,
-    ):
-        from .backend import Child, Children, Leaf, materialize
-        from .shadow import ShadowNode, _handle_of
-
-        return materialize(
-            self.unit,
-            ShadowNode(
-                "ObjectPlaceStateV1",
-                span,
-                (
-                    ("object_coordinate", Leaf(self.object_coordinate)),
-                    ("class_definition_cid", Leaf(self.class_definition_cid)),
-                    ("construction_testimony", Leaf(self.construction_testimony)),
-                    ("object_identity_cid", Leaf(self.object_identity_cid)),
-                    ("base", Child(_handle_of(self.base))),
-                    ("selectors", Leaf(selectors)),
-                    ("values", Children(tuple(_handle_of(item) for item in values))),
-                    ("value_testimonies", Leaf(value_testimonies)),
-                    ("version_cids", Leaf(version_cids)),
-                    ("version_records", Leaf(version_records)),
-                    ("prior_version_cids", Leaf(prior_version_cids)),
-                    ("store_occurrence_cids", Leaf(store_occurrence_cids)),
-                    ("invalidated_by_opaque_call", Leaf(invalidated)),
-                    ("evaluation", Leaf(self.evaluation)),
-                    ("name", Leaf(self.name)),
-                    ("store_evaluations", Leaf(tuple(store_evaluations))),
-                ),
-            ),
-            self.reporter,
-        )
 
 
 class Attribute(Expression):
@@ -24436,7 +24039,11 @@ class Attribute(Expression):
         )
 
     def substitute(self, scope):
-        """Project only from a construction-authenticated object place."""
+        """Project a field a coordinate receiver's store put there
+        (``_ReceiverFieldProjection``).  Any other receiver is read as it
+        stands: after a field store on a receiver a name holds, that is the
+        receiver's post-state (``ReceiverFieldStoreState``), which the read's
+        sugar reads the field from at reduce."""
         from .shadow import rewrite
 
         receiver, changed = self._substitute_field(self.value, scope)
@@ -24455,21 +24062,6 @@ class Attribute(Expression):
                     place=True,
                     of=projection.of,
                 )
-        if (
-            isinstance(receiver, IfExp)
-            and isinstance(receiver.body, ObjectPlaceStateV1)
-            and isinstance(receiver.orelse, ObjectPlaceStateV1)
-            and receiver.body.object_identity_cid == receiver.orelse.object_identity_cid
-        ):
-            when_true = receiver.body.attribute_read(self.attr, self)
-            when_false = receiver.orelse.attribute_read(self.attr, self)
-            if when_true is not None and when_false is not None:
-                return rewrite(receiver, body=when_true, orelse=when_false)
-        if isinstance(receiver, ObjectPlaceStateV1):
-            # The value the store put there, read through its key.
-            projected = receiver.attribute_read(self.attr, self)
-            if projected is not None:
-                return projected
         return self if not changed else rewrite(self, value=receiver)
 
 
@@ -24487,12 +24079,6 @@ class Subscript(Expression):
         index, index_changed = self._substitute_field(
             self.slice_, _scope_after(scope, self.value, receiver)
         )
-        if isinstance(receiver, ObjectPlaceStateV1):
-            # The value the store put there, read through its key; the field
-            # is the one the index's ground value names (``ground_subscript_key``).
-            projected = receiver.subscript_read(index, self)
-            if projected is not None:
-                return projected
         if not receiver_changed and not index_changed:
             return self
         return rewrite(self, value=receiver, slice_=index)

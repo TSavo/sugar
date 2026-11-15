@@ -3,8 +3,9 @@ INERT at the meaning layer for a plain Name target, because their binding (if
 any) already threaded via substitute/substitution_binding before sugar runs;
 an annotation states nothing at runtime either way. Attribute/subscript
 augmented targets build one typed runtime-store effect; a valued annotation of
-an attribute/subscript target is the plain store ``Assign`` (#7757); bare
-non-Name annotations remain loud gaps."""
+an attribute/subscript target is the plain store ``Assign`` (#7757), followed
+in a module body by the annotation's evaluation; bare non-Name annotations
+remain loud gaps."""
 
 import tempfile
 
@@ -288,6 +289,67 @@ def test_annotated_store_is_the_assign_store(annotated, plain):
     assert _outcome_shape(_fn(annotated).sugar().desugar()) == _outcome_shape(
         _fn(plain).sugar().desugar()
     )
+
+
+def _module(src):
+    return SourceFile(
+        path_source(_write(src)),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    ).root
+
+
+_MODULE_PRELUDE = "d = {}\nclass C:\n    pass\no = C()\n"
+
+
+@pytest.mark.parametrize(
+    ("annotated", "plain"),
+    [
+        ("d['k']: int = 1\n", "d['k'] = 1\n"),
+        ("o.f: int = 1\n", "o.f = 1\n"),
+    ],
+    ids=["item", "field"],
+)
+def test_module_annotated_store_evaluates_its_annotation_after_the_store(
+    annotated, plain
+):
+    """In a module body Python evaluates a non-simple target's annotation
+    after the store, and discards it (#7757): the statement is the store
+    ``<target> = <value>``, then the annotation as an expression statement,
+    spliced into the module block.  The annotation may run code; it is
+    evaluated, never stored."""
+    annotated_body = _module(_MODULE_PRELUDE + annotated).substitute({}).body
+    plain_body = _module(_MODULE_PRELUDE + plain).substitute({}).body
+    assert not any(statement.kind == "AnnAssign" for statement in annotated_body)
+    assert len(annotated_body) == len(plain_body) + 1
+    # The store first, the same statement the plain spelling makes ...
+    assert annotated_body[-2].kind == plain_body[-1].kind
+    # ... then the annotation, evaluated as an expression.
+    evaluated = annotated_body[-1]
+    assert evaluated.kind == "Expr"
+    assert evaluated.value.kind == "Name"
+    assert evaluated.value.id == "int"
+
+
+def test_module_annotated_store_under_postponed_annotations_is_the_store():
+    """``from __future__ import annotations`` postpones every annotation:
+    the module-body annotated store is the store alone, as in a function."""
+    future = "from __future__ import annotations\n"
+    annotated_body = _module(future + "d = {}\nd['k']: int = 1\n").substitute({}).body
+    plain_body = _module(future + "d = {}\nd['k'] = 1\n").substitute({}).body
+    assert [statement.kind for statement in annotated_body] == [
+        statement.kind for statement in plain_body
+    ]
+
+
+def test_module_annotated_store_never_substituted_refuses_by_name():
+    """Only the module block's substitution splices the store and the
+    annotation's evaluation; never substituted, the statement refuses by
+    name rather than drop the annotation's evaluation."""
+    statement = _module("d = {}\nd['k']: int = 1\n").body[-1]
+    assert statement.kind == "AnnAssign"
+    with pytest.raises(SugarNotWritten) as refused:
+        statement.sugar()
+    assert refused.value.owner == "AnnAssign._construct_sugar"
 
 
 def test_bare_annotated_store_target_stores_nothing():

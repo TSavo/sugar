@@ -306,9 +306,9 @@ def _ref(node):
     construction authenticated.
 
     A read of a formal is re-spanned to its use site (``Name.substitute``), so
-    every read is a fresh node over the same ``coordinate``.  Every version
-    of an object place (each field store mints one) is the one object its
-    construction made (``object_identity_cid``); the receiver an active
+    every read is a fresh node over the same ``coordinate``.  Every read of
+    an object place is the one object its construction made
+    (``object_identity_cid``); the receiver an active
     ``__init__`` constructs is its binding coordinate.  A read of an
     assigned name is the object its assignment was given (``_identity``);
     a name's object after a mutation is the object before it (``_object``)."""
