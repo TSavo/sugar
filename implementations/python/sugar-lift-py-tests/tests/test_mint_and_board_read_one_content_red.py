@@ -18,7 +18,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
+from sugar_lift_py_tests.witness_harness import (
+    claim_verdict,
+    run_source_through_real_solver,
+)
 
 _MODULE = (
     "class Resource:\n"
@@ -41,12 +44,25 @@ _MODULE = (
 
 
 def test_a_with_over_a_same_module_manager_reaches_the_solver(tmp_path: Path) -> None:
-    """RED on main: ``f()`` enters ``Resource(1)`` and returns 1.
+    """``f()`` enters ``Resource(1)`` and returns 1.
 
-    The truthful claim is ``sat`` and the lying one ``unsat`` once mint builds
-    the ``with`` the board's door already builds.
+    The manager is made in ``f``'s frame, so ``__init__`` and ``__enter__``
+    are applied to a current object and ``f()`` is 1: the test function's
+    claim is decided, truthful ``sat`` and lying ``unsat``.
+
+    ``Resource.__init__``'s and ``__enter__``'s OWN proofs have no caller:
+    ``self.target = target`` and ``return self.target`` act on a formal with
+    no actual, and each owes an ``undecided`` member (step 8).  A source that
+    owes anything is never ``sat`` as a whole, so the truthful half is read on
+    the test function's own claims (``witness_harness.claim_verdict``): what
+    the methods' own proofs owe sits above the test function and is set aside.
     """
     truthful = run_source_through_real_solver(tmp_path / "t", _MODULE.format(claim=1))
     lying = run_source_through_real_solver(tmp_path / "l", _MODULE.format(claim=2))
-    assert truthful.verdict == "sat"
+    (test_line,) = (
+        number
+        for number, line in enumerate(_MODULE.splitlines(), start=1)
+        if line.startswith("def test_")
+    )
+    assert claim_verdict(truthful.prove_doc, claims_from_line=test_line) == "sat"
     assert lying.verdict == "unsat"
