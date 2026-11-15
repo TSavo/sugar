@@ -51,6 +51,21 @@ def _sf(source: str, name: str = "t.py") -> SourceFile:
     )
 
 
+def _module_run_completes(tree: SourceFile) -> bool:
+    """The module body's one run completes on its one arm, under truth.
+
+    A spread call reads the name it spreads (``xs`` in ``f(*xs)``), which the
+    statement before it bound.  The call reduced alone, in no context, reads a
+    name nothing bound: a state Python never runs the call in.  So the call is
+    reduced where it stands, by THE module reduction (``owner_reduction``)."""
+    from sugar_lift_py_tests.tree_enumerate import owner_reduction
+
+    reduction = owner_reduction(None, tree)
+    return (
+        reduction.outcome.completed_value() is not None and len(reduction.ends) == 1
+    )
+
+
 def test_named_keyword_actual_constructs_on_call_site() -> None:
     """f(a=1) — keywords ride CallSiteSugar, values are ConstructedTermSugar."""
     call = next(
@@ -94,30 +109,28 @@ def test_starred_positional_actual_constructs_spread_call() -> None:
     """f(*xs) — starred positional is SpreadCallSugar, not a bare gap."""
     from sugar_source_tree.nodes import Starred
 
+    tree = _sf("def f(a, b):\n    return a\nxs = (1, 2)\nf(*xs)\n", "star_call.py")
     call = next(
         n
-        for n in _sf(
-            "def f(a, b):\n    return a\nxs = (1, 2)\nf(*xs)\n", "star_call.py"
-        ).nodes()
+        for n in tree.nodes()
         if isinstance(n, Call) and any(isinstance(a, Starred) for a in n.args)
     )
     sugar = call.sugar()
     assert isinstance(sugar, SpreadCallSugar)
-    assert sugar.desugar(None).completed_value() is not None
+    assert _module_run_completes(tree)
 
 
 def test_double_star_keyword_actual_constructs_spread_call() -> None:
     """f(**d) — double-star keyword is SpreadCallSugar."""
+    tree = _sf("def f(a=1):\n    return a\nd = {'a': 2}\nf(**d)\n", "dstar.py")
     call = next(
         n
-        for n in _sf(
-            "def f(a=1):\n    return a\nd = {'a': 2}\nf(**d)\n", "dstar.py"
-        ).nodes()
+        for n in tree.nodes()
         if isinstance(n, Call) and any(kw.arg is None for kw in n.keywords)
     )
     sugar = call.sugar()
     assert isinstance(sugar, SpreadCallSugar)
-    assert sugar.desugar(None).completed_value() is not None
+    assert _module_run_completes(tree)
 
 
 def test_param_with_default_constructs_param_sugar_not_gap() -> None:
