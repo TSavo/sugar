@@ -492,6 +492,31 @@ class ObjectValue(FloorValue):
             fix="decide the class's namespace for the name (ClassDef.namespace_binds)",
         )
 
+    def setitem(self, index, value, site, ctx):
+        """``self[index] = value``: CPython calls ``type(self).__setitem__``
+        (``PyObject_SetItem``), an implicit special-method lookup on the type
+        that no instance field shadows -- the one class-namespace lookup
+        (``ClassDef.namespace_owner``).  When it decides that no class of the
+        MRO binds ``__setitem__`` (``object`` does not), the store raises
+        ``TypeError`` ("object does not support item assignment") before
+        anything is stored; nothing else answers it.  Any other answer -- a
+        class that binds it, a builtin base that does, a lookup not decided
+        -- is not written here and still refuses by name."""
+        definition = getattr(self.defining_class, "class_definition", None)
+        if definition is not None:
+            decided, owner = definition.namespace_owner("__setitem__")
+            if decided and owner is None:
+                from sugar_lift_py_tests.floor.ground_exit import (
+                    ground_exceptional_exit,
+                )
+
+                return ground_exceptional_exit(
+                    exception_name="TypeError",
+                    site=site,
+                    owner="ObjectValue.setitem",
+                )
+        return super().setitem(index, value, site, ctx)
+
     def authenticates_plain_attribute_store(self, name: str) -> bool:
         """Whether ``self.name = value`` is an ordinary instance-field store."""
         return self._store_descriptor(name) is False

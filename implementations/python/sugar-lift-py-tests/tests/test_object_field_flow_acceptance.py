@@ -456,24 +456,41 @@ def test_custom_getitem_receiver_stays_loud(tmp_path):
     assert _is_typed_loud(_outcome_or_panic(path, "boundary"))
 
 
+def _item_assignment_type_error(path: Path, source: str) -> None:
+    """``item[k] = v`` on an instance of a class no class of whose MRO binds
+    ``__setitem__`` (``object`` does not): CPython raises ``TypeError``
+    ("'Vessel' object does not support item assignment") at the first store,
+    and nothing after it runs.  Never a completion that stores the item on the
+    instance, and never a construction panic: the type's namespace decides
+    it (``ObjectValue.setitem``)."""
+    path.write_text(source)
+    native: dict = {}
+    exec(compile(source, str(path), "exec"), native)
+    with pytest.raises(TypeError, match="does not support item assignment"):
+        native["boundary"]()
+
+    outcome = _outcome_or_panic(path, "boundary")
+    assert isinstance(outcome, ExitSet), outcome
+    assert outcome.halts() == outcome.exits, outcome
+    assert [halt.effect.exception_name for halt in outcome.halts()] == [
+        "TypeError"
+    ], outcome
+
+
 def test_plain_object_subscript_store_then_read_uses_same_field_map(tmp_path):
-    path = tmp_path / "plain_object_subscript.py"
-    path.write_text(
+    _item_assignment_type_error(
+        tmp_path / "plain_object_subscript.py",
         "class Vessel:\n    pass\n\n"
         "def boundary():\n"
         "    item = Vessel()\n"
         "    item[0] = 7\n"
-        "    return item[0]\n"
+        "    return item[0]\n",
     )
-    assert not _is_typed_loud(_outcome_or_panic(path, "boundary"))
-    states = _object_states(path, "boundary")
-    assert states[-1].selectors
-    assert states[-1].field(states[-1].selectors[0]) is not None
 
 
 def test_subscript_aliases_share_identity_and_immutable_versions(tmp_path):
-    path = tmp_path / "subscript_alias_versions.py"
-    path.write_text(
+    _item_assignment_type_error(
+        tmp_path / "subscript_alias_versions.py",
         "class Vessel:\n    pass\n\n"
         "def boundary():\n"
         "    item = Vessel()\n"
@@ -481,35 +498,20 @@ def test_subscript_aliases_share_identity_and_immutable_versions(tmp_path):
         "    item[0] = 7\n"
         "    first = alias[0]\n"
         "    alias[0] = 11\n"
-        "    return item[0]\n"
+        "    return item[0]\n",
     )
-    assert not _is_typed_loud(_outcome_or_panic(path, "boundary"))
-    states = _object_states(path, "boundary")
-    assert {state.object_identity_cid for state in states} == {
-        states[0].object_identity_cid
-    }
-    final = states[-1]
-    assert len(final.selectors) == 1
-    assert len(final.version_cids) == 1
-    assert final.prior_version_cids[0] is not None
-    assert final.prior_version_cids[0] != final.version_cids[0]
-    assert final.field(final.selectors[0]) is not None
 
 
 def test_distinct_constructed_subscript_keys_do_not_collide(tmp_path):
-    path = tmp_path / "distinct_subscript_keys.py"
-    path.write_text(
+    _item_assignment_type_error(
+        tmp_path / "distinct_subscript_keys.py",
         "class Vessel:\n    pass\n\n"
         "def boundary():\n"
         "    item = Vessel()\n"
         "    item[0] = 7\n"
         "    item[1] = 11\n"
-        "    return item[0]\n"
+        "    return item[0]\n",
     )
-    assert not _is_typed_loud(_outcome_or_panic(path, "boundary"))
-    state = _object_states(path, "boundary")[-1]
-    assert len(state.selectors) == 2
-    assert len(set(state.version_cids)) == 2
 
 
 def test_symbolic_subscript_key_stays_typed_loud(tmp_path):
