@@ -732,6 +732,57 @@ mod tests {
     }
 
     #[test]
+    fn lifted_predicate_with_colon_is_applied_as_declared_and_decides() {
+        // #7766: a Python claim guards a call's value by
+        // `python:unknown_callee_call.completes(...)`. The predicate-decl pass
+        // declared it quoted (`|python:...|`) while the application was
+        // emitted bare, so z3 read `:unknown_callee_call.completes` as a
+        // keyword ("invalid expression, unexpected keyword") and the
+        // federation conjoin row stopped at an encoding error.
+        let call = ctor(
+            "python:call_result",
+            vec![
+                ctor("call:f", vec![int_const(3)]),
+                ctor("python:occurrence", vec![string_const("site")]),
+            ],
+        );
+        let completes = atomic("python:unknown_callee_call.completes", vec![call.clone()]);
+        let post = implies(completes.clone(), eq(call.clone(), int_const(3)));
+        let claim = |rhs: i64| {
+            serde_json::json!({"kind": "and", "operands": [
+                completes.clone(),
+                post.clone(),
+                eq(call.clone(), int_const(rhs))
+            ]})
+        };
+        let truthful = fixture_compile_asserted_to_parts(&claim(3)).expect("compile truthful");
+        let truthful_script = format!("{}{}", truthful.preamble, truthful.body);
+        assert!(
+            truthful_script.contains("(declare-fun |python:unknown_callee_call.completes| (")
+                && truthful_script.contains("(|python:unknown_callee_call.completes| "),
+            "the application must spell the head exactly as its declaration:\n{truthful_script}"
+        );
+        assert!(
+            !truthful_script.contains("(python:unknown_callee_call.completes "),
+            "a bare `:` in a head is a keyword to z3:\n{truthful_script}"
+        );
+        let lying = fixture_compile_asserted_to_parts(&claim(4)).expect("compile lying");
+        let lying_script = format!("{}{}", lying.preamble, lying.body);
+        if let Some(z3) = which_z3() {
+            assert_eq!(
+                run_z3(&z3, &truthful_script).trim(),
+                "sat",
+                "f(3) == 3 under `completes -> out = 3` is sat:\n{truthful_script}"
+            );
+            assert_eq!(
+                run_z3(&z3, &lying_script).trim(),
+                "unsat",
+                "f(3) == 4 under `completes -> out = 3` is unsat:\n{lying_script}"
+            );
+        }
+    }
+
+    #[test]
     fn mixed_numeric_python_equality_uses_explicit_to_real_bridge() {
         let integer = int_const(3);
         let real = serde_json::json!({
