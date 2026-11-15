@@ -173,6 +173,47 @@ fn prove_reports_each_member_owed_and_undecidable() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Step 9: an imported proof's own owed members are that proof's debt. They
+/// are carried as the import's state and never counted in the importing
+/// project's `owed`; the project's own member still is.
+#[test]
+fn an_imported_proofs_owed_members_are_its_own_never_the_importers() {
+    let dir = make_unique_dir("imported-owed");
+    let imports = dir.join(".sugar").join("imports");
+    fs::create_dir_all(&imports).expect("mkdir imports");
+    let mut vendor_a = refused_f();
+    vendor_a.symbol = Some("python:b64vendor.ord".into());
+    vendor_a.site.file = "b64vendor.py".into();
+    let mut vendor_b = vendor_a.clone();
+    vendor_b.site.start_line = 9;
+    publish(&imports, &[vendor_a, vendor_b]);
+    let mut own = refused_f();
+    own.symbol = Some("python:test_consumer.helper".into());
+    own.site.file = "test_consumer.py".into();
+    publish(&dir, &[own]);
+
+    let pool = load_all_proofs::run_prove_inputs(&dir);
+    assert!(pool.load_errors.is_empty(), "{:?}", pool.load_errors);
+    assert_eq!(pool.undecided_members().count(), 3);
+    let mut report = Report::default();
+    sugar_verifier::report::add_undecided_members(&pool, &mut report);
+
+    assert_eq!(report.owed, 1, "only the project's own member is owed");
+    assert_eq!(report.violations, 0);
+    assert_eq!(report.rows.len(), 1);
+    assert_eq!(
+        report.rows[0].callsite.file.as_deref(),
+        Some("test_consumer.py")
+    );
+    assert_eq!(report.imported.len(), 2, "the import's members are carried");
+    assert_eq!(report.imported_owed(), 2);
+    for row in &report.imported {
+        assert_eq!(row.status, ObligationVerdict::Undecidable);
+        assert_eq!(row.callsite.file.as_deref(), Some("b64vendor.py"));
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn an_unanswered_member_without_a_symbol_names_its_site() {
     let dir = make_unique_dir("unanswered");

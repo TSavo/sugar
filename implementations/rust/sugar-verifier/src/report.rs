@@ -60,6 +60,72 @@ pub fn add_callsite_with_method(
     add_callsite_with_discharge(cs.clone(), verdict, reason, discharge_method, None, r);
 }
 
+/// Did a staged import speak this member (step 9)? Then what it states and
+/// what it owes is that proof's own: its halt sites, its owed members and its
+/// self-posts are carried as the import's state, never counted as the
+/// importing project's. Attribution is the loader's stamp
+/// (`MementoPool::is_vendor_member`), read here and nowhere else in the report.
+pub fn member_is_imported(pool: &MementoPool, cid: &MementoCid) -> bool {
+    pool.is_vendor_member(cid.as_str())
+}
+
+/// A callsite row belongs to the contract it was enumerated from
+/// (`property_cid`): an imported contract's callsite (its halt loci, its own
+/// calls) is that import's obligation.
+pub fn callsite_is_imported(cs: &CallSite, pool: &MementoPool) -> bool {
+    cs.property_cid
+        .as_ref()
+        .is_some_and(|cid| member_is_imported(pool, cid))
+}
+
+/// Carry one imported proof's own obligation as that import's state. It
+/// touches no count and no verdict: it is the import's debt, reported beside
+/// the project's rows, never as one of them.
+pub fn add_imported(row: ReportRow, r: &mut Report) {
+    r.imported.push(row);
+}
+
+fn callsite_row(
+    cs: CallSite,
+    verdict: ObligationVerdict,
+    reason: &str,
+    discharge_method: Option<String>,
+    body_discharge_tier: Option<String>,
+) -> ReportRow {
+    ReportRow {
+        callsite: cs,
+        status: verdict,
+        reason: reason.to_string(),
+        discharge_method,
+        body_discharge_tier,
+        verification: None,
+        verify_effect: VerifyEffectCarrier::NoEffect,
+    }
+}
+
+/// One callsite verdict through the one door: an imported contract's callsite
+/// is carried as the import's state; the project's own is a row and counts.
+/// Returns true when the row is the project's own and not discharged.
+pub fn add_callsite_result(
+    cs: CallSite,
+    verdict: ObligationVerdict,
+    reason: &str,
+    discharge_method: Option<String>,
+    body_discharge_tier: Option<String>,
+    pool: &MementoPool,
+    r: &mut Report,
+) -> bool {
+    if callsite_is_imported(&cs, pool) {
+        add_imported(
+            callsite_row(cs, verdict, reason, discharge_method, body_discharge_tier),
+            r,
+        );
+        return false;
+    }
+    add_callsite_with_discharge(cs, verdict, reason, discharge_method, body_discharge_tier, r);
+    verdict != ObligationVerdict::Discharged
+}
+
 pub fn add_callsite_with_discharge(
     cs: CallSite,
     verdict: ObligationVerdict,
@@ -69,15 +135,13 @@ pub fn add_callsite_with_discharge(
     r: &mut Report,
 ) {
     r.total_callsites += 1;
-    r.rows.push(ReportRow {
-        callsite: cs,
-        status: verdict,
-        reason: reason.to_string(),
+    r.rows.push(callsite_row(
+        cs,
+        verdict,
+        reason,
         discharge_method,
         body_discharge_tier,
-        verification: None,
-        verify_effect: VerifyEffectCarrier::NoEffect,
-    });
+    ));
     if verdict == ObligationVerdict::Discharged {
         r.discharged += 1;
     } else if verdict == ObligationVerdict::Refused {
@@ -108,6 +172,50 @@ pub fn add_self_post(contract_cid: &str, verdict: ObligationVerdict, reason: &st
     add_self_post_with_method(contract_cid, verdict, reason, None, r);
 }
 
+fn self_post_row(
+    contract_cid: &str,
+    verdict: ObligationVerdict,
+    reason: &str,
+    discharge_method: Option<String>,
+) -> ReportRow {
+    let cs = CallSite {
+        property_name: format!("self-post:{contract_cid}"),
+        property_cid: MementoCid::try_parse(contract_cid.to_string()).ok(),
+        ..CallSite::default()
+    };
+    ReportRow {
+        callsite: cs,
+        status: verdict,
+        reason: reason.to_string(),
+        discharge_method,
+        body_discharge_tier: None,
+        verification: None,
+        verify_effect: VerifyEffectCarrier::NoEffect,
+    }
+}
+
+/// One self-post verdict through the one door: an imported contract's
+/// self-post is the import's state; the project's own is a row and counts.
+/// Returns true when it is imported.
+pub fn add_self_post_result(
+    contract_cid: &str,
+    verdict: ObligationVerdict,
+    reason: &str,
+    discharge_method: Option<String>,
+    pool: &MementoPool,
+    r: &mut Report,
+) -> bool {
+    if pool.is_vendor_member(contract_cid) {
+        add_imported(
+            self_post_row(contract_cid, verdict, reason, discharge_method),
+            r,
+        );
+        return true;
+    }
+    add_self_post_with_method(contract_cid, verdict, reason, discharge_method, r);
+    false
+}
+
 pub fn add_self_post_with_method(
     contract_cid: &str,
     verdict: ObligationVerdict,
@@ -117,20 +225,12 @@ pub fn add_self_post_with_method(
 ) {
     // NOTE: intentionally NO `r.total_callsites += 1` here. A self-post is
     // a contract self-consistency obligation, not a call site (#fix/self-post-not-a-callsite).
-    let cs = CallSite {
-        property_name: format!("self-post:{contract_cid}"),
-        property_cid: MementoCid::try_parse(contract_cid.to_string()).ok(),
-        ..CallSite::default()
-    };
-    r.rows.push(ReportRow {
-        callsite: cs,
-        status: verdict,
-        reason: reason.to_string(),
+    r.rows.push(self_post_row(
+        contract_cid,
+        verdict,
+        reason,
         discharge_method,
-        body_discharge_tier: None,
-        verification: None,
-        verify_effect: VerifyEffectCarrier::NoEffect,
-    });
+    ));
     if verdict == ObligationVerdict::Discharged {
         r.discharged += 1;
     } else if verdict == ObligationVerdict::Refused {
@@ -240,8 +340,11 @@ pub fn add_consistency_with_verification(
 
 /// One row per `undecided` member in the pool (step 8): status
 /// `undecidable`, reason `owed: <why>`, the member's site as its locus. Never
-/// sent to a solver. Each counts in `owed`; a report with anything owed is
-/// never green (`report_exit_code`).
+/// sent to a solver. Each of the project's own counts in `owed`; a report
+/// with anything owed is never green (`report_exit_code`). A member an
+/// imported proof spoke is that proof's own debt (step 9): carried as the
+/// import's state (`Report::imported`), never counted in this project's
+/// `owed`.
 pub fn add_undecided_members(pool: &MementoPool, r: &mut Report) {
     use sugar_proof_envelope::{UndecidedMember, UndecidedReason};
     // A call the join answers (step 9) is no longer owed: an imported
@@ -279,7 +382,7 @@ pub fn add_undecided_members(pool: &MementoPool, r: &mut Report) {
             }
         }
         cs.property_cid = Some(cid.clone());
-        r.rows.push(ReportRow {
+        let row = ReportRow {
             callsite: cs,
             status: ObligationVerdict::Undecidable,
             reason,
@@ -287,7 +390,12 @@ pub fn add_undecided_members(pool: &MementoPool, r: &mut Report) {
             body_discharge_tier: None,
             verification: None,
             verify_effect: VerifyEffectCarrier::from_producer(ObligationVerdict::Undecidable, None),
-        });
+        };
+        if member_is_imported(pool, cid) {
+            add_imported(row, r);
+            continue;
+        }
+        r.rows.push(row);
         r.owed += 1;
     }
 }
@@ -1123,6 +1231,120 @@ mod tests {
             r.violations, 1,
             "a failing self-post must still fail the run"
         );
+    }
+
+    /// A pool where `vendor-contract` was spoken by a staged import and
+    /// `own-contract` by the project.
+    fn pool_with_an_import() -> MementoPool {
+        use crate::types::SpeakerRole;
+        let mut pool = MementoPool::default();
+        pool.attribute_member_for_tests(
+            &cid_string("vendor-contract"),
+            SpeakerRole::Vendor,
+            ".sugar/imports/vendor.proof",
+        );
+        pool.attribute_member_for_tests(
+            &cid_string("own-contract"),
+            SpeakerRole::Consumer,
+            "own.proof",
+        );
+        pool
+    }
+
+    fn callsite_of(contract: &str) -> CallSite {
+        CallSite {
+            bridge_ir_name: "concept:panic-freedom.leaf.runtime-failure-site".into(),
+            property_name: contract.to_string(),
+            property_cid: Some(cid(contract)),
+            panic_site: true,
+            ..CallSite::default()
+        }
+    }
+
+    /// Step 9: an imported contract's halt site is that proof's debt. It is
+    /// carried as the import's state and is never a violation, a row or a
+    /// callsite of the importing project; the project's own rows decide.
+    #[test]
+    fn an_imported_contracts_halt_site_is_the_imports_debt_never_a_violation() {
+        let pool = pool_with_an_import();
+        let mut r = Report::default();
+        let counted = add_callsite_result(
+            callsite_of("vendor-contract"),
+            ObligationVerdict::Undecidable,
+            "no bridge links a Python halt",
+            None,
+            None,
+            &pool,
+            &mut r,
+        );
+        assert!(!counted, "an imported halt is not the project's violation");
+        let counted = add_callsite_result(
+            callsite_of("own-contract"),
+            ObligationVerdict::Discharged,
+            "ok",
+            None,
+            None,
+            &pool,
+            &mut r,
+        );
+        assert!(!counted);
+
+        assert_eq!(r.violations, 0);
+        assert_eq!(r.total_callsites, 1);
+        assert_eq!(r.rows.len(), 1);
+        assert_eq!(r.rows[0].callsite.property_name, "own-contract");
+        assert_eq!(r.imported.len(), 1);
+        assert_eq!(r.imported[0].status, ObligationVerdict::Undecidable);
+        assert_eq!(r.imported_owed(), 0, "a halt site is not an owed member");
+        assert_eq!(
+            r.verdict(),
+            crate::types::ReportVerdict::Green,
+            "the import's debt never moves the importer's verdict"
+        );
+    }
+
+    #[test]
+    fn the_projects_own_halt_site_still_counts() {
+        let pool = pool_with_an_import();
+        let mut r = Report::default();
+        let counted = add_callsite_result(
+            callsite_of("own-contract"),
+            ObligationVerdict::Undecidable,
+            "no bridge",
+            None,
+            None,
+            &pool,
+            &mut r,
+        );
+        assert!(counted);
+        assert_eq!(r.violations, 1);
+        assert!(r.imported.is_empty());
+        assert_ne!(r.verdict(), crate::types::ReportVerdict::Green);
+    }
+
+    #[test]
+    fn an_imported_contracts_self_post_is_the_imports_state() {
+        let pool = pool_with_an_import();
+        let mut r = Report::default();
+        assert!(add_self_post_result(
+            &cid_string("vendor-contract"),
+            ObligationVerdict::Undecidable,
+            "self-post: unknown",
+            None,
+            &pool,
+            &mut r,
+        ));
+        assert!(!add_self_post_result(
+            &cid_string("own-contract"),
+            ObligationVerdict::Undecidable,
+            "self-post: unknown",
+            None,
+            &pool,
+            &mut r,
+        ));
+        assert_eq!(r.violations, 1, "only the project's own self-post counts");
+        assert_eq!(r.rows.len(), 1);
+        assert_eq!(r.imported.len(), 1);
     }
 
     #[test]

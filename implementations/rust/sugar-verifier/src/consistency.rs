@@ -3155,6 +3155,12 @@ struct AmbientPostInstances {
 struct AmbientPost {
     binding: BridgeBinding,
     post: Json,
+    /// The path conditions of the halts the answering contract states (each
+    /// panic locus's `guard`, over the contract's formals). The post speaks
+    /// of completed arms only; a call whose result the claim reads completed,
+    /// so each halt's guard is false under the call's actual. A halt certain
+    /// on that path makes the join unsatisfiable: the claim is refuted.
+    halt_guards: Vec<Json>,
     /// The joined member's CID.
     member_cid: String,
     site_cid: String,
@@ -3221,14 +3227,27 @@ fn unanswered_edges(pool: &MementoPool) -> Vec<UnansweredEdge> {
     edges
 }
 
-/// What one bridge answers for `symbol`: its binding and post, or the
-/// reason the answer is wrong. `Ok(None)` when the contract states no post:
-/// it answers nothing, and the call stays owed.
+/// The halt guards an answering contract states: the `guard` of each of its
+/// panic loci (`enumerate_callsites::panic_loci_from_body`, the one reader).
+/// A locus that states no guard states no path condition to read here.
+fn contract_halt_guards(body: &Json) -> Vec<Json> {
+    crate::enumerate_callsites::panic_loci_from_body(body)
+        .iter()
+        .flat_map(crate::enumerate_callsites::guard_facts_from_locus)
+        .collect()
+}
+
+/// One bridge's answer: the binding, the post, and the halt guards.
+type BridgeAnswer = (BridgeBinding, Json, Vec<Json>);
+
+/// What one bridge answers for `symbol`: its binding, post and halt guards,
+/// or the reason the answer is wrong. `Ok(None)` when the contract states no
+/// post: it answers nothing, and the call stays owed.
 fn bridge_answer(
     pool: &MementoPool,
     symbol: &str,
     bridge_env: &sugar_proof_envelope::StoredMember,
-) -> Result<Option<(BridgeBinding, Json)>, (String, DroppedAmbientPostReason)> {
+) -> Result<Option<BridgeAnswer>, (String, DroppedAmbientPostReason)> {
     let raw_target = bridge_env
         .field("targetContractCid")
         .and_then(|v| v.as_str())
@@ -3287,6 +3306,7 @@ fn bridge_answer(
             .cloned()
             .map(|cid| cid.to_string())
     });
+    let halt_guards = contract_halt_guards(&body);
     Ok(Some((
         BridgeBinding {
             source_symbol: symbol.to_string(),
@@ -3296,6 +3316,7 @@ fn bridge_answer(
             out_binding,
         },
         post,
+        halt_guards,
     )))
 }
 
@@ -3337,9 +3358,10 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
             bridge_answer(pool, &edge.symbol, first)
         };
         match answer {
-            Ok(Some((binding, post))) => posts.push(AmbientPost {
+            Ok(Some((binding, post, halt_guards))) => posts.push(AmbientPost {
                 binding,
                 post,
+                halt_guards,
                 member_cid: edge.member_cid.clone(),
                 site_cid: edge.site_cid.clone(),
                 refusal: None,
@@ -3354,6 +3376,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                     out_binding: String::new(),
                 },
                 post: Json::Null,
+                halt_guards: Vec::new(),
                 member_cid: edge.member_cid.clone(),
                 site_cid: edge.site_cid.clone(),
                 refusal: Some(reason),
@@ -3466,7 +3489,23 @@ fn linked_ambient_post_instances_for_inv(
                 });
                 continue;
             }
-            let mut instance = post.post.clone();
+            // The result the claim reads is a completed call: every halt the
+            // contract states is off this path, `not(guard)` under the
+            // call's actual (step 9). A halt certain on the path makes the
+            // join unsatisfiable and refutes the claim; one the actual
+            // rules out conjoins `true`.
+            let mut instance = if post.halt_guards.is_empty() {
+                post.post.clone()
+            } else {
+                let mut operands = Vec::with_capacity(post.halt_guards.len() + 1);
+                operands.push(post.post.clone());
+                operands.extend(
+                    post.halt_guards
+                        .iter()
+                        .map(|guard| IrFormula::Not(guard.clone()).to_value()),
+                );
+                IrFormula::And(operands).to_value()
+            };
             for (formal, actual) in post.binding.formals.iter().zip(args.iter()) {
                 instance = crate::instantiate::substitute_formula_pub(&instance, formal, actual);
             }
@@ -9264,6 +9303,7 @@ mod tests {
                 out_binding: "out".to_string(),
             },
             post,
+            halt_guards: Vec::new(),
             member_cid: "test-member-cid".to_string(),
             site_cid: site_cid.to_string(),
             refusal: None,
@@ -9394,6 +9434,95 @@ mod tests {
             "ident(3) == 4 under the joined `out = x` is unsat: {}",
             result.reason
         );
+    }
+
+    // ── Step 9: the joined contract's halts under the call's actual ──────
+    // vendor `def ident(x): if x == 3: raise ValueError; return x`: post
+    // `out = x` over the completed arm, one panic locus guarded `x = 3`.
+
+    fn ident_vendor_post_halting_when(guard: Json) -> AmbientPost {
+        let mut post = ident_vendor_post();
+        post.halt_guards = vec![guard];
+        post
+    }
+
+    #[test]
+    fn a_halt_certain_on_the_call_path_refutes_the_claim() {
+        // ident(3) certainly raises: the result `ident(3) == 3` reads never
+        // exists, so the claim is refuted, although `out = x` alone says 3.
+        let result = prove_joined(
+            ident_claim(3, JOIN_SITE),
+            &[ident_vendor_post_halting_when(eqf(var("x"), int(3)))],
+        );
+        assert_eq!(
+            result.verdict,
+            ObligationVerdict::Unsatisfied,
+            "a raise certain under the actual 3 refutes ident(3) == 3: {}",
+            result.reason
+        );
+    }
+
+    #[test]
+    fn an_unconditional_halt_refutes_every_claim_on_the_call() {
+        let result = prove_joined(
+            ident_claim(3, JOIN_SITE),
+            &[ident_vendor_post_halting_when(eqf(int(1), int(1)))],
+        );
+        assert_eq!(result.verdict, ObligationVerdict::Unsatisfied, "{}", result.reason);
+    }
+
+    #[test]
+    fn a_halt_the_actual_rules_out_leaves_the_claim_to_the_post() {
+        // The halt is at x = 4; the call's actual is 3, so it is off the
+        // path and the post decides alone.
+        let halts_at_4 = ident_vendor_post_halting_when(eqf(var("x"), int(4)));
+        let truthful = prove_joined(ident_claim(3, JOIN_SITE), &[halts_at_4.clone()]);
+        assert_eq!(
+            truthful.verdict,
+            ObligationVerdict::Discharged,
+            "{}",
+            truthful.reason
+        );
+        let lying = prove_joined(ident_claim(4, JOIN_SITE), &[halts_at_4]);
+        assert_eq!(lying.verdict, ObligationVerdict::Unsatisfied, "{}", lying.reason);
+    }
+
+    #[test]
+    fn the_halt_guard_is_instantiated_at_the_call_actual() {
+        let partition = linked_ambient_post_instances_for_inv(
+            &ident_claim(3, JOIN_SITE),
+            &[ident_vendor_post_halting_when(eqf(var("x"), int(3)))],
+        );
+        assert!(partition.dropped.is_empty(), "{:?}", partition.dropped);
+        assert_eq!(partition.kept.len(), 1, "{partition:?}");
+        let call = json!({"kind": "ctor", "name": "call:ident", "args": [int(3)]});
+        assert_eq!(
+            partition.kept[0].instantiated_post,
+            canonicalize_formula_json(&IrFormula::And(vec![
+                eqf(call_result(call, JOIN_SITE), int(3)),
+                IrFormula::Not(eqf(int(3), int(3))).to_value(),
+            ])
+            .to_value()),
+            "x := the actual in the post and in every halt guard"
+        );
+    }
+
+    #[test]
+    fn the_join_reads_each_panic_locus_guard_of_the_answering_contract() {
+        let guard = eqf(var("x"), int(3));
+        let body = json!({
+            "formals": ["x"],
+            "post": eqf(var("out"), var("x")),
+            "panicLoci": [
+                {"callee": "concept:panic-freedom.leaf.runtime-failure-site",
+                 "file": "idn.py", "line": 2, "guard": guard.clone()},
+                // A locus that states no guard states no path condition.
+                {"callee": "concept:panic-freedom.leaf.runtime-failure-site",
+                 "file": "idn.py", "line": 3},
+            ],
+        });
+        assert_eq!(contract_halt_guards(&body), vec![guard]);
+        assert!(contract_halt_guards(&json!({"formals": ["x"]})).is_empty());
     }
 
     #[test]

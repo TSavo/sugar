@@ -53,6 +53,10 @@ pub fn report_to_json(r: &Report) -> Json {
         "owed": r.owed,
         "dischargeSplit": discharge_split_to_json(r),
         "rows": rows,
+        // Step 9: an imported proof's own halt sites, owed members and
+        // self-posts, carried as the import's state. Not this project's
+        // rows: they count in none of the totals above and move no verdict.
+        "imported": imported_to_json(r),
         "lineAccounting": line_accounting,
         "loadErrors": load_errors,
         "callEdges": call_edges,
@@ -60,6 +64,26 @@ pub fn report_to_json(r: &Report) -> Json {
         // Per-symbol superposition verdict: the N z3 compiles this run already
         // performed, folded by callee symbol. strength = surviving universe count.
         "superposition": superposition_to_json(r),
+    })
+}
+
+/// The imports' own state (step 9): every row an imported proof owes or
+/// states, with its own counts. The importing project's totals never include
+/// these.
+fn imported_to_json(r: &Report) -> Json {
+    let rows: Vec<Json> = r
+        .imported
+        .iter()
+        .map(sugar_verifier::report::row_to_json)
+        .collect();
+    json!({
+        "owed": r.imported_owed(),
+        "notDischarged": r
+            .imported
+            .iter()
+            .filter(|row| row.status != ObligationVerdict::Discharged)
+            .count(),
+        "rows": rows,
     })
 }
 
@@ -170,6 +194,14 @@ pub fn format_report_pretty(r: &Report, quiet: bool) -> String {
                 r.owed.to_string().red().to_string()
             }
         );
+        if !r.imported.is_empty() {
+            let _ = writeln!(
+                out,
+                "  imported debt   : {} ({} owed; the imports' own, not this project's)",
+                r.imported.len(),
+                r.imported_owed()
+            );
+        }
         let _ = writeln!(
             out,
             "  load errors     : {}",
