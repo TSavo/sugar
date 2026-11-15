@@ -48,12 +48,13 @@ read.  Its statement bound each default under its per-parameter key
 (``DefinitionDefaultsSugar``) and every call of the function reads those
 keys, as a call by name does.
 
-A read of a ``class``'s name never runs the class statement (#7757 item 21).
-Python runs it once, where it stands, and the read is the value that run
-bound under the statement's key (``_bound_by_statement``): the binding the
-reduction the read stands in made, and, for a class statement the module
-body runs, read where nothing in that reduction bound the key (a function
-called after import), the binding the module's one run made
+A read of a ``class``'s name never runs the class statement, and a read of a
+decorated ``def``'s name never applies its decorators again (#7757 item 21).
+Python runs the statement once, where it stands, and the read is the value
+that run bound under the statement's key (``_bound_by_statement``): the
+binding the reduction the read stands in made, and, for a statement the
+module body runs, read where nothing in that reduction bound the key (a
+function called after import), the binding the module's one run made
 (``call_site_sugar.ModuleFinalValue``, ``tree_enumerate.module_end_contexts``).
 Where that run completes on no arm, no import completes and the read is the
 run's halts, each carried as the run reached it
@@ -61,8 +62,8 @@ run's halts, each carried as the run reached it
 function that calls ``Box()`` halt with the ``ZeroDivisionError`` the import
 raises, never complete and never refuse.  Any other key neither holds is
 refused by name, as every read of an unbound key is
-(``evaluation_ref_sugar.refuse_unbound_evaluation``): the class statement is
-never reduced again in the read's place.
+(``evaluation_ref_sugar.refuse_unbound_evaluation``): the statement is never
+reduced again in the read's place.
 
 A method of a class that reads the class's name (``Box()`` inside
 ``Box.run``) is constructed while the class statement's own application is
@@ -187,10 +188,10 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
     # stored, for the statement to lay in its record.  False on every read of
     # the name, which runs no class body's stores.
     runs_statement: bool = field(default=False, compare=False)
-    # The source unit whose module body runs the ``class`` statement
-    # (``SourceUnit.module_execution_site``: a class statement the module
-    # runs at import), else None (a ``def``, or a class statement that runs
-    # only when some function is called).  A read of the name that the
+    # The source unit whose module body runs the ``class`` statement or
+    # decorated ``def`` (``SourceUnit.module_execution_site``: a statement
+    # the module runs at import), else None (an undecorated ``def`` read as
+    # a value, or a statement that runs only when some function is called).  A read of the name that the
     # reduction it stands in bound no key for reads what that unit's one
     # module run bound the key to (``_bound_by_statement``).  A lookup aid,
     # never testimony: the read is testified by its name, site and key.
@@ -230,48 +231,54 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
         # (``_bound_by_statement``).  A read constructed while its own
         # statement was under construction (a method of a class reading the
         # class's name) is the same read of the same key.  Where nothing
-        # bound the key: a ``def``'s read is the application itself (a
-        # module function's read after import); an application that reads
-        # its own result refuses; and a ``class``'s read is the module run's
-        # halts where that run completes on no arm (``_module_run_halts``),
-        # else refused by name as a read of an unbound key
-        # (``_unbound_class_read``) -- the class statement runs only where it
-        # is the statement (``runs_statement``), never again at a read of
-        # its name.
+        # bound the key: an application that reads its own result refuses;
+        # and a read of a ``class``'s or decorated ``def``'s name is the
+        # module run's halts where that run completes on no arm
+        # (``_module_run_halts``), else refused by name as a read of an
+        # unbound key (``_unbound_read``) -- the statement runs, and its
+        # decorators apply, only where it is the statement
+        # (``runs_statement``), never again at a read of its name.  Only an
+        # undecorated ``def`` read as a value (no key, no class) is the
+        # application itself: its function, no decorator to apply.
         bound = self._bound_by_statement(ctx)
         if bound is not None:
             return ExitSet.completed(bound)
         if self.refusal is not None:
             _refuse(self.site, self.refusal)
-        if self.definition_class is not None and not self.runs_statement:
+        if not self.runs_statement and (
+            self.definition_class is not None or self.evaluation is not None
+        ):
             halts = self._module_run_halts()
             if halts:
                 return ExitSet(halts)
-            self._unbound_class_read(ctx)
+            self._unbound_read(ctx)
         return self._evaluate(self.decorators, (), ctx)
 
     def _module_run_halts(self) -> tuple:
         """The halted arms of the module's one run, where the module body
-        runs this class statement (``module_run``) and that run completes on
-        no arm (``tree_enumerate.module_run_halts``); else empty.
+        runs this ``class`` statement or decorated ``def`` (``module_run``)
+        and that run completes on no arm (``tree_enumerate.module_run_halts``);
+        else empty.
 
-        Python runs the class statement once, at import.  Where every arm of
-        that run halts (the class body or a base raises, or any statement of
-        the module body does), no import completes, so no route reaches this
-        read but through one of those halts: the read is them, each the
-        run's own arm, read off the one reduction (#7757 item 21, #7766).
-        The class statement is never reduced again for the reader, and the
-        halts are never a completion.  Where some arm completes, a function
-        is called after that import, and the read is the class it bound
-        (``_bound_by_statement``) or, bound by none, refused by name."""
+        Python runs the statement once, at import.  Where every arm of that
+        run halts (the class body, a base, a decorator raises, or any
+        statement of the module body does), no import completes, so no route
+        reaches this read but through one of those halts: the read is them,
+        each the run's own arm, read off the one reduction (#7757 item 21,
+        #7766).  The statement is never reduced again for the reader, and
+        the halts are never a completion.  Where some arm completes, a
+        function is called after that import, and the read is the value it
+        bound (``_bound_by_statement``) or, bound by none, refused by
+        name."""
         if self.module_run is None or self.evaluation is None:
             return ()
         from sugar_lift_py_tests.tree_enumerate import module_run_halts
 
         return module_run_halts(self.module_run)
 
-    def _unbound_class_read(self, ctx):
-        """A read of a ``class``'s name whose statement's key nothing bound
+    def _unbound_read(self, ctx):
+        """A read of a ``class``'s or decorated ``def``'s name whose
+        statement's key nothing bound
         where the read reduces: no reduction the read stands in ran the
         statement, and the module's one run bound nothing under it (the
         statement does not run in the module body, the run is under way, or
@@ -280,8 +287,8 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
         one refusal of a read of an unbound key
         (``evaluation_ref_sugar.refuse_unbound_evaluation``): the function
         that reads it is undecided by that name
-        (``tree_enumerate.refused_function_row``).  The class statement is
-        never reduced in the read's place."""
+        (``tree_enumerate.refused_function_row``).  The statement is never
+        reduced, nor its decorators applied, in the read's place."""
         from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
             evaluation_read_here,
             refuse_unbound_evaluation,

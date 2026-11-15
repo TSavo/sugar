@@ -4051,20 +4051,21 @@ class SourceUnit:
         rebinds it at -- ``y = e`` (any target shape), ``y: T = e``, ``x +=
         e``, ``(x := e)`` (in a comprehension too), a ``for`` target, a
         ``with ... as`` target, a ``match`` capture, a ``class`` statement
-        (which binds its name under its evaluation key,
-        ``_decorated_statement_sugar``) -- that some function, lambda or
-        class body
+        or a decorated ``def`` (which bind the name under the statement's
+        evaluation key, ``_decorated_statement_sugar``) -- that some
+        function, lambda or class body
         reads as a global (CPython's ``symtable``).  A name no such body
         reads is never threaded for a reader: the threading records only
         these (``module_binding_states``).  So every read of a module
-        class's name outside the module block -- a call, a bare read
-        (``b = Box``), an argument (``isinstance(x, Box)``), an attribute
-        (``Box.attr``) -- is the class statement's key, the one read
-        (``DecoratorApplicationSugar``, #7757 item 21).
+        class's or decorated function's name outside the module block -- a
+        call, a bare read (``b = Box``), an argument (``isinstance(x,
+        Box)``), an attribute (``Box.attr``) -- is the statement's key, the
+        one read (``DecoratorApplicationSugar``, #7757 item 21).
 
-        A name bound only by a ``def`` or ``import`` statement (which bind
-        no key) is not one: its reader resolves the definition or the
-        import.  Every other statement that binds a threaded name
+        A name bound only by an undecorated ``def`` (or a ``contextmanager``
+        generator, whose call applies its own frame) or an ``import``
+        statement (which bind no key) is not one: its reader resolves the
+        definition or the import.  Every other statement that binds a threaded name
         carries its binding in the threading too (``module_binding_states``):
         a ``def`` or ``class`` binds the definition, an ``import`` the one
         import table's row for that binding (``import_binding_reference``),
@@ -4108,10 +4109,14 @@ class SourceUnit:
                 keyed.update(node.names_bound_here())
             elif isinstance(node, (For, AsyncFor, WithItem)):
                 loop_bound.update(node.names_bound_here())
-            elif isinstance(node, ClassDef):
-                # A class statement binds its name under its evaluation key
-                # (``_decorated_statement_sugar``), as an assignment binds
-                # its target: every read of the name is that key's read.
+            elif isinstance(
+                node, (ClassDef, FunctionDef, AsyncFunctionDef)
+            ) and not call_applies_own_frame(node):
+                # A class statement, and a decorated ``def`` whose call is a
+                # call of its decorators' result, bind the name under the
+                # statement's evaluation key (``_decorated_statement_sugar``),
+                # as an assignment binds its target: every read of the name
+                # is that key's read.
                 keyed.add(node.name)
             if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
                 continue
@@ -25573,10 +25578,10 @@ class DecoratedDefinitionRef(Expression):
     as an assignment binds its value, ``AssignSugar``), and every read and
     call of the name reads that key (``DecoratorApplicationSugar``), never
     applies the decorators again.  Where no reduction running the statement
-    bound the key (a module function's read after import), a ``def``'s read
-    is the application itself; a ``class``'s read is what the module's one
-    run bound the key to, and is refused by name where that run bound
-    nothing: a class statement is never reduced at a read of its name
+    bound the key (a module function's or class's read after import), the
+    read is what the module's one run bound the key to, and is refused by
+    name where that run bound nothing: a class statement is never reduced,
+    and a decorator never applied again, at a read of the name
     (``DecoratorApplicationSugar._bound_by_statement``).
     """
 
@@ -25926,14 +25931,14 @@ def _decorated_statement_sugar(statement):
     stored, exactly as an undecorated ``class`` statement lays it
     (``ClassDefinitionSugar.as_statement``).
 
-    A ``class`` statement substitution bound no reference for (a module
-    body's: no reader outside the module block is threaded for its name)
-    binds its name all the same, under its own key
-    (``ClassDef.statement_value_ref``): the key every read of a module
-    class's name reads, so the module's one run leaves the class a frame
-    called after import reads (#7757 item 21).  A decorated ``def``
-    substitution bound no reference for reduces as that application alone,
-    in statement position (``DecoratorApplicationSugar.as_statement``)."""
+    A ``class`` statement or decorated ``def`` substitution bound no
+    reference for (a module body's: no reader outside the module block is
+    threaded for its name) binds its name all the same, under its own key
+    (``ClassDef.statement_value_ref``; ``_definition_evaluation_key`` with
+    no scope for a ``def``): the key every read of the module name reads
+    (a call by name, ``Call._decorated_definition_call``), so the module's
+    one run leaves the value a frame called after import reads (#7757 item
+    21)."""
     import copy
 
     value = getattr(statement, "decorated_value", None)
@@ -25941,7 +25946,11 @@ def _decorated_statement_sugar(statement):
         value = (
             statement.statement_value_ref()
             if isinstance(statement, ClassDef)
-            else _decorated_definition_ref(statement, statement.span)
+            else _decorated_definition_ref(
+                statement,
+                statement.span,
+                evaluation=_definition_evaluation_key(statement, {}),
+            )
         )
     application = value.sugar()
     # The statement's own application: a shallow copy (stamps kept, as
@@ -26010,12 +26019,14 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
     construction failure (the application reading its own result, a
     definition with no frame) refuses.
 
-    A read of a ``class``'s name is the statement's key and nothing else:
-    where the reduction the read stands in bound it, and, for a class
-    statement the module body runs (``SourceUnit.module_execution_site``,
-    carried as ``module_run``), where the module's one run bound it
+    A read of a ``class``'s or decorated ``def``'s name is the statement's
+    key and nothing else: where the reduction the read stands in bound it,
+    and, for a statement the module body runs
+    (``SourceUnit.module_execution_site``, carried as ``module_run``), where
+    the module's one run bound it
     (``DecoratorApplicationSugar._bound_by_statement``).  It never reduces
-    the class statement again; a key neither bound is refused by name.
+    the class statement or applies the decorators again; a key neither
+    bound is refused by name.
 
     A read constructed while this statement's application is under
     construction up the stack holds no application.  It reads the
@@ -26036,11 +26047,13 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
     )
 
     unit = definition.unit
-    # The unit whose module body runs a ``class`` statement, at import: a
-    # read of the name after import reads what that one run bound the key to.
+    # The unit whose module body runs a ``class`` statement or a decorated
+    # ``def``, at import: a read of the name after import reads what that one
+    # run bound the key to.  An undecorated ``def`` read as a value binds no
+    # key (``SourceUnit.function_definition_for_read``): none.
     module_run = (
         unit
-        if isinstance(definition, ClassDef)
+        if not call_applies_own_frame(definition)
         and unit.module_execution_site(definition) is not None
         else None
     )
