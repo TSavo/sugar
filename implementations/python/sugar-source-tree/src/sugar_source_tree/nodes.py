@@ -27679,6 +27679,208 @@ def _receiver_uses(definition):
     return received, blocked, read, zero_argument_super
 
 
+#: What a call of a definition whose body this module cannot read may change:
+#: every object it is handed (``_names_a_call_may_change``).
+EVERY_NAME = None
+
+
+def _names_a_call_may_change(definition):
+    """``(names, runs_unseen_code)``: what a call of ``definition`` (a
+    ``def`` or a lambda) may change, read off its body, or ``EVERY_NAME``
+    (None) for a generator function or an ``async def`` (its body runs after
+    its call returned, ``_receiver_uses``) and for anything else.  The one
+    decision the alias rule asks of a callee
+    (``lambda_callable.definition_edge_call``, #7757 step 7): a call that
+    binds one object to two of the contract's formals or inputs lies only
+    where the contract states a change of that object through one of them
+    while it reads it through another.
+
+    ``names`` are the parameters, captured cells and module globals whose
+    object the body may change or whose binding it may rebind:
+
+    - each name ``_receiver_uses`` reads as ``received`` (a method call on
+      it, an item store or delete, a field store: the contract's
+      ``class:<p>`` input used for a dispatched call or a store, whose
+      object it states over ``python:after``);
+    - each name the body hands to code, by any read that is not one of the
+      reads below: a call's argument or callee, the root of an item or field
+      store or of a method call on a field or an item (``n.x.f()``,
+      ``n[0].f()``), an assignment's value (an alias the body may change it
+      through), an augmented assignment's target or value, an iterable, a
+      ``with`` item, a starred or formatted value, a raised or awaited
+      value.  The inner call's edge names the object it may change
+      (``CallSiteValue.after_labels``), and the contract states the read of
+      every other formal at entry;
+    - each name a nested function, lambda or class reads (code that runs
+      where the frame does not see it);
+    - each name the body declares ``global`` or ``nonlocal`` (a rebinding,
+      stated over ``python:after(out, "global:<n>")`` /
+      ``"cell:<n>"``);
+    - the first parameter where the body calls ``super()`` with no argument
+      (a base's method runs on that object).
+
+    A read hands nothing on, and changes nothing, where it is an operand of
+    a unary or binary operator or of a comparison, a truth test (``if``,
+    ``while``, ``assert``, a conditional expression's test), an index or a
+    slice bound, a returned value, an expression statement's value or an
+    annotation -- or an attribute read, an item read, a ``bool`` operand, a
+    conditional expression's branch or a tuple or list display element
+    standing in one of those places: the lifter reads each as the native
+    operation over its operands or the plain read
+    (``SymbolicValue._runtime_binary_dispatch``), which changes none.  A
+    plain rebinding of a local name (an assignment's, a ``for``'s or a
+    ``with``'s target name, a walrus's, ``del n``) changes no object.
+
+    ``runs_unseen_code``: the body makes a call, an item or field store or
+    delete, an augmented assignment, a loop, a ``with``, a comprehension, an
+    ``await`` or a formatted value -- code that may run a function this
+    file defines, which may change any module global or captured cell the
+    callee's contract reads (``_global_input_names`` follows them).  A
+    parameter's object is changed by such code only where an object it
+    reaches is, or is held by, one of those inputs, which the alias rule
+    asks of them.
+
+    Read once per definition (its construction-cache row)."""
+    if not isinstance(definition, (FunctionDef, Lambda)):
+        return EVERY_NAME
+    row = definition._coordinate()[2]
+    held = row.get("__names_a_call_may_change__")
+    if held is not None:
+        return held[0]
+    answer = _read_names_a_call_may_change(definition)
+    row["__names_a_call_may_change__"] = (answer,)
+    return answer
+
+
+def _read_names_a_call_may_change(definition):
+    """``_names_a_call_may_change``, read off the definition's body."""
+    uses = _receiver_uses(definition)
+    if uses is None:
+        return EVERY_NAME
+    received, _blocked, _read, zero_argument_super = uses
+    body = definition.body
+    statements = tuple(body) if isinstance(body, (list, tuple)) else (body,)
+    nodes = []
+    for statement in statements:
+        nodes.extend(statement.walk())
+    pure: set = set()
+    stored: set = set()
+
+    def hands_nothing(expression) -> None:
+        # The Names whose read in a place that hands nothing on reads only
+        # what the expression's value is: through an attribute or item
+        # read, a ``bool`` operand, a conditional's branch, a display.
+        pending = [expression]
+        while pending:
+            node = pending.pop()
+            if isinstance(node, Name):
+                pure.add(id(node))
+            elif isinstance(node, (Attribute, Subscript)):
+                pending.append(node.value)
+            elif isinstance(node, BoolOp):
+                pending.extend(node.values)
+            elif isinstance(node, IfExp):
+                pending.extend((node.body, node.orelse))
+            elif isinstance(node, (Tuple_, List)):
+                pending.extend(
+                    element for element in node.elts if not isinstance(element, Starred)
+                )
+
+    def rebinds(target) -> None:
+        # A plain store of a name: an unpack's or a starred leaf included.
+        pending = [target]
+        while pending:
+            node = pending.pop()
+            if isinstance(node, Name):
+                stored.add(id(node))
+            elif isinstance(node, Starred):
+                pending.append(node.value)
+            elif isinstance(node, (Tuple_, List)):
+                pending.extend(node.elts)
+
+    if isinstance(definition, Lambda):
+        hands_nothing(body)
+    names: set = set(received)
+    runs_unseen_code = False
+    for node in nodes:
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
+            names.update(inner.id for inner in node.walk() if isinstance(inner, Name))
+        elif isinstance(node, (Global, Nonlocal)):
+            names.update(node.names)
+        if isinstance(node, BinOp):
+            hands_nothing(node.left)
+            hands_nothing(node.right)
+        elif isinstance(node, UnaryOp):
+            hands_nothing(node.operand)
+        elif isinstance(node, Compare):
+            hands_nothing(node.left)
+            for comparator in node.comparators:
+                hands_nothing(comparator)
+        elif isinstance(node, (If, While, IfExp)):
+            hands_nothing(node.test)
+        elif isinstance(node, Assert):
+            hands_nothing(node.test)
+            if node.msg is not None:
+                hands_nothing(node.msg)
+        elif isinstance(node, (Return, Expr)):
+            if node.value is not None:
+                hands_nothing(node.value)
+        elif isinstance(node, Subscript):
+            hands_nothing(node.slice_)
+        elif isinstance(node, Slice):
+            for bound in (node.lower, node.upper, node.step):
+                if bound is not None:
+                    hands_nothing(bound)
+        elif isinstance(node, AnnAssign):
+            hands_nothing(node.annotation)
+            rebinds(node.target)
+        elif isinstance(node, Assign):
+            for target in node.targets:
+                rebinds(target)
+        elif isinstance(node, (For, AsyncFor, Comprehension, NamedExpr)):
+            rebinds(node.target)
+        elif isinstance(node, WithItem) and node.optional_vars is not None:
+            rebinds(node.optional_vars)
+        elif isinstance(node, Delete):
+            for target in node.targets:
+                rebinds(target)
+        if isinstance(
+            node,
+            (
+                Call,
+                AugAssign,
+                For,
+                AsyncFor,
+                With,
+                AsyncWith,
+                Comprehension,
+                Await,
+                FormattedValue,
+            ),
+        ):
+            runs_unseen_code = True
+    # An item or field store or delete runs ``__setitem__`` / ``__setattr__``
+    # / ``__delitem__`` / ``__delattr__``.
+    for node in nodes:
+        if isinstance(node, (Assign, Delete)):
+            leaves = _store_leaves(node.targets)
+        elif isinstance(node, (AnnAssign, For, AsyncFor)):
+            leaves = _store_leaves((node.target,))
+        else:
+            continue
+        if leaves:
+            runs_unseen_code = True
+            break
+    if _attribute_store_targets(nodes):
+        runs_unseen_code = True
+    for node in nodes:
+        if isinstance(node, Name) and id(node) not in pure and id(node) not in stored:
+            names.add(node.id)
+    if zero_argument_super and definition.params:
+        names.add(definition.params[0].name)
+    return frozenset(names), runs_unseen_code
+
+
 def _global_input_names(definition) -> frozenset:
     """The module globals a call of ``definition`` (a ``def``, ``async
     def`` or lambda) reads that are its contract's ``global:`` inputs: each
