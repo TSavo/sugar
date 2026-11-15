@@ -19,7 +19,7 @@ Boundary (load-bearing):
     authority or reporter. Seat-bound receipts are minted per demand with the
     caller's root/path; the pass product is not.
 
-The one opener's populated file (``get_opened`` / ``remember_opened``) is
+The one opener's opened file (``get_opened`` / ``remember_opened``) is
 seat-bound and authority-bound: it is keyed by the workspace root and the
 table/session it was opened under as well as the CID and seat, so it is shared
 only by opens that would have produced the same unit.
@@ -82,7 +82,7 @@ _LEXICAL: collections.OrderedDict[tuple, Any] = collections.OrderedDict()
 _LEXICAL_PREPARE_COUNTS: dict[str, int] = {}
 
 # The one opener's product (``lift_rpc.open_source_file_for_construction``): a
-# file parsed under a construction context and POPULATED. Keyed by content CID
+# file parsed under a construction context. Keyed by content CID
 # and seat, like residency, plus the workspace root and the authority it was
 # opened under (the table or caller-held context, and the resolution session).
 # The authority objects are held in the value, so an ``id`` in the key cannot be
@@ -93,7 +93,7 @@ _OPENED: collections.OrderedDict[tuple, tuple[tuple, Any]] = (
 # The construction context the opener opens a file under for an authority it
 # derives itself (the table and the session): minted once, so a caller that
 # names it (the audit leaf) and a caller that does not (the enumerate levels)
-# open under the same object and share one parse and one population. Keyed
+# open under the same object and share one parse. Keyed
 # like ``_OPENED``.
 _OPEN_CONTEXTS: collections.OrderedDict[tuple, tuple[tuple, Any]] = (
     collections.OrderedDict()
@@ -135,7 +135,7 @@ def _opened_key(
 def get_opened(
     source_cid: str, source_seat: str, workspace_root: str, authority: tuple
 ) -> Any | None:
-    """The opener's populated file for these bytes, seat, root and authority."""
+    """The opener's opened file for these bytes, seat, root and authority."""
     key = _opened_key(source_cid, source_seat, workspace_root, authority)
     hit = _OPENED.get(key)
     if hit is None:
@@ -156,14 +156,14 @@ def remember_opened(
     authority: tuple,
     source_file: Any,
 ) -> None:
-    """Record a file the opener opened and populated; bounded like residency."""
+    """Record a file the opener opened; bounded like residency."""
     key = _opened_key(source_cid, source_seat, workspace_root, authority)
     _OPENED[key] = (tuple(authority), source_file)
     _OPENED.move_to_end(key)
     while len(_OPENED) > _resident_limit():
         evicted, _held = _OPENED.popitem(last=False)
-        # The context leaves with the file it populated: a later open mints a
-        # fresh one and prepares its own unit, never populates this one twice.
+        # The context leaves with the file it was opened under: a later open
+        # mints a fresh one and prepares its own unit.
         _OPEN_CONTEXTS.pop(evicted, None)
 
 
@@ -196,15 +196,6 @@ def open_context(
     while len(_OPEN_CONTEXTS) > _resident_limit():
         _OPEN_CONTEXTS.popitem(last=False)
     return context
-
-
-def forget_open_context(
-    source_cid: str, source_seat: str, workspace_root: str, authority: tuple
-) -> None:
-    """Drop the context of an open whose population halted: it is not reused."""
-    _OPEN_CONTEXTS.pop(
-        _opened_key(source_cid, source_seat, workspace_root, authority), None
-    )
 
 
 def _remember(source_cid: str, source_seat: str, ctx: ProcessResidentFileContext) -> None:

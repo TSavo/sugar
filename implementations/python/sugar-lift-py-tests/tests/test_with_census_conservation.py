@@ -184,9 +184,9 @@ def test_known_constructed_with_item_shows_constructed_gt_zero(tmp_path: Path):
     """Planted constructed testimony at a real with-item must tally constructed>0.
 
     Without this tooth, constructed=0 on a corpus could be an off-by-everything
-    counter and still look like product residual. Plants SourceDerived at the
-    live use-site (same type With construction consumes) after opening a real
-    with-item file — derivation population is not required to validate the tally.
+    counter and still look like product residual. Plants a constructed row at
+    the live use-site in the table With reads, after opening a real with-item
+    file.
     """
     module = _load()
     from types import SimpleNamespace
@@ -231,16 +231,31 @@ def test_known_constructed_with_item_shows_constructed_gt_zero(tmp_path: Path):
         def exit_outcome_for(self, _entered, _ctx=None):
             return ExitSet.completed(False)
 
-    ctx.source_derived_contract_refs[use_site] = SourceDerivedContextManagerRefV1(
-        use_site=use_site,
-        summary_cid="blake3-512:" + ("a" * 128),
-        semantics=ProtocolResourceSemanticsV1(
-            enter=EnterResultContractV1(sort=PrimitiveSort("Value")),
-            exit=ExitContractV1(disposition=ReturnTruthinessDispositionV1()),
+    from types import MappingProxyType
+
+    from sugar_lift_py_tests.context_manager_resolution import ResolvedContractRefsV1
+
+    planted = ResolvedContractRefsV1(
+        refs.catalog_cid,
+        refs.table_cid,
+        MappingProxyType(
+            {
+                use_site: SourceDerivedContextManagerRefV1(
+                    use_site=use_site,
+                    summary_cid="blake3-512:" + ("a" * 128),
+                    semantics=ProtocolResourceSemanticsV1(
+                        enter=EnterResultContractV1(sort=PrimitiveSort("Value")),
+                        exit=ExitContractV1(
+                            disposition=ReturnTruthinessDispositionV1()
+                        ),
+                    ),
+                    import_signature=ImportSignatureV2(()),
+                    protocol=_Protocol(),
+                )
+            }
         ),
-        import_signature=ImportSignatureV2(()),
-        protocol=_Protocol(),
     )
+    ctx = tree_construction_context_for_workspace(tmp_path, contract_refs=planted)
     rows = module._tally_cm_resolutions(ctx, source_cid=source_file.unit.source_cid)
     sites = module._ast_site_prevalence(path)
     assert sites.get("site:with-item", 0) == 1
@@ -280,10 +295,10 @@ def test_unconstructed_with_item_is_counted_not_silently_dropped(tmp_path: Path)
     assert partition["conserves"] is True
 
 
-def test_effective_tally_includes_contract_refs_not_only_source_derived(
+def test_effective_tally_includes_contract_refs(
     tmp_path: Path,
 ):
-    """Measurement defect class: source_derived-only under-counts provisional table."""
+    """The tally reads the provisional table With reads."""
     module = _load()
     from sugar_lift_py_tests.lift_rpc import (
         open_source_file_for_construction,
@@ -301,8 +316,6 @@ def test_effective_tally_includes_contract_refs_not_only_source_derived(
     source_file = open_source_file_for_construction(
         path, root=tmp_path, construction_context=ctx
     )
-    # Old defect shape: derived empty, provisional has the gap.
-    assert len(ctx.source_derived_contract_refs) == 0
     assert len(refs.by_use_site) == 1
     rows = module._tally_cm_resolutions(ctx, source_cid=source_file.unit.source_cid)
     assert len(rows) == 1, rows

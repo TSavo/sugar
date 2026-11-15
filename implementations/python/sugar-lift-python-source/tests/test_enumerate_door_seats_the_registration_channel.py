@@ -21,8 +21,8 @@ unreachable from that seat: the only way to arrive is for the node's reporter to
 be one that owns no registration at all. It was ABSENCE, not foreignness. The
 node was born on ``NULL_REPORTER`` because ``_handle_enumerate`` opened its tree
 without a ``reporter=`` at the ``context-manager-resolutions`` level, and that
-level goes on to CONSTRUCT sugar (``populate_source_derived_resource_refs`` ->
-``ClassDef.sugar()``). This is the #7171 null-reporter class in a second
+level went on to CONSTRUCT sugar (the since-deleted population pre-pass
+reached ``ClassDef.sugar()``). This is the #7171 null-reporter class in a second
 costume: nodes writing into a channel that can never answer.
 
 THE ENTRANCE IS THE CENSUS ENTRANCE: ``measure_file_via_enumerate``. A bare

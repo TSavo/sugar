@@ -12,13 +12,14 @@ individual floors already minted their raise (then ``RaiseValue``, since
    ``ExpectationNotMetEffect``.
 
 This module pins one source-visible representative per family through the
-production doors only: workspace-relative ``SourceFile``,
-``populate_source_derived_resource_refs``, ``With.sugar().desugar()``.
+production doors only: workspace-relative ``SourceFile`` under the step-3
+table its ``with`` enrolls, ``With.sugar().desugar()``.
 
-``pytest.raises`` is an imported call: a coordinate plus an edge, cited by its
-import target and never derived from the installed pytest body (#7884). What
-it does with the body's halt is the imported proof's to answer; the lift keeps
-the body's halt on the cited manager's open exit and decides no expectation.
+``pytest.raises`` is an imported call: a coordinate plus an edge, never
+derived from the installed pytest body (#7884). What it does with the body's
+halt is the imported proof's to answer; the ``with``'s manager is what the
+head reduces to (#7757), the undecided manager here, whose open exit keeps
+the body's halt and decides no expectation.
 """
 
 from __future__ import annotations
@@ -28,9 +29,11 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import (
-    OpaqueCitedContextManagerRefV1,
-    SourceDerivedContextManagerRefV1,
     TreeConstructionContextV1,
+)
+from sugar_lift_py_tests.lift_rpc import (
+    _context_manager_rows_for_paths,
+    provisional_contract_refs_from_demand_rows,
 )
 from sugar_lift_py_tests.no_call_body_attribution import (
     AttributionOutcome,
@@ -40,13 +43,9 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     _exceptional_exit_effects,
 )
 from sugar_lift_py_tests.outcome import ExitSet
-from sugar_lift_py_tests.sugar.with_opaque_cited_manager_sugar import (
-    WithOpaqueCitedManagerSugar,
+from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+    WithReducedManagerSugar,
 )
-from sugar_lift_python_source.manager_summary_derivation import (
-    populate_source_derived_resource_refs,
-)
-from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.nodes import (
     Attribute,
@@ -74,7 +73,7 @@ _FAMILY_SLICES: tuple[tuple[ProducerFamily, str, str, type], ...] = (
 def _build_slice(
     tmp_path: Path, *, family: ProducerFamily, body: str, expected: str
 ) -> tuple[TreeConstructionContextV1, With, object]:
-    """Production doors only: workspace-relative source + populate + With node."""
+    """Production doors only: workspace-relative source + its table + With node."""
     source = (
         "import pytest\n"
         f"def use_{family.value.lower()}_boundary():\n"
@@ -84,16 +83,14 @@ def _build_slice(
     path = tmp_path / f"{family.value}_auth_exit.py"
     path.write_text(source, encoding="utf-8")
     root = tmp_path
-    context = TreeConstructionContextV1.for_source_call_construction()
+    context = TreeConstructionContextV1(
+        contract_refs=provisional_contract_refs_from_demand_rows(
+            _context_manager_rows_for_paths([path], root=root)
+        ),
+    )
     tree = SourceFile(
         workspace_path_source(str(path), root=str(root)),
         construction_context=context,
-    )
-    populate_source_derived_resource_refs(
-        tree,
-        root=root,
-        path=path,
-        session=SourceResolutionSession(enrolled_distributions=frozenset()),
     )
     with_node = next(node for node in tree.nodes() if isinstance(node, With))
     body_expr = with_node.body[0].value
@@ -150,26 +147,21 @@ def test_producer_emits_authenticated_exceptional_exit(
     _FAMILY_SLICES,
     ids=[family.value for family, *_ in _FAMILY_SLICES],
 )
-def test_imported_pytest_raises_is_cited_by_its_target(
+def test_imported_pytest_raises_is_the_heads_reduced_value(
     tmp_path: Path,
     family: ProducerFamily,
     body: str,
     expected: str,
     node_type: type,
 ) -> None:
-    """Shared door: the imported manager is cited by its import target, never
-    derived from the installed pytest body (#7884)."""
+    """Shared door: the imported manager is never derived from the installed
+    pytest body (#7884); it is what the head reduces to (#7757)."""
     del node_type
-    context, with_node, _body = _build_slice(
+    _context, with_node, _body = _build_slice(
         tmp_path, family=family, body=body, expected=expected
     )
-    (reference,) = tuple(context.source_derived_contract_refs.values())
-    assert not isinstance(reference, SourceDerivedContextManagerRefV1), reference
-    assert isinstance(reference, OpaqueCitedContextManagerRefV1), reference
-    assert reference.target_name == "python:pytest.raises", reference
-    assert reference.roster.resolution_kind == "call-target-off-population"
     boundary = with_node.sugar()
-    assert isinstance(boundary, WithOpaqueCitedManagerSugar), type(boundary).__name__
+    assert isinstance(boundary, WithReducedManagerSugar), type(boundary).__name__
 
 
 @pytest.mark.parametrize(
@@ -184,7 +176,7 @@ def test_full_route_keeps_the_producer_halt(
     expected: str,
     node_type: type,
 ) -> None:
-    """Truthful full route: the body's producer halt leaves the cited manager.
+    """Truthful full route: the body's producer halt leaves the undecided manager.
 
     The manager's exit disposition is open, so the halt stays on the exit's
     falsity face; it is never consumed by a law the lift does not hold."""

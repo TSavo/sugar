@@ -21,7 +21,6 @@ from sugar_lift_py_tests.sugar.generator_with_sugar import (
     GeneratorObjectWithSugar,
     GeneratorWithSugar,
 )
-from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
 
 from test_contextmanager_generator_protocol import (
     _SUPPRESSES_VALUE_ERROR,
@@ -87,17 +86,11 @@ def test_the_halt_carries_the_observed_text(tmp_path):
     assert effect.exception_type_coordinate is not None
 
 
-@pytest.mark.parametrize(
-    ("contextlib_enrolled", "consumer"),
-    ((True, WithSourceResourceSugar), (False, GeneratorWithSugar)),
-)
-def test_a_contextmanager_generator_still_constructs_its_manager(
-    tmp_path, contextlib_enrolled, consumer
-):
+def test_a_contextmanager_generator_still_constructs_its_manager(tmp_path):
     opened = _imported(
         tmp_path,
         _SUPPRESSES_VALUE_ERROR,
         "raise ValueError('v')",
-        contextlib_enrolled=contextlib_enrolled,
+        contextlib_enrolled=False,
     )
-    assert _function_rows(*opened) == (consumer, [("return", 7)])
+    assert _function_rows(*opened) == (GeneratorWithSugar, [("return", 7)])

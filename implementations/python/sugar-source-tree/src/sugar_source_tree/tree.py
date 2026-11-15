@@ -55,7 +55,7 @@ class SourceFile:
     file is opened one way only, by
     ``sugar_lift_py_tests.lift_rpc.open_source_file_for_construction``, whose
     first stage (``_open_at_seat``) reads the file at its seat and constructs
-    this from that identity, and which then populates the unit (#7757 item 5).
+    this from that identity (#7757 item 5).
 
     ``_open_at_seat`` is the one entry into residency: it alone calls
     ``process_resident_file._source_file_from_identity``. Calling the class

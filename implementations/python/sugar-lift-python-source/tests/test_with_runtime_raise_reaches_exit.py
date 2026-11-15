@@ -19,10 +19,10 @@ import pytest
 
 from sugar_lift_py_tests.effect import RaiseEffect, RuntimeEffect
 from sugar_lift_py_tests.outcome import Completed, Halted
-from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
+from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithReducedManagerSugar
 from sugar_source_tree.nodes import FunctionDef, With
 
-from test_contextlib_suppress_source_exit_faces import _corpus, _open, _suppress
+from test_contextlib_suppress_source_exit_faces import _corpus, _open
 
 _MANAGERS = (
     "class Swallows:\n"
@@ -42,7 +42,7 @@ def _with(tmp_path: Path, manager: str, body: str):
     source = _MANAGERS + f"def f():\n    with {manager}():\n        {body}\n    return 1\n"
     source_file = _open(_corpus(tmp_path, source))
     with_node = next(n for n in source_file.nodes() if isinstance(n, With))
-    assert type(with_node.sugar()) is WithSourceResourceSugar
+    assert type(with_node.sugar()) is WithReducedManagerSugar
     func = next(
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
@@ -80,22 +80,6 @@ def test_true_exit_suppresses_a_runtime_raise(tmp_path, body):
 def test_false_exit_reraises_the_runtime_raise(tmp_path, body, name):
     exits = _with(tmp_path, "NeverSuppresses", body)
     assert _raised(exits) == [name]
-
-
-def test_suppress_consumes_a_runtime_raise_of_its_class(tmp_path):
-    exits = _suppress(tmp_path, "ZeroDivisionError", "1/0")
-    assert _halts(exits) == []
-    assert any(isinstance(face, Completed) for face in exits.exits)
-
-
-def test_suppress_consumes_a_runtime_raise_by_its_base(tmp_path):
-    exits = _suppress(tmp_path, "LookupError", "{}['k']")
-    assert _halts(exits) == []
-
-
-def test_suppress_reraises_an_unrelated_runtime_raise(tmp_path):
-    exits = _suppress(tmp_path, "ZeroDivisionError", "{}['k']")
-    assert _raised(exits) == ["KeyError"]
 
 
 def _returns(exits):

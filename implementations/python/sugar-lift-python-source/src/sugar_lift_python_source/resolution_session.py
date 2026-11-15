@@ -207,7 +207,7 @@ def session_or_new(
 ) -> SourceResolutionSession:
     """Return the caller's authoritative session; refuse unknown authority.
 
-    Multi-resolve owners (populate, package enumeration, file-open, census walk)
+    Multi-resolve owners (package enumeration, file-open, census walk)
     must pass an explicit session — or use ``walk_session_for(workspace_root)``
     — so amortization reaches every receipt they own. Do not call this at those
     doors and throw the result away between receipts.

@@ -326,9 +326,8 @@ def provisional_contract_refs_from_demands(root: Path):
     unconditional ``RuntimeSelectedContextManager`` (false red).
 
     Each demand lands as ``ContextManagerResolutionGapV1`` of the one kind
-    ``undecided`` (#7757 item 4). Source-derived managers may still
-    win via ``populate_source_derived_resource_refs`` after the context is
-    installed — derived takes precedence over this provisional gap table.
+    ``undecided`` (#7757 item 4): its manager is what the head reduces to
+    (``With._reduced_manager_sugar``).
 
     Rows are derived per source on first demand: asking about one file costs
     that file, not the corpus. Process-memoized by resolved root so a second
@@ -447,7 +446,7 @@ def _open_at_seat(
     A file becomes a node tree here and nowhere else (#7757 item 5): its bytes
     are read at its seat (``_read_at_seat``) and parsed into the resident unit.
     ``open_source_file_for_construction`` is this stage under a construction
-    context, then population. The two step-3 readers (the With rows and the
+    context. The two step-3 readers (the With rows and the
     lexical import pass) call this stage with no context, because their rows
     are what that context's table is built from; they read the same seat, the
     same bytes and the same resident unit the opener does. The files are step
@@ -542,7 +541,7 @@ def construction_context_for_open(
     prebind's bound refs when installed), and minted once per file and
     authority (``process_resident_file.open_context``). A caller that passes it
     to the opener explicitly (the audit leaf) and a caller that passes nothing
-    (the enumerate levels) open the same unit: one parse, one population.
+    (the enumerate levels) open the same unit: one parse.
     """
     from sugar_source_tree.process_resident_file import open_context
 
@@ -572,13 +571,13 @@ def open_source_file_for_construction(
 ):
     """THE one way a Python file is opened for construction (#7757 item 5).
 
-    Two stages, one open. The first stage (``_open_at_seat``) reads the file at
-    its seat and parses it under a construction context; this function then
-    populates the unit with source-derived manager refs at exact use-sites.
-    There is no open that skips either, so every reader -- every
-    ``sugar.enumerate`` level, the audit leaf, the console census, the
-    caller-parameter contract, the attribution instruments, the scripts --
-    reads the same tree.
+    The open (``_open_at_seat``) reads the file at its seat and parses it
+    under a construction context.  Nothing reads a function body here: a
+    ``with``'s manager is what its head reduces to, at reduce (#7757).
+    There is no other open, so every reader -- every ``sugar.enumerate``
+    level, the audit leaf, the console census, the caller-parameter
+    contract, the attribution instruments, the scripts -- reads the same
+    tree.
 
     The context, when the caller names none, is built on
     ``_enumerate_contract_refs``: the Rust prebind's bound refs when installed,
@@ -602,22 +601,13 @@ def open_source_file_for_construction(
 
     A file is opened once per authority: the same bytes at the same seat,
     under the same table (or caller-held context), the same session and the
-    same ``root``, return the unit this door already opened and populated
+    same ``root``, return the unit this door already opened
     (``process_resident_file.get_opened``), with its reporter rebound and its
     roll call reseated. A walk that reopens its files --
     the enumerate levels, the caller-parameter contract asked once per
-    question -- pays the parse and the population once.
-
-    A failure while populating source-derived refs propagates to the caller,
-    as it does at the ``context-manager-resolutions`` level: a halt is not
-    turned into a file that opened (#7795). A population that halted is not
-    remembered.
+    question -- pays the parse once.
     """
-    from sugar_lift_python_source.manager_summary_derivation import (
-        populate_source_derived_resource_refs,
-    )
     from sugar_source_tree.process_resident_file import (
-        forget_open_context,
         get_opened,
         open_context,
         remember_opened,
@@ -683,22 +673,7 @@ def open_source_file_for_construction(
     if reporter is not NULL_REPORTER:
         _seat_roll_call_reporter(source_file, reporter)
     if opened_before:
-        # Populated when it was first opened under this authority.
         return source_file
-    try:
-        populate_source_derived_resource_refs(
-            source_file,
-            root=root,
-            path=path,
-            session=session,
-        )
-    except BaseException:
-        # A population that halted is not remembered, and neither is the
-        # context it wrote into: the next open mints a fresh one and so
-        # prepares its own unit.
-        if authority is own:
-            forget_open_context(source_cid, seat, str(root), own)
-        raise
     remember_opened(source_cid, seat, str(root), authority, source_file)
     return source_file
 
@@ -2064,7 +2039,7 @@ def _roll_call_audit_leaf(
         # The context is named here, on the authenticated table when the Rust
         # prebind installed one, and it is the same context the enumerate
         # levels open this file under (``construction_context_for_open``), so
-        # the leaf shares their parse and their population.
+        # the leaf shares their parse.
         source_file = open_source_file_for_construction(
             full_path,
             root=root,
@@ -2514,9 +2489,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 from sugar_source_tree.reporter import CollectingReporter
 
                 # SEAT THE REGISTRATION CHANNEL (#7171 class, second costume):
-                # this door CONSTRUCTS sugar (the opener's
-                # `populate_source_derived_resource_refs` reaches
-                # `ClassDef.sugar()`), so the tree must be opened
+                # this door CONSTRUCTS sugar, so the tree must be opened
                 # on a reporter that can hold a registration. The one opener
                 # seats it.
                 try:
@@ -2545,7 +2518,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         ],
                     )
                     return
-                # The opener above already populated this tree under the walk
+                # The opener above already opened this tree under the walk
                 # session for this root (step 2's file list). Construction
                 # terminals stay loud here. The recensus consumer preserves the
                 # already-authenticated provisional key manifest alongside the

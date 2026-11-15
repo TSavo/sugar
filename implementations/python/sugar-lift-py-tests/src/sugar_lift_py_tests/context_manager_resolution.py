@@ -819,19 +819,12 @@ def effective_context_manager_resolutions_for_source(
     context: object, *, source_cid: str
 ) -> dict[SourceFragmentCoordinateV1, object]:
     """Project the exact resolution table consumed by With for one source."""
-    effective: dict[SourceFragmentCoordinateV1, object] = dict(
+    return dict(
         resolutions_for_source(
             getattr(getattr(context, "contract_refs", None), "by_use_site", None),
             source_cid,
         )
     )
-    for coordinate, resolution in (
-        getattr(context, "source_derived_contract_refs", None) or {}
-    ).items():
-        if getattr(coordinate, "source_cid", None) == source_cid:
-            # Same precedence as With._prebound_manager_resolution.
-            effective[coordinate] = resolution
-    return effective
 
 
 @dataclass(frozen=True)
@@ -1113,22 +1106,12 @@ class TreeConstructionContextV1:
     workspace_root: str | None = None
     # Mutable frame table held by reference; the context object itself is frozen.
     source_call_frames: dict = field(default_factory=dict)
-    # Unresolved named calls parked at exact source coordinates. Ordinary Sugar
-    # construction consumes the testimony only when execution reaches the call.
-    opaque_source_call_obligations: dict = field(default_factory=dict)
-    source_derived_contract_refs: dict = field(default_factory=dict)
-    # Manager uses whose head is proven, from source, not to be a context
-    # manager (a class MRO without ``__enter__`` or ``__exit__``): keyed like
-    # ``source_derived_contract_refs``; the With raises the interpreter's own
-    # TypeError after evaluating the head.
-    source_non_manager_heads: dict = field(default_factory=dict)
 
     @classmethod
     def for_source_call_construction(
         cls,
         *,
         source_call_frames: dict | None = None,
-        opaque_source_call_obligations: dict | None = None,
         workspace_root: str | None = None,
     ) -> "TreeConstructionContextV1":
         """Construction context for sole-path source-call frames without CM enrollment."""
@@ -1136,11 +1119,6 @@ class TreeConstructionContextV1:
             contract_refs=empty_resolved_contract_refs(),
             workspace_root=workspace_root,
             source_call_frames={} if source_call_frames is None else source_call_frames,
-            opaque_source_call_obligations=(
-                {}
-                if opaque_source_call_obligations is None
-                else opaque_source_call_obligations
-            ),
         )
 
     @classmethod

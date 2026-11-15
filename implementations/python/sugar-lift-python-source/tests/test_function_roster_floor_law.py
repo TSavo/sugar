@@ -1,14 +1,7 @@
-"""A populate failure inside the one opener propagates (#7795).
+"""A failure inside the one opener propagates (#7795).
 
-History. #7062 and #7075 each stopped one exception class from erasing the
-function count of a file whose SourceFile had already been built. The repair
-that followed caught every ``Exception`` from populate inside
-``open_source_file_for_construction`` and wrote it to ``populate_residuals``,
-which nothing reads: the open "succeeded" and the halt was dropped.
-
-The catch is deleted. A populate failure of any class reaches the caller, as it
-does at the ``context-manager-resolutions`` level. The function count the board
-reports comes from the ``functions`` level, which does not populate.
+The opener catches nothing: an open that never builds its SourceFile raises.
+The function count the board reports comes from the ``functions`` level.
 """
 
 from __future__ import annotations
@@ -22,10 +15,6 @@ from sugar_lift_py_tests.lift_rpc import (
     tree_construction_context_for_workspace,
 )
 from sugar_source_tree.reporter import CollectingReporter
-
-
-class _UnlistedPopulateDefect(Exception):
-    """Third costume by construction: neither SugarNotWritten nor TypeError."""
 
 
 def _write_three_functions(path: Path) -> None:
@@ -53,60 +42,10 @@ def _open(tmp_path: Path, path: Path):
     )
 
 
-def test_unlisted_populate_exception_propagates(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A populate failure outside every historical allowlist reaches the caller."""
-    path = tmp_path / "target.py"
-    _write_three_functions(path)
-
-    def boom_populate(source_file, **_k):
-        del source_file
-        raise _UnlistedPopulateDefect(
-            "third costume: not SNW, not TypeError — allowlist cannot see me"
-        )
-
-    monkeypatch.setattr(
-        "sugar_lift_python_source.manager_summary_derivation."
-        "populate_source_derived_resource_refs",
-        boom_populate,
-    )
-
-    with pytest.raises(_UnlistedPopulateDefect, match="third costume"):
-        _open(tmp_path, path)
-
-
-@pytest.mark.parametrize(
-    "planted",
-    [
-        RuntimeError("populate runtime failure"),
-        ValueError("populate value failure"),
-    ],
-)
-def test_runtime_error_and_value_error_also_propagate(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, planted: Exception
-) -> None:
-    """Two more Exception subclasses: the opener has no arm that keeps one."""
-    path = tmp_path / "target.py"
-    _write_three_functions(path)
-
-    def boom(source_file, **_k):
-        del source_file
-        raise planted
-
-    monkeypatch.setattr(
-        "sugar_lift_python_source.manager_summary_derivation."
-        "populate_source_derived_resource_refs",
-        boom,
-    )
-    with pytest.raises(type(planted)):
-        _open(tmp_path, path)
-
-
 def test_open_path_failure_before_sourcefile_still_raises(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An open that never builds its SourceFile raises, before any populate."""
+    """An open that never builds its SourceFile raises."""
     from sugar_lift_py_tests.lift_rpc import _open_at_seat
     from sugar_source_tree.panic import SugarNotWritten
     import sugar_source_tree.process_resident_file as residency
@@ -140,7 +79,7 @@ def test_open_path_failure_before_sourcefile_still_raises(
 def test_successful_open_returns_the_file_with_its_functions(
     tmp_path: Path,
 ) -> None:
-    """The truthful half: populate returns, and the open returns the file."""
+    """The truthful half: the open returns the file."""
     path = tmp_path / "target.py"
     _write_three_functions(path)
     source_file = _open(tmp_path, path)

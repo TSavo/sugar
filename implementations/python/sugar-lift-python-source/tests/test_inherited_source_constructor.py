@@ -7,22 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.context_manager_resolution import (
-    SourceDerivedContextManagerRefV1,
-)
 from sugar_lift_py_tests.corpus_pin import pin_corpus
-from sugar_lift_py_tests.context_manager_contract import (
-    NeverSuppressesDispositionV1,
-    ProtocolResourceSemanticsV1,
-    ReturnTruthinessDispositionV1,
-)
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_py_tests.outcome import Halted
-from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
+from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithReducedManagerSugar
 from sugar_source_tree.nodes import FunctionDef, With
 from sugar_source_tree.reporter import CollectingReporter
 from sugar_lift_python_source.resolution_session import (
@@ -109,31 +101,17 @@ def _open(root: Path, name: str, *, session):
     )
 
 
-def _with_resolution(root: Path, name: str, *, session):
-    source_file = _open(root, name, session=session)
-    with_node = next(n for n in source_file.nodes() if isinstance(n, With))
-    refs = source_file.root.unit.construction_context.source_derived_contract_refs
-    line = with_node.line_col_span().start_line
-    (site,) = [k for k in refs if k.start_line == line]
-    return refs[site], source_file
-
-
 def _session():
     return SourceResolutionSession(enrolled_distributions=frozenset({"tiny-corpus"}))
 
 
 def test_inherited_source_constructor_constructs(tmp_path) -> None:
     root = _corpus(tmp_path, **{"e.py": NAMED})
-    session = _session()
-    ref, source_file = _with_resolution(root, "e.py", session=session)
-    assert type(ref) is SourceDerivedContextManagerRefV1
-    assert isinstance(ref.semantics, ProtocolResourceSemanticsV1)
-    assert isinstance(
-        ref.semantics.exit.disposition,
-        (NeverSuppressesDispositionV1, ReturnTruthinessDispositionV1),
-    )
+    source_file = _open(root, "e.py", session=_session())
+    # The manager is the head's reduced value: the subclass instance, entered
+    # through the base's own methods (#7757).
     sugar = next(n.sugar() for n in source_file.nodes() if isinstance(n, With))
-    assert type(sugar) is WithSourceResourceSugar
+    assert type(sugar) is WithReducedManagerSugar
     func = next(
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
@@ -151,14 +129,7 @@ def test_inherited_source_constructor_constructs(tmp_path) -> None:
 
 def test_inherited_source_constructor_does_not_suppress_a_body_raise(tmp_path) -> None:
     root = _corpus(tmp_path, **{"e.py": NAMED_RAISE})
-    session = _session()
-    ref, source_file = _with_resolution(root, "e.py", session=session)
-    assert type(ref) is SourceDerivedContextManagerRefV1
-    assert isinstance(ref.semantics, ProtocolResourceSemanticsV1)
-    assert isinstance(
-        ref.semantics.exit.disposition,
-        (NeverSuppressesDispositionV1, ReturnTruthinessDispositionV1),
-    )
+    source_file = _open(root, "e.py", session=_session())
     func = next(
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
@@ -171,13 +142,14 @@ def test_inherited_source_constructor_does_not_suppress_a_body_raise(tmp_path) -
 
 def test_own_initializer_does_not_inherit_the_base_formals(tmp_path) -> None:
     """``Named`` defines its own ``__init__()``, so ``Named(1)`` has an actual
-    no formal consumes. Populate says so by name, and the open raises it: the
-    failure used to be caught inside the opener, and the file opened with the
-    ``with`` left underived (#7795)."""
+    no formal consumes.  The open reads no body; the head's own construction
+    says so by name (#7757)."""
     from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
     root = _corpus(tmp_path, **{"e.py": OWN_INIT})
-    # Every open populates (#7796): there is no unpopulated open to read the
-    # constructor frame from first, so the open itself is the observation.
+    source_file = _open(root, "e.py", session=_session())
+    func = next(
+        n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
+    )
     with pytest.raises(SourceCallBindingGap, match="unconsumed call actual"):
-        _open(root, "e.py", session=_session())
+        func.sugar().desugar()

@@ -1,4 +1,4 @@
-"""A ``with`` over a chain on a module a call returned is cited (#7742).
+"""A ``with`` over a chain on a module a call returned (#7742).
 
 ``pandas.io.common._get_binary_io_classes`` reads::
 
@@ -11,34 +11,25 @@
 module, ``python:module(<name>)`` (the object ``import <name>`` binds), so the
 helper's return arms are that module or ``None``.  zstandard is installed but
 off the enrolled population (and implemented in C), so the manager its chain
-produces is cited over ``OpaqueCitedContextManagerRefV1`` naming
-``python:zstandard.ZstdDecompressor``: enter and exit may raise, a body raise
-still propagates.  A helper that returns something that is not a module, an
-absent module, and a local bound twice are never cited.
+produces is what the head reduces to: nothing decides it, so enter and exit
+may raise, and a body raise still propagates.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
-from sugar_lift_py_tests.context_manager_resolution import (
-    OpaqueCitedContextManagerRefV1,
-    SourceFragmentCoordinateV1,
-)
 from sugar_lift_py_tests.floor.none_value import NoneValue
 from sugar_lift_py_tests.source_call_resolution import (
     imported_module_value,
     module_value_name,
     pinned_present_top_level_module,
 )
-from sugar_lift_py_tests.sugar.with_opaque_cited_manager_sugar import (
-    WithOpaqueCitedManagerSugar,
+from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+    WithReducedManagerSugar,
 )
 from sugar_source_tree.formal_manager_head import call_bound_local_manager_head
 from sugar_source_tree.nodes import With
-from sugar_source_tree.panic import SourceTreePanic
 
 from test_contextlib_suppress_source_exit_faces import _corpus, _open
 
@@ -89,31 +80,22 @@ def _lifted(tmp_path: Path, *, name="zstandard", returned="module", body="pass")
     source = _OPT.format(name=name, returned=returned, body=body)
     source_file = _open(_corpus(tmp_path, source))
     (with_node,) = [n for n in source_file.nodes() if isinstance(n, With)]
-    (item,) = with_node.items
-    coordinate = SourceFragmentCoordinateV1(
-        with_node.unit.source_cid, *item._manager_use_site_span()
-    )
-    seated = with_node.unit.construction_context.source_derived_contract_refs.get(
-        coordinate
-    )
-    return source_file, with_node, seated
+    return source_file, with_node
 
 
-def test_a_chain_on_a_returned_off_population_module_is_cited(tmp_path):
-    source_file, with_node, seated = _lifted(tmp_path)
-    assert type(seated) is OpaqueCitedContextManagerRefV1
-    assert seated.target_name == "python:zstandard.ZstdDecompressor"
-    assert seated.roster.resolution_kind == "call-target-off-population"
+def test_a_chain_on_a_returned_off_population_module_is_undecided(tmp_path):
+    """The head reduces to an attribute chain on the off-population module:
+    nothing decides the manager, so it is the undecided manager (#7757)."""
+    source_file, with_node = _lifted(tmp_path)
     consumer, rows = _function_rows(source_file, with_node)
-    assert consumer is WithOpaqueCitedManagerSugar
+    assert consumer is WithReducedManagerSugar
     # The head, enter and exit may each raise; the body falls through.
     assert ("halt", None) in rows
     assert ("return", 7) in rows
 
 
-def test_the_cited_with_keeps_the_body_raise(tmp_path):
-    source_file, with_node, seated = _lifted(tmp_path, body="raise KeyError(1)")
-    assert type(seated) is OpaqueCitedContextManagerRefV1
+def test_the_undecided_with_keeps_the_body_raise(tmp_path):
+    source_file, with_node = _lifted(tmp_path, body="raise KeyError(1)")
     _consumer, rows = _function_rows(source_file, with_node)
     assert ("halt", "KeyError") in rows
 
@@ -126,25 +108,6 @@ def test_a_present_module_is_its_module_coordinate():
     assert module_value_name(imported_module_value("zstandard")) == "zstandard"
     # Nothing else is read as a module.
     assert module_value_name(NoneValue()) is None
-
-
-def test_a_returned_value_that_is_not_a_module_is_not_cited(tmp_path):
-    # The lying twin: the helper returns its string operand, not a module.
-    _source_file, _with_node, seated = _lifted(tmp_path, returned="name")
-    assert not isinstance(seated, OpaqueCitedContextManagerRefV1)
-    (tmp_path / "again").mkdir()
-    source_file, with_node, _ = _lifted(tmp_path / "again", returned="name")
-    with pytest.raises(SourceTreePanic, match="CONTEXT MANAGER RESOLUTION GAP"):
-        _function_rows(source_file, with_node)
-
-
-def test_an_absent_module_is_never_cited(tmp_path):
-    # import_module halts with ModuleNotFoundError, so opt returns only None:
-    # nothing is a module and nothing is cited.
-    _source_file, _with_node, seated = _lifted(
-        tmp_path, name="zz_sugar_absent_module_7742"
-    )
-    assert not isinstance(seated, OpaqueCitedContextManagerRefV1)
 
 
 def _unit(source: str):

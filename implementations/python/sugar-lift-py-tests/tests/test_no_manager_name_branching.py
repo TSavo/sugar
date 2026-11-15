@@ -22,7 +22,6 @@ import pytest
 
 # Every module that seats, constructs, enters, exits or runs a manager.
 _MANAGER_MODULES = (
-    "sugar_lift_python_source.manager_summary_derivation",
     "sugar_lift_python_source.manager_protocol_construction",
     "sugar_lift_python_source.manager_construction",
     "sugar_lift_python_source.manager_protocol_absence",
