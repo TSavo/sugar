@@ -395,7 +395,8 @@ def test_except_star_routes_an_undetermined_raise_two_ways(tmp_path) -> None:
         "    try:\n"
         "        raise OSError(e, 'x')\n"
         "    except* ValueError:\n"
-        "        return 2\n",
+        "        pass\n"
+        "    return 2\n",
     )
     completed = [face for face in exits.exits if isinstance(face, Completed)]
     halted = [face for face in exits.exits if isinstance(face, Halted)]

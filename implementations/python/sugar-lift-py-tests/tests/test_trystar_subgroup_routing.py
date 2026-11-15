@@ -392,7 +392,8 @@ def test_a_retained_except_star_match_is_two_faces_never_a_refusal():
         "    try:\n"
         "        raise ExceptionGroup('g', [ValueError('a')])\n"
         "    except* ArrowInvalid:\n"
-        "        return 1\n",
+        "        pass\n"
+        "    return 1\n",
         name="retained_star.py",
     )
     completed = [face for face in outcome.exits if isinstance(face, Completed)]
@@ -459,7 +460,8 @@ def test_trystar_handles_a_plain_raise_as_its_one_member_group():
         "    try:\n"
         "        raise ValueError('alone')\n"
         "    except* ValueError:\n"
-        "        return 1\n",
+        "        pass\n"
+        "    return 1\n",
         name="star_on_plain.py",
     )
     assert outcome.halts() == (), outcome.exits
@@ -501,7 +503,8 @@ def test_trystar_reraises_an_unmatched_plain_raise_unwrapped():
             "    try:\n"
             "        raise ValueError('alone')\n"
             "    except* TypeError:\n"
-            "        return 1\n",
+            "        pass\n"
+            "    return 1\n",
             name="star_plain_unmatched.py",
         )
     )
