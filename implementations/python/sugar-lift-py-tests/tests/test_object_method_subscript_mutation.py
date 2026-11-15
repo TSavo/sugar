@@ -1,9 +1,18 @@
 import pytest
 
 from sugar_lift_py_tests.floor import ObjectMethodValue, TermValue
+from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.tree import SourceFile
+
+
+def _effect(outcome):
+    """The mutation is one halt and nothing else: no arm completes."""
+    assert isinstance(outcome, ExitSet)
+    (halt,) = outcome.exits
+    assert isinstance(halt, Halted)
+    return halt.effect
 
 
 def _sites(tmp_path):
@@ -39,9 +48,10 @@ def test_object_method_subscript_mutations_have_exact_owner_occurrences(
         if operation == "setitem"
         else value.delitem(TermValue(0), site, None)
     )
-    assert outcome.value.effect.exception_name == "TypeError"
-    assert outcome.value.effect.producer_node_owner == owner
-    assert outcome.value.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
+    effect = _effect(outcome)
+    assert effect.exception_name == "TypeError"
+    assert effect.producer_node_owner == owner
+    assert effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
 
 def test_object_method_subscript_mutations_reject_wrong_site(tmp_path):
@@ -49,5 +59,5 @@ def test_object_method_subscript_mutations_reject_wrong_site(tmp_path):
     value = _value(store_site)
     store = value.setitem(TermValue(0), TermValue(7), store_site, None)
     delete = value.delitem(TermValue(0), delete_site, None)
-    assert store.value.effect.occurrence_id != f"{delete_site.filename}:{delete_site.line}:{delete_site.col}"
-    assert delete.value.effect.occurrence_id != f"{store_site.filename}:{store_site.line}:{store_site.col}"
+    assert _effect(store).occurrence_id != f"{delete_site.filename}:{delete_site.line}:{delete_site.col}"
+    assert _effect(delete).occurrence_id != f"{store_site.filename}:{store_site.line}:{store_site.col}"
