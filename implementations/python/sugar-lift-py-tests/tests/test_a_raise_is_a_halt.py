@@ -220,8 +220,11 @@ def test_the_truthful_half_of_each_of_the_five_completes(shape: str) -> None:
 
 # A lambda bound to a local name and called (``g = lambda: 1 // 0; g()``) is
 # reduced now: the call runs the lambda's body, which raises, so the call
-# halts with no completion, as Python does.
-_FIVE_REDUCED = {"lambda-call"}
+# halts with no completion, as Python does.  So is ``Box()`` over a class
+# whose own ``def __new__`` returns ``1 // 0`` and whose ``__init__`` is
+# ``object``'s (``ClassDef.returned_new``): the class call runs that
+# ``__new__`` through the one method door, and its halt is the call's.
+_FIVE_REDUCED = {"lambda-call", "raising-new"}
 
 
 @pytest.mark.parametrize(
@@ -295,7 +298,21 @@ def test_a_raising_default_is_not_sat(tmp_path: Path) -> None:
     assert result.prove_doc["owed"] >= 1
 
 
-@pytest.mark.parametrize("shape", sorted(_FIVE))
+# A truthful half Python decides whose file no proof can: one of its
+# functions, proved on its own (step 8), owes a call nothing in that proof
+# answers, so the file reads ``open``, stated, and never ``sat``, however
+# the test function's own claim is decided.
+_FIVE_OPEN = {
+    "function-passed-as-argument": (
+        "h's own proof calls its formal: f() is a call of an arrived value, "
+        "which no actual binds where h is proved on its own, so it is the "
+        "unanswered call and h owes its member; only a caller's frame "
+        "(test_f's h(g)) binds f"
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(set(_FIVE) - set(_FIVE_OPEN)))
 def test_the_truthful_half_of_each_of_the_five_is_sat(
     shape: str, tmp_path: Path
 ) -> None:
@@ -306,6 +323,20 @@ def test_the_truthful_half_of_each_of_the_five_is_sat(
     )
 
     assert result.verdict == "sat"
+
+
+@pytest.mark.parametrize("shape", sorted(_FIVE_OPEN))
+def test_a_truthful_half_whose_helper_owes_a_call_is_open(
+    shape: str, tmp_path: Path
+) -> None:
+    truthful, _lying = _FIVE_HALVES[shape]
+
+    result = run_source_through_real_solver(
+        tmp_path / "t", _solver_source(_FIVE[shape].format(x=truthful))
+    )
+
+    assert result.verdict == "open", _FIVE_OPEN[shape]
+    assert result.prove_doc["owed"] >= 1, _FIVE_OPEN[shape]
 
 
 @pytest.mark.xfail(strict=True, reason=_NOT_REDUCED)
