@@ -6937,6 +6937,26 @@ def _source_position(node: "Node") -> tuple:
     return (node.kind, node.span.start, node.span.end)
 
 
+def _evaluation_occurrence(node) -> dict:
+    """The source occurrence an evaluation coordinate names: the file's
+    content CID, the node's span in it and the CID of its text.
+
+    The text's CID alone (``SourceFragment.seal().cid``) is the same for two
+    statements spelled alike (``x += 1`` twice in one body), so two
+    evaluations would share one key and a read of the first would name the
+    second.  A fragment is its file, its pinned source and its span
+    (``SourceFragment.__eq__``); every evaluation key names it that way, so
+    each occurrence is its own evaluation and every copy of one occurrence
+    (a loop iteration's, an exit path's, a frame rebuilt from the same
+    source) names the same one."""
+    memento = node.fragment.seal()
+    return {
+        "sourceCid": memento.source_cid,
+        "span": [memento.start, memento.end],
+        "fragmentCid": memento.cid,
+    }
+
+
 def _loop_header_evaluation_key(loop, name: str, scope) -> str:
     """The coordinate of a live loop header's evaluation of ``name``: the
     value ``name`` holds when an item of ``loop``'s body begins (the pre-loop
@@ -6959,8 +6979,8 @@ def _loop_header_evaluation_key(loop, name: str, scope) -> str:
 
     return EVALUATION_PREFIX + cid_of_json(
         {
-            "kind": "python-loop-header-evaluation-v1",
-            "loopFragmentCid": loop.fragment.seal().cid,
+            "kind": "python-loop-header-evaluation-v2",
+            "loop": _evaluation_occurrence(loop),
             "name": name,
             "occurrence": [
                 *scope.get(_EVALUATION_OCCURRENCE, ()),
@@ -6990,8 +7010,8 @@ def _loop_target_evaluation_key(loop, name: str, scope) -> str:
 
     return EVALUATION_PREFIX + cid_of_json(
         {
-            "kind": "python-loop-target-evaluation-v1",
-            "loopFragmentCid": loop.fragment.seal().cid,
+            "kind": "python-loop-target-evaluation-v2",
+            "loop": _evaluation_occurrence(loop),
             "name": name,
             "occurrence": [
                 *scope.get(_EVALUATION_OCCURRENCE, ()),
@@ -7018,8 +7038,8 @@ def _match_capture_evaluation_key(case, name: str, scope) -> str:
 
     return EVALUATION_PREFIX + cid_of_json(
         {
-            "kind": "python-match-capture-evaluation-v1",
-            "caseFragmentCid": case.fragment.seal().cid,
+            "kind": "python-match-capture-evaluation-v2",
+            "case": _evaluation_occurrence(case),
             "name": name,
             "occurrence": [
                 *scope.get(_EVALUATION_OCCURRENCE, ()),
@@ -8951,8 +8971,8 @@ class Statement(Node):
         from .shadow import occurrence_tags_of
 
         coordinate = {
-            "kind": "python-statement-evaluation-v1",
-            "statementFragmentCid": self.fragment.seal().cid,
+            "kind": "python-statement-evaluation-v2",
+            "statement": _evaluation_occurrence(self),
             "occurrence": [
                 *scope.get(_EVALUATION_OCCURRENCE, ()),
                 *occurrence_tags_of(self),
@@ -25217,8 +25237,8 @@ def _default_evaluation_key(definition, index: int) -> str:
 
     return EVALUATION_PREFIX + cid_of_json(
         {
-            "kind": "python-definition-default-evaluation-v1",
-            "definitionFragmentCid": definition.fragment.seal().cid,
+            "kind": "python-definition-default-evaluation-v2",
+            "definition": _evaluation_occurrence(definition),
             "formal": index,
         }
     )
