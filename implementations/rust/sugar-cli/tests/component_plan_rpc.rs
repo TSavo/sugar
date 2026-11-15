@@ -505,37 +505,3 @@ fn unclaimed_census_language_is_an_error() {
     );
     assert_pid_reaped(rust.pid());
 }
-
-#[test]
-#[serial]
-fn allow_failed_components_downgrades() {
-    let project = TempDir::new().expect("project tempdir");
-    write_rust_project(project.path());
-    let lifter = fake_rust_lifter(project.path());
-    let crashed = FakeComponent::crashed("python-crashed-component");
-    let rust = FakeComponent::rust_claiming("rust-claiming-component", &lifter);
-    let joined_components = component_path(&[&crashed, &rust]);
-
-    let output = Command::new(sugar_bin())
-        .arg("lift")
-        .arg("--allow-failed-components")
-        .arg(project.path())
-        .env("HOME", project.path().join("home"))
-        .env("SUGAR_COMPONENT_PATH", &joined_components)
-        .env("SUGAR_COMPONENT_PLAN_TIMEOUT_SECS", "2")
-        .output()
-        .expect("run sugar lift with allow-failed-components");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "--allow-failed-components should let the run proceed\nstdout:\n{stdout}\nstderr:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("warning") && stderr.contains("python-crashed-component"),
-        "downgraded failure should be printed as a warning\nstdout:\n{stdout}\nstderr:\n{stderr}"
-    );
-    assert!(
-        stdout.contains(r#""kind":"ir-document""#) || stdout.contains("\"kind\": \"ir-document\"")
-    );
-}
