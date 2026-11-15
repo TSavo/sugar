@@ -68,8 +68,10 @@ class Box:
         # A field read alone: the class is an input, the field's reads are
         # the ``field:`` input under the plain-read guard (#7757).
         ("        return self.n", ("self",)),
-        # A field stored and read: the ``__dict__`` changes in the frame.
-        ("        self.n = 1\n        return self.n", ()),
+        # A field stored and read: the store is stated under the plain-store
+        # guard over the class input (#7757 step 7, #8862); the read after it
+        # reads the frame's own store, never a ``field:`` input.
+        ("        self.n = 1\n        return self.n", ("self",)),
         # Neither a method call nor a field read: no input.
         ("        return other", ()),
         # An item store or delete is ``type(other).__setitem__`` /
@@ -555,12 +557,14 @@ def test_a_field_stored_before_code_that_reaches_no_object_is_read_per_arm() -> 
 
 
 @pytest.mark.parametrize(
-    "after",
+    ("after", "others"),
     [
-        "    other.poke()",
-        "    print(v)",
-        "    if v:\n        b.n = 0",
-        "    other.n = 3",
+        ("    other.poke()", []),
+        ("    print(v)", []),
+        ("    if v:\n        b.n = 0", []),
+        # ``other.n = 3`` is itself the last store of ``other.n`` and nothing
+        # follows it: stated, as any such store is.  ``b.n`` is not.
+        ("    other.n = 3", [("other", "n")]),
     ],
     ids=[
         "method-call",
@@ -569,12 +573,14 @@ def test_a_field_stored_before_code_that_reaches_no_object_is_read_per_arm() -> 
         "alias-store",
     ],
 )
-def test_a_field_code_after_it_may_change_is_never_stated(after: str) -> None:
+def test_a_field_code_after_it_may_change_is_never_stated(
+    after: str, others: list
+) -> None:
     """``b.n = v`` followed by code that may change ``b.n``: a method call
     on another parameter (it may be the same object), a builtin over a
     formal (its dunders run), a later store of ``n`` under a branch, a store
-    of ``n`` on another parameter -- nothing is stated, and a caller's read
-    of ``n`` stays undecided (#7757 step 7)."""
+    of ``n`` on another parameter -- ``b.n`` is never stated, and a caller's
+    read of it stays undecided (#7757 step 7)."""
     source = (
         "class Box:\n"
         "    pass\n"
@@ -584,4 +590,9 @@ def test_a_field_code_after_it_may_change_is_never_stated(after: str) -> None:
         "    b.n = v\n"
         f"{after}\n"
     )
-    assert _stated_fields(source) == []
+    stated = [
+        (param, attr)
+        for _plain_stores, fields in _stated_fields(source)
+        for param, attr, _value in fields
+    ]
+    assert stated == others
