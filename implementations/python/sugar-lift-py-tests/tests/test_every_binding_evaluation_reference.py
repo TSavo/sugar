@@ -159,6 +159,24 @@ def _returned(outcome) -> list:
     return found
 
 
+def _after_the_rebind(read):
+    """The read of ``y`` before the ``x += ...`` that follows its binding in
+    each fixture.
+
+    ``x += e`` is the one mutation door on ``x``'s object (#8096,
+    ``name_mutation_statement``): the tree does not decide at substitution
+    whether ``__iadd__`` changes that object, the value does at reduce.  So a
+    name bound to the object (``y: int = x``, an unrolled ``for y in [x]``)
+    reads it after the call (``PathAfterCall``), and a name whose value may
+    hold it (``y = x + 0``: a source ``__add__`` may return ``x``) reads its
+    value after the call (``ReceiverAfterCall``).  Both keep the name's read
+    before the call as ``prior``, which an immutable value keeps at reduce
+    (the outcome twins below read the old value).  That read is the key's
+    reference, never the right-hand side again."""
+    assert getattr(read, "kind", None) in ("PathAfterCall", "ReceiverAfterCall"), read
+    return read.prior
+
+
 def _resolved(value):
     retained = getattr(value, "retained_source_completion_outcome", None)
     if not callable(retained):
@@ -187,9 +205,10 @@ def test_an_expression_assignment_is_read_through_its_key() -> None:
     ret = body[-1]
     assert isinstance(ret, Return)
     assert isinstance(assign.evaluation, str)
-    assert isinstance(ret.value, EvaluationRef)
-    assert ret.value.evaluation == projection_key(assign.evaluation, "y")
-    assert ret.value.name == "y"
+    read = _after_the_rebind(ret.value)
+    assert isinstance(read, EvaluationRef)
+    assert read.evaluation == projection_key(assign.evaluation, "y")
+    assert read.name == "y"
 
 
 def test_an_expression_assignment_sugar_binds_its_key() -> None:
@@ -229,8 +248,9 @@ def test_an_annotated_assignment_is_read_through_its_key() -> None:
     annotated = next(node for node in body if isinstance(node, AnnAssign))
     ret = body[-1]
     assert isinstance(annotated.evaluation, str)
-    assert isinstance(ret.value, EvaluationRef)
-    assert ret.value.evaluation == projection_key(annotated.evaluation, "y")
+    read = _after_the_rebind(ret.value)
+    assert isinstance(read, EvaluationRef)
+    assert read.evaluation == projection_key(annotated.evaluation, "y")
 
 
 def test_an_annotated_assignment_evaluates_its_value() -> None:
@@ -272,10 +292,12 @@ def test_an_unrolled_name_target_is_keyed_per_iteration() -> None:
         and isinstance(getattr(node, "evaluation", None), str)
     ]
     assert len(stores) == 1
-    read = next(
-        node.value
-        for node in body
-        if isinstance(node, Assign) and node.targets[0].id == "r"
+    read = _after_the_rebind(
+        next(
+            node.value
+            for node in body
+            if isinstance(node, Assign) and node.targets[0].id == "r"
+        )
     )
     assert isinstance(read, EvaluationRef)
     assert read.evaluation == projection_key(stores[0].evaluation, "y")
