@@ -32,10 +32,7 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.witness_harness import (
-    WitnessPipelineError,
-    run_source_through_real_solver,
-)
+from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 
 _PRELUDE = (
     "import os\n"
@@ -397,11 +394,10 @@ def test_a_function_that_calls_a_class_reading_an_undefined_name_halts(
 # after it is never reached.  Before this change the solver answered ``sat``
 # to the lying half too.
 #
-# What the lying half gets today is no verdict, not ``unsat``: the function's
-# only arm is halted at the call, an assert no arm evaluated has no row, and
-# halted arms of a reduction are not emitted (#7766).  The harness reports
-# that as "no assertion rows".  The ``unsat`` this twin should end in is the
-# expected-red test below.
+# The function's only arm is halted at the call, so no arm completes and the
+# assert no arm reached states the halted arm's guard negated: the halt is
+# under truth, so the row is ``false`` and the lying half reads ``unsat``
+# (#7766).  The test certainly raises, so it fails.
 # ---------------------------------------------------------------------------
 
 _TWIN = (
@@ -421,23 +417,6 @@ def test_an_assert_after_a_call_of_a_class_that_exists_is_sat(tmp_path: Path) ->
     assert truthful.verdict == "sat"
 
 
-def test_an_assert_after_a_call_of_a_raising_class_is_not_sat(tmp_path: Path) -> None:
-    lying = run_source_through_real_solver(tmp_path / "l", _TWIN.format(field="1 // 0"))
-
-    with pytest.raises(WitnessPipelineError, match="no assertion rows"):
-        lying.verdict
-
-
-@pytest.mark.xfail(
-    strict=True,
-    raises=WitnessPipelineError,
-    reason=(
-        "the lying half is not refuted: the function's only arm is halted at "
-        "the class call, the assert after it has no row, and halted arms of a "
-        "reduction are not emitted, so there is no verdict where there should "
-        "be unsat (#7766)"
-    ),
-)
 def test_an_assert_after_a_call_of_a_raising_class_is_unsat(tmp_path: Path) -> None:
     lying = run_source_through_real_solver(tmp_path / "l", _TWIN.format(field="1 // 0"))
 
@@ -447,7 +426,7 @@ def test_an_assert_after_a_call_of_a_raising_class_is_unsat(tmp_path: Path) -> N
 # #7799's own program: the class has an ``__init__``.  Its universe runs on the
 # receiver the class call makes (``tree_enumerate.function_universe_outcome``),
 # so when the statement halts, the universe is that halt, as the call in
-# ``test_box`` is: no arm reaches the assert, and there are no assertion rows.
+# ``test_box`` is: no arm reaches the assert, and its row states the halt.
 _TWIN_WITH_INITIALIZER = (
     "class Box:\n"
     "    limit = {field}\n"
@@ -470,10 +449,9 @@ def test_a_field_of_an_object_of_a_class_that_exists_is_sat(tmp_path: Path) -> N
     assert truthful.verdict == "sat"
 
 
-def test_a_raising_class_with_an_initializer_is_not_sat(tmp_path: Path) -> None:
+def test_a_raising_class_with_an_initializer_is_unsat(tmp_path: Path) -> None:
     lying = run_source_through_real_solver(
         tmp_path / "l", _TWIN_WITH_INITIALIZER.format(field="1 // 0")
     )
 
-    with pytest.raises(WitnessPipelineError, match="no assertion rows"):
-        lying.verdict
+    assert lying.verdict == "unsat"

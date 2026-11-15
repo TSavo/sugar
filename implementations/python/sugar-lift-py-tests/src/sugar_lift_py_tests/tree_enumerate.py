@@ -42,6 +42,52 @@ def halted_assertion_sites(halted_arms) -> tuple:
     return tuple(sites)
 
 
+def unreached_assertion_sites(definition, halted_arms) -> tuple:
+    """The ``assert`` statements of ``definition``'s own body that no halted
+    arm of its reduction passed, for a reduction that has no completed arm.
+
+    The function states these claims; the reduction says whether and how
+    each is decided. Only which ``assert`` statements the body holds is read
+    off the tree (its own body: a nested ``def``, ``class`` or ``lambda`` is
+    another frame and states its own). An assertion a halted arm held on its
+    way to the halt rode that arm's record and is not one of these: the arm
+    passed it (a fact held before a later halt is not refuted). The
+    assertion a halted arm left at is the reduction's own site
+    (``halted_assertion_sites``) and is stated there.
+    """
+    from sugar_lift_py_tests.floor.inv_value import InvValue
+    from sugar_lift_py_tests.floor.universe_value import assertion_site_key
+    from sugar_source_tree.nodes import (
+        AsyncFunctionDef,
+        ClassDef,
+        FunctionDef,
+        Lambda,
+    )
+
+    passed = {
+        assertion_site_key(entry.site)
+        for arm in halted_arms
+        for entry in getattr(arm.state, "entries", ())
+        if isinstance(entry, InvValue) and entry.site is not None
+    }
+    sites = []
+    seen_nodes: set = set()
+    stack = list(reversed(tuple(getattr(definition, "body", ()) or ())))
+    while stack:
+        node = stack.pop()
+        if id(node) in seen_nodes:
+            continue
+        seen_nodes.add(id(node))
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef, Lambda)):
+            continue
+        if isinstance(node, Assert):
+            if assertion_site_key(node.fragment) not in passed:
+                sites.append(node.fragment)
+            continue
+        stack.extend(child for _field, _index, child in reversed(node.children()))
+    return tuple(sites)
+
+
 def _stated_fragment(holder):
     """The source fragment ``holder`` states, or ``None`` when it states none:
     the fragment itself, or one an operation still carries as ``site`` or
@@ -624,7 +670,7 @@ def function_universe_outcome(fn):
     )
 
 
-def reduction_rows(outcome, *, owner, blame, def_memento):
+def reduction_rows(outcome, *, owner, blame, def_memento, definition):
     """THE projection from one reduction to its wire rows (#7766).
 
     A function body's one reduction (``function_contract_rows``) becomes rows
@@ -633,6 +679,12 @@ def reduction_rows(outcome, *, owner, blame, def_memento):
     ``ExitSet`` of completed and halted arms (one completed arm under guard
     true is the one-arm case); ``owner`` states the name, formals and symbol
     when no arm completed. ``None`` when the outcome is not a set of arms.
+
+    ``definition`` is the function the reduction is of. When no arm of the
+    reduction completed, each ``assert`` of its body that no arm reached
+    (``unreached_assertion_sites``) states its row from the halted arms'
+    guards (``exit_arms_payload_rows``), so a certain halt is decided at
+    prove.
     """
     from sugar_lift_py_tests.floor.universe_value import (
         UniverseValue,
@@ -687,6 +739,9 @@ def reduction_rows(outcome, *, owner, blame, def_memento):
         )
         for arm in halted
     )
+    unreached = ()
+    if halted and not arms:
+        unreached = unreached_assertion_sites(definition, halted)
     return exit_arms_payload_rows(
         name=stated.name,
         formals=tuple(stated.formals),
@@ -696,6 +751,8 @@ def reduction_rows(outcome, *, owner, blame, def_memento):
         halted_assertion_sites=halted_sites,
         halt_loci=halt_loci,
         def_memento=def_memento,
+        unreached_assertion_sites=unreached,
+        halted_guards=tuple(arm.guard for arm in halted),
     )
 
 
@@ -723,6 +780,7 @@ def function_contract_rows(fn, file_rel: str):
         owner=fn.sugar(),
         blame=fn.fragment,
         def_memento=def_memento,
+        definition=fn,
     )
 
 
