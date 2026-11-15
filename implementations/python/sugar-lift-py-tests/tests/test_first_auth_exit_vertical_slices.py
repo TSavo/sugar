@@ -14,6 +14,11 @@ individual floors already minted their raise (then ``RaiseValue``, since
 This module pins one source-visible representative per family through the
 production doors only: workspace-relative ``SourceFile``,
 ``populate_source_derived_resource_refs``, ``With.sugar().desugar()``.
+
+``pytest.raises`` is an imported call: a coordinate plus an edge, cited by its
+import target and never derived from the installed pytest body (#7884). What
+it does with the body's halt is the imported proof's to answer; the lift keeps
+the body's halt on the cited manager's open exit and decides no expectation.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import (
+    OpaqueCitedContextManagerRefV1,
     SourceDerivedContextManagerRefV1,
     TreeConstructionContextV1,
 )
@@ -33,15 +39,13 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     attribute_body_probes,
     _exceptional_exit_effects,
 )
-from sugar_lift_py_tests.outcome import Completed, ExitSet
-from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBoundarySugar
+from sugar_lift_py_tests.outcome import ExitSet
+from sugar_lift_py_tests.sugar.with_opaque_cited_manager_sugar import (
+    WithOpaqueCitedManagerSugar,
+)
 from sugar_lift_python_source.manager_summary_derivation import (
     populate_source_derived_resource_refs,
 )
-from sugar_lift_python_source.dependency_artifact import (
-    authenticate_dependency_top_level,
-)
-from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.nodes import (
     Attribute,
@@ -84,74 +88,19 @@ def _build_slice(
         workspace_path_source(str(path), root=str(root)),
         construction_context=context,
     )
-    pytest_graph = authenticate_dependency_top_level("pytest")
-    if pytest_graph.artifact_kind != "distribution":
-        raise AssertionError("installed pytest slice requires a distribution graph")
-    session = SourceResolutionSession(
-        enrolled_distributions=frozenset({pytest_graph.distribution_name})
-    )
-    session.dependency_graphs["pytest"] = pytest_graph
-    populate_source_derived_resource_refs(tree, root=root, path=path, session=session)
+    populate_source_derived_resource_refs(tree, root=root, path=path)
     with_node = next(node for node in tree.nodes() if isinstance(node, With))
     body_expr = with_node.body[0].value
     return context, with_node, body_expr
 
 
-def _without_pytest_raises_construction_halts(exits):
-    """The With's body-route faces after ``AbstractRaises.__init__``'s own halts.
-
-    pytest's ``re.compile(match)`` is an off-population call inside the
-    enrolled pytest body, an unanswered ``UnknownCalleeCallV1``, so it may
-    raise. Python evaluates
-    ``pytest.raises(...)`` before anything is entered, so each such halt is the
-    With's own face: the body never runs and ``__exit__`` never runs. pytest's
-    ``except re.error`` route reaches ``fail(...)`` (``Failed``); any other
-    exception propagates undetermined. Formatting that ``re.error`` into
-    ``fail``'s message (``f"...{re_error}"``) runs its class's ``__format__``,
-    which the lift does not know is CPython's own, so it may raise too. Every
-    remaining face is reached only where that call completed.
-    """
-    from sugar_lift_py_tests.outcome import Halted
-
-    construction = [
-        face
-        for face in exits
-        if isinstance(face, Halted)
-        and _negates_unanswered_call(face.guard, "re.compile")
-    ]
-    kinds = sorted(
-        (
-            type(face.effect).__name__,
-            getattr(face.effect, "exception_name", None)
-            or getattr(face.effect, "producer_node_owner", None),
-        )
-        for face in construction
+def _raises_named(outcome, expected: str) -> tuple:
+    """The halts of ``outcome`` that raise ``expected`` by name."""
+    return tuple(
+        effect
+        for effect in _exceptional_exit_effects(outcome)
+        if getattr(effect, "exception_name", None) == expected
     )
-    assert kinds == [
-        ("RaiseEffect", "Failed"),
-        ("UndeterminedRaiseEffect", "UnknownCallee:format"),
-        ("UndeterminedRaiseEffect", "UnknownCallee:re.compile"),
-    ], kinds
-    (failed,) = [face for face in construction if face.effect.exception_name == "Failed"]
-    assert "re.error" in repr(failed.guard)
-    rest = tuple(face for face in exits if all(face is not c for c in construction))
-    for face in rest:
-        assert not _negates_unanswered_call(face.guard, "re.compile")
-    return rest
-
-
-def _negates_unanswered_call(guard, target):
-    """``guard`` conjoins ``not python:unknown_callee_call.completes(target, _)``."""
-    kind = getattr(guard, "kind", None)
-    if kind == "not":
-        (operand,) = guard.operands
-        if getattr(operand, "name", None) != "python:unknown_callee_call.completes":
-            return False
-        (call,) = operand.args
-        return getattr(call.args[0], "value", None) == target
-    if kind == "and":
-        return any(_negates_unanswered_call(op, target) for op in guard.operands)
-    return False
 
 
 @pytest.mark.parametrize(
@@ -195,22 +144,26 @@ def test_producer_emits_authenticated_exceptional_exit(
     _FAMILY_SLICES,
     ids=[family.value for family, *_ in _FAMILY_SLICES],
 )
-def test_installed_pytest_raises_derives_effect_boundary(
+def test_imported_pytest_raises_is_cited_by_its_target(
     tmp_path: Path,
     family: ProducerFamily,
     body: str,
     expected: str,
     node_type: type,
 ) -> None:
-    """Shared door: populate_source_derived installs WithEffectBoundarySugar."""
+    """Shared door: the imported manager is cited by its import target, never
+    derived from the installed pytest body (#7884)."""
     del node_type
     context, with_node, _body = _build_slice(
         tmp_path, family=family, body=body, expected=expected
     )
-    reference = next(iter(context.source_derived_contract_refs.values()))
-    assert isinstance(reference, SourceDerivedContextManagerRefV1), reference
+    (reference,) = tuple(context.source_derived_contract_refs.values())
+    assert not isinstance(reference, SourceDerivedContextManagerRefV1), reference
+    assert isinstance(reference, OpaqueCitedContextManagerRefV1), reference
+    assert reference.target_name == "python:pytest.raises", reference
+    assert reference.roster.resolution_kind == "call-target-off-population"
     boundary = with_node.sugar()
-    assert isinstance(boundary, WithEffectBoundarySugar), type(boundary).__name__
+    assert isinstance(boundary, WithOpaqueCitedManagerSugar), type(boundary).__name__
 
 
 @pytest.mark.parametrize(
@@ -218,26 +171,23 @@ def test_installed_pytest_raises_derives_effect_boundary(
     _FAMILY_SLICES,
     ids=[family.value for family, *_ in _FAMILY_SLICES],
 )
-def test_full_route_consumes_matching_halt(
+def test_full_route_keeps_the_producer_halt(
     tmp_path: Path,
     family: ProducerFamily,
     body: str,
     expected: str,
     node_type: type,
 ) -> None:
-    """Truthful full route: producer halt is consumed; boundary completes."""
+    """Truthful full route: the body's producer halt leaves the cited manager.
+
+    The manager's exit disposition is open, so the halt stays on the exit's
+    falsity face; it is never consumed by a law the lift does not hold."""
     del node_type
     _context, with_node, _body = _build_slice(
         tmp_path, family=family, body=body, expected=expected
     )
     outcome = with_node.sugar().desugar()
-    exits = _without_pytest_raises_construction_halts(outcome.exits)
-    assert len(exits) == 1, (family, exits)
-    assert isinstance(exits[0], Completed), (
-        family,
-        type(exits[0]).__name__,
-        getattr(exits[0], "effect", None),
-    )
+    assert _raises_named(outcome, expected), (family, outcome)
 
 
 @pytest.mark.parametrize(
@@ -252,25 +202,24 @@ def test_full_route_consumes_matching_halt(
     ),
     ids=["BinOp", "Subscript", "Compare", "UnaryOp", "Attribute", "BoolOp"],
 )
-def test_lying_body_without_matching_halt_fails_expectation(
+def test_lying_body_without_matching_halt_carries_none(
     tmp_path: Path,
     family: ProducerFamily,
     body: str,
     expected: str,
 ) -> None:
-    """Lying twin: completed body under expects-raise is ExpectationNotMet."""
+    """Lying twin: a completing body leaves no halt named ``expected``, and the
+    lift decides no expectation for a manager whose law it does not hold."""
     from sugar_lift_py_tests.effect import ExpectationNotMetEffect
-    from sugar_lift_py_tests.outcome import Halted
 
     _context, with_node, _body = _build_slice(
         tmp_path, family=family, body=body, expected=expected
     )
     outcome = with_node.sugar().desugar()
-    exits = _without_pytest_raises_construction_halts(outcome.exits)
-    assert len(exits) == 1
-    face = exits[0]
-    assert isinstance(face, Halted)
-    assert isinstance(face.effect, ExpectationNotMetEffect)
+    assert not _raises_named(outcome, expected), (family, outcome)
+    assert not any(
+        isinstance(face.effect, ExpectationNotMetEffect) for face in outcome.halts()
+    ), (family, outcome)
 
 
 def test_callsite_not_is_not_refused_for_manager_derivation() -> None:

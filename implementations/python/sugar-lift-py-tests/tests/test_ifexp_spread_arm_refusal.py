@@ -9,7 +9,7 @@ membrane, not the type truth. Promotion deletes the SNW for this class.
 
 from __future__ import annotations
 
-import hashlib
+from sugar_lift_python_source.canonical import blake3_512_of
 
 from sugar_lift_py_tests.sugar.if_exp_sugar import IfExpSugar
 from sugar_lift_py_tests.sugar.spread_sugar import SpreadCollectionSugar
@@ -19,7 +19,7 @@ from sugar_source_tree.tree import SourceFile
 
 
 def _cid(source: str) -> str:
-    return hashlib.sha256(source.encode("utf-8")).hexdigest()
+    return blake3_512_of(source.encode("utf-8"))
 
 
 def test_ifexp_spread_list_arm_constructs_as_constructed_term() -> None:
