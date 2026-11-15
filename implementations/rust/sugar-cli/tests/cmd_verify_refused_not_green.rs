@@ -130,8 +130,7 @@ fn strings_consistency_formula() -> Json {
 
 fn publish_inv_project(suffix: &str, solver_fixture: SolverFixture) -> PathBuf {
     let dir = unique_dir(suffix);
-    let proof_dir = dir.join(".sugar");
-    fs::create_dir_all(&proof_dir).expect("mkdir .sugar");
+    fs::create_dir_all(dir.join(".sugar")).expect("mkdir .sugar");
     install_smt_compiler_manifest(&dir);
     match solver_fixture {
         SolverFixture::MissingSeat => write_missing_solver_config(&dir),
@@ -168,8 +167,11 @@ fn publish_inv_project(suffix: &str, solver_fixture: SolverFixture) -> PathBuf {
         declared_at: declared_at.into(),
         manifest: None,
     });
+    // Prove reads the minted `.proof` at the project root and the imports in
+    // `.sugar/imports`, by name (step 9; ruling 3b on #7766, #7833). A
+    // `.proof` anywhere else under the root is not prove's input.
     let hex = cid_hex(&built.cid).expect("cid prefix");
-    fs::write(proof_dir.join(format!("{hex}.proof")), &built.bytes).expect("write proof");
+    fs::write(dir.join(format!("{hex}.proof")), &built.bytes).expect("write proof");
     dir
 }
 
@@ -207,8 +209,8 @@ fn combined_output(out: &Output) -> String {
 }
 
 fn strings_consistency_contract_member(project: &Path) -> Json {
-    let proof_path = fs::read_dir(project.join(".sugar"))
-        .expect("read .sugar proof dir")
+    let proof_path = fs::read_dir(project)
+        .expect("read project root")
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .find(|path| path.extension().is_some_and(|ext| ext == "proof"))
