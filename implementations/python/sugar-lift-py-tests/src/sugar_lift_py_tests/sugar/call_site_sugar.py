@@ -803,7 +803,12 @@ class CallSiteSugar(ConstructedTermSugar):
             if module_halt is not None:
                 return module_halt
         # The one binder (``object_value.bind_call``): every call form binds
-        # its actuals there, and ``_apply_bound`` applies the body.
+        # its actuals there, and ``_apply_bound`` applies the body.  The frame
+        # a call by name carries is a ``def``'s (``Call._construct_call_sugar``
+        # seats one only for a function definition): a class call is the call
+        # of the class statement's value
+        # (``ClassDefinitionValue.callable_application_with``), never this
+        # frame, so the body here is never a class constructor's.
         body = (
             None
             if source_call_frame is None
@@ -811,48 +816,30 @@ class CallSiteSugar(ConstructedTermSugar):
                 source_call_frame, owner="CallSiteSugar.desugar", blame=self.site
             )
         )
-
-        def bind(defaults, body):
-            return bind_source_frame_call(
-                self.target_name,
-                positional,
-                kw_values,
-                frame=source_call_frame,
-                ctx=ctx,
-                owner="CallSiteSugar.desugar",
-                blame=self.site,
-                term=term,
-                body=body,
-                defaults=defaults,
-                call_occurrence=self.call_occurrence,
-                authenticated_target_symbol=self.import_target_symbol,
-                exception_type_coordinate=self.exception_type_coordinate,
-                exception_type_mro=self.exception_type_mro,
-                builtin_exception_class=self._applied_builtin_exception_class(
-                    source_call_frame
-                ),
-                python_type_coordinate=self._applied_builtin_type_of(
-                    source_call_frame, positional, kw_values, term
-                ),
-                language_callee=self.language_callee,
-            )
-
-        from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
-            ClassConstructorBodySugar,
+        callsite = bind_source_frame_call(
+            self.target_name,
+            positional,
+            kw_values,
+            frame=source_call_frame,
+            ctx=ctx,
+            owner="CallSiteSugar.desugar",
+            blame=self.site,
+            term=term,
+            body=body,
+            defaults=(),
+            call_occurrence=self.call_occurrence,
+            authenticated_target_symbol=self.import_target_symbol,
+            exception_type_coordinate=self.exception_type_coordinate,
+            exception_type_mro=self.exception_type_mro,
+            builtin_exception_class=self._applied_builtin_exception_class(
+                source_call_frame
+            ),
+            python_type_coordinate=self._applied_builtin_type_of(
+                source_call_frame, positional, kw_values, term
+            ),
+            language_callee=self.language_callee,
         )
-
-        if isinstance(body, ClassConstructorBodySugar):
-            # ``Cls(...)``: the class statement's one outcome is read, and on
-            # each completed face the call binds the constructor defaults its
-            # class value carries (``bind_class_call``).
-            return body.bind_class_call(
-                ctx,
-                lambda defaults, entered: self._apply_bound(
-                    bind(defaults, entered), source_call_frame, ctx
-                ),
-                site=self.site,
-            )
-        return self._apply_bound(bind((), body), source_call_frame, ctx)
+        return self._apply_bound(callsite, source_call_frame, ctx)
 
     def _apply_bound(self, callsite, source_call_frame, ctx):
         """Apply the call ``callsite`` the one binder bound into
