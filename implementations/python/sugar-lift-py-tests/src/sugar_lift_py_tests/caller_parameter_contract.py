@@ -826,7 +826,7 @@ class NativeOperationExitCarrierV1:
     # ``(continuations, guards, step)``: each ExitSet-wide step with the
     # continuation and guard counts at its enrollment. The guards enrolled
     # before a step restrict the exits that step is handed, never what it
-    # composes beside them (``ExitSet.sequence``'s sibling arms).
+    # composes beside them (``ExitSet.and_then``'s sibling arms).
     exitset_continuations: tuple = dataclass_field(
         default=(), compare=False, repr=False
     )
@@ -1184,9 +1184,9 @@ class NativeOperationExitCarrierV1:
             # states it as its ``site`` (#7766).
             projected_halt = resolution.project(source_node=self.site)
             # The resolution continues beneath the projector's halt, which this
-            # discharge owns and consumes: composed through ``sequence``, the
+            # discharge owns and consumes: composed through ``and_then``, the
             # resolution's arms owe what the projector's halt owed.
-            exits = exits.sequence(
+            exits = exits.and_then(
                 # Never called: the one arm of ``exits`` halts (above).
                 ExitSet.completed,
                 consume=lambda _halt: projected_halt,
@@ -1317,10 +1317,10 @@ class NativeOperationExitCarrierV1:
         def union_short_circuit(exits, short):
             continuing_guard, stopped, continuing_face, stopped_face = short
             # Each completed first-leg face stops on the stopped side of the
-            # split (``sequence``: its guard, faces and ``owed`` ride on). A
+            # split (``and_then``: its guard, faces and ``owed`` ride on). A
             # first-leg exception predates the truth-value split and bypasses
             # both faces unchanged. The two legs join through the one join.
-            stopping = stopped.sequence(
+            stopping = stopped.and_then(
                 lambda value: ExitSet.completed(value).guarded(
                     true_guard(), stopped_face
                 )

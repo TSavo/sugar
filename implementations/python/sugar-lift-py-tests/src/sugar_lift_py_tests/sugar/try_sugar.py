@@ -236,7 +236,7 @@ def _and_finally_with_raise_context(
 
     The one ``finally`` of a ``try`` and of a ``try*`` (``TryStarSugar``).
     The ``ExitSet.and_finally`` laws (restore / cleanup-halt supersede /
-    terminal cleanup supersede), composed through ``ExitSet.sequence``: the
+    terminal cleanup supersede), composed through ``ExitSet.and_then``: the
     ``finally`` runs beneath every completed arm (``step``) and beneath every
     halted arm (``consume`` -- the try owns every halt that reaches its
     ``finally``), so each outgoing arm carries the incoming arm's guard, faces
@@ -340,7 +340,7 @@ def _and_finally_with_raise_context(
             lambda cleaned: ExitSet.halted(halt.effect, state=cleaned),
         )
 
-    return pre_finally.sequence(after_completion, consume=after_halt)
+    return pre_finally.and_then(after_completion, consume=after_halt)
 
 
 def _pending_returns(value):
@@ -429,9 +429,9 @@ def _returns_after(cleaned, pending):
 def _finally_beneath(cleanup_es, in_flight, restore):
     """The ``finally``'s arms as the continuation beneath one incoming arm.
 
-    Composed through ``ExitSet.sequence``: what follows each cleanup arm runs
+    Composed through ``ExitSet.and_then``: what follows each cleanup arm runs
     beneath it, so it keeps that arm's guard, faces and ``owed``, and the
-    outer ``sequence`` conjoins the incoming arm's onto them. A restoring
+    outer ``and_then`` conjoins the incoming arm's onto them. A restoring
     completion is followed by the incoming destination (``restore`` of the
     record the cleanup left: the incoming arm's own value, or its halt
     leaving from that record), a terminal completion (return in finally)
@@ -443,7 +443,7 @@ def _finally_beneath(cleanup_es, in_flight, restore):
     arms to compose yet: the composition is enrolled on the carrier
     (``after_discharge``) and runs on the arms it discharges to, as the
     block reducer composes any statement whose result waits on actuals.
-    The outer ``ExitSet.sequence`` composes the carrier beneath the
+    The outer ``ExitSet.and_then`` composes the carrier beneath the
     incoming arm.
     """
     from sugar_lift_py_tests.caller_parameter_contract import (
@@ -473,7 +473,7 @@ def _finally_beneath(cleanup_es, in_flight, restore):
 
     def beneath(cleaned_exits):
         exits = _require_exit_set(cleaned_exits, owner="TrySugar.finally")
-        return exits.sequence(after_cleanup, consume=supersede)
+        return exits.and_then(after_cleanup, consume=supersede)
 
     if isinstance(cleanup_es, NativeOperationExitCarrierV1):
         return cleanup_es.after_discharge(beneath)
@@ -557,7 +557,7 @@ def _beneath_read_face(residual, face):
     beneath one ``face`` of that arm type's read (``_effect_match_verdict``).
 
     The one composition of a continuation beneath an arm
-    (``ExitSet.sequence``, ``consume=``: the ``try`` owns the halt in flight):
+    (``ExitSet.and_then``, ``consume=``: the ``try`` owns the halt in flight):
     the halt's guard, faces and ``owed`` are conjoined with the face's.  A
     halted face is the ``try``'s halt right there -- Python raises it while
     matching, the arms after this one never see it, its ``finally`` does --
@@ -585,15 +585,15 @@ def _beneath_read_face(residual, face):
             )
         )
 
-    return residual.sequence(ExitSet.completed, consume=consume)
+    return residual.and_then(ExitSet.completed, consume=consume)
 
 
 def _handled_beneath(reached, handled):
     """The handler's arms ``handled`` as the continuation beneath the halt
     in flight that reached it (``reached``, ``_beneath_read_face``): each
     arm keeps its own guard, faces and ``owed`` conjoined with the halt's
-    (``ExitSet.sequence``, ``consume=``)."""
-    return reached.sequence(ExitSet.completed, consume=lambda _in_flight: handled)
+    (``ExitSet.and_then``, ``consume=``)."""
+    return reached.and_then(ExitSet.completed, consume=lambda _in_flight: handled)
 
 
 def _binding_facts_for(slot_id, effect, site) -> tuple:
@@ -667,7 +667,7 @@ def _ground_route_on_faces(exits, route_site, handler_count, arm, site):
 
     def decide(state):
         # The face continues as itself with the route decided in its record;
-        # ``sequence`` keeps its guard, faces and ``owed``. Halts bypass.
+        # ``and_then`` keeps its guard, faces and ``owed``. Halts bypass.
         context = getattr(state, "context", None)
         table = getattr(context, "ground_branch_results", None)
         if isinstance(state, _ReducedBlock) and isinstance(table, dict):
@@ -677,7 +677,7 @@ def _ground_route_on_faces(exits, route_site, handler_count, arm, site):
             )
         return ExitSet.completed(state)
 
-    return exits.sequence(decide)
+    return exits.and_then(decide)
 
 
 def _ground_decided_route(routed, route_site, handler_count, ctx, site):
@@ -787,7 +787,7 @@ def _route_handlers_over_exits(
             # bound, its entries follow the body's, and a body that returned
             # (or returned under a guard) never runs it there.
             parts.append(
-                ExitSet((exit_,)).sequence(
+                ExitSet((exit_,)).and_then(
                     lambda state: reduce_block_to_exitset(orelse, ctx, after=state)
                 )
             )
@@ -826,7 +826,7 @@ def _route_one_halt(
     faces of its own (``_effect_match_verdict``): a dotted read off an
     imported module, a computed type, the undecided citation of a class a
     star import may bind.  The walk goes on beneath every face of that read
-    (``_beneath_read_face``, through ``ExitSet.sequence``): a halted face is
+    (``_beneath_read_face``, through ``ExitSet.and_then``): a halted face is
     the try's halt there, which no later arm sees, beside each completed
     face, under which matching proceeds on the verdict it holds.  A handler
     runs beneath the residual that reached it (``_handled_beneath``), so it
@@ -939,7 +939,7 @@ def _prepend_facts(exits, facts: tuple):
     """Attach EffectBinding facts to every completed exit's entry list.
 
     Each completed face continues as its record with the facts before its
-    entries, composed through ``ExitSet.sequence``: the face's guard,
+    entries, composed through ``ExitSet.and_then``: the face's guard,
     partition testimony and ``owed`` ride on unchanged. Halts bypass."""
     from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
@@ -954,4 +954,4 @@ def _prepend_facts(exits, facts: tuple):
             )
         )
 
-    return exits.sequence(prepended)
+    return exits.and_then(prepended)

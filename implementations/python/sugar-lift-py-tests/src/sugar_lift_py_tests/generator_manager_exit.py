@@ -287,15 +287,15 @@ def _after_refused_yield(machine, message: str, site):
     if not isinstance(closed, ExitSet):
         _loud(f"close returned {type(closed).__name__}", site=site)
     # The RuntimeError leaves beneath each completed close face
-    # (``ExitSet.sequence``), keeping its guard, faces and ``owed``. A raise
+    # (``ExitSet.and_then``), keeping its guard, faces and ``owed``. A raise
     # from close() supersedes the RuntimeError in flight: that halt stands.
-    return closed.sequence(lambda _closed: ExitSet.halted(refusal))
+    return closed.and_then(lambda _closed: ExitSet.halted(refusal))
 
 
 def _map_exits(exit_set, on_completed, site, *, thrown=None):
     """Map a machine ExitSet face by face, keeping every guard and face key.
 
-    Composed through ``ExitSet.sequence``: ``on_completed`` runs beneath each
+    Composed through ``ExitSet.and_then``: ``on_completed`` runs beneath each
     completed face, and a halt the mapping owns (the thrown exception let
     out, a ``StopIteration`` PEP 479 turns into a ``RuntimeError``) is
     consumed; every other halt stands. Whatever follows a face keeps its
@@ -313,4 +313,4 @@ def _map_exits(exit_set, on_completed, site, *, thrown=None):
             return ExitSet.halted(_pep479(effect, site=site), state=face.state)
         return None
 
-    return exit_set.sequence(on_completed, consume=owned)
+    return exit_set.and_then(on_completed, consume=owned)

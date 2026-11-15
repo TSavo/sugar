@@ -38,7 +38,7 @@ class _StarFace:
 
     # The path into this face: ONE completed arm whose value is the temporal
     # state (a ``_ReducedBlock``). Its guard, faces and ``owed`` are what
-    # ``ExitSet.sequence`` composed from every handler arm the face ran
+    # ``ExitSet.and_then`` composed from every handler arm the face ran
     # through; everything emitted from the face runs beneath it, so nothing
     # restates them by hand.
     path: object  # ExitSet
@@ -71,7 +71,7 @@ def _matcher_read(matcher, ctx):
 
 def _beneath_read_faces(path, read):
     """``path`` -- one routing face's completed arm -- continued beneath
-    every face of one arm type's ``read`` (``ExitSet.sequence``).
+    every face of one arm type's ``read`` (``ExitSet.and_then``).
 
     Answers ``(halts, reads)``.  A halted face is the ``try*``'s halt right
     there, as for ordinary ``except`` (``try_sugar._beneath_read_face``):
@@ -85,7 +85,7 @@ def _beneath_read_faces(path, read):
     gives the path under that face's guard, faces and ``owed``, still the
     one arm holding the face's state, paired with the type value it read.
     A face whose guard cannot hold beneath the path is dropped by
-    ``sequence``, never invented.
+    ``and_then``, never invented.
     """
     from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
 
@@ -99,15 +99,15 @@ def _beneath_read_faces(path, read):
                     (face if face.state is not None else replace(face, state=state),)
                 )
 
-            halts.append(path.sequence(raised))
+            halts.append(path.and_then(raised))
             continue
 
         def continued(state, face=face):
-            return ExitSet((face,)).sequence(
+            return ExitSet((face,)).and_then(
                 lambda _type, state=state: ExitSet.completed(state)
             )
 
-        beneath = path.sequence(continued)
+        beneath = path.and_then(continued)
         if beneath.exits:
             reads.append((beneath, face.value))
     return halts, reads
@@ -208,7 +208,7 @@ class TryStarSugar(Sugar):
             """The continuation beneath one body halt the try* owns.
 
             Built from the halt's point on: the frontier starts under truth,
-            with no faces and owing nothing, and ``sequence`` conjoins the
+            with no faces and owing nothing, and ``and_then`` conjoins the
             body halt's guard, faces and ``owed`` onto every arm answered here.
 
             What the handlers route is a raised exception, read the one way
@@ -325,7 +325,7 @@ class TryStarSugar(Sugar):
                     raised = regroup_except_star(original, effects)
                 if effects:
                     retained.append(
-                        face.path.sequence(
+                        face.path.and_then(
                             lambda state, raised=raised: ExitSet.halted(
                                 raised, state=state
                             )
@@ -335,8 +335,8 @@ class TryStarSugar(Sugar):
                     retained.append(face.path)
 
             # No arm is invented: when no path leaves the handlers (every arm
-            # was unsatisfiable, so ``sequence`` dropped it), the continuation
-            # is exactly the empty set ``sequence`` composed. A raise is never
+            # was unsatisfiable, so ``and_then`` dropped it), the continuation
+            # is exactly the empty set ``and_then`` composed. A raise is never
             # a completion (#7825). The leaving faces are siblings: one join.
             return ExitSet(()).union(*retained)
 
@@ -421,14 +421,14 @@ class TryStarSugar(Sugar):
                     handler_ctx,
                     after=replace(record, context=handler_ctx),
                 )
-                # The handler runs beneath this split's path: ``sequence``
+                # The handler runs beneath this split's path: ``and_then``
                 # conjoins the path's guard, faces and ``owed`` onto every
                 # handler arm. One next face per composed arm.  The frontier
                 # is built from the handler's arms now: a handler still
-                # waiting on its caller's actuals, whose carrier ``sequence``
+                # waiting on its caller's actuals, whose carrier ``and_then``
                 # composed, is refused by name here.
                 composed = _require_exit_set(
-                    path.sequence(lambda _state, exits=handler_exits: exits),
+                    path.and_then(lambda _state, exits=handler_exits: exits),
                     owner="TryStarSugar.handler",
                 )
                 _walk_handler_arms(
@@ -471,14 +471,14 @@ class TryStarSugar(Sugar):
                 )
 
                 # The next face's path is this arm continuing as its temporal
-                # state (``sequence``; ``consume=`` for a halted arm): the
+                # state (``and_then``; ``consume=`` for a halted arm): the
                 # arm's guard, faces and ``owed``.
                 def walk_on(_reached, state=next_state):
                     return ExitSet.completed(state)
 
                 next_frontier.append(
                     _StarFace(
-                        path=ExitSet((arm,)).sequence(walk_on, consume=walk_on),
+                        path=ExitSet((arm,)).and_then(walk_on, consume=walk_on),
                         residual=handler_residual,
                         exceptional=exceptional,
                     )
@@ -487,7 +487,7 @@ class TryStarSugar(Sugar):
         def close(result):
             """The ``finally`` over every arm the try* composed, then its own
             faces.  An ``else`` suite still waiting on its caller's actuals
-            (``sequence`` handed its carrier on) is closed once it discharges."""
+            (``and_then`` handed its carrier on) is closed once it discharges."""
             if isinstance(result, NativeOperationExitCarrierV1):
                 return result.after_discharge(
                     lambda projected: close(
@@ -524,7 +524,7 @@ class TryStarSugar(Sugar):
             halts the try* owns run the handlers beneath them.  A body with
             no face (every arm unsatisfiable) leaves the try* with none: an
             empty arm set is never a completion, so none is made up."""
-            return close(body.sequence(after_body, consume=handled))
+            return close(body.and_then(after_body, consume=handled))
 
         if isinstance(body, NativeOperationExitCarrierV1):
             # The body still waits on its caller's actuals: once it discharges,

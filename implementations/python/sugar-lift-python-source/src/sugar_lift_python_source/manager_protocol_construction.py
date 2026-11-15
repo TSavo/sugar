@@ -375,7 +375,7 @@ def _apply_protocol_call(call: CallSiteValue, ctx):
 
     def body_completion(value):
         # Each completed face continues as the body completion it retained
-        # (``ExitSet.sequence``): its guard, faces and ``owed`` ride on. Each
+        # (``ExitSet.and_then``): its guard, faces and ``owed`` ride on. Each
         # halt of the body stands as the call's own.
         if isinstance(value, CallSiteValue) and value.term is call.term:
             retained = value.retained_source_completion_outcome()
@@ -383,7 +383,7 @@ def _apply_protocol_call(call: CallSiteValue, ctx):
                 return ExitSet.completed(retained.completed_value())
         return ExitSet.completed(value)
 
-    return outcome.sequence(body_completion)
+    return outcome.and_then(body_completion)
 
 
 def _resource_enter_transitions(receiver: ObjectValue, enter_outcome, *, blame: object):
@@ -433,20 +433,20 @@ def _resource_enter_transitions(receiver: ObjectValue, enter_outcome, *, blame: 
                 fix="preserve the ordinary enter block or keep resource state loud",
             )
         # Each store runs beneath every state the stores before it reached
-        # (``ExitSet.sequence``), so each split's guard and face ride on.
+        # (``ExitSet.and_then``), so each split's guard and face ride on.
         states = ExitSet.completed(receiver)
         for statement in block.statements:
-            states = states.sequence(
+            states = states.and_then(
                 lambda state, statement=statement: stored(state, statement)
             )
-        return states.sequence(
+        return states.and_then(
             lambda state: ExitSet.completed(EnteredManagerStateValue(block, state))
         )
 
-    # Every transition runs beneath its enter face (``ExitSet.sequence``):
+    # Every transition runs beneath its enter face (``ExitSet.and_then``):
     # the face's guard, faces and ``owed`` ride onto each one. A halted enter
     # face leaves the With as itself.
-    return enter_exits.sequence(transitions)
+    return enter_exits.and_then(transitions)
 
 
 def _apply_receiver_store(

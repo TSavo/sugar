@@ -1953,7 +1953,7 @@ class CallSiteValue(FloorValue):
                 call_owned(halt.effect, frame), state=at_the_call(ctx, carried)
             )
 
-        return outcome.sequence(completed_at_the_call, consume=left_the_call)
+        return outcome.and_then(completed_at_the_call, consume=left_the_call)
 
 
 def carries_its_stores_to_the_caller(call) -> bool:
@@ -2312,7 +2312,7 @@ def at_the_call(ctx, carried=()):
     splices every entry the caller made before the call in front
     (``function_universe_sugar._halt_state``), as it does for any statement's
     halt. The halt keeps the callee's effect, and its arm keeps what the
-    callee owes (``ExitSet.sequence``).
+    callee owes (``ExitSet.and_then``).
 
     What the callee did before its halt to an object the caller can see is
     not rolled back: ``carried`` (``caller_visible_values``) are the writes

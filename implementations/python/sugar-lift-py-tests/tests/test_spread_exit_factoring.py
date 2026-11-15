@@ -1,7 +1,7 @@
 """#6309 — spread sequencing keeps each element's ExitSet as a FACTOR.
 
 The defect this pins: ``SpreadCollectionSugar._collect`` chained ``and_then``
-once per spread element, and ``ExitSet.sequence`` appends every exit of
+once per spread element, and ``ExitSet.and_then`` appends every exit of
 ``step(value)`` under every completed exit of the prefix.  With ``k`` elements
 of ``m`` arms each that is ``m ** k`` materialized arms — the population, not
 the per-merge cost, is what timed out ``pandas/core/generic.py``.

@@ -43,7 +43,7 @@ def _reduce_into(element_sugars, ctx, build):
     # Each element is reduced after the ones before it, under the state after
     # them (``reduce_operands``): ``[(b := 2), b]`` reads ``b`` as 2.
     # An element that PARTITIONS enters the fold with at most one completed arm
-    # (#6324). `and_then` is `ExitSet.sequence`, which distributes the tail
+    # (#6324). `ExitSet.and_then` distributes the tail
     # under every completed arm of the prefix, so an unfactored element makes
     # the accumulator grow multiplicatively: `test_arrow.py` measured 133,104
     # arms arriving at one `normalize` call through this loop. Factoring moves

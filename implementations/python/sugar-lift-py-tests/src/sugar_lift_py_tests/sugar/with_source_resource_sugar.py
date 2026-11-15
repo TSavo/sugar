@@ -73,7 +73,7 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
     """Enter every manager face under its guard; union the exits (8.5).
 
     The enter runs beneath its manager face and the body beneath its enter
-    face, each composed onto that face by ``ExitSet.sequence``: it takes the
+    face, each composed onto that face by ``ExitSet.and_then``: it takes the
     face's guard and faces and owes what the face owes. The exit routing
     carries a body face's debts onto every arm it leaves through, under
     Python's own disposition: the truth of what ``__exit__`` returns.
@@ -118,7 +118,7 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
         manager_out, owner="WithReducedManagerSugar.manager"
     )
     manager_es = halts_recorded(
-        manager_out.sequence(lambda value: _project_manager_receiver(value, ctx)),
+        manager_out.and_then(lambda value: _project_manager_receiver(value, ctx)),
         halt_record(ctx),
     )
     parts = []
@@ -129,7 +129,7 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
         manager_facts = ManagerBinding(
             resource.manager_slot_id, manager_face.value
         ).to_facts(site=resource.site)
-        enter_es = ExitSet((manager_face,)).sequence(
+        enter_es = ExitSet((manager_face,)).and_then(
             lambda manager: halts_recorded(
                 _require_exit_set(
                     resource.protocol.enter_resource_outcome_for(manager, ctx),
@@ -152,9 +152,9 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
                 # The body reads ``as x`` as the value ``__enter__`` returned.
                 body_ctx = binding.bound_in(ctx)
             # The exit is routed per body face: a body whose carrier
-            # ``sequence`` composed is refused by name here.
+            # ``and_then`` composed is refused by name here.
             body_es = _require_exit_set(
-                ExitSet((enter_face,)).sequence(
+                ExitSet((enter_face,)).and_then(
                     lambda _entered, body_ctx=body_ctx: reduce_block_to_exitset(
                         resource.body, body_ctx
                     )
@@ -298,7 +298,7 @@ def _project_manager_receiver(value, ctx, seen=frozenset()):
         ),
         owner="WithReducedManagerSugar.manager",
     )
-    return projected.sequence(
+    return projected.and_then(
         lambda receiver: (
             ExitSet.completed(receiver)
             if receiver is value
@@ -373,7 +373,7 @@ def _exit_return_values(exit_es, *, owner="WithReducedManagerSugar.exit-return")
 
     def returns(block):
         """What one completed exit face returns, each return under its own
-        guard; ``sequence`` conjoins the face's guard, faces and ``owed``
+        guard; ``and_then`` conjoins the face's guard, faces and ``owed``
         onto every one. Halts bypass."""
         if not isinstance(block, BlockValue):
             return ExitSet.completed(block)
@@ -427,7 +427,7 @@ def _exit_return_values(exit_es, *, owner="WithReducedManagerSugar.exit-return")
         # The returns are siblings: one join.
         return ExitSet(()).union(*rows)
 
-    result = exit_es.sequence(returns)
+    result = exit_es.and_then(returns)
     if not result.exits:
         construction_panic_gap(
             owner=owner,

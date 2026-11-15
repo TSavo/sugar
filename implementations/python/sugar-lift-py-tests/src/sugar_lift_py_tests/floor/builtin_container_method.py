@@ -391,8 +391,8 @@ def _then_pair(outcome):
     post = outcome.completed_value()
     if post is None or container_kind(post) is None:
         return UNDECIDED
-    # Rebuilt through ``sequence`` so the arm's ``owed`` rides onto the pair.
-    return outcome.sequence(lambda value: _pair(value, _none()))
+    # Rebuilt through ``and_then`` so the arm's ``owed`` rides onto the pair.
+    return outcome.and_then(lambda value: _pair(value, _none()))
 
 
 def _find_key(entries, key):

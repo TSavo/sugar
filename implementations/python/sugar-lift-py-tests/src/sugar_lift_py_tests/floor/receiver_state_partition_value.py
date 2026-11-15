@@ -86,10 +86,10 @@ class ReceiverStatePartitionValue(FloorValue):
 
         def flattened(partition):
             # A nested partition is sequenced beneath the completed face that
-            # holds it: ``sequence`` conjoins the enclosing guard, carries both
+            # holds it: ``and_then`` conjoins the enclosing guard, carries both
             # faces' testimony, and the flattened face owes what its enclosing
             # face owed too (#7825, H4).
-            return partition.exits.sequence(
+            return partition.exits.and_then(
                 lambda value: (
                     flattened(value)
                     if isinstance(value, ReceiverStatePartitionValue)

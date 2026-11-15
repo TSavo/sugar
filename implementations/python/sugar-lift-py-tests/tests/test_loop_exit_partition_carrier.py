@@ -631,7 +631,7 @@ def test_the_loop_family_stays_linear_as_factors_are_appended(tmp_path):
     for step_count in (1, 2, 3, 4, 5, 6, 7, 8):
         exits = family
         for index in range(step_count):
-            exits = exits.sequence(
+            exits = exits.and_then(
                 lambda value, _i=index: ExitSet.completed((value, _i))
             )
         series.append(len([e for e in exits.exits if isinstance(e, Completed)]))

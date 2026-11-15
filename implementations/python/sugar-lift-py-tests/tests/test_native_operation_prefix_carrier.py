@@ -90,7 +90,7 @@ def test_completed_prefix_arms_stay_deferred_and_retain_all_testimony() -> None:
         )
     )
 
-    composed = prefix.sequence(lambda _value: carrier)
+    composed = prefix.and_then(lambda _value: carrier)
 
     assert isinstance(composed, NativeOperationExitCarrierV1)
     actuals = {
@@ -102,7 +102,7 @@ def test_completed_prefix_arms_stay_deferred_and_retain_all_testimony() -> None:
     # The same exits eager sequencing of the discharged carrier gives: the
     # carrier's own guard restricts its exits, never the arms beside it.
     discharged = carrier.discharge(None, actuals)
-    assert exits == prefix.sequence(lambda _value: discharged)
+    assert exits == prefix.and_then(lambda _value: discharged)
     stopped = next(exit_ for exit_ in exits.exits if exit_.effect is stopped_effect)
     assert isinstance(stopped, Halted)
     assert stopped.state is stopped_state
@@ -118,7 +118,7 @@ def test_completed_prefix_arms_stay_deferred_and_retain_all_testimony() -> None:
 
 
 def test_prefix_carriers_of_different_demands_both_discharge() -> None:
-    """``sequence`` composes carriers of different demands beneath one prefix:
+    """``and_then`` composes carriers of different demands beneath one prefix:
     the caller's actuals discharge each in arm order."""
     first, left, right = _carrier("less_than")
     second, _, _ = _carrier("add")
@@ -132,14 +132,14 @@ def test_prefix_carriers_of_different_demands_both_discharge() -> None:
     )
     actuals = {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
 
-    composed = prefix.sequence(
+    composed = prefix.and_then(
         lambda value: first if value == TermValue(1) else second,
     )
 
     assert isinstance(composed, NativeOperationExitCarrierV1)
     first_exits = first.discharge(None, actuals)
     second_exits = second.discharge(None, actuals)
-    assert composed.discharge(None, actuals) == prefix.sequence(
+    assert composed.discharge(None, actuals) == prefix.and_then(
         lambda value: first_exits if value == TermValue(1) else second_exits
     )
 
@@ -148,7 +148,7 @@ def test_prefix_composition_retains_later_carrier_continuations() -> None:
     carrier, left, right = _carrier()
     guard = atomic("test:prefix", [])
     prefix = ExitSet((Completed(guard, TermValue(1)),))
-    composed = prefix.sequence(lambda _value: carrier).and_then(
+    composed = prefix.and_then(lambda _value: carrier).and_then(
         lambda _predicate: ExitSet.completed(TermValue(99))
     )
 

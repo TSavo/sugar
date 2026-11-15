@@ -609,7 +609,7 @@ def header_applied(statement, field: str, ctx):
     ``headed`` is the statement: each halted face of the header halted at
     the statement's head (``halt_record(ctx)``), and on each completed face
     the rest of the statement runs (``header_ran``).  Each run keeps its
-    face's guard, faces and ``owed`` (``ExitSet.sequence``)."""
+    face's guard, faces and ``owed`` (``ExitSet.and_then``)."""
     from sugar_lift_py_tests.floor.named_expression_value import (
         peel_walrus_binds,
     )
@@ -622,7 +622,7 @@ def header_applied(statement, field: str, ctx):
     ):
         return None, outcome
     return (
-        halts_recorded(outcome, halt_record(ctx)).sequence(
+        halts_recorded(outcome, halt_record(ctx)).and_then(
             lambda value: header_ran(statement, field, value, ctx)
         ),
         outcome,
@@ -824,7 +824,7 @@ def past_prior_returns(state, ctx, goes_on, returned):
     entries, fall-through guard and transforms -- the arm's guard already
     says no earlier ``return`` was taken, so none of them is live on it (as
     ``resumed`` drops them after a halt), and what follows never stands
-    beside them. One composition beneath both (``ExitSet.sequence``), which
+    beside them. One composition beneath both (``ExitSet.and_then``), which
     hands on a continuation still waiting on its caller's actuals.
     """
     earlier = _prior_return_face(state, ctx)
@@ -845,7 +845,7 @@ def past_prior_returns(state, ctx, goes_on, returned):
             return goes_on(record)
         return returned(record)
 
-    return branches.sequence(after)
+    return branches.and_then(after)
 
 
 def reduce_block_to_exitset(
@@ -1020,7 +1020,7 @@ def reduce_block_to_exitset(
                     # The halt leaves with the one record a statement's halt
                     # leaves the block with (``_halt_state``): the prefix for
                     # a halt at the statement's head, the prefix spliced onto
-                    # a nested record; ``sequence`` keeps its guard, faces and
+                    # a nested record; ``and_then`` keeps its guard, faces and
                     # ``owed``. A record-less arm reaches here only from a
                     # statement that binds nothing before its own halt
                     # (``halts_at_statement_head`` and no walrus, checked
@@ -1028,7 +1028,7 @@ def reduce_block_to_exitset(
                     # same state the plain halt above gives.
                     return ExitSet.halted(halt.effect, state=_halt_state(state, halt))
 
-                composed = outcome.sequence(project, consume=spliced)
+                composed = outcome.and_then(project, consume=spliced)
                 if returned is not None:
                     # The faces of every earlier ``return`` stand beside the
                     # statement's own: ``project`` and ``spliced`` answer exits,
@@ -1080,14 +1080,14 @@ def reduce_block_to_exitset(
             # The straight-line singleton is the only ExitSet face that can
             # become a deferred native-operation carrier without needing a
             # guarded carrier algebra. Preserve it directly. Branching paths
-            # continue through ExitSet.sequence and remain loud if they try to
+            # continue through ExitSet.and_then and remain loud if they try to
             # smuggle an undischarged carrier through a guard.
             exits = reduce_next(exits.exits[0].value)
         else:
             # A completed prefix may expose a deferred native operation.
-            # ``sequence`` keeps that carrier outside ExitSet until caller
+            # ``and_then`` keeps that carrier outside ExitSet until caller
             # actuals discharge it; no ExitSet ever holds a carrier as an arm.
-            exits = exits.sequence(reduce_next)
+            exits = exits.and_then(reduce_next)
 
     # The block boundary is where an obligation stops being in flight, so it is
     # the one door that consumes the carriers. Doing it here rather than per
@@ -1133,7 +1133,7 @@ def block_values(exits):
 
     if isinstance(exits, NativeOperationExitCarrierV1):
         return exits.and_then(block_value)
-    return exits.sequence(block_value)
+    return exits.and_then(block_value)
 
 
 @dataclass(frozen=True)

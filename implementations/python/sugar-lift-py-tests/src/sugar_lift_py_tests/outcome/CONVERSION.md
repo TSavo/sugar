@@ -14,7 +14,7 @@ Read a result through its own methods:
 | can this step halt | `bool(o.halts())` |
 | the halted effects | `h.effect for h in o.halts()` |
 | a halt's branch condition | `h.guard` |
-| continue on every completed arm | `o.and_then(step)` / `o.sequence(step)` |
+| continue on every completed arm | `o.and_then(step)` (`consume=` for a halt it owns) |
 | factor an operand's completed arms | `o.factor_completed()` |
 
 ## Arms: `owed` (H4)
@@ -27,7 +27,7 @@ and it never decides a merge or enters an enrolled CID.
 **Every arm rebuild carries it.** A rebuild from one arm passes that arm's
 `owed`. A rebuild from several arms carries the union of their debts, and
 outside `exit_set.py` that union is never written by hand (#7825): a step
-and what follows compose through `ExitSet.sequence` (with `consume=` for a
+and what follows compose through `ExitSet.and_then` (with `consume=` for a
 halt the composition owns), sibling arms that stand for each other merge
 through `ExitSet.union` / `normalize`, and what a set of arms owes together
 is read with `ExitSet.owed_items()`. The union itself (`_owed_union`) is

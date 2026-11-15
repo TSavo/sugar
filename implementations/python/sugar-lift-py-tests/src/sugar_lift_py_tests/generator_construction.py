@@ -1496,7 +1496,7 @@ class GeneratorConstructionV1:
             self.steps[self.cursor], FinallyStepV1
         ):
             cleanup = self._reduce_finally(self.steps[self.cursor])
-            return cleanup.sequence(
+            return cleanup.and_then(
                 lambda state: ExitSet.completed(
                     GeneratorTerminationV1(None, self.binding_state)
                 )
@@ -2668,14 +2668,14 @@ class GeneratorConstructionV1:
 
         A halted edge's pre-halt record is the one this frame left at this
         cursor (``_left_here``), whatever record a reduced helper carried.
-        Each halt continues as itself from it through ``ExitSet.sequence``
+        Each halt continues as itself from it through ``ExitSet.and_then``
         (``consume=``), so its guard, faces and ``owed`` ride on; a completed
         arm continues as itself.
         """
         from sugar_lift_py_tests.outcome import ExitSet
 
         record = self._left_here()
-        return outcome.sequence(
+        return outcome.and_then(
             ExitSet.completed,
             consume=lambda halt: ExitSet.halted(halt.effect, state=record),
         )
@@ -2771,7 +2771,7 @@ class GeneratorConstructionV1:
                     return transitioned
                 return ExitSet.completed(transitioned)
 
-            transitioned = branches.sequence(_transition_branch_machine)
+            transitioned = branches.and_then(_transition_branch_machine)
             if isinstance(transitioned, ExitSet):
                 factored = transitioned.factor_completed()
                 branch_faces = frozenset({then_face, else_face})
@@ -2818,13 +2818,13 @@ class GeneratorConstructionV1:
         ):
             return _transition_truth(guard_outcome.completed_value())
         if isinstance(guard_outcome, ExitSet):
-            projected = guard_outcome.sequence(_project_guard_operand)
+            projected = guard_outcome.and_then(_project_guard_operand)
         elif isinstance(guard_outcome, NativeOperationExitCarrierV1):
             projected = guard_outcome.and_then(_project_guard_operand)
         else:
             return self._gap(requested, "If carrying a suspension")
         if isinstance(projected, ExitSet):
-            return projected.sequence(_transition_projected_truth)
+            return projected.and_then(_transition_projected_truth)
         if isinstance(projected, NativeOperationExitCarrierV1):
             return projected.and_then(_transition_projected_truth)
         return self._gap(requested, "If carrying a suspension")
@@ -3214,12 +3214,12 @@ class GeneratorConstructionV1:
 def _guard_exits(exit_set: ExitSet, face) -> ExitSet:
     """``exit_set`` continuing beneath one routing face, completed or halted.
 
-    Composed through ``ExitSet.sequence`` (``consume=`` for a halted face the
+    Composed through ``ExitSet.and_then`` (``consume=`` for a halted face the
     routing owns): the face's guard is conjoined onto every exit, both sets of
     partition testimony ride, and the face's debts ride onto every exit under
     it.
     """
-    return ExitSet((face,)).sequence(
+    return ExitSet((face,)).and_then(
         lambda _value: exit_set, consume=lambda _halt: exit_set
     )
 

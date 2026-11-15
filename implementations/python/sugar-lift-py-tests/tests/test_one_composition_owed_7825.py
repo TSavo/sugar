@@ -1,6 +1,6 @@
 """#7825, one composition: every site that unioned debts by hand now composes.
 
-An arm owes what any path into it incurred. ``ExitSet.sequence`` (with
+An arm owes what any path into it incurred. ``ExitSet.and_then`` (with
 ``consume=`` for a halt the composition owns) is the one way to compose a
 step with what follows, carrying guard, faces and ``owed``; sibling arms that
 stand for each other join through ``ExitSet.union`` / ``normalize``, and what a
@@ -366,7 +366,7 @@ def test_a_deferred_carrier_owes_its_prefix_arms_debts() -> None:
             ),
         )
     )
-    composed = prefix.sequence(lambda _value: carrier)
+    composed = prefix.and_then(lambda _value: carrier)
     assert isinstance(composed, NativeOperationExitCarrierV1)
     try:
         unanswered_calls.owed_calls(composed)

@@ -17,7 +17,7 @@ outcome and owes the same member. "Not decided here" is stated one way: the
 one constructor, ``ExitSet.two_faced``, puts one ``UnansweredCallV1`` on the
 ``owed`` slot of BOTH its arms (#7825, H4; #7757 item 13), since the
 operation is incurred whether it then completes or raises. ``owed`` rides every
-arm rebuild by union (``ExitSet.sequence`` for a composition, ``ExitSet.union``
+arm rebuild by union (``ExitSet.and_then`` for a composition, ``ExitSet.union``
 / ``normalize`` for a merge), so the item reaches
 the reduction's final arms on every path that reached the call. The full scan
 that mint packages reads it there (``owed_calls``); nothing is recorded on the

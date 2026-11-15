@@ -453,7 +453,7 @@ def _owed_union(*parts: tuple) -> tuple:
     every arm it stands for. Dropping one is dropping a member of the proof.
 
     Private (#7825): only the rebuilds in this module call it. Outside it, a
-    step and what follows compose through ``ExitSet.sequence`` (``consume=``
+    step and what follows compose through ``ExitSet.and_then`` (``consume=``
     for a halt the composition owns), arms that stand for each other merge
     through ``ExitSet.union`` / ``normalize``, and the debts of a set of arms
     are read with ``ExitSet.owed_items``. Nobody else unions debts by hand.
@@ -703,7 +703,7 @@ class ExitSet(Generic[T]):
         its guard and ``owed``.
         """
         stamp = partition(partition_id)[face]
-        return self.sequence(
+        return self.and_then(
             lambda value: ExitSet.completed(value).guarded(true_guard(), stamp)
         )
 
@@ -719,7 +719,7 @@ class ExitSet(Generic[T]):
 
         The difference is what happens when such a face is SEQUENCED. Exit-level
         arms multiply: k steps of m arms distribute into m ** k arms, because
-        ``sequence`` appends every exit of the tail under every completed exit of
+        ``and_then`` appends every exit of the tail under every completed exit of
         the prefix. Value-level arms compose: k steps contribute k guarded values
         to one arm, so both work and storage grow linearly in k. Same denotation,
         different growth — which is the whole fix.
@@ -946,13 +946,15 @@ class ExitSet(Generic[T]):
 
         return ExitSet(tuple(merged))
 
-    def sequence(
+    def and_then(
         self,
         step: Callable[[T], "ExitSet[U]"],
         *,
         consume: Callable[[Halted], "ExitSet[U] | None"] | None = None,
     ) -> "ExitSet[U]":
-        """Map ``step`` over completed exits; halted exits bypass the tail.
+        """THE ONE COMPOSITION of an outcome with what follows it (#7757).
+
+        Map ``step`` over completed exits; halted exits bypass the tail.
 
         The prefix arm's obligations ride onto EVERY exit the tail produced
         under it. They were incurred before the tail ran, on the path that
@@ -973,12 +975,12 @@ class ExitSet(Generic[T]):
 
         A step or ``consume`` that answers a deferred native-operation carrier
         (a loop or ``with`` body still waiting on its caller's actual) is
-        composed through the carrier's own ``after_discharge``, as
-        ``and_then`` hands one on: once it discharges, its exits are composed
-        beneath that arm exactly as an ``ExitSet``'s are, beside every other
-        arm's continuation in arm order, and the answer is that carrier.
-        Anything else that is not an ``ExitSet`` cannot compose and is refused
-        by name (``_require_exit_set``, owner ``ExitSet.sequence``).
+        composed through the carrier's own ``after_discharge``: once it
+        discharges, its exits are composed beneath that arm exactly as an
+        ``ExitSet``'s are, beside every other arm's continuation in arm order,
+        and the answer is that carrier. Anything else that is not an
+        ``ExitSet`` cannot compose and is refused by name
+        (``_require_exit_set``, owner ``ExitSet.and_then``).
 
         Never refused for its shape: a carrier answered beneath one arm of
         several composes beside the others exactly as beneath a sole arm, so
@@ -1013,18 +1015,6 @@ class ExitSet(Generic[T]):
             # the carrier itself.
             return deferred[0][2]
         return _compose_after_discharge(tuple(exits), tuple(deferred))
-
-    def and_then(self, step):
-        """Run ``step`` on every completed arm's value; halts bypass it.
-
-        The one composition (``sequence``): each arm's guard, faces and
-        ``owed`` ride onto what ``step`` produced under it, a carrier
-        ``step`` answers composes through its ``after_discharge`` beside every
-        other arm (handed on as itself beneath one plain arm), and every
-        halted arm stands with its guard, record and ``owed``. Never refused
-        for having several faces (#7757).
-        """
-        return self.sequence(step)
 
     def and_finally(
         self,
@@ -1278,7 +1268,7 @@ class ExitSet(Generic[T]):
 def _extend_beneath(target: list, prefix: Exit, continued: ExitSet) -> None:
     """Append ``continued``'s arms as the continuation beneath ``prefix``.
 
-    The one composition ``sequence`` performs per arm, whether the
+    The one composition ``and_then`` performs per arm, whether the
     continuation was answered at once or after a carrier discharged.
     """
     for following in continued.exits:
@@ -1305,7 +1295,7 @@ def _is_plain(exit_: Exit) -> bool:
 
 
 def _carrier_or_refuse(outcome):
-    """A deferred native-operation carrier ``sequence`` can compose, or the
+    """A deferred native-operation carrier ``and_then`` can compose, or the
     refusal of anything else that is not an ``ExitSet``."""
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
@@ -1313,11 +1303,11 @@ def _carrier_or_refuse(outcome):
 
     if isinstance(outcome, NativeOperationExitCarrierV1):
         return outcome
-    return _require_exit_set(outcome, owner="ExitSet.sequence")
+    return _require_exit_set(outcome, owner="ExitSet.and_then")
 
 
 def _compose_after_discharge(resolved: tuple, deferred: tuple):
-    """``sequence``'s answer when arms' continuations wait on carriers.
+    """``and_then``'s answer when arms' continuations wait on carriers.
 
     ``resolved`` holds every arm composed already; each ``deferred`` entry is
     ``(position, prefix arm, carrier)``, its position the slot in
@@ -1337,9 +1327,9 @@ def _compose_after_discharge(resolved: tuple, deferred: tuple):
 
 @dataclass(frozen=True, eq=False)
 class _SequencedBeside:
-    """The step that composes a carrier's exits beside ``sequence``'s arms.
+    """The step that composes a carrier's exits beside ``and_then``'s arms.
 
-    ``resolved`` is every arm ``sequence`` composed already, ``position``
+    ``resolved`` is every arm ``and_then`` composed already, ``position``
     the slot the carrier's exits fill beneath ``prefix``, and ``rest`` the
     later ``(position, prefix arm, carrier)`` entries still waiting.
     """
@@ -1354,7 +1344,7 @@ class _SequencedBeside:
         _extend_beneath(
             inserted,
             self.prefix,
-            _require_exit_set(projected, owner="ExitSet.sequence"),
+            _require_exit_set(projected, owner="ExitSet.and_then"),
         )
         composed = (
             *self.resolved[: self.position],
@@ -1400,8 +1390,8 @@ def factored_operand(outcome):
     THE LAW THIS ENFORCES. Every k-operand fold in the lift is written the same
     way -- ``outcome = outcome.and_then(next_operand)``, k times, in
     ``collection_sugar._reduce_into``, ``method_call_sugar._collect``,
-    ``bool_op_sugar``, ``fstring_sugar``. ``and_then`` is ``ExitSet.sequence``,
-    and ``sequence`` appends every exit of the tail under every COMPLETED exit
+    ``bool_op_sugar``, ``fstring_sugar``. ``ExitSet.and_then`` appends every
+    exit of the tail under every COMPLETED exit
     of the prefix. So an operand carrying m completed arms multiplies the
     accumulator by m, and k operands distribute into m ** k arms.
 
@@ -1440,9 +1430,9 @@ def factored_operand(outcome):
 def _require_exit_set(outcome, *, owner: str = "ExitSet.and_then") -> ExitSet:
     """The one refusal of something that is not exits where exits are needed.
 
-    The one composition (``ExitSet.and_then``, through ``sequence``) composes
+    The one composition (``ExitSet.and_then``) composes
     a carrier a step answers and refuses anything else here (owner
-    ``ExitSet.sequence``); every position that reads an outcome's arms
+    ``ExitSet.and_then``); every position that reads an outcome's arms
     directly (``.exits``, ``completed_value()``) and cannot hand a deferred
     carrier on through the carrier's own ``and_then`` / ``after_discharge``
     refuses through here too, under its own ``owner``.

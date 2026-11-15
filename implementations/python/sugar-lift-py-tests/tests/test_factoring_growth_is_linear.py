@@ -45,7 +45,7 @@ def _arms_after_k_steps(k: int, *, factor: bool) -> int:
                 )
             )
 
-        exits = exits.sequence(build)
+        exits = exits.and_then(build)
         if factor:
             exits = exits.factor_completed()
     return len(exits.exits)

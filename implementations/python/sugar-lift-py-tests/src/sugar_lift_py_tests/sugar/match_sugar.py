@@ -185,7 +185,7 @@ def _tested(outcome, site):
     completed truth value decided as matched / not matched; a halt stays."""
     from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 
-    return _require_exit_set(outcome, owner="MatchSugar.pattern").sequence(
+    return _require_exit_set(outcome, owner="MatchSugar.pattern").and_then(
         lambda value: _decide(_formula_from_floor_value(value, site), site)
     )
 
@@ -206,7 +206,7 @@ def _each(outcome, step):
 
     if isinstance(outcome, NativeOperationExitCarrierV1):
         return outcome.and_then(step)
-    return _projected(outcome).sequence(step)
+    return _projected(outcome).and_then(step)
 
 
 def _then_match(outcome, step):
@@ -251,11 +251,11 @@ def match_pattern(spec, value, site, ctx):
     whose completed faces are ``_Matched`` (the selection is their guards'
     join where they matched) and whose halts are the projections' halts."""
     if isinstance(spec, ValuePatternSpec):
-        return _projected(spec.value.desugar(ctx)).sequence(
+        return _projected(spec.value.desugar(ctx)).and_then(
             lambda literal: _tested(value.equals(literal, site, ctx), site)
         )
     if isinstance(spec, SingletonPatternSpec):
-        return _projected(spec.value.desugar(ctx)).sequence(
+        return _projected(spec.value.desugar(ctx)).and_then(
             lambda singleton: _tested(value.is_identical(singleton, site), site)
         )
     if isinstance(spec, CapturePatternSpec):
@@ -328,7 +328,7 @@ def _match_sequence(spec, value, site, ctx):
         site,
     ):
         return _outcome(False)
-    return _projected(value.length(site)).sequence(
+    return _projected(value.length(site)).and_then(
         lambda length: _sequence_of_length(spec, value, length, site, ctx)
     )
 
@@ -470,7 +470,7 @@ def _match_mapping(spec, value, site, ctx):
         site,
     ):
         return _outcome(False)
-    return _keys(spec.keys, ctx).sequence(
+    return _keys(spec.keys, ctx).and_then(
         lambda keys: _then_match(
             _match_entries(value, tuple(zip(keys, spec.patterns)), site, ctx),
             lambda: _mapping_rest(value, keys, spec.rest_key, site),
@@ -482,7 +482,7 @@ def _keys(sugars, ctx, collected=()):
     """Each key sugar's value, in order."""
     if not sugars:
         return ExitSet.completed(tuple(collected))
-    return _projected(sugars[0].desugar(ctx)).sequence(
+    return _projected(sugars[0].desugar(ctx)).and_then(
         lambda key: _keys(sugars[1:], ctx, (*collected, key))
     )
 
@@ -539,7 +539,7 @@ def _match_class(spec, value, site, ctx):
     """A class pattern: the subject is an instance of the class, and each
     sub-pattern matches the attribute it names (``__match_args__`` names
     the positional ones)."""
-    return _projected(spec.cls.desugar(ctx)).sequence(
+    return _projected(spec.cls.desugar(ctx)).and_then(
         lambda cls: _then_match(
             _instance_of(cls, value, site),
             lambda: _class_members(spec, cls, value, site, ctx),
@@ -571,7 +571,7 @@ def _instance_of(cls, value, site):
 def _class_members(spec, cls, value, site, ctx):
     if not spec.positional:
         return _match_attributes(value, spec.keywords, site, ctx)
-    return _projected(cls.attribute("__match_args__", site, ctx)).sequence(
+    return _projected(cls.attribute("__match_args__", site, ctx)).and_then(
         lambda names: _positional_members(spec, names, value, site, ctx)
     )
 
@@ -602,7 +602,7 @@ def _match_attributes(value, members, site, ctx):
     if not members:
         return _outcome(True)
     (attr, sub), rest = members[0], members[1:]
-    first = _projected(value.attribute(attr, site, ctx)).sequence(
+    first = _projected(value.attribute(attr, site, ctx)).and_then(
         lambda member: match_pattern(sub, member, site, ctx),
         consume=lambda halt: _missing_attribute(halt, attr, site),
     )
@@ -701,7 +701,7 @@ def _debt(owed=()):
 
     The match's PATH is one such arm: what the patterns, equalities and
     guards run so far incurred. It grows only by composition --
-    ``path.sequence(lambda _: step)`` for a step that ran after it, and
+    ``path.and_then(lambda _: step)`` for a step that ran after it, and
     ``ExitSet.union`` for sibling faces of one step, which merges them into
     one arm owing every sibling's debt -- never by unioning debts by hand.
     """
@@ -710,7 +710,7 @@ def _debt(owed=()):
 
 def _then(path, step):
     """``path`` followed by ``step``: one arm owing both, in that order."""
-    return path.sequence(lambda _reached: step)
+    return path.and_then(lambda _reached: step)
 
 
 def _after(guard, path, exits):
@@ -718,14 +718,14 @@ def _after(guard, path, exits):
 
     ``path`` is the one-arm match step (``_debt``) owing what the patterns,
     equalities and guards on the path into these arms incurred, restricted
-    here to ``guard``. ``ExitSet.sequence`` conjoins ``guard`` onto every arm
+    here to ``guard``. ``ExitSet.and_then`` conjoins ``guard`` onto every arm
     and carries the debt onto every arm, completed and halted alike, so
     nothing a completed equality or guard face owed is dropped by being read
     as a formula only. Halted.state and partition faces ride through
     unchanged.
     """
     reached = path if guard is None else path.guarded(guard)
-    return reached.sequence(lambda _reached: exits)
+    return reached.and_then(lambda _reached: exits)
 
 
 def _halted_face(face, prefix_guard):
@@ -1022,7 +1022,7 @@ class MatchSugar(Sugar):
             # face, over a one-shot sugar presenting that face's value; its
             # guard, its partition testimony and what it owes ride onto every
             # nested arm. A halted subject face stands.
-            parts = subject_out.sequence(
+            parts = subject_out.and_then(
                 lambda value: MatchSugar(
                     _CompleteValueSugar(value, self.site),
                     self.cases,

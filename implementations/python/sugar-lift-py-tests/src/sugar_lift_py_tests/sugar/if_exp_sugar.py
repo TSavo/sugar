@@ -125,7 +125,7 @@ class IfExpSugar(ConstructedTermSugar):
 
         truth = truth_of(cond_value, self.site, owner="IfExpSugar.test")
         if isinstance(truth, ExitSet) and plain_completed_value(truth) is None:
-            return truth.sequence(
+            return truth.and_then(
                 lambda truth_value: self._join_on(
                     truth_formula(ExitSet.completed(truth_value), cond_value), ctx
                 )
@@ -276,7 +276,7 @@ class IfExpSugar(ConstructedTermSugar):
         exits = exits.union(else_out.guarded(not_formula, else_face))
 
         # FACTOR THE COMPLETED FACE (#6324). An EXPRESSION's exit set is consumed
-        # by `and_then`, and `ExitSet.sequence` appends every exit of the tail
+        # by `and_then`, and `ExitSet.and_then` appends every exit of the tail
         # under every completed exit of the prefix: a receiver with m completed
         # arms followed by k operands distributes into m ** k arms. Two completed
         # arms here is not a small number downstream -- it is the base of an

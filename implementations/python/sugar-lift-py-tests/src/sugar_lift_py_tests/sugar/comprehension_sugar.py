@@ -522,9 +522,7 @@ class ComprehensionSugar(ConstructedTermSugar):
                     depth, enter(roster), projected, binds, carried, after
                 )
 
-            if len(unpacked.exits) == 1:
-                return unpacked.and_then(member)
-            return unpacked.sequence(member)
+            return unpacked.and_then(member)
 
         def run_member(depth, inner_ctx, projected, binds, carried, after):
             """One member of generator ``depth`` whose target is bound in

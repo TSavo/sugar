@@ -223,7 +223,7 @@ class JoinedStrSugar(ConstructedTermSugar):
         # each arm concatenates under its own guard. `acc.value.add(right.value,
         # ...)` assumed both sides were one unconditional value.
         # One completed arm per part (#6324): concatenation is a k-step fold
-        # through `ExitSet.sequence`, so an unfactored partitioning part
+        # through `ExitSet.and_then`, so an unfactored partitioning part
         # multiplies the accumulator at every remaining part.
         # The parts are operands of the concatenation: a walrus in one binds
         # once, through the one operand door; the joined value so far carries

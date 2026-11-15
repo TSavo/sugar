@@ -68,7 +68,7 @@ class PositionalUnpackOperation:
     answers both faces of its runtime unpack (``runtime_unpack_faces``): the
     roster of each position's projection under the unpack's completes atom,
     and the runtime-cardinality halt under its complement.  It is the one
-    answer every caller composes (``ExitSet.sequence``): the halt is an arm
+    answer every caller composes (``ExitSet.and_then``): the halt is an arm
     as it is, and the leaves are read from the completed arm.
     """
 

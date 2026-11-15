@@ -392,7 +392,7 @@ class ObjectValue(FloorValue):
                 # A raise continues as the Attribute's own halt beneath its
                 # arm (guard, faces and ``owed`` ride on); every other arm
                 # stands.
-                return outcome.sequence(
+                return outcome.and_then(
                     lambda value: ExitSet.completed(value),
                     consume=lambda halt: (
                         ExitSet.halted(

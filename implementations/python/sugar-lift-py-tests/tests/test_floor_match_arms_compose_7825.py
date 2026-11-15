@@ -1,7 +1,7 @@
 """#7825 / #7757: the floor and match arm lists compose or join (after #8041).
 
 The hand-assembled arm lists in ``floor/*`` and ``sugar/match_sugar.py`` now
-compose through ``ExitSet.sequence``, join through ``ExitSet.union``, or build
+compose through ``ExitSet.and_then``, join through ``ExitSet.union``, or build
 one fresh arm with ``ExitSet.completed`` / ``ExitSet.halted``. Each assembly
 that dropped what an arm carried has a test here that it now survives, and
 ``ExitSet.with_partition_face`` (which read an ``exit_.partition`` no arm has)

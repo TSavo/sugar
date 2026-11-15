@@ -83,7 +83,7 @@ def test_sequence_carries_the_prefix_debt_onto_every_continuation() -> None:
 
 def test_an_owing_arm_keeps_its_debt_on_the_arm() -> None:
     item = unanswered_calls.unanswered_call(None, _Site())
-    owing = ExitSet.completed(TermValue(1)).sequence(
+    owing = ExitSet.completed(TermValue(1)).and_then(
         lambda value: ExitSet((Completed(true_guard(), value, owed=(item,)),))
     )
     assert owing.completed_value() == TermValue(1)

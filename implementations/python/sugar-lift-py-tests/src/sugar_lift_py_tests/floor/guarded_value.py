@@ -71,7 +71,7 @@ def _beside(guard, true_outcome, false_outcome):
     """Both arms' outcomes, each under its own polarity, when either arm's
     operation still waits on its caller (#7757).
 
-    The two polarities are composed through ``ExitSet.sequence``, which hands
+    The two polarities are composed through ``ExitSet.and_then``, which hands
     a carrier on through its own ``after_discharge``: once the caller's
     actual answers, that arm's exits land beneath its guard, beside every
     exit of the other arm.  Neither arm's exits are dropped for the other's.
@@ -82,7 +82,7 @@ def _beside(guard, true_outcome, false_outcome):
     polarities = ExitSet.completed(True, guard).union(
         ExitSet.completed(False, not_(guard))
     )
-    return polarities.sequence(lambda taken: true_outcome if taken else false_outcome)
+    return polarities.and_then(lambda taken: true_outcome if taken else false_outcome)
 
 
 def _siblings(guard, true_outcome, false_outcome, faces=(None, None)):
@@ -104,7 +104,7 @@ def _siblings(guard, true_outcome, false_outcome, faces=(None, None)):
 
 def _joined(guard, true_outcome, false_outcome, *, owner: str, blame):
     """Two single-valued arms rejoined as one ``GuardedValue`` under ``guard``,
-    rebuilt through ``sequence``: the joined arm owes what both owed."""
+    rebuilt through ``and_then``: the joined arm owes what both owed."""
     from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
     from sugar_lift_py_tests.outcome import ExitSet
 
@@ -114,8 +114,8 @@ def _joined(guard, true_outcome, false_outcome, *, owner: str, blame):
     false_outcome = require_single_value(
         false_outcome, owner=owner, blame=blame, arm="when_false"
     )
-    return true_outcome.sequence(
-        lambda true_value: false_outcome.sequence(
+    return true_outcome.and_then(
+        lambda true_value: false_outcome.and_then(
             lambda false_value: ExitSet.completed(
                 GuardedValue(guard, true_value, false_value)
             )
@@ -329,8 +329,8 @@ class GuardedValue(FloorValue):
         )
         # Both arms' predicates ran: the joined arm is sequenced after both,
         # so it owes what both owed (#7825, H4), exactly as ``_map`` rejoins.
-        return true_outcome.sequence(
-            lambda _true_value: false_outcome.sequence(
+        return true_outcome.and_then(
+            lambda _true_value: false_outcome.and_then(
                 lambda _false_value: ExitSet.completed(joined)
             )
         )
@@ -367,10 +367,10 @@ class GuardedValue(FloorValue):
         false_outcome = require_single_value(
             false_outcome, owner=owner, blame=site, arm="when_false"
         )
-        # Rebuilt through ``sequence``: the joined predicate owes what both
+        # Rebuilt through ``and_then``: the joined predicate owes what both
         # arms owed.
-        return true_outcome.sequence(
-            lambda true_value: false_outcome.sequence(
+        return true_outcome.and_then(
+            lambda true_value: false_outcome.and_then(
                 lambda false_value: GuardedValue(
                     self.guard, true_value, false_value
                 ).truth(site)
@@ -526,9 +526,9 @@ class GuardedValue(FloorValue):
                 )
             )
         )
-        # Rebuilt through ``sequence``: the joined roster owes what both owed.
-        return true_outcome.sequence(
-            lambda _true: false_outcome.sequence(
+        # Rebuilt through ``and_then``: the joined roster owes what both owed.
+        return true_outcome.and_then(
+            lambda _true: false_outcome.and_then(
                 lambda _false: ExitSet.completed(joined)
             )
         )

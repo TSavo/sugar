@@ -194,7 +194,7 @@ def prepend_facts_to_exitset(exits, facts: tuple):
     """Attach binding facts to every exit's record: a completed face's entries,
     a halted face's pre-effect state.  Guards, partition faces and pending
     obligations ride through unchanged: each face continues as its record
-    with the facts in it, composed through ``ExitSet.sequence`` (``consume=``
+    with the facts in it, composed through ``ExitSet.and_then`` (``consume=``
     for the halted faces)."""
     from dataclasses import replace
 
@@ -229,4 +229,4 @@ def prepend_facts_to_exitset(exits, facts: tuple):
             _ReducedBlock(entries=(*facts,), can_fall_through=True, fall_through=())
         )
 
-    return exits.sequence(on_completion, consume=on_halt)
+    return exits.and_then(on_completion, consume=on_halt)

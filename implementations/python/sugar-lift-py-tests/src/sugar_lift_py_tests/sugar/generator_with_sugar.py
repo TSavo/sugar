@@ -26,7 +26,7 @@ def _left_the_frame(outcome: ExitSet, record) -> ExitSet:
     (``halt_record``) for the enter, the record the body face left
     (``face_record``) for the exit -- with the frame the halt left carried
     inside that record (``frame``), never in its place. Each halt continues
-    beneath its arm (``ExitSet.sequence``, ``consume=``), keeping its guard,
+    beneath its arm (``ExitSet.and_then``, ``consume=``), keeping its guard,
     faces and ``owed``; a completed arm continues as itself.
     """
     from dataclasses import replace
@@ -35,7 +35,7 @@ def _left_the_frame(outcome: ExitSet, record) -> ExitSet:
         frame = None if halt.state is None else halt.state.frame
         return ExitSet.halted(halt.effect, state=replace(record, frame=frame))
 
-    return outcome.sequence(ExitSet.completed, consume=left)
+    return outcome.and_then(ExitSet.completed, consume=left)
 
 
 @dataclass(frozen=True)
@@ -95,16 +95,16 @@ class GeneratorWithSugar(Sugar):
             return self._consume_enter_outcome(machine.resume(), machine, ctx)
 
         # Everything the enter and the body produce runs beneath its manager
-        # face (``ExitSet.sequence``): its guard and faces, and what the
+        # face (``ExitSet.and_then``): its guard and faces, and what the
         # manager expression owes. The with's own faces: a halt stays a halted
         # arm (#7826).
-        return manager_es.sequence(enter)
+        return manager_es.and_then(enter)
 
     def _consume_enter_outcome(self, entered, machine, ctx):
         """Route first-resume of a generator manager, including open enter faces.
 
         A halted step is the enter's own halt; a completed step continues the
-        enter beneath itself (``ExitSet.sequence``).
+        enter beneath itself (``ExitSet.and_then``).
         """
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
@@ -121,7 +121,7 @@ class GeneratorWithSugar(Sugar):
             # A halt of the first resume is the enter's, at the head of the
             # ``with``: it leaves the generator's frame into the record of
             # where the ``with`` began (``_left_the_frame``).
-            return _left_the_frame(entered, halt_record(ctx)).sequence(
+            return _left_the_frame(entered, halt_record(ctx)).and_then(
                 lambda value: self._consume_enter_outcome(value, machine, ctx)
             )
         if isinstance(entered, GeneratorConstructionV1):
@@ -196,7 +196,7 @@ class GeneratorWithSugar(Sugar):
         Observation lives in ``generator_entry_refusal`` (vendor conversion).
         This consumer only asks for it — no vendor module name here
         (``generator_construction_law``). The manager face's guard, faces and
-        ``owed`` are the composition's (``ExitSet.sequence`` in ``desugar``).
+        ``owed`` are the composition's (``ExitSet.and_then`` in ``desugar``).
         The refusal halts at the head of the ``with``, before its body: it
         carries the empty record where it halted (``halt_record``), onto
         which the block composition splices what ran before the ``with``.
@@ -306,6 +306,6 @@ class GeneratorObjectWithSugar(Sugar):
             return ExitSet.halted(effect, state=halt_record(ctx))
 
         # The refusal runs beneath each completed manager face
-        # (``ExitSet.sequence``): it keeps the face's guard, faces and
+        # (``ExitSet.and_then``): it keeps the face's guard, faces and
         # ``owed``. A halted manager face stands.
-        return manager_es.sequence(refused)
+        return manager_es.and_then(refused)

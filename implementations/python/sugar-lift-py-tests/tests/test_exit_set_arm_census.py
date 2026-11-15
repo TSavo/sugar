@@ -13,7 +13,7 @@ Two things are under test here, and they are different:
    census prints is worth reading.
 
 2. **The halted face grows as a product at three of the four sites, and is
-   flat at the fourth.** ``sequence`` is the control: its halted bypass means
+   flat at the fourth.** ``and_then`` is the control: its halted bypass means
    halted arms out stay equal to halted incomings no matter how wide the other
    operand gets. If the control ever showed growth, the law would be measuring
    the harness rather than the algebra.
@@ -140,9 +140,9 @@ def test_every_row_reconciles_at_sequence(width: int) -> None:
     tail = _mixed(2, "tail")
 
     with arm_census() as rows:
-        body.sequence(lambda _value: tail)
+        body.and_then(lambda _value: tail)
 
-    _assert_all_reconcile(_rows_for(rows, "sequence"))
+    _assert_all_reconcile(_rows_for(rows, "and_then"))
 
 
 def test_conservation_holds_with_no_remainder_bucket() -> None:
@@ -243,7 +243,7 @@ def test_instrument_restores_every_patched_method() -> None:
         name: getattr(ExitSet, name)
         for name in (
             "normalize",
-            "sequence",
+            "and_then",
             "and_finally",
             "and_exit",
             "and_exit_truthiness",
@@ -275,8 +275,8 @@ def _halted_out_by_width(site: str) -> dict[int, int]:
                 body.and_finally(lambda: other)
             elif site == "and_exit":
                 body.and_exit(other, disposition=NeverSuppresses())
-            elif site == "sequence":
-                body.sequence(lambda _value: other)
+            elif site == "and_then":
+                body.and_then(lambda _value: other)
             else:  # pragma: no cover - guarded by SITES
                 raise AssertionError(site)
         site_rows = _rows_for(rows, site)
@@ -299,7 +299,7 @@ def test_halted_arms_grow_with_the_other_operand(site: str) -> None:
 
 
 def test_sequence_is_the_control_and_stays_flat() -> None:
-    """``sequence``'s bypass keeps halted arms carried from incomings linear.
+    """``and_then``'s bypass keeps halted arms carried from incomings linear.
 
     The tail's own halted arms still scale -- that is the tail's face, not a
     product with the incoming halts -- so the tooth is on the split column, not
@@ -310,8 +310,8 @@ def test_sequence_is_the_control_and_stays_flat() -> None:
     for width in _WIDTHS:
         tail = _mixed(width, "tail")
         with arm_census() as rows:
-            body.sequence(lambda _value: tail)
-        site_rows = _rows_for(rows, "sequence")
+            body.and_then(lambda _value: tail)
+        site_rows = _rows_for(rows, "and_then")
         _assert_all_reconcile(site_rows)
         carried[width] = sum(row.halted_from_incoming for row in site_rows)
 
@@ -434,7 +434,7 @@ def test_totals_reports_every_site() -> None:
         body.and_exit_truthiness(other, site=None)
         body.and_finally(lambda: other)
         body.and_exit(other, disposition=NeverSuppresses())
-        body.sequence(lambda _value: other)
+        body.and_then(lambda _value: other)
 
     summary = totals(rows)
     assert set(summary) == set(SITES)

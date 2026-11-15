@@ -1,7 +1,7 @@
 """#7825 / #7757: arm lists that were assembled by hand now compose or join.
 
 Every rewritten site composes a step with what follows through
-``ExitSet.sequence`` (``consume=`` for a halt the composition owns), joins
+``ExitSet.and_then`` (``consume=`` for a halt the composition owns), joins
 sibling sets through ``ExitSet.union``, or builds one fresh arm with
 ``ExitSet.completed`` / ``ExitSet.halted``. Two of the hand assemblies dropped
 what an arm carried; each has a test here that it now survives.

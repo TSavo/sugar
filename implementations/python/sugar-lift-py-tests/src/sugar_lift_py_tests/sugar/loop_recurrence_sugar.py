@@ -371,7 +371,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         to its pre-loop value, and ``carried`` those values.
 
         A pre-loop value is an outcome like every other, and the loop is what
-        follows it on every face it completes on (``ExitSet.sequence``): under
+        follows it on every face it completes on (``ExitSet.and_then``): under
         that face's guard and faces, owing what it owes -- a read after an
         earlier loop is that loop's exit route under its guard
         (``guarded_binding_read_sugar._read_loop_projection``).  One waiting
@@ -437,7 +437,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 # One unconditional value owing nothing: the loop is exactly
                 # what follows it.
                 return bound(initial_value)
-            return initial.sequence(bound)
+            return initial.and_then(bound)
 
         return start_from(0, runtime_ctx, ())
 
@@ -495,7 +495,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         # the one two-faced outcome (``FloorValue.undecided_iteration``).
         # The loop's recurrence is what follows the face ``iter`` completes
         # on, under its guard and owing what it owes
-        # (``ExitSet.sequence``); the face it raises on leaves the loop
+        # (``ExitSet.and_then``); the face it raises on leaves the loop
         # before any item.  The recurrence stays over the iterable's own
         # term.
         iterated = halts_recorded(
@@ -507,7 +507,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
         if isinstance(iterated, NativeOperationExitCarrierV1):
             return iterated.and_then(after_iter)
-        return _require_exit_set(iterated, owner="LoopRecurrenceSugar.iter").sequence(
+        return _require_exit_set(iterated, owner="LoopRecurrenceSugar.iter").and_then(
             after_iter
         )
 
@@ -631,7 +631,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 # and as a loop only under the guard that it was not taken
                 # (``past_prior_returns``), as a concrete loop's ``else``
                 # does (``_finish_iterator``).
-                return otherwise.sequence(
+                return otherwise.and_then(
                     lambda state: past_prior_returns(
                         state, state.context, after_suite, after_suite
                     ),
@@ -663,7 +663,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
         # The item's target unpack runs first: the item's body (and the
         # recurrence) are what follows its completed arm
-        # (``ExitSet.sequence``), and its halt (too few, too many, not
+        # (``ExitSet.and_then``), and its halt (too few, too many, not
         # iterable) leaves the loop with what the items before it did, as
         # every halt does (``recurrence``).
         projected, enter, item = self._enter_symbolic_item(
@@ -705,7 +705,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             # One way in (a name target, a ``while``): the item is exactly
             # what follows it, a body waiting on its caller's actuals handed on.
             return projected.and_then(run_item)
-        return projected.sequence(run_item, consume=lambda halt: recurrence(halt=halt))
+        return projected.and_then(run_item, consume=lambda halt: recurrence(halt=halt))
 
     def _symbolic_item(self):
         """``(body_sugars, guard)``: the body the recurrence's one symbolic
@@ -832,7 +832,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         loop's ``break``/``continue``) leaves with its record and what the
         items before it did (``recurrence(halt=...)``), as a concrete
         item's does.  Every arm keeps the guard, partition faces and
-        ``owed`` of the item's arm it continues (``ExitSet.sequence``).  An
+        ``owed`` of the item's arm it continues (``ExitSet.and_then``).  An
         arm that falls through after
         an earlier guarded ``return`` took its exit where that return's guard
         held: it is split as the block composition splits a later halt
@@ -893,10 +893,10 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
             def after(item_ran):
                 if item_ran:
-                    return body.sequence(leave, consume=own_control)
+                    return body.and_then(leave, consume=own_control)
                 return exhausted()
 
-            return ran.sequence(after)
+            return ran.and_then(after)
 
         if isinstance(body, NativeOperationExitCarrierV1):
             # The body still waits on its caller's actuals: once it
@@ -961,8 +961,8 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 # StopIteration and leaves beneath it, under its guard and
                 # faces, owing what the exhausting ``next`` owed.  An ``else``
                 # suite still waiting on its caller's actuals is composed
-                # beneath it too (``sequence`` hands the carrier on).
-                return outcome.sequence(
+                # beneath it too (``and_then`` hands the carrier on).
+                return outcome.and_then(
                     ExitSet.completed,
                     consume=lambda _stop: self._finish_iterator(
                         runtime, ctx, entries=entries, carried=carried, items=index
@@ -970,7 +970,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 )
             # Any other halt of the item's ``next`` leaves the loop with what
             # the items before it did (``_left_with``).
-            return outcome.sequence(
+            return outcome.and_then(
                 ExitSet.completed,
                 consume=lambda halt: self._left_with(entries, (), halt=halt),
             )
@@ -1039,7 +1039,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             return run_item(projections)
         # The unpack's halt leaves the loop with what the items before it
         # did (``_left_with``).
-        return projected.sequence(
+        return projected.and_then(
             run_item, consume=lambda halt: self._left_with(entries, (), halt=halt)
         )
 
@@ -1055,17 +1055,17 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
         def after_body(body):
             # Each face of this iteration is its own path, and what follows it
-            # runs beneath it (``ExitSet.sequence``): a completed face carries
+            # runs beneath it (``ExitSet.and_then``): a completed face carries
             # its own state into the next iteration, this loop's own
             # break/continue is consumed and continues, any other halt leaves
             # the loop with what the items before it did and its own record
             # (``_after_loop_control``). The first iteration's faces are never
             # the loop's outcome.
             # A later item still waiting on its caller's actuals answers its
-            # deferred carrier: ``sequence`` composes it beneath its face, and
+            # deferred carrier: ``and_then`` composes it beneath its face, and
             # the loop hands the composed carrier on to its caller.
             if len(body.exits) != 1:
-                return body.sequence(
+                return body.and_then(
                     lambda state: self._after_iteration_state(
                         state, runtime, resume, entries=entries, index=index
                     ),
@@ -1088,7 +1088,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 index=index,
             )
             # The one face, whichever kind, continues into ``following``.
-            return body.sequence(
+            return body.and_then(
                 lambda _state: following, consume=lambda _halt: following
             )
 
@@ -1266,7 +1266,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             )
             if not undecided:
                 # Each true face runs the body in this item, after the test.
-                tested = tested.sequence(
+                tested = tested.and_then(
                     lambda item: ExitSet.completed(self._with_body(item, runtime))
                 )
         if undecided and index == 0:
@@ -1287,7 +1287,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             )
         # A halt of the test leaves the loop with what the items before it
         # did (``_left_with``).
-        return tested.sequence(
+        return tested.and_then(
             lambda item: self._after_test(item, runtime, entries=entries, index=index),
             consume=lambda halt: self._left_with(entries, (), halt=halt),
         )
@@ -1668,7 +1668,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         item with authenticated members answers one plain roster or halts;
         one without (the symbolic item, a concrete item's symbolic member)
         answers both faces of its runtime unpack (``runtime_unpack_faces``):
-        the leaves are read from each completed arm (``ExitSet.sequence``),
+        the leaves are read from each completed arm (``ExitSet.and_then``),
         beneath its guard and carrying what it owes, and an inner unpack's
         halt is an arm beneath the outer one's."""
         from sugar_lift_py_tests.operations.positional_unpack_operation import (
@@ -1702,7 +1702,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             # the roster or halting with the unpack's raise, both owing its
             # ``undecided`` member.  The leaves are read from each completed
             # arm beneath its guard and owing what it owes, and the halt is an
-            # arm as it is (``ExitSet.sequence``): never refused for its debt.
+            # arm as it is (``ExitSet.and_then``): never refused for its debt.
             unpacked = _require_exit_set(
                 operation.submit(current, ctx), owner="LoopRecurrenceSugar.target"
             )
@@ -1728,13 +1728,13 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                     # siblings' on each completed arm.
                     return project(
                         target.elts[index], roster.members[index], (*path, index)
-                    ).sequence(
+                    ).and_then(
                         lambda child: collect(index + 1, (*bindings, *child))
                     )
 
                 return collect(0, ())
 
-            return unpacked.sequence(leaves)
+            return unpacked.and_then(leaves)
 
         return project(pattern.target, value)
 
@@ -1839,7 +1839,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
         def publish(otherwise):
             # The published bindings run beneath every face of the else suite
-            # (``ExitSet.sequence``): each takes that face's guard and faces
+            # (``ExitSet.and_then``): each takes that face's guard and faces
             # and owes what it owes.  A completed face leaves with what the
             # items and the suite left; a halt (a ``raise``, a call's halt,
             # an enclosing loop's ``break``/``continue``) leaves with what the
@@ -1852,7 +1852,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             # one composition a block gives a statement after a guarded
             # ``return`` (``past_prior_returns``) -- so the statement after
             # the loop never stands beside it unguarded.
-            return otherwise.sequence(
+            return otherwise.and_then(
                 lambda state: past_prior_returns(
                     state, state.context, after_suite, after_suite
                 ),
@@ -1965,7 +1965,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         composition binds a completed loop's (``reduce_block_to_exitset``),
         so an enclosing loop reads its latch from what this loop published.
         Its guard, faces and ``owed`` are its arm's: the caller composes
-        beneath it (``ExitSet.sequence``).  With nothing to carry its record
+        beneath it (``ExitSet.and_then``).  With nothing to carry its record
         is left as it is, by identity (``function_universe_sugar._prefixed``'s
         law).  Every halt carries a record, built by its producer
         (``function_universe_sugar.halt_record``: an unpack's, ``next``'s
@@ -2162,7 +2162,7 @@ class _WhileItemTestV1:
             _require_exit_set(outcome, owner="LoopRecurrenceSugar.while-test"),
             halt_record(ctx),
         )
-        return test.sequence(lambda value: self._truth_faces(value, ctx))
+        return test.and_then(lambda value: self._truth_faces(value, ctx))
 
     def _truth_faces(self, value, ctx) -> ExitSet:
         """The test's value's truth, taken through the one truth rule
@@ -2189,7 +2189,7 @@ class _WhileItemTestV1:
             return ExitSet.completed(_WhileTest(None, scope))
         if plain_completed_value(truth) is not None:
             return ExitSet.completed(_WhileTest(truth_formula(truth, value), scope))
-        return halts_recorded(truth, halt_record(ctx)).sequence(
+        return halts_recorded(truth, halt_record(ctx)).and_then(
             lambda truth_value: ExitSet.completed(
                 _WhileTest(
                     truth_formula(ExitSet.completed(truth_value), value), scope
