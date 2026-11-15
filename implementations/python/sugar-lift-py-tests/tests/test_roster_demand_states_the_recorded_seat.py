@@ -170,16 +170,22 @@ def test_the_roster_demand_rooted_at_the_package_is_refused_by_name(
     assert "no other checkout resolves" in reason
 
 
-def test_an_absent_locus_root_is_refused_the_same_way(installed_corpus) -> None:
-    """Omission is not permission. No locus root means the corpus root stands,
-    and for an installed corpus that is precisely the unseated address."""
-    _install_root, package, file_rel = installed_corpus
+def test_an_absent_locus_root_is_the_one_the_distribution_records(
+    installed_corpus,
+) -> None:
+    """Omission states no second address. With no locus root the opener
+    derives it once, from the distribution's own manifest
+    (``lift_rpc._locus_root``, ``install_root_for``): the install root arm one
+    states, never the corpus root. So the roster is the one arm one serves, at
+    the recorded seat; only a locus root that states another address is
+    refused (the arm above)."""
+    install_root, package, file_rel = installed_corpus
 
     nodes, gaps = _roster(package, file_rel, None)
 
-    assert nodes == []
-    assert len(gaps) == 1
-    assert f"records the seat `{SEAT}`" in gaps[0]["reason"]
+    assert gaps == [], f"the derived locus is the recorded seat: {gaps}"
+    assert len(nodes) == 1
+    assert nodes == _roster(package, file_rel, install_root)[0]
 
 
 def test_the_refused_locus_becomes_a_roster_gap_terminal(installed_corpus) -> None:
