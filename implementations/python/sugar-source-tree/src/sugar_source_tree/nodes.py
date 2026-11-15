@@ -18565,6 +18565,20 @@ class For(Statement):
                 if action is not None:
                     return produced, current, action
                 continue
+            if any(
+                node.kind in ("Break", "Continue")
+                and node.control_context.nearest_loop_target().target_cid
+                == self.owned_loop_target.target_cid
+                for node in statement.walk()
+            ):
+                # A jump this loop owns inside any other statement (``try:
+                # chunk = it.read() except StopIteration: break``, a ``with``
+                # whose body breaks) is selected by no ground guard here:
+                # which items run is decided where the statement runs.
+                # Linearized, the jump was left with no enclosing loop and
+                # its construction crashed (``tests/io/test_stata.py:1313``,
+                # #7757).  The loop stays a live loop, which routes the jump.
+                return abandoned()
             substituted = statement.substitute_in_block(current)
             expanded = (
                 substituted.statements
