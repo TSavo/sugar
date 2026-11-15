@@ -1,0 +1,58 @@
+name: Bisect one test
+
+# WHY THIS EXISTS
+#
+# When a test turns red across several merges and nobody can find the cause by
+# reading, CI answers it: run that one test at each named commit and print
+# PASS/FAIL per commit. Nobody runs tests by hand; this is the measurement.
+# Dispatch with the commits (oldest first) and the pytest node id, relative to
+# implementations/python.
+
+on:
+  workflow_dispatch:
+    inputs:
+      shas:
+        description: "space-separated commits, oldest first"
+        required: true
+      test:
+        description: "pytest node id relative to implementations/python"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bisect-one-test
+  cancel-in-progress: true
+
+jobs:
+  bisect:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12.13"
+      - name: Scorecard environment (persistent venv)
+        shell: bash
+        run: bash tools/main_scorecard_env.sh
+      - name: Run the test at each commit
+        shell: bash
+        env:
+          SHAS: ${{ inputs.shas }}
+          TEST: ${{ inputs.test }}
+        run: |
+          set +e -uo pipefail
+          for sha in $SHAS; do
+            git checkout -q --force "$sha" || { echo "BISECT $sha CHECKOUT-FAILED"; continue; }
+            PYTHONPATH="$(python3 tools/managed_checkout_pythonpath.py --repo-root "$GITHUB_WORKSPACE")" \
+              python -m pytest "implementations/python/$TEST" -q -p no:cacheprovider -p no:randomly \
+              > "$RUNNER_TEMP/bisect-$sha.log" 2>&1
+            rc=$?
+            if [ "$rc" -eq 0 ]; then verdict=PASS; else verdict=FAIL; fi
+            echo "BISECT $sha $verdict (exit $rc) $(git log -1 --format=%s "$sha" | cut -c1-90)"
+            grep -a -E '^(FAILED|ERROR) |passed|failed' "$RUNNER_TEMP/bisect-$sha.log" | tail -n 6
+          done
