@@ -124,11 +124,17 @@ def test_a_formal_still_enrols_its_link_unit() -> None:
 
 def test_a_formal_subscript_owes_the_carrier_demand_instead() -> None:
     """``p[0]`` on the formal ``p`` is decided by the caller's actual: the
-    function defers as the ``subscript`` carrier, the one form that replaced
-    the owed contract (#6611)."""
+    body defers as the ``subscript`` carrier, the one form that replaced the
+    owed contract (#6611).  The function's own proof has no caller, so it
+    states that carrier discharged with no actual (#7766,
+    ``as_its_own_proof_states``): the operation completes only under its own
+    undecided guard, halts under the complement, and owes the one
+    ``undecided`` member.  Its halt is kept."""
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
     from sugar_source_tree import nodes
 
@@ -137,6 +143,17 @@ def test_a_formal_subscript_owes_the_carrier_demand_instead() -> None:
         for node in _tree(_FAMILIES["bare"]).nodes()
         if isinstance(node, nodes.FunctionDef) and node.name == "f"
     ]
+    # What a caller discharges with its actual: the subscript carrier.
+    pending = fn.sugar().desugar(None)
+    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
+    assert pending.demand.operator == "subscript"
+    # What the function's own proof states: the carrier with no actual.
     outcome = function_universe_outcome(fn)
-    assert isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
-    assert outcome.demand.operator == "subscript"
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert len(outcome.exits) == 2
+    (completed,) = (exit_ for exit_ in outcome.exits if isinstance(exit_, Completed))
+    (halted,) = outcome.halts()
+    assert "python:unanswered_native_operation.completes" in repr(completed.guard)
+    assert type(halted.effect) is UndeterminedRaiseEffect
+    assert halted.effect.exception_name is None
+    assert outcome.owed_items()
