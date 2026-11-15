@@ -8393,9 +8393,20 @@ def _evaluation_reference_kind(node) -> Optional[str]:
     evaluation, ``"import"`` for an import's row (``ImportBindingRef``),
     or a phi whose arms are such references or constants; ``"member"``
     where a comprehension member's coordinate is among them, None for
-    anything else."""
+    anything else.
+
+    A name an assignment binds to a call's result is bound to the object
+    that call made (``Assign._object_place_state``: ``OpaqueObjectStateV1``,
+    or ``ObjectPlaceStateV1`` for a class of this file), which carries the
+    statement's evaluation key and is read through it, exactly as the
+    reference it refines (``EvaluationRefSugar``): a reference to that
+    evaluation, ``"evaluation"``.  Read as anything else, every module
+    global bound to a call (``_dtype_obj = np.dtype(object)``) was cited
+    undecided wherever a function read it."""
     if isinstance(node, EvaluationRef):
         return "member" if getattr(node, "member", False) else "evaluation"
+    if isinstance(node, (OpaqueObjectStateV1, ObjectPlaceStateV1)):
+        return "evaluation"
     if isinstance(node, ImportBindingRef):
         return "import"
     if not (isinstance(node, IfExp) and isinstance(node.test, BranchResultRef)):
