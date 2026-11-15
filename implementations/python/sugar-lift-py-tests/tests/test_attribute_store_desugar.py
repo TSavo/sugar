@@ -614,7 +614,9 @@ def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
             "authenticated raise locus must be a file:line:col occurrence id, "
             f"not presence-only; got {halt.effect.occurrence_id!r}"
         )
-        assert f"'startLine': {CORPUS_LINE}" in halt.effect.occurrence_id
+        assert halt.effect.occurrence_id.startswith(
+            f"{CORPUS_RELATIVE}:{CORPUS_LINE}:"
+        ), halt.effect.occurrence_id
 
     for receiver, owner in (
         (getter_only, "ObjectValue.setattr"),
