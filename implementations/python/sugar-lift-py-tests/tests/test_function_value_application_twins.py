@@ -127,16 +127,22 @@ _OPEN_UNTIL_STEP_7 = {
 }
 
 # The called function's own contract (its body lifted alone, never the
-# call's reduction) owes these rows (step 8): a nested ``def`` reading a cell
-# of its enclosing function has that cell free (``return y``), and an
-# operation on a formal nothing decides is unanswered (``a + b``).  A source
-# that owes anything is never ``sat`` (``witness_harness.prove_verdict``), so
-# the truthful half whose callee owes is ``open`` -- its claim decided all
-# the same: the test's consistency row is discharged while the lying half's
-# is refuted.
+# call's reduction) owes these rows (step 8): an operation on a formal
+# nothing decides is unanswered (``a + b``).  A source that owes anything is
+# never ``sat`` (``witness_harness.prove_verdict``), so the truthful half
+# whose callee owes is ``open`` -- its claim decided all the same: the test's
+# consistency row is discharged while the lying half's is refuted.
+#
+# A nested ``def`` reading a cell of its enclosing function (``return y``)
+# owes nothing since #8698: the cell is its contract's ``cell:y`` input, which
+# the call supplies (``py.closure``).  The ``==`` on the call's result, at the
+# test function's own line, is the one undecided equality over the call's
+# result (#8743): prove answers it from the joined post, which decides its
+# operands over literals (#8748).  On scorecard 43738710481 (before #8743)
+# that member was the one row owed in the cell and default twins.
 _OWED_BY_THE_CALLEE = {
-    "cell-read-at-the-call": ("undecided:test_witness.py:4",),
-    "direct-cell-read-at-the-call": ("undecided:test_witness.py:4",),
+    "cell-read-at-the-call": (),
+    "direct-cell-read-at-the-call": (),
     "module-def-default": (),
     "module-def-spread": ("undecided:test_witness.py:2",),
 }
