@@ -16,7 +16,18 @@ def _git(root: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def test_git_source_provenance_reports_commit_and_dirty(tmp_path: Path) -> None:
+_CONTENT_PREFIX = "blake3-512_"
+
+
+def _assert_content_identity(identity: object) -> None:
+    """The one identity: the roots' content hash, in its path-safe spelling."""
+    assert str(identity).startswith(_CONTENT_PREFIX)
+    assert len(str(identity)) == len(_CONTENT_PREFIX) + 128
+
+
+def test_git_source_provenance_is_content_addressed_and_reports_dirty(
+    tmp_path: Path,
+) -> None:
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "config", "user.name", "Test")
     _git(tmp_path, "config", "user.email", "test@example.com")
@@ -30,18 +41,22 @@ def test_git_source_provenance_reports_commit_and_dirty(tmp_path: Path) -> None:
     _git(tmp_path, "commit", "-qm", "fixture")
     head = _git(tmp_path, "rev-parse", "HEAD")
 
-    assert source_provenance_for_roots([first, second]) == {
-        "identity": head,
-        "kind": "git",
-        "dirty": False,
-    }
+    # Identity is the content of the roots, in a checkout as anywhere else:
+    # never the commit, which names files outside the roots too. Git only
+    # answers whether the roots differ from what is committed.
+    clean = source_provenance_for_roots([first, second])
+    assert clean["kind"] == "content"
+    assert clean["dirty"] is False
+    _assert_content_identity(clean["identity"])
+    assert clean["identity"] != head
 
     (second / "b.py").write_text("B = 3\n")
-    assert source_provenance_for_roots([first, second]) == {
-        "identity": head,
-        "kind": "git",
-        "dirty": True,
-    }
+    edited = source_provenance_for_roots([first, second])
+    assert edited["kind"] == "content"
+    assert edited["dirty"] is True
+    _assert_content_identity(edited["identity"])
+    # The edit is in the identity itself, not only in the dirty flag.
+    assert edited["identity"] != clean["identity"]
 
 
 def test_non_git_source_provenance_is_content_addressed(tmp_path: Path) -> None:
@@ -55,8 +70,7 @@ def test_non_git_source_provenance_is_content_addressed(tmp_path: Path) -> None:
     provenance = source_provenance_for_roots([first, second])
     assert provenance["kind"] == "content"
     assert provenance["dirty"] is False
-    assert str(provenance["identity"]).startswith("blake3-512:")
-    assert len(str(provenance["identity"])) == len("blake3-512:") + 128
+    _assert_content_identity(provenance["identity"])
 
 
 def _python_package_tree(root: Path, package: str, marker: str) -> Path:
