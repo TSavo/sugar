@@ -8,10 +8,9 @@ import sys
 import pytest
 
 
-from sugar_lift_py_tests.repo_root import resolve_repo_root, sugar_lift_py_tests_package_root
+from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 
 SCRIPT = sugar_lift_py_tests_package_root() / "scripts" / "private_orphan_transition.py"
-REPO = resolve_repo_root()
 
 
 def _load_audit():
@@ -125,13 +124,13 @@ def test_second_private_helper_is_not_special_cased() -> None:
     assert findings[0].lost_references[0].line == 4
 
 
-def _run_cli(before: str, after: str) -> subprocess.CompletedProcess[str]:
+def _run_cli(repo: Path, before: str, after: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
             sys.executable,
             str(SCRIPT),
             "--repo",
-            str(REPO),
+            str(repo),
             "--before",
             before,
             "--after",
@@ -143,18 +142,93 @@ def _run_cli(before: str, after: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_current_main_truthful_twin_is_green() -> None:
-    completed = _run_cli("b7feb76b8", "b7feb76b8")
+# The CLI reads two revisions of a repository.  The revisions are built here:
+# a checkout holds no history to name (CI clones one commit), and a commit of
+# a deleted branch exists nowhere.
+_MODULE = "implementations/python/demo-dist/src/demo/manager.py"
+_CALLED = (
+    "def _classify(value):\n"
+    "    return value\n\n"
+    "def build(value):\n"
+    "    return _classify(value)\n"
+)
+_ORPHANED = (
+    "def _classify(value):\n"
+    "    return value\n\n"
+    "def build(value):\n"
+    "    return value\n"
+)
+
+
+def _git(repo: Path, *args: str) -> str:
+    completed = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=orphan-transition-test",
+            "-c",
+            "user.email=orphan-transition-test@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            *args,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout.strip()
+
+
+def _two_revisions(tmp_path: Path) -> tuple[Path, str, str]:
+    """A repository whose second commit drops ``_classify``'s last reference
+    and keeps its definition: ``(repo, before, after)``."""
+    repo = tmp_path / "repo"
+    module = repo / _MODULE
+    module.parent.mkdir(parents=True)
+    _git(repo, "init", "-q")
+    module.write_text(_CALLED, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "--no-verify", "-m", "before")
+    before = _git(repo, "rev-parse", "HEAD")
+    module.write_text(_ORPHANED, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "--no-verify", "-m", "after")
+    after = _git(repo, "rev-parse", "HEAD")
+    return repo, before, after
+
+
+def test_cli_truthful_twin_is_green(tmp_path: Path) -> None:
+    repo, before, _after = _two_revisions(tmp_path)
+    completed = _run_cli(repo, before, before)
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "orphan_transitions=0" in completed.stdout
 
 
-def test_real_branch_loss_names_helper_and_deleted_reference() -> None:
-    completed = _run_cli("b7feb76b8", "b273c4d05")
+def test_cli_names_the_orphaned_helper_and_its_lost_reference(tmp_path: Path) -> None:
+    repo, before, after = _two_revisions(tmp_path)
+    completed = _run_cli(repo, before, after)
 
     assert completed.returncode == 1, completed.stdout + completed.stderr
-    assert "_has_non_higher_order_return" in completed.stdout
-    assert "manager_construction.py:1134" in completed.stdout
+    assert "_classify" in completed.stdout
+    assert f"{_MODULE}:1:" in completed.stdout
     assert "lost reference" in completed.stdout
-    assert "manager_construction.py:836" in completed.stdout
+    assert f"{_MODULE}:5:" in completed.stdout
+    assert "orphan_transitions=1" in completed.stdout
+
+    # The reverse transition gains a reference: nothing is orphaned.
+    regained = _run_cli(repo, after, before)
+    assert regained.returncode == 0, regained.stdout + regained.stderr
+    assert "orphan_transitions=0" in regained.stdout
+
+
+def test_cli_refuses_a_revision_the_repository_does_not_have(tmp_path: Path) -> None:
+    repo, before, _after = _two_revisions(tmp_path)
+    completed = _run_cli(repo, before, "0" * 40)
+
+    assert completed.returncode != 0, completed.stdout + completed.stderr
+    assert "git diff failed" in completed.stderr
+    # No verdict line: a revision it cannot read is not a count of zero.
+    assert "orphan_transitions=" not in completed.stdout
