@@ -154,6 +154,8 @@ def test_guarded_value_lying_half_returns_the_false_arm_on_its_completed_face() 
 # 2. sugar/for_universal_sugar.py: struck, then deleted (inventory item 38).
 #    No source node constructed ForUniversalSugar. A source `for` goes through
 #    the loop recurrence, which keeps the body's halt beside the completion.
+#    The recurrence follows the completed face of the iterable's `iter`: over
+#    a formal that is an undecided operation, two-faced and owed.
 # ---------------------------------------------------------------------------
 
 _FOR = "def test_f(xs):\n    for x in xs:\n        {body}\n    assert 1 == 1\n"
@@ -174,20 +176,44 @@ def test_for_universal_sugar_is_never_reached_from_source() -> None:
 
 
 @pytest.mark.parametrize(
-    ("body", "faces", "verdict"),
+    ("body", "faces"),
     [
-        ("y = 1", (1, ()), "sat"),
-        ("raise ValueError", (1, ("RaiseEffect",)), "open"),
+        ("y = 1", (1, ("UndeterminedRaiseEffect",))),
+        ("raise ValueError", (1, ("RaiseEffect", "UndeterminedRaiseEffect"))),
     ],
     ids=["truthful", "lying"],
 )
 def test_a_source_loop_keeps_its_body_halt_beside_the_completion(
-    body: str, faces, verdict: str, tmp_path: Path
+    body: str, faces, tmp_path: Path
 ) -> None:
+    """``xs`` is a formal: nothing here decides its ``iter``, so iterating it
+    is an undecided operation like every other. It completes on one face and
+    raises something undetermined on the other, and both owe the operation
+    as the ``undecided`` member at the loop. So neither half is ``sat``: a
+    source that owes a member never is. The halves differ at the reduction:
+    the lying body's ``raise`` is a halted face of its own beside the
+    completion and beside the undetermined halt of ``iter``."""
     source = _FOR.format(body=body)
 
-    assert _faces(_function(source)) == faces
-    assert _verdict(tmp_path, source) == verdict
+    outcome = _function(source)
+    completed, halts = _faces(outcome)
+    assert (completed, tuple(sorted(halts))) == faces
+    # ``iter`` over the formal is owed once, at the loop (line 2).
+    assert [item.site.start_line for item in outcome.owed_items()] == [2]
+    assert _verdict(tmp_path, source) == "open"
+
+
+@pytest.mark.parametrize("iterable", ["(1, 2)", "[1, 2]"], ids=["tuple", "list"])
+def test_a_loop_over_a_decided_iterable_owes_no_iter(iterable: str) -> None:
+    """A literal tuple or list made in the frame is decided: its ``iter``
+    completes, on one face, owing nothing. Only an iterable the reduction
+    has not decided is two-faced."""
+    outcome = _function(
+        f"def test_f():\n    for x in {iterable}:\n        y = 1\n    assert 1 == 1\n"
+    )
+
+    assert not outcome.halts()
+    assert not outcome.owed_items()
 
 
 # ---------------------------------------------------------------------------

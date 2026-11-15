@@ -559,9 +559,10 @@ class SymbolicValue(FloorValue):
         carrier, discharged through ``project_iter`` (as every other
         operation on a formal is).  Any other symbolic receiver's
         ``__iter__`` is not decided here, so the call is the one two-faced
-        unanswered outcome (:meth:`undecided_iteration`).  A live ``for``
-        over a symbolic iterable never submits this operation: it is the
-        loop's recurrence."""
+        unanswered outcome (:meth:`undecided_iteration`).  A ``for`` over a
+        symbolic iterable submits this operation too: the loop's recurrence
+        is what follows the face it completes on
+        (``LoopRecurrenceSugar._desugar_with_iterable``)."""
         del ctx
         if self.formal_coordinate is not None:
             from sugar_lift_py_tests.caller_parameter_contract import (
