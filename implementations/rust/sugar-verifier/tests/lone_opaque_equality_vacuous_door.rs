@@ -29,10 +29,11 @@
 
 use std::sync::Arc;
 
-use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
+use sugar_canonicalizer::{blake3_512_of, Value as CValue};
+use sugar_claim_envelope::{mint_bridge, MintBridgeArgs};
 use sugar_proof_envelope::{
     build_proof_envelope, ed25519_pubkey_string, BridgeMemento, ContractBody, ContractMemento,
-    Ed25519Seed, FlatAtom, ProofEnvelopeInput, ProofGraph,
+    ContractMementoRef, Ed25519Seed, FlatAtom, ProofEnvelopeInput, ProofGraph,
 };
 use sugar_verifier::{
     load_all_proofs::ProofBytes, LegacyZ3Fallback, ObligationVerdict, Runner, RunnerConfig,
@@ -92,32 +93,31 @@ fn ir_eq(lhs: Arc<CValue>, rhs: Arc<CValue>) -> Arc<CValue> {
 
 // ─── Bridge builder ──────────────────────────────────────────────────────────
 
-/// Build raw bridge envelope bytes for `sourceSymbol -> targetContractCid`.
-/// Uses the v1.1-flat `evidence.body` shape so `sugar_proof_envelope::member_body`
-/// and `member_field` work on it the same as on a real minted bridge.
-fn raw_bridge_bytes(source_symbol: &str, target_cid: &str, signer_seed: Ed25519Seed) -> Vec<u8> {
-    let body = cv_obj(vec![
-        ("sourceSymbol", cv_str(source_symbol)),
-        ("sourceLayer", cv_str("test")),
-        ("targetContractCid", cv_str(target_cid)),
-        ("targetLayer", cv_str("test-kit")),
-    ]);
-    let evidence = cv_obj(vec![("kind", cv_str("bridge")), ("body", body.clone())]);
-    let envelope_preimage = cv_obj(vec![
-        ("kind", cv_str("bridge")),
-        ("sourceSymbol", cv_str(source_symbol)),
-        ("targetContractCid", cv_str(target_cid)),
-    ]);
-    let sig_input = encode_jcs(&envelope_preimage);
-    let signature = sugar_proof_envelope::ed25519_sign_string(&signer_seed, sig_input.as_bytes());
-    let pubkey = ed25519_pubkey_string(&signer_seed);
-    let envelope = cv_obj(vec![
-        ("signer", cv_str(&pubkey)),
-        ("declaredAt", cv_str("2026-06-28T00:00:00.000Z")),
-        ("signature", cv_str(&signature)),
-    ]);
-    let value = cv_obj(vec![("envelope", envelope), ("evidence", evidence)]);
-    encode_jcs(&value).into_bytes()
+/// Mint the bridge member `sourceSymbol -> targetContractCid` the one way a
+/// bridge is minted (`sugar_claim_envelope::mint_bridge`): a signed layered
+/// memento with `envelope`, `header` and `metadata`. A hand-rolled member
+/// without a header fails the member signature check at load (#3507).
+fn minted_bridge_bytes(
+    source_symbol: &str,
+    target_cid: &str,
+    signer_seed: Ed25519Seed,
+    declared_at: &str,
+) -> Vec<u8> {
+    mint_bridge(&MintBridgeArgs {
+        produced_by: "test".into(),
+        produced_at: declared_at.into(),
+        source_symbol: source_symbol.into(),
+        source_layer: "test".into(),
+        target_contract: ContractMementoRef::new(target_cid),
+        target_layer: "test-kit".into(),
+        ir_arg_sorts: vec!["String".into()],
+        ir_return_sort: "String".into(),
+        notes: String::new(),
+        signer_seed,
+        target_proof_cid: None,
+        callsite: None,
+    })
+    .canonical_bytes
 }
 
 // ─── Proof bundle builder ─────────────────────────────────────────────────────
@@ -171,9 +171,8 @@ fn build_lone_opaque_proof_bundle(literal: &str) -> ProofBytes {
     graph.register_contract(consumer_contract);
 
     // ── Bridge: call:encodeVendor -> vendor_cid ───────────────────────────────
-    // We build a v1.1-flat bridge envelope manually so we don't need
-    // sugar_claim_envelope as a test dependency.
-    let bridge_bytes = raw_bridge_bytes("call:encodeVendor", &vendor_cid, signer_seed);
+    let bridge_bytes =
+        minted_bridge_bytes("call:encodeVendor", &vendor_cid, signer_seed, declared_at);
     let bridge_memento = BridgeMemento::new(bridge_bytes);
     graph.push_bridge(bridge_memento);
 
