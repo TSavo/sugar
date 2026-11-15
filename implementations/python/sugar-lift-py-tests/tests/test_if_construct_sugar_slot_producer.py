@@ -213,10 +213,21 @@ def test_condition_halt_emits_no_occurrence_from_toxic_body_twins() -> None:
     assert len(outcome.exits) == 1
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
-    condition_occurrence = str(comparisons[0].sugar().site)
-    body_occurrences = {str(node.sugar().site) for node in comparisons[1:]}
-    assert halted.effect.occurrence_id == condition_occurrence
-    assert halted.effect.occurrence_id not in body_occurrences
+
+    def address(site) -> str:
+        return f"{site.filename}:{site.line}:{site.col}"
+
+    condition_address = address(comparisons[0].sugar().site)
+    body_addresses = {address(node.sugar().site) for node in comparisons[1:]}
+    assert condition_address not in body_addresses
+    # The halt is raised at the condition, in the frame ``choose(None)``
+    # entered: its occurrence is the condition's address, then the call it
+    # was reached through (``occurrence_key``) -- content, never a fragment's
+    # repr, and never either body comparison.
+    raised_at, separator, path = halted.effect.occurrence_id.partition("@")
+    assert raised_at == condition_address
+    assert separator == "@" and path.startswith("call:")
+    assert raised_at not in body_addresses
     assert halted.state is not None
 
 
