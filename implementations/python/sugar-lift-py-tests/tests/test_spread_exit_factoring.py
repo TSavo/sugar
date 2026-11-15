@@ -223,7 +223,14 @@ def _spread(elements, kind: str = "collection") -> ExitSet:
 
 def _atoms(formula, seen: set) -> set:
     if isinstance(formula, _Atomic):
-        seen.add(formula)
+        # An atom over a factored value (``py.conditional``) is not a free
+        # bit: it is the atom over whichever face the assignment selects
+        # (``_selected_atom``).  A call's completion is stated over its call
+        # term (#7757 step 5, #8753), which holds its operands, so the
+        # factored call's ``completes`` atom is such an atom, and the legacy
+        # expansion states one per combination of completed operand faces.
+        if not any(_has_conditional(arg) for arg in formula.args):
+            seen.add(formula)
     elif isinstance(formula, _Connective):
         for operand in formula.operands:
             _atoms(operand, seen)
@@ -237,9 +244,41 @@ def _guard_atoms(exit_set: ExitSet) -> tuple:
     return tuple(sorted(seen, key=lambda a: a.name))
 
 
+def _has_conditional(term) -> bool:
+    if isinstance(term, _Ctor):
+        return term.name == "py.conditional" or any(
+            _has_conditional(arg) for arg in term.args
+        )
+    return False
+
+
+def _selected(term, assignment: dict):
+    """``term`` with every ``py.conditional`` replaced by the face the
+    assignment selects: a term again, so an atom over it is an atom."""
+    if isinstance(term, _Ctor):
+        if term.name == "py.conditional" and len(term.args) == 3:
+            guard, when_true, when_false = term.args
+            chosen = (
+                when_true
+                if _holds(_formula_from_term(guard), assignment)
+                else when_false
+            )
+            return _selected(chosen, assignment)
+        return _Ctor(term.name, tuple(_selected(arg, assignment) for arg in term.args))
+    return term
+
+
+def _selected_atom(formula: _Atomic, assignment: dict) -> _Atomic:
+    """The atom ``formula`` states under ``assignment``: itself, or, over a
+    factored value, the atom over the selected face."""
+    if not any(_has_conditional(arg) for arg in formula.args):
+        return formula
+    return _Atomic(formula.name, tuple(_selected(a, assignment) for a in formula.args))
+
+
 def _holds(formula, assignment: dict) -> bool:
     if isinstance(formula, _Atomic):
-        return assignment[formula]
+        return assignment[_selected_atom(formula, assignment)]
     if isinstance(formula, _Connective):
         operands = formula.operands
         if formula.kind == "and":

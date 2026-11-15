@@ -494,7 +494,12 @@ def test_a_nested_function_call_carries_its_captured_cell() -> None:
     lift refused the call for want of the captured ``offset``.  A local
     def's contract states ``cell:offset`` (#8698) and its call carries the
     binding the calling scope holds as ``py.closure("offset", 2)`` (#8705):
-    the testimony is on the edge, so there is nothing to refuse."""
+    the testimony is on the edge, so there is nothing to refuse.
+
+    The value the call completes with is ``python:call_result(<call term>,
+    <occurrence>)`` (#7808, ``source_call_resolution._occurrence_result``),
+    and its completion is stated over that same term (#8753): the cell is
+    an operand of the call term inside it, never of the result."""
     from sugar_lift_py_tests.ir import ctor, str_const
 
     _, _, functions = _tree(
@@ -508,9 +513,12 @@ def test_a_nested_function_call_carries_its_captured_cell() -> None:
     edge = _row_edge(_row(functions["outer"]))
     assert edge.arg_values == (TermValue(3),)
     owner = str(edge.site)
+    assert edge.term.name == "python:call_result", edge.term
+    call_term = edge.term.args[0]
+    assert call_term.name.startswith("call:"), call_term
     assert ctor(
         "py.closure", [str_const("offset"), TermValue(2).to_term(owner=owner)]
-    ) in list(edge.term.args)
+    ) in list(call_term.args)
 
 
 def test_nested_shadowed_function_does_not_cross_wire_outer_same_name() -> None:
