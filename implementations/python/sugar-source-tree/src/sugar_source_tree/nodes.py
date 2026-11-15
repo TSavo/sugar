@@ -6177,6 +6177,46 @@ def _iteration_scope(loop, index: int, bindings, outer):
     }
 
 
+def _item_threaded(statements, scope):
+    """``(scope, rebound)``: ``scope``, the state an item of an unrolled
+    loop begins in, threaded through the item's occurrence copies
+    (``_iteration_copies``) as the block threads those same copies once the
+    loop has dissolved (``_substitute_body_tracked``): each copy's binding,
+    then what its operations may rebind by the one exposure rule
+    (``container_mutation.havoc_after``) -- a module global a call rebinds
+    through ``global``, a ``nonlocal`` cell, a name bound to an object the
+    code may reach -- keyed by the copy's own evaluation (its iteration
+    segment).  The state the next item begins in is this one: a name an
+    item's call may rebind is read in the next item (its body, its store
+    targets) as the item left it, never as it stood before the loop, and
+    two items' rebindings are two evaluations.  Before, the carry took the
+    copies' bindings alone.
+
+    ``rebound``: the names whose last change in the item is such a
+    rebinding, with what they read after it; a later statement's own
+    binding of a name (a walrus's included) wins over it, as in the block
+    (``_rebind`` keeps a name the statement bound)."""
+    from .container_mutation import havoc_after
+
+    rebound = {}
+    for statement in statements:
+        pre = scope
+        binding = statement.substitution_binding(scope)
+        if binding:
+            scope = {**scope, **binding}
+            for name in binding:
+                rebound.pop(name, None)
+        for node in statement.walk():
+            if node.kind == "NamedExpr" and node.target.kind == "Name":
+                rebound.pop(node.target.id, None)
+        after = havoc_after(statement, pre, scope)
+        for name, state in after.items():
+            if scope.get(name, _MISSING) is not state:
+                rebound[name] = state
+        scope = after
+    return scope, rebound
+
+
 def _exit_path_scope(clause_owner, path: str, bindings):
     """The scope for substituting ``clause_owner``'s ``finally`` for one exit
     path (``"completion"`` or ``"halt"``): ``bindings``, with that path's
@@ -17051,12 +17091,12 @@ class For(Statement):
                             new_body = _iteration_copies(self, index, new_body)
                             unrolled.extend(new_body)
                             # thread this iteration's bindings forward (the
-                            # carried fold), never the loop target's own names
-                            # (rebound next iteration).
-                            for stmt in new_body:
-                                b = stmt.substitution_binding(iter_scope)
-                                if b:
-                                    iter_scope = {**iter_scope, **b}
+                            # carried fold), and what its operations may
+                            # rebind (``_item_threaded``), never the loop
+                            # target's own names (rebound next iteration).
+                            iter_scope, _rebound = _item_threaded(
+                                new_body, iter_scope
+                            )
                             carried = {
                                 k: v
                                 for k, v in iter_scope.items()
@@ -17675,10 +17715,10 @@ class For(Statement):
             unpack = self._item_unpack(
                 None if unpacks is None else unpacks[index], index, carried, scope
             )
-            iteration = _iteration_scope(
+            start = _iteration_scope(
                 self, index, {**carried, **element_bindings}, scope
             )
-            reduced = self._substitute_controlled_suite(self.body, iteration, minted)
+            reduced = self._substitute_controlled_suite(self.body, start, minted)
             if reduced is None:
                 if minted is not None:
                     minted.extend(unrolled)
@@ -17688,13 +17728,18 @@ class For(Statement):
             statements, iteration, action = reduced
             if unpack is not None:
                 statements = (unpack, *statements)
-            unrolled.extend(_iteration_copies(self, index, statements))
+            copies = _iteration_copies(self, index, statements)
+            unrolled.extend(copies)
+            # What the item's operations may rebind is carried as the copies
+            # left it, keyed by this item's evaluation (``_item_threaded``),
+            # never as the suite's untagged threading did.
+            _threaded, rebound = _item_threaded(copies, start)
             target_names = set(
                 self.unit.require_target_pattern(self, self.target).names
             )
             carried = {
                 key: value
-                for key, value in iteration.items()
+                for key, value in {**iteration, **rebound}.items()
                 if key not in target_names
             }
             if action == "break":
@@ -17718,6 +17763,8 @@ class For(Statement):
         return tuple(unrolled), final_target_bindings
 
     def _substitute_controlled_suite(self, statements, scope, minted=None):
+        from .container_mutation import havoc_after
+
         produced = []
         current = dict(scope)
 
@@ -17801,10 +17848,16 @@ class For(Statement):
             )
             produced.extend(expanded)
             for item in expanded:
+                pre_item = current
                 binding = item.substitution_binding(current)
                 if binding:
                     binding = item._binding_entries(binding, current)
                     current = {**current, **binding}
+                # What the statement's operations may rebind is read after
+                # it as the block reads it (``_substitute_body_tracked``):
+                # the one exposure rule, within the item as between items
+                # (``_item_threaded``).
+                current = havoc_after(item, pre_item, current)
             if isinstance(substituted, _Splice) and substituted.bindings:
                 projected = statement._binding_entries(substituted.bindings, current)
                 current = {**current, **projected}
@@ -18218,17 +18271,23 @@ class While(Statement):
                     unrolled.extend(else_body)
                 return tuple(unrolled)
             if controlled:
+                start = _iteration_scope(self, index, carried, scope)
                 reduced = For._substitute_controlled_suite(
                     self,
                     self.body,
-                    _iteration_scope(self, index, carried, scope),
+                    start,
                     made,
                 )
                 if reduced is None:
                     return abandoned()
                 new_body, carried, action = reduced
                 made.extend(new_body)
-                unrolled.extend(_iteration_copies(self, index, new_body))
+                copies = _iteration_copies(self, index, new_body)
+                unrolled.extend(copies)
+                # What the item's operations may rebind is carried keyed by
+                # this item's evaluation (``_item_threaded``).
+                _threaded, rebound = _item_threaded(copies, start)
+                carried = {**carried, **rebound}
                 if action == "break":
                     return tuple(unrolled)
                 continue
@@ -18244,10 +18303,9 @@ class While(Statement):
             made.extend(new_body)
             new_body = _iteration_copies(self, index, new_body)
             unrolled.extend(new_body)
-            for stmt in new_body:
-                b = stmt.substitution_binding(carried)
-                if b:
-                    carried = {**carried, **b}
+            # The item's bindings and what its operations may rebind
+            # (``_item_threaded``) are the state the next test and item read.
+            carried, _rebound = _item_threaded(new_body, carried)
         return abandoned()  # fuel exhausted: an infinite/huge loop is not an unroll
 
     def _ground_truth(self, test):
