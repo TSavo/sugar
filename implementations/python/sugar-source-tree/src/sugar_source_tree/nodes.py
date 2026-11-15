@@ -24197,6 +24197,21 @@ class Call(Expression):
             # ``DecoratedDefinitionRef`` the definition bound), never the
             # definition's frame (#7757).
             lexical_row = None
+        if lexical_row is not None and not isinstance(
+            self.func, (Name, FormalRef, BindingCoordinateRef)
+        ):
+            # The row was enrolled by the source callee's spelling, and names
+            # the last ``def`` of that name before the call.  A substitution
+            # that read the name as something else -- a binding two branches'
+            # ``def``s merged (``GuardedBindingRead``: each def's face, and a
+            # ``NameError`` face where an arm left it unbound), a phi's
+            # reference -- left no spelling the seat could absorb: the call is
+            # that value's (``ComputedCallSugar`` below), which builds the
+            # callee and keeps every face.  Seating the row's one ``def``
+            # dropped the others, and the callee was built by nothing: it
+            # registered and never answered (``core/internals/managers.py:
+            # 1403``, ``value_getitem`` after ``iset``'s live loop).
+            lexical_row = None
         if lexical_row is not None:
             function_definition = lexical_row.definition_occurrence
             if (
