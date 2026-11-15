@@ -250,17 +250,15 @@ def _resource_verdict(disposition: object, effect: object):
     if isinstance(disposition, Suppresses):
         return _suppresses_verdict(disposition, effect)
 
-    from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-    construction_panic_gap(
-        owner="exit_disposition._resource_verdict",
-        blame="exit_disposition",
-        observed=f"exit disposition species {type(disposition).__name__} has no verdict arm",
-        requested=(
-            "NeverSuppresses | ExitSuppressionContract | RuntimeSelected | "
-            "Suppresses | EffectBoundaryDisposition"
-        ),
-        fix=f"write _resource_verdict arm for {type(disposition).__name__}",
+    # Anything else is not an exit contract at all (``None``, a stray
+    # object): no Python construct reached this door, so there is no verdict
+    # arm to write, and a construction panic's "write more Floor" would ask
+    # for exactly the compatibility arm this module refuses to hold. The
+    # caller handed the algebra a non-contract: a TypeError, by name.
+    raise TypeError(
+        "exit disposition must be NeverSuppresses, ExitSuppressionContract, "
+        "RuntimeSelected, Suppresses, or EffectBoundaryDisposition; "
+        f"got {type(disposition).__name__}"
     )
 
 
