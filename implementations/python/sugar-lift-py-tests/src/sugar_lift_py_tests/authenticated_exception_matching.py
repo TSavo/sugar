@@ -150,21 +150,36 @@ def _matches_single_raise_effect(effect, expected) -> "MessageVerdict":
 def _authenticated_ancestry(effect, raised_identity):
     """The raised class's ancestry as testified, or ``None`` when nobody did.
 
-    The effect's own ``exception_type_mro`` is the testimony when it carries
-    one. A ``builtins`` identity minted without it (a ground language raise
-    such as ``None.attr``'s ``AttributeError``) still names a class whose
-    ancestry the language itself states, so the closed builtin table answers.
-    """
-    mro = getattr(effect, "exception_type_mro", None)
-    if mro is not None:
-        return mro
-    args = getattr(raised_identity, "args", ())
-    if len(args) != 2 or getattr(args[0], "value", None) != "builtins":
-        return None
-    from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+    A ``builtins`` identity names a class the language owns, and the language
+    states its ancestry: the closed builtin table (``_builtin_exception_identity``,
+    the hierarchy of the interpreter the cited fold runs,
+    ``builtin_exception_cited_fold``) answers, by the identity the raise's
+    binding minted -- never by the effect's carried ``exception_type_mro``.
+    Every producer that mints a builtin raise (a ``raise E(...)`` whose call
+    the fold constructed, a ground language raise such as ``None.attr``'s
+    ``AttributeError``, a group, a ``NameError``) carries its own copy of
+    that ancestry or none; a copy is a second source, and ``except
+    Exception`` over ``raise ValueError('boom')`` must be decided by the
+    language's statement, not by whichever copy a producer made
+    (``test_builtin_exception_ancestry``, #7757).  So a builtin's ancestry is
+    read in one place, here.
 
-    identity, ancestry = _builtin_exception_identity(getattr(args[1], "value", None))
-    return ancestry if identity == raised_identity else None
+    Any other identity (a source class) is testified by the effect's own
+    ``exception_type_mro``; an ``import`` coordinate carries none (its
+    defining proof states its ancestry, step 9).
+    """
+    args = getattr(raised_identity, "args", ())
+    if len(args) == 2 and getattr(args[0], "value", None) == "builtins":
+        from sugar_lift_py_tests.floor.ground_exit import (
+            _builtin_exception_identity,
+        )
+
+        identity, ancestry = _builtin_exception_identity(
+            getattr(args[1], "value", None)
+        )
+        if identity == raised_identity:
+            return ancestry
+    return getattr(effect, "exception_type_mro", None)
 
 
 def _raised_subject(effect):
