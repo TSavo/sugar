@@ -19286,6 +19286,7 @@ class Raise(Statement):
             AuthenticatedExceptionTypeSugar,
         )
         from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+        from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
         from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
 
         identity = None
@@ -19316,16 +19317,23 @@ class Raise(Statement):
             exception_sugar = node.sugar()
 
         if identity is not None and isinstance(
-            exception_sugar, (CallSiteSugar, MethodCallSugar)
+            exception_sugar, (CallSiteSugar, MethodCallSugar, ComputedCallSugar)
         ):
+            # A call of a source class is a call of its value (its name's read
+            # is the class statement's key): a ``ComputedCallSugar``, whose
+            # constructor runs and whose instance carries the class, as a
+            # plain or method call's does.
             return replace(
                 exception_sugar,
                 exception_type_coordinate=identity,
                 exception_type_mro=mro,
             )
-        if identity is not None:
+        if identity is not None and not isinstance(node, Call):
             # An imported class's value is the one its identity names
-            # (``AuthenticatedExceptionTypeSugar.desugar``), Name or chain alike.
+            # (``AuthenticatedExceptionTypeSugar.desugar``), Name or chain
+            # alike.  Only a class reference is its class's value: a call is
+            # its construction, never stood in for by the class it calls (the
+            # constructor's halts and the instance it builds are the call's).
             return AuthenticatedExceptionTypeSugar(
                 exception_sugar,
                 identity,

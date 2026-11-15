@@ -210,6 +210,14 @@ class ClassDefinitionValue(GuardStableValue):
                 blame=operation.site,
                 refuse=refuse,
                 defaults=defaults,
+                # The class a raise authenticated for this callee: the
+                # instance the constructor builds is of it, so the call
+                # carries it, as a plain call of a builtin exception does
+                # (``RaiseSugar._effect`` reads the class off the value).
+                exception_type_coordinate=getattr(
+                    operation, "exception_type_coordinate", None
+                ),
+                exception_type_mro=getattr(operation, "exception_type_mro", None),
             ).producer_outcome(ctx),
         )
 

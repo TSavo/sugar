@@ -186,7 +186,6 @@ class TryStarSugar(Sugar):
             _require_exit_set,
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            _ReducedBlock,
             face_record,
             reduce_block_to_exitset,
             resumed,
@@ -522,12 +521,10 @@ class TryStarSugar(Sugar):
 
         def route(body):
             """Route the body's faces: completed arms run the ``else``, the
-            halts the try* owns run the handlers beneath them."""
-            return close(
-                body.sequence(after_body, consume=handled)
-                if body.exits
-                else ExitSet.completed(_ReducedBlock((), True, ()))
-            )
+            halts the try* owns run the handlers beneath them.  A body with
+            no face (every arm unsatisfiable) leaves the try* with none: an
+            empty arm set is never a completion, so none is made up."""
+            return close(body.sequence(after_body, consume=handled))
 
         if isinstance(body, NativeOperationExitCarrierV1):
             # The body still waits on its caller's actuals: once it discharges,

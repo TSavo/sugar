@@ -41,6 +41,14 @@ class ComputedCallSugar(ConstructedTermSugar):
     # bound under the frame's captured coordinate before the body runs
     # (``with_captured_values``); never the binding the lambda was made in.
     captured: tuple = dataclass_field(default=(), compare=False)
+    # Exception construction only: the class a ``raise`` (or an exception
+    # group's member) authenticated for this call's callee
+    # (``Raise._raised_operand_sugar``), as ``CallSiteSugar`` and
+    # ``MethodCallSugar`` carry it.  The instance a source class's
+    # constructor builds carries it (``ClassDefinitionValue``); any other
+    # callee's call is unanswered and carries none.
+    exception_type_coordinate: object = dataclass_field(default=None, compare=False)
+    exception_type_mro: tuple | None = dataclass_field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         require_constructed_term_sugar(self.callee, owner="ComputedCallSugar.callee")
@@ -257,10 +265,29 @@ class ComputedCallSugar(ConstructedTermSugar):
             name = callee_term.name if type(callee_term) is _Var else "py.call"
             return UnknownCalleeCallV1(name).faces(callsite, self.site)
 
-        return apply_callee(callee, positional, kw_values, self.site, ctx, unanswered)
+        return apply_callee(
+            callee,
+            positional,
+            kw_values,
+            self.site,
+            ctx,
+            unanswered,
+            exception_type_coordinate=self.exception_type_coordinate,
+            exception_type_mro=self.exception_type_mro,
+        )
 
 
-def apply_callee(callee, positional, kw_values, site, ctx, unanswered) -> ExitSet:
+def apply_callee(
+    callee,
+    positional,
+    kw_values,
+    site,
+    ctx,
+    unanswered,
+    *,
+    exception_type_coordinate=None,
+    exception_type_mro=None,
+) -> ExitSet:
     """``callee(*positional, **kw_values)`` for a callee already reduced to a
     value: the one routine a called value is applied by.
 
@@ -274,6 +301,11 @@ def apply_callee(callee, positional, kw_values, site, ctx, unanswered) -> ExitSe
     is ``unanswered()``, the caller's one unanswered citation, two-faced and
     owed (#7585, #7757), never a completion.  This does not invent calling an
     import member or an unknown formal.
+
+    ``exception_type_coordinate``/``exception_type_mro``: the class a raise
+    authenticated for the callee (``ComputedCallSugar``), handed to the
+    application so the instance a source class's constructor builds carries
+    it (``ClassDefinitionValue.callable_application_with``).
     """
     from sugar_lift_py_tests.floor import (
         BoundMethodValue,
@@ -291,6 +323,8 @@ def apply_callee(callee, positional, kw_values, site, ctx, unanswered) -> ExitSe
             tuple(positional) + tuple(value for _, value in kw_values),
             tuple(name for name, _ in kw_values),
             site,
+            exception_type_coordinate=exception_type_coordinate,
+            exception_type_mro=exception_type_mro,
         ),
         ctx,
     )
