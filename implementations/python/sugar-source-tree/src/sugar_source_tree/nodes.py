@@ -6941,6 +6941,27 @@ def _minted_binding_reference(reference):
     return reference
 
 
+def _minted_member_read(read):
+    """``read``, the item or slice read of an unpacked value the rewrite
+    mints to name the object an unpack gives a name (``For._item_of``,
+    ``For._slice_of``; carried as the name's reference's ``of`` by
+    ``Assign._unpack_member_objects``), answering the roll where it is
+    minted, with the index or slice minted for it (``For._int_constant``,
+    both at the statement's span).
+
+    Python evaluates no subscript there: the unpack iterates the value once,
+    and the read only names which object the name denotes, never its value.
+    Nothing builds it, so it answers here as a binding does
+    (``_minted_binding_reference``).  The value it reads from is no part of
+    it: that is the statement's right-hand side, which the statement builds,
+    or an outer member minted here.  A store that does reach the read
+    constructs it and answers again, present or refused by name."""
+    _minted_binding_reference(read)
+    for node in read.slice_.walk():
+        node.discharge_by_substitution()
+    return read
+
+
 def _read_at_halt(state) -> "Optional[Node]":
     """The read, at a halt inside a simple statement, of a name unbound before
     it that the statement binds to ``state``: the same reference to the
@@ -15640,7 +15661,11 @@ class Assign(Statement):
                     after = count - index - 1
                     give(
                         element.value.id,
-                        For._slice_of(self, value, index, -after if after else None),
+                        _minted_member_read(
+                            For._slice_of(
+                                self, value, index, -after if after else None
+                            )
+                        ),
                     )
                 continue
             position = index if not stars or index < stars[0] else index - count
@@ -15648,7 +15673,7 @@ class Assign(Statement):
                 None if display is None else _display_member(display, ("item", position))
             )
             if member is None or isinstance(member, Name):
-                member = For._item_of(self, value, position)
+                member = _minted_member_read(For._item_of(self, value, position))
             if isinstance(element, Name):
                 give(element.id, member)
             elif isinstance(element, (Tuple_, List)) and element.elts:
