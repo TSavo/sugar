@@ -438,6 +438,16 @@ def definition_edge_call(
     owner_name = str(site)
     parameters = tuple(parameters)
     actuals = tuple(actuals)
+    term_of = _edge_actual_terms(
+        tuple(zip(parameters, actuals))
+        if packed
+        else (
+            *((f"arg:{index}", value) for index, value in enumerate(positional)),
+            *((f"kw:{name}", value) for name, value in keywords),
+        ),
+        site,
+        owner_name,
+    )
     if packed:
         # A formal ``*args`` / ``**kwargs`` is the packed value the call
         # binds, never one positional actual: every formal by name, each
@@ -446,7 +456,7 @@ def definition_edge_call(
         arguments = [
             ctor(
                 "py.packed" if name in packed else "py.kwarg",
-                [str_const(name), value.to_term(owner=owner_name)],
+                [str_const(name), term_of(value)],
             )
             for name, value in zip(parameters, actuals)
         ]
@@ -460,9 +470,9 @@ def definition_edge_call(
             if getattr(parameter, "default", None) is not None
         }
         arguments = (
-            [value.to_term(owner=owner_name) for value in positional]
+            [term_of(value) for value in positional]
             + [
-                ctor("py.kwarg", [str_const(name), value.to_term(owner=owner_name)])
+                ctor("py.kwarg", [str_const(name), term_of(value)])
                 for name, value in keywords
             ]
             + [
@@ -548,6 +558,44 @@ def definition_edge_call(
         **testimony,
     )
     return UnknownCalleeCallV1(target).faces(callsite, site)
+
+
+def _edge_actual_terms(operands, site, owner_name):
+    """The term each actual of a same-file definition's edge stands as, by
+    the one alias rule (``object_identity.as_bound_formals``).
+
+    The callee's contract holds two formals as two objects
+    (``container_mutation.same_object``: each formal its own coordinate), so
+    it states, for ``def grow(a, b): a.append(1); return len(b)``, that the
+    result is ``len(b)`` at entry.  That is false where one object reaches
+    two actuals (``grow(xs, xs)``): binding the caller's contents to both
+    formals would refute the truth and let the lie read ``sat``.  So an
+    actual another actual of the same call may be, or hold, one of its
+    objects is bound arrived (``arrived_as``, named by its operand) and
+    stands as its object's identity (``identity_term``:
+    ``python:object_read(<call>, <operand>, <arrival>)``), never the
+    contents it arrived with: nothing the contract states about it decides
+    the caller's claim.  Every other actual is its own term.
+
+    ``operands`` are ``(label, value)`` pairs; the result maps a value to
+    its term."""
+    from .object_identity import as_bound_formals, identity_term
+
+    labels = tuple(label for label, _value in operands)
+    values = tuple(value for _label, value in operands)
+    bound = as_bound_formals(values, labels)
+    shared = {}
+    for label, value, held in zip(labels, values, bound):
+        if held is not value and id(value) not in shared:
+            shared[id(value)] = identity_term(
+                held, site, f"edge-actual/{label}", owner=owner_name
+            )
+
+    def term_of(value):
+        term = shared.get(id(value))
+        return value.to_term(owner=owner_name) if term is None else term
+
+    return term_of
 
 
 def _after_labels(
