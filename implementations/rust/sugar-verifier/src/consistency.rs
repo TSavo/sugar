@@ -3349,6 +3349,11 @@ pub enum DroppedAmbientPostReason {
     WrongProvider,
     /// The bridge's target contract is not in the proofs prove read.
     StaleContractRef,
+    /// The join would re-enter a contract it is already instantiating: the
+    /// encoding states no recursion, so the call is not answered and stays
+    /// owed (never assumed). Not a wrong answer: the row is not decided on
+    /// what remains.
+    RecursiveContract,
 }
 
 /// One ambient vendor post that matched a callsite but did not enter `linkedPosts`.
@@ -3376,6 +3381,7 @@ impl DroppedAmbientPostReason {
             DroppedAmbientPostReason::WrongContractKind => "wrong-contract-kind",
             DroppedAmbientPostReason::WrongProvider => "wrong-provider",
             DroppedAmbientPostReason::StaleContractRef => "stale-or-malformed-contract-ref",
+            DroppedAmbientPostReason::RecursiveContract => "recursive-contract",
         }
     }
 
@@ -3620,16 +3626,23 @@ fn bridge_answer(
 }
 
 /// THE JOIN (step 9; row 0a.5). Each unanswered call member's `symbol` is
-/// joined to the bridge whose `sourceSymbol` is the same string: the
-/// imported proof that answers it. The join is by symbol and site, never by
-/// a call term's spelling: the consumer's call term is the same whether
-/// anything answers it.
+/// joined to the bridge whose `sourceSymbol` is the same string, over every
+/// proof prove read: the project's own `.proof` and the imported ones alike
+/// (owner, 2026-11-15, #7757: a same-file call is coordinate + edge, joined
+/// at prove exactly like an imported call). Who spoke the bridge is never
+/// read here; it decides only where an import's own rows are reported
+/// (`report::member_is_imported`). The join is by symbol and site, never by a
+/// call term's spelling: the caller's call term is the same whether anything
+/// answers it.
 ///
 /// - No bridge states the symbol: the edge is unbound and the member stays
 ///   owed (nothing here).
 /// - Bridges state it with more than one target: refused, `ambiguous-target`.
 /// - A bridge's target is missing, of the wrong kind or from the wrong
 ///   provider: refused by name.
+/// - The answering contract is recursive (it reaches itself through calls
+///   the join answers): the encoding states no recursion, so the call is not
+///   answered and its member stays owed (`recursive_contract_cids`).
 fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
     let edges = unanswered_edges(pool);
     let mut posts = Vec::new();
@@ -3682,7 +3695,94 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
             }),
         }
     }
+    let recursive = recursive_contract_cids(&posts);
+    if recursive.is_empty() {
+        return posts;
+    }
     posts
+        .into_iter()
+        .filter(|post| {
+            let on_cycle =
+                post.refusal.is_none() && recursive.contains(post.binding.target_cid.as_str());
+            if on_cycle {
+                info!(
+                    symbol = %post.binding.source_symbol,
+                    target_cid = %post.binding.target_cid,
+                    member_cid = %post.member_cid,
+                    "verifier/linker: a recursive contract answers this call; the encoding states no recursion, so the call stays owed"
+                );
+            }
+            !on_cycle
+        })
+        .collect()
+}
+
+/// Every `python:call_result` term a formula states outside a quantifier.
+fn call_result_terms(formula: &Json) -> Vec<Json> {
+    let mut terms = Vec::new();
+    collect_unquantified_ctor_terms(formula, &mut terms);
+    terms.retain(is_call_result_term);
+    terms
+}
+
+fn is_call_result_term(term: &Json) -> bool {
+    term.get("name").and_then(|v| v.as_str()) == Some(PYTHON_CALL_RESULT)
+}
+
+/// The answering contracts that reach themselves through the join (step 9):
+/// a contract whose post or halt guards read a call (`python:call_result` at
+/// an edge's site) that the join answers with a contract that reaches the
+/// first one again, itself included. These are the reads the joined post
+/// instances follow (`linked_ambient_post_instances_for_inv`), so a contract
+/// not in this set is never re-entered by the join.
+fn recursive_contract_cids(posts: &[AmbientPost]) -> std::collections::BTreeSet<String> {
+    use std::collections::BTreeSet;
+    let answered: Vec<&AmbientPost> = posts.iter().filter(|p| p.refusal.is_none()).collect();
+    let mut targets_by_site: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for post in &answered {
+        targets_by_site
+            .entry(post.site_cid.as_str())
+            .or_default()
+            .push(post.binding.target_cid.as_str());
+    }
+    let mut successors: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for post in &answered {
+        let target = post.binding.target_cid.as_str();
+        if successors.contains_key(target) {
+            continue;
+        }
+        let mut reads = call_result_terms(&post.post);
+        for guard in &post.halt_guards {
+            reads.extend(call_result_terms(guard));
+        }
+        let mut next: BTreeSet<&str> = BTreeSet::new();
+        for read in &reads {
+            if let Some((_call, site)) = call_result_parts(read) {
+                if let Some(site_targets) = targets_by_site.get(site) {
+                    next.extend(site_targets.iter().copied());
+                }
+            }
+        }
+        successors.insert(target, next);
+    }
+    let mut recursive = BTreeSet::new();
+    for (&start, first) in &successors {
+        let mut stack: Vec<&str> = first.iter().copied().collect();
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        while let Some(node) = stack.pop() {
+            if node == start {
+                recursive.insert(start.to_string());
+                break;
+            }
+            if !seen.insert(node) {
+                continue;
+            }
+            if let Some(next) = successors.get(node) {
+                stack.extend(next.iter().copied());
+            }
+        }
+    }
+    recursive
 }
 
 /// The `undecided` members the join answers: a vendor contract states a post
@@ -4020,10 +4120,26 @@ fn linked_ambient_post_instances_for_inv(
     let mut seen = std::collections::BTreeSet::new();
     // The join reads only the term the claim constrains: the call's
     // completed result at its occurrence. The vendor's `out` IS that term.
-    for result_term in callsites
-        .iter()
-        .filter(|term| term.get("name").and_then(|v| v.as_str()) == Some(PYTHON_CALL_RESULT))
-    {
+    //
+    // One join over every contract (step 9): a joined post reads calls of its
+    // own (a same-file helper, or another import), and the claim reads them
+    // through it, so each is joined in turn wherever it has an answer. The
+    // claim's own reads are taken as they stand; a read a joined instance
+    // adds is taken once. Each read carries the contracts it was reached
+    // through, so the join never re-enters one (`RecursiveContract`).
+    let term_key = |term: &Json| {
+        libsugar::canonical::json_jcs(term)
+            .unwrap_or_else(|_| serde_json::to_string(term).unwrap_or_default())
+    };
+    let mut pending: std::collections::VecDeque<(Json, Vec<String>)> = callsites
+        .into_iter()
+        .filter(is_call_result_term)
+        .map(|term| (term, Vec::new()))
+        .collect();
+    let mut read: std::collections::BTreeSet<String> =
+        pending.iter().map(|(term, _)| term_key(term)).collect();
+    while let Some((result_term, through)) = pending.pop_front() {
+        let result_term = &result_term;
         let Some((call, site_cid)) = call_result_parts(result_term) else {
             dropped.push(DroppedAmbientPost {
                 source_symbol: "<unknown-call>".to_string(),
@@ -4041,6 +4157,16 @@ fn linked_ambient_post_instances_for_inv(
                     target_cid: post.binding.target_cid.clone(),
                     member_cid: post.member_cid.clone(),
                     reason: reason.clone(),
+                    spelling: compact_json(result_term),
+                });
+                continue;
+            }
+            if through.contains(&post.binding.target_cid) {
+                dropped.push(DroppedAmbientPost {
+                    source_symbol: post.binding.source_symbol.clone(),
+                    target_cid: post.binding.target_cid.clone(),
+                    member_cid: post.member_cid.clone(),
+                    reason: DroppedAmbientPostReason::RecursiveContract,
                     spelling: compact_json(result_term),
                 });
                 continue;
@@ -4112,6 +4238,20 @@ fn linked_ambient_post_instances_for_inv(
             let key = libsugar::canonical::json_jcs(&instance)
                 .unwrap_or_else(|_| serde_json::to_string(&instance).unwrap_or_default());
             if seen.insert(key) {
+                // The joined contract's own reads, at the call's actual: the
+                // claim reads them through this instance. The read at this
+                // site is the one just answered (`out` stands for it).
+                for nested in call_result_terms(&instance) {
+                    let nested_site = call_result_parts(&nested).map(|(_, site)| site);
+                    if nested_site == Some(site_cid) {
+                        continue;
+                    }
+                    if read.insert(term_key(&nested)) {
+                        let mut nested_through = through.clone();
+                        nested_through.push(post.binding.target_cid.clone());
+                        pending.push_back((nested, nested_through));
+                    }
+                }
                 kept.push(LinkedPostInstance {
                     binding: post.binding.clone(),
                     call: result_term.clone(),
@@ -10633,6 +10773,238 @@ mod tests {
             !joined_member_cids(&pool).contains(&member),
             "an answer dropped as open after specialization never answers the call"
         );
+    }
+
+    // ── One join over every contract prove has (owner, 2026-11-15, #7757) ──
+    // One proof, nothing imported. A same-file call is coordinate + edge: the
+    // caller's claim reads `python:call_result(call:<name>(…), <site>)` and
+    // an unanswered member at that site names the callee's target symbol; the
+    // callee's own contract is bridged under that symbol in the same proof.
+    // The join binds it exactly as it binds an imported contract.
+
+    /// A function contract `name(x)` with `post`, bridged as `symbol`, in the
+    /// project's own proof (no speaker stamp: the consumer's). Returns its CID.
+    fn own_function(pool: &mut MementoPool, name: &str, symbol: &str, post: Json) -> String {
+        let contract_cid = blake3_512_of(format!("same-proof-contract-{name}").as_bytes());
+        pool.insert_unanchored_for_tests(
+            test_cid(&contract_cid),
+            json!({
+                "evidence": {
+                    "kind": "contract",
+                    "body": {
+                        "contractName": name,
+                        "formals": ["x"],
+                        "outBinding": "out",
+                        "post": post
+                    }
+                }
+            }),
+        );
+        pool.insert_unanchored_for_tests(
+            test_cid(&blake3_512_of(format!("same-proof-bridge-{name}").as_bytes())),
+            json!({
+                "evidence": {
+                    "kind": "bridge",
+                    "body": {
+                        "sourceSymbol": symbol,
+                        "targetContractCid": contract_cid
+                    }
+                }
+            }),
+        );
+        contract_cid
+    }
+
+    /// `<callee>(3) == rhs and <callee>(3) != 5`, read at `site_cid`.
+    fn same_proof_claim(callee: &str, rhs: i64, site_cid: &str) -> Json {
+        let call = json!({"kind": "ctor", "name": callee, "args": [int(3)]});
+        IrFormula::And(vec![
+            eqf(call_result(call.clone(), site_cid), int(rhs)),
+            IrFormula::Not(eqf(call_result(call, site_cid), int(5))).to_value(),
+        ])
+        .to_value()
+    }
+
+    fn the_one_claim(pool: &MementoPool) -> ConsistencyResult {
+        let (plan, registry) = z3_plan_and_registry();
+        let results = verify_consistency(
+            pool,
+            &plan,
+            &registry,
+            &test_compilers(),
+            std::path::Path::new("."),
+        );
+        assert_eq!(results.len(), 1, "exactly one claim");
+        results.into_iter().next().expect("one claim")
+    }
+
+    /// `def g(x): return x` and `def test_f(): assert g(3) == rhs`, one file.
+    fn f_calls_g_pool(rhs: i64) -> (MementoPool, String) {
+        let site = answered_site(4, 12);
+        let site_cid = undecided_site_coordinate_cid(&site);
+        let mut pool = MementoPool::default();
+        let member = insert_unanswered(&mut pool, Some("python:m.g"), site);
+        own_function(&mut pool, "g", "python:m.g", eqf(var("out"), var("x")));
+        insert_contract(
+            &mut pool,
+            "blake3-512:same-proof-test-f",
+            "test_f",
+            same_proof_claim("call:g", rhs, &site_cid),
+        );
+        (pool, member)
+    }
+
+    #[test]
+    fn a_same_proof_edge_binds_its_contract_like_an_imported_one() {
+        let (pool, member) = f_calls_g_pool(3);
+        assert!(
+            !pool.is_vendor_member(&member),
+            "nothing here is imported: the edge and its contract are one proof's"
+        );
+        assert!(
+            joined_member_cids(&pool).contains(&member),
+            "the same-proof contract answers the call, so it is not owed"
+        );
+        // Python call edges are `undecided` members joined here, never a
+        // linker callsite: the link surface states no unresolved edge.
+        assert!(
+            crate::enumerate_callsites::run(&pool)
+                .iter()
+                .all(|cs| cs.bridge_target_cid.is_some()),
+            "a same-proof edge is never an unresolved link edge"
+        );
+        let truthful = the_one_claim(&pool);
+        assert_eq!(
+            truthful.verdict,
+            ObligationVerdict::Discharged,
+            "g(3) == 3 under g's `out = x`: {}",
+            truthful.reason
+        );
+        let (pool, _) = f_calls_g_pool(4);
+        let lying = the_one_claim(&pool);
+        assert_eq!(
+            lying.verdict,
+            ObligationVerdict::Unsatisfied,
+            "g(3) == 4 under g's `out = x` is refuted: {}",
+            lying.reason
+        );
+    }
+
+    /// `def g(x): return x`, `def f(x): return g(x)`, and
+    /// `def test_f(): assert f(3) == rhs`, one file: the claim reads `g`
+    /// through `f`'s post.
+    fn f_through_g_pool(rhs: i64) -> MementoPool {
+        let test_site = answered_site(4, 12);
+        let test_site_cid = undecided_site_coordinate_cid(&test_site);
+        let f_site = answered_site(20, 24);
+        let f_site_cid = undecided_site_coordinate_cid(&f_site);
+        let mut pool = MementoPool::default();
+        insert_unanswered(&mut pool, Some("python:m.f"), test_site);
+        insert_unanswered(&mut pool, Some("python:m.g"), f_site);
+        own_function(&mut pool, "g", "python:m.g", eqf(var("out"), var("x")));
+        let inner = json!({"kind": "ctor", "name": "call:g", "args": [var("x")]});
+        own_function(
+            &mut pool,
+            "f",
+            "python:m.f",
+            eqf(var("out"), call_result(inner, &f_site_cid)),
+        );
+        insert_contract(
+            &mut pool,
+            "blake3-512:same-proof-test-f-through-g",
+            "test_f",
+            same_proof_claim("call:f", rhs, &test_site_cid),
+        );
+        pool
+    }
+
+    #[test]
+    fn a_joined_contracts_own_calls_are_joined_in_turn() {
+        let truthful = the_one_claim(&f_through_g_pool(3));
+        assert_eq!(
+            truthful.verdict,
+            ObligationVerdict::Discharged,
+            "f(3) == 3 under f's `out = g(x)` and g's `out = x`: {}",
+            truthful.reason
+        );
+        // Without g's post the claim reads a free `g(3)` and `f(3) == 4`
+        // would be satisfiable: the join must reach g through f.
+        let lying = the_one_claim(&f_through_g_pool(4));
+        assert_eq!(
+            lying.verdict,
+            ObligationVerdict::Unsatisfied,
+            "f(3) == 4 is refuted through f's call of g: {}",
+            lying.reason
+        );
+    }
+
+    /// `def f(x): return f(x)` and `def test_f(): assert f(3) == 3`, one
+    /// file: f's edge targets f itself.
+    fn recursive_pool() -> (MementoPool, String, String) {
+        let test_site = answered_site(4, 12);
+        let test_site_cid = undecided_site_coordinate_cid(&test_site);
+        let f_site = answered_site(20, 24);
+        let f_site_cid = undecided_site_coordinate_cid(&f_site);
+        let mut pool = MementoPool::default();
+        let test_member = insert_unanswered(&mut pool, Some("python:m.f"), test_site);
+        let self_member = insert_unanswered(&mut pool, Some("python:m.f"), f_site);
+        let inner = json!({"kind": "ctor", "name": "call:f", "args": [var("x")]});
+        own_function(
+            &mut pool,
+            "f",
+            "python:m.f",
+            eqf(var("out"), call_result(inner, &f_site_cid)),
+        );
+        insert_contract(
+            &mut pool,
+            "blake3-512:same-proof-test-recursive",
+            "test_f",
+            same_proof_claim("call:f", 3, &test_site_cid),
+        );
+        (pool, test_member, self_member)
+    }
+
+    #[test]
+    fn a_recursive_edge_stays_owed() {
+        let (pool, test_member, self_member) = recursive_pool();
+        assert!(
+            collect_ambient_posts(&pool).is_empty(),
+            "a recursive contract answers nothing: the encoding states no recursion"
+        );
+        let joined = joined_member_cids(&pool);
+        assert!(!joined.contains(&self_member), "f's call of itself stays owed");
+        assert!(
+            !joined.contains(&test_member),
+            "a call answered only by the recursive contract stays owed"
+        );
+        let mut report = crate::types::Report::default();
+        crate::report::add_undecided_members(&pool, &BTreeMap::new(), &mut report);
+        assert_eq!(report.owed, 2, "both calls are owed, never assumed");
+        // The solve terminates: nothing re-enters f.
+        let _ = the_one_claim(&pool);
+    }
+
+    #[test]
+    fn the_join_never_re_enters_a_contract_it_is_instantiating() {
+        // Two answers at two sites by the one contract `f`, whose post reads
+        // its own call: reached through f, f is not instantiated again.
+        let inner = json!({"kind": "ctor", "name": "call:f", "args": [var("x")]});
+        let f_post = eqf(var("out"), call_result(inner, "blake3-512:f-site"));
+        let outer = joined_post("python:m.f", JOIN_SITE, f_post.clone(), vec!["x".into()]);
+        let again = joined_post("python:m.f", "blake3-512:f-site", f_post, vec!["x".into()]);
+        let call = json!({"kind": "ctor", "name": "call:f", "args": [int(3)]});
+        let claim = eqf(call_result(call, JOIN_SITE), int(3));
+        let partition = linked_ambient_post_instances_for_inv(&claim, &[outer, again]);
+        assert_eq!(partition.kept.len(), 1, "{partition:?}");
+        assert!(
+            partition
+                .dropped
+                .iter()
+                .any(|d| d.reason == DroppedAmbientPostReason::RecursiveContract),
+            "{:?}",
+            partition.dropped
+        );
+        assert!(!DroppedAmbientPostReason::RecursiveContract.is_wrong_answer());
     }
 
     #[test]
