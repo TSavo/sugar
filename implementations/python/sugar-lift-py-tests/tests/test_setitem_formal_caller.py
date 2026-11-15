@@ -16,6 +16,14 @@ Mint contract (matches #6614 projector):
   coordinates ``(receiver.formal?, index.formal?, value.formal?)``
   projector: ``receiver.setitem(index, value, site)``
 
+Since #8857 the helper above takes ``class:obj`` as an input (``obj`` is
+stored into and used no other way), so its store is the dispatched
+``__setitem__`` edge, answered at prove by the class each caller binds
+(``list.__setitem__``'s law, #8864); a caller supplies ``py.class("0",
+python:builtin("list"))`` for a list it built.  The ``setitem`` carrier and
+its projector stand for a store on a formal whose class is no input
+(``_carrier_definition``); the discharge tests below read that carrier.
+
 Source evaluation order is independent of discharge order:
 
   Python evaluates RHS, then receiver, then index.
@@ -53,10 +61,79 @@ def _tree(source: str, name: str = "setitem_caller.py") -> SourceFile:
 
 
 def _helper_definition():
+    """``helper`` alone and its own proof's reduction.
+
+    ``obj`` is stored into and used no other way, so its class is an input
+    of ``helper``'s contract (``nodes._receiver_class_parameters``) and
+    ``obj[key] = value`` is ``type(obj).__setitem__(obj, key, value)``: the
+    dispatched edge (``receiver_dispatch.dispatch_edge_call``, #8857), owed
+    as it stands, resolved at prove at the class each caller binds (a
+    builtin ``list`` takes its law, ``consistency::builtin_dispatch_answer``,
+    #8864).  It is no ``setitem`` carrier."""
     source = "def helper(obj, key, value):\n    obj[key] = value\n"
     tree = _tree(source, "helper_alone.py")
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     return function, function.sugar().desugar(None)
+
+
+def _dispatched_call(outcome, method: str = "__setitem__"):
+    """The dispatched item operation's coordinate in a helper's own proof:
+    ``call:dispatch:<method>(<receiver>, <operands>..., py.class("0",
+    class:<receiver>))``, read off the halt its edge owes (``python:raised(
+    <call term>, <occurrence>)``), under the owner every unanswered call's
+    halt names."""
+    from sugar_lift_py_tests.call_symbol import call_symbol
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == f"UnknownCallee:dispatch:{method}"
+    ]
+    assert len(halts) == 1, outcome
+    assert f"python:dispatch:{method}" in {
+        call.symbol for call in owed_calls(outcome)
+    }
+    raised = halts[0].effect.raised_by_call
+    assert raised.name == "python:raised", raised
+    call = raised.args[0]
+    assert call.name == call_symbol(f"dispatch:{method}"), call
+    return call
+
+
+def _class_input(call, receiver: str) -> None:
+    """The dispatched call's receiver class rides last, as the class input
+    of the receiver's parameter: ``py.class("0", class:<receiver>)``."""
+    from sugar_lift_py_tests.ir import str_const
+
+    rides = call.args[-1]
+    assert rides.name == "py.class", rides
+    assert rides.args[0] == str_const("0")
+    assert rides.args[1].name == f"class:{receiver}", rides
+
+
+def _carrier_definition():
+    """The ``setitem`` carrier ``SubscriptStoreEffectSugar.project_setitem``
+    mints for a store on a formal whose class is no input of its contract
+    (an ``obj`` its body also reads bare, hands to code, or a nested
+    function reads): one operation waiting for the caller's actuals, over
+    ``helper``'s own formal coordinates, in discharge order.  Its discharge
+    is the Floor ``setitem`` projector; the dispatched helper above never
+    takes it."""
+    from sugar_lift_py_tests.floor import SymbolicValue
+
+    function, _outcome = _helper_definition()
+    site = function.body[0].fragment
+    obj_c, key_c, value_c = function.formal_coordinates()
+    carrier = SubscriptStoreEffectSugar.mint_setitem_carrier(
+        site=site,
+        receiver=SymbolicValue(make_var("obj"), obj_c),
+        index=SymbolicValue(make_var("key"), key_c),
+        value=SymbolicValue(make_var("value"), value_c),
+    )
+    return function, carrier
 
 
 def _caller_edge(signature: str, actuals: str):
@@ -120,10 +197,22 @@ def _named(edge, kind: str, name: str, value: int):
     return ctor(kind, [str_const(name), _int(edge, value)])
 
 
+def _class(key: str, name: str):
+    """``py.class(<key>, python:builtin("<name>"))``: the class of an actual
+    the caller decides, after the actuals (#8857)."""
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.receiver_dispatch import (
+        CLASS_ARGUMENT,
+        builtin_class_term,
+    )
+
+    return ctor(CLASS_ARGUMENT, [str_const(key), builtin_class_term(name)])
+
+
 def _discharged(receiver, key, value):
-    """The helper's own contract row discharged with ``receiver``, ``key``
-    and ``value``: what prove binds its carrier with at a call."""
-    _, pending = _helper_definition()
+    """The ``setitem`` carrier discharged with ``receiver``, ``key`` and
+    ``value``: the Floor ``setitem`` projector's answer."""
+    _, pending = _carrier_definition()
     obj_cid, key_cid, value_cid = pending.demand.operand_coordinate_cids
     return pending.discharge(
         None, {obj_cid: receiver, key_cid: key, value_cid: value}
@@ -148,8 +237,11 @@ def _assert_named_halt(outcome, name: str) -> Halted:
 
 
 def _stored_list(completed_face) -> ListValue:
-    """Pull the store post-state list out of a function-universe completion."""
+    """Pull the store post-state list out of a completion: the projector's
+    own post (a carrier with no continuation), or a function universe's."""
     assert isinstance(completed_face, Completed)
+    if isinstance(completed_face.value, ListValue):
+        return completed_face.value
     record = getattr(completed_face.value, "record", None)
     assert record is not None
     lists = [s for s in record.statements if isinstance(s, ListValue)]
@@ -172,7 +264,20 @@ def _identity(name: str):
 
 
 def test_helper_alone_is_undischarged_setitem_carrier() -> None:
-    _, pending = _helper_definition()
+    # Expected shape changed (#8857): the store on a formal whose class is an
+    # input is the dispatched ``__setitem__`` edge, owed (never completed
+    # here) with its halt kept; the carrier stands only where the class is
+    # no input (``_carrier_definition``).
+    _, outcome = _helper_definition()
+    call = _dispatched_call(outcome)
+    assert [arg.name for arg in call.args[:3]] == ["obj", "key", "value"]
+    _class_input(call, "obj")
+    assert len(call.args) == 4
+    # The edge completes under its own ``completes`` atom and halts under
+    # the complement: both faces stand, neither is chosen here.
+    assert [face for face in outcome.exits if isinstance(face, Completed)]
+
+    _, pending = _carrier_definition()
     assert isinstance(pending, NativeOperationExitCarrierV1)
     assert pending.demand.operator == "setitem"
     assert len(pending.operands) == 3
@@ -201,13 +306,13 @@ def _unanswered(pending, actuals) -> None:
 
 def test_missing_caller_actual_is_undischarged_not_completed() -> None:
     """Missing authenticated actuals remain undischarged — never fabricate green."""
-    _, pending = _helper_definition()
+    _, pending = _carrier_definition()
     _unanswered(pending, {})
 
 
 def test_partial_caller_actual_is_undischarged_discrimination() -> None:
     """Positive twin supplies all three; discrimination omits value and stays red."""
-    _, pending = _helper_definition()
+    _, pending = _carrier_definition()
     obj_cid, key_cid, value_cid = pending.demand.operand_coordinate_cids
     completed = pending.discharge(
         None,
@@ -236,7 +341,7 @@ def test_partial_caller_actual_is_undischarged_discrimination() -> None:
 
 def test_setitem_mint_operand_order_matches_projector() -> None:
     """#6613: lengths and order are load-bearing — pin discharge order."""
-    _, pending = _helper_definition()
+    _, pending = _carrier_definition()
     assert pending.demand.operator == "setitem"
     import inspect
 
@@ -249,6 +354,12 @@ def test_setitem_mint_operand_order_matches_projector() -> None:
         "key",
         "value",
     )
+    # The dispatched edge takes the same order: ``type(obj).__setitem__(obj,
+    # key, value)``, the receiver first as a plain function bound to an
+    # instance takes it.
+    _, outcome = _helper_definition()
+    call = _dispatched_call(outcome)
+    assert [arg.name for arg in call.args[:3]] == ["obj", "key", "value"]
 
 
 def test_mint_setitem_carrier_producer_contract() -> None:
@@ -315,7 +426,7 @@ def test_mint_setitem_carrier_rejects_no_formal_coordinate() -> None:
 
 
 def test_mutable_receiver_completes_store_via_setitem() -> None:
-    _, pending = _helper_definition()
+    _, pending = _carrier_definition()
     obj_cid, key_cid, value_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
         None,
@@ -345,23 +456,35 @@ def test_positional_keyword_and_default_callers_complete_same_demand() -> None:
         _binds, receiver = peel_walrus_binds(edge.arg_values[0])
         assert isinstance(receiver, ListValue), receiver
         assert receiver.elements == (TermValue(0),)
+    # After the actuals ride the classes the caller decides (#8857): the
+    # ``[0]`` it built is a ``list`` -- what ``helper``'s ``class:obj`` binds
+    # at prove, so the builtin ``list.__setitem__`` law answers the
+    # dispatched store (#8864) -- and each supplied ``int`` an ``int``; a
+    # default supplies none.
     assert list(_coordinate(positional).args[1:]) == [
         _int(positional, 0),
         _int(positional, 9),
+        _class("0", "list"),
+        _class("1", "int"),
+        _class("2", "int"),
     ]
     assert list(_coordinate(keyword).args[1:]) == [
         _named(keyword, "py.kwarg", "key", 0),
         _named(keyword, "py.kwarg", "value", 9),
+        _class("obj", "list"),
+        _class("key", "int"),
+        _class("value", "int"),
     ]
     assert list(_coordinate(default).args[1:]) == [
         _named(default, "py.default", "key", 0),
         _named(default, "py.default", "value", 9),
+        _class("0", "list"),
     ]
 
 
 def test_discrimination_wrong_cell_is_not_the_completed_store() -> None:
     """Positive stores at key 0; discrimination at key 1 must not match."""
-    _, pending = _helper_definition()
+    _, pending = _carrier_definition()
     obj_cid, key_cid, value_cid = pending.demand.operand_coordinate_cids
     base = fresh(ListValue, (TermValue(0), TermValue(1)))
     positive = pending.discharge(
@@ -385,7 +508,7 @@ def test_discrimination_wrong_cell_is_not_the_completed_store() -> None:
 
 
 def test_invalid_index_halts_with_named_indexerror() -> None:
-    _, pending = _helper_definition()
+    _, pending = _carrier_definition()
     obj_cid, key_cid, value_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
         None,
@@ -409,7 +532,7 @@ def test_invalid_index_halts_with_named_indexerror() -> None:
 
 def test_discrimination_valid_index_is_not_indexerror() -> None:
     """Positive twin of IndexError: in-range store completes."""
-    _, pending = _helper_definition()
+    _, pending = _carrier_definition()
     obj_cid, key_cid, value_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
         None,
@@ -456,7 +579,13 @@ def test_source_caller_indexerror_halts_with_named_identity() -> None:
         "IndexError",
     )
     edge = _caller_edge("obj, key, value", "[0], 4, 9")
-    assert list(_coordinate(edge).args[1:]) == [_int(edge, 4), _int(edge, 9)]
+    assert list(_coordinate(edge).args[1:]) == [
+        _int(edge, 4),
+        _int(edge, 9),
+        _class("0", "list"),
+        _class("1", "int"),
+        _class("2", "int"),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -470,7 +599,7 @@ def test_swapped_key_value_coordinates_rejected_against_truthful_store() -> None
     A generic splat would hide this: both orders invoke ``setitem`` without
     TypeError.  Explicit discharge order makes the lying face distinguishable.
     """
-    function, truthful = _helper_definition()
+    function, truthful = _carrier_definition()
     site = function.body[0].fragment
     from sugar_lift_py_tests.floor import SymbolicValue
 
@@ -517,7 +646,7 @@ def test_swapped_key_value_coordinates_rejected_against_truthful_store() -> None
 
 def test_discrimination_truthful_order_completes_at_correct_cell() -> None:
     """Positive twin of the swapped lying arm."""
-    _, truthful = _helper_definition()
+    _, truthful = _carrier_definition()
     obj_c, key_c, value_c = truthful.coordinates
     exits = truthful.discharge(
         None,
