@@ -1394,13 +1394,17 @@ def test_a_failing_asserts_message_walrus_is_bound_when_it_raises() -> None:
     ) == _returned_after("        (a := 1)\n        assert 1 == 2\n", "AssertionError")
 
 
-def test_an_assert_whose_message_has_no_sugar_refuses_at_construction() -> None:
-    # The message is built with the statement, never during reduction:
-    # ``(yield 2)`` there has no sugar, so the assert refuses by name at
-    # construction, even though it cannot fail.
-    with pytest.raises(SugarNotWritten) as refused:
-        _built_assert("assert 1 == 1, (yield 2)\n")
-    assert refused.value.owner == "Yield.sugar"
+def test_an_assert_built_from_source_holds_its_messages_yield() -> None:
+    # The message is built with the statement, never during reduction: a
+    # ``(yield 2)`` there is its own sugar from construction (a yield
+    # expression is a suspension, ``Yield._construct_sugar``), held by the
+    # assert even though the assert cannot fail.
+    from sugar_lift_py_tests.sugar.yield_suspension_sugar import (
+        YieldSuspensionSugar,
+    )
+
+    built = _built_assert("def f():\n    assert 1 == 1, (yield 2)\n")
+    assert isinstance(built.message, YieldSuspensionSugar)
 
 
 @dataclass(frozen=True)
