@@ -14524,8 +14524,11 @@ class Delete(Statement):
             # key ``__delitem__`` receives.  The one door, on a name or
             # through a path (``del a.b[k]``, ``del a[i][j]``): the value the
             # receiver holds at reduce decides it.
-            receiver = target.value.substitute(scope)
-            args = (target.slice_.substitute(scope),)
+            # Each part substitutes as every store target's does
+            # (``_substituted_store_target``): a read the rewrite replaced
+            # answers by that substitution.
+            receiver, _changed = self._substitute_field(target.value, scope)
+            args = (self._substitute_field(target.slice_, scope)[0],)
             if isinstance(target.value, Name):
                 mutation = name_mutation_statement(
                     self,
@@ -14992,6 +14995,14 @@ def _receiver_field_store(
         ShadowNode("ReceiverFieldStoreState", statement.span, fields),
         statement.reporter,
     )
+    # The store IS its source target ``<receiver>.<attr>``: it builds the
+    # receiver (``post_state.receiver``) and makes the one
+    # ``type(receiver).__setattr__`` the target stands for (``o.x OP= v``
+    # reads the field first through the one attribute lookup, at
+    # ``get_site``), so nothing else constructs the target and no evaluation
+    # of it is dropped.  This absorption is its discharge, as a replaced
+    # statement's is (``discharge_by_substitution``).
+    target.discharge_by_substitution()
     return materialize(
         statement.unit,
         ShadowNode(
@@ -15550,7 +15561,10 @@ class Assign(Statement):
             return None
         target = self.targets[0]
         after_value = _scope_after(scope, self.value, new_value)
-        receiver = target.value.substitute(after_value)
+        # The receiver substitutes as every store target's does
+        # (``_substituted_store_target``): a read the rewrite replaced
+        # answers by that substitution.
+        receiver, _changed = self._substitute_field(target.value, after_value)
         if not isinstance(receiver, Node):
             return None
         # The statement evaluates ``value`` once and binds it under its key;
@@ -15593,8 +15607,14 @@ class Assign(Statement):
 
             # ``r[k] = v`` and ``r[lo:hi:st] = it`` alike: the slice is the key
             # ``__setitem__`` receives.  The value the receiver holds at
-            # reduce decides it, whatever it was given.
-            args = (target.slice_.substitute(scope), self.value.substitute(scope))
+            # reduce decides it, whatever it was given.  Each part substitutes
+            # as every store target's does (``_substituted_store_target``): a
+            # read the rewrite replaced answers by that substitution.
+            receiver, _changed = self._substitute_field(target.value, scope)
+            args = (
+                self._substitute_field(target.slice_, scope)[0],
+                self._substitute_field(self.value, scope)[0],
+            )
             if not isinstance(target.value, Name):
                 # ``a.b[k] = v``, ``a[i][j] = v``: the store on the object
                 # the path reaches; a receiver that is no path from a name
@@ -15603,7 +15623,7 @@ class Assign(Statement):
                     self,
                     scope,
                     site=target,
-                    receiver=target.value.substitute(scope),
+                    receiver=receiver,
                     method="__setitem__",
                     args=args,
                 )
@@ -15612,7 +15632,7 @@ class Assign(Statement):
                 scope,
                 site=target,
                 name=target.value.id,
-                receiver=target.value.substitute(scope),
+                receiver=receiver,
                 method="__setitem__",
                 args=args,
                 value_first=True,
@@ -16476,8 +16496,13 @@ class AugAssign(Statement):
         from .backend import Leaf
 
         target = self.target
-        receiver = target.value.substitute(scope)
-        rhs = self.value.substitute(_scope_after(scope, target.value, receiver))
+        # Each part substitutes as every store target's does
+        # (``_substituted_store_target``): a read the rewrite replaced answers
+        # by that substitution.
+        receiver, _changed = self._substitute_field(target.value, scope)
+        rhs, _changed = self._substitute_field(
+            self.value, _scope_after(scope, target.value, receiver)
+        )
         evaluation = self._evaluation_key(scope)
         # Never an identifier: the statement writes each name it rebinds
         # under ``projection_key(evaluation, name)`` (``_receiver_field_store``).
@@ -16527,8 +16552,14 @@ class AugAssign(Statement):
         )
 
         target = self.target
-        receiver = target.value.substitute(scope)
-        args = (target.slice_.substitute(scope), self.value.substitute(scope))
+        # Each part substitutes as every store target's does
+        # (``_substituted_store_target``): a read the rewrite replaced answers
+        # by that substitution.
+        receiver, _changed = self._substitute_field(target.value, scope)
+        args = (
+            self._substitute_field(target.slice_, scope)[0],
+            self._substitute_field(self.value, scope)[0],
+        )
         if not isinstance(target.value, Name):
             mutation = path_item_statement(
                 self,

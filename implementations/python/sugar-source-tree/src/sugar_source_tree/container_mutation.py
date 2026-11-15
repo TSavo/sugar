@@ -2145,6 +2145,17 @@ def _container_call(
         fields = (*fields, ("frame_receiver", Leaf(frame_receiver)))
     if receiver_evaluation is not None:
         fields = (*fields, ("receiver_evaluation", Leaf(receiver_evaluation)))
+    if fallback is None:
+        # An item store, an item delete and an in-place operator have no
+        # ordinary call: the operation IS its source site (``r[k] = v``'s,
+        # ``del r[k]``'s and ``r[k] OP= v``'s target, ``r OP= x``'s
+        # statement).  It builds the receiver and the operands and makes the
+        # one ``__setitem__`` / ``__delitem__`` / in-place call the site
+        # stands for, so nothing else constructs the site and no evaluation
+        # of it is dropped.  This absorption is its discharge, as a replaced
+        # statement's is (``discharge_by_substitution``).  A method's site
+        # is the call ``fallback`` constructs, which answers for itself.
+        site_node.discharge_by_substitution()
     return _materialize(site_node, "PathContainerCall", fields, tags)
 
 
