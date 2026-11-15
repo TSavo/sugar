@@ -45,6 +45,17 @@ class TupleValue(GuardStableValue):
     def python_index_protocol(self) -> bool:
         return False
 
+    def equals(self, other, site, ctx):
+        """``tuple == tuple`` member by member (``sequence_equality``), when
+        every member pair it reads is decided; else the one undecided
+        equality."""
+        from .sequence_equality import decided_sequence_equality
+
+        decided = decided_sequence_equality(self, other, site, ctx)
+        if decided is not None:
+            return decided
+        return super().equals(other, site, ctx)
+
     def attribute(self, name, site, ctx):
         # Bound methods and fields on a constructed tuple (``().count``, ``t.index``) stay the
         # py.getattr coordinate -- one law, shared with StringValue and the
