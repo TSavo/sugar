@@ -74,7 +74,7 @@ def _routed(monkeypatch, source: str, *, seated_under=None):
     from sugar_lift_py_tests.floor import object_value
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 
-    bound: list = []
+    bound = _Bound()
     applied: list = []
     real_bind = object_value.bind_call
     real_apply = CallSiteValue.producer_outcome
@@ -82,6 +82,8 @@ def _routed(monkeypatch, source: str, *, seated_under=None):
     def bind_spy(*args, **kwargs):
         callsite = real_bind(*args, **kwargs)
         bound.append(callsite)
+        owner = getattr(kwargs.get("frame"), "owner", None)
+        bound.frame_names[id(callsite)] = getattr(owner, "name", None)
         return callsite
 
     def apply_spy(self, *args, **kwargs):
@@ -95,9 +97,29 @@ def _routed(monkeypatch, source: str, *, seated_under=None):
     return _test_function_outcome(source), bound, applied
 
 
+class _Bound(list):
+    """Every call the one binder bound, in order, and the name of the source
+    function whose frame each bound (``frame_names``, by the call's ``id``).
+
+    A call of a plain ``def`` is the call of the function's value, whatever
+    spelled the callee (#8647): it is bound as ``py.call`` through the def's
+    own frame (``LambdaCallable.callable_application_with``), so the callee
+    is read off the frame it binds, never off the call's spelling."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.frame_names: dict[int, str | None] = {}
+
+
 def _bound_and_applied(bound, applied, target_name: str) -> bool:
+    """A call of ``target_name`` -- the call's target, or the source function
+    whose frame it bound -- was bound by the one binder and applied."""
+    frame_names = getattr(bound, "frame_names", {})
     return any(
-        callsite.target_name == target_name
+        (
+            callsite.target_name == target_name
+            or frame_names.get(id(callsite)) == target_name
+        )
         and any(callsite is used for used in applied)
         for callsite in bound
     )
