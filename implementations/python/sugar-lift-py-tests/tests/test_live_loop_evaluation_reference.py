@@ -500,8 +500,11 @@ def test_the_bodys_write_is_its_augmented_assignment() -> None:
     runtime = _live_runtime()
     [(header, writes, else_writes)] = runtime.carried_evaluations
     [aug] = runtime.body_sugars
-    assert writes == (aug.evaluation,)
-    assert aug.evaluation != header
+    # ``t += v`` is the one mutation door's statement: its write of ``t`` is
+    # the in-place result bound under the statement's key, never the key of
+    # the call's pair (``ContainerMutationStatementSugar.evaluation``).
+    assert writes == (_in_place_key(aug),)
+    assert _in_place_key(aug) != header
     assert else_writes == ()
 
 
@@ -517,9 +520,15 @@ def test_an_assignment_in_the_body_is_a_keyed_write() -> None:
     [(header, writes, _else_writes)] = runtime.carried_evaluations
     [assign] = runtime.body_sugars
     assert isinstance(assign, AssignSugar)
-    assert writes == (carried_write_key(assign.site, "t"),)
-    assert writes[0].startswith(EVALUATION_PREFIX)
-    assert writes[0] != header
+    # The statement writes ``t`` under each key it binds it under
+    # (``Node.written_keys``): its carried write, then its projection of the
+    # statement's evaluation, the key every later read of ``t`` reads.
+    assert writes == (
+        carried_write_key(assign.site, "t"),
+        dict(assign.evaluations)["t"],
+    )
+    assert all(write.startswith(EVALUATION_PREFIX) for write in writes)
+    assert header not in writes
 
 
 _LIVE_WHILE = (
@@ -986,10 +995,13 @@ def test_a_live_body_reads_the_target_through_its_key() -> None:
     [target] = runtime.target_evaluations
     assert target.startswith(EVALUATION_PREFIX)
     [aug] = runtime.body_sugars
-    # ``t += v`` reads ``v`` through the item's projection, not by spelling.
-    assert isinstance(aug.right, EvaluationRefSugar)
-    assert aug.right.evaluation == target
-    assert aug.right.name == "v"
+    # ``t += v`` reads ``v`` through the item's projection, not by spelling:
+    # the operand of the one mutation door's in-place call.
+    assert isinstance(aug, ContainerMutationStatementSugar)
+    [right] = aug.evaluated[0].args
+    assert isinstance(right, EvaluationRefSugar)
+    assert right.evaluation == target
+    assert right.name == "v"
 
 
 def test_a_target_bound_before_the_loop_is_carried_through_its_key() -> None:
