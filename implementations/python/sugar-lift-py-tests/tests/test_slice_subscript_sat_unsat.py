@@ -1,122 +1,101 @@
+"""Slice subscripts, read through the kit's one door.
+
+These twins once drove the ``lift`` RPC method and read its ``ir`` document.
+That method is deleted (#7864: mint is the only driver of the kit); what mint
+reads is the ``sugar.enumerate`` universe scan, so the twins read that: one
+``function-contract`` row per function, its halted arms as ``panicLoci``, and
+one ``undecided`` row per operation nothing in the proof answers.
+"""
+
 from __future__ import annotations
 
-import json
-import os
-import subprocess
-import sys
 from pathlib import Path
 
-
-from sugar_lift_py_tests.repo_root import resolve_repo_root
-
-ROOT = resolve_repo_root()
-PY_TESTS = ROOT / "implementations/python/sugar-lift-py-tests"
+from sugar_lift_py_tests import lift_rpc
 
 
-def _run_lift_rpc(project: Path) -> dict:
-    env = {
-        **os.environ,
-        "PYTHONPATH": str(PY_TESTS / "src"),
-    }
-    request = "\n".join(
-        json.dumps(message)
-        for message in [
-            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+def _enumerate(level: str, project: Path, at=None) -> dict:
+    captured: list = []
+    original_send = lift_rpc._send
+    lift_rpc._send = captured.append
+    try:
+        lift_rpc._dispatch_request(
             {
                 "jsonrpc": "2.0",
-                "id": 2,
-                "method": "lift",
-                "params": {"workspace_root": str(project), "source_paths": ["."]},
+                "id": 1,
+                "method": "sugar.enumerate",
+                "params": {
+                    "level": level,
+                    "workspace_root": str(project),
+                    "at": at,
+                    "seek": False,
+                    "options": {},
+                },
             },
-            {"jsonrpc": "2.0", "id": 3, "method": "shutdown", "params": {}},
-        ]
-    )
-
-    completed = subprocess.run(
-        [sys.executable, "-m", "sugar_lift_py_tests.lift_rpc", "--rpc"],
-        input=request + "\n",
-        text=True,
-        capture_output=True,
-        check=False,
-        env=env,
-    )
-
-    assert completed.returncode == 0, completed.stderr
-    responses = [
-        json.loads(line) for line in completed.stdout.splitlines() if line.strip()
-    ]
-    response = next(item for item in responses if item.get("id") == 2)
+        )
+    finally:
+        lift_rpc._send = original_send
+    (response,) = captured
     assert "error" not in response, response
     return response["result"]
 
 
-def _write_assertion(project: Path, body: str) -> None:
+def _rows(project: Path, body: str) -> list[dict]:
+    """Every row the universe scan states for a one-file project."""
     project.mkdir()
-    (project / "test_slice_subscript.py").write_text(
-        body,
-        encoding="utf-8",
+    (project / "test_slice_subscript.py").write_text(body, encoding="utf-8")
+    (file_node,) = _enumerate("source_files", project)["nodes"]
+    result = _enumerate("universe", project, at=file_node["memento"])
+    assert result["gaps"] == []
+    return [node["audit"] for node in result["nodes"]]
+
+
+def _contract(rows: list[dict]) -> dict:
+    (row,) = [row for row in rows if row["kind"] == "function-contract"]
+    return row
+
+
+def test_concrete_string_slice_is_decided_at_the_one_door(tmp_path: Path) -> None:
+    """``'abcdef'[1:3]`` is ``'bc'``.  Truthful: the function's one row states
+    the assertion's claim, nothing halts and nothing is left undecided.
+    Lying (``== 'bd'``): the assertion halts, as its one panic locus."""
+    truthful = _rows(
+        tmp_path / "good",
+        "def test_concrete_string_slice():\n    assert 'abcdef'[1:3] == 'bc'\n",
+    )
+    lying = _rows(
+        tmp_path / "bad",
+        "def test_concrete_string_slice():\n    assert 'abcdef'[1:3] == 'bd'\n",
     )
 
+    (good,) = truthful
+    assert good["kind"] == "function-contract"
+    assert good["name"] == "test_concrete_string_slice"
+    assert "inv" in good
+    assert "panicLoci" not in good
 
-def _first_inv(doc: dict) -> dict:
-    return doc["ir"][0]["inv"]
+    bad = _contract(lying)
+    assert len(bad["panicLoci"]) == 1
 
 
-def test_concrete_string_slice_lift_rpc_emits_expected_formula(
+def test_symbolic_slice_is_not_decided_in_the_functions_own_proof(
     tmp_path: Path,
 ) -> None:
-    good = tmp_path / "good"
-    _write_assertion(
-        good,
-        "def test_concrete_string_slice():\n" "    assert 'abcdef'[1:3] == 'bc'\n",
+    """``values[::2]`` slices a formal: the operation waits for a caller's
+    actual, and the function's own proof has none (#7766).  So the scan states
+    the function's one contract row and the slice as ``undecided`` members
+    (``reason: unanswered``) at the file; it never states a result for it."""
+    rows = _rows(
+        tmp_path / "good",
+        "def test_symbolic_slice(values):\n    assert values[::2] == values[::2]\n",
     )
 
-    good_doc = _run_lift_rpc(good)
-
-    assert _first_inv(good_doc)["args"] == [
-        {
-            "kind": "const",
-            "sort": {"kind": "primitive", "name": "String"},
-            "value": "bc",
-        },
-        {
-            "kind": "const",
-            "sort": {"kind": "primitive", "name": "String"},
-            "value": "bc",
-        },
-    ]
-
-
-def test_symbolic_slice_lift_rpc_emits_slice_term(
-    tmp_path: Path,
-) -> None:
-    good = tmp_path / "good"
-    _write_assertion(
-        good,
-        "def test_symbolic_slice(values):\n" "    assert values[::2] == values[::2]\n",
-    )
-
-    good_doc = _run_lift_rpc(good)
-
-    left, right = _first_inv(good_doc)["args"]
-    assert left == right
-    assert left == {
-        "kind": "ctor",
-        "name": "py.subscript",
-        "args": [
-            {"kind": "var", "name": "values"},
-            {
-                "kind": "ctor",
-                "name": "py.slice",
-                "args": [
-                    {"kind": "ctor", "name": "None", "args": []},
-                    {"kind": "ctor", "name": "None", "args": []},
-                    {
-                        "kind": "const",
-                        "sort": {"kind": "primitive", "name": "Int"},
-                        "value": 2,
-                    },
-                ],
-            },
-        ],
-    }
+    contract = _contract(rows)
+    assert contract["name"] == "test_symbolic_slice"
+    assert contract["formals"] == ["values"]
+    undecided = [row for row in rows if row["kind"] == "undecided"]
+    assert undecided, rows
+    assert len(undecided) == len(rows) - 1
+    for row in undecided:
+        assert row["reason"] == {"unanswered": {}}
+        assert row["site"]["file"] == "test_slice_subscript.py"
