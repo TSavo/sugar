@@ -14206,7 +14206,12 @@ def _receiver_field_store(
     from sugar_lift_py_tests.temporal.temporal_context import projection_key
 
     from .backend import Child, Children, Leaf, MaybeChild, materialize
-    from .container_mutation import _identity, aliases, holder_states
+    from .container_mutation import (
+        _identity,
+        aliases,
+        field_store_method,
+        holder_states,
+    )
     from .shadow import ShadowNode, _handle_of, occurrence_tags_of
 
     held = target.value
@@ -14217,19 +14222,22 @@ def _receiver_field_store(
     if scope and isinstance(root, Node) and not isinstance(root, Name):
         exact, containing = aliases(scope, root)
         names.extend(name for name in exact if name not in names)
-        # A field store is the plain store of one field (``ordinary=False``):
-        # a name that merely shares something with the object keeps its
-        # binding.
+        # A name that merely shares something with the object is rebound
+        # too, to its value after the store, which the receiver's value
+        # decides at reduce (``field_store_method``): the store is
+        # ``type(receiver).__setattr__``, which reaches nothing beyond the
+        # object only when the receiver's class takes ``object``'s and binds
+        # no data descriptor for the name
+        # (``ObjectValue.field_store_route``).
         holders = holder_states(
             statement,
             scope,
             receiver=receiver,
             root=root,
             containing=containing,
-            method="__setattr__",
+            method=field_store_method(target.attr),
             tags=occurrence_tags_of(statement),
             skip=names,
-            ordinary=False,
         )
     writes = ()
     if isinstance(evaluation, str):
@@ -14237,17 +14245,26 @@ def _receiver_field_store(
             (name, projection_key(evaluation, name))
             for name in (*names, *(name for name, _state in holders))
         )
+    fields = (
+        ("receiver", Child(_handle_of(receiver))),
+        ("value", Child(_handle_of(stored))),
+        ("attr", Leaf(target.attr)),
+    )
+    if isinstance(evaluation, str):
+        # A store that runs code (a ``__setattr__``, a descriptor's
+        # ``__set__``, an undecided class lookup) leaves the receiver as that
+        # code left it: the statement binds it under this projection of its
+        # key, and the post-state reads it there (``ReceiverFieldStoreSugar``,
+        # ``ReceiverFieldStoreStateSugar``).  A plain store binds nothing
+        # there.  No name is spelled ``.<attr>=``: the key is no name's
+        # projection (``writes``).
+        fields = (
+            *fields,
+            ("after", Leaf(projection_key(evaluation, f".{target.attr}="))),
+        )
     post_state = materialize(
         statement.unit,
-        ShadowNode(
-            "ReceiverFieldStoreState",
-            statement.span,
-            (
-                ("receiver", Child(_handle_of(receiver))),
-                ("value", Child(_handle_of(stored))),
-                ("attr", Leaf(target.attr)),
-            ),
-        ),
+        ShadowNode("ReceiverFieldStoreState", statement.span, fields),
         statement.reporter,
     )
     return materialize(
@@ -20220,13 +20237,17 @@ class ReceiverFieldStoreStatement(Statement):
         holds the object inside another value (``lst = [o]``, ``d = {'k':
         o}``, ``t = (o,)``, another object's field), or may be it (a member
         whose identity is undecided), to its value after the store -- the
-        opaque post-state, never its old value.  A field store is the plain
-        store of one field (``ordinary=False``): a name that merely shares
-        something with the object keeps its binding.  The names were decided
-        once, where the statement was built (``_receiver_field_store``); the
-        bindings are the states, so every later read in the block reads the
-        state, and a live loop reads the statement's write of it
-        (``written_keys``)."""
+        opaque post-state, never its old value.  A name that merely shares
+        something with the object is rebound too, to its value after the
+        store, which the receiver's value decides at reduce
+        (``container_mutation.field_store_method``): the store is
+        ``type(receiver).__setattr__``, which reaches nothing beyond the
+        object only when the receiver's class takes ``object``'s and binds no
+        data descriptor for the name (``ObjectValue.field_store_route``).
+        The names were decided once, where the statement was built
+        (``_receiver_field_store``); the bindings are the states, so every
+        later read in the block reads the state, and a live loop reads the
+        statement's write of it (``written_keys``)."""
         del scope
         return self._states()
 
@@ -20262,6 +20283,9 @@ class ReceiverFieldStoreStatement(Statement):
             value=post_state.value.sugar(),
             attr=post_state.attr,
             site=self.fragment,
+            # The key a store that runs code binds the receiver after it
+            # under, which the post-state reads (``_receiver_field_store``).
+            after=getattr(post_state, "after", None),
         )
         # Each distinct state once, bound under the key of every name that
         # reads it.
@@ -24327,7 +24351,11 @@ class ReceiverFieldStoreState(Expression):
         )
 
         return ReceiverFieldStoreStateSugar(
-            self.receiver.sugar(), self.value.sugar(), self.attr, self.fragment
+            self.receiver.sugar(),
+            self.value.sugar(),
+            self.attr,
+            self.fragment,
+            after=getattr(self, "after", None),
         )
 
 

@@ -606,19 +606,156 @@ class ObjectValue(FloorValue):
         """Whether ``self.name = value`` is an ordinary instance-field store."""
         return self._store_descriptor(name) is False
 
-    def setattr(self, name, value, site, ctx):
-        """``self.name = value`` via instance-field store or property refusal.
+    def field_store_route(self, name: str) -> tuple:
+        """``(kind, member)``: what ``self.name = value`` runs, decided by
+        the one class-namespace lookup on this receiver's type.  The store
+        is ``type(self).__setattr__(self, name, value)``
+        (``PyObject_SetAttr``): an implicit special-method lookup on the
+        type, which no instance field shadows.
 
-        Properties are data descriptors: a getter without an authenticated
-        setter raises ``AttributeError`` on the **store** path — never by
-        consulting :meth:`attribute` / the read path.
+        - ``("setattr", method)``: a source class of the MRO binds
+          ``__setattr__`` to a plain function its body wrote
+          (``class_member``).  The store is a call of that function on this
+          receiver.
+        - Where the lookup's owner is the builtin ``object``, the store is
+          ``object.__setattr__`` (``PyObject_GenericSetAttr``), which the
+          class's binding of ``name`` decides:
+          ``("refused", None)``, a source ``property`` -- a data descriptor
+          whose setter is not a member this lookup selects, so the store
+          raises ``AttributeError``;
+          ``("descriptor", (descriptor, method))``, a class field holding an
+          instance of a source class whose type binds ``__set__`` to a plain
+          function its body wrote -- the store is a call of that function on
+          the descriptor;
+          ``("plain", None)``, no class binding ``name``, or a function (a
+          non-data descriptor), or a value that is no data descriptor -- the
+          instance-field store (``with_field_store``).
+        - ``("undecided", None)``: anything else.  A lookup of
+          ``__setattr__`` or of ``name`` that is not decided (an unread
+          base, a decorator, a store on the class, ``@x.setter``); a builtin
+          base other than ``object`` that holds a ``__setattr__`` of its own
+          (``BaseException``: its slot is not read here); a ``__setattr__``
+          or ``__set__`` that is not a plain function the class wrote; a
+          class field whose value's descriptor protocol is not read here.
+          The store is the one unanswered call (``field_store_call``).
+
+        A receiver built with no class statement has only its own roster
+        (``class_member``): a ``__setattr__`` there is that function, none is
+        the default store."""
+        undecided = ("undecided", None)
+        definition = getattr(self.defining_class, "class_definition", None)
+        if definition is None:
+            decided, method, value = self.class_member("__setattr__")
+            if not decided or value is not None:
+                return undecided
+            if method is not None:
+                return ("setattr", method) if _plain_function(method) else undecided
+        else:
+            decided, owner = definition.namespace_owner("__setattr__")
+            if not decided or owner is None:
+                return undecided
+            if isinstance(owner, str):
+                if owner != "object":
+                    return undecided
+            else:
+                decided, method, _value = self.class_member("__setattr__")
+                if not decided or not _plain_function(method):
+                    return undecided
+                return "setattr", method
+        decided, method, value = self.class_member(name)
+        if not decided:
+            return undecided
+        if method is not None:
+            if method.descriptor_kind == "property":
+                return "refused", None
+            return "plain", None
+        if value is None:
+            return "plain", None
+        return _descriptor_route(value)
+
+    def field_store_runs_code(self, name: str) -> bool:
+        """Whether ``self.name = value`` runs, or may run, code beyond the
+        instance-field store (``field_store_route``): a ``__setattr__``, a
+        descriptor's ``__set__``, or a class lookup that does not decide.
+        Such a store reaches what a call reaches; a plain one changes this
+        object only (``builtin_container_call_sugar._may_change``)."""
+        return self.field_store_route(name)[0] not in ("plain", "refused")
+
+    def field_store_call(self, name, value, site, ctx):
+        """The call ``self.name = value`` is, where the store runs code
+        (``field_store_route``), applied under ``ctx`` like any call: the
+        source ``__setattr__`` the lookup selected, called on this receiver
+        with the name and the value; a source descriptor's ``__set__``,
+        called on the descriptor with this receiver and the value
+        (``call_member``, the one application); or, where the lookup does
+        not decide, the one unanswered call ``type(self).__setattr__``
+        (``unanswered_method_call``): two-faced and owed, nothing assumed of
+        what it runs."""
+        from .string_value import StringValue
+
+        kind, member = self.field_store_route(name)
+        if kind == "setattr":
+            return self.call_member(
+                "__setattr__",
+                member,
+                (StringValue(name), value),
+                owner="ObjectValue.field_store_call",
+                blame=site,
+                ctx=ctx,
+            )
+        if kind == "descriptor":
+            descriptor, method = member
+            return descriptor.call_member(
+                "__set__",
+                method,
+                (self, value),
+                owner="ObjectValue.field_store_call",
+                blame=site,
+                ctx=ctx,
+            )
+        return self.unanswered_method_call(
+            "__setattr__", (StringValue(name), value), (), site
+        )
+
+    def after_field_store_call(self, result, site):
+        """``after(alias)``: this receiver's object after the call its field
+        store was (``field_store_call``) completed with ``result``, as a
+        binding ``alias`` that held it holds it now.
+
+        Where the call states what it did to the object
+        (``call_site_value.receiver_after_its_call``, the one projection of a
+        callee's effects on what its caller sees), that state
+        (``object_identity.as_the_alias_holds``).  Where it states nothing --
+        a body whose effects on it are not all field stores, the unanswered
+        call -- the same object, of the same class, whose contents this frame
+        no longer holds (``object_identity.arrived`` at the store): every
+        field read of it is the undecided read, never the object as it was
+        before the store, and never with the field assumed stored."""
+        from .call_site_value import receiver_after_its_call
+        from .object_identity import arrived, as_the_alias_holds
+
+        stated = receiver_after_its_call(self, result)
+        if stated is not None:
+            return lambda alias: as_the_alias_holds(stated, alias)
+        return lambda alias: arrived(alias, site)
+
+    def setattr(self, name, value, site, ctx):
+        """``self.name = value``, decided by the one class lookup
+        (``field_store_route``); completes with this receiver after it.
+
+        The plain store is the instance-field store.  A property is a data
+        descriptor: a getter without an authenticated setter raises
+        ``AttributeError`` on the **store** path — never by consulting
+        :meth:`attribute` / the read path.  A store that runs code is that
+        call (``field_store_call``): its halts are the store's, and the
+        receiver after it is what the call states, else unknown
+        (``after_field_store_call``), carrying what the call carries to its
+        caller.
         """
         from sugar_lift_py_tests.outcome import ExitSet
 
-        descriptor = self._store_descriptor(name)
-        if descriptor is None:
-            self._refuse_undecided_store(name, site, "ObjectValue.setattr")
-        if descriptor:
+        kind, _member = self.field_store_route(name)
+        if kind == "refused":
             from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
             return ground_exceptional_exit(
@@ -626,7 +763,23 @@ class ObjectValue(FloorValue):
                 site=site,
                 owner="ObjectValue.setattr",
             )
-        return ExitSet.completed(self.with_field_store(name, value))
+        if kind == "plain":
+            return ExitSet.completed(self.with_field_store(name, value))
+        from .named_expression_value import carry_walrus_binds, peel_walrus_binds
+
+        outcome = self.field_store_call(name, value, site, ctx)
+        if not isinstance(outcome, ExitSet):
+            # A deferred native operation of the body: the caller's to
+            # discharge, as for any call.
+            return outcome
+        return outcome.and_then(
+            lambda result: ExitSet.completed(
+                carry_walrus_binds(
+                    peel_walrus_binds(result)[0],
+                    self.after_field_store_call(result, site)(self),
+                )
+            )
+        )
 
     def delattr(self, name, site, ctx):
         """``del self.name`` via instance-field delete or property refusal.
@@ -1138,6 +1291,69 @@ class ObjectValue(FloorValue):
             gap_locus=GapLocus.CONSTRUCTION,
         )
         construction_panic(info)
+
+
+def _plain_function(method) -> bool:
+    """Whether ``method`` -- the member the one class-namespace lookup
+    selected (``ObjectValue.class_member``) -- is a plain function the class
+    wrote: read off an instance it is a method bound to it
+    (``implicit_arguments``).  A ``staticmethod``, a ``classmethod`` and a
+    ``property`` are not."""
+    return isinstance(method, ObjectMethodValue) and method.descriptor_kind is None
+
+
+def _descriptor_route(value) -> tuple:
+    """``ObjectValue.field_store_route``'s answer for a store of a name the
+    class binds to the class field ``value``, under ``object``'s
+    ``__setattr__`` (``PyObject_GenericSetAttr``: a data descriptor on the
+    type -- one whose type defines ``__set__`` or ``__delete__`` -- answers
+    the store; anything else is shadowed by the instance field).
+
+    - An instance of a source class: its type's ``__set__``, read by the one
+      class-namespace lookup.  A plain function a class of its MRO wrote is
+      the descriptor's call; no class binding ``__set__`` nor ``__delete__``
+      is no data descriptor, the plain store; anything else is undecided (a
+      lookup not decided, a builtin base's, a ``__delete__`` with no
+      ``__set__``: that store raises, which is not written here).
+    - A value whose own type is a decided builtin (a number, a string, a
+      container), or a function the class holds as a field: no data
+      descriptor, the plain store.
+    - Any other value (a call's result, an import's member, a class): its
+      type's descriptor protocol is not read here, undecided."""
+    from sugar_lift_py_tests.floor.lambda_callable import LambdaCallable
+    from sugar_lift_py_tests.source_call_resolution import builtin_typed_value
+
+    undecided = ("undecided", None)
+    if isinstance(value, ObjectValue):
+        definition = getattr(value.defining_class, "class_definition", None)
+        if definition is not None:
+            decided, owner = definition.namespace_owner("__set__")
+            if not decided or isinstance(owner, str):
+                return undecided
+            if owner is None:
+                decided, deleter = definition.namespace_owner("__delete__")
+                return ("plain", None) if decided and deleter is None else undecided
+        # A descriptor built with no class statement has only its own roster
+        # (``class_member``).
+        decided, method, held = value.class_member("__set__")
+        if not decided or held is not None:
+            return undecided
+        if method is None:
+            decided, deleter, held = value.class_member("__delete__")
+            if decided and deleter is None and held is None:
+                return "plain", None
+            return undecided
+        if not _plain_function(method):
+            return undecided
+        return "descriptor", (value, method)
+    if isinstance(value, LambdaCallable):
+        return "plain", None
+    if (
+        builtin_typed_value(value, shallow=True)
+        and getattr(value, "formal_coordinate", None) is None
+    ):
+        return "plain", None
+    return undecided
 
 
 _INPLACE_BINARY_DUNDER_METHODS = {
