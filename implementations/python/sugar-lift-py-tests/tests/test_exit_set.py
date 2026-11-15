@@ -105,20 +105,22 @@ def test_block_reduction_retains_complement_of_guarded_halt():
     )
 
     class GuardedHalt:
-        # A statement that binds nothing before its halt: the block's prefix
-        # is its record.
-        halts_at_statement_head = True
-
+        # A statement's exit set is its whole partition: a statement that may
+        # halt states the face it completes on too, through the one
+        # halt-or-not constructor. The reducer sequences the arms it is
+        # handed and invents no completion for a producer that stated none.
         def desugar(self, ctx=None):
             del ctx
-            return ExitSet.halted(effect).guarded(condition)
+            return ExitSet.conditional_halt(condition, effect, _record())
 
     exits = reduce_block_to_exitset((GuardedHalt(),))
 
-    assert isinstance(exits.exits[0], Halted)
-    assert exits.exits[0].guard == condition
-    assert isinstance(exits.exits[1], Completed)
-    assert exits.exits[1].guard == not_(condition)
+    assert len(exits.exits) == 2
+    (halt,) = exits.halts()
+    (done,) = [exit_ for exit_ in exits.exits if isinstance(exit_, Completed)]
+    assert halt.guard == condition
+    assert halt.effect == effect
+    assert done.guard == not_(condition)
 
 
 def test_and_finally_cleanup_completion_restores_incoming_completed():
