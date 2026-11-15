@@ -1,14 +1,11 @@
-"""A ``with`` head whose class is proven, from source, not to be a manager.
+"""A ``with`` head whose class is decided not to be a manager.
 
-``with x:`` looks ``__enter__``/``__exit__`` up on ``type(x)``'s MRO.  When
-every class of that C3 MRO is a module ``class`` statement read here or a
-cited language base (``object``, ``abc.ABC``, their attribute sets read from
-the interpreter) and none binds ``__enter__`` (or ``__exit__``), the head is
-evaluated and then the ``with`` raises the interpreter's own ``TypeError``
-("'X' object does not support the context manager protocol", or "... (missed
-__exit__ method)") before any enter and before the body.  This covers
-same-module classes.  Any base that is neither, a class decorator, a
-metaclass, or a module that could install the protocol keeps the gap.
+``with x:`` looks ``__enter__``/``__exit__`` up on ``type(x)``.  The head is
+reduced, and where the one class-namespace lookup on the value's type decides
+that it binds no ``__enter__`` (or no ``__exit__``), the ``with`` raises the
+interpreter's own ``TypeError`` ("'X' object does not support the context
+manager protocol", or "... (missed __exit__ method)") before any enter and
+before the body (``ReducedManagerProtocolV1``, #7757).
 
 What a decorated function's call returns is the one decorator application's
 (``DecoratorApplicationSugar``, #7757): no proof is read from a decorator's
@@ -22,12 +19,10 @@ import pytest
 
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor import TermValue
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.manager_protocol_absence_refusal import (
     cited_language_base,
     observed_non_manager_with_refusal,
 )
-from sugar_source_tree.panic import SugarNotWritten
 
 from test_assignment_evaluates_rhs import _rows
 from test_contextlib_suppress_source_exit_faces import _corpus, _open
@@ -45,7 +40,7 @@ def _type_error_halt(tmp_path, source, type_name, *, has_enter=False):
     assert returns == []
     (halt,) = halts
     assert isinstance(halt, RaiseEffect)
-    assert halt.producer_node_owner == "NonManagerObjectWithSugar"
+    assert halt.producer_node_owner == "ReducedManagerProtocolV1"
     refusal = observed_non_manager_with_refusal(
         type_name, has_enter=has_enter, has_exit=False
     )
@@ -100,7 +95,6 @@ def test_a_decorated_async_def_head_is_the_decorator_application(tmp_path):
     )
     source_file = _open(_corpus(tmp_path, source))
     context = source_file.root.unit.construction_context
-    assert not context.source_non_manager_heads
     assert not context.source_call_frames
 
 
@@ -243,23 +237,6 @@ def test_a_module_writer_is_known_by_its_binding(module_tail, proven):
     assert (proof is not None) is proven
 
 
-def test_a_callee_shadowed_by_a_parameter_is_not_the_module_class(tmp_path):
-    """The ``with`` head's callee resolves through the binding its read
-    reaches: ``M`` is ``f``'s parameter, so the module's ``class M`` (which
-    lacks the protocol) is never read as the head's class; ``g``'s ``M`` is
-    the module's, and its head is (#7757)."""
-    source = (
-        "class M:\n    pass\n"
-        "def f(M):\n    with M():\n        return 1\n"
-        "def g():\n    with M():\n        return 1\n"
-    )
-    source_file = _open(_corpus(tmp_path, source))
-    heads = source_file.root.unit.construction_context.source_non_manager_heads
-    assert len(heads) == 1, heads
-    (proof,) = heads.values()
-    assert proof.type_name == "M"
-
-
 def test_a_local_class_without_enter_raises_type_error(tmp_path):
     _type_error_halt(
         tmp_path, "class M:\n    pass\ndef f():\n    with M():\n        return 1\n", "M"
@@ -282,26 +259,3 @@ def test_contextmanager_is_still_a_manager(tmp_path):
     )
     returns, _ = _split(tmp_path, source)
     assert returns == [TermValue(1)]
-
-
-@pytest.mark.parametrize(
-    "source",
-    [
-        # the module installs the protocol after the class statement
-        "class M:\n    pass\nM.__enter__ = lambda s: 1\n"
-        "def f():\n    with M():\n        return 1\n",
-        # a class decorator may return anything
-        "def d(c):\n    return c\n@d\nclass M:\n    pass\n"
-        "def f():\n    with M():\n        return 1\n",
-        # an unresolved base
-        "import textwrap\nclass M(textwrap.TextWrapper):\n    pass\n"
-        "def f():\n    with M():\n        return 1\n",
-        # a constructor that may raise keeps the gap (its faces are not carried)
-        "class M:\n    def __init__(self, x):\n        if x:\n            raise ValueError('v')\n"
-        "def f():\n    with M(1):\n        return 1\n",
-    ],
-    ids=["patched", "class-decorator", "unresolved-base", "raising-constructor"],
-)
-def test_unproven_heads_keep_the_gap(tmp_path, source):
-    with pytest.raises((SugarNotWritten, ConstructionPanic)):
-        _split(tmp_path, source)

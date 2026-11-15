@@ -3,15 +3,14 @@
 Every rewritten site in ``sugar_lift_python_source`` composes a step with
 what follows through ``ExitSet.sequence`` (``consume=`` for a halt the
 composition owns), joins sibling sets through ``ExitSet.union``, or builds one
-fresh arm with ``ExitSet.completed``. Four of the hand assemblies dropped what
-an arm carried (its guard, its partition testimony or what it owed); each has
-a test here that it now survives.
+fresh arm with ``ExitSet.completed``. The hand assemblies dropped what an arm
+carried (its guard, its partition testimony or what it owed); each remaining
+one has a test here that it now survives.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from types import SimpleNamespace
 
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor import (
@@ -133,125 +132,3 @@ def test_a_nested_receiver_leaf_keeps_its_whole_path() -> None:
     assert arm.guard == and_([outer, inner])
     assert arm.faces == frozenset({outer_side, inner_side})
     assert arm.owed == ("debt:outer", "debt:inner")
-
-
-def test_a_factored_boundary_face_keeps_its_partition_testimony(
-    monkeypatch,
-) -> None:
-    # Each boundary face was rebuilt from guard and ``owed`` alone: the
-    # receiver face's partition testimony was dropped.
-    from sugar_lift_py_tests.context_manager_contract import (
-        EffectBoundarySemanticsV1,
-        NoMessagePatternV1,
-        OptionalFormalArgumentProjectionV1,
-    )
-    from sugar_lift_py_tests.floor.none_value import NoneValue
-    from sugar_lift_python_source import manager_summary_derivation as msd
-
-    none_side, pattern_side = partition(("test:match-face", 7825))
-    guard = atomic("test:match-none:7825", [])
-    no_pattern = ObjectValue(
-        "Manager", (ObjectField("match", NoneValue()),), allocation=FRAME_FRESH
-    )
-    pattern = ObjectValue(
-        "Manager", (ObjectField("match", TermValue(1)),), allocation=FRAME_FRESH
-    )
-    behavior = SimpleNamespace(
-        receiver_state=ReceiverStatePartitionValue(
-            ExitSet(
-                (
-                    Completed(
-                        guard, no_pattern, frozenset({none_side}), ("debt:none",)
-                    ),
-                    Completed(
-                        complement_guard(guard),
-                        pattern,
-                        frozenset({pattern_side}),
-                        ("debt:pattern",),
-                    ),
-                )
-            )
-        )
-    )
-
-    def semantics(message_pattern_operand):
-        return EffectBoundarySemanticsV1(
-            mode="test-mode",
-            effect_kind="test-effect",
-            expected_type_operand="test-expected",
-            message_pattern_operand=message_pattern_operand,
-            binding="test-binding",
-        )
-
-    none_boundary = semantics(NoMessagePatternV1())
-    pattern_boundary = semantics(OptionalFormalArgumentProjectionV1(1))
-    monkeypatch.setattr(
-        msd,
-        "_derive_boundary_for_receiver",
-        lambda protocol, behavior, receiver: (
-            none_boundary if receiver is no_pattern else pattern_boundary
-        ),
-    )
-    monkeypatch.setattr(
-        msd, "_signature_for_behavior", lambda behavior, semantics: "signature"
-    )
-    protocol = SimpleNamespace(
-        receiver_state=None,
-        protocol_construction_cid="test-protocol",
-        enter_frame_cid="test-enter",
-        exit_frame_cid="test-exit",
-    )
-
-    summary = msd._derive_factored_effect_boundary(protocol, behavior)
-
-    assert isinstance(summary, msd.FactoredEffectBoundarySummaryV1)
-    none_arm, pattern_arm = summary.boundary_faces.exits
-    assert none_arm.value is none_boundary
-    assert none_arm.guard == guard
-    assert none_arm.faces == frozenset({none_side})
-    assert none_arm.owed == ("debt:none",)
-    assert pattern_arm.value is pattern_boundary
-    assert pattern_arm.guard == complement_guard(guard)
-    assert pattern_arm.faces == frozenset({pattern_side})
-    assert pattern_arm.owed == ("debt:pattern",)
-
-
-def test_a_spread_application_keeps_the_call_arms_testimony() -> None:
-    # The application was rebuilt as a fresh truth arm owing the call's
-    # debts: the call arm's partition testimony was dropped.
-    from sugar_lift_py_tests.floor import CallSiteValue
-    from sugar_lift_py_tests.outcome.exit_set import true_guard
-    from sugar_lift_python_source.manager_summary_derivation import (
-        _constructor_application_from_spread,
-    )
-
-    class _BoundCall(CallSiteValue):
-        """A constructor call whose actuals are already bound."""
-
-        __eq__ = object.__eq__
-        __hash__ = object.__hash__
-        bound_source_actuals = SimpleNamespace(actuals=(TermValue(1),))
-
-    call = object.__new__(_BoundCall)
-    side, _other = partition(("test:spread-call", 7825))
-    outcome = ExitSet(
-        (Completed(true_guard(), call, frozenset({side}), ("debt:call",)),)
-    )
-    call_sugar = SimpleNamespace(
-        desugar=lambda ctx: outcome,
-        source_call_frame=SimpleNamespace(
-            parameters=("expected",),
-            parameter_kinds=("positional_or_keyword",),
-        ),
-        site="test:spread-site:7825",
-        call_occurrence=None,
-    )
-
-    (arm,) = _constructor_application_from_spread(call_sugar, None).exits
-
-    assert isinstance(arm, Completed)
-    assert arm.value.arguments == (TermValue(1),)
-    assert arm.value.keyword_names == ()
-    assert arm.guard == true_guard()
-    assert arm.faces == frozenset({side})
-    assert arm.owed == ("debt:call",)

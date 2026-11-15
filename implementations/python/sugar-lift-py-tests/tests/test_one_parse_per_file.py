@@ -85,21 +85,9 @@ def test_the_context_a_caller_names_is_the_one_the_opener_builds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The audit leaf names the context; the enumerate levels do not. One open."""
-    import sugar_lift_python_source.manager_summary_derivation as derivation
-
     path = tmp_path / "producer.py"
     path.write_text(_PRODUCER, encoding="utf-8")
     bound = _count_parses(monkeypatch)
-    populated = []
-    original_populate = derivation.populate_source_derived_resource_refs
-
-    def counted_populate(source_file, **kwargs):
-        populated.append(source_file.unit.filename)
-        return original_populate(source_file, **kwargs)
-
-    monkeypatch.setattr(
-        derivation, "populate_source_derived_resource_refs", counted_populate
-    )
 
     named = lift_rpc.construction_context_for_open(path, root=tmp_path)
     level = lift_rpc.open_source_file_for_construction(
@@ -115,7 +103,6 @@ def test_the_context_a_caller_names_is_the_one_the_opener_builds(
     assert level.unit.construction_context is named
     assert leaf is level
     assert len(bound) == 1
-    assert populated == ["producer.py"]
 
 
 def test_a_plain_caller_between_the_readers_and_the_opener_costs_no_parse(

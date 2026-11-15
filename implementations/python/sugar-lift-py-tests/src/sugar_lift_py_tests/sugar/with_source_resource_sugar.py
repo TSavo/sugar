@@ -45,13 +45,85 @@ class WithSourceResourceSugar(Sugar):
         return _route_manager_faces(self, ctx)
 
 
-def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
+@dataclass(frozen=True)
+class WithReducedManagerSugar(Sugar):
+    """``with <head>:`` whose manager is the value its head reduced to.
+
+    The head is reduced once, as any expression is (``manager``); each value
+    it completes with is the manager, and ``protocol`` reads ``__enter__``
+    and ``__exit__`` on that value's own type, or answers the undecided
+    manager.  The faces are routed by the one router every constructed
+    ``with`` uses (``_route_manager_faces``) under Python's own disposition:
+    the truth of what ``__exit__`` returns decides whether an exception the
+    body raised is suppressed (8.5).
+    """
+
+    manager: Sugar
+    protocol: object
+    body: tuple[Sugar, ...]
+    manager_slot_id: str
+    enter_slot_id: str | None
+    exit_face_id: str
+    site: object = field(compare=False, default=None)
+
+    @classmethod
+    def witnesses(cls):
+        from sugar_lift_py_tests.sugar.witnesses import _call_pair
+
+        prefix = (
+            "class Resource:\n"
+            "    def __init__(self):\n"
+            "        self.closed = False\n"
+            "    def __enter__(self):\n"
+            "        return self\n"
+            "    def __exit__(self, effect_type, effect, traceback):\n"
+            "        self.closed = True\n"
+            "        return False\n\n"
+            "def make():\n"
+            "    return Resource()\n\n"
+            "def A(halts):\n"
+            "    resource = make()\n"
+            "    try:\n"
+            "        with resource:\n"
+            "            if halts:\n"
+            "                raise ValueError\n"
+            "    except ValueError:\n"
+            "        pass\n"
+            "    return resource.closed\n\n"
+        )
+        return _call_pair(
+            name="with_reduced_manager_closes_completed_and_halted",
+            owner_sugar="WithReducedManagerSugar",
+            truthful=prefix + "def test_a():\n"
+            "    assert A(False)\n"
+            "    assert A(True)\n",
+            lying=prefix + "def test_a():\n"
+            "    assert A(False)\n"
+            "    assert not A(True)\n",
+        )
+
+    def desugar(self, ctx: object = None) -> ExitSet:
+        from sugar_lift_py_tests.context_manager_contract import (
+            ReturnTruthinessDispositionV1,
+        )
+
+        return _route_manager_faces(
+            self, ctx, disposition=ReturnTruthinessDispositionV1()
+        )
+
+
+def _route_manager_faces(
+    resource, ctx: object = None, *, disposition=None
+) -> ExitSet:
     """Enter every manager face under its guard; union the exits (8.5).
 
     The enter runs beneath its manager face and the body beneath its enter
     face, each composed onto that face by ``ExitSet.sequence``: it takes the
     face's guard and faces and owes what the face owes. The exit routing
     carries a body face's debts onto every arm it leaves through.
+
+    ``disposition`` is the exit's disposition; without one it is the
+    resource's summary's.
     """
     from sugar_lift_py_tests.outcome.exit_set import Halted, _require_exit_set
     from sugar_lift_py_tests.outcome.resource_bindings import (
@@ -177,12 +249,16 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
                 face_facts = ExitFaceBinding.from_body_exit(
                     resource.exit_face_id, body_face
                 ).to_facts(site=resource.site, guard=body_face.guard)
-                disposition = resource.summary.semantics.exit.disposition
+                face_disposition = (
+                    disposition
+                    if disposition is not None
+                    else resource.summary.semantics.exit.disposition
+                )
                 from sugar_lift_py_tests.context_manager_contract import (
                     ReturnTruthinessDispositionV1,
                 )
 
-                if isinstance(disposition, ReturnTruthinessDispositionV1):
+                if isinstance(face_disposition, ReturnTruthinessDispositionV1):
                     from sugar_lift_py_tests.context_manager_contract import (
                         NeverSuppressesDispositionV1,
                     )
@@ -222,7 +298,7 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
                 else:
                     routed = ExitSet((body_face,)).and_exit(
                         exit_es,
-                        disposition=disposition,
+                        disposition=face_disposition,
                         resume=resume,
                     )
                 parts.append(
@@ -269,6 +345,9 @@ def _project_manager_receiver(value, ctx, seen=frozenset()):
         # ``contextmanager(f)(...)`` is ``_GeneratorContextManager(f, args,
         # kwds)``, whose ``self.gen`` is this allocated generator: the generator
         # protocol enters and exits exactly this machine.
+        return ExitSet.completed(value)
+    if not callable(getattr(value, "project_operation_receiver_outcome", None)):
+        # A value with no retained completion to project is its own receiver.
         return ExitSet.completed(value)
     from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 

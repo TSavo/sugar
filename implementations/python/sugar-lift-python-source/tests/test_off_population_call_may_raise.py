@@ -22,7 +22,7 @@ import pytest
 
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.outcome import Completed, Halted
-from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
+from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
 from sugar_source_tree.nodes import FunctionDef
 
 from test_contextmanager_generator_protocol import _function_rows, _imported
@@ -54,7 +54,7 @@ def _faces(tree):
 def test_an_off_population_call_in_enter_is_two_faced(tmp_path, enter):
     opened = _imported(tmp_path, _manager(enter), "pass", contextlib_enrolled=True)
     assert _function_rows(*opened) == (
-        WithSourceResourceSugar,
+        GeneratorWithSugar,
         [("halt", None), ("return", 7)],
     )
     faces = _faces(opened[0])

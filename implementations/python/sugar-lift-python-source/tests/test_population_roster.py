@@ -1,8 +1,7 @@
 """The population is step 2's file list and nothing else.
 
-Every ``sugar.enumerate`` level opens its file through the one opener, and the
-opener populates under the walk session for the root (#7796). That session's
-roster is ``project_file_roster(root)``: the content CID of every file step 2
+Every ``sugar.enumerate`` level opens its file through the one opener, under
+the walk session for the root (#7796). That session's roster is ``project_file_roster(root)``: the content CID of every file step 2
 lists. No distribution is enrolled by name, no module by a module-scoped
 entry or a standing extra, and no module by being imported. A module is
 enrolled only when the source its artifact seats for it is a listed file. An
@@ -23,10 +22,6 @@ from sugar_lift_python_source.resolution_session import (
     project_file_roster,
 )
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_lift_py_tests.context_manager_resolution import (
-    OpaqueCitedContextManagerRefV1,
-    SourceDerivedContextManagerRefV1,
-)
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_source_tree.reporter import CollectingReporter
 
@@ -82,24 +77,6 @@ def test_roster_is_the_content_cid_of_every_listed_file(tmp_path) -> None:
         assert name not in roster
 
 
-def test_the_open_populates_under_the_file_roster(tmp_path, monkeypatch) -> None:
-    """No level opens without populating, and none names a distribution."""
-    from sugar_lift_python_source import manager_summary_derivation as msd
-
-    root = _project(tmp_path, **{"a.py": "x = 1\n"})
-    seen: list[object] = []
-    original = msd.populate_source_derived_resource_refs
-
-    def capture(source_file, *, root, path, session=None, **kwargs):
-        seen.append(session)
-        return original(source_file, root=root, path=path, session=session, **kwargs)
-
-    monkeypatch.setattr(msd, "populate_source_derived_resource_refs", capture)
-    open_source_file_for_construction(root / "a.py", root=root)
-    assert len(seen) == 1
-    assert seen[0].enrolled_distributions == project_file_roster(root)
-
-
 def test_only_a_listed_file_enrolls_a_module() -> None:
     session = SourceResolutionSession(
         enrolled_distributions=frozenset({"blake3-512:listed"})
@@ -123,9 +100,15 @@ def test_the_session_has_no_import_admission() -> None:
     assert not hasattr(session, "imported_modules")
 
 
-def test_importing_contextlib_leaves_nullcontext_cited(tmp_path) -> None:
+def test_importing_contextlib_leaves_nullcontext_unread(tmp_path) -> None:
     """contextlib is installed, not one of step 2's files. Importing it does
-    not enroll it: nullcontext is an imported call, cited, never lifted."""
+    not enroll it: nullcontext is an imported call, never lifted.  The
+    ``with``'s manager is what its head reduces to (#7757)."""
+    from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+        WithReducedManagerSugar,
+    )
+    from sugar_source_tree.nodes import With
+
     source = (
         "from contextlib import nullcontext\n"
         "\n"
@@ -137,8 +120,5 @@ def test_importing_contextlib_leaves_nullcontext_cited(tmp_path) -> None:
     source_file = open_source_file_for_construction(
         root / "nc.py", root=root, reporter=CollectingReporter()
     )
-    refs = source_file.root.unit.construction_context.source_derived_contract_refs
-    assert len(refs) == 1
-    for ref in refs.values():
-        assert not isinstance(ref, SourceDerivedContextManagerRefV1), ref
-        assert isinstance(ref, OpaqueCitedContextManagerRefV1), ref
+    with_node = next(n for n in source_file.nodes() if isinstance(n, With))
+    assert type(with_node.sugar()) is WithReducedManagerSugar

@@ -23,7 +23,6 @@ from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.generator_manager_exit import observed_exit_refusals
 from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
-from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
 from sugar_source_tree.nodes import With
 
 import test_contextlib_suppress_source_exit_faces as opener
@@ -47,48 +46,46 @@ def _with(tmp_path: Path, source: str):
 
 
 def _imported(tmp_path: Path, implementation: str, body: str, *, contextlib_enrolled):
-    """``from arbitrary import cm`` over an installed distribution's manager."""
-    from test_returned_resource_with_construction import (
-        _contextmanager_dependency_graphs,
-        _distribution,
-    )
+    """``with cm():`` over the manager ``implementation`` defines.
 
+    No dependency body is ever read (#7757): an imported call answers from
+    the import table and the imported proofs only.  So the manager's source
+    stands in the consumer's own file, and its call is followed at reduce like
+    any same-file call.  The consumer is constructed under the step-3 table
+    its own ``with`` items enroll (the undecided row: the manager is what the
+    head reduces to).  ``contextlib_enrolled`` changes nothing it constructs."""
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
     )
-    from sugar_lift_python_source.canonical import blake3_512_of
-    from sugar_lift_python_source.manager_summary_derivation import (
-        populate_source_derived_resource_refs,
+    from sugar_lift_py_tests.lift_rpc import (
+        _context_manager_rows_for_paths,
+        provisional_contract_refs_from_demand_rows,
     )
-    from sugar_lift_python_source.resolution_session import SourceResolutionSession
+    from sugar_lift_python_source.canonical import blake3_512_of
     from sugar_source_tree.tree import SourceFile
 
-    dist = _distribution(tmp_path, implementation, exported="cm")
+    del contextlib_enrolled
     consumer = (
-        "from arbitrary import cm\n"
+        f"{implementation}\n"
         f"def f():\n    with cm():\n        {body}\n    return 7\n"
     )
     path = tmp_path / "consumer.py"
     path.write_text(consumer, encoding="utf-8")
-    context = TreeConstructionContextV1.for_source_call_construction()
+    context = TreeConstructionContextV1(
+        contract_refs=provisional_contract_refs_from_demand_rows(
+            _context_manager_rows_for_paths([path], root=tmp_path)
+        ),
+    )
     tree = SourceFile(
         (consumer, str(path), blake3_512_of(consumer.encode("utf-8"))),
         construction_context=context,
     )
-    roster = {dist.metadata["Name"]}
-    if contextlib_enrolled:
-        roster.add("cpython-stdlib:contextlib")
-    populate_source_derived_resource_refs(
-        tree,
-        root=tmp_path,
-        path=path,
-        distribution_index={"arbitrary": dist},
-        artifact_graph_cache=(
-            _contextmanager_dependency_graphs() if contextlib_enrolled else None
-        ),
-        session=SourceResolutionSession(enrolled_distributions=frozenset(roster)),
+    # The consumer's own ``with``: the last ``with cm():`` line of the file.
+    lines = consumer.splitlines()
+    line = len(lines) - lines[::-1].index("    with cm():")
+    return tree, next(
+        n for n in tree.nodes() if isinstance(n, With) and n.lineno == line
     )
-    return tree, next(n for n in tree.nodes() if isinstance(n, With))
 
 
 def _exits(tmp_path: Path, source: str):
@@ -136,11 +133,9 @@ def test_local_contextmanager_seats_its_own_frame(tmp_path):
     definition whose call keeps its frame (``call_applies_own_frame``,
     #7757): the frame is seated at the head and the With applies contextlib's
     law to it.  No decorator body is read to name enter/exit definitions."""
-    source_file, with_node = _with(
+    _source_file, with_node = _with(
         tmp_path, _manager(_SUPPRESSES_VALUE_ERROR, "pass")
     )
-    context = source_file.root.unit.construction_context
-    assert len(context.source_call_frames) == 1
     assert type(with_node.sugar()) is GeneratorWithSugar
 
 
@@ -188,18 +183,6 @@ def _function_rows(source_file, with_node):
 
 
 @pytest.mark.parametrize(
-    ("road", "consumer"),
-    (
-        # the kept frame of a local ``@contextmanager`` generator, under
-        # contextlib's law (#7757).
-        ("local", GeneratorWithSugar),
-        ("imported", WithSourceResourceSugar),
-        # contextlib's source off population: the import road seats the
-        # generator frame and GeneratorWithSugar consumes it under the same law.
-        ("imported-off-population", GeneratorWithSugar),
-    ),
-)
-@pytest.mark.parametrize(
     ("body", "rows"),
     (
         ("raise ValueError('v')", [("return", 7)]),
@@ -207,17 +190,11 @@ def _function_rows(source_file, with_node):
         ("pass", [("return", 7)]),
     ),
 )
-def test_except_arm_suppresses_only_its_exception(tmp_path, road, consumer, body, rows):
-    if road == "local":
-        opened = _with(tmp_path, _manager(_SUPPRESSES_VALUE_ERROR, body))
-    else:
-        opened = _imported(
-            tmp_path,
-            _SUPPRESSES_VALUE_ERROR,
-            body,
-            contextlib_enrolled=road == "imported",
-        )
-    assert _function_rows(*opened) == (consumer, rows)
+def test_except_arm_suppresses_only_its_exception(tmp_path, body, rows):
+    # the kept frame of a local ``@contextmanager`` generator, under
+    # contextlib's law (#7757).
+    opened = _with(tmp_path, _manager(_SUPPRESSES_VALUE_ERROR, body))
+    assert _function_rows(*opened) == (GeneratorWithSugar, rows)
 
 
 def test_undetermined_c_call_raise_splits_on_the_generator_except_arm(tmp_path):

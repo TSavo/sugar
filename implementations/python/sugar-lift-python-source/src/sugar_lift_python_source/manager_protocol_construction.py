@@ -9,6 +9,7 @@ from sugar_lift_py_tests.floor import (
     BlockValue,
     CallSiteValue,
     EnteredManagerStateValue,
+    FloorValue,
     GuardedReceiverFieldStoreValue,
     ObjectField,
     ObjectValue,
@@ -159,136 +160,297 @@ class ConstructedManagerProtocolV1:
         )
 
     def exit_outcome_for_body(self, entered, body_face, ctx: object = None):
-        """Invoke the cited exit frame with this body face's actual ABI inputs.
+        """Invoke the cited exit frame with this body face's actual ABI inputs
+        (``_exit_for_body``)."""
+        return _exit_for_body(self.exit_face_id, entered, body_face, ctx)
 
-        Python language reference 8.5, the with statement:
-        https://docs.python.org/3/reference/compound_stmts.html#the-with-statement
 
-        Bind before reducing the native method, not after an abstract reduction:
-        unreachable normal/exceptional branches must not perform field lookups.
-        """
-        from sugar_lift_py_tests.outcome import Completed, Halted
-        from sugar_lift_py_tests.effect import GroupedRaiseEffect, RaiseEffect
+def _exit_for_body(exit_face_id: str, entered, body_face, ctx: object = None):
+    """``__exit__`` on the entered receiver with this body face's actual ABI
+    inputs.
+
+    Python language reference 8.5, the with statement:
+    https://docs.python.org/3/reference/compound_stmts.html#the-with-statement
+
+    Bind before reducing the native method, not after an abstract reduction:
+    unreachable normal/exceptional branches must not perform field lookups.
+    """
+    from sugar_lift_py_tests.outcome import Completed, Halted
+    from sugar_lift_py_tests.effect import GroupedRaiseEffect, RaiseEffect
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.undetermined_exception_value import (
+        UndeterminedExceptionTypeValue,
+    )
+    from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
+    from sugar_lift_py_tests.floor import FloorValue, NoneValue
+    from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
+        AuthenticatedExceptionTypeValue,
+    )
+    from sugar_lift_py_tests.floor.manager_coordinate import RaisedExitTypeValue
+    from sugar_lift_py_tests.floor.class_value import ClassValue
+    from sugar_lift_py_tests.floor.class_definition_value import (
+        ClassDefinitionValue,
+    )
+    from sugar_lift_py_tests.floor.exception_class_value import ExceptionClassValue
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+    if not isinstance(entered, EnteredManagerStateValue):
+        construction_panic_gap(
+            owner="ManagerProtocol.exit_outcome_for_body",
+            blame=exit_face_id,
+            observed=type(entered).__name__,
+            requested="matching entered manager state",
+            fix="carry the exact enter face into resource exit",
+        )
+    if isinstance(body_face, Completed) or (
+        isinstance(body_face, Halted)
+        and isinstance(body_face.effect, LoopControlEffect)
+    ):
+        args = (NoneValue(), NoneValue(), NoneValue())
+    elif isinstance(body_face, Halted) and isinstance(body_face.effect, RaiseEffect):
+        effect = body_face.effect
+        value = effect.raised_value
+        # The RaiseEffect already owns type identity. Pass the native value,
+        # not that identity witness, into the callee's operation dispatch.
+        while isinstance(value, AuthenticatedExceptionTypeValue):
+            value = value.value
+        if value is None or isinstance(
+            value, (ClassValue, ClassDefinitionValue, ExceptionClassValue)
+        ):
+            # A bare class still needs native exception instantiation; it
+            # must never stand in for the actual instance supplied by With.
+            # The raise authenticates an instance's existence, not its
+            # fields. An unused slot needs no fabricated instance; a lookup
+            # on this still-undischarged slot remains a typed demand.
+            value = ExitValueCoordinate(exit_face_id, None)
+        if not isinstance(value, FloorValue):
+            construction_panic_gap(
+                owner="ManagerProtocol.exit_outcome_for_body",
+                blame=effect.occurrence,
+                observed="authenticated raise without an actual exception value",
+                requested="actual raised Floor value, not a guessed instance",
+                fix="retain the exception producer's actual value on the body face",
+            )
+        args = (
+            RaisedExitTypeValue(
+                effect.exception_type_coordinate, effect.exception_type_mro
+            ),
+            value,
+            ExitTracebackCoordinate(exit_face_id, None),
+        )
+    elif isinstance(body_face, Halted) and isinstance(
+        body_face.effect, GroupedRaiseEffect
+    ):
+        from sugar_lift_py_tests.floor.grouped_exception_value import (
+            GroupedExceptionValue,
+        )
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        effect = body_face.effect
+        # BaseExceptionGroup(...) natively becomes ExceptionGroup when every
+        # leaf is an Exception, so only the ExceptionGroup coordinate states
+        # the instance's real class.
+        if effect.exception_type_coordinate != ctor(
+            "python:exception_type_identity",
+            [str_const("builtins"), str_const("ExceptionGroup")],
+        ) or effect.exception_type_mro is None:
+            construction_panic_gap(
+                owner="ManagerProtocol.exit_outcome_for_body",
+                blame=exit_face_id,
+                observed="exception group without builtins.ExceptionGroup testimony",
+                requested="an authenticated builtins.ExceptionGroup body raise",
+                fix="authenticate the group's native class before exit inputs",
+            )
+        args = (
+            RaisedExitTypeValue(
+                effect.exception_type_coordinate, effect.exception_type_mro
+            ),
+            GroupedExceptionValue(effect, exit_face_id),
+            ExitTracebackCoordinate(exit_face_id, None),
+        )
+    elif isinstance(body_face, Halted) and isinstance(
+        body_face.effect, UndeterminedRaiseEffect
+    ) and body_face.effect.exception_value is not None:
+        # A may-raise operation threw ONE exception object nobody testified
+        # to. With hands it to __exit__ like any raise: (type(e), e, tb),
+        # with type(e) derived from e itself, never a guessed class. The
+        # exit's own type tests then split on it.
+        exception = body_face.effect.exception_value
+        args = (
+            UndeterminedExceptionTypeValue(exception),
+            exception,
+            ExitTracebackCoordinate(exit_face_id, None),
+        )
+    else:
+        construction_panic_gap(
+            owner="ManagerProtocol.exit_outcome_for_body",
+            blame=exit_face_id,
+            observed=type(getattr(body_face, "effect", body_face)).__name__,
+            requested="normal control or an authenticated raised body face",
+            fix="authenticate the body exit before constructing native exit inputs",
+        )
+    return _call_protocol_method(
+        entered.receiver_state,
+        "__exit__",
+        args,
+        exit_face_id,
+        ctx,
+    )
+
+
+@dataclass(frozen=True)
+class UndecidedManagerSlotResultValue(FloorValue):
+    """What ``__enter__`` or ``__exit__`` of the undecided manager returned.
+
+    Opaque and keyed on the ``with`` evaluation's exit face: nothing here
+    decides which method ran, so nothing decides what it returned."""
+
+    slot: str
+    key: str
+
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        del owner
+        return ctor(
+            "python:undecided_manager.slot_result",
+            (str_const(self.slot), str_const(self.key)),
+        )
+
+    def truth(self, site):
+        """Truth is the undecided ``py.truthy`` of this exact opaque result."""
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import py_truthy
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        return ExitSet.completed(
+            PredicateValue(py_truthy(self.to_term(owner="truth")), site)
+        )
+
+
+@dataclass(frozen=True)
+class ReducedManagerProtocolV1:
+    """The protocol of the manager a ``with`` head reduced to (#7757).
+
+    The head is reduced once, as any expression is, and each value it
+    completes with is the manager.  ``__enter__`` and ``__exit__`` are read
+    on that value's own type, as Python reads them (8.5):
+
+    * a receiver whose type the one class-namespace lookup decides selects
+      both methods: each is bound and applied as every call is
+      (``_call_protocol_method``);
+    * a receiver whose type it decides lacks either: the ``with`` raises the
+      interpreter's own TypeError before any enter and before the body;
+    * any other value is the undecided manager: ``__enter__`` and
+      ``__exit__`` each complete with an opaque result or raise something
+      undetermined (``ExitSet.two_faced``), both faces owing the one
+      undecided member at the ``with`` item.  The truth of the opaque exit
+      result decides suppression, never assumed either way.
+
+    No manager is invented and no callee body is read here: what the head
+    reduced to is the only testimony.
+    """
+
+    exit_face_id: str
+    # The With item's ``SourceFragmentCoordinateV1``, where each undecided
+    # step is owed (``ExitSet.two_faced``).
+    coordinate: object = field(compare=False)
+    # The With item's source fragment, where an undecided step halts.
+    fragment: object = field(default=None, compare=False)
+
+    @staticmethod
+    def _protocol_of(receiver):
+        """``(decided, has_enter, has_exit)`` for the receiver's own type.
+
+        ``decided`` is True only when the one class-namespace lookup decides
+        the answer: both methods present, or one of them absent where Python
+        looks it up first."""
+        if not isinstance(receiver, ObjectValue):
+            return False, None, None
+        has_enter = receiver.has_method("__enter__")
+        if has_enter is False:
+            return True, False, receiver.has_method("__exit__") is True
+        has_exit = receiver.has_method("__exit__")
+        if has_enter is None or has_exit is None:
+            return False, has_enter, has_exit
+        return True, has_enter, has_exit
+
+    def _undecided_step(self, step: str, value):
+        """``step`` completes with ``value`` under its site-keyed atom, or
+        raises something nothing names under the complement: the one
+        two-faced constructor, owing the undecided member at the item."""
         from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-        from sugar_lift_py_tests.floor.undetermined_exception_value import (
-            UndeterminedExceptionTypeValue,
-        )
-        from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
-        from sugar_lift_py_tests.floor import FloorValue, NoneValue
-        from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
-            AuthenticatedExceptionTypeValue,
-        )
-        from sugar_lift_py_tests.floor.manager_coordinate import RaisedExitTypeValue
-        from sugar_lift_py_tests.floor.class_value import ClassValue
-        from sugar_lift_py_tests.floor.class_definition_value import (
-            ClassDefinitionValue,
-        )
-        from sugar_lift_py_tests.floor.exception_class_value import ExceptionClassValue
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+        from sugar_lift_py_tests.ir import atomic, ctor, str_const
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        if not isinstance(entered, EnteredManagerStateValue):
-            construction_panic_gap(
-                owner="ManagerProtocol.exit_outcome_for_body",
-                blame=self.exit_face_id,
-                observed=type(entered).__name__,
-                requested="matching entered manager state",
-                fix="carry the exact enter face into resource exit",
-            )
-        if isinstance(body_face, Completed) or (
-            isinstance(body_face, Halted)
-            and isinstance(body_face.effect, LoopControlEffect)
-        ):
-            args = (NoneValue(), NoneValue(), NoneValue())
-        elif isinstance(body_face, Halted) and isinstance(
-            body_face.effect, RaiseEffect
-        ):
-            effect = body_face.effect
-            value = effect.raised_value
-            # The RaiseEffect already owns type identity. Pass the native value,
-            # not that identity witness, into the callee's operation dispatch.
-            while isinstance(value, AuthenticatedExceptionTypeValue):
-                value = value.value
-            if value is None or isinstance(
-                value, (ClassValue, ClassDefinitionValue, ExceptionClassValue)
-            ):
-                # A bare class still needs native exception instantiation; it
-                # must never stand in for the actual instance supplied by With.
-                # The raise authenticates an instance's existence, not its
-                # fields. An unused slot needs no fabricated instance; a lookup
-                # on this still-undischarged slot remains a typed demand.
-                value = ExitValueCoordinate(self.exit_face_id, None)
-            if not isinstance(value, FloorValue):
-                construction_panic_gap(
-                    owner="ManagerProtocol.exit_outcome_for_body",
-                    blame=effect.occurrence,
-                    observed="authenticated raise without an actual exception value",
-                    requested="actual raised Floor value, not a guessed instance",
-                    fix="retain the exception producer's actual value on the body face",
+        guard = atomic(
+            "python:undecided_manager.slot_completes",
+            [
+                ctor(
+                    "python:undecided_manager.step",
+                    (str_const(step), str_const(self.exit_face_id)),
                 )
-            args = (
-                RaisedExitTypeValue(
-                    effect.exception_type_coordinate, effect.exception_type_mro
-                ),
-                value,
-                ExitTracebackCoordinate(self.exit_face_id, None),
-            )
-        elif isinstance(body_face, Halted) and isinstance(
-            body_face.effect, GroupedRaiseEffect
-        ):
-            from sugar_lift_py_tests.floor.grouped_exception_value import (
-                GroupedExceptionValue,
-            )
-            from sugar_lift_py_tests.ir import ctor, str_const
+            ],
+        )
+        return ExitSet.two_faced(
+            value,
+            UndeterminedRaiseEffect(
+                blame=self.exit_face_id,
+                occurrence=f"{self.exit_face_id}#{step}",
+                producer_node_owner=f"ReducedManagerProtocolV1.{step}",
+                site=self.fragment,
+            ),
+            guard=guard,
+            site=self.coordinate,
+        )
 
-            effect = body_face.effect
-            # BaseExceptionGroup(...) natively becomes ExceptionGroup when every
-            # leaf is an Exception, so only the ExceptionGroup coordinate states
-            # the instance's real class.
-            if effect.exception_type_coordinate != ctor(
-                "python:exception_type_identity",
-                [str_const("builtins"), str_const("ExceptionGroup")],
-            ) or effect.exception_type_mro is None:
-                construction_panic_gap(
-                    owner="ManagerProtocol.exit_outcome_for_body",
-                    blame=self.exit_face_id,
-                    observed="exception group without builtins.ExceptionGroup testimony",
-                    requested="an authenticated builtins.ExceptionGroup body raise",
-                    fix="authenticate the group's native class before exit inputs",
-                )
-            args = (
-                RaisedExitTypeValue(
-                    effect.exception_type_coordinate, effect.exception_type_mro
+    def enter_resource_outcome_for(self, receiver, ctx: object = None):
+        """Enter the exact receiver the head's reduction produced."""
+        decided, has_enter, has_exit = self._protocol_of(receiver)
+        if not decided:
+            return self._undecided_step(
+                "__enter__",
+                EnteredManagerStateValue(
+                    enter_value=UndecidedManagerSlotResultValue(
+                        "__enter__", self.exit_face_id
+                    ),
+                    receiver_state=receiver,
                 ),
-                GroupedExceptionValue(effect, self.exit_face_id),
-                ExitTracebackCoordinate(self.exit_face_id, None),
             )
-        elif isinstance(body_face, Halted) and isinstance(
-            body_face.effect, UndeterminedRaiseEffect
-        ) and body_face.effect.exception_value is not None:
-            # A may-raise operation threw ONE exception object nobody testified
-            # to. With hands it to __exit__ like any raise: (type(e), e, tb),
-            # with type(e) derived from e itself, never a guessed class. The
-            # exit's own type tests then split on it.
-            exception = body_face.effect.exception_value
-            args = (
-                UndeterminedExceptionTypeValue(exception),
-                exception,
-                ExitTracebackCoordinate(self.exit_face_id, None),
+        if not (has_enter and has_exit):
+            from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+            from sugar_lift_py_tests.manager_protocol_absence_refusal import (
+                observed_non_manager_with_refusal,
             )
-        else:
-            construction_panic_gap(
-                owner="ManagerProtocol.exit_outcome_for_body",
-                blame=self.exit_face_id,
-                observed=type(getattr(body_face, "effect", body_face)).__name__,
-                requested="normal control or an authenticated raised body face",
-                fix="authenticate the body exit before constructing native exit inputs",
+            from sugar_lift_py_tests.outcome import ExitSet
+
+            refusal = observed_non_manager_with_refusal(
+                receiver.class_name, has_enter=has_enter, has_exit=has_exit
             )
-        return _call_protocol_method(
-            entered.receiver_state,
+            blame = str(self.fragment)
+            return ExitSet.halted(
+                RaiseEffect.for_builtin(
+                    refusal.exception_name,
+                    occurrence=f"non-manager-with-refusal:{blame}",
+                    blame=blame,
+                    raised_value=refusal.message,
+                    producer_node_owner="ReducedManagerProtocolV1",
+                    site=self.fragment,
+                )
+            )
+        enter = _call_protocol_method(receiver, "__enter__", (), self.exit_face_id, ctx)
+        return _resource_enter_transitions(receiver, enter, blame=self.exit_face_id)
+
+    def exit_outcome_for_body(self, entered, body_face, ctx: object = None):
+        """``__exit__`` over this body face: the entered receiver's own
+        method, or the undecided manager's two-faced exit."""
+        receiver = getattr(entered, "receiver_state", None)
+        decided, has_enter, has_exit = self._protocol_of(receiver)
+        if decided and has_enter and has_exit:
+            return _exit_for_body(self.exit_face_id, entered, body_face, ctx)
+        return self._undecided_step(
             "__exit__",
-            args,
-            self.exit_face_id,
-            ctx,
+            UndecidedManagerSlotResultValue("__exit__", self.exit_face_id),
         )
 
 

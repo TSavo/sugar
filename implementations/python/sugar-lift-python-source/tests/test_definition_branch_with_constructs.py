@@ -3,11 +3,10 @@
 The board accounts a file through ``roll_call.discharge``, which constructs
 every definition (``node.sugar()``, step 5) and reduces none.  An ``if``
 builds both of its suites, every statement of them, when it is constructed:
-a ``with`` in a suite is built when its manager has a contract and refused by
-the same named ``With`` refusal when it has none.  Nothing waits on a
-reduction to build it, so the board counts the tree built or refused by name
-(``pandas/plotting/_matplotlib/__init__.py:67`` once ended ``completed`` with
-its ``with`` unconstructed).
+a ``with`` in a suite is built, its manager what its head reduces to.
+Nothing waits on a reduction to build it, so the board counts the tree built
+or refused by name (``pandas/plotting/_matplotlib/__init__.py:67`` once ended
+``completed`` with its ``with`` unconstructed).
 """
 
 from __future__ import annotations
@@ -16,9 +15,9 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
-from sugar_source_tree.nodes import FunctionDef, With
-from sugar_source_tree.panic import SourceTreePanic
+from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
+from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithReducedManagerSugar
+from sugar_source_tree.nodes import With
 from sugar_source_tree.roll_call import discharge
 
 import test_contextlib_suppress_source_exit_faces as opener
@@ -54,41 +53,20 @@ def test_a_reachable_branch_with_is_constructed_by_the_discharge(tmp_path):
     with_node = next(n for n in source_file.nodes() if isinstance(n, With))
     line = with_node.line_col_span().start_line
     assert [e for e in report.present if e.kind == "With" and e.start_line == line]
-    assert type(with_node.sugar()) is WithSourceResourceSugar
+    assert type(with_node.sugar()) is GeneratorWithSugar
 
 
-def _with_refusals(source_file):
-    return [
-        str(panic)
-        for node, panic in source_file.reporter.gaps
-        if isinstance(node, With)
-    ]
-
-
-def test_constructing_the_definition_refuses_its_branch_with_by_name(tmp_path):
-    # The lying twin: before #7699 this definition answered clean while the
-    # ``with`` under the undecided ``if c:`` was never constructed.  Building
-    # the definition alone builds the ``with``, so it is refused here.
+def test_a_branch_with_over_an_unread_manager_is_constructed(tmp_path):
+    # The lying twin of a refusal: before #7699 the ``with`` under the
+    # undecided ``if c:`` was never constructed.  Building the definition
+    # builds the ``with``; its manager is what the head reduces to (#7757),
+    # here a manager nothing decides.
     source_file = _open(tmp_path, _guarded("unknown_manager()"))
-    f = next(
-        n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
-    )
-    with pytest.raises(SourceTreePanic, match="CONTEXT MANAGER RESOLUTION GAP"):
-        f.sugar()
-    (refusal,) = _with_refusals(source_file)
-    assert "CONTEXT MANAGER RESOLUTION GAP" in refusal
-
-
-def test_a_reachable_branch_with_without_a_contract_is_refused(tmp_path):
-    source_file = _open(tmp_path, _guarded("unknown_manager()"))
-    report = discharge(source_file)  # the board refuses it, by name
-    (refusal,) = _with_refusals(source_file)
-    assert "CONTEXT MANAGER RESOLUTION GAP" in refusal
+    report = discharge(source_file)
     with_node = next(n for n in source_file.nodes() if isinstance(n, With))
     line = with_node.line_col_span().start_line
-    assert not [e for e in report.present if e.kind == "With" and e.start_line == line]
-    with pytest.raises(SourceTreePanic, match="CONTEXT MANAGER RESOLUTION GAP"):
-        with_node.sugar()
+    assert [e for e in report.present if e.kind == "With" and e.start_line == line]
+    assert type(with_node.sugar()) is WithReducedManagerSugar
 
 
 def _errstate_signature():
@@ -131,23 +109,10 @@ def _errstate_signature():
     )
 
 
-def _discharged_branch_with(tmp_path):
-    source_file = _open(tmp_path, _guarded("cm()"))
-    report = discharge(source_file)
-    with_node = next(n for n in source_file.nodes() if isinstance(n, With))
-    line = with_node.line_col_span().start_line
-    assert [e for e in report.present if e.kind == "With" and e.start_line == line]
-    value = with_node.sugar()
-    assert type(value) is WithSourceResourceSugar
-    return value
-
-
-def test_a_branch_with_over_a_defaulted_signature_canonicalizes(tmp_path):
-    # #7730: ``pandas/core/series.py:3345`` -- ``with np.errstate(all=
-    # "ignore"):`` under ``if isinstance(other, Series):``.  The discharge
-    # builds the branch ``with`` and the census reporter content-addresses
-    # the presented value, whose summary carries the manager's signature.
-    # Each default is a sealed, CID-owning term, so the value canonicalizes.
+def test_a_signature_with_sealed_defaults_canonicalizes():
+    # #7730: ``np.errstate.__init__``'s signature.  Each default is a sealed,
+    # CID-owning term, so the signature canonicalizes, and a different default
+    # is a different value.
     from dataclasses import replace
 
     from sugar_lift_py_tests.context_manager_contract import (
@@ -157,15 +122,9 @@ def test_a_branch_with_over_a_defaulted_signature_canonicalizes(tmp_path):
     from sugar_lift_py_tests.ir import PrimitiveSort
     from sugar_source_tree.binding_state import constructed_value_cid_v2
 
-    value = _discharged_branch_with(tmp_path)
-    errstate_shaped = replace(
-        value,
-        summary=replace(value.summary, import_signature=_errstate_signature()),
-    )
-    assert isinstance(constructed_value_cid_v2(errstate_shaped), str)
-    # The defaults are content: a different default is a different value.
-    other = _errstate_signature()
-    other_parameters = list(other.parameters)
+    signature = _errstate_signature()
+    assert isinstance(constructed_value_cid_v2(signature), str)
+    other_parameters = list(signature.parameters)
     other_parameters[1] = replace(
         other_parameters[1],
         sort=PrimitiveSort("Int"),
@@ -173,15 +132,9 @@ def test_a_branch_with_over_a_defaulted_signature_canonicalizes(tmp_path):
             {"kind": "const", "value": 0, "sort": {"kind": "primitive", "name": "Int"}}
         ),
     )
-    differently_defaulted = replace(
-        value,
-        summary=replace(
-            value.summary, import_signature=ImportSignatureV2(tuple(other_parameters))
-        ),
-    )
-    assert constructed_value_cid_v2(differently_defaulted) != constructed_value_cid_v2(
-        errstate_shaped
-    )
+    assert constructed_value_cid_v2(
+        ImportSignatureV2(tuple(other_parameters))
+    ) != constructed_value_cid_v2(signature)
 
 
 def test_a_raw_json_term_still_has_no_category(tmp_path):

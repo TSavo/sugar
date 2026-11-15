@@ -2341,10 +2341,6 @@ def exception_type_identity_of_import_target(target_symbol: str):
     return exception_type_identity_of_symbol(target_symbol)
 
 
-# ``SourceUnit._projected_manager_heads_memo`` while the projection runs.
-_PROJECTING_MANAGER_HEADS = object()
-
-
 @dataclass(frozen=True)
 class SourceUnit:
     """One parsed source: oracle-pinned text, its content address, its line table.
@@ -2462,12 +2458,6 @@ class SourceUnit:
     _class_namespace_stores_memo: object = field(
         init=False, default=None, repr=False, compare=False
     )
-    # ``(typed module, projected functions, {use-site span: provider Call})``:
-    # every function that writes a bare-Name ``with`` head, substituted once
-    # (``projected_manager_heads``), rebuilt if the typed root is replaced.
-    _projected_manager_heads_memo: object = field(
-        init=False, default=None, repr=False, compare=False
-    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
@@ -2505,7 +2495,6 @@ class SourceUnit:
         object.__setattr__(self, "_module_binding_states_memo", None)
         object.__setattr__(self, "_module_statement_starts_memo", None)
         object.__setattr__(self, "_class_namespace_stores_memo", None)
-        object.__setattr__(self, "_projected_manager_heads_memo", None)
 
     def _published_enrollment_decisions(
         self, occurrence: SourceOccurrenceIdentityV1
@@ -2900,99 +2889,6 @@ class SourceUnit:
                 fix="construct this SourceUnit only through SourceFile",
             )
         return self._constructed_module
-
-    def projected_manager_heads(self) -> tuple:
-        """``(projected functions, {use-site span: provider Call})``.
-
-        ``with m:`` enters the manager the Name reaches.  A function body
-        substituted under no outer binding (``substitute({})``) replaces the
-        Name with its reaching value while ``WithItem.substitute`` keeps the
-        item's immutable use coordinate, so the projection preserves
-        shadowing and undecided values with no second binding mechanism.
-        Only functions that write a bare-Name manager -- single-item
-        ``with m:`` and multi-item ``with m, n:`` alike -- are projected, so
-        unrelated frames demand nothing.
-
-        Read off this one opened file, once per typed root, and kept on the
-        unit.  Population reads one manager-use row per use site from the
-        index (``_projected_manager_call_uses``); a bare-Name head reads its
-        provider Call from it at construction (``With._provider_manager_call``).
-        The index is keyed by use site: it holds a Call borrowed from another
-        locus at every use site it was projected to, so ``m = make(); with m:
-        ...; with m: ...`` gives both ``with`` sites the one provider Call.
-
-        A head whose binding is undecided reaches no provider Call: the Name
-        stays (``Name.substitute``), so its use site has no index entry and
-        the ``With`` reduces the manager as undecided.  Each function's frame
-        is that function's one rewrite under no outer binding
-        (``FunctionDef.rewrite_under_no_binding``), read here, never caught
-        here.  A rewrite that refused (it reads a module global the module
-        body leaves undecided, ``_bound_module_references``, or any other
-        named refusal) is the function's refusal: its heads have no index
-        entry and the projection reads the next function.  The function's own
-        construction refuses by name where the universe scan records it as
-        the function's refused member (step 8).  One function never takes
-        down the file's open.  No provider is invented for it.
-        """
-        module = self._require_typed_module(
-            "SourceUnit.projected_manager_heads", blame=self.filename
-        )
-        memo = self._projected_manager_heads_memo
-        if memo is _PROJECTING_MANAGER_HEADS:
-            raise BackendDefect(
-                blame=self.filename,
-                owner="SourceUnit.projected_manager_heads",
-                observed="the projection asked for itself while projecting",
-                requested="one projection of this file's bare-Name manager heads",
-                fix="a substituted item reads its own projected head, never the file's",
-            )
-        if memo is not None and memo[0] is module:
-            return memo[1], memo[2]
-        object.__setattr__(
-            self, "_projected_manager_heads_memo", _PROJECTING_MANAGER_HEADS
-        )
-        try:
-            projected_list = []
-            for function in self.constructed_module.function_nodes:
-                if not any(
-                    isinstance(node, With)
-                    and any(item.context_expr.kind == "Name" for item in node.items)
-                    for node in function.walk()
-                ):
-                    continue
-                rewrite = function.rewrite_under_no_binding()
-                if rewrite.panic is None:
-                    projected_list.append(rewrite.value)
-            projected = tuple(projected_list)
-            providers: dict = {}
-            for root in projected:
-                for node in root.walk():
-                    if not isinstance(node, (With, AsyncWith)):
-                        continue
-                    for item in node.items:
-                        expr = item.context_expr
-                        if not isinstance(expr, Call):
-                            continue
-                        span = expr.line_col_span()
-                        call_span = (
-                            span.start_line,
-                            span.start_col,
-                            span.end_line,
-                            span.end_col,
-                        )
-                        use_site = item._manager_use_site_span()
-                        if use_site == call_span:
-                            # The head is its own call: a direct-call manager,
-                            # not one borrowed from another locus.
-                            continue
-                        providers[use_site] = expr
-        except BaseException:
-            object.__setattr__(self, "_projected_manager_heads_memo", None)
-            raise
-        object.__setattr__(
-            self, "_projected_manager_heads_memo", (module, projected, providers)
-        )
-        return projected, providers
 
     def _lexical_import_seat(self):
         """``(root, path)`` this unit's lexical import pass runs under: the
@@ -9481,10 +9377,8 @@ class WithItem(Node):
         return self._make_call(enter_attr, ())
 
     def _source_exit_face_id(self) -> str:
-        """The source occurrence's exit face: the one the manager summary
-        derivation states the derived protocol's ``__exit__`` over
-        (``manager_summary_derivation._direct_with_call_uses``), once per
-        use site, before any evaluation exists."""
+        """The source occurrence's exit face, once per use site, before any
+        evaluation exists."""
         return f"{self._effect_slot_id()}#exit_face"
 
     def _exit_face_id(self) -> str:
@@ -10021,18 +9915,15 @@ class FunctionDef(Statement):
         return FunctionDef._generator_top_level_steps(body, name_statement)
 
     @staticmethod
-    def _generator_step_producer(with_step=None):
+    def _generator_step_producer():
         """The one generator step producer: ``(name_statement, branch_steps)``.
 
         ``name_statement`` names one statement as a generator step (or says
         it cannot); ``branch_steps`` names a suite (a branch, a ``try`` body,
-        a cleanup suite, a nested ``with`` body), or None when any statement
-        in it is unnameable.  A top-level generator body
-        (``_generator_top_level_steps``) and a nested ``with`` body a manager
-        derivation seats (``manager_summary_derivation``) are both named
-        here.  ``with_step`` names a ``with`` statement for a caller that
-        resolves its manager (a cited-opaque manager); without it a ``with``
-        is unnameable here and a top-level body keeps it opaque.
+        a cleanup suite), or None when any statement in it is unnameable.  A
+        top-level generator body (``_generator_top_level_steps``) is named
+        here.  A ``with`` is unnameable here: a top-level body keeps it
+        opaque.
         """
         from sugar_lift_py_tests.generator_construction import (
             AssignStepV1,
@@ -10685,11 +10576,6 @@ class FunctionDef(Statement):
                 if body_steps is None and FunctionDef._owns_yield(statement.body):
                     return _GeneratorTryFinallyExpansionV1(statement, cleanup_step)
                 return absent_step
-            if isinstance(statement, With) and with_step is not None:
-                step = with_step(statement)
-                if step is None:
-                    return absent_step
-                return _GeneratorNamedStepV1(step)
             return absent_step
 
         def finally_step(finalbody):
@@ -11047,46 +10933,6 @@ class FunctionDef(Statement):
             self, reads, owner="FunctionDef._module_global_references"
         )
 
-    def rewrite_under_no_binding(self):
-        """This function's body rewritten by temporal substitution under no
-        outer binding (``substitute({})``): the frame the file's bare-Name
-        manager heads are projected off (``SourceUnit.projected_manager_heads``).
-
-        The function's one answer, asked once per resident function and
-        ambient state through the one door for memo rows
-        (``construction_cache``): the row holds the rewritten function, or the
-        refusal the rewrite raised, remembered as loudly as an answer.  The
-        row is returned; a reader that reads past this function reads
-        ``row.panic`` and never catches.  The refusal is the function's: its
-        own construction (``_construct_sugar``) substitutes the same body and
-        refuses by name, where the universe scan records it as the function's
-        refused member (step 8).  A ``BackendDefect`` is not the function's
-        refusal: it is not remembered, and it propagates.
-        """
-        cache = self._construction_cache()
-        key = (id(self.ref), "rewrite-under-no-binding")
-        row = serve(cache.substitutions, key, self.reporter)
-        if row is not None:
-            return row
-        computation = open_row()
-        try:
-            rewritten = self.substitute({})
-        except BackendDefect:
-            abandon_row(computation)
-            raise
-        except LifterRefusal as refusal:
-            cache._pinned[key] = self.ref
-            return close_row(
-                cache.substitutions, key, computation, self.reporter, panic=refusal
-            )
-        except BaseException:
-            abandon_row(computation)
-            raise
-        cache._pinned[key] = self.ref
-        return close_row(
-            cache.substitutions, key, computation, self.reporter, value=rewritten
-        )
-
     def bridge_source_symbol(self) -> Optional[str]:
         """This definition's ``bridgeSourceSymbol``: the target symbol a
         consumer's import of it reaches, for a module-level function under a
@@ -11431,10 +11277,6 @@ class AsyncFunctionDef(Statement):
 
     def _module_global_references(self) -> dict:
         return FunctionDef._module_global_references(self)
-
-    def rewrite_under_no_binding(self):
-        """Same one rewrite under no outer binding as FunctionDef."""
-        return FunctionDef.rewrite_under_no_binding(self)
 
     def bridge_source_symbol(self) -> Optional[str]:
         """Same definition symbol as FunctionDef."""
@@ -17090,53 +16932,85 @@ class With(Statement):
             end_line,
             end_col,
         )
-        derived = context.source_derived_contract_refs.get(coordinate)
-        if derived is not None:
-            return coordinate, derived
+        seat = coordinate
         if hasattr(item, "selected_arm_of_start_line"):
             # One arm of a branch-selected head (``_selected_manager_sugar``):
-            # its resolution rides inside the With item's selected ref.
-            from sugar_lift_py_tests.context_manager_resolution import (
-                SelectedContextManagerRefV1,
+            # the table enrolls the ``with`` item, never an arm's call, so the
+            # arm reads its item's own row.
+            seat = SourceFragmentCoordinateV1(
+                self.unit.source_cid,
+                item.selected_arm_of_start_line,
+                item.selected_arm_of_start_col,
+                item.selected_arm_of_end_line,
+                item.selected_arm_of_end_col,
             )
-
-            selected = context.source_derived_contract_refs.get(
-                SourceFragmentCoordinateV1(
-                    self.unit.source_cid,
-                    item.selected_arm_of_start_line,
-                    item.selected_arm_of_start_col,
-                    item.selected_arm_of_end_line,
-                    item.selected_arm_of_end_col,
-                )
-            )
-            if isinstance(selected, SelectedContextManagerRefV1):
-                arm = selected.arm(coordinate)
-                if arm is not None:
-                    return coordinate, arm
         try:
-            return coordinate, context.contract_refs.require(coordinate)
+            return coordinate, context.contract_refs.require(seat)
         except ContractRefProtocolError:
             return coordinate, _UNSEATED_MANAGER_ROW
 
-    def _published_non_manager_head(self, item: WithItem):
-        """The producer's absence proof for a direct-call head, else None."""
-        if not isinstance(item.context_expr, Call):
-            return None
-        context = self._require_construction_context(
-            owner="With._published_non_manager_head"
-        )
+    def _manager_answered_by_reduction(self, item: WithItem) -> bool:
+        """True when the item's row is the undecided gap: nothing the table
+        holds answers the manager, so the manager is what the one reduction
+        of the head gives (``_reduced_manager_sugar``).
+
+        The table answers an imported call from the import table and the
+        imported proofs; every other head -- a same-file call, a name, an
+        attribute, anything -- keeps the undecided row, and its value is read
+        at reduce like any expression's.  A row of any other kind is the
+        table's own answer, read as it is."""
         from sugar_lift_py_tests.context_manager_resolution import (
-            SourceFragmentCoordinateV1,
-            TreeConstructionContextV1,
+            UNDECIDED_GAP_KIND,
+            ContextManagerResolutionGapV1,
         )
 
-        if not isinstance(context, TreeConstructionContextV1):
-            return None
-        start_line, start_col, end_line, end_col = item._manager_use_site_span()
-        coordinate = SourceFragmentCoordinateV1(
-            self.unit.source_cid, start_line, start_col, end_line, end_col
+        resolution = self._seated_manager_resolution(item)[1]
+        return (
+            isinstance(resolution, ContextManagerResolutionGapV1)
+            and resolution.kind == UNDECIDED_GAP_KIND
         )
-        return context.source_non_manager_heads.get(coordinate)
+
+    def _reduced_manager_sugar(self, item: WithItem, binds_enter_result: bool):
+        """``with <head>:`` whose manager is the value the head reduces to.
+
+        The head is reduced once, as any expression is: a same-file call is
+        followed at reduce like any call and its returned value is the
+        manager; an imported call answers from the import table and the
+        imported proofs only.  ``__enter__`` and ``__exit__`` are then read
+        on that value's own type (``ReducedManagerProtocolV1``): a type the
+        one class-namespace lookup decides runs its own methods, or raises
+        the interpreter's TypeError where it lacks them; any other value is
+        the undecided manager, each step two-faced and owing the one
+        undecided member at this item.  No manager is invented."""
+        from sugar_lift_py_tests.context_manager_resolution import (
+            SourceFragmentCoordinateV1,
+        )
+        from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+            WithReducedManagerSugar,
+        )
+        from sugar_lift_python_source.manager_protocol_construction import (
+            ReducedManagerProtocolV1,
+        )
+
+        manager_slot = item._manager_slot_id()
+        exit_face = item._exit_face_id()
+        return WithReducedManagerSugar(
+            manager=item.context_expr.sugar(),
+            protocol=ReducedManagerProtocolV1(
+                exit_face,
+                SourceFragmentCoordinateV1(
+                    self.unit.source_cid, *item._manager_use_site_span()
+                ),
+                item.fragment,
+            ),
+            body=tuple(stmt.sugar() for stmt in self.body),
+            manager_slot_id=manager_slot,
+            enter_slot_id=(
+                f"{manager_slot}#enter_result" if binds_enter_result else None
+            ),
+            exit_face_id=exit_face,
+            site=self.fragment,
+        )
 
     def _raise_resolution_gap(self, resolution) -> None:
         from .panic import ContextManagerResolutionConstructionGap
@@ -17174,12 +17048,10 @@ class With(Statement):
 
         A direct Call head is already the provider, and so is the base Call of
         a branch-selected arm's opaque call-result identity
-        (``selected_manager_calls``: it constructs as its base call).  A bare
-        Name head of this file's own ``with`` reaches its provider through the
-        file's one projection of ordinary assignment testimony, at the
-        immutable manager-use coordinate (``SourceUnit.projected_manager_heads``).
-        A substituted item's head is already its projection: a Name left there
-        reaches no Call.  Same spelling elsewhere never authorizes a manager.
+        (``selected_manager_calls``: it constructs as its base call).  Any
+        other head reaches no Call here: what a name holds is what the head
+        reduces to (``_reduced_manager_sugar``).  Same spelling elsewhere never
+        authorizes a manager.
         """
         expr = item.context_expr
         if isinstance(expr, Call):
@@ -17190,10 +17062,7 @@ class With(Statement):
             and isinstance(expr.base, Call)
         ):
             return expr.base
-        if expr.kind != "Name" or hasattr(item, "manager_use_site_start_line"):
-            return None
-        _projected, providers = self.unit.projected_manager_heads()
-        return providers.get(item._manager_use_site_span())
+        return None
 
     def _generator_manager_frame(self, item: WithItem):
         context = self._require_construction_context(
@@ -17218,6 +17087,20 @@ class With(Statement):
             span.end_col,
         )
         frame = context.source_call_frames.get(coordinate)
+        if frame is None and isinstance(
+            call.unit.lexical_call_enrollment(call), LexicalCallEnrolledV1
+        ):
+            # The frame the call itself applies, as its own construction reads
+            # it (``Call._construct_sugar``): its lexical row's definition,
+            # when the call runs that definition's own frame
+            # (``call_applies_own_frame``).  A definition whose frame is under
+            # construction up the stack applies none here.
+            definition = call.unit.source_function_definition_for_call(call)
+            if definition is not None:
+                try:
+                    frame = definition.source_visible_call_frame()
+                except SourceCallFrameCycle:
+                    frame = None
         if frame is None or frame.generator_steps is None:
             return None
         return frame
@@ -17573,19 +17456,27 @@ class With(Statement):
         # of that store, never their prior state by spelling.  Its contract
         # is the generator frame, read before any resolution is required.
         # A seated row is read as the door reads it; an unseated one lowers
-        # the store and leaves the refusal to construction.
+        # the store and leaves the refusal to construction.  The undecided
+        # row lowers it too: the manager is the head's reduced value, whose
+        # enter result the store reads (``_reduced_manager_sugar``).
         if self._generator_manager_frame(item) is None:
             resolution = self._seated_manager_resolution(item)[1]
-            if resolution is not _UNSEATED_MANAGER_ROW and (
-                not isinstance(
-                    resolution,
-                    (
-                        ContextManagerContractRefV1,
-                        SourceDerivedContextManagerRefV1,
-                        FormalManagerRefV1,
-                    ),
+            if (
+                resolution is not _UNSEATED_MANAGER_ROW
+                and not self._manager_answered_by_reduction(item)
+                and (
+                    not isinstance(
+                        resolution,
+                        (
+                            ContextManagerContractRefV1,
+                            SourceDerivedContextManagerRefV1,
+                            FormalManagerRefV1,
+                        ),
+                    )
+                    or not isinstance(
+                        resolution.semantics, ProtocolResourceSemanticsV1
+                    )
                 )
-                or not isinstance(resolution.semantics, ProtocolResourceSemanticsV1)
             ):
                 return self
 
@@ -17640,23 +17531,6 @@ class With(Statement):
         if binds_enter_result and item.optional_vars.kind == "Name":
             as_name = item.optional_vars.id
 
-        non_manager = self._published_non_manager_head(item)
-        if non_manager is not None:
-            from sugar_lift_py_tests.sugar.generator_with_sugar import (
-                NonManagerObjectWithSugar,
-            )
-
-            # The head's class is proven, from its source MRO, to lack
-            # ``__enter__`` (or ``__exit__``): evaluate the head once, then the
-            # With raises the interpreter's own TypeError before enter and body.
-            return NonManagerObjectWithSugar(
-                manager=item.context_expr.sugar(),
-                site=self.fragment,
-                type_name=non_manager.type_name,
-                has_enter=non_manager.has_enter,
-                has_exit=non_manager.has_exit,
-            )
-
         generator_manager = self._generator_manager_sugar(item)
         if generator_manager is not None:
             from sugar_lift_py_tests.sugar.generator_with_sugar import (
@@ -17687,6 +17561,11 @@ class With(Statement):
                 enter_slot_id=enter_slot,
                 site=self.fragment,
             )
+
+        if self._manager_answered_by_reduction(item):
+            # Nothing the table holds answers this manager: it is the value
+            # the head reduces to, entered through that value's own type.
+            return self._reduced_manager_sugar(item, binds_enter_result)
 
         # SourceTreePanic from the door propagates — no Exception swallow.
         resolved_ref = self._require_narrow_cm_ref(item)
@@ -18372,14 +18251,17 @@ class With(Statement):
             # gap or an unadmitted contract refuses through the door here.  A
             # row nobody seated is construction's question, not this
             # binding's: ``_construct_sugar`` asks the same require door and
-            # refuses by name.  So no caller (population's manager-call
-            # projection included) needs every row seated before it binds.
+            # refuses by name.  So no caller needs every row seated before it
+            # binds.
+            # The undecided row binds the enter result of the head's reduced
+            # value (``_reduced_manager_sugar``).
             # SourceTreePanic from the door propagates — no Exception swallow.
             resolved_ref = None
             if (
                 self._generator_manager_frame(item) is None
                 and self._seated_manager_resolution(item)[1]
                 is not _UNSEATED_MANAGER_ROW
+                and not self._manager_answered_by_reduction(item)
             ):
                 resolved_ref = self._require_narrow_cm_ref(item)
             from sugar_lift_py_tests.context_manager_contract import (
@@ -22975,25 +22857,6 @@ class Call(Expression):
             self._discharge_callee_spelling()
             return self.args[1].sugar()
 
-        if isinstance(context, TreeConstructionContextV1):
-            # The roster states the ONE classification every authenticated
-            # owner gave this call; owners that disagreed panicked at install,
-            # so there is nothing here to choose between.
-            obligation = context.opaque_source_call_obligations.get(coordinate)
-            if obligation is not None:
-                return self._not_bridged_call_site(
-                    args=tuple(a.sugar() for a in self.args),
-                    keywords=tuple(
-                        (
-                            kw.arg if kw.arg is not None else "**",
-                            kw.value.sugar(),
-                        )
-                        for kw in self.keywords
-                    ),
-                    gap=f"{obligation.resolution_kind}:{obligation.target_name}",
-                    language_callee=language_callee,
-                )
-
         # Either spread form selects the reference call coordinate. In
         # particular, a lone ``**d`` must not fall through to the legacy
         # keyword bridge as ``py.kwarg("**", d)``.
@@ -23538,30 +23401,6 @@ class Call(Expression):
         if target is None:
             return None
         return target[len("python:") :] if target.startswith("python:") else target
-
-    def _not_bridged_call_site(
-        self, *, args, keywords, gap: str, language_callee=None
-    ):
-        """A call nothing bridges stays its own edge.
-
-        The callee keeps the spelling it was written with, and its edge the
-        target symbol the import reference table holds for it, exactly as a
-        bridged call. Only the gap says it is not bridged: the call is never
-        renamed to a shared stand-in. ``language_callee`` is the member the
-        node bound the callee to, carried for the language's own dispatch.
-        """
-        from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
-
-        return CallSiteSugar(
-            target_name=self._spread_callee_name(self.func) or self.func.segment(),
-            args=args,
-            site=self.fragment,
-            keywords=keywords,
-            contract_resolution_gap=gap,
-            import_target_symbol=self.unit.import_reference_of(self.func),
-            reference_symbol=self._import_reference_symbol(),
-            language_callee=language_callee,
-        )
 
     def _authenticate_warning_category(self, args_sugar, keyword_sugars):
         """Attach the floor-owned class identity to a ``warnings.warn`` category.

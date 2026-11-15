@@ -13,9 +13,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-from sugar_lift_py_tests.context_manager_resolution import (
-    TreeConstructionContextV1,
-)
 from sugar_lift_py_tests.floor import (
     FloorValue,
     ObjectValue,
@@ -23,7 +20,6 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.ir import _term_content_cid
 from sugar_source_tree.binding_state import BindingEntryV1
-from sugar_source_tree.nodes import Call
 
 from .canonical import cid_of_json
 from .dependency_artifact import DependencyArtifactGraph
@@ -355,46 +351,3 @@ def _floor_one_tuple_callsite(
     if len(class_actuals) == 1 and isinstance(arg, ComprehensionValue):
         return TupleValue(class_actuals)
     return None
-
-
-def _call_coordinate(call: Call):
-    from sugar_lift_py_tests.context_manager_resolution import (
-        SourceFragmentCoordinateV1,
-    )
-
-    span = call.line_col_span()
-    return SourceFragmentCoordinateV1(
-        call.unit.source_cid,
-        span.start_line,
-        span.start_col,
-        span.end_line,
-        span.end_col,
-    )
-
-
-def _install_source_call_frame(
-    context: TreeConstructionContextV1,
-    call: Call,
-    frame: object,
-) -> None:
-    from sugar_source_tree.panic import BackendDefect
-
-    coordinate = _call_coordinate(call)
-    if coordinate in context.opaque_source_call_obligations:
-        raise BackendDefect(
-            blame=call.fragment,
-            owner="manager_construction._install_source_call_frame",
-            observed="frame/obligation collision",
-            requested="one source-call classification at the exact coordinate",
-            fix="keep authenticated frames and opaque obligations disjoint",
-        )
-    existing = context.source_call_frames.get(coordinate)
-    if existing is not None and existing != frame:
-        raise BackendDefect(
-            blame=call.fragment,
-            owner="manager_construction._install_source_call_frame",
-            observed="conflicting source-call frame",
-            requested="byte-identical duplicate frame testimony",
-            fix="resolve the conflicting authenticated source frame",
-        )
-    context.source_call_frames[coordinate] = frame

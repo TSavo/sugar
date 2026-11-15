@@ -1,23 +1,21 @@
-"""A ``with`` whose manager cannot be read from source is cited, not refused.
+"""A ``with`` whose manager cannot be read from source is undecided, not refused.
 
 The owner's rule (#7661): you install what you have and you cite what you
 don't.  Two heads have nothing to read:
 
 * ``klass = getattr(module, name)`` then ``with klass(path) as f:`` -- a
   run-time string picks the class, so there is no callee
-  (``tests/io/parser/test_python_parser_only.py:176``).  The citation names no
-  callee, only the head's own coordinate and ``head-runtime-selected``.
+  (``tests/io/parser/test_python_parser_only.py:176``).
 * ``with mmap.mmap(fd, 0) as m:`` -- no artifact authenticates ``mmap``, so
   the lifter does not have the callee: it is not bridged
-  (``tests/io/parser/test_c_parser_only.py:560``).  The citation names the
-  callee's import target and nothing about why it is not bridged: the same
-  kind as ``tarfile.open``, an unenrolled pure-Python callee.
+  (``tests/io/parser/test_c_parser_only.py:560``), the same as
+  ``tarfile.open``, an unenrolled pure-Python callee.
 
-Both are constructed over the existing ``OpaqueCitedContextManagerRefV1``
-(``WithOpaqueCitedManagerSugar``): enter and exit may each raise, suppression
-is undecided, and a raise in the body still propagates.  A manager whose
-source CAN be read is still constructed from source, and a head proven not to
-be a manager still refuses through its own door.
+Each manager is what its head reduces to (#7757), and nothing decides it:
+it is the undecided manager (``WithReducedManagerSugar``): enter and exit may
+each raise, suppression is undecided, and a raise in the body still
+propagates.  A source class at the head runs its own methods, and a source
+class lacking them raises the interpreter's TypeError.
 """
 
 from __future__ import annotations
@@ -26,12 +24,8 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.context_manager_resolution import (
-    OpaqueCitedContextManagerRefV1,
-    SourceFragmentCoordinateV1,
-)
-from sugar_lift_py_tests.sugar.with_opaque_cited_manager_sugar import (
-    WithOpaqueCitedManagerSugar,
+from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+    WithReducedManagerSugar,
 )
 from sugar_source_tree.formal_manager_head import runtime_selected_manager_head
 from sugar_source_tree.nodes import With
@@ -74,46 +68,28 @@ _SOURCE_CLASS_HEAD = (
 
 
 def _lifted(tmp_path: Path, template: str, body: str):
-    """``(seated ref, With consumer type, sorted return/halt rows of f)``."""
+    """``(With consumer type, sorted return/halt rows of f)``."""
     source_file = _open(_corpus(tmp_path, template.format(body=body)))
     (with_node,) = [n for n in source_file.nodes() if isinstance(n, With)]
-    (item,) = with_node.items
-    coordinate = SourceFragmentCoordinateV1(
-        with_node.unit.source_cid, *item._manager_use_site_span()
-    )
-    seated = with_node.unit.construction_context.source_derived_contract_refs.get(
-        coordinate
-    )
-    consumer, rows = _function_rows(source_file, with_node)
-    return seated, consumer, rows
+    return _function_rows(source_file, with_node)
 
 
-def test_run_time_selected_head_is_cited_naming_its_own_site(tmp_path):
-    seated, consumer, rows = _lifted(tmp_path, _GETATTR_HEAD, "pass")
-    assert type(seated) is OpaqueCitedContextManagerRefV1
-    # No callee is named: there is none.  The subject is the head's site.
-    assert seated.target_name == ""
-    assert seated.roster.resolution_kind == "head-runtime-selected"
-    assert seated.use_site.start_line == 3
-    assert "head-runtime-selected head at" in seated.cited_subject
-    assert consumer is WithOpaqueCitedManagerSugar
+def test_run_time_selected_head_is_undecided(tmp_path):
+    consumer, rows = _lifted(tmp_path, _GETATTR_HEAD, "pass")
+    assert consumer is WithReducedManagerSugar
     # The head call, enter and exit may each raise; the body falls through.
     assert ("halt", None) in rows
     assert ("return", 7) in rows
 
 
 def test_run_time_selected_head_keeps_the_body_raise(tmp_path):
-    seated, _consumer, rows = _lifted(tmp_path, _GETATTR_HEAD, "raise KeyError(1)")
-    assert type(seated) is OpaqueCitedContextManagerRefV1
+    _consumer, rows = _lifted(tmp_path, _GETATTR_HEAD, "raise KeyError(1)")
     assert ("halt", "KeyError") in rows
 
 
-def test_an_unauthenticated_callee_is_cited_as_not_bridged(tmp_path):
-    seated, consumer, rows = _lifted(tmp_path, _C_TYPE_HEAD, "pass")
-    assert type(seated) is OpaqueCitedContextManagerRefV1
-    assert seated.target_name == "python:mmap.mmap"
-    assert seated.roster.resolution_kind == "call-target-off-population"
-    assert consumer is WithOpaqueCitedManagerSugar
+def test_an_unauthenticated_callee_is_undecided(tmp_path):
+    consumer, rows = _lifted(tmp_path, _C_TYPE_HEAD, "pass")
+    assert consumer is WithReducedManagerSugar
     assert ("halt", None) in rows
     assert ("return", 7) in rows
 
@@ -121,43 +97,34 @@ def test_an_unauthenticated_callee_is_cited_as_not_bridged(tmp_path):
 def test_not_bridged_does_not_depend_on_the_callee_language(tmp_path):
     # A pure-Python callee the lifter does not have (stdlib ``tarfile``, off
     # the enrolled population) and one no artifact authenticates (``mmap``)
-    # get the same citation kind, the same consumer and the same rows.
+    # get the same consumer and the same rows.
     (tmp_path / "c").mkdir()
     (tmp_path / "py").mkdir()
-    c_seated, c_consumer, c_rows = _lifted(tmp_path / "c", _C_TYPE_HEAD, "pass")
-    py_seated, py_consumer, py_rows = _lifted(
+    c_consumer, c_rows = _lifted(tmp_path / "c", _C_TYPE_HEAD, "pass")
+    py_consumer, py_rows = _lifted(
         tmp_path / "py", _PYTHON_OFF_POPULATION_HEAD, "pass"
     )
-    assert type(py_seated) is type(c_seated) is OpaqueCitedContextManagerRefV1
-    assert py_seated.target_name == "python:tarfile.open"
-    assert (
-        py_seated.roster.resolution_kind
-        == c_seated.roster.resolution_kind
-        == "call-target-off-population"
-    )
-    assert py_consumer is c_consumer is WithOpaqueCitedManagerSugar
+    assert py_consumer is c_consumer is WithReducedManagerSugar
     assert py_rows == c_rows
 
 
 def test_an_unauthenticated_callee_keeps_the_body_raise(tmp_path):
-    seated, _consumer, rows = _lifted(tmp_path, _C_TYPE_HEAD, "raise KeyError(1)")
-    assert type(seated) is OpaqueCitedContextManagerRefV1
+    _consumer, rows = _lifted(tmp_path, _C_TYPE_HEAD, "raise KeyError(1)")
     assert ("halt", "KeyError") in rows
 
 
-def test_a_readable_source_manager_is_constructed_not_cited(tmp_path):
-    # The lying twin: a manager whose source can be read is never cited.
-    seated, consumer, rows = _lifted(tmp_path, _SOURCE_CLASS_HEAD, "pass")
-    assert seated is not None
-    assert not isinstance(seated, OpaqueCitedContextManagerRefV1)
-    assert consumer is not WithOpaqueCitedManagerSugar
-    # Its enter and exit are read from source: neither may raise.
+def test_a_readable_source_manager_runs_its_own_methods(tmp_path):
+    # The lying twin: a source class at the head enters and exits through
+    # its own methods, read at reduce on the head's value.
+    consumer, rows = _lifted(tmp_path, _SOURCE_CLASS_HEAD, "pass")
+    assert consumer is WithReducedManagerSugar
+    # Its enter and exit are its own source: neither may raise.
     assert rows == [("return", 7)]
 
 
-def test_a_proven_non_manager_head_is_not_cited(tmp_path):
-    # The lying twin of a non-manager: a class proven from source to lack
-    # ``__enter__`` keeps its refusal face (TypeError), never a citation.
+def test_a_source_class_without_the_protocol_raises_type_error(tmp_path):
+    # A class whose own type lacks ``__enter__`` raises the interpreter's
+    # TypeError at the head, never a manager.
     template = (
         "class N:\n"
         "    pass\n"
@@ -166,9 +133,8 @@ def test_a_proven_non_manager_head_is_not_cited(tmp_path):
         "        {body}\n"
         "    return 7\n"
     )
-    seated, consumer, rows = _lifted(tmp_path, template, "pass")
-    assert not isinstance(seated, OpaqueCitedContextManagerRefV1)
-    assert consumer is not WithOpaqueCitedManagerSugar
+    _consumer, rows = _lifted(tmp_path, template, "pass")
+    assert ("halt", "TypeError") in rows
     assert ("return", 7) not in rows
 
 
@@ -222,7 +188,7 @@ _NOT_BRIDGED_HEADS = {
 
 
 @pytest.mark.parametrize("head", sorted(_NOT_BRIDGED_HEADS))
-def test_a_head_with_no_source_is_cited_as_not_bridged(tmp_path, head):
+def test_a_head_with_no_source_is_undecided(tmp_path, head):
     prelude, call = _NOT_BRIDGED_HEADS[head]
     template = (
         prelude
@@ -231,9 +197,7 @@ def test_a_head_with_no_source_is_cited_as_not_bridged(tmp_path, head):
         + "        {body}\n"
         + "    return 7\n"
     )
-    seated, consumer, rows = _lifted(tmp_path, template, "pass")
-    assert type(seated) is OpaqueCitedContextManagerRefV1
-    assert seated.roster.resolution_kind == "call-target-off-population"
-    assert consumer is WithOpaqueCitedManagerSugar
+    consumer, rows = _lifted(tmp_path, template, "pass")
+    assert consumer is WithReducedManagerSugar
     assert ("halt", None) in rows
     assert ("return", 7) in rows

@@ -16,7 +16,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
 )
 
 
-def test_opaque_source_call_obligation_transport_is_frozen_and_inspectable():
+def test_opaque_source_call_obligation_is_frozen_and_inspectable():
     coordinate = SourceFragmentCoordinateV1(
         "blake3-512:" + "a" * 128,
         7,
@@ -27,13 +27,7 @@ def test_opaque_source_call_obligation_transport_is_frozen_and_inspectable():
     owner_cid = "blake3-512:" + "b" * 128
     obligation = OpaqueSourceCallObligationV1(coordinate, "func", owner_cid)
     roster = opaque_source_call_roster_of(obligation)
-    table = {coordinate: roster}
-    context = TreeConstructionContextV1.for_source_call_construction(
-        opaque_source_call_obligations=table
-    )
 
-    assert context.opaque_source_call_obligations is table
-    assert context.opaque_source_call_obligations[coordinate] == roster
     assert roster.obligations == (obligation,)
     assert roster.owner(owner_cid) is obligation
     assert obligation.coordinate == coordinate
@@ -42,8 +36,18 @@ def test_opaque_source_call_obligation_transport_is_frozen_and_inspectable():
     with pytest.raises(FrozenInstanceError):
         obligation.target_name = "other"
 
-    empty = TreeConstructionContextV1.for_source_call_construction()
-    assert empty.opaque_source_call_obligations == {}
+
+def test_the_construction_context_holds_no_table_a_pre_pass_fills():
+    """A ``with``'s manager is what its head reduces to (#7757): the context
+    carries no table of managers, non-managers or opaque calls read off
+    callee bodies at file open."""
+    context = TreeConstructionContextV1.for_source_call_construction()
+    for name in (
+        "source_derived_contract_refs",
+        "source_non_manager_heads",
+        "opaque_source_call_obligations",
+    ):
+        assert not hasattr(context, name), name
 
 
 def unresolved_table():

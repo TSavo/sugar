@@ -67,12 +67,11 @@ def _import_bound_unanswered_call(sugar):
     name is (step 3).  Nothing in this proof answers the call, so it is the
     unanswered ``undecided`` member under that symbol and two-faced -- never a
     total completion.  A call cited off the population is the same unanswered
-    call (``_off_population_unanswered_call``), and a ``with`` item's resolved
-    manager keeps its resolution's faces.
+    call (``_off_population_unanswered_call``).
     """
     if sugar.reference_symbol is None or sugar.contract_resolution_gap is not None:
         return None
-    if sugar.site is None or _resolved_manager_construction(sugar):
+    if sugar.site is None:
         return None
     from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
 
@@ -100,33 +99,6 @@ def _off_population_unanswered_call(sugar):
     return UnknownCalleeCallV1(sugar.spelled_target)
 
 
-def _resolved_manager_construction(sugar) -> bool:
-    """This call is a ``with`` item's manager, which the manager resolution
-    resolved: its construction faces are that resolution's testimony, not an
-    unknown callee's."""
-    unit = getattr(sugar.site, "unit", None)
-    context = getattr(unit, "construction_context", None)
-    refs = getattr(context, "source_derived_contract_refs", None)
-    if not refs:
-        return False
-    span = sugar.site.line_col_span
-    coordinate = SourceFragmentCoordinateV1(
-        sugar.site.source_cid,
-        span.start_line,
-        span.start_col,
-        span.end_line,
-        span.end_col,
-    )
-    from sugar_lift_py_tests.context_manager_resolution import (
-        ContextManagerResolutionGapV1,
-    )
-
-    resolved = refs.get(coordinate)
-    return resolved is not None and not isinstance(
-        resolved, ContextManagerResolutionGapV1
-    )
-
-
 def _unknown_callee_call(sugar, source_call_frame, callsite):
     """The may-raise testimony for a bodiless call nothing answered.
 
@@ -138,13 +110,10 @@ def _unknown_callee_call(sugar, source_call_frame, callsite):
     or a builtin the lifter does not model (``open``, ``getattr``, ``next``)
     -- what runs was not looked at, so the call is the one unanswered
     citation, two-faced and owed, never a completion (#7757: a raise is never
-    a completion; a halt is never dropped).  A ``with`` item's resolved
-    manager keeps its resolution's faces."""
+    a completion; a halt is never dropped)."""
     if source_call_frame is not None:
         return None
     if _builtin_law_answers(sugar, callsite):
-        return None
-    if _resolved_manager_construction(sugar):
         return None
     from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
 
