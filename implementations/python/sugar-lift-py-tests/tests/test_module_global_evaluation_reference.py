@@ -1019,9 +1019,12 @@ def test_a_reader_reached_while_the_module_is_threaded_reads_the_binding_there(
         None,
     )
     seen = []
-    original = FunctionDef.substitute
+    # A block threads a ``def`` statement through ``substitute_in_block``
+    # (its signature where the statement runs; its body is never the
+    # block's), so that is where the module threading reaches it.
+    original = FunctionDef.substitute_in_block
 
-    def substitute(self, scope):
+    def substitute_in_block(self, scope):
         # ``def probe`` is threaded after ``y = f()`` and before ``z = f()``.
         if self.name == "probe" and not seen:
             seen.append(
@@ -1029,7 +1032,7 @@ def test_a_reader_reached_while_the_module_is_threaded_reads_the_binding_there(
             )
         return original(self, scope)
 
-    monkeypatch.setattr(FunctionDef, "substitute", substitute)
+    monkeypatch.setattr(FunctionDef, "substitute_in_block", substitute_in_block)
     unit.module_binding_states()
     ((at_reached, at_unreached, with_no_site),) = seen
     assert isinstance(at_reached, EvaluationRef)
