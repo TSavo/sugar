@@ -276,8 +276,12 @@ def test_discrimination_keyword_swap_is_not_positional_store() -> None:
     truthful = _method_callsite(
         METHOD_BODY + "\nHolder().store([0, 1, 2], key=1, value=99)\n"
     )
+    # The raising call stands in a function called after import: in the
+    # module body it raises IndexError, the module's one run completes on no
+    # arm, and ``Holder`` has no completed import to be read from.
     swapped = _method_callsite(
-        METHOD_BODY + "\nHolder().store([0, 1, 2], key=99, value=1)\n"
+        METHOD_BODY
+        + "\ndef caller():\n    Holder().store([0, 1, 2], key=99, value=1)\n"
     )
     _assert_bound_self_first(truthful)
     _assert_bound_self_first(swapped)
@@ -334,7 +338,12 @@ def test_discrimination_mutable_completion_is_not_indexerror() -> None:
 
 
 def test_invalid_index_method_call_halts_with_named_indexerror() -> None:
-    site = _method_callsite(METHOD_BODY + "\nHolder().store([0], 4, 9)\n")
+    # The raising call stands in a function called after import: in the
+    # module body it raises IndexError, the module's one run completes on no
+    # arm, and ``Holder`` has no completed import to be read from.
+    site = _method_callsite(
+        METHOD_BODY + "\ndef caller():\n    Holder().store([0], 4, 9)\n"
+    )
     _assert_bound_self_first(site)
     assert site.arg_values[1:] == (
         fresh(ListValue, (TermValue(0),)),
