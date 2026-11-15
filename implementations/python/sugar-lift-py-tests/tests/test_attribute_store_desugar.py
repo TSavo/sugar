@@ -512,14 +512,20 @@ def test_pinned_pandas_name_attr_unpack_coordinate_is_real() -> None:
 
 def _member_bound(unpack):
     """The context the line-113 store runs in: its member ``"foo"`` bound
-    under the leaf's member key, as the unpack binds it before the store."""
+    under the leaf's member key, and the Name leaf to its left
+    (``original_name``) bound under its key, as the unpack binds both before
+    the store.  The store writes the post-store state of every name that may
+    hold its receiver (``KeyedStoreSugar.writes``), ``original_name`` among
+    them, and that state reads the name where the unpack bound it: the old
+    ``index.name`` of a formal ``index``, a value no caller has supplied."""
     from sugar_lift_py_tests.context import ReduceContext
     from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
 
+    ctx = ReduceContext.root(owner="pandas-name-store")
+    for name, name_key in unpack.evaluations:
+        ctx = ScopeRebind(name_key, SymbolicValue(make_var(name))).extend_scope(ctx)
     ((key, _member),) = unpack.members
-    return ScopeRebind(key, StringValue("foo")).extend_scope(
-        ReduceContext.root(owner="pandas-name-store")
-    )
+    return ScopeRebind(key, StringValue("foo")).extend_scope(ctx)
 
 
 def _real_pandas_name_store():
