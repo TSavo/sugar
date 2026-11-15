@@ -39,6 +39,7 @@ from sugar_source_tree.nodes import (
     ContainerMutationStatement,
     EvaluationRef,
     FunctionDef,
+    PathAfterCall,
     Return,
 )
 from sugar_source_tree.tree import SourceFile
@@ -171,6 +172,22 @@ def _returned(outcome) -> list:
 # ---------------------------------------------------------------------------
 
 
+def _after_the_rebind(read):
+    """The read of ``y`` before the ``x += 1`` that follows ``y = x``.
+
+    ``x += 1`` is the one mutation door on ``x``'s object (#8096,
+    ``name_mutation_statement``), and after ``y = x`` that object is ``y``'s
+    too: the tree does not decide at substitution whether ``__iadd__``
+    changes it, the value does at reduce. So ``y`` after it is the object
+    after the call (``PathAfterCall``), keeping ``y``'s read before the call
+    as ``prior`` -- which an immutable value keeps at reduce (the function
+    twins below return 2). That prior read is the alias's key, never ``x``
+    read again (as ``test_every_binding_evaluation_reference`` reads it,
+    #8235)."""
+    assert isinstance(read, PathAfterCall), read
+    return read.prior
+
+
 def test_an_alias_reads_its_own_projection_of_the_assignment() -> None:
     body = _function(STRAIGHT).substitute({}).body
     first, assign = [node for node in body if isinstance(node, Assign)]
@@ -180,9 +197,10 @@ def test_an_alias_reads_its_own_projection_of_the_assignment() -> None:
     assert isinstance(first.evaluation, str)
     assert first.evaluation != assign.evaluation
     assert isinstance(assign.evaluation, str)
-    assert isinstance(ret.value, EvaluationRef)
-    assert ret.value.evaluation == projection_key(assign.evaluation, "y")
-    assert ret.value.name == "y"
+    read = _after_the_rebind(ret.value)
+    assert isinstance(read, EvaluationRef)
+    assert read.evaluation == projection_key(assign.evaluation, "y")
+    assert read.name == "y"
 
 
 def test_the_alias_never_reads_the_name_it_was_given() -> None:
@@ -195,9 +213,9 @@ def test_the_alias_never_reads_the_name_it_was_given() -> None:
         and getattr(node, "rebinds", None) == "x"
     ]
     assert augs
-    ret = body[-1]
-    assert all(ret.value.evaluation != aug.evaluation for aug in augs)
-    assert ret.value.name != "x"
+    read = _after_the_rebind(body[-1].value)
+    assert all(read.evaluation != aug.evaluation for aug in augs)
+    assert read.name != "x"
 
 
 def test_the_assignment_sugar_carries_the_alias_key() -> None:
@@ -232,9 +250,9 @@ def test_each_unrolled_iteration_aliases_its_own_evaluation() -> None:
     ]
     assert len(aliases) == 2
     assert aliases[0].evaluation != aliases[1].evaluation
-    ret = body[-1]
-    assert isinstance(ret.value, EvaluationRef)
-    assert ret.value.evaluation == projection_key(aliases[1].evaluation, "y")
+    read = _after_the_rebind(body[-1].value)
+    assert isinstance(read, EvaluationRef)
+    assert read.evaluation == projection_key(aliases[1].evaluation, "y")
 
 
 # ---------------------------------------------------------------------------
