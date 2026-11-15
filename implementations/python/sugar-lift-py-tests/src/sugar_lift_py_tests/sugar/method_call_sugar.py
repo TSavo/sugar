@@ -23,7 +23,7 @@ from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
 )
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import _assertion_pair
 
 
 @dataclass(frozen=True)
@@ -51,12 +51,12 @@ class MethodCallSugar(ConstructedTermSugar):
     def witnesses(cls):
         # int.bit_length is a real method with a decidable shape: the pair rides
         # the coordinate's identity against a contradicting asserted value.
-        prefix = "def A(z):\n    return z.bit_length()\n\n"
-        return _call_pair(
+        return _assertion_pair(
             name="method_call_return",
             owner_sugar="MethodCallSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 3\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 4\n",
+            statements="z = 5",
+            truthful="z.bit_length() == 3",
+            lying="z.bit_length() == 4",
         )
 
     def to_term(self, *, owner: str):

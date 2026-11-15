@@ -10,7 +10,7 @@ from sugar_lift_py_tests.sugar.sugar_base import (
     Sugar,
     require_constructed_term_sugar,
 )
-from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
+from sugar_lift_py_tests.sugar.witnesses import _expression_pair
 
 
 def _collect(sugars: tuple, ctx, done: tuple, finish, *, earlier: tuple = ()):
@@ -158,7 +158,7 @@ class SpreadCollectionSugar(ConstructedTermSugar):
 
     @classmethod
     def witnesses(cls):
-        return _call_return_pair(
+        return _expression_pair(
             name="spread_collection_len",
             owner_sugar="SpreadCollectionSugar",
             body="len([*z])",
@@ -224,7 +224,7 @@ class SpreadDictSugar(ConstructedTermSugar):
 
     @classmethod
     def witnesses(cls):
-        return _call_return_pair(
+        return _expression_pair(
             name="spread_dict_len",
             owner_sugar="SpreadDictSugar",
             body="len({**z})",
@@ -304,7 +304,7 @@ class SpreadCallSugar(ConstructedTermSugar):
 
     @classmethod
     def witnesses(cls):
-        return _call_return_pair(
+        return _expression_pair(
             name="spread_call",
             owner_sugar="SpreadCallSugar",
             body="tuple((*z,))",

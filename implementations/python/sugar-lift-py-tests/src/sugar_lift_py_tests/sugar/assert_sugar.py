@@ -5,7 +5,7 @@ from typing import ClassVar
 
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import _assertion_pair
 
 
 @dataclass(frozen=True)
@@ -51,15 +51,12 @@ class AssertSugar(Sugar):
     def witnesses(cls):
         # The stated inv IS the discriminator: the truthful twin's assert holds
         # in the body's universe, the lying twin's contradicts it.
-        return _call_pair(
+        return _assertion_pair(
             name="assert_return",
             owner_sugar="AssertSugar",
-            truthful=(
-                "def A(z):\n    return z\n\n" "def test_a():\n    assert A(5) == 5\n"
-            ),
-            lying=(
-                "def A(z):\n    return z\n\n" "def test_a():\n    assert A(5) == 6\n"
-            ),
+            statements="z = 5",
+            truthful="z == 5",
+            lying="z == 6",
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:

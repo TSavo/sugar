@@ -10,7 +10,7 @@ from sugar_lift_py_tests.caller_parameter_contract import (
 )
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import _assertion_pair
 
 
 @dataclass(frozen=True)
@@ -55,12 +55,12 @@ class AugAssignSugar(Sugar):
 
     @classmethod
     def witnesses(cls):
-        prefix = "def A(renamed):\n    renamed += 2\n    return renamed\n\n"
-        return _call_pair(
+        return _assertion_pair(
             name="augassign_read_op_store",
             owner_sugar=cls.__name__,
-            truthful=prefix + "def test_a():\n    assert A(3) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(3) == 3\n",
+            statements="renamed = 3\nrenamed += 2",
+            truthful="renamed == 5",
+            lying="renamed == 3",
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:

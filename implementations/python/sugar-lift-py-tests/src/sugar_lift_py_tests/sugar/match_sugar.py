@@ -51,7 +51,7 @@ from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
+from sugar_lift_py_tests.sugar.witnesses import _expression_pair
 
 
 @dataclass(frozen=True)
@@ -982,7 +982,7 @@ class MatchSugar(Sugar):
 
     @classmethod
     def witnesses(cls):
-        return _call_return_pair(
+        return _expression_pair(
             name="match_value_return",
             owner_sugar="MatchSugar",
             body="1 if z == 1 else 0",

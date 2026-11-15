@@ -21,7 +21,7 @@ from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
 )
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import _assertion_pair
 
 
 def _concatenate_joined_parts(left, right, site, ctx):
@@ -189,12 +189,12 @@ class JoinedStrSugar(ConstructedTermSugar):
 
     @classmethod
     def witnesses(cls):
-        prefix = 'def A(z):\n    return f"n={z}"\n\n'
-        return _call_pair(
+        return _assertion_pair(
             name="fstring_return",
             owner_sugar="JoinedStrSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == '5'\n",
-            lying=prefix + "def test_a():\n    assert A(5) == '6'\n",
+            statements="z = 5",
+            truthful="f'n={z}' == '5'",
+            lying="f'n={z}' == '6'",
         )
 
     def to_term(self, *, owner: str):

@@ -30,7 +30,7 @@ from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
+from sugar_lift_py_tests.sugar.witnesses import _expression_pair
 
 
 def _ground_atomic_truth(formula):
@@ -230,9 +230,9 @@ class IfSugar(Sugar):
 
     @classmethod
     def witnesses(cls):
-        # A guarded return: under the guard the post is `z == 1 -> out == 10`, so
-        # the caller's `A(1) == 10` discharges and `A(1) == 11` contradicts.
-        return _call_return_pair(
+        # A guarded value over the local `z`, asserted in the test itself: the
+        # truthful twin asserts the guarded arm's 10, the lying twin 11.
+        return _expression_pair(
             name="if_guarded_return",
             owner_sugar="IfSugar",
             body="10 if z == 1 else 20",

@@ -7,7 +7,7 @@ from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
 )
-from sugar_lift_py_tests.sugar.witnesses import _call_pair
+from sugar_lift_py_tests.sugar.witnesses import _assertion_pair
 
 # Binary operator kind -> the floor that owns its meaning. The value owns what
 # each operation MEANS (ints fold, strings concatenate on `+`, mixed types hit
@@ -61,12 +61,14 @@ class BinOpSugar(ConstructedTermSugar):
     def witnesses(cls):
         # `+` folds concrete numbers on the addition floor; the pair proves the
         # lift discriminates on the computed sum, not just the operands.
-        prefix = "def A(z):\n    if 1 + 1 == 2:\n        return z\n    return 0\n\n"
-        return _call_pair(
+        return _assertion_pair(
             name="binop_add_return",
             owner_sugar="BinOpSugar",
-            truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
-            lying=prefix + "def test_a():\n    assert A(5) == 0\n",
+            statements=(
+                "z = 5\n" "if 1 + 1 == 2:\n" "    out = z\n" "else:\n" "    out = 0"
+            ),
+            truthful="out == 5",
+            lying="out == 0",
         )
 
     def to_term(self, *, owner: str):

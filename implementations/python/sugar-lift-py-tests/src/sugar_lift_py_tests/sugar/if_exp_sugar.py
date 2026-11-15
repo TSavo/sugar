@@ -25,7 +25,7 @@ from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
 )
-from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
+from sugar_lift_py_tests.sugar.witnesses import _expression_pair
 from sugar_lift_py_tests.sugar.if_sugar import predicate_formula, truth_formula
 
 
@@ -60,9 +60,9 @@ class IfExpSugar(ConstructedTermSugar):
 
     @classmethod
     def witnesses(cls):
-        # A conditional return: the post distributes to z == 1 -> out == 10, so
-        # the caller's A(1) == 10 discharges and A(1) == 11 contradicts.
-        return _call_return_pair(
+        # A conditional over the local `z`, asserted in the test itself: the
+        # truthful twin asserts the `z == 1` arm's 10, the lying twin 11.
+        return _expression_pair(
             name="ifexp_conditional_return",
             owner_sugar="IfExpSugar",
             body="10 if z == 1 else 20",
