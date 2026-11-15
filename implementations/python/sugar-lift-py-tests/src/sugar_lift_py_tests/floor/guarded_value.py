@@ -147,6 +147,22 @@ class GuardedValue(FloorValue):
             ],
         )
 
+    def guarded(self, formula):
+        """This value under an outer control guard: each arm under it.
+
+        The selection between the arms is not a statement and the guard
+        does not change which arm the inner guard selects, so the value
+        rides unchanged where every arm does (each a pure constructed value,
+        ``GuardStableValue``).  An arm that keeps the outer restriction
+        itself (a constructed receiver state, ``ObjectValue.guarded``) keeps
+        it inside this selection; an arm that cannot ride under a guard
+        refuses by its own name."""
+        when_true = self.when_true.guarded(formula)
+        when_false = self.when_false.guarded(formula)
+        if when_true is self.when_true and when_false is self.when_false:
+            return self
+        return GuardedValue(self.guard, when_true, when_false)
+
     def answer(self, ctx=None):
         """Resolve both binding arms when a joined name is read."""
         return self._map(lambda arm: arm.answer(ctx), operation="answer", blame=ctx)
