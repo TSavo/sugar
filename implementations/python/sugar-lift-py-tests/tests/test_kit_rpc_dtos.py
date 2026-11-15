@@ -21,13 +21,15 @@ from sugar_lift_py_tests.kit_rpc import (
 )
 from sugar_lift_py_tests.effect import RuntimeEffect, SubscriptStoreRuntimeEffect
 from sugar_lift_py_tests.effect.runtime_effect import runtime_effect_evidence
-from sugar_lift_py_tests.ir import make_var
+from sugar_lift_py_tests.ir import gte, make_var, num
 from sugar_lift_py_tests.proofir import (
     ClaimFormula,
     ConstructionSite,
     Derived,
     Provenance,
 )
+from sugar_lift_py_tests.proofir.scope import claim_formula_from_ir
+from sugar_lift_py_tests.proofir.sorts import UnknownSort
 
 CID_A = "blake3-512:" + "a" * 128
 CID_B = "blake3-512:" + "b" * 128
@@ -47,9 +49,16 @@ def _source_memento() -> SourceMementoDto:
     )
 
 
-def _claim_formula_from_payload(payload: dict[str, object]) -> ClaimFormula:
-    wrapped = ClaimFormula.from_rpc(
-        payload,
+def _post_claim() -> ClaimFormula:
+    """``out >= 0`` as a contract's post: a constructed formula with its
+    provenance.  The payload writer lowers a claim through its term table
+    from the formula it denotes (``ClaimFormula.ir_formula``); a wire-only
+    claim (``ClaimFormula.from_rpc``) denotes nothing and is refused by name
+    there, never re-serialized from its bytes."""
+    return claim_formula_from_ir(
+        gte(make_var("out"), num(0)),
+        var_sorts={"out": UnknownSort(reason="lift is sort-silent")},
+        allowed_vars=("out",),
         provenance=Provenance(
             node_class="FunctionContract",
             construction_site=ConstructionSite(
@@ -59,8 +68,6 @@ def _claim_formula_from_payload(payload: dict[str, object]) -> ClaimFormula:
         ),
         role="FunctionContract.post",
     )
-    assert wrapped is not None
-    return wrapped
 
 
 def _named_runtime_effect(tmp_path, reason: str) -> RuntimeEffect:
@@ -121,7 +128,7 @@ def test_python_dtos_emit_rpc_report_shapes(tmp_path) -> None:
     body_universe = BodyUniverseDto(
         name="encode_len::universe",
         out_binding="out",
-        post=_claim_formula_from_payload({"kind": "atomic", "name": ">=", "args": []}),
+        post=_post_claim(),
         source_warrants=[source],
         warranted_by=callsite_fact,
     )
