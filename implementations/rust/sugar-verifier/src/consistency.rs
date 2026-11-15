@@ -3501,6 +3501,11 @@ struct AmbientPost {
     /// so each halt's guard is false under the call's actual. A halt certain
     /// on that path makes the join unsatisfiable: the claim is refuted.
     halt_guards: Vec<Json>,
+    /// The halts the answering contract states with their raised type:
+    /// `(type, guard)` per panic locus whose `argTerm` names the raised
+    /// exception's class and that states its guard (`contract_typed_halts`).
+    /// What types the exception a call raised (`with_raised_types`).
+    typed_halts: Vec<(Json, Json)>,
     /// The joined member's CID.
     member_cid: String,
     site_cid: String,
@@ -3577,8 +3582,27 @@ fn contract_halt_guards(body: &Json) -> Vec<Json> {
         .collect()
 }
 
-/// One bridge's answer: the binding, the post, and the halt guards.
-type BridgeAnswer = (BridgeBinding, Json, Vec<Json>);
+/// Each halt an answering contract states with its raised type, as `(type,
+/// guard)`: a panic locus whose `argTerm` is a ctor (the raised class's
+/// coordinate, the Python kit's `tree_enumerate.halt_locus`) and whose
+/// `guard` is a formula. A locus that names no type (an undetermined raise)
+/// or states no guard types nothing.
+fn contract_typed_halts(body: &Json) -> Vec<(Json, Json)> {
+    crate::enumerate_callsites::panic_loci_from_body(body)
+        .iter()
+        .filter_map(|locus| {
+            let raised = locus
+                .get("argTerm")
+                .filter(|term| term.get("kind").and_then(|v| v.as_str()) == Some("ctor"))?;
+            let guard = locus.get("guard").filter(|guard| guard.is_object())?;
+            Some((raised.clone(), guard.clone()))
+        })
+        .collect()
+}
+
+/// One bridge's answer: the binding, the post, the halt guards, and the
+/// typed halts.
+type BridgeAnswer = (BridgeBinding, Json, Vec<Json>, Vec<(Json, Json)>);
 
 /// What one bridge answers for `symbol`: its binding, post and halt guards,
 /// or the reason the answer is wrong. `Ok(None)` when the contract states no
@@ -3641,6 +3665,7 @@ fn bridge_answer(
             .map(|cid| cid.to_string())
     });
     let halt_guards = contract_halt_guards(&body);
+    let typed_halts = contract_typed_halts(&body);
     let stated_inputs = stated_input_values(&body);
     Ok(Some((
         BridgeBinding {
@@ -3653,6 +3678,7 @@ fn bridge_answer(
         },
         post,
         halt_guards,
+        typed_halts,
     )))
 }
 
@@ -4013,10 +4039,11 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
             bridge_answer(pool, &edge.symbol, first)
         };
         match answer {
-            Ok(Some((binding, post, halt_guards))) => posts.push(AmbientPost {
+            Ok(Some((binding, post, halt_guards, typed_halts))) => posts.push(AmbientPost {
                 binding,
                 post,
                 halt_guards,
+                typed_halts,
                 member_cid: edge.member_cid.clone(),
                 site_cid: edge.site_cid.clone(),
                 refusal: None,
@@ -4038,6 +4065,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                 },
                 post: Json::Null,
                 halt_guards: Vec::new(),
+                typed_halts: Vec::new(),
                 member_cid: edge.member_cid.clone(),
                 site_cid: edge.site_cid.clone(),
                 refusal: Some(reason),
@@ -4098,6 +4126,7 @@ fn owed_post(
         },
         post: Json::Null,
         halt_guards: Vec::new(),
+        typed_halts: Vec::new(),
         member_cid: member_cid.to_string(),
         site_cid: site_cid.to_string(),
         refusal: Some(reason),
@@ -4990,6 +5019,151 @@ fn with_ambient_posts_with_instances(
     (IrFormula::And(operands).to_value(), partition)
 }
 
+// ── The raised type of a joined call (step 9; #7757 step 7) ────────────────
+//
+// A call whose edge names its callee raises, when it halts, the exception
+// `python:raised(<call term>, <occurrence>)` (the Python kit's
+// `UnknownCalleeCallV1.faces`). A handler around the call tests it with
+// `adt.is_python_type(<that exception>, <handler class>)`. The callee's
+// contract states each halt it can take with its raised class and its guard
+// (a panic locus's `argTerm` and `guard`). The halts of one reduction are
+// its halted arms, whose guards are disjoint path conditions, so under halt
+// `i`'s guard, bound to the call's actuals, the exception is an instance of
+// exactly that class: whether the handler takes it is whether the class is
+// the handler's class or a subclass of it. That is the class question
+// `adt.is_python_type(<class>, <handler class>)`, true where the two are one
+// class; any other pair is the open subclass question the ancestry join
+// answers where a proof states the class's ancestry, and leaves open
+// otherwise. A halt that names no class (an undetermined raise) states
+// nothing, and the handler's test stays open.
+
+/// The ctor naming the exception one evaluation of a call raised.
+const PYTHON_RAISED: &str = "python:raised";
+/// The open subclass question an `except` retains.
+const PYTHON_IS_TYPE_PREDICATE: &str = "adt.is_python_type";
+
+/// Every `adt.is_python_type(python:raised(..), <class>)` atom `node` states
+/// outside a quantifier.
+fn collect_raised_type_tests<'a>(node: &'a Json, out: &mut Vec<&'a Json>) {
+    match node.get("kind").and_then(|k| k.as_str()) {
+        Some("atomic") => {
+            if node.get("name").and_then(|v| v.as_str()) != Some(PYTHON_IS_TYPE_PREDICATE) {
+                return;
+            }
+            let Some([subject, _class]) = node
+                .get("args")
+                .and_then(|v| v.as_array())
+                .map(Vec::as_slice)
+            else {
+                return;
+            };
+            if subject.get("kind").and_then(|v| v.as_str()) == Some("ctor")
+                && subject.get("name").and_then(|v| v.as_str()) == Some(PYTHON_RAISED)
+                && !out.contains(&node)
+            {
+                out.push(node);
+            }
+        }
+        Some("forall") | Some("exists") => {}
+        _ => {
+            if let Some(operands) = node.get("operands").and_then(|v| v.as_array()) {
+                for operand in operands {
+                    collect_raised_type_tests(operand, out);
+                }
+            }
+        }
+    }
+}
+
+/// `{"kind":"implies","operands":[a, b]}`.
+fn implies_formula(antecedent: Json, consequent: Json) -> Json {
+    json!({ "kind": "implies", "operands": [antecedent, consequent] })
+}
+
+/// The facts that type each exception a joined call raised in `inv`: for
+/// each handler test `adt.is_python_type(python:raised(<call>, <occurrence>),
+/// <H>)` whose occurrence's site an answering contract joins (`ambient`),
+/// and each halt that contract states with its class `T` and guard `g`
+/// (`AmbientPost::typed_halts`), `g[actuals] -> (test <-> is(T, H))`, with
+/// `is(T, H)` true where `T` and `H` are one class. The call's actuals are
+/// bound to the contract's formals by the one binder
+/// (`bind_call_arguments`); a call that does not fit types nothing.
+fn raised_type_facts(inv: &Json, ambient: &[AmbientPost]) -> Vec<Json> {
+    let mut tests = Vec::new();
+    collect_raised_type_tests(inv, &mut tests);
+    let mut facts: Vec<Json> = Vec::new();
+    for test in tests {
+        let Some([raised, handler]) = test
+            .get("args")
+            .and_then(|v| v.as_array())
+            .map(Vec::as_slice)
+        else {
+            continue;
+        };
+        let Some((call, site_cid)) = call_result_parts(raised) else {
+            continue;
+        };
+        let Some(args) = call.get("args").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        for post in ambient
+            .iter()
+            .filter(|post| post.site_cid == site_cid && post.refusal.is_none())
+        {
+            let Some(bindings) =
+                bind_call_arguments(&post.binding.formals, &post.binding.stated_inputs, args)
+            else {
+                continue;
+            };
+            for (class, guard) in &post.typed_halts {
+                let guard = fold_ground_applications(&substitute_call_bindings(guard, &bindings));
+                let fact = if class == handler {
+                    implies_formula(guard, (*test).clone())
+                } else {
+                    let class_test = json!({
+                        "kind": "atomic",
+                        "name": PYTHON_IS_TYPE_PREDICATE,
+                        "args": [class, handler],
+                    });
+                    implies_formula(
+                        guard,
+                        IrFormula::And(vec![
+                            implies_formula((*test).clone(), class_test.clone()),
+                            implies_formula(class_test, (*test).clone()),
+                        ])
+                        .to_value(),
+                    )
+                };
+                if !facts.contains(&fact) {
+                    facts.push(fact);
+                }
+            }
+        }
+    }
+    facts
+}
+
+/// Conjoin `raised_type_facts` with `inv`. Each fact is true of the call
+/// whatever path the claim takes (it speaks of the exception that call
+/// raised under the halt the callee took), so it is conjoined at the top.
+fn with_raised_types(inv: Json, ambient: &[AmbientPost]) -> Json {
+    if ambient.is_empty() {
+        return inv;
+    }
+    let facts = raised_type_facts(&inv, ambient);
+    if facts.is_empty() {
+        return inv;
+    }
+    debug!(
+        facts = facts.len(),
+        "verifier/linker: conjoining the raised types of joined calls into obligation"
+    );
+    let mut operands = Vec::with_capacity(facts.len() + 1);
+    operands.push(inv);
+    operands.extend(facts);
+    IrFormula::And(operands).to_value()
+}
+
 // ── The ancestry join (step 9; #7757) ──────────────────────────────────────
 //
 // A Python consumer's `except Handler` against a raised class it imported
@@ -5781,6 +5955,7 @@ fn process_consistency_group(
             let (inv, mut ambient_partition) =
                 with_ambient_posts_with_instances(inv, &ambient_posts);
             settle_owed_operations(&mut ambient_partition, plan, registry, compilers);
+            let inv = with_raised_types(inv, ambient_posts);
             let inv = with_exception_ancestry(inv, exception_ancestry);
             let linked_posts = ambient_partition.kept.clone();
             let dropped_ambient_posts = ambient_partition.dropped.clone();
@@ -5841,6 +6016,7 @@ fn process_consistency_group(
                 let (inv, mut ambient_partition) =
                     with_ambient_posts_with_instances(original_inv.clone(), &ambient_posts);
                 settle_owed_operations(&mut ambient_partition, plan, registry, compilers);
+                let inv = with_raised_types(inv, ambient_posts);
                 let inv = with_exception_ancestry(inv, exception_ancestry);
                 let linked_posts = ambient_partition.kept.clone();
                 let dropped_ambient_posts = ambient_partition.dropped.clone();
@@ -10376,10 +10552,66 @@ mod tests {
             },
             post,
             halt_guards: Vec::new(),
+            typed_halts: Vec::new(),
             member_cid: "test-member-cid".to_string(),
             site_cid: site_cid.to_string(),
             refusal: None,
         }
+    }
+
+    /// #7757 step 7: a handler's test over the exception a joined call
+    /// raised is typed by each halt the callee's contract states, under that
+    /// halt's guard bound to the call's actuals; a halt with no class types
+    /// nothing; a site nothing answers types nothing.
+    #[test]
+    fn a_joined_calls_raised_exception_is_typed_by_the_callees_halts() {
+        let class = |name: &str| {
+            json!({"kind": "ctor", "name": "python:exception_type_identity", "args": [
+                {"kind": "const", "value": "builtins", "sort": {"kind": "primitive", "name": "String"}},
+                {"kind": "const", "value": name, "sort": {"kind": "primitive", "name": "String"}},
+            ]})
+        };
+        let call = json!({"kind": "ctor", "name": "call:m.boom", "args": [
+            {"kind": "const", "value": 1, "sort": {"kind": "primitive", "name": "Int"}},
+        ]});
+        let raised = json!({"kind": "ctor", "name": PYTHON_RAISED, "args": [
+            call,
+            {"kind": "ctor", "name": PYTHON_OCCURRENCE, "args": [
+                {"kind": "const", "value": JOIN_SITE, "sort": {"kind": "primitive", "name": "String"}},
+            ]},
+        ]});
+        let test = |handler: Json| {
+            json!({"kind": "atomic", "name": PYTHON_IS_TYPE_PREDICATE, "args": [raised.clone(), handler]})
+        };
+        let guard = json!({"kind": "atomic", "name": "p", "args": [{"kind": "var", "name": "x"}]});
+        let mut post = joined_post(
+            "python:m.boom",
+            JOIN_SITE,
+            json!({"kind": "and", "operands": []}),
+            vec!["x".to_string()],
+        );
+        post.typed_halts = vec![(class("ValueError"), guard)];
+
+        // The handler names the raised class: under the halt's guard (its
+        // formal bound to the call's actual) the handler takes it.
+        let exact = raised_type_facts(&test(class("ValueError")), std::slice::from_ref(&post));
+        assert_eq!(exact.len(), 1, "{exact:?}");
+        let rendered = exact[0].to_string();
+        assert!(rendered.contains("\"implies\""), "{rendered}");
+        assert!(!rendered.contains("\"var\""), "the formal is bound: {rendered}");
+
+        // Another handler class: the class question, both ways.
+        let other = raised_type_facts(&test(class("Exception")), std::slice::from_ref(&post));
+        assert_eq!(other.len(), 1, "{other:?}");
+        assert!(other[0].to_string().contains("Exception"));
+
+        // A halt with no class, or a site nothing answers, types nothing.
+        let mut untyped = post.clone();
+        untyped.typed_halts.clear();
+        assert!(raised_type_facts(&test(class("ValueError")), &[untyped]).is_empty());
+        let mut elsewhere = post.clone();
+        elsewhere.site_cid = "blake3-512:elsewhere".to_string();
+        assert!(raised_type_facts(&test(class("ValueError")), &[elsewhere]).is_empty());
     }
 
     fn ambient_post_encode_base64(post: Json, formals: Vec<String>) -> AmbientPost {
