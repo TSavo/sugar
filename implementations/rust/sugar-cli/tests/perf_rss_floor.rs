@@ -87,7 +87,9 @@ fn perf_rss_and_dhat_documentation_has_copy_paste_commands() {
         "docs must include the verify RSS harness one-liner"
     );
     assert!(
-        doc_text.contains("cargo run -p sugar-cli --features dhat-heap --bin sugar -- verify"),
+        // `sugar verify --project` was deleted (item 39, #7861); the docs
+        // profile `sugar prove` (#7892).
+        doc_text.contains("cargo run -p sugar-cli --features dhat-heap --bin sugar -- prove"),
         "docs must include the dhat heap profiling one-liner"
     );
     assert!(
