@@ -222,3 +222,24 @@ def test_the_guard_is_not_dropped_by_the_stable_category(corpus: Path) -> None:
     # would satisfy the kind check alone.
     assert formula == implies(guard, claim)
     assert guard != claim, "the obligation implies itself -- no guard was carried"
+
+
+def test_every_halt_of_the_guarded_obligation_carries_its_record(corpus: Path) -> None:
+    """RECORDED: no halt of ``if flag: assert claim`` leaves record-less.
+
+    Both truths wait on a caller's actual. With none, ``bool(claim)`` is the
+    unanswered operation's two faces, and the assert takes the truth of the
+    unanswered result on its completed face: that truth's raise face is
+    minted by the assert's continuation while the deferred operation
+    discharges, not by the operation. It leaves from the state the suite's
+    block enrolled, as the operation's own halt does
+    (``NativeOperationExitCarrierV1._halts_leave_enrolled_state``), so the
+    ``if`` join reads a record on every suite halt.
+    """
+    from sugar_lift_py_tests.outcome import Halted
+
+    outcome = _own_proof(_functions(corpus)["guarded_obligation"])
+    halts = [exit_ for exit_ in outcome.exits if isinstance(exit_, Halted)]
+    assert halts, outcome
+    recordless = [halt for halt in halts if halt.state is None]
+    assert not recordless, f"halts with no record: {recordless!r}"
