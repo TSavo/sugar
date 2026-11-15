@@ -89,7 +89,7 @@ _PROGRAMS = {
     "dict-comprehension-repeated-key": (
         "    ok = 0\n"
         "    try:\n"
-        "        d = {0: boom() if x == 0 else x for x in range(2)}\n"
+        "        d = {{0: boom() if x == 0 else x for x in range(2)}}\n"
         "    except ValueError:\n"
         "        ok = 1\n"
         "    assert ok == {claim}\n",
