@@ -57,17 +57,22 @@ class LiveSymbolicItemV1:
     test holds (a ``while``) -- under which the body's arms are the loop's
     exits.  Under its negation the loop leaves as its recurrence.
 
-    ``test_sugar``: a ``while`` test the symbolic item evaluates before its
-    body, through the one truth rule a live item's test takes
-    (``LoopRecurrenceSugar._tested``), or None.  It is handed only where
-    the test reads no binding (``_symbolic_test_sugar``): there it has one
-    value at every item, so a truth the reduction decides for the symbolic
-    item is the truth at every item, and the item runs under that decided
-    truth in place of ``guard``.  The construction never decides it."""
+    ``test_sugar``: a ``while`` test, which the symbolic item evaluates
+    before its body as every item does, through the one rule a live item's
+    test takes (``LoopRecurrenceSugar._tested``); None for a ``for``.  Each
+    halt of it leaves the loop as a live item's test halt does, and the body
+    runs after what it stored.  ``test_decides``: whether a truth the
+    reduction decides for the symbolic item is the truth at every item --
+    only where the test reads no binding (``_reads_a_binding``), so it has
+    one value at every item; there the item runs under that decided truth
+    in place of ``guard``.  A test that reads a binding is evaluated all the
+    same (its halts are the loop's), but the item runs under ``guard``, its
+    slot, undecided.  The construction never decides it."""
 
     body_sugars: tuple[object, ...]
     guard: object
     test_sugar: object = None
+    test_decides: bool = False
 
 
 def _reads_a_binding(expression) -> bool:
@@ -81,18 +86,27 @@ def _reads_a_binding(expression) -> bool:
     )
 
 
-def _symbolic_test_sugar(loop):
-    """The test the recurrence's symbolic item of ``loop`` evaluates
-    (``LiveSymbolicItemV1.test_sugar``): a ``while`` test that reads no
+def _symbolic_item(loop, body_sugars, guard) -> LiveSymbolicItemV1:
+    """The recurrence's symbolic item of ``loop``: its body, the guard an
+    item runs under, and for a ``while`` its test
+    (``LiveSymbolicItemV1.test_sugar``), which every item evaluates before
+    its body -- the symbolic item too, so the test is constructed here
+    wherever the loop is, built or refused by name, and its halts are the
+    loop's.  Its truth decides the item only where the test reads no
     binding (``_reads_a_binding``: ``while True:``, ``while 1:``), whose
-    value is the same at every item; else None, and the item runs under the
-    test's slot guard, undecided.  Nothing about its truth is read here: the
-    reduction evaluates it (``LoopRecurrenceSugar._recurrence``)."""
+    value is the same at every item (``test_decides``); else the item runs
+    under the test's slot guard, undecided.  Nothing about its truth is read
+    here: the reduction evaluates it (``LoopRecurrenceSugar._recurrence``)."""
     from .nodes import While
 
-    if not isinstance(loop, While) or _reads_a_binding(loop.test):
-        return None
-    return loop.test.sugar()
+    if not isinstance(loop, While):
+        return LiveSymbolicItemV1(body_sugars, guard)
+    return LiveSymbolicItemV1(
+        body_sugars,
+        guard,
+        loop.test.sugar(),
+        test_decides=not _reads_a_binding(loop.test),
+    )
 
 
 from .nodes import TargetPatternV1 as LiveForTargetPatternV1
@@ -786,7 +800,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
         # decides it, ``while True:`` included.  The reduction decides it where
         # it runs the loop: a live item per item (``_test_item``), the
         # recurrence's symbolic item for a test that reads no binding
-        # (``LiveSymbolicItemV1.test_sugar``), each publishing the exit it
+        # (``LiveSymbolicItemV1.test_decides``), each publishing the exit it
         # decided (``_exit_decision``) for a read after the loop to select by.
         test_guard = branch_result_guard(
             branch_result_slot(loop.test), loop.test.fragment
@@ -1192,9 +1206,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
 
     construction = replace(
         construction,
-        symbolic_item=LiveSymbolicItemV1(
-            body_sugars, true_guard, _symbolic_test_sugar(loop)
-        ),
+        symbolic_item=_symbolic_item(loop, body_sugars, true_guard),
     )
 
     writes = _carried_writes(items, carried_names)

@@ -51,14 +51,17 @@ def test_a_constant_while_test_is_its_slot_guard_and_the_reduction_decides_it(
     )
     _body, guard = loop._symbolic_item()
     assert not _is_true(guard), guard
-    assert loop._symbolic_test() is not None
+    test, decides = loop._symbolic_test()
+    assert test is not None and decides
 
 
-def test_a_while_test_that_reads_a_binding_is_not_evaluated_by_the_symbolic_item(
+def test_a_while_test_that_reads_a_binding_is_evaluated_but_never_decides(
     tmp_path,
 ) -> None:
     # ``condition`` may differ from one item to the next: the symbolic item
     # does not stand for every item's test, so it runs under the slot guard.
+    # The test is evaluated all the same, as every item evaluates it: it is
+    # constructed with the loop and its halts are the loop's.
     loop = _loop(
         tmp_path,
         "def choose(condition):\n"
@@ -67,7 +70,8 @@ def test_a_while_test_that_reads_a_binding_is_not_evaluated_by_the_symbolic_item
         "    else:\n"
         "        return 9\n",
     )
-    assert loop._symbolic_test() is None
+    test, decides = loop._symbolic_test()
+    assert test is not None and not decides
 
 
 def test_unconditional_while_return_has_no_fabricated_else_face(tmp_path) -> None:
