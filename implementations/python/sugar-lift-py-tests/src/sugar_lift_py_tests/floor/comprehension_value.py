@@ -118,67 +118,40 @@ class ComprehensionValue(GuardStableValue):
         return operation.project_comprehension(self, ctx)
 
     def contains(self, item, site):
-        # Finite comprehension testimony folds like a list; otherwise membership
-        # stays the py.in coordinate over the comprehension term.
+        """``item in <comprehension>``, by the one membership law (#7757 H10).
+
+        A list or set decided whole (``display``) is that display's
+        membership, as its truth, ``==``, ``+`` and subscript are.  A
+        generator whose every member is in hand (``finite_elements``, no
+        display) is iterated in order, as a list compares: the one
+        ``floor.membership``, decided where every comparison it makes is,
+        else the undecided membership.  A comprehension whose members are not
+        in hand is the floor's one undecided membership
+        (``FloorValue.undecided_contains``): its members' ``__eq__`` (and a
+        set's ``__hash__``) may raise, so it is two-faced, the halt kept,
+        owed -- never a bare ``py.in``."""
+        if self.display is not None:
+            return self.display.contains(item, site)
         if self.finite_elements is not None:
-            from sugar_lift_py_tests.floor.set_value import (
-                _bool_result,
-                _closed_member_equal,
+            from sugar_lift_py_tests.floor.guarded_operand import (
+                distribute_guarded_membership,
             )
 
-            decisions = tuple(
-                _closed_member_equal(item, element) for element in self.finite_elements
-            )
-            if any(decision is True for decision in decisions):
-                return _bool_result(True, site)
-            if all(decision is False for decision in decisions):
-                return _bool_result(False, site)
-            if any(decision is None for decision in decisions):
-                from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-                from sugar_lift_py_tests.ir import atomic
-                from sugar_lift_py_tests.outcome import ExitSet
+            distributed = distribute_guarded_membership(self, item, site)
+            if distributed is not None:
+                return distributed
+            from sugar_lift_py_tests.floor.membership import membership
 
-                return ExitSet.completed(
-                    PredicateValue(
-                        atomic(
-                            "py.in",
-                            [
-                                item.to_term(
-                                    owner="ComprehensionValue.contains member"
-                                ),
-                                self.to_term(owner=str(site)),
-                            ],
-                        ),
-                        site,
-                        operand_callsites=(*item.callsites(),),
-                    )
-                )
-            from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-            construction_panic_gap(
-                owner="ComprehensionValue.contains",
-                blame=str(site),
-                observed=type(item).__name__,
-                requested="constructed finite member or typed symbolic membership",
-                fix="construct comprehension membership on the Python floor or keep it loud",
+            hashed = _is_set_coordinate(self.term)
+            return membership(
+                self,
+                item,
+                self.finite_elements,
+                kind="set" if hashed else "generator",
+                hashed=hashed,
+                site=site,
             )
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import atomic
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        return ExitSet.completed(
-            PredicateValue(
-                atomic(
-                    "py.in",
-                    [
-                        item.to_term(owner="ComprehensionValue.contains member"),
-                        self.to_term(owner=str(site)),
-                    ],
-                ),
-                site,
-                operand_callsites=(*item.callsites(),),
-            )
-        )
+        return self.undecided_contains(item, site, owner="ComprehensionValue.contains")
 
     def truth(self, site):
         """Opaque comprehensions stand as conditions via ``py.truthy``.

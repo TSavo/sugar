@@ -431,12 +431,38 @@ class GuardedValue(FloorValue):
         )
 
     def contains(self, item, site):
-        """Distribute membership over both branch faces as a joined predicate."""
-        return self._predicate(
-            lambda arm: arm.contains(item, site),
-            operation="contains",
+        """``item in (a if c else b)``: each arm's own membership, rejoined
+        (:meth:`rejoined_membership`)."""
+        return self.rejoined_membership(
+            self.when_true.contains(item, site),
+            self.when_false.contains(item, site),
             operand=item,
+            site=site,
+        )
+
+    def rejoined_membership(self, true_outcome, false_outcome, *, operand, site):
+        """Two arms' memberships under this value's guard: the container's
+        arms (:meth:`contains`) or the needle's
+        (``guarded_operand.distribute_guarded_membership``).
+
+        Two decided answers rejoin into one formula under the guard.  An arm
+        that is anything else -- the undecided membership's two faces
+        (``FloorValue.undecided_contains``), a halt, a partition -- keeps
+        every exit under its own polarity beside the other arm's
+        (:func:`_siblings`): its halt is never dropped and never patched on
+        afterwards (#7757 H10)."""
+        if (
+            true_outcome.completed_value() is None
+            or false_outcome.completed_value() is None
+        ):
+            return _siblings(self.guard, true_outcome, false_outcome)
+        return self._rejoined_predicate(
+            true_outcome,
+            false_outcome,
+            operation="contains",
+            operand=operand,
             blame=site,
+            ctx=None,
         )
 
     def project_sequence_with(self, operation, ctx):

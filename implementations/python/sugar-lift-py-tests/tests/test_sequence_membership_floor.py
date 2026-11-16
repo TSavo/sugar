@@ -146,15 +146,24 @@ def test_string_substring_membership_is_decided():
     )
 
 
-def test_symbolic_string_membership_emits_py_in():
+def test_symbolic_string_membership_is_the_undecided_membership():
+    """``x in "abc"`` over a needle whose type is not decided raises
+    ``TypeError`` for a non-``str`` one: two faces, the halt kept, never the
+    bare ``py.in`` (#7757 H10)."""
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.floor import StringValue, SymbolicValue
-    from sugar_lift_py_tests.ir import _Atomic, make_var
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.outcome import Completed
 
-    result = (
-        StringValue("abc").contains(SymbolicValue(make_var("needle")), "site").completed_value()
-    )
-    assert isinstance(result.formula, _Atomic)
-    assert result.formula.name == "py.in"
+    outcome = StringValue("abc").contains(SymbolicValue(make_var("needle")), "site")
+    assert outcome.completed_value() is None
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    (halt,) = outcome.halts()
+    assert done.value.formula.name == "python:truth_result"
+    assert done.value.formula.args[0].args[0].value == "In"
+    assert "python:compare.completes" in repr(done.guard)
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.effect.producer_node_owner == "UndecidedCompare:In"
 
 
 def _workspace_fragment(tmp_path):

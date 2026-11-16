@@ -111,35 +111,13 @@ class MutableGlobalValue(FloorValue):
         )
 
     def contains(self, item, site):
-        if self.kind != "dict":
-            return self.undecided_contains(
-                item, site, owner="MutableGlobalValue.contains"
-            )
-        if getattr(site, "source_cid", None) != self.pin_source_cid:
-            from sugar_source_tree.panic import SugarNotWritten
+        """``item in <mutable global>``: the floor's one undecided membership.
 
-            raise SugarNotWritten(
-                blame=site,
-                owner="MutableGlobalValue.contains",
-                observed="foreign source for mutable-global membership occurrence",
-                requested="authenticated same-source membership occurrence",
-                fix="carry the binding-owned pin into same-source module temporal state",
-            )
-
-        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.ir import atomic
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        return ExitSet.completed(
-            PredicateValue(
-                atomic(
-                    "py.in",
-                    [
-                        item.to_term(owner="python.mutable_dict.contains key"),
-                        self.to_term(owner="python.mutable_dict.contains dict"),
-                    ],
-                ),
-                site,
-                operand_callsites=(*item.callsites(), *self.callsites()),
-            )
-        )
+        The pin names the binding, not its members: another function may
+        have changed them, so which keys it holds is not decided here.  A
+        dict probes by hash and compares a colliding key with ``==``, which
+        may run a stored key's ``__eq__``; any other kind's ``__contains__``
+        is not decided at all.  Either way ``item in self`` may raise:
+        two faces, the halt kept, owed (#7757 H10) -- never a bare
+        ``py.in``.  It reads no member, so the site's source is not asked."""
+        return self.undecided_contains(item, site, owner="MutableGlobalValue.contains")

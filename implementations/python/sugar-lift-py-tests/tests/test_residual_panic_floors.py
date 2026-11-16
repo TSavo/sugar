@@ -4,7 +4,7 @@ Covers the next measured owners:
 - StringValue.attribute (19) — bound methods as py.getattr
 - UniverseValue.guarded (26) — nested def under if
 - DictValue.contains (5) — key membership
-- ComprehensionValue.contains (5) — py.in / finite fold
+- ComprehensionValue.contains (5) — undecided membership / finite fold
 - PredicateValue.attribute (7) — py.getattr
 """
 
@@ -50,11 +50,21 @@ def test_dict_key_membership_folds():
     )
 
 
-def test_opaque_comprehension_membership_emits_py_in():
+def test_opaque_comprehension_membership_is_the_undecided_membership():
+    """Its members' ``__eq__`` may raise: two faces, the halt kept, never
+    the bare ``py.in`` (#7757 H10)."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, Halted
+
     comp = ComprehensionValue(ctor("py.listcomp", [make_var("xs")]))
-    result = comp.contains(TermValue(1), "site").completed_value()
-    assert isinstance(result, PredicateValue)
-    assert result.formula.name == "py.in"
+    outcome = comp.contains(TermValue(1), "site")
+    assert outcome.completed_value() is None
+    (completed,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    (halted,) = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert completed.guard.name == "python:compare.completes"
+    assert isinstance(completed.value, PredicateValue)
+    assert isinstance(halted.effect, UndeterminedRaiseEffect)
+    assert halted.effect.producer_node_owner == "UndecidedCompare:In"
 
 
 def test_nested_function_def_under_if_does_not_panic_on_universe_guarded():
