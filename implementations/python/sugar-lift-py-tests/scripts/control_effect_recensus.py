@@ -927,25 +927,7 @@ def main() -> int:
             "checkpoints and seal with --aggregate-only."
         ),
     )
-    parser.add_argument(
-        "--carry-store",
-        type=Path,
-        default=None,
-        help=(
-            "fingerprint store (tools/scorecard_carry.py): carry a file's row "
-            "forward when every function and file its measurement depended on "
-            "is unchanged; measure and record the rest. Rows that came from an "
-            "instrument failure or the measurement ceiling are never carried."
-        ),
-    )
     args = parser.parse_args()
-    # Started before any measurement so the record holds everything this
-    # process runs (the cumulative depset; see BoardCarry).
-    board_carry = None
-    if args.carry_store is not None and not args.aggregate_only:
-        from scorecard_carry import BoardCarry
-
-        board_carry = BoardCarry(args.carry_store, resolve_repo_root())
     corpus_slice: tuple[int, int] | None = None
     if args.slice is not None:
         from pandas_census_checkpoint import CheckpointError, parse_slice
@@ -1145,15 +1127,6 @@ def main() -> int:
     # Computing it any other way would be a second addressing convention.
     locus_root = locus_root_for_corpus(corpus_root)
     workspace_root = corpus_root
-    if board_carry is not None:
-        board_carry.bind(
-            {
-                "corpusAggregateHash": observed_pin.aggregate_hash,
-                "corpusRoot": str(corpus_root),
-                "locusRoot": str(locus_root),
-                "measurementCeilingSeconds": ceiling_seconds(),
-            }
-        )
 
     file_names = sorted(by_file)
     if len(file_names) != len(paths):
@@ -1598,81 +1571,66 @@ def main() -> int:
                     }
                     _set_bars(post, refresh=True)
 
-                # A carried row is the stored row of a measurement whose every
-                # dependency is unchanged in this tree (tools/scorecard_carry.py).
-                carried_row = (
-                    board_carry.lookup(file) if board_carry is not None else None
-                )
-                # Only a constructed / construction-panic row that the measurement
-                # itself produced is recorded. An instrument failure or a
-                # ceiling row is never carried: it is measured again next run.
-                row_recordable = False
-                if carried_row is not None:
-                    row = carried_row
-                else:
-                    try:
-                        # AUTHORITY: sugar.enumerate only. No private SourceFile walk.
-                        # workspace_root for enumerate is the corpus root; at.file is
-                        # the path relative to that root (not the pin-prefixed key).
-                        from recensus_enumerate_consumer import (
-                            _instrument_failure_row,
-                            measure_file_via_enumerate,
-                        )
+                try:
+                    # AUTHORITY: sugar.enumerate only. No private SourceFile walk.
+                    # workspace_root for enumerate is the corpus root; at.file is
+                    # the path relative to that root (not the pin-prefixed key).
+                    from recensus_enumerate_consumer import (
+                        _instrument_failure_row,
+                        measure_file_via_enumerate,
+                    )
 
-                        row = measure_file_via_enumerate(
-                            workspace_root=corpus_root,
-                            file_rel=relative,
-                            source_workspace_root=locus_root,
+                    row = measure_file_via_enumerate(
+                        workspace_root=corpus_root,
+                        file_rel=relative,
+                        source_workspace_root=locus_root,
+                    )
+                    if row.get("terminalKind") in {
+                        "constructed",
+                        "construction-panic",
+                    }:
+                        source_cid = str(
+                            (row.get("inputKey") or {}).get("sourceCid")
                         )
-                        if row.get("terminalKind") in {
-                            "constructed",
-                            "construction-panic",
-                        }:
-                            source_cid = str(
-                                (row.get("inputKey") or {}).get("sourceCid")
-                            )
-                            resolution_rows = _tally_cm_resolutions(
-                                source_cid=source_cid,
-                                resolution_events=list(
-                                    row.pop("contextManagerResolutionEvents", [])
-                                ),
-                            )
-                            sites = _ast_site_prevalence(path)
-                            with_partition = _with_census_partition(
-                                resolution_rows, sites
-                            )
-                            row["withResolutionRows"] = resolution_rows
-                            row["cmResolutions"] = {
-                                "constructed": with_partition["constructed"],
-                                "unconstructed": with_partition["unconstructed"],
-                            }
-                            row["astSites"] = dict(sites)
-                            from compose_control_effect_board import (
-                                EDGE_WITH_PARTITION,
-                            )
-
-                            row.setdefault("edgeWitnesses", {})[
-                                EDGE_WITH_PARTITION
-                            ] = with_partition["edgeWitness"]
-                            row_recordable = True
-                    except LifterRefusal:
-                        raise
-                    except BaseException as error:  # noqa: BLE001 -- per-file terminal
-                        if _is_process_control(error):
-                            raise
-                        row = _instrument_failure_row(
-                            error,
-                            file_rel=relative,
-                            phase="main-file-producer",
-                            source_cid=None,
-                            function_nodes=[],
-                            functions_total=int(
-                                _ast_site_prevalence(path).get("site:function-def", 0)
+                        resolution_rows = _tally_cm_resolutions(
+                            source_cid=source_cid,
+                            resolution_events=list(
+                                row.pop("contextManagerResolutionEvents", [])
                             ),
-                            functions_enumerated=0,
                         )
-                    if board_carry is not None:
-                        board_carry.record(file, row if row_recordable else None)
+                        sites = _ast_site_prevalence(path)
+                        with_partition = _with_census_partition(
+                            resolution_rows, sites
+                        )
+                        row["withResolutionRows"] = resolution_rows
+                        row["cmResolutions"] = {
+                            "constructed": with_partition["constructed"],
+                            "unconstructed": with_partition["unconstructed"],
+                        }
+                        row["astSites"] = dict(sites)
+                        from compose_control_effect_board import (
+                            EDGE_WITH_PARTITION,
+                        )
+
+                        row.setdefault("edgeWitnesses", {})[
+                            EDGE_WITH_PARTITION
+                        ] = with_partition["edgeWitness"]
+                except LifterRefusal:
+                    raise
+                except BaseException as error:  # noqa: BLE001 -- per-file terminal
+                    if _is_process_control(error):
+                        raise
+                    row = _instrument_failure_row(
+                        error,
+                        file_rel=relative,
+                        phase="main-file-producer",
+                        source_cid=None,
+                        function_nodes=[],
+                        functions_total=int(
+                            _ast_site_prevalence(path).get("site:function-def", 0)
+                        ),
+                        functions_enumerated=0,
+                    )
                 file_s = time.perf_counter() - t_file
                 checkpoint.append(file, row)
                 measured_now.append((file, row))
@@ -1777,8 +1735,7 @@ def main() -> int:
                 # flock/fsync, but the re-read+write storm is real volume. Law
                 # is unchanged: every file_s still lands on the shelf before the
                 # process exits the lift phase.
-                if carried_row is None:  # a carried row measured nothing now
-                    lpt_prior_rows.append((path, file_s, relative))
+                lpt_prior_rows.append((path, file_s, relative))
                 # One line per slow file (always for first/last/every-N, and
                 # always when wall exceeds 5s).
                 slow = file_s >= 5.0
@@ -1835,8 +1792,6 @@ def main() -> int:
                     )
             progress_stream.close()
 
-    if board_carry is not None:
-        _narrate(f"RECENSUS CARRY {board_carry.line()}")
     if corpus_slice is not None:
         # A seat banks rows. It states no board: the other seats' files are
         # not missing, they are someone else's, and only the joined journal

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The package suite and the solver twins of the main scorecard (#8416).
 #
-#   main_scorecard_suite.sh plan        which files run, packed onto shards
+#   main_scorecard_suite.sh plan        every file, packed onto the shards
 #   main_scorecard_suite.sh run <i>     run shard i's files
 #   main_scorecard_suite.sh post        post the suite and twins numbers
 #
@@ -15,13 +15,18 @@
 #   suite tree (scorecard_carry.py summarize --filtered/--only-files), plus
 #   the twin files outside the suite tree, which run once, as `twins`, on
 #   whichever shard the plan puts them.
-# * The plan packs every file that must run onto the shards by measured cost
-#   (tools/main_scorecard_shard_plan.py on the LPT prior in
+# * The plan packs every file onto the SUITE_SHARD_COUNT shards by measured
+#   cost (tools/main_scorecard_shard_plan.py on the LPT prior in
 #   $SCORECARD_CACHE/lpt-file-costs, which every pytest here refreshes).
+#
+# NOTHING IS CARRIED (#8416): every file of the plan runs on every run. The
+# carry recorder (sys.monitoring re-instrumenting live bytecode per test)
+# carried nothing and was the prime suspect for the shards' segfaults; it is
+# deleted (tools/scorecard_carry.py).
 #
 # Every shard reads the plan from $SCORECARD_CACHE/runs/plan-$GITHUB_RUN_ID
 # (the cache directory every runner shares), so a re-run shard reads the
-# same plan, and writes its carry summaries (and pytest's exit status) under
+# same plan, and writes its pytest summaries (and pytest's exit status) under
 # $plan/results, which every attempt of the run shares: a shard re-run after
 # a failure completes the same row. `set +e` where pytest may exit nonzero on
 # purpose (#8293).
@@ -80,30 +85,16 @@ cmd_plan() {
     "twin files: $(count_lines "$plan/twins-paths.txt")" \
     "($(count_lines "$plan/twins-in-suite.txt") counted from the suite's results," \
     "$(count_lines "$plan/twins-extra.txt") outside the suite tree)"
-  python "$repo/tools/scorecard_carry.py" suite-plan \
-    --store "$SCORECARD_STORE" --label suite \
-    --paths-file "$plan/suite-paths.txt" \
-    --summary "$results/suite/plan.json" \
-    --rerun-paths "$plan/suite-rerun.txt"
-  python "$repo/tools/scorecard_carry.py" suite-plan \
-    --store "$SCORECARD_STORE" --label twins \
-    --paths-file "$plan/twins-extra.txt" \
-    --summary "$results/twins/plan.json" \
-    --rerun-paths "$plan/twins-rerun.txt"
-  local n fanout shards
-  n=$(( $(count_lines "$plan/suite-rerun.txt") + $(count_lines "$plan/twins-rerun.txt") ))
-  if [ "$n" -gt "$SUITE_INLINE_MAX_FILES" ]; then fanout=true; shards="$SUITE_SHARD_COUNT"; else fanout=false; shards=1; fi
   python "$repo/tools/main_scorecard_shard_plan.py" pack --cwd "$py" \
-    --suite "$plan/suite-rerun.txt" --twins "$plan/twins-rerun.txt" \
-    --shard-count "$shards" --out "$plan" --ledger "$ledger"
-  echo "rerun=$n" >> "$GITHUB_OUTPUT"
-  echo "fanout=$fanout" >> "$GITHUB_OUTPUT"
-  echo "files to run: $n (fan out over $shards shard(s): $fanout)"
+    --suite "$plan/suite-paths.txt" --twins "$plan/twins-extra.txt" \
+    --shard-count "$SUITE_SHARD_COUNT" --out "$plan" --ledger "$ledger"
+  echo "files to run: $(( $(count_lines "$plan/suite-paths.txt") + $(count_lines "$plan/twins-extra.txt") ))" \
+    "over $SUITE_SHARD_COUNT shards"
 }
 
 run_pytest() {
   # run_pytest <label> <list> <summary> <log>; returns 1 when pytest did not
-  # run its tests (exit other than 0 passed, 1 failed, 5 nothing left to run).
+  # run its tests (exit other than 0 passed, 1 failed, 5 no tests collected).
   local label="$1" list="$2" summary="$3" log="$4" rc
   local -a paths=()
   [ -f "$list" ] && mapfile -t paths < "$list"
@@ -113,8 +104,7 @@ run_pytest() {
     python -m pytest "${paths[@]}" -v \
     -p no:cacheprovider -p no:randomly \
     -p scorecard_carry_pytest \
-    --carry-store "$SCORECARD_STORE" --carry-label "$label" \
-    --carry-summary "$summary" \
+    --carry-label "$label" --carry-summary "$summary" \
     > "$log" 2>&1
   rc=$?
   echo "$rc" > "${summary%.json}.exit"

@@ -16,8 +16,9 @@ name: Main scorecard board
 # The board number is compared with the newest earlier row that measured the
 # board, and REGRESSION: turns the job red.
 #
-# Incremental carry, the persistent venv and `set +e` are as described in
-# main-scorecard.yml.
+# The persistent venv and `set +e` are as described in main-scorecard.yml.
+# Every seat measures every file of its slice: nothing is carried from an
+# earlier run (the carry recorder is gone, #8416; see main-scorecard.yml).
 #
 # The hourly run has its own group and a gate, as in main-scorecard.yml
 # ("THE HOUR NEVER REPLACES A PUSH", #8416): it never replaces the push run
@@ -126,9 +127,7 @@ jobs:
         run: bash tools/main_scorecard_wait_fast_lane.sh
 
   # The pass kit's shape (run.sh): BOARD_SEATS seats of --slice i/K, each with
-  # its own checkpoint, joined, then --aggregate-only. With --carry-store a
-  # seat measures only the files whose recorded dependencies changed and
-  # carries the other rows. pandas is pinned to 3.0.3 by
+  # its own checkpoint, joined, then --aggregate-only. pandas is pinned to 3.0.3 by
   # sugar-lift-py-tests[test] and docs/ledgers/pins/pandas-3.0.3.pin.json.
   board:
     name: pandas board
@@ -189,7 +188,6 @@ jobs:
                   --corpus-root "$PANDAS_CORPUS" \
                   --slice "$i/$K" \
                   --out-dir "$OUT/s$i" \
-                  --carry-store "$SCORECARD_STORE" \
                   > "$OUT/s$i.log" 2>&1
               echo $? > "$OUT/s$i.rc"
             ) &
@@ -197,7 +195,6 @@ jobs:
           wait
           for i in $(seq 0 $((K - 1))); do
             echo "seat s$i rc=$(cat "$OUT/s$i.rc" 2>/dev/null || echo missing)"
-            grep -a 'RECENSUS CARRY' "$OUT/s$i.log" || echo "seat s$i: no RECENSUS CARRY line"
           done
           cat "$OUT"/s*/checkpoint.jsonl > "$OUT/join/checkpoint.jsonl" 2>/dev/null
           timeout -s KILL "$BOARD_JOIN_CAP_S" \
@@ -232,20 +229,12 @@ jobs:
             partial_args=(--set "board.instrument_failures=${failures:-?}" \
               --set "board.note=partial: compose refused the board; ${failures:-?} files failed the instrument and are not counted")
           fi
-          carried=0; rerun=0
-          for log in board/s*.log; do
-            [ -f "$log" ] || continue
-            c="$(grep -a 'RECENSUS CARRY' "$log" | tail -n 1 | sed -n 's/.* carried=\([0-9]*\).*/\1/p')"
-            r="$(grep -a 'RECENSUS CARRY' "$log" | tail -n 1 | sed -n 's/.* rerun=\([0-9]*\).*/\1/p')"
-            carried=$((carried + ${c:-0})); rerun=$((rerun + ${r:-0}))
-          done
-          echo "board completed=$completed total=$total cpanic=$cpanic instrument_failures=${failures:-0} partial=${partial:-0} rerun=$rerun carried=$carried"
+          echo "board completed=$completed total=$total cpanic=$cpanic instrument_failures=${failures:-0} partial=${partial:-0}"
           if [ -n "$completed" ] && [ -n "$total" ]; then
             python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" --final \
               --set "board.completed=$completed" --set "board.total=$total" \
               --set "board.cpanic=${cpanic:-?}" \
               --set "board.line=$(printf '%s' "$line" | cut -c1-300)" \
-              --set "board.carry.rerun=$rerun" --set "board.carry.carried=$carried" \
               "${partial_args[@]}"
           else
             python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" --final \

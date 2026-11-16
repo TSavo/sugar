@@ -13,8 +13,8 @@ workspace, which every checkout wiped: every run fell back to equal counts
 solver twins were a separate 20-minute job that re-ran 50 files the suite
 shards had already run.
 
-``pack`` runs once, in the plan job. It takes the files the carry plan says
-must run -- the suite's, and the twin files outside the suite tree (the twins
+``pack`` runs once, in the plan job. It takes every file that runs -- the
+suite's, and the twin files outside the suite tree (the twins
 in the suite tree are read from the suite's own results) -- and packs them
 onto the shards with tools/lpt_file_shards.py on the shared prior
 (SUGAR_LPT_PRIOR_DIR, written by tools/scorecard_carry_pytest.py after every
@@ -31,14 +31,14 @@ measured test count).
 A LOST SHARD IS NEVER A SMALLER TOTAL (#8416, run 43832361876)
 
 Suite shard 2 failed in its toolchain step and shard 1's pytest died with
-SIGSEGV (exit 139); neither wrote a carry summary, and the join summed the six
+SIGSEGV (exit 139); neither wrote a pytest summary, and the join summed the six
 that did: the row said ``suite=4209/4212`` as if measured, with about 1450
 tests silently missing, and the alarm (failing counts only) said OK.
 
 ``check`` runs in the job that posts the suite and twins numbers. A shard
-that was planned files of a population and left no carry summary for it, or
-whose pytest exited other than 0 (passed), 1 (tests failed) or 5 (nothing
-left to run once carried tests were deselected), or that ran nothing while
+that was planned files of a population and left no pytest summary for it, or
+whose pytest exited other than 0 (passed), 1 (tests failed) or 5 (no tests
+collected), or that ran nothing while
 tests were planned, did not measure. That population's result is then
 rewritten as unmeasured with an ``incomplete:`` note naming the shards. The
 twins in the suite tree are counted from the suite's results, so a lost suite
@@ -56,7 +56,7 @@ from pathlib import Path
 
 POPULATIONS = ("suite", "twins")
 # pytest exit statuses after which the shard's tests ran: 0 all passed,
-# 1 some failed, 5 nothing left to run (every test was carried).
+# 1 some failed, 5 no tests collected.
 RAN = {0, 1, 5}
 PLAN_SCHEMA = "sugar-main-scorecard-shards/v1"
 
@@ -208,7 +208,6 @@ def cmd_check(args: argparse.Namespace) -> int:
                 {
                     "measured": False,
                     "note": note,
-                    "carry": previous.get("carry") or {},
                     "jobWallSeconds": previous.get("jobWallSeconds"),
                     "partial": {
                         "passed": previous.get("passed"),
@@ -256,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
     pack.add_argument("--ledger", type=Path, default=None, help="per-file test counts")
     check = sub.add_parser("check", help="did every planned shard report its tests?")
     check.add_argument("--plan", type=Path, required=True, help="the plan directory")
-    check.add_argument("--results", type=Path, required=True, help="the shards' carry summaries")
+    check.add_argument("--results", type=Path, required=True, help="the shards' pytest summaries")
     check.add_argument("--result", action="append", default=[], metavar="POPULATION=FILE")
     check.add_argument("--ledger", type=Path, default=None, help="per-file test counts")
     args = parser.parse_args(argv)

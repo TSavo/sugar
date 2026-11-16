@@ -39,6 +39,10 @@ Comment shape (first line, then one machine-readable line of key=value):
   sha= prev= run= suite=p/t twins=p/t federation= rust=p/t board=c/t cpanic=
   issues= prs= pending= rerun= carried= wall=
 
+``rerun=`` and ``carried=`` keep their shape (``suite:N,twins:N,board:N``),
+but nothing is carried any more (#8416): rerun is each measure's total and
+carried is 0.
+
 ``rust`` is the Rust unit and integration tests (``cargo test``) of the crates
 on the Python proof path. Rows written before it existed have no ``rust=``
 key: they still parse (``rust`` is not in ROW_KEYS) and count as not measured.
@@ -457,10 +461,20 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
         status = f"OK all measured numbers held or improved{pending_txt} | {range_txt}"
 
     def carry_cell(field: str) -> str:
+        # Nothing is carried (#8416: the carry recorder is deleted): every
+        # measured test or board file ran, so rerun is the measure's total
+        # and carried is 0. The cells keep their shape for row readers.
         parts = []
         for measure in ("suite", "twins", "board"):
-            value = (results[measure].get("carry") or {}).get(field)
-            parts.append(f"{measure}:{'-' if measure in outside else num(value)}")
+            if measure in outside:
+                value = "-"
+            elif not results[measure].get("measured"):
+                value = "?"
+            elif field == "carried":
+                value = "0"
+            else:
+                value = num(results[measure].get("total"))
+            parts.append(f"{measure}:{value}")
         return ",".join(parts)
 
     wall = run_wall(repo, run_id)
