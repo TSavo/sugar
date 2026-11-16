@@ -24,14 +24,33 @@ class BoundMethodValue(FloorValue):
     (``ObjectValue.call_member``), never one selected again by name; ``o.m(...)``
     on a source instance is the attribute read answering this value, then
     this call.  None only for the method a ``super()`` lookup selects
-    (``BuiltinSuperMethodValue``), which the receiver answers by name.  Any
-    other use of the value (truthiness, comparison, further attributes) stays
-    a FloorValue panic.
+    (``BuiltinSuperMethodValue``), which the receiver answers by name.  Its
+    truth is decided (``truth``); any other use of the value (comparison,
+    further attributes) stays a FloorValue panic.
     """
 
     receiver: object
     name: str
     member: object = field(default=None, compare=False)
+
+    def truth(self, site):
+        """``bool(o.m)``: a function bound to its receiver is a ``method``,
+        whose type binds neither ``__bool__`` nor ``__len__``, so it is
+        ``True`` (#7757 H12).  The member a ``super()`` read selects is not
+        known to be a function (``super().x`` reads any attribute), so its
+        truth is the one undecided truth, both faces owed."""
+        from sugar_lift_py_tests.floor.lambda_callable import LambdaCallable
+
+        if isinstance(self.member, LambdaCallable):
+            from sugar_lift_py_tests.outcome import ExitSet
+            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                TrueBoolLiteralSugar,
+            )
+
+            return ExitSet.completed(TrueBoolLiteralSugar(site=site))
+        from sugar_lift_py_tests.sugar.bool_op_sugar import _unanswered_truth
+
+        return _unanswered_truth(self, site, owner=f"{type(self).__name__}.truth")
 
     def callable_application_with(self, operation, ctx):
         keyword_count = len(operation.keyword_names)
