@@ -1,8 +1,10 @@
 """A slice `lower:upper:step` is the py.slice coordinate; omitted bounds are None.
 
-Projection note: a formal's subscript is decided by the caller's actual (the
-``subscript`` carrier).  Read the slice term at the formal's own symbolic
-stand-in — never via ``UniverseValue.post`` while demands pend.
+Projection note: a formal's subscript is the one undecided read (#7757, audit
+2 row NEW-1, #9016), never a carrier waiting on a caller's actual: its value
+is ``python:subscript_result(<receiver>, <index>, <key>)``, keyed per
+evaluation, on the face that completes under its
+``python:subscript_op.completes`` atom.  The slice is that read's index.
 """
 
 from __future__ import annotations
@@ -18,25 +20,10 @@ def _sub(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(src)
         path = f.name
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-    from sugar_lift_py_tests.floor import SymbolicValue
-    from sugar_lift_py_tests.ir import make_var
     from sugar_lift_py_tests.outcome import Completed
 
     sugar = next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions()).sugar()
     outcome = sugar.desugar()
-    if isinstance(outcome, NativeOperationExitCarrierV1):
-        outcome = outcome.discharge(
-            None,
-            {
-                coordinate.coordinate_cid: SymbolicValue(
-                    make_var(coordinate.declared_name)
-                )
-                for coordinate in sugar.formal_coordinates
-            },
-        )
     (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
     universe = done.value
     for entry in universe.record.statements:
@@ -49,7 +36,7 @@ def _sub(src):
 
 def test_full_slice():
     sub = _sub("def A(xs):\n    return xs[1:2]\n")
-    assert sub.name == "py.subscript"
+    assert sub.name == "python:subscript_result"
     sl = sub.args[1]
     assert sl.name == "py.slice"
     assert sl.args[0].value == 1 and sl.args[1].value == 2

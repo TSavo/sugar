@@ -5,9 +5,12 @@ key; for a key of undecided type those may raise anything, and the lookup may
 find any entry or none.  It used to refuse (``undecided receiver runtime type
 or index semantics: DictValue[...]``) -- numpy's ``get_printoptions`` indexes
 a literal dict with ``opts['legacy']``.  Now the #7587 opaque-subscript law
-applies: the symbolic ``py.subscript(<dict>, <key>)`` completes under
-``python:subscript.completes(...)`` and the complement halts with an
-``UndeterminedRaiseEffect``.  A formal key still waits for the caller's actual.
+applies as the one undecided read (#7757, audit 2 row NEW-1, #9016): the
+value keyed per evaluation, ``python:subscript_result(<dict>, <key>,
+<occurrence>)``, completes under ``python:subscript_op.completes(...)`` and
+the complement halts with an ``UndeterminedRaiseEffect``.  A formal key is
+the same read in the function's own proof; a caller's actual is joined at
+prove, never waited on.
 """
 
 from __future__ import annotations
@@ -33,7 +36,7 @@ def test_an_unknown_key_completes_symbolically_or_raises(tmp_path):
     )
     (value,) = returns
     assert isinstance(value, SymbolicValue)
-    assert value.term.name == "py.subscript"
+    assert value.term.name == "python:subscript_result"
     owners = sorted(
         halt.producer_node_owner
         for halt in halts

@@ -5,7 +5,9 @@
 an import member whose runtime value is not projected, so the subscript used
 to refuse (``ImportMemberValue.subscript``: undecided receiver runtime type)
 and voided the manager.  It is now the #7587 opaque-subscript law: it
-completes under ``python:subscript.completes(...)`` and halts with an
+completes with ``python:subscript_result(...)`` under
+``python:subscript_op.completes(...)`` (keyed per evaluation, #9016) and
+halts with an
 ``UndeterminedRaiseEffect`` under the complement.  The dotted read
 ``sys.modules`` before it is two-faced as well
 (``ImportMemberValue.read_faces``): one more halt, of the same kind.
