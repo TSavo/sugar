@@ -324,13 +324,13 @@ def _built_set(values, site):
         _hash_decided,
         _index_of,
     )
-    from sugar_lift_py_tests.floor.membership import decided_unhashable
     from sugar_lift_py_tests.floor.set_value import SetValue
 
     kept: list = []
     for member in values:
-        if decided_unhashable(member):
-            return _display_refusal(site, "SetSugar")
+        refused = _uninsertable(member, site, "SetSugar")
+        if refused is not None:
+            return refused
         if _hash_decided(member) and _index_of(tuple(kept), member) not in (None, -1):
             continue
         kept.append(member)
@@ -350,13 +350,13 @@ def _built_dict(pairs, site):
         _index_of,
     )
     from sugar_lift_py_tests.floor.dict_value import DictValue
-    from sugar_lift_py_tests.floor.membership import decided_unhashable
 
     keys: list = []
     values: list = []
     for key, value in pairs:
-        if decided_unhashable(key):
-            return _display_refusal(site, "DictSugar")
+        refused = _uninsertable(key, site, "DictSugar")
+        if refused is not None:
+            return refused
         found = _index_of(tuple(keys), key) if _hash_decided(key) else None
         if found not in (None, -1):
             values[found] = value
@@ -369,6 +369,21 @@ def _built_dict(pairs, site):
     return ExitSet.completed(
         DictValue(tuple(zip(keys, values)), allocation=made_at(site))
     )
+
+
+def _uninsertable(member, site, owner):
+    """The one insertion rule of a set member or a dict key: CPython hashes
+    it as it inserts it, and a decidedly unhashable one is the ``TypeError``
+    halt there (``_display_refusal``); ``None`` when it is inserted.  A
+    display inserts after every member has run (``_built_set``,
+    ``_built_dict``); a comprehension inserts each member as it runs, so it
+    applies this rule member by member (``ComprehensionSugar._finite_map``)
+    and a later member never runs past an unhashable one."""
+    from sugar_lift_py_tests.floor.membership import decided_unhashable
+
+    if decided_unhashable(member):
+        return _display_refusal(site, owner)
+    return None
 
 
 def _display_refusal(site, owner):

@@ -611,6 +611,7 @@ class ComprehensionSugar(ConstructedTermSugar):
             carry_walrus_binds,
             peel_walrus_binds,
         )
+        from sugar_lift_py_tests.sugar.collection_sugar import _uninsertable
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             plain_completed_value,
         )
@@ -650,8 +651,9 @@ class ComprehensionSugar(ConstructedTermSugar):
             if self.key is not None:
                 # The dict comprehension makes a new dict here, by the one
                 # dict display rule (``_built_dict``): a repeated key keeps
-                # its first position and takes the last value, an unhashable
-                # key raises ``TypeError``.
+                # its first position and takes the last value.  Every key
+                # here was inserted as its member ran (``after_value``), so
+                # an unhashable one already halted there.
                 return _built_dict(tuple(projected), self.site).and_then(
                     lambda built: ExitSet.completed(carry_walrus_binds(binds, built))
                 )
@@ -662,8 +664,9 @@ class ComprehensionSugar(ConstructedTermSugar):
             # failed.  A list or set is decided whole here: what the proof
             # states for it is its display (``ComprehensionValue.display``),
             # a set's built by the one set display rule (``_built_set``: an
-            # equal member collapses into the first, an unhashable one
-            # raises ``TypeError``).  A generator is never consumed here: it
+            # equal member collapses into the first; an unhashable one
+            # already halted as its member ran, ``after_element``).  A
+            # generator is never consumed here: it
             # states its own coordinate, and its making owes
             # (``_generator``).
             own = self._own_coordinate()
@@ -771,6 +774,12 @@ class ComprehensionSugar(ConstructedTermSugar):
 
                 def after_value(key_binds, key, value_value):
                     value_binds, value = peel_walrus_binds(value_value)
+                    # CPython inserts the pair once its value has run: an
+                    # unhashable key is the ``TypeError`` halt here, before
+                    # any later member runs (``_uninsertable``).
+                    refused = _uninsertable(key, self.site, "DictSugar")
+                    if refused is not None:
+                        return refused
                     return after(
                         (*projected, (key, value)),
                         *written((*key_binds, *value_binds)),
@@ -780,16 +789,18 @@ class ComprehensionSugar(ConstructedTermSugar):
 
             def after_element(element_value):
                 element_binds, element = peel_walrus_binds(element_value)
-                return after(
-                    (
-                        *projected,
-                        element.project_operation_receiver(
-                            inner_ctx,
-                            owner="ComprehensionSugar finite constructed element",
-                        ),
-                    ),
-                    *written(element_binds),
+                element = element.project_operation_receiver(
+                    inner_ctx,
+                    owner="ComprehensionSugar finite constructed element",
                 )
+                if self.kind == "py.setcomp":
+                    # CPython inserts each member as it runs: an unhashable
+                    # one is the ``TypeError`` halt here, before any later
+                    # member runs (``_uninsertable``).
+                    refused = _uninsertable(element, self.site, "SetSugar")
+                    if refused is not None:
+                        return refused
+                return after((*projected, element), *written(element_binds))
 
             return self.element.desugar(inner_ctx).and_then(after_element)
 
