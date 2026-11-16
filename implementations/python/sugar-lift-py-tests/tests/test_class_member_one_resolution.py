@@ -3,9 +3,10 @@
 
 1. Every reader of an instance's class member -- the attribute read, the
    explicit call ``o.m()``, an implicit special-method call -- reads the one
-   class-namespace lookup once (``ObjectValue.class_member``) and carries the
-   member it selected; the call binds that member, never one selected again
-   by name.
+   class-namespace lookup once (``ObjectValue.class_member``).  A class-field
+   value it finds is read and carried; a ``def`` (of any kind) is never
+   classified here: the read and the call are the dispatched read and call,
+   whose member prove's one walk of the order decides (#7757 L3).
 2. The member is the binding the class body left last (``ClassDef.body_binder``):
    a ``def`` after a ``property`` of the same name, an assignment after a
    ``def``, a ``def`` after an assignment.
@@ -119,6 +120,24 @@ def _the_edge(outcome) -> None:
     assert completed.value.body is None
 
 
+def _the_read(outcome) -> None:
+    """A read of a ``def`` off an instance: the dispatched read prove's one
+    walk of the order decides (#7757 L3); with no workspace root no class
+    is named, so it is the undecided read, two-faced and owed -- never a
+    ``BoundMethodValue`` the lift built from the ``def`` it found."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed
+
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
+    assert outcome.owed_items()
+    assert not any(
+        isinstance(face.value, BoundMethodValue)
+        for face in outcome.exits
+        if isinstance(face, Completed)
+    )
+
+
 # --- 1 and 2. one resolution, the last binding ------------------------------------
 
 
@@ -136,15 +155,17 @@ def test_a_def_after_a_property_is_the_member_every_reader_meets() -> None:
     assert decided and value is None
     assert method is not None and method.descriptor_kind is None
 
-    # The read is the plain def bound to the receiver, never the property's
-    # getter run at the read.
-    read = receiver.attribute("m", "m-site", ctx).completed_value()
-    assert isinstance(read, BoundMethodValue)
-    assert read.member is method
-    _the_edge(_call(read, (), "m-site", ctx))
+    # The lookup still names the def (the store side reads it), but the read
+    # and the call no longer classify it (#7757 L3): the read is the
+    # dispatched read prove's walk decides (with no workspace root, the
+    # undecided read), never the property's getter run at the read and
+    # never a bound method the lift built from the def.
+    _the_read(receiver.attribute("m", "m-site", ctx))
+    # ``o.m()`` written as a call is the one dispatched call itself.
+    _the_edge(receiver.dispatched_method_call("m", (), (), "m-site"))
 
-    # The class-side call (an implicit special-method call's door) reads the
-    # same member: the edge, never the property's getter run at the read.
+    # The class-side call (an implicit special-method call's door) is the
+    # same dispatched call: the edge, never the property's getter run here.
     outcome = receiver.call_method_value(
         "m", (), owner="test", blame="call-site", ctx=ctx
     )
@@ -173,9 +194,11 @@ def test_a_def_after_an_assignment_is_the_member() -> None:
 
     decided, method, value = receiver.class_member("m")
     assert decided and value is None and method is not None
-    read = receiver.attribute("m", "m-site", ctx).completed_value()
-    assert isinstance(read, BoundMethodValue) and read.member is method
-    _the_edge(_call(read, (), "m-site", ctx))
+    # Not a class-field value: the read is the dispatched read (the
+    # undecided read with no workspace root), the call the dispatched call,
+    # never the earlier ``5`` (#7757 L3).
+    _the_read(receiver.attribute("m", "m-site", ctx))
+    _the_edge(receiver.dispatched_method_call("m", (), (), "m-site"))
 
 
 # --- 3. a function in the class namespace, read off an instance ------------------

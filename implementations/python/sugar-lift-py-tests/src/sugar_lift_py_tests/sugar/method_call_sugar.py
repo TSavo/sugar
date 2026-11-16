@@ -429,10 +429,15 @@ def _source_instance_method_call(
     (``ObjectValue.attribute``), never a method selected beside it, and the
     value it answers is applied by the one routine (``apply_callee``):
 
-    - a method the class binds is a ``BoundMethodValue`` carrying the member
-      the lookup selected, called as the one dispatched call
-      (``ObjectValue.call_member``), and so is a function the class
-      namespace holds as a field (``function.__get__`` binds the receiver);
+    - where no recorded field and no class-field value answers ``o.m`` --
+      a ``def`` the class wrote, of any kind, or no member at all -- the
+      call is the one dispatched call
+      (``ObjectValue.dispatched_method_call``): prove's one walk of the
+      order decides the member, its binding and the lookup's raise (#7757
+      L3); the lift never reads the ``def`` to classify it;
+    - a function the class namespace holds as a field is a
+      ``BoundMethodValue`` (``function.__get__`` binds the receiver), called
+      as the one dispatched call (``ObjectValue.call_member``);
     - an instance field that shadows the method is that field's value
       called (``self.m = lambda: 1`` -> ``o.m()`` is ``1``);
     - on an instance whose fields are not current (it arrived by binding,
@@ -479,6 +484,13 @@ def _source_instance_method_call(
             )
         return apply_callee(callee, positional, kw_values, site, ctx, unanswered)
 
+    # No recorded field and no class-field value answers ``o.m``: the call
+    # is the one dispatched call itself, whose member prove's one walk of
+    # the order decides (``ObjectValue.dispatched_method_call``, #7757 L3),
+    # never ``o.m`` read as a member the lift classified and then called.
+    direct = receiver.dispatched_method_call(name, positional, kw_values, site)
+    if direct is not None:
+        return direct
     return receiver.attribute(name, site, ctx).and_then(call)
 
 

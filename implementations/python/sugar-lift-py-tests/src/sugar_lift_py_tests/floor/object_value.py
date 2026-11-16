@@ -39,6 +39,30 @@ def _builtin_binds_data_descriptor(owner: str, name: str) -> bool:
     return hasattr(held, "__set__") or hasattr(held, "__delete__")
 
 
+def _attribute_owned(outcome):
+    """A dispatched read's raise continues as the Attribute's own halt
+    beneath its arm (guard, faces and ``owed`` ride on); every other arm
+    stands."""
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    if not isinstance(outcome, ExitSet):
+        return outcome
+    return outcome.and_then(
+        lambda value: ExitSet.completed(value),
+        consume=lambda halt: (
+            ExitSet.halted(
+                replace(halt.effect, producer_node_owner="Attribute"),
+                state=halt.state,
+            )
+            if isinstance(halt.effect, RaiseEffect)
+            else None
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class ObjectValue(FloorValue):
     class_name: str
@@ -165,11 +189,15 @@ class ObjectValue(FloorValue):
         edge: its result, ``NotImplemented`` included, is what the method's
         contract states, joined at prove (#7757 step 6).
 
-        The method is the one the one class-namespace lookup selects
-        (``class_member``); a lookup it does not decide is the unanswered
-        call (``unanswered_method_call``).
+        Which member runs and how it binds (a plain function, a
+        ``staticmethod``, a ``classmethod``, a property) is prove's one walk
+        of the order's (``consistency::dispatch_walk``, #7757 L3): the lift
+        reads no ``def``'s kind or frame.  A lookup the one class-namespace
+        lookup does not decide is the unanswered call
+        (``unanswered_method_call``); a class-field value there is no method
+        this constructs, and refuses by name.
         """
-        decided, method, _value = self.class_member(dunder)
+        decided, _method, value = self.class_member(dunder)
         if not decided:
             return self.unanswered_method_call(dunder, (other,), (), site)
         same_class = (
@@ -189,28 +217,22 @@ class ObjectValue(FloorValue):
                 requested="same source class or an exact native right operand",
                 fix="derive reflected/subclass method order before rich comparison",
             )
-        if (
-            method is None
-            or method.source_call_frame is None
-            or method.source_call_frame_cid is None
-            or method.descriptor_kind is not None
-            or method.source_call_frame_cid != method.source_call_frame.frame_cid
-        ):
+        if value is not None:
             return self._floor_gap(
                 owner=owner,
                 blame=site,
-                observed=f"source {dunder} frame or descriptor is not authenticated",
-                requested=f"the definition-owned ordinary {dunder} method frame",
-                fix="construct its exact frame/descriptor binding before invoking it",
+                observed=f"source {dunder} is a class-field value",
+                requested=f"a {dunder} the class body wrote as a def",
+                fix="construct the class-field value's call before invoking it",
             )
         # The call is its coordinate and edge, joined at prove to the
-        # method's contract (``call_member``, the one dispatched call, #7757
-        # step 8): what it returns -- a native boolean, ``NotImplemented``,
-        # anything -- is that contract's, never its body applied here.  The
-        # comparison's value is the call's, its truth the call's own.
-        return self.call_member(
-            dunder, method, (other,), owner=owner, blame=site, ctx=ctx
-        )
+        # method's contract (``_dispatched_or_owed``, the one dispatched
+        # call, #7757 step 8): what it returns -- a native boolean,
+        # ``NotImplemented``, anything -- is that contract's, never its body
+        # applied here.  The comparison's value is the call's, its truth the
+        # call's own.
+        del ctx
+        return self._dispatched_or_owed(dunder, (other,), (), site)
 
     def matrix_multiply(self, other, site, ctx):
         """``@`` on an object is the ``__matmul__`` data-model method,
@@ -242,9 +264,6 @@ class ObjectValue(FloorValue):
     def attribute(self, name, site, ctx):
         """Project an exact field from this constructed receiver state.
 
-        A property getter is a body: it applies under ``ctx``, the reading
-        caller's context, keeping that caller's temporal and halts.
-
         The one currency rule (``object_identity.contents_current``): the
         recorded instance fields are read only when they are the object's
         fields now (a construction in this frame made it).  An instance that
@@ -269,20 +288,22 @@ class ObjectValue(FloorValue):
         current or not: the store makes that field known; the rest of an
         arrived instance stays as its currency says.
 
-        Every member read off the class -- a property, a class field, a
-        method -- is the one the one class-namespace lookup selects
-        (``class_member``: the binding the class body left last); a lookup
-        it does not decide is the unanswered read (``undecided_attribute_result``).
-        The member is read once and carried: a property's getter, and the
-        method a ``BoundMethodValue`` binds, are that member, never looked up
-        again by name.
+        A class-field value (a class-body binding other than a ``def``) is
+        read off the class by the one class-namespace lookup
+        (``class_member``: the binding the class body left last): no proof
+        row states a field's value, so the lift is its only answerer.  A
+        lookup that does not decide is the undecided read
+        (``undecided_attribute_result``).
 
-        A name nothing answers -- no field (a deleted one included), no class
-        member -- is the dispatched read (``_dispatched_call(read=True)``):
-        whether it raises ``AttributeError`` is decided once, at prove, by
-        the one walk of the order (``consistency::dispatch_walk``, #7757 L3),
-        never here.  Where the read names no class it is the undecided
-        read."""
+        Every other name -- a ``def`` the class wrote (plain, static, class
+        method or property), or no class member at all, or a field a delete
+        removed -- is the dispatched read (``_dispatched_call(read=True)``):
+        which member it finds, how it binds, and whether it raises
+        ``AttributeError`` are decided once, at prove, by the one walk of the
+        order (``consistency::dispatch_walk``, #7757 L3), never here.  Where
+        the read names no class it is the undecided read.  ``o.m(...)``
+        written as a call is the dispatched call itself
+        (``dispatched_method_call``)."""
         from .object_identity import contents_current
 
         current = contents_current(self)
@@ -304,36 +325,11 @@ class ObjectValue(FloorValue):
                 from sugar_lift_py_tests.outcome import ExitSet
 
                 return ExitSet.completed(field.value)
-        decided, selected, class_value = self.class_member(name)
+        decided, _selected, class_value = self.class_member(name)
         if not decided:
             return undecided_attribute_result(
                 self, name, site, owner="ObjectValue.attribute"
             )
-        if selected is not None and selected.descriptor_kind == "property":
-            from dataclasses import replace
-
-            from sugar_lift_py_tests.effect import RaiseEffect
-            from sugar_lift_py_tests.outcome import ExitSet
-
-            def attribute_owned(outcome):
-                if not isinstance(outcome, ExitSet):
-                    return outcome
-                # A raise continues as the Attribute's own halt beneath its
-                # arm (guard, faces and ``owed`` ride on); every other arm
-                # stands.
-                return outcome.and_then(
-                    lambda value: ExitSet.completed(value),
-                    consume=lambda halt: (
-                        ExitSet.halted(
-                            replace(halt.effect, producer_node_owner="Attribute"),
-                            state=halt.state,
-                        )
-                        if isinstance(halt.effect, RaiseEffect)
-                        else None
-                    ),
-                )
-
-            return attribute_owned(self._property_read(name, site))
         if class_value is not None:
             from sugar_lift_py_tests.floor.lambda_callable import LambdaCallable
             from sugar_lift_py_tests.outcome import ExitSet
@@ -351,41 +347,51 @@ class ObjectValue(FloorValue):
 
                 return ExitSet.completed(BoundMethodValue(self, name, class_value))
             return ExitSet.completed(class_value)
-        if selected is not None:
-            # A function on the receiver's class, read off the instance, is
-            # the value its descriptor binds (a non-data descriptor: no
-            # instance field shadows it here, the field arm above already
-            # answered): a plain function a method bound to this receiver, a
-            # ``staticmethod`` the bare function, a ``classmethod`` a method
-            # bound to the receiver's class.  The value is this receiver, the
-            # name and the method this lookup selected; its call is the one
-            # dispatched call over this receiver's class (``call_member``),
-            # bound at prove by the kind the class's namespace row states,
-            # and nothing here selects which function runs.
-            # ``obj.m()`` is this read, then that call
-            # (``method_call_sugar._source_instance_method_call``).  Nothing
-            # about the body is decided at the read.
-            from sugar_lift_py_tests.floor.bound_method_value import BoundMethodValue
-            from sugar_lift_py_tests.outcome import ExitSet
-
-            return ExitSet.completed(BoundMethodValue(self, name, selected))
         # No recorded field answers the name (a field a delete removed
-        # included), and the one class-namespace lookup selected no member
-        # for it.  Whether the read raises ``AttributeError`` -- no class of
-        # the order binds it, the ``__dict__`` may not hold it, no
-        # ``__getattr__`` or ``__getattribute__`` answers -- is the one walk
-        # of the order's to decide, at prove (``consistency::dispatch_walk``,
-        # #7757 NEW-7/L3): the read is the dispatched read on this instance,
-        # its class and the fields its ``__dict__`` may hold now
-        # (``receiver_dispatch.class_value``: a deleted field is not one of
-        # them), both faces kept.  Where it names no class, the one
-        # undecided read.
+        # included), and the one class-namespace lookup found no class-field
+        # value for it: a ``def`` the class wrote (plain, ``staticmethod``,
+        # ``classmethod``, ``property``) or nothing.  Which member that is,
+        # what kind it binds as, and whether the read raises
+        # ``AttributeError`` -- no class of the order binds it, the
+        # ``__dict__`` may not hold it, no ``__getattr__`` or
+        # ``__getattribute__`` answers -- are the one walk of the order's to
+        # decide, at prove (``consistency::dispatch_walk``, #7757 NEW-7/L3):
+        # the read is the dispatched read on this instance, its class and the
+        # fields its ``__dict__`` may hold now (``receiver_dispatch.
+        # class_value``: a deleted field is not one of them), both faces
+        # kept.  Where it names no class, the one undecided read.
         dispatched = self._dispatched_call(name, (), (), site, read=True)
         if dispatched is not None:
-            return dispatched
+            return _attribute_owned(dispatched)
         return undecided_attribute_result(
             self, name, site, owner="ObjectValue.attribute"
         )
+
+    def dispatched_method_call(self, name, positional, kw_values, site):
+        """``self.<name>(*positional, **kw_values)`` written as a method call
+        (``method_call_sugar._source_instance_method_call``), where no
+        recorded field shadows ``name`` and the one class-namespace lookup
+        finds no class-field value for it: the one dispatched call
+        (``_dispatched_or_owed``), whose member, binding and absent raise
+        prove's one walk of the order decides (#7757 L3).  Nothing here
+        decides that the class binds a ``def`` (nor its kind) before calling
+        it.
+
+        None where the read decides the callee here -- the instance's
+        contents are not current (``attribute``'s undecided read or stored
+        field), a recorded field holds ``name`` (that value is called), the
+        lookup is not decided (the undecided read, called), or a class field
+        holds a value (that value, read and called)."""
+        from .object_identity import contents_current
+
+        if not contents_current(self) or any(
+            field.name == name for field in self.fields
+        ):
+            return None
+        decided, _selected, class_value = self.class_member(name)
+        if not decided or class_value is not None:
+            return None
+        return self._dispatched_or_owed(name, positional, kw_values, site)
 
     def reads_plain_field(self, name: str) -> bool:
         """Whether a read of ``name`` off this instance, while its
@@ -997,27 +1003,37 @@ class ObjectValue(FloorValue):
         prove (``call_member``, ``receiver_dispatch.dispatch_edge_call``,
         #7757 step 8).
 
-        The member is the one the one class-namespace lookup selects
-        (``class_member``), read once and called (``call_member``); a lookup
-        it does not decide is the unanswered call
+        A class-field value the one class-namespace lookup finds
+        (``class_member``) is read once and called (``call_member``); a
+        lookup it does not decide is the unanswered call
         (``unanswered_method_call``), never a method of the roster found by
-        its name.
+        its name.  Anything else -- a ``def`` the class wrote, whatever its
+        kind, or no class member -- is the one dispatched call
+        (``_dispatched_or_owed``): which member runs, how it binds, and
+        whether the lookup raises are prove's one walk's to decide
+        (``consistency::dispatch_walk``, #7757 L3).  The lift never reads the
+        ``def``'s kind or frame to choose how to call it (a frame the call
+        form authenticated, ``required_frame``, selects nothing here).
         """
-        decided, method, value = self.class_member(name)
+        decided, _method, value = self.class_member(name)
         if not decided:
             return self.unanswered_method_call(
                 name, arguments, keywords, blame, halted_at=halted_at
             )
-        return self.call_member(
-            name,
-            method if method is not None else value,
-            arguments,
-            owner=owner,
-            blame=blame,
-            ctx=ctx,
-            keywords=keywords,
-            required_frame=required_frame,
-            halted_at=halted_at,
+        if value is not None:
+            return self.call_member(
+                name,
+                value,
+                arguments,
+                owner=owner,
+                blame=blame,
+                ctx=ctx,
+                keywords=keywords,
+                required_frame=required_frame,
+                halted_at=halted_at,
+            )
+        return self._dispatched_or_owed(
+            name, arguments, keywords, blame, halted_at=halted_at
         )
 
     def call_member(
@@ -1059,7 +1075,7 @@ class ObjectValue(FloorValue):
           site, contents this frame no longer holds) it is the one
           unanswered call (``unanswered_method_call``), owed.
         - A ``property`` is read, never called here: its getter answers the
-          read (``attribute``, ``_property_read``).  Reached as a call (an
+          dispatched read (``attribute``).  Reached as a call (an
           implicit special-method call of a name the class binds to a
           property) it is the unanswered call, owed.
         - Anything else is no callable member here and refuses by name.
@@ -1123,19 +1139,6 @@ class ObjectValue(FloorValue):
         return self.unanswered_method_call(
             name, arguments, keywords, site, halted_at=halted_at
         )
-
-    def _property_read(self, name, site):
-        """``self.<name>`` where the one class-namespace lookup selected a
-        ``property`` the class wrote: on an instance whose class is decided
-        here, the dispatched read (``_dispatched_call(read=True)``), its
-        getter called with this instance at prove (#7757 step 8); otherwise,
-        or where it names no class, the one unanswered call of the name,
-        owed."""
-        if receiver_class_decided(self):
-            dispatched = self._dispatched_call(name, (), (), site, read=True)
-            if dispatched is not None:
-                return dispatched
-        return self.unanswered_method_call(name, (), (), site)
 
     def _dispatched_call(
         self, name, arguments, keywords, site, *, read=False, halted_at=None

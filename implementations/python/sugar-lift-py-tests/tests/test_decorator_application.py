@@ -2049,17 +2049,20 @@ def test_a_call_into_a_frame_reaches_its_nested_def_through_the_call(
 # ---------------------------------------------------------------------------
 
 
-def test_a_descriptor_read_off_an_instance_is_a_callable_value(tmp_path) -> None:
-    """``m = obj.sm; m(3)``: the read is the value the descriptor binds, and
-    its call is the one dispatched call over the instance's class: the
-    instance and the written actual, bound at prove by the kind the class's
-    namespace row states (nothing for a ``staticmethod``, the class for a
-    ``classmethod``, #7757 step 8).  Before, the read was refused.  The
-    body's raise is its contract's halt, joined at prove."""
-    from sugar_lift_py_tests.callable_application import CallableApplication
-    from sugar_lift_py_tests.floor import TermValue
+def test_a_descriptor_read_off_an_instance_is_the_dispatched_read(tmp_path) -> None:
+    """``obj.sm`` read off an instance is the dispatched read prove's one
+    walk of the order decides (#7757 L3): the lift no longer reads the
+    ``def``'s decorator to build the value its descriptor binds.  ``obj.sm(3)``
+    written as a call is the one dispatched call over the instance's class:
+    the instance and the written actual, bound at prove by the kind the
+    class's namespace row states (nothing for a ``staticmethod``, the class
+    for a ``classmethod``, #7757 step 8).  The body's raise is its
+    contract's halt, joined at prove."""
+    from sugar_lift_py_tests.floor import CallSiteValue, TermValue
     from sugar_lift_py_tests.floor.bound_method_value import BoundMethodValue
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
     from sugar_lift_py_tests.ir import num
+    from sugar_lift_py_tests.outcome import Completed
 
     for decorator, formals in (("staticmethod", "n"), ("classmethod", "cls, n")):
         box, ctx = _rooted_class_value(
@@ -2071,10 +2074,15 @@ def test_a_descriptor_read_off_an_instance_is_a_callable_value(tmp_path) -> None
             decorator,
         )
         receiver = box.fresh_receiver("receiver-cid", allocation=FRAME_FRESH)
-        read = receiver.attribute("pick", "pick-site", ctx).completed_value()
-        assert isinstance(read, BoundMethodValue), decorator
-        outcome = read.callable_application_with(
-            CallableApplication((TermValue(3),), (), "pick-site", owner="test"), ctx
+        read = receiver.attribute("pick", "pick-site", ctx)
+        (done,) = [face for face in read.exits if isinstance(face, Completed)]
+        assert read.halts(), decorator
+        _binds, value = peel_walrus_binds(done.value)
+        assert not isinstance(value, BoundMethodValue), decorator
+        assert isinstance(value, CallSiteValue), decorator
+        assert value.target_name == "dispatch:.pick", decorator
+        outcome = receiver.dispatched_method_call(
+            "pick", (TermValue(3),), (), "pick-site"
         )
         term = _edge_term(outcome, "dispatch:pick")
         # The instance the read bound rides first, as its identity term

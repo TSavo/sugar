@@ -302,20 +302,34 @@ class MappingObjectValue(ObjectValue):
         the storage (``dict_base_call``).  On an instance whose fields are
         not current the ``__dict__`` is not held: ``ObjectValue.attribute``'s
         undecided read, as for every name that is no data descriptor."""
-        from .object_identity import contents_current
-
-        if (
-            name in _DICT_BASE_ARITIES
-            and contents_current(self)
-            and not any(field.name == name for field in self.fields)
-            and self.protocol_owner(name, site) == "dict"
-        ):
+        if self._reads_dict_base_member(name, site):
             from sugar_lift_py_tests.outcome import ExitSet
 
             from .bound_method_value import BoundMethodValue
 
             return ExitSet.completed(BoundMethodValue(self, name))
         return super().attribute(name, site, ctx)
+
+    def _reads_dict_base_member(self, name, site) -> bool:
+        """Whether ``self.name`` reads a ``dict`` method a door here applies
+        (``attribute``): current contents, no field of the name, and the MRO
+        binding it to ``dict``."""
+        from .object_identity import contents_current
+
+        return (
+            name in _DICT_BASE_ARITIES
+            and contents_current(self)
+            and not any(field.name == name for field in self.fields)
+            and self.protocol_owner(name, site) == "dict"
+        )
+
+    def dispatched_method_call(self, name, positional, kw_values, site):
+        """``ObjectValue.dispatched_method_call``, except where ``self.name``
+        reads a ``dict`` method a door here applies (``attribute``): that
+        read, then its call, answers from the storage."""
+        if self._reads_dict_base_member(name, site):
+            return None
+        return super().dispatched_method_call(name, positional, kw_values, site)
 
     def call_method_value(
         self,
