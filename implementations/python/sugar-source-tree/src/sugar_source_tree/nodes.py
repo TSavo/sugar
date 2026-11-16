@@ -110,7 +110,7 @@ _EVALUATION_OCCURRENCE = object()
 # under the same iterations, evaluated on two exit paths.  Its evaluation
 # coordinate carries these so the two copies never share one key.
 _EVALUATION_EXIT_PATH = object()
-# Set by ``SourceUnit.module_binding_states`` while it threads the module
+# Set by ``SourceUnit.module_run`` while it threads the module
 # body: the table ``_substitute_body_tracked`` records the binding scope
 # standing before every statement it threads into, at any depth
 # (``ModuleBindingStatesV1.at``).
@@ -2415,14 +2415,15 @@ class SourceUnit:
         init=False, default=None, repr=False, compare=False
     )
     # ``(typed module, threaded names, unthreaded names)``
-    # (``module_threaded_names``) and ``(typed module, refusal,
-    # ModuleBindingStatesV1)``: the module body threaded once for its readers
-    # outside the module block (``module_binding_states``), rebuilt if the
-    # typed root is replaced.
+    # (``module_threaded_names``) and ``(module, refusal, statements,
+    # ModuleBindingStatesV1)``: the module body's one run (``module_run``),
+    # which the module block constructs from and every reader outside the
+    # module block reads (``module_binding_states``), rebuilt if the typed
+    # root is replaced.
     _module_global_rows_memo: object = field(
         init=False, default=None, repr=False, compare=False
     )
-    _module_binding_states_memo: object = field(
+    _module_run_memo: object = field(
         init=False, default=None, repr=False, compare=False
     )
     # ``(typed module, start offsets, module statements, answers)``: the
@@ -2490,7 +2491,7 @@ class SourceUnit:
         object.__setattr__(self, "_module_name_rows_memo", None)
         object.__setattr__(self, "_dynamic_global_writer_memo", None)
         object.__setattr__(self, "_module_global_rows_memo", None)
-        object.__setattr__(self, "_module_binding_states_memo", None)
+        object.__setattr__(self, "_module_run_memo", None)
         object.__setattr__(self, "_module_statement_starts_memo", None)
         object.__setattr__(self, "_class_namespace_stores_memo", None)
         object.__setattr__(self, "_lexical_import_seat_memo", None)
@@ -4099,61 +4100,79 @@ class SourceUnit:
         return frozenset(reads), frozenset(writes)
 
     def module_binding_states(self) -> "ModuleBindingStatesV1":
-        """The module body threaded once, the way ``Module.substitute``
-        threads it: the binding scope standing before every statement it
-        runs at import, at any depth (``ModuleBindingStatesV1.at``), and
-        after the last (``final``).
+        """What the module body's one run (``module_run``) left standing for
+        a reader outside the module block: the binding scope before every
+        statement it runs at import, at any depth
+        (``ModuleBindingStatesV1.at``), and after the last (``final``).
 
         A reader outside the module block takes a module name from here,
-        through ``module_bindings_at``.  A ``def`` statement's body is not
-        threaded (it does not run at import): no block substitutes the body
-        of a ``def`` it holds (``FunctionDef.substitute_in_block``).  Only
-        the names such a reader
-        reads (``module_threaded_names``) are recorded, at every statement
-        and after the last.  A refusal threading the body is remembered and
-        raised to every reader that asks.
-
-        Asked again while the body is being threaded (a statement's
-        construction reached a reader of this module: a module-level live
-        loop calling a function), the answer is the threading so far:
-        ``at`` holds every statement threaded up to here, and ``final`` is
-        None.  The threading is the module's own, whoever asked first: it
-        runs under no call site (``_MODULE_EXECUTION_SITE``), and each
-        statement it records is a new point of it (``_MODULE_THREADING``),
-        so an answer read from a partly threaded body is served again only
-        at that same point.
+        through ``module_bindings_at``.  It is never a second walk of the
+        body: the run the module block constructs from (``Module.substitute``,
+        ``Module._construct_sugar``) records these as it threads, whoever
+        asked first (#7757 new 5).  Asked while that run is threading the
+        body, the answer is the run so far (``final`` None).
         """
-        from sugar_lift_py_tests.gap.panic import ConstructionPanic
-
         module = self._require_typed_module(
             "SourceUnit.module_binding_states", blame=self.filename
         )
-        memo = self._module_binding_states_memo
+        return self.module_run(module)[1]
+
+    def module_run(self, module: "Module") -> "tuple":
+        """The module body run once, as it runs at import (step 5: the
+        module's one temporal rewrite): ``(statements, states)``, the
+        threaded statements the module block constructs from
+        (``Module.substitute``) and the binding scope that same threading
+        left standing before every statement it ran and after the last
+        (``ModuleBindingStatesV1``), which every reader outside the module
+        block reads (``module_binding_states``).  Nothing threads the module
+        body a second time.
+
+        A ``def`` statement's body is not threaded (it does not run at
+        import): no block substitutes the body of a ``def`` it holds
+        (``FunctionDef.substitute_in_block``).  Only the names a reader
+        outside the module block reads (``module_threaded_names``) are
+        recorded, at every statement and after the last.  A refusal
+        threading the body is remembered and raised to every reader that
+        asks, the module block among them.
+
+        Asked again while the body is being threaded (a statement's
+        construction reached a reader of this module: a module-level live
+        loop calling a function), the answer is the run so far:
+        ``statements`` is None, ``at`` holds every statement threaded up to
+        here, and ``final`` is None.  The run is the module's own, whoever
+        asked first: it runs under no call site (``_MODULE_EXECUTION_SITE``),
+        and each statement it records is a new point of it
+        (``_MODULE_THREADING``), so an answer read from a partly threaded
+        body is served again only at that same point.
+        """
+        from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+        memo = self._module_run_memo
         if memo is not None and memo[0] is module:
             if memo[1] is not None:
                 raise memo[1]
-            return memo[2]
+            return memo[2], memo[3]
         names = self.module_threaded_names()
         record = _ModuleStatementRecord(names)
         object.__setattr__(
             self,
-            "_module_binding_states_memo",
-            (module, None, ModuleBindingStatesV1(at=record.at, final=None)),
+            "_module_run_memo",
+            (module, None, None, ModuleBindingStatesV1(at=record.at, final=None)),
         )
         site_token = _MODULE_EXECUTION_SITE.set(None)
         threading_token = _MODULE_THREADING.set(object())
         try:
-            _statements, _changed, final = module._substitute_body_tracked(
+            statements, _changed, final = module._substitute_body_tracked(
                 module.body,
                 {_MODULE_STATEMENT_STATES: record},
             )
         except (SourceTreePanic, ConstructionPanic) as refusal:
             object.__setattr__(
-                self, "_module_binding_states_memo", (module, refusal, None)
+                self, "_module_run_memo", (module, refusal, None, None)
             )
             raise
         except BaseException:
-            object.__setattr__(self, "_module_binding_states_memo", None)
+            object.__setattr__(self, "_module_run_memo", None)
             raise
         finally:
             # A scope that kept the record records nothing after this.
@@ -4164,8 +4183,10 @@ class SourceUnit:
             at=record.at,
             final={name: final[name] for name in names if name in final},
         )
-        object.__setattr__(self, "_module_binding_states_memo", (module, None, states))
-        return states
+        object.__setattr__(
+            self, "_module_run_memo", (module, None, statements, states)
+        )
+        return statements, states
 
     def module_execution_site(self, node) -> "Optional[ModuleExecutionSiteV1]":
         """Where ``node`` (a call, or a class statement) runs while the module
@@ -7813,7 +7834,7 @@ def _loop_header_bindings(loop, names, scope, kept=frozenset()) -> dict:
 
 @dataclass(frozen=True)
 class ModuleBindingStatesV1:
-    """The module body threaded once (``SourceUnit.module_binding_states``).
+    """The module body threaded once (``SourceUnit.module_run``).
 
     ``at`` maps the source position (``_source_position``) of every
     statement the threading ran, at any depth, to the binding scope
@@ -7830,7 +7851,7 @@ class ModuleBindingStatesV1:
 
 
 class _ModuleStatementRecord:
-    """The table ``SourceUnit.module_binding_states`` threads a module body
+    """The table ``SourceUnit.module_run`` threads a module body
     with (``_MODULE_STATEMENT_STATES``): ``at`` as ``ModuleBindingStatesV1``
     holds it, open while that threading runs.  Each recorded scope holds
     only ``names`` (``SourceUnit.module_threaded_names``): the names some
@@ -7910,7 +7931,7 @@ class ModuleExecutionSiteV1:
 _MODULE_EXECUTION_SITE: AmbientVar = AmbientVar(
     "sugar_module_execution_site", default=None
 )
-# A new token for each statement ``SourceUnit.module_binding_states`` records
+# A new token for each statement ``SourceUnit.module_run`` records
 # while it threads a module body; None when no module body is being threaded.
 # Every reader of module bindings reads it, so an answer read from a partly
 # threaded body is served again only at that same point of that threading.
@@ -8058,7 +8079,7 @@ def _walrus_targets(statement) -> frozenset:
 
 def _module_threads(scope, name: str) -> bool:
     """Whether ``scope`` threads a module body for its readers
-    (``SourceUnit.module_binding_states``: the open ``_MODULE_STATEMENT_STATES``
+    (``SourceUnit.module_run``: the open ``_MODULE_STATEMENT_STATES``
     record) and ``name`` is one some reader outside the module block reads
     (``SourceUnit.module_threaded_names``)."""
     record = scope.get(_MODULE_STATEMENT_STATES)
@@ -8090,9 +8111,10 @@ def _module_uncarried_names(statement, carried, scope) -> frozenset:
 
 def _live_loop_publication(loop, carried, scope) -> dict:
     """What a live loop leaves each name it writes bound to, for the rest of
-    its block and, threading a module body, for a reader outside the module
-    block (``_module_threads``: only the names such a reader reads), beside
-    the names it carries under their binding coordinates (``carried``,
+    its block -- in a module body, the module block's own run, which every
+    reader outside the module block reads (``SourceUnit.module_run``), so
+    every name it writes is published, whether or not such a reader reads
+    it -- beside the names it carries under their binding coordinates (``carried``,
     published as ``LoopProjectedBinding``).
 
     Every name the loop's items write in its scope -- its target,
@@ -8141,13 +8163,10 @@ def _live_loop_publication(loop, carried, scope) -> dict:
 
     if isinstance(loop, For):
         scope = _scope_after(scope, loop.iter, loop.iter)
-    threading = scope.get(_MODULE_STATEMENT_STATES)
     post_writes = loop_post_writes(loop, carried, scope)
     make_ifexp = functools.partial(If._make_ifexp, loop)
     published = {}
     for name, (post_key, _writes, _else_writes) in sorted(post_writes.items()):
-        if threading is not None and not _module_threads(scope, name):
-            continue
         prior = scope.get(name, _MISSING)
         if prior is UNDECIDED_MODULE_BINDING:
             continue
@@ -9386,7 +9405,7 @@ class Node(Typed):
         exception routing must begin the selected handler from.
 
         Threading a module body for its readers
-        (``SourceUnit.module_binding_states``), the scope carries the table
+        (``SourceUnit.module_run``), the scope carries the table
         ``_MODULE_STATEMENT_STATES``: the same state is recorded there for
         every statement, at any depth, by its source position.
 
@@ -10718,16 +10737,44 @@ class Module(Node):
     def substitute(self, scope):
         """The module is the top block: it threads its statements (a module-
         level assignment binds its name for the rest) but masks nothing -- there
-        is no enclosing scope above it."""
+        is no enclosing scope above it.
+
+        The threading is the module body's one run (``SourceUnit.module_run``,
+        #7757 new 5): the same run every reader outside the module block reads
+        its bindings from (``module_binding_states``), never a second walk.  A
+        scope handed down from above is refused by name: nothing encloses a
+        module.  So is a substitution asked while that run is still threading
+        the body: the block is not yet run."""
         from .shadow import rewrite
 
-        new_body, changed = self._substitute_body(self.body, scope)
-        if not changed:
+        if scope:
+            raise SourceTreePanic(
+                blame=self.fragment,
+                owner="Module.substitute",
+                observed="a binding scope handed to the module block",
+                requested="the module body's one run, under no enclosing scope",
+                fix="substitute the module with the empty scope",
+            )
+        statements, _states = self.unit.module_run(self)
+        if statements is None:
+            raise SourceTreePanic(
+                blame=self.fragment,
+                owner="Module.substitute",
+                observed="the module block substituted while its one run threads it",
+                requested="the module body's one run, finished",
+                fix=(
+                    "read the run so far through module_binding_states, "
+                    "never the module block"
+                ),
+            )
+        if statements is self.body:
             return self
-        return rewrite(self, body=new_body)
+        return rewrite(self, body=statements)
 
     def _construct_sugar(self):
-        """Construct the module block after its one temporal scope fold.
+        """Construct the module block after its one temporal scope fold: the
+        module body's one run (``SourceUnit.module_run``), whose recorded
+        bindings are what every reader outside the module block reads.
 
         ``Module`` owns only source order and module-level binding scope.  Each
         statement owns its own meaning and constructs through ``Statement.sugar``
