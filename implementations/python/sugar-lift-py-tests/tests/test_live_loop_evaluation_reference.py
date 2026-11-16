@@ -2023,7 +2023,8 @@ def test_a_concrete_items_loop_control_hands_on_its_records_entries(
     # Item 0 left ``TermValue(1)`` before its ``break``/``continue``; the
     # items before it left ``TermValue(0)``.  ``continue`` takes both on to
     # the next item, from the record's context; ``break`` leaves the loop
-    # with both.
+    # with both, and last the exit it left by, decided on that path: its own
+    # ``break``, never exhaustion (``_exit_decision``, #8982).
     runtime = SimpleNamespace(carried_names=(), carried_evaluations=())
     record = _control_record(TermValue(1))
     (halt,) = ExitSet.halted(
@@ -2038,10 +2039,17 @@ def test_a_concrete_items_loop_control_hands_on_its_records_entries(
     outcome = _recurrence()._after_loop_control(
         halt, runtime, (), resume, entries=(TermValue(0),), index=0
     )
-    assert outcome.completed_value() == BlockValue((TermValue(0), TermValue(1)))
     if action == "continue":
+        assert outcome.completed_value() == BlockValue((TermValue(0), TermValue(1)))
         assert resumed == [(record.context, (TermValue(0), TermValue(1)), (), 1)]
     else:
+        assert outcome.completed_value() == BlockValue(
+            (
+                TermValue(0),
+                TermValue(1),
+                BranchResultDecision(loop_exit_slot(LOOP), False),
+            )
+        )
         assert resumed == []
 
 

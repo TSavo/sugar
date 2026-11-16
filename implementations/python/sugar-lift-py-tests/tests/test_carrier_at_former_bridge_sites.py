@@ -698,7 +698,13 @@ def _finish_with_else(monkeypatch, otherwise):
         items=0,
         else_ran=False,
         halt=None,
+        exhausted,
     ):
+        # The ``else`` suite runs only where the iterator was exhausted, so
+        # every face it leaves by is published as the loop's exhaustion,
+        # never its own ``break`` (``_exit_decision``, #8982).
+        assert exhausted is True
+        assert else_ran is True
         if halt is not None:
             own = () if halt.state is None else halt.state.entries
             return ExitSet.halted(
