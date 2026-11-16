@@ -86,13 +86,26 @@ def _store_halts(outcome) -> list:
 
 def _the_call(call: str) -> CallSiteValue:
     """The source call's value on its completed face: the edge, which owes
-    its halt under the complement of its ``completes`` atom."""
+    its halt under the complement of its ``completes`` atom.  Its completed
+    value carries its record that it may reach every module global (#9108,
+    ``call_site_value.bind_after_call``); the call is the value beneath it."""
+    from sugar_lift_py_tests.floor.call_site_value import AfterCallRecordValue
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        peel_walrus_binds,
+    )
+
     outcome = _call_outcome(call)
     assert [face for face in outcome.exits if isinstance(face, Halted)], outcome
     completed = [face for face in outcome.exits if isinstance(face, Completed)]
     assert len(completed) == 1, outcome
-    assert isinstance(completed[0].value, CallSiteValue), completed[0].value
-    return completed[0].value
+    binds, value = peel_walrus_binds(completed[0].value)
+    assert any(
+        isinstance(bind.assigned_value, AfterCallRecordValue)
+        and bind.assigned_value.reaches_every_global()
+        for bind in binds
+    ), binds
+    assert isinstance(value, CallSiteValue), value
+    return value
 
 
 def test_try_body_retains_formal_store_as_one_deferred_carrier() -> None:

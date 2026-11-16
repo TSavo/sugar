@@ -9,6 +9,8 @@ from sugar_lift_py_tests.context_manager_resolution import (
 )
 from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import CallSiteValue
+from sugar_lift_py_tests.floor.call_site_value import AfterCallRecordValue
+from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
 from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
@@ -46,12 +48,21 @@ def _call_and_callee(signature: str, function_body: str, actuals: str):
     (completed,) = (face for face in outcome.exits if isinstance(face, Completed))
     (halted,) = outcome.halts()
     assert completed.guard.name == "python:unknown_callee_call.completes"
-    assert isinstance(completed.value, CallSiteValue)
-    assert completed.value.body is None
+    # The unanswered call's completed value carries its record that it may
+    # reach every module global (#9108, ``bind_after_call``); the call is the
+    # value beneath it.
+    binds, value = peel_walrus_binds(completed.value)
+    assert any(
+        isinstance(bind.assigned_value, AfterCallRecordValue)
+        and bind.assigned_value.reaches_every_global()
+        for bind in binds
+    ), binds
+    assert isinstance(value, CallSiteValue)
+    assert value.body is None
     assert type(halted.effect) is UndeterminedRaiseEffect
     assert halted.effect.exception_name is None
     function = next(node for node in source.nodes() if isinstance(node, FunctionDef))
-    return completed, halted, function.sugar().desugar(None)
+    return value, halted, function.sugar().desugar(None)
 
 
 def test_authenticated_call_publishes_its_source_body_halt() -> None:
@@ -65,10 +76,10 @@ def test_authenticated_call_publishes_its_source_body_halt() -> None:
 
 
 def test_completed_source_call_keeps_the_ordinary_call_coordinate() -> None:
-    completed, _halted, _callee = _call_and_callee("", "    return 7", "")
+    value, _halted, _callee = _call_and_callee("", "    return 7", "")
 
-    assert completed.value.term.name == "python:call_result"
-    assert completed.value.term.args[0].name.startswith("call:")
+    assert value.term.name == "python:call_result"
+    assert value.term.args[0].name.startswith("call:")
 
 
 def test_guarded_source_call_preserves_completed_and_halted_faces() -> None:

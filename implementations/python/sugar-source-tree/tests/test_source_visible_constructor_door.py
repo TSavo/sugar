@@ -63,6 +63,29 @@ def _completed_values(outcome) -> tuple:
     return values
 
 
+def _unanswered_call_coordinates(outcome) -> tuple:
+    """The call coordinate on every completed face of a class call nothing
+    here answers.  No contract here states what the call reaches, so each
+    completed value carries its record that it may reach every module
+    global (#9108, ``call_site_value.bind_after_call``); the coordinate is
+    the value beneath that record."""
+    from sugar_lift_py_tests.floor.call_site_value import AfterCallRecordValue
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        peel_walrus_binds,
+    )
+
+    coordinates = []
+    for value in _completed_values(outcome):
+        binds, coordinate = peel_walrus_binds(value)
+        assert any(
+            isinstance(bind.assigned_value, AfterCallRecordValue)
+            and bind.assigned_value.reaches_every_global()
+            for bind in binds
+        ), binds
+        coordinates.append(coordinate)
+    return tuple(coordinates)
+
+
 def _field_names(value) -> set:
     """The fields a value states it holds, by name (none when it states
     none: a dispatched call's result holds what prove joins)."""
@@ -161,7 +184,7 @@ def test_a_source_new_body_is_never_read_for_its_fields() -> None:
     call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
 
     assert class_node.returned_new() is None
-    for coordinate in _completed_values(call.sugar().desugar()):
+    for coordinate in _unanswered_call_coordinates(call.sugar().desugar()):
         assert isinstance(coordinate, CallSiteValue)
         assert coordinate.body is None
 
@@ -179,7 +202,7 @@ def test_source_visible_new_constructor_refuses_foreign_returned_receiver() -> N
     )
     call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
 
-    for coordinate in _completed_values(call.sugar().desugar()):
+    for coordinate in _unanswered_call_coordinates(call.sugar().desugar()):
         assert isinstance(coordinate, CallSiteValue)
         assert coordinate.body is None
 
@@ -207,7 +230,7 @@ def test_source_visible_new_constructor_refuses_uncompleted_return(
     )
     call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
 
-    for coordinate in _completed_values(call.sugar().desugar()):
+    for coordinate in _unanswered_call_coordinates(call.sugar().desugar()):
         assert isinstance(coordinate, CallSiteValue)
         assert coordinate.body is None
 
@@ -235,7 +258,7 @@ def test_source_visible_new_constructor_refuses_nonexact_field_roster(
     )
     call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
 
-    for coordinate in _completed_values(call.sugar().desugar()):
+    for coordinate in _unanswered_call_coordinates(call.sugar().desugar()):
         assert isinstance(coordinate, CallSiteValue)
         assert coordinate.body is None
 

@@ -73,12 +73,28 @@ def _calls(tree, name: str):
 
 def _edge(outcome) -> CallSiteValue:
     """A same-file call's value: its coordinate and edge, completing under
-    its ``completes`` atom and halting under the complement."""
+    its ``completes`` atom and halting under the complement.
+
+    Desugared with no context, the call is the one unanswered call: its
+    completed value carries its record that it may reach every module
+    global (#9108, ``call_site_value.bind_after_call``), and the call is the
+    value beneath that record."""
+    from sugar_lift_py_tests.floor.call_site_value import AfterCallRecordValue
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        peel_walrus_binds,
+    )
+
     assert isinstance(outcome, ExitSet), type(outcome)
     assert outcome.halts(), outcome
     (completed,) = [face for face in outcome.exits if isinstance(face, Completed)]
-    assert isinstance(completed.value, CallSiteValue), type(completed.value)
-    return completed.value
+    binds, value = peel_walrus_binds(completed.value)
+    assert any(
+        isinstance(bind.assigned_value, AfterCallRecordValue)
+        and bind.assigned_value.reaches_every_global()
+        for bind in binds
+    ), binds
+    assert isinstance(value, CallSiteValue), type(value)
+    return value
 
 
 def _row_return(function):
