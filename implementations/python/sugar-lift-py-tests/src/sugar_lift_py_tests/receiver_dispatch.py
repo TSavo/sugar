@@ -911,7 +911,7 @@ def receiver_after_dispatch(receiver, result):
 
     The same read for ``super().m(...)`` on an instance: it is a dispatched
     call whose receiver is the frame's receiver, keyed ``"0"``
-    (``BuiltinSuperValue._selected_call``), so the caller reads it after the
+    (``BuiltinSuperValue._dispatched``), so the caller reads it after the
     call by that key and prove pairs it with the method's receiver parameter
     the same way.
 

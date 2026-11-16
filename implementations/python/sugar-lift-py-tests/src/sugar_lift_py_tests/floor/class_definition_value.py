@@ -345,12 +345,15 @@ class ClassDefinitionValue(GuardStableValue):
 
     def namespace_member(self, name, roster=None, *, after=None) -> tuple:
         """``(decided, found, holder, method, value)``: what ``name`` read on
-        this class's type is -- the one class-namespace lookup (#7757), and
-        the one resolution every reader of a class member reads: an
-        instance's attribute read, call, comparison and store
-        (``ObjectValue.class_member``), ``Cls.m`` (``call_method_value``) and
-        ``super().m`` (``after``: the lookup from the class after the
-        ``__class__`` cell, ``BuiltinSuperValue``).
+        this class's type is -- the one class-namespace lookup (#7757) every
+        lift reader of a class member's value reads: an instance's attribute
+        read, call, comparison and store (``ObjectValue.class_member``), a
+        class-body field read off its class (``attribute``), the namespace
+        row (``tree_enumerate``).  A call off a class object (``Cls.m``,
+        ``call_method_value``) and ``super().m`` never read it: they state
+        the dispatched call, and prove's one walk decides the member and
+        whether the lookup raises (``consistency::dispatch_walk``, #7757
+        NEW-7).
 
         - ``found`` is the class of the MRO that holds ``name``
           (``ClassDef.namespace_owner``): a ``ClassDef``, a builtin class
@@ -442,86 +445,26 @@ class ClassDefinitionValue(GuardStableValue):
         keywords=(),
         required_frame=None,
     ):
-        """``Cls.m(...)``: the member the one class-namespace lookup selects
-        for ``m`` on this class (``namespace_member``), read off the class
-        and called.  Nothing selects it again by name.
+        """``Cls.m(...)``: the one dispatched call looked up on this class
+        object (``_dispatched_on_class``), whatever the class's order holds
+        for ``m``.  The lift states the call and nothing about which member
+        it finds (#7757 NEW-7): prove's one walk of the order this class's
+        own proof states (``consistency::dispatch_walk``) decides which
+        member runs and how ``__get__(None, cls)`` binds it (a plain
+        function, a function field or a ``staticmethod`` unbound, the
+        written actuals as they stand; a ``classmethod`` with the class
+        first), and the raise the lookup itself takes: a property read off
+        its class is the property object, which is not callable
+        (``TypeError``).  A name no class of the order binds stays owed
+        there (the metaclass, which no row states, may answer it).  Every
+        other lookup prove does not decide stays owed, both faces standing.
+        Where this class names no join symbol (no workspace root) or the
+        call has no site, the one unanswered call of ``Cls.<name>``, owed.
 
-        - A ``def`` the class's order holds for ``m`` is the one dispatched
-          call looked up on this class object (``_dispatched_on_class``):
-          prove looks the method up on the order this class's own proof
-          states and binds it as ``__get__(None, cls)`` binds the kind its
-          namespace row states (a plain function or ``staticmethod``
-          unbound, the written actuals as they stand; a ``classmethod``
-          with the class first).  The lookup here only tells that a method
-          call is what this is (a property read off its class is not
-          callable and refuses by name).  A frame the call form
-          authenticated must be the selected function's own.
-        - A function the class namespace holds as a field (``f = lambda x:
-          x``, ``m = some_def``), read off its class, is the same one
-          dispatched call (``_dispatched_on_class``), as it is read off an
-          instance (``ObjectValue.call_member``): prove binds it unbound,
-          the written actuals as they stand, where its namespace row states
-          the ``field`` kind, and leaves it owed otherwise.  Nothing here
-          selects or applies the function (#7757 entry 6).
-        - A lookup it does not decide is the unanswered call; a name no
-          source class of the order holds, a property (the property object
-          is not callable) and any other value refuse by name."""
-        decided, found, _holder, method, value = self.namespace_member(name)
-        if not decided:
-            return self._unanswered_call(
-                f"{self.class_name}.{name}",
-                arguments,
-                keywords,
-                blame,
-            )
-        if method is not None:
-            if method.descriptor_kind == "property":
-                # ``Cls.p`` is the property object itself, which is not callable.
-                raise SugarNotWritten(
-                    owner=owner,
-                    blame=blame,
-                    observed=f"{self.class_name}.{name} is a property read off its class",
-                    requested="a callable class attribute",
-                    fix="read the property off an instance, or keep the call loud",
-                )
-            if (
-                required_frame is not None
-                and method.source_call_frame.frame_cid != required_frame.frame_cid
-            ):
-                raise SugarNotWritten(
-                    owner=owner,
-                    blame=blame,
-                    observed=(
-                        f"{self.class_name}.{name}: the authenticated frame is not "
-                        "the selected method's"
-                    ),
-                    requested="the frame of the method the one lookup selected",
-                    fix="authenticate the call against the selected method's frame",
-                )
-            # A ``def`` read off the class: the one dispatched call, looked
-            # up on this class object at prove (``receiver_dispatch.
-            # dispatch_edge_call`` with ``on_class``, ``consistency::
-            # dispatched_target``), never the function selected here (#7757
-            # entry 6: one MRO lookup).
-            return self._dispatched_on_class(name, arguments, keywords, blame)
-        from sugar_lift_py_tests.floor.lambda_callable import LambdaCallable
-
-        if isinstance(value, LambdaCallable) and required_frame is None:
-            # A function held as a class field, read off the class: the same
-            # one dispatched call, looked up on this class object at prove and
-            # bound there by the ``field`` kind its row states, never the
-            # function applied here (#7757 entry 6: one MRO lookup).
-            return self._dispatched_on_class(name, arguments, keywords, blame)
-        raise SugarNotWritten(
-            owner=owner,
-            blame=blame,
-            observed=(
-                f"{self.class_name}.{name} is held by "
-                f"{getattr(found, 'name', found)}"
-            ),
-            requested="one authenticated class-method definition",
-            fix="preserve unique method resolution or keep the call loud",
-        )
+        No frame is selected here, so none is checked against one a call
+        form authenticated (``required_frame``)."""
+        del owner, ctx, required_frame
+        return self._dispatched_on_class(name, arguments, keywords, blame)
 
     def attribute(self, name, site, ctx):
         """``Cls.name``: a read off the class object itself.

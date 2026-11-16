@@ -93,10 +93,14 @@ _LIAR = (
 )
 
 
-def test_super_naming_an_absent_method_is_the_attribute_error() -> None:
-    # Derived's MRO is read whole (Derived, Base, object) and no class after
-    # Derived binds ``greet``: CPython's AttributeError, never a base method.
-    context, (_base, derived) = _constructed(_LIAR)
+def test_super_naming_an_absent_method_is_decided_at_prove(tmp_path) -> None:
+    # No class after Derived (Base, object) binds ``greet``: CPython's
+    # AttributeError.  The lift never walks the order to find that out
+    # (#7757 NEW-7): it states the one dispatched call after ``Derived``,
+    # both faces kept, and prove's one walk of the order the classes' rows
+    # state decides no class binds it (``consistency::dispatch_walk``): the
+    # halt is the face the call keeps, typed ``AttributeError``.
+    context, (_base, derived) = _constructed(_LIAR, tmp_path)
     receiver = derived.fresh_receiver("receiver", allocation=FRAME_FRESH)
     zuper = BuiltinSuperValue(current_class=derived, receiver=receiver)
 
@@ -108,9 +112,12 @@ def test_super_naming_an_absent_method_is_the_attribute_error() -> None:
         ctx=context,
     )
 
-    assert outcome.halts() == outcome.exits
-    assert [halt.effect.exception_name for halt in outcome.halts()] == [
-        "AttributeError"
+    call = _edge_call(outcome)
+    assert call.target_name == "dispatch:greet", call.target_name
+    assert not [
+        halt
+        for halt in outcome.halts()
+        if getattr(halt.effect, "exception_name", None) == "AttributeError"
     ]
 
 

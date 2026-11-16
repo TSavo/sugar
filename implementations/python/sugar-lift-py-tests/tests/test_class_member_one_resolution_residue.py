@@ -1,12 +1,12 @@
 """The residue of the one class-member resolution (#7757, residue of #8163).
 
 1. ``Cls.m`` (``ClassDefinitionValue.call_method_value``) and ``super().m``
-   (``BuiltinSuperValue``) read the one resolution
-   (``ClassDefinitionValue.namespace_member``: ``namespace_owner``, then the
-   binding the holding class's body left last), never a method of the roster
-   found by its name.  A function class field read off its class or through
-   ``super()`` is the one dispatched call, as a ``def`` is: prove binds it
-   (unbound off the class, to the receiver through ``super()``).
+   (``BuiltinSuperValue``) are the one dispatched call, never a method of
+   the roster found by its name: prove's one walk of the order
+   (``consistency::dispatch_walk``) selects the binding the holding class's
+   body left last, binds it by its kind (a function class field unbound off
+   the class, to the receiver through ``super()``), and decides where the
+   lookup raises (#7757 NEW-7).  The lift reads no member for them.
 2. A store through any name whose value may be a class -- a call's result, a
    ``for``/``with`` target, a lambda's or a comprehension's own variable --
    makes the name undecided on every class the module hands on.
@@ -183,12 +183,33 @@ def test_cls_m_after_an_assignment_never_runs_the_earlier_def() -> None:
     box = classes["Box"]
     receiver = box.fresh_receiver("receiver", allocation=FRAME_FRESH)
 
-    # ``Box.m`` is ``5``: not callable here, refused by name -- never the
-    # roster's ``def`` of the same name.
-    with pytest.raises(SugarNotWritten):
+    # ``Box.m`` is ``5`` -- never the roster's ``def`` of the same name.  The
+    # lift reads no member (#7757 NEW-7): the call is the one dispatched call
+    # looked up on ``Box`` (with no workspace root, the unanswered call of
+    # ``Box.m``), and prove's walk finds a binding of kind ``other`` there,
+    # which runs no function it states: owed, both faces standing.
+    _the_edge(
         box.call_method_value(
             "m", (receiver,), owner="test", blame="cls-m", ctx=context
         )
+    )
+
+
+def test_cls_p_of_a_property_is_the_dispatched_call_decided_at_prove() -> None:
+    context, classes = _values(
+        "class Box:\n    @property\n    def p(self):\n        return 3\n"
+    )
+
+    # ``Box.p`` is the property object, which is not callable: CPython's
+    # ``TypeError``.  The lift no longer reads the order to refuse it by
+    # name (#7757 NEW-7): it is the one dispatched call looked up on
+    # ``Box``, its halt face kept, and prove's one walk decides the call
+    # raises (``consistency::dispatch_walk``).
+    _the_edge(
+        classes["Box"].call_method_value(
+            "p", (), owner="test", blame="cls-p", ctx=context
+        )
+    )
 
 
 def test_super_m_is_the_last_binding_a_lambda_bound_to_the_receiver() -> None:
