@@ -10,12 +10,19 @@ that predicate -- never a bespoke inequality atom.
 
 Compare construction is partitioned by law — not one monomorphic refusal:
 
-- **ordering** (`<` `<=` `>` `>=`): rich-method dispatch may complete or raise
+- **ordering** (`<` `<=` `>` `>=`): rich-method dispatch may complete or raise;
+  the left value's ordering floor answers it whole
 - **membership** (`in` / `not in`): container owns ``__contains__`` / iteration
-- **equality** (`==` / `!=`): ``__eq__`` / ``__ne__`` may complete or raise
+- **equality** (`==` / `!=`): ``__eq__`` may complete or raise; the left
+  value's equals floor answers it whole (``equality_atom.answered_equality``)
 - **identity** (`is` / `is not`): total object identity; never user-code dispatch
 - **chaining** (`a < b < c`): pair laws composed under short-circuit ``And`` at
   ``Compare._construct_sugar`` (ChainedCompareSugar carrying adjacent values)
+
+Each value type answers an undecided comparison itself, with the one keyed
+two-faced ``python:compare_result`` (:func:`undecided_dispatch_faces`), or
+decides it where it truly decides: no halt is patched onto a bare predicate
+after the floor answered (#7757).
 """
 
 from __future__ import annotations
@@ -45,53 +52,6 @@ COMPARE_METHODS: dict[str, str] = {
 COMPARISON_KINDS = frozenset(COMPARE_METHODS) | {"NotEq", "Is", "IsNot", "In", "NotIn"}
 
 
-def publish_undecided_ordering_edges(left, right, site, op_kind: str, outcome):
-    """Ordering law: never dual-edge residual FOL invent (LAW_OF_ONE).
-
-    Floor undecided doors throw named; ground doors construct Sugar or
-    an authenticated ground exit (a halt). A residual plain completed
-    ``PredicateValue`` is OUR fabrication second door — construction panic, not a nameless dual-edge
-    ExitSet. Equality still dual-edges via the shared helper; membership has
-    no membrane: the container's own floor answers it, two-faced wherever it
-    is undecided (``FloorValue.undecided_contains``).
-
-    Retirement path: when no path can mint ordering PredicateValue, this
-    membrane only passes through and may shrink to ``return outcome``.
-    """
-    del left, right
-    from sugar_lift_py_tests.floor import PredicateValue
-    from sugar_lift_py_tests.sugar.function_universe_sugar import (
-        plain_completed_value,
-    )
-
-    if not isinstance(plain_completed_value(outcome), PredicateValue):
-        return outcome
-
-    from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-    construction_panic_gap(
-        owner="publish_undecided_ordering_edges",
-        blame=site,
-        observed=(
-            f"residual completed PredicateValue on ordering desugar ({op_kind})"
-        ),
-        requested=(
-            "named SugarNotWritten for undecided operands, or Sugar-owned "
-            "TrueBool/FalseBool/a ground exit for decided ground"
-        ),
-        fix=(
-            "LAW_OF_ONE: never dual-edge or sole-complete FOL invent for "
-            "ordering; construct Sugar on ground arms; throw named when "
-            "runtime types are undecided"
-        ),
-    )
-
-
-def publish_undecided_equality_edges(left, right, site, op_kind: str, outcome):
-    """Retain native equality outcomes; refuse unproven dispatch completion."""
-    return _publish_undecided_dispatch_edges(left, right, site, op_kind, outcome)
-
-
 def construct_identity_comparison(left, right, site, *, negated: bool = False):
     """Identity law: total object identity; never a dual-edge raise partition.
 
@@ -105,114 +65,20 @@ def construct_identity_comparison(left, right, site, *, negated: bool = False):
     return outcome.and_then(lambda predicate: predicate.negate())
 
 
-def _publish_undecided_dispatch_edges(left, right, site, op_kind: str, outcome):
-    """Retain constructed native outcomes, not unproven dispatch completion.
-
-    An already-constructed Floor outcome owns its completion or exceptional
-    testimony, independently of whether operand runtime types are known here.
-    Preserve that outcome rather than replacing its exception identity/state.
-
-    A residual predicate alone does not prove that rich-method dispatch
-    completes: Python may select user code that raises an arbitrary exception.
-    Refuse that undecided case instead of inventing a TypeError or a nameless
-    exceptional face.  Only equality is routed here: identity dispatches no
-    user code, and membership's container floor answers its own undecided
-    case (``FloorValue.undecided_contains``, #7757 H10).
-    """
-    from sugar_lift_py_tests.floor import PredicateValue
-    from sugar_lift_py_tests.sugar.function_universe_sugar import (
-        plain_completed_value,
-    )
-
-    # Operand type uncertainty cannot revoke an already-constructed Floor
-    # outcome. In particular, native halt/ExitSet testimony already owns
-    # its exception type, occurrence, guards and pre-effect state. Only a bare
-    # predicate needs the unresolved-dispatch check below; inventing an exit
-    # for that predicate would still require native exception testimony.
-    predicate = plain_completed_value(outcome)
-    if not isinstance(predicate, PredicateValue):
-        return outcome
-
-    # An ``except ... as e`` / ``with ... as x`` / ``pytest.raises ... as
-    # ei`` slot is a coordinate prove does not interpret, and it testifies to
-    # no value (``denotes_value``), so the type test below would hand back
-    # the bare ``py.eq`` over it: a free predicate the solver satisfies by
-    # choice, so ``errs[0] == errs[1]`` over two items' ``e`` could read
-    # ``sat``.  The object's class selects ``__eq__``, which nothing here
-    # looked at: the undecided dispatch, which owes (``ExitSet.two_faced``),
-    # as for any operand whose type is not decided.
-    from sugar_lift_py_tests.floor.effect_coordinate import reads_an_effect_slot
-
-    if reads_an_effect_slot(left) or reads_an_effect_slot(right):
-        return undecided_dispatch_faces(predicate, site, op_kind)
-
-    # A class object testifies to no value either (``denotes_value``).
-    # ``==`` with one is its metaclass's ``__eq__``: where that is decided to
-    # be ``type``'s against another such class or a singleton, the floor
-    # already answered by identity (``object_identity.equality_by_identity``,
-    # ``term_identity``).  A bare ``py.eq`` still standing over a class (a
-    # class whose metaclass is not decided, or an operand whose own
-    # ``__eq__`` may answer first) is the same free predicate: the undecided
-    # dispatch, which owes.
-    if _bare_equality(predicate) and (_class_object(left) or _class_object(right)):
-        return undecided_dispatch_faces(predicate, site, op_kind)
-
-    denotes_left = getattr(left, "denotes_value", None)
-    denotes_right = getattr(right, "denotes_value", None)
-    if not callable(denotes_left) or not callable(denotes_right):
-        return outcome
-    if not (denotes_left() and denotes_right()):
-        return outcome
-
-    decided_left = getattr(left, "runtime_type_is_decided", None)
-    decided_right = getattr(right, "runtime_type_is_decided", None)
-    if not callable(decided_left) or not callable(decided_right):
-        return outcome
-    if decided_left() and decided_right():
-        return outcome
-
-    # Undecided dispatch: the operands' runtime types select ``__eq__`` (and
-    # its reflection), which this frame did not look
-    # at, so the comparison may raise anything -- the #7585 law.  It completes
-    # with the truth of the undecided comparison's value, keyed per
-    # evaluation (``python:truth_result(python:compare_result(<kind>, left,
-    # right, <key>), <key>)``), only under
-    # ``python:compare.completes(python:compare(op, left, right, <key>))`` and
-    # halts with an
-    # ``UndeterminedRaiseEffect`` (owner ``UndecidedCompare:<op>``) under the
-    # complement.  No exception type is named: the halt is undetermined.
-    return undecided_dispatch_faces(predicate, site, op_kind)
-
-
-def _bare_equality(predicate) -> bool:
-    """``predicate`` is one ``py.eq`` atom, the equality the floor emitted
-    without deciding it."""
-    from sugar_lift_py_tests.ir import _Atomic
-
-    formula = predicate.formula
-    return isinstance(formula, _Atomic) and formula.name == "py.eq"
-
-
-def _class_object(value) -> bool:
-    """``value`` is a class object (a source class, a builtin or installed
-    exception class, a class lowered for recognition)."""
-    from sugar_lift_py_tests.floor.class_definition_value import (
-        ClassDefinitionValue,
-    )
-    from sugar_lift_py_tests.floor.class_value import ClassValue
-    from sugar_lift_py_tests.floor.exception_class_value import (
-        ExceptionClassValue,
-    )
-
-    return isinstance(value, (ClassDefinitionValue, ClassValue, ExceptionClassValue))
-
-
 def undecided_dispatch_faces(predicate, site, op_kind: str):
     """Two faces for one undecided rich-comparison dispatch.
 
-    Shared by the Sugar membrane (a residual predicate over undecided
-    operands) and the Floor's undecided membership / ordering doors: a
-    parameter operand takes these same faces.
+    The one answer every value type gives a comparison whose operands'
+    runtime types select a method this frame did not look at (the #7585
+    law): the floor's undecided equality (``equality_atom.
+    answered_equality``), ordering (:func:`undecided_ordering_faces`) and
+    membership (``FloorValue.undecided_contains``).  It completes with the
+    truth of the comparison's value, keyed per evaluation
+    (``python:truth_result(python:compare_result(<kind>, left, right,
+    <key>), <key>)``), only under ``python:compare.completes(
+    python:compare(op, left, right, <key>))``, and halts with an
+    ``UndeterminedRaiseEffect`` (owner ``UndecidedCompare:<op>``) under the
+    complement.  No exception type is named: the halt is undetermined.
     """
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.ir import atomic, ctor, str_const
@@ -487,14 +353,10 @@ class ComparisonOpSugar(ConstructedTermSugar):
         # caller: an ordering is the rich method, then its reflection after
         # ``NotImplemented`` (the subclass rule first), which no one
         # dispatched method states, so an undecided operand takes the
-        # undecided ordering's two faces (audit row NEW-1).
-        return publish_undecided_ordering_edges(
-            left,
-            right,
-            self.site,
-            self.op_kind,
-            ORDERING_FLOOR_OPERATIONS[method](left, right, self.site, ctx),
-        )
+        # undecided ordering's two faces (audit row NEW-1) -- from the
+        # floor itself (``FloorValue._refuse_ordering_meaning``), whose
+        # answer is the whole meaning (#7757).
+        return ORDERING_FLOOR_OPERATIONS[method](left, right, self.site, ctx)
 
     def _negated_truth(self, result):
         """``not result`` for the result ``a != b`` (``a == b``'s) or ``a not
@@ -530,17 +392,13 @@ class ComparisonOpSugar(ConstructedTermSugar):
                     requested="authenticated native __ne__ dispatch",
                     fix="construct __ne__ method order and invoke its source frame",
                 )
-            # Equality law: a != b is not (a == b); dual-edge, then negate
-            # the equality result's truth.  A parameter operand is not
-            # deferred to a caller (``==``'s reflection and identity fallback
-            # are no one dispatched method): an undecided operand dual-edges.
-            return publish_undecided_equality_edges(
-                left,
-                right,
-                self.site,
-                self.op_kind,
-                left.equals(right, self.site, ctx),
-            ).and_then(self._negated_truth)
+            # Equality law: a != b is not (a == b); the equals floor's
+            # answer, then the completed truth negated.  A parameter operand
+            # is not deferred to a caller (``==``'s reflection and identity
+            # fallback are no one dispatched method): the floor answers an
+            # undecided operand with the undecided equality's two faces
+            # (``equality_atom.answered_equality``), whose halt stands.
+            return left.equals(right, self.site, ctx).and_then(self._negated_truth)
         if self.op_kind == "Is":
             return construct_identity_comparison(left, right, self.site, negated=False)
         if self.op_kind == "IsNot":

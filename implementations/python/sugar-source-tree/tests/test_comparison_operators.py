@@ -45,7 +45,10 @@ def _compares(outcome):
 
 
 def test_not_equal_is_equals_negated():
-    inv = _inv("def A(z):\n    assert z != 2\n    return z\n", "UndecidedCompare:NotEq")
+    """``z != 2`` stands on the equals floor: the floor's one undecided
+    equality (owner ``UndecidedCompare:Eq``), its completed truth negated --
+    never a second equality answer for ``!=`` (#7757)."""
+    inv = _inv("def A(z):\n    assert z != 2\n    return z\n", "UndecidedCompare:Eq")
     assert inv.kind == "not"
     # The truth of the undecided ``==``'s value, keyed per evaluation
     # (#7757 NEW-1).
@@ -98,18 +101,18 @@ def test_chained_comparison_conjoins_adjacent_pairs():
 
 def test_comparison_composes_inside_boolop():
     """``(z == 1) and (z != 2)``: each equality is its own undecided
-    equality over the formal and its literal."""
+    equality over the formal and its literal (``!=`` on the equals floor,
+    its truth negated), each with its own halt."""
     outcome = undecided_outcome(
         _fn("def A(z):\n    assert (z == 1) and (z != 2)\n    return z\n")
     )
     owners = undetermined_owners(outcome)
-    assert "UndecidedCompare:Eq" in owners
-    assert "UndecidedCompare:NotEq" in owners
+    assert owners.count("UndecidedCompare:Eq") >= 2
     pairs = {
         (op, getattr(left, "name", None), getattr(right, "value", None))
         for op, left, right in _compares(outcome)
     }
-    assert pairs == {("Eq", "z", 1), ("NotEq", "z", 2)}
+    assert pairs == {("Eq", "z", 1), ("Eq", "z", 2)}
 
 
 if __name__ == "__main__":

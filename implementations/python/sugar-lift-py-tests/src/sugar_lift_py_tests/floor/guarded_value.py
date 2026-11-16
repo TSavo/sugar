@@ -50,11 +50,6 @@ def _item_mutation_on_arm(method, arm, operands, site, ctx):
     )
 
 
-def _all_halt(outcome) -> bool:
-    """Every arm of an answered outcome halts."""
-    return outcome.halts() == outcome.exits
-
-
 def _siblings(guard, true_outcome, false_outcome, faces=(None, None)):
     """Both arms' outcomes as siblings: each under its own polarity (``guard``
     and its negation), joined by the one sibling join (``ExitSet.union``).
@@ -206,12 +201,21 @@ class GuardedValue(FloorValue):
         """Distribute one predicate over both arms and rejoin its formulas.
 
         ``operate(arm)`` is the predicate's explicit call on one arm (#7757);
-        ``operand`` is the predicate's first operand, which an arm answering
-        no formula is compared to (``FloorValue.equals``).
+        ``operand`` is the predicate's other operand, named in a refusal.
+
+        An arm that is not one completed value -- every exit halts, or the
+        arm is an undecided comparison's two faces (``==`` or an ordering
+        over a formal, ``FloorValue.undecided_contains``) -- keeps every exit
+        under its own polarity beside the other arm's (:func:`_siblings`):
+        its halt is never dropped, and no arm is rejoined that is not one
+        value (#7757).
         """
         true_outcome = operate(self.when_true)
         false_outcome = operate(self.when_false)
-        if _all_halt(true_outcome) or _all_halt(false_outcome):
+        if (
+            true_outcome.completed_value() is None
+            or false_outcome.completed_value() is None
+        ):
             return _siblings(self.guard, true_outcome, false_outcome)
         return self._rejoined_predicate(
             true_outcome,
@@ -226,7 +230,15 @@ class GuardedValue(FloorValue):
         self, true_outcome, false_outcome, *, operation: str, operand, blame, ctx
     ):
         """Both arms' single predicate outcomes rejoined into one formula
-        under this value's guard (:meth:`_predicate`)."""
+        under this value's guard (:meth:`_predicate`).
+
+        An arm whose answer is a value that is no formula (a source rich
+        method's result, which is whatever its contract returns) is that
+        arm's answer under its polarity, beside the other arm's
+        (:func:`_siblings`): never the guarded value compared again to
+        ``operand`` by another operation, which would answer ``<`` with an
+        ``==`` and run ``__eq__`` a second time (#7757)."""
+        del operand, ctx
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import and_, implies, not_
         from sugar_lift_py_tests.outcome import ExitSet
@@ -262,7 +274,7 @@ class GuardedValue(FloorValue):
         true_formula = formula(true_value)
         false_formula = formula(false_value)
         if true_formula is None or false_formula is None:
-            return super().equals(operand, blame, ctx)
+            return _siblings(self.guard, true_outcome, false_outcome)
         if (
             type(true_value) is TrueBoolLiteralSugar
             and type(false_value) is FalseBoolLiteralSugar
@@ -319,11 +331,16 @@ class GuardedValue(FloorValue):
 
         ``operate(arm)`` is the left operand's explicit predicate call on one
         arm (#7757); ``operation`` only names it in a refusal.  Both arms are
-        always evaluated (:func:`_siblings`).
+        always evaluated: an arm that is not one completed value (every exit
+        halts, or the undecided comparison's two faces) keeps every exit
+        under its own polarity beside the other arm's (:func:`_siblings`).
         """
         true_outcome = operate(self.when_true)
         false_outcome = operate(self.when_false)
-        if _all_halt(true_outcome) or _all_halt(false_outcome):
+        if (
+            true_outcome.completed_value() is None
+            or false_outcome.completed_value() is None
+        ):
             return _siblings(self.guard, true_outcome, false_outcome)
         from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
 

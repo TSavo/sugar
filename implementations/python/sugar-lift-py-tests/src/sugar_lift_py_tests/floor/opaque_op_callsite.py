@@ -116,20 +116,32 @@ class OpaqueOpCallsite(FloorValue):
         )
 
     def equals(self, other, site, ctx):
-        from sugar_lift_py_tests.floor.equality_atom import resolve_equality_atom
+        """``<operator result> == other``: the result's type is not decided
+        (:meth:`runtime_type_is_decided`), so its ``__eq__`` is one this
+        frame did not read -- the floor's one undecided equality, two-faced
+        (``equality_atom.answered_equality``), its computed companion carried
+        beside the keyed truth.  Never a bare ``py.eq`` a later pass patches
+        a halt onto (#7757)."""
+        del ctx
+        from sugar_lift_py_tests.floor.equality_atom import (
+            answered_equality,
+            resolve_equality_atom,
+        )
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.outcome import ExitSet
 
         companion = self.companion_formula(owner=str(site))
         companions = (companion,) if companion is not None else ()
         formula, bridges = resolve_equality_atom(self, other, owner=str(site))
-        return ExitSet.completed(
+        return answered_equality(
+            self,
+            other,
             PredicateValue(
                 formula,
                 site,
                 operand_callsites=(self,),
                 derived_formulas=(*companions, *bridges),
-            )
+            ),
+            site,
         )
 
     def _downstream(self) -> FloorValue:

@@ -64,7 +64,9 @@ def test_ne_of_two_call_results_negates_and_may_raise(tmp_path):
     (value,) = returns
     assert type(value) is PredicateValue
     assert value.formula.kind == "not"
-    assert "UndecidedCompare:NotEq" in _owners(halts)
+    # ``!=`` stands on the equals floor: the one undecided equality's halt
+    # (#7757), its completed truth negated.
+    assert "UndecidedCompare:Eq" in _owners(halts)
 
 
 def test_the_compare_raise_reaches_an_except_arm(tmp_path):

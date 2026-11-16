@@ -10,13 +10,13 @@ Before, two instances of a class whose MRO binds no ``__eq__`` fell to
 ``resolve_equality_atom``'s ``py.eq(py.object.identity(..),
 py.object.identity(..))``, and two classes to ``py.eq(python:type(A),
 python:type(B))``, left bare because a class testifies to no value
-(``_publish_undecided_dispatch_edges``).  ``py.eq`` over terms nothing
+(the compare post-pass, since deleted).  ``py.eq`` over terms nothing
 interprets is a predicate the solver chooses, so the lie ``a == b`` over two
 objects Python made apart could read ``sat``.  Now
 ``object_identity.equality_by_identity`` answers them by the identity rule
 (``object_identity`` for instances, ``term_identity`` for classes of
-metaclass ``type``), and a bare ``py.eq`` still standing over a class owes
-the undecided dispatch.
+metaclass ``type``), and any other equality over a class is the floor's
+one undecided equality (``equality_atom.answered_equality``), which owes.
 
 A lying claim is never ``sat``; a truthful one is never ``unsat``.  Each
 half goes through ``run_source_through_real_solver``: real ``sugar mint``

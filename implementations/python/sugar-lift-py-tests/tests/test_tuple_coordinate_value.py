@@ -138,9 +138,6 @@ def test_tuple_coordinate_length_equals_int_is_native_int_equality(
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
     from sugar_lift_py_tests.floor.tuple_coordinate_value import TupleLengthValue
     from sugar_lift_py_tests.ir import py_eq
-    from sugar_lift_py_tests.sugar.comparison_op_sugar import (
-        publish_undecided_equality_edges,
-    )
 
     call, _ = _nodes(_tree(tmp_path, "length-eq.py"))
     ctx = _context("tuple-coordinate-length-eq")
@@ -152,10 +149,9 @@ def test_tuple_coordinate_length_equals_int_is_native_int_equality(
     assert length.runtime_type_is_decided()
 
     one = TermValue(1)
-    outcome = length.equals(one, call.fragment, None)
-    published = publish_undecided_equality_edges(
-        length, one, call.fragment, "Eq", outcome
-    )
+    # ``int == int`` runs no code the lift did not read: the floor's own
+    # answer is the completed predicate, no halt (``answered_equality``).
+    published = length.equals(one, call.fragment, None)
 
     assert published.completed_value() is not None
     assert isinstance(published.completed_value(), PredicateValue)

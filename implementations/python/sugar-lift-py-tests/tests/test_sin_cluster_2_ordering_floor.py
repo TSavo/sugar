@@ -279,47 +279,6 @@ def test_lying_complete_predicate_is_not_ordering_meaning() -> None:
     _assert_undecided_ordering_faces(outcome)
 
 
-def test_lying_residual_ordering_predicate_mint_panics_at_publisher() -> None:
-    """Lying twin: a residual completed PredicateValue cannot dual-edge at Sugar.
-
-    Plants the old FOL invent outcome into publish_undecided_ordering_edges.
-    Must ConstructionPanic — never ExitSet with nameless Compare halt.
-    """
-    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
-    from sugar_lift_py_tests.ir import atomic
-    from sugar_lift_py_tests.outcome import ExitSet
-    from sugar_lift_py_tests.sugar.comparison_op_sugar import (
-        publish_undecided_ordering_edges,
-    )
-
-    left = _symbolic()
-    right = TermValue(1)
-    forged = ExitSet.completed(
-        PredicateValue(
-            atomic(
-                "py.lt",
-                [
-                    left.to_term(owner="lying residual left"),
-                    right.to_term(owner="lying residual right"),
-                ],
-            ),
-            SITE,
-        )
-    )
-    with pytest.raises(ConstructionPanic) as raised:
-        outcome = publish_undecided_ordering_edges(left, right, SITE, "Lt", forged)
-        if isinstance(outcome, ExitSet):
-            raise AssertionError(
-                "residual ordering PredicateValue dual-edged — SIN reintroduced"
-            )
-        raise AssertionError(
-            "residual ordering PredicateValue passed through; must panic"
-        )
-    assert "PredicateValue" in str(raised.value)
-    assert "ordering" in str(raised.value).lower()
-
-
 # ---------------------------------------------------------------------------
 # Undecided binary: the #7585 two faces, like ordering (#7622)
 # ---------------------------------------------------------------------------
