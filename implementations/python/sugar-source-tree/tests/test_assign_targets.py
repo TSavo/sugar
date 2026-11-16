@@ -1,9 +1,8 @@
-"""`a, b = <display>` destructures against a matching Tuple/List rhs, and
-`x = y = e` chains a single rhs to several names -- both are threaded by
-substitute exactly like the single-Name case, so both go inert at the
-meaning layer. A display that substitution does not pair (a wrong arity, a
-nested level that is no display) is built and unpacked at reduce, as any
-other right-hand side is: a wrong count is Python's ValueError. Store targets (attribute/subscript) are never bound --
+"""`a, b = <display>` builds the display and unpacks it at reduce, as any
+other right-hand side is (#7757 S2): each name is bound under its
+projection of the statement's evaluation, and a wrong count is Python's
+ValueError. `x = y = e` chains a single rhs to several names, threaded by
+substitute exactly like the single-Name case. Store targets (attribute/subscript) are never bound --
 they lift straight to a typed red runtime effect instead (the fragment-type
 seam; see test_store_target_effect.py for the full witness/continuation
 discipline)."""

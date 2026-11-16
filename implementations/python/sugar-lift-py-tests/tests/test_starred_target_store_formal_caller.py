@@ -32,7 +32,6 @@ from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.assign_sugar import (
     DynamicUnpackStoreAssignSugar,
     KeyedStoreSugar,
-    UnpackStoreAssignSugar,
 )
 from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
     ContainerMutationStatementSugar,
@@ -164,13 +163,14 @@ def test_pure_name_star_stays_dynamic_unpack() -> None:
     assert "DynamicUnpackStoreAssignSugar" not in kinds
 
 
-def test_display_star_store_stays_unpack_store_assign() -> None:
+def test_display_star_store_is_the_one_store_unpack() -> None:
+    # A display right-hand side is evaluated once and unpacked at reduce,
+    # as any other is: no second store unpack for displays (#7757 S2).
     function, _ = _helper(
         "def helper(obj):\n    obj.x, *rest = 1, 2, 3\n    return rest\n"
     )
     kinds = [type(s).__name__ for s in function.sugar().statements]
-    assert "UnpackStoreAssignSugar" in kinds
-    assert "DynamicUnpackStoreAssignSugar" not in kinds
+    assert "DynamicUnpackStoreAssignSugar" in kinds
 
 
 def test_attribute_and_subscript_production_construction() -> None:

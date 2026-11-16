@@ -6,7 +6,8 @@ Corpus (pandas 3.0.3, content-verified):
   ``out, codes[-1] = out[sorter], codes[-1][sorter]``
 
 Shape: Name + Subscript store unpack (``out`` binds, then ``codes[-1]`` stores).
-Construction admits the leaf as ``UnpackStoreAssignSugar`` +
+Construction admits the leaf as ``DynamicUnpackStoreAssignSugar`` (the one
+unpack, a display right-hand side among them, #7757 S2) +
 ``SubscriptStoreEffectSugar``.  The setitem half is the one item mutation
 (``store_effect_sugar.item_mutation``, #7757 step 7): source evaluation is
 value→receiver→index; the dispatched call is receiver→index→value.  A later
@@ -27,8 +28,12 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.floor import ListValue, TermValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
-from sugar_lift_py_tests.sugar.assign_sugar import UnpackStoreAssignSugar
+from sugar_lift_py_tests.sugar.assign_sugar import DynamicUnpackStoreAssignSugar
 from sugar_lift_py_tests.sugar.store_effect_sugar import SubscriptStoreEffectSugar
+from sugar_lift_py_tests.sugar.unpack_projection_targets import (
+    NameUnpackTarget,
+    StoreUnpackTarget,
+)
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Assign, Call, FunctionDef
 from sugar_lift_py_tests.lift_rpc import tree_construction_context_for_workspace
@@ -240,12 +245,13 @@ def test_real_coordinate_constructs_unpack_store_with_setitem_leaf() -> None:
     )
     assert len(assigns) == 1
     sugar = assigns[0].sugar()
-    assert isinstance(sugar, UnpackStoreAssignSugar)
-    assert len(sugar.bindings) == 1
-    assert sugar.bindings[0][0] == "out"
-    assert len(sugar.stores) == 1
-    assert isinstance(sugar.stores[0], SubscriptStoreEffectSugar)
-    store = sugar.stores[0]
+    assert isinstance(sugar, DynamicUnpackStoreAssignSugar)
+    names = [t.name for t in sugar.targets if isinstance(t, NameUnpackTarget)]
+    assert names == ["out"]
+    stores = [t.store for t in sugar.targets if isinstance(t, StoreUnpackTarget)]
+    assert len(stores) == 1
+    assert isinstance(stores[0], SubscriptStoreEffectSugar)
+    store = stores[0]
     # Store leaf is codes[...] = ...  (receiver name from source)
     assert store.receiver is not None
     assert store.index is not None

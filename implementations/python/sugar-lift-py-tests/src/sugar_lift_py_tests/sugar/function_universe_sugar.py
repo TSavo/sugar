@@ -541,7 +541,7 @@ def stores_laid_on_completion(value, outcome, ctx):
     them already (the door lays them, ``_halted_after``).  ``outcome`` as
     it is where ``value`` carried no callee store.
 
-    A Name-only unpack of a non-display right-hand side
+    A Name-only unpack of a right-hand side
     (``DynamicUnpackAssignSugar``, ``NestedDynamicUnpackAssignSugar``) lays
     them here, as an assignment's values (``evaluate_assignment_values``)
     and a store unpack (``DynamicUnpackStoreAssignSugar``) lay theirs."""

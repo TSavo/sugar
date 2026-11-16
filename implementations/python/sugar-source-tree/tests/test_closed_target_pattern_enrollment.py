@@ -196,7 +196,9 @@ def test_stranded_enrolled_assign_refuses_instead_of_shrugging(
 def test_stranded_enrolled_assign_does_not_fall_through_to_store_construction(
     tmp_path: Path,
 ) -> None:
-    """Caller #5 (``Assign._destructured_binding``) must stop tolerating.
+    """Caller #5 (the unpack's one pattern reader, ``Assign._ground_members``;
+    once ``Assign._destructured_binding``, deleted with the display pairing,
+    #7757 S2) must stop tolerating.
 
     Before the repair this returned ``None`` -- indistinguishable from a
     lawful mixed/store unpack -- and construction silently continued with a
@@ -207,7 +209,7 @@ def test_stranded_enrolled_assign_does_not_fall_through_to_store_construction(
     _strand(source_file.unit, assignment)
 
     with pytest.raises(nodes.TargetPatternConstructionGapV1) as refused:
-        assignment.substitution_binding({})
+        assignment._ground_members(assignment.targets[0])
     assert refused.value.reason == "foreign-target-occurrence"
 
 
@@ -598,9 +600,11 @@ def test_with_tuple_target_is_an_enrolled_consumer_with_a_seated_row(
 def test_lowered_with_store_projects_through_the_with_pattern(
     tmp_path: Path,
 ) -> None:
-    """TRUTHFUL: the lowered store destructures instead of raising."""
+    """TRUTHFUL: the lowered store reads its pattern through the With and
+    projects the ground display instead of raising (``_ground_members``, the
+    unpack's one pattern reader, #7757 S2)."""
     _, _, _, store = _with_tuple(tmp_path, "w2")
-    binding = store.substitution_binding({})
+    binding = store._ground_members(store.targets[0])
     assert sorted(binding) == ["no", "yes"]
     assert binding["yes"].value == 1
     assert binding["no"].value == 2
@@ -615,7 +619,7 @@ def test_lying_stranded_with_row_still_refuses_by_name(tmp_path: Path) -> None:
     source_file, with_node, _, store = _with_tuple(tmp_path, "w3")
     _strand(source_file.unit, with_node)
     with pytest.raises(nodes.TargetPatternConstructionGapV1) as refused:
-        store.substitution_binding({})
+        store._ground_members(store.targets[0])
     assert refused.value.reason == "foreign-target-occurrence"
 
 
