@@ -32,6 +32,18 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from frame_fresh import FRAME_FRESH
 
 
+def _recorded(receiver: ObjectValue, name: str):
+    """The field the receiver records under ``name`` (the last store of it).
+
+    These tests are about which receiver a store leaves bound, so they read
+    the recorded field itself: a source read through ``attribute`` is that
+    field only under prove's ``python:plain_read`` (#7757), and these
+    receivers name no class to guard it by."""
+    return next(
+        field.value for field in reversed(receiver.fields) if field.name == name
+    )
+
+
 @dataclass(frozen=True)
 class _StoreReceiverField(Sugar):
     receiver: ObjectValue
@@ -52,7 +64,7 @@ class _ReadReceiverField(Sugar):
         return ()
 
     def desugar(self, ctx=None):
-        return ctx.temporal.value_for("self").attribute("payload", "test", ctx)
+        return ExitSet.completed(_recorded(ctx.temporal.value_for("self"), "payload"))
 
 
 @dataclass(frozen=True)
@@ -201,8 +213,7 @@ def test_returned_alias_observes_updated_receiver_identity():
     ).value
     assert isinstance(returned, ObjectValue)
     assert returned.identity == receiver.identity
-    read_back = returned.attribute("payload", "test", None)
-    assert read_back == ExitSet.completed(TermValue(17))
+    assert _recorded(returned, "payload") == TermValue(17)
 
 
 def test_same_class_different_receiver_identity_is_not_rewritten():
@@ -288,8 +299,7 @@ def test_receiver_field_post_state_preserves_identity() -> None:
 
     assert isinstance(after, ObjectValue)
     assert after.identity == receiver.identity
-    read_back = after.attribute("owner", "test", None)
-    assert read_back == ExitSet.completed(TermValue(7))
+    assert _recorded(after, "owner") == TermValue(7)
 
 
 def test_receiver_field_post_state_preserves_defining_class_authority() -> None:

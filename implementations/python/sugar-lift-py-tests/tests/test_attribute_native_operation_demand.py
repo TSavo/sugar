@@ -114,9 +114,18 @@ def test_formal_attribute_completes_or_halts_from_authenticated_actual() -> None
 
     from sugar_lift_py_tests.ir import ctor, str_const
 
-    assert len(completed.exits) == 1
-    assert isinstance(completed.exits[0], Completed)
-    assert completed.exits[0].value == TermValue(7)
+    # Expected value changed (#7757): a recorded field is the read's value
+    # only under prove's ``python:plain_read`` over the instance's class
+    # term (a ``__getattribute__`` or a class data descriptor answers it
+    # otherwise); this receiver has no class statement, so no class term
+    # guards it and the read is the undecided read, its halt kept -- never
+    # the recorded ``7`` outright.
+    assert completed.halts(), completed
+    assert not [
+        arm
+        for arm in completed.exits
+        if isinstance(arm, Completed) and arm.value == TermValue(7)
+    ], completed
     assert len(halted.exits) == 1
     assert isinstance(halted.exits[0], Halted)
     # Pin the positive identity — `is not None` under an identity-promising

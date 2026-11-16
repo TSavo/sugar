@@ -235,8 +235,16 @@ def test_a_class_pattern_tests_the_instance_and_its_attribute() -> None:
     receiver = point.fresh_receiver("point-receiver", allocation=FRAME_FRESH)
     at_zero = replace(receiver, fields=(ObjectField("x", TermValue(0)),))
     at_one = replace(receiver, fields=(ObjectField("x", TermValue(1)),))
-    assert _matched(match_pattern(pattern, at_zero, SITE, None)).matched
-    assert not _matched(match_pattern(pattern, at_one, SITE, None)).matched
+    # Expected value changed (#7757): a recorded field is the read's value
+    # only under prove's ``python:plain_read`` (a ``__getattribute__`` or a
+    # class data descriptor answers it otherwise), and with no workspace
+    # root no class term guards it: ``o.x`` is the undecided read, whose
+    # raise is not decided against ``AttributeError``.  The pattern refuses
+    # by name; it never guesses a match or a miss from the recorded field.
+    for subject in (at_zero, at_one):
+        with pytest.raises(SugarNotWritten) as excinfo:
+            match_pattern(pattern, subject, SITE, None)
+        assert excinfo.value.observed.startswith("undecided"), excinfo.value
     # Whether an int is an instance of a source class is not decided here.
     with pytest.raises(SugarNotWritten) as excinfo:
         match_pattern(pattern, TermValue(0), SITE, None)

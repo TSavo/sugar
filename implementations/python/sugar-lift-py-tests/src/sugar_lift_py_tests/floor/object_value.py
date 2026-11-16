@@ -88,7 +88,9 @@ class ObjectValue(FloorValue):
     # The fields a store in this frame put on the instance (the one field
     # store, ``with_field_store``): each is the instance's field now even
     # where the instance arrived by binding and its other fields are not
-    # current (``attribute``).  An arrival by binding clears them
+    # current (``ConstructedInstanceValue.post_formula`` states them).  A
+    # read never answers from them on such an instance: it names no class
+    # term to guard the read by (``attribute``).  An arrival by binding clears them
     # (``object_identity.arrived``): code this frame does not see may have
     # changed them since.
     stored_fields: tuple[str, ...] = dataclass_field(
@@ -299,18 +301,21 @@ class ObjectValue(FloorValue):
         arrived by binding may have been changed since by another alias,
         which may have stored, deleted or added any name in its ``__dict__``.
 
-        On an instance that is not current, every name but one a store in
-        this frame put on it is the dispatched read (``_dispatched_read``):
-        which member a data descriptor or the ``__dict__`` answers it with is
-        prove's walk of the order to decide (``consistency::dispatch_walk``),
-        never the lift's.  Such an instance names no class term
-        (``receiver_dispatch.class_value``), so the read is the undecided
-        read over its identity (``identity_term``).
+        On an instance that is not current, every name is the dispatched
+        read (``_dispatched_read``): which member a data descriptor or the
+        ``__dict__`` answers it with is prove's walk of the order to decide
+        (``consistency::dispatch_walk``), never the lift's.  Such an
+        instance names no class term (``receiver_dispatch.class_value``), so
+        the read is the undecided read over its identity (``identity_term``).
 
-        A field a store in this frame put on the instance
-        (``stored_fields``, the one field store) is the instance's field now,
-        current or not: the store makes that field known; the rest of an
-        arrived instance stays as its currency says.
+        A recorded instance field of a current instance is read as that
+        field only on the face where prove decides the read IS the
+        ``__dict__`` entry (``plain_read_guard``: ``python:plain_read(<class>,
+        "<name>")``, no ``__getattribute__`` or other read hook in the order
+        and no binding of the name -- a class data descriptor would win over
+        the entry, ``consistency::plain_read_holds``); under its complement
+        the read is the dispatched read (#7757).  The lift never reads a
+        recorded field outright.
 
         A class-field value (a class-body binding other than a ``def``) is
         read off the class by the one class-namespace lookup
@@ -338,16 +343,16 @@ class ObjectValue(FloorValue):
         from .object_identity import contents_current
 
         if not contents_current(self):
-            if name in self.stored_fields:
-                # A store this frame made: the field is the instance's now,
-                # whatever the rest of an arrived instance holds.
-                for field in reversed(self.fields):
-                    if field.name == name:
-                        return ExitSet.completed(field.value)
             return self._dispatched_read(name, site)
         for field in reversed(self.fields):
             if field.name == name:
-                return ExitSet.completed(field.value)
+                return self._guarded_read_faces(
+                    name,
+                    ExitSet.completed(field.value),
+                    self.plain_read_guard(name),
+                    site,
+                    owner="ObjectValue.plain_read",
+                )
         decided, _selected, class_value = self.class_member(name)
         if not decided:
             return undecided_attribute_result(
@@ -417,22 +422,63 @@ class ObjectValue(FloorValue):
             return None
         return class_read_atom(term, name)
 
+    def plain_read_guard(self, name: str):
+        """``python:plain_read(<class>, "<name>")`` (``receiver_dispatch.
+        plain_read_atom``) over this instance's class term
+        (``receiver_dispatch.class_value``): prove's statement that a read
+        of ``name`` on this instance is its ``__dict__`` entry by Python's
+        own rule (``consistency::plain_read_holds``: no class of the order
+        binds ``__getattribute__``, ``__getattr__``, ``__slots__`` or
+        ``__dict__``, and none binds the name -- a data descriptor of it
+        would win over the entry).  The same atom a constructed field's read
+        is stated under (``ConstructedInstanceValue.post_formula``, #9051).
+
+        None where no class term is decided -- an instance not current, one
+        whose ``__class__`` was stored, no class symbol (no workspace root),
+        no class statement -- or ``name`` is a dunder name: the read is then
+        only the dispatched read."""
+        from sugar_lift_py_tests.receiver_dispatch import (
+            class_value,
+            is_dunder,
+            plain_read_atom,
+        )
+
+        if is_dunder(name) or any(item.name == "__class__" for item in self.fields):
+            return None
+        term = class_value(self)
+        if term is None:
+            return None
+        return plain_read_atom(term, name)
+
     def _class_read_faces(self, name, read, site):
         """The one shape of a class-field value read (#7757 L1): ``read`` --
         the class binding's value, as its descriptor binds it -- under
-        ``class_read_guard``, and the dispatched read under its complement,
-        the two faces of one partition.  Where no guard is decided, the
-        dispatched read alone: the lift never decides that no hook runs or
-        that the value is no descriptor."""
+        ``class_read_guard``, and the dispatched read under its complement
+        (``_guarded_read_faces``)."""
+        return self._guarded_read_faces(
+            name,
+            read,
+            self.class_read_guard(name),
+            site,
+            owner="ObjectValue.class_read",
+        )
+
+    def _guarded_read_faces(self, name, read, guard, site, *, owner: str):
+        """The one shape of a read the lift answers from what it holds (a
+        recorded instance field under ``plain_read_guard``, a class-field
+        value under ``class_read_guard``): ``read`` under ``guard``, and the
+        dispatched read (``_dispatched_read``) under its complement, the two
+        faces of one partition.  Where no guard is decided, the dispatched
+        read alone: the lift never decides that no hook runs, that no data
+        descriptor wins, or that the value is no descriptor (#7757)."""
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.outcome.exit_set import partition
 
         dispatched = self._dispatched_read(name, site)
-        guard = self.class_read_guard(name)
         if guard is None or not isinstance(dispatched, ExitSet):
             return dispatched
-        then, otherwise = partition(("ObjectValue.class_read", guard, str(site)))
+        then, otherwise = partition((owner, guard, str(site)))
         return read.guarded(guard, then).union(
             dispatched.guarded(not_(guard), otherwise)
         )

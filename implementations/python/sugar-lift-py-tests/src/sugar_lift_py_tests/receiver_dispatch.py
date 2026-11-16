@@ -205,6 +205,14 @@ def stored_class_input(receiver, name: str, unit):
 #: (``consistency::PYTHON_PLAIN_READ``, decided on the namespace rows).
 PLAIN_READ = "python:plain_read"
 
+
+def plain_read_atom(class_term, name: str):
+    """``python:plain_read(<class_term>, "<name>")`` (``PLAIN_READ``)."""
+    from sugar_lift_py_tests.ir import atomic, str_const
+
+    return atomic(PLAIN_READ, [class_term, str_const(name)])
+
+
 #: ``python:class_read(<class>, <field>)``: a read of ``<field>`` on an
 #: instance of ``<class>`` is the value its class's namespace binds the
 #: name to, by Python's own rule -- the instance's ``__dict__`` does not

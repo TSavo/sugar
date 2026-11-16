@@ -201,11 +201,49 @@ def test_deleting_a_held_field_is_the_dispatched_delete(source, tmp_path) -> Non
         assert not (isinstance(after, ObjectValue) and contents_current(after)), after
 
 
-def test_a_recorded_field_still_answers(tmp_path) -> None:
-    value, site = _setup("class Widget:\n    pass\n", tmp_path)
+@pytest.mark.parametrize(
+    "source",
+    [
+        "class Widget:\n    pass\n",
+        # ``__getattribute__`` runs on every read: the read is not the entry.
+        "class Widget:\n    def __getattribute__(self, name):\n        return 99\n",
+        # A class data descriptor of the name wins over the entry.
+        "class Widget:\n    @property\n    def missing(self):\n        return 99\n",
+    ],
+)
+def test_a_recorded_field_answers_only_under_plain_read(tmp_path, source) -> None:
+    """A recorded field is the read's value only on the face prove's
+    ``python:plain_read(<class>, "missing")`` holds on; its complement is
+    the dispatched read, its halt kept.  The lift decides neither face,
+    whatever the class binds (#7757)."""
+    value, site = _setup(source, tmp_path)
     receiver = _fresh(value, (ObjectField("missing", TermValue(4)),))
 
-    assert receiver.attribute("missing", site, None).completed_value() == TermValue(4)
+    outcome = receiver.attribute("missing", site, None)
+
+    _no_lift_attribute_error(outcome)
+    assert outcome.halts(), outcome
+    completed = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    fours = [arm for arm in completed if arm.value == TermValue(4)]
+    assert len(fours) == 1, completed
+    assert "python:plain_read" in repr(fours[0].guard)
+    assert len(completed) == 2, completed
+
+
+def test_a_recorded_field_with_no_class_named_is_the_undecided_read() -> None:
+    """No workspace root: no class term guards the read, so it is the
+    undecided read alone, never the recorded field outright (#7757)."""
+    value, site = _setup("class Widget:\n    pass\n")
+    receiver = _fresh(value, (ObjectField("missing", TermValue(4)),))
+
+    outcome = receiver.attribute("missing", site, None)
+
+    _undecided(outcome)
+    assert all(
+        arm.value != TermValue(4)
+        for arm in outcome.exits
+        if isinstance(arm, Completed)
+    ), outcome
 
 
 # --- no class named: the undecided read ------------------------------------------
