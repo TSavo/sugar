@@ -211,88 +211,66 @@ def test_helper_alone_completed_face_returns_p() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2. Writable source-defined receiver completes the field store
+# 2. A source-defined receiver's store is decided at prove (#7757 H1b)
 # ---------------------------------------------------------------------------
 
 
-def test_writable_source_defined_receiver_completes_field_store() -> None:
+def _the_store_is_never_decided_here(exits, value) -> None:
+    """``receiver.field = value`` on a source instance is
+    ``type(receiver).__setattr__``: the lift never decides that it is the
+    plain store, nor that it raises ``AttributeError``.  The instance with
+    the field stored is a completed face only under ``python:plain_store``,
+    which prove decides; every other face is the call's, its halt kept."""
+    from sugar_lift_py_tests.floor.object_identity import contents_current
+
+    assert isinstance(exits, ExitSet)
+    assert exits.halts(), exits
+    for halt in exits.halts():
+        assert getattr(halt.effect, "exception_name", None) != "AttributeError", (
+            halt.effect
+        )
+    for face in exits.exits:
+        if not isinstance(face, Completed) or "python:plain_store" in repr(
+            face.guard
+        ):
+            continue
+        stored = face.value
+        assert not (
+            isinstance(stored, ObjectValue)
+            and contents_current(stored)
+            and any(f.name == "field" and f.value == value for f in stored.fields)
+        ), stored
+
+
+def test_writable_source_defined_receiver_store_is_decided_at_prove() -> None:
     helper, receiver = _source_class_receiver("    pass\n")
     assert receiver.methods == ()
-    exits = _stored(helper, receiver, TermValue(7))
-    assert len(exits.exits) == 1
-    face = exits.exits[0]
-    assert isinstance(face, Completed)
-    assert isinstance(face.value, ObjectValue)
-    assert face.value.fields[-1].name == "field"
-    assert face.value.fields[-1].value == TermValue(7)
-
-
-def test_writable_source_defined_receiver_completes_discrimination() -> None:
-    helper, receiver = _source_class_receiver("    pass\n")
-    exits = _stored(helper, receiver, TermValue(7))
-    with pytest.raises(AssertionError):
-        assert isinstance(exits.exits[0], Halted), "writable field must complete"
+    _the_store_is_never_decided_here(
+        _stored(helper, receiver, TermValue(7)), TermValue(7)
+    )
 
 
 # ---------------------------------------------------------------------------
-# 3. Getter-only property → AttributeError
+# 3. Getter-only property: the read never licenses the store
 # ---------------------------------------------------------------------------
 
 
-def test_property_without_setter_named_attribute_error() -> None:
-    """Expected verdict changed (#7757 NEW-1): the carrier's pre-effect state
-    identity (``halted.state is pending.pre_effect_state.state``) has
-    nothing to compare against now -- the carrier is deleted.  The state
-    ``f``'s own store halt keeps is the block's record
-    (``_undecided_store``)."""
+def test_property_without_setter_is_never_decided_here() -> None:
+    """A getter-only property's store raises ``AttributeError`` in Python;
+    the lift decides neither that nor a completed store."""
     helper, receiver = _source_class_receiver(
         "    @property\n" "    def field(self):\n" "        return 1\n"
     )
     assert any(
         m.name == "field" and m.descriptor_kind == "property" for m in receiver.methods
     )
-    # Floor store path (not read) refuses.
     site = helper.body[0].fragment
-    from sugar_lift_py_tests.effect import RaiseEffect
-
-    direct = receiver.setattr("field", TermValue(7), site, None)
-    assert direct.halts() == direct.exits
-    (direct_halt,) = direct.halts()
-    assert isinstance(direct_halt.effect, RaiseEffect)
-    assert direct_halt.effect.exception_name == "AttributeError"
-    assert direct_halt.effect.producer_node_owner == "ObjectValue.setattr"
-
-    exits = _stored(helper, receiver, TermValue(7))
-    assert len(exits.exits) == 1
-    halted = exits.exits[0]
-    assert isinstance(halted, Halted)
-    assert not isinstance(halted, Completed)
-    assert halted.effect.exception_type_coordinate == _identity("AttributeError")
-    assert halted.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
-    assert not isinstance(getattr(halted, "value", None), UniverseValue)
-
-
-def test_property_without_setter_discrimination_not_completed() -> None:
-    """Bite: getter must not authorize a Completed store."""
-    helper, receiver = _source_class_receiver(
-        "    @property\n" "    def field(self):\n" "        return 1\n"
+    _the_store_is_never_decided_here(
+        receiver.setattr("field", TermValue(7), site, None), TermValue(7)
     )
-    exits = _stored(helper, receiver, TermValue(99))
-    with pytest.raises(AssertionError):
-        assert isinstance(exits.exits[0], Completed), "read path licensed a store"
-
-
-def test_read_authorizes_write_twin_fails() -> None:
-    """Lying twin: borrowing readable property evidence to complete a store."""
-    helper, receiver = _source_class_receiver(
-        "    @property\n" "    def field(self):\n" "        return 1\n"
+    _the_store_is_never_decided_here(
+        _stored(helper, receiver, TermValue(99)), TermValue(99)
     )
-    # Property is readable via the enrollment of the getter.
-    assert any(m.descriptor_kind == "property" for m in receiver.methods)
-    exits = _stored(helper, receiver, TermValue(1))
-    assert isinstance(exits.exits[0], Halted)
-    with pytest.raises(AssertionError):
-        assert isinstance(exits.exits[0], Completed), "read authorized write"
 
 
 # ---------------------------------------------------------------------------
@@ -315,15 +293,15 @@ def test_eval_order_differs_from_store_operand_order() -> None:
 
 def test_swapped_receiver_value_twin_fails() -> None:
     """A store with receiver and value swapped is distinguishable: the
-    truthful store completes with the field stored, the swapped one is
-    ``9.field = <object>``, the named AttributeError."""
+    truthful store is the instance's ``__setattr__``, decided at prove
+    (#7757 H1b), the swapped one is ``9.field = <object>``, the named
+    AttributeError."""
     function, outcome = _helper()
     writable = ObjectValue(
         "R", (ObjectField("field", TermValue(0)),), allocation=FRAME_FRESH
     )
     truthful = _stored(function, writable, TermValue(9))
-    assert isinstance(truthful.exits[0], Completed)
-    assert truthful.exits[0].value.fields[-1].value == TermValue(9)
+    _the_store_is_never_decided_here(truthful, TermValue(9))
 
     lying = _stored(function, TermValue(9), writable)
     assert isinstance(lying.exits[0], Halted)

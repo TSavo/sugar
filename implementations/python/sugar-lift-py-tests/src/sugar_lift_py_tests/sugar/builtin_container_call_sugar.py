@@ -150,19 +150,18 @@ def _may_change(value, method, pure, sharer, held=None) -> bool:
     as a parameter's or a display's object is: it may have changed.
 
     The one field store (``container_mutation.field_store_method``:
-    ``value`` is its receiver) is ``type(receiver).__setattr__``, which the
-    receiver's class decides (``ObjectValue.field_store_route``).  The store
+    ``value`` is its receiver) is ``type(receiver).__setattr__``.  The store
     changes the object itself, and whatever holds it.  It reaches what the
-    receiver shares, and what the caller holds beyond it, only when it runs
-    code: an instance whose class takes ``object``'s ``__setattr__`` and
-    binds no data descriptor for the name runs none; one whose class binds a
-    ``__setattr__`` or a descriptor's ``__set__``, or whose lookup does not
-    decide, does or may; a builtin container's or an immutable value's own
-    floor answers the store and runs none; any other receiver (a formal with
-    no actual, an undecided value) may run any.  An operand the store hands
-    that code (its rule's ``operand``; ``held`` its own value) may have
-    changed when the store runs code and the operand is one a call it is
-    handed to changes.
+    receiver shares, and what the caller holds beyond it, when it runs
+    code.  Whether a source instance's store is the plain ``__dict__`` store
+    (which runs none) is decided at prove alone (``ObjectValue.
+    plain_store_faces``, #7757 H1b), so here it may run code: what the
+    instance shares may have changed.  A builtin container's or an immutable
+    value's own floor answers the store and runs none; any other receiver (a
+    formal with no actual, an undecided value) may run any.  An operand the
+    store hands that code (its rule's ``operand``; ``held`` its own value)
+    may have changed when the store runs code and the operand is one a call
+    it is handed to changes.
 
     ``del o.<attr>`` (``container_mutation.FIELD_DELETE_METHOD``) is
     ``type(o).__delattr__``: a source instance's own value is its floor's
@@ -194,7 +193,7 @@ def _may_change(value, method, pure, sharer, held=None) -> bool:
                 held is None or _may_change(held, "", False, False)
             )
         if isinstance(value, ObjectValue):
-            return not sharer or value.field_store_runs_code(attr)
+            return True
     kind = law.container_kind(value)
     if method == FIELD_DELETE_METHOD:
         # ``del o.<attr>`` (``container_mutation._call_targets``) is
@@ -894,9 +893,7 @@ def _replace_path(value, steps, post, check_shared):
             # An instance whose fields are not current (``instance_stale``)
             # has no field to find: the root after the call is opaque.
             return None
-        if not value.authenticates_plain_attribute_store(key):
-            return None
-        positions = [i for i, field in enumerate(value.fields) if field.name == key]
+        positions =[i for i, field in enumerate(value.fields) if field.name == key]
         if not positions:
             return None
         position = positions[-1]

@@ -275,6 +275,8 @@ def test_shadow_store_does_not_rewrite_distinct_alias_return() -> None:
 
 
 def test_receiver_field_post_state_preserves_identity() -> None:
+    """The plain store's post-state (the face under ``python:plain_store``,
+    #7757 H1b) keeps the receiver's identity."""
     receiver = ObjectValue(
         "Namespace",
         (),
@@ -282,17 +284,11 @@ def test_receiver_field_post_state_preserves_identity() -> None:
         allocation=FRAME_FRESH,
     )
 
-    outcome = ReceiverFieldStoreStateSugar(
-        _FixedSugar(receiver),
-        _FixedSugar(TermValue(7)),
-        "owner",
-        "site",
-    ).desugar(None)
+    after = receiver.with_field_store("owner", TermValue(7))
 
-    assert any(isinstance(face, Completed) for face in outcome.exits), outcome
-    assert isinstance(outcome.completed_value(), ObjectValue)
-    assert outcome.completed_value().identity == receiver.identity
-    read_back = outcome.completed_value().attribute("owner", "test", None)
+    assert isinstance(after, ObjectValue)
+    assert after.identity == receiver.identity
+    read_back = after.attribute("owner", "test", None)
     assert read_back == ExitSet.completed(TermValue(7))
 
 
@@ -306,12 +302,30 @@ def test_receiver_field_post_state_preserves_defining_class_authority() -> None:
         allocation=FRAME_FRESH,
     )
 
+    after = receiver.with_field_store("owner", TermValue(7))
+
+    assert after.defining_class is defining_class
+
+
+def test_a_post_state_with_no_class_term_is_never_the_stored_instance() -> None:
+    """With no class term no face is guarded as the plain store (#7757
+    H1b): the post-state is what the store's call left, never the
+    instance with the field assumed stored."""
+    receiver = ObjectValue(
+        "Namespace", (), identity="receiver-1", allocation=FRAME_FRESH
+    )
+    assert receiver.plain_store_guard("owner") is None
+
     outcome = ReceiverFieldStoreStateSugar(
         _FixedSugar(receiver), _FixedSugar(TermValue(7)), "owner", "site"
     ).desugar(None)
 
-    assert any(isinstance(face, Completed) for face in outcome.exits), outcome
-    assert outcome.completed_value().defining_class is defining_class
+    for face in outcome.exits:
+        if isinstance(face, Completed):
+            assert not (
+                isinstance(face.value, ObjectValue)
+                and any(field.name == "owner" for field in face.value.fields)
+            ), face.value
 
 
 def test_receiver_field_post_state_does_not_borrow_foreign_class_authority() -> None:

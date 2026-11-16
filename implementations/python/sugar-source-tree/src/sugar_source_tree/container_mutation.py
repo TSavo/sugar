@@ -81,13 +81,13 @@ receiver an active ``__init__`` constructs):
   face, and every other case, keeps the unknown.
 - **A field store** (``o.f = v``, ``nodes.ReceiverFieldStoreStatement``) is
   ``type(o).__setattr__``: one operation more (``_FieldStore``).  The
-  receiver's value decides at reduce what it runs
-  (``field_store_method``, ``ObjectValue.field_store_route``): an instance
-  whose class takes ``object``'s ``__setattr__`` and binds no data descriptor
-  for the name stores the field and changes the object only; a source
-  ``__setattr__`` or descriptor ``__set__`` is that function's call; a
-  class lookup that does not decide, or a receiver that is no source
-  instance, is a call the caller does not follow.  Where it runs code, what
+  receiver's value decides at reduce what it runs (``field_store_method``):
+  a source instance's store is the plain store only under
+  ``python:plain_store``, which prove decides (``ObjectValue.
+  plain_store_faces``, #7757 H1b), and otherwise the dispatched
+  ``__setattr__`` call, so it may run code; a builtin container's or an
+  immutable value's floor runs none; any other receiver is a call the
+  caller does not follow.  Where it runs code, what
   the object shares (``holder_states``), the stored value's objects
   (``_call_targets``) and what the caller holds beyond them
   (``_ambient_targets``) are exposed as at any such call.
@@ -2347,13 +2347,11 @@ def holder_states(
     - The operation may be an ordinary call -- code that reaches whatever
       the object holds (``sharer``) -- which the receiver's value decides at
       reduce, for the one door's mutation and for a field store alike.  A
-      builtin container's cited mutation changes the container only, and a
-      field store whose receiver's class takes ``object``'s ``__setattr__``
-      and binds no data descriptor for the name changes the object only:
-      neither reaches a name that merely shares something with the object.
-      A field store that runs a ``__setattr__`` or a descriptor's
-      ``__set__``, or whose class lookup does not decide, does
-      (``ObjectValue.field_store_runs_code``).  Where no read of the
+      builtin container's cited mutation changes the container only: it
+      reaches no name that merely shares something with the object.  A
+      field store on a source instance may run code (whether it is the
+      plain store is prove's to decide, ``ObjectValue.plain_store_faces``),
+      so it does reach such a name.  Where no read of the
       receiver decides it (``_reads_again``: a temporary, a path), a sharer
       is exposed as an operand handed to a call is (``_OPERAND_RULES``)."""
     from .nodes import Node
@@ -2406,7 +2404,7 @@ def field_store_method(attr: str, *, operand: bool = False) -> str:
     """The method a rule names for the one field store ``o.<attr> = v``
     (``nodes.ReceiverFieldStoreStatement``): ``type(o).__setattr__`` with the
     stored name, which the receiver's value needs to decide what the store
-    runs (``field_store_rule``, ``ObjectValue.field_store_route``).
+    may run (``field_store_rule``).
     ``operand``: the rule is for an object the stored value hands the code
     the store runs."""
     return f"{_FIELD_STORE_OPERAND if operand else _FIELD_STORE_METHOD}{attr}"

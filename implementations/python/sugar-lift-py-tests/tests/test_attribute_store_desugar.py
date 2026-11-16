@@ -231,17 +231,17 @@ def test_rhs_halt_wins_before_receiver_evaluation(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_ground_object_field_store_completes(tmp_path):
+def test_a_store_on_an_instance_naming_no_class_is_the_call(tmp_path):
+    """No class term, so no ``python:plain_store`` guard (#7757 H1b): the
+    store is the one ``type(o).__setattr__`` call, both faces kept, and the
+    field is never recorded as stored."""
     receiver = ObjectValue(
         "R", (ObjectField("attr", TermValue(0)),), allocation=FRAME_FRESH
     )
     outcome = _store(receiver, TermValue(9), [], _site(tmp_path)).desugar()
-    stored = outcome.completed_value()
-    assert isinstance(stored, ReceiverFieldStoreValue)
-    assert stored.value == TermValue(9)
-    # The object after the store, as every binding of it reads it.
-    after = stored.receiver.with_field_store(stored.attr, stored.value)
-    assert after.fields[-1].value == TermValue(9)
+    assert outcome.halts(), outcome
+    for arm in outcome.exits:
+        assert not isinstance(getattr(arm, "value", None), ReceiverFieldStoreValue)
 
 
 def test_readable_immutable_receiver_raises_on_store(tmp_path):
@@ -300,7 +300,10 @@ def test_list_read_path_does_not_license_list_setattr(tmp_path):
     assert halt.effect.producer_node_owner == "ListValue.setattr"
 
 
-def test_property_without_setter_raises_attribute_error_not_completed(tmp_path):
+def test_property_without_setter_is_never_a_completed_plain_store(tmp_path):
+    """A getter-only property's store raises ``AttributeError`` in Python.
+    The lift never decides it (#7757 H1b): the store is the call, its halt
+    face kept, and the field is never recorded as stored."""
     from sugar_lift_py_tests.floor.return_value import ReturnValue
 
     @dataclass(frozen=True)
@@ -328,10 +331,9 @@ def test_property_without_setter_raises_attribute_error_not_completed(tmp_path):
         allocation=FRAME_FRESH,
     )
     outcome = _store(receiver, TermValue(7), [], _site(tmp_path)).desugar()
-    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
-    (halt,) = outcome.halts()
-    assert halt.effect.exception_name == "AttributeError"
-    assert halt.effect.producer_node_owner == "ObjectValue.setattr"
+    assert outcome.halts(), outcome
+    for arm in outcome.exits:
+        assert not isinstance(getattr(arm, "value", None), ReceiverFieldStoreValue)
 
 
 def test_undecided_retains_dual_face_runtime_effect(tmp_path):
