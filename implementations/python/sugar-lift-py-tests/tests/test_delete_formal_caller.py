@@ -645,6 +645,20 @@ def test_missing_list_index_halts_with_named_indexerror_and_pre_effect_state() -
     _holds_earlier_store(_frame_halt(FRAME_BAD_INDEX, "IndexError"))
 
 
+def _the_dispatched_attribute_delete(exits) -> None:
+    """``del o.field`` on a source instance: ``type(o).__delattr__``, the one
+    dispatched delete whose halts prove's walk decides (#7757 H1c), or, where
+    no class is named, the one undecided attribute mutation.  Both faces are
+    kept, and the lift names no ``AttributeError`` of its own."""
+    assert isinstance(exits, ExitSet)
+    assert exits.halts(), exits
+    assert any(isinstance(face, Completed) for face in exits.exits), exits
+    for halt in exits.halts():
+        assert getattr(halt.effect, "exception_type_coordinate", None) != _identity(
+            "AttributeError"
+        ), halt.effect
+
+
 def test_missing_attribute_is_the_undecided_delattr_and_keeps_pre_effect() -> None:
     # The floor's own face over the decided actual.  A name the recorded
     # fields do not hold is not decided absent here (#7757 L3, #9039/#9043/
@@ -752,7 +766,10 @@ def test_swapped_receiver_index_coordinates_rejected_against_truthful_delete() -
 
 
 def test_read_does_not_authorize_delete_on_getter_only_property() -> None:
-    """Property is readable but delete must not complete (read ≠ delete authority)."""
+    """Property is readable but the read never decides the delete (read ≠
+    delete authority): the delete is the dispatched ``__delattr__``, whose
+    halt face is kept, never a completion alone and never an
+    ``AttributeError`` the lift decides (#7757 H1c)."""
 
     @dataclass(frozen=True)
     class _GetterBody(Sugar):
@@ -782,12 +799,7 @@ def test_read_does_not_authorize_delete_on_getter_only_property() -> None:
     assert any(
         m.name == "field" and m.descriptor_kind == "property" for m in receiver.methods
     )
-    exits = _attr_door(receiver)
-    halted = exits.exits[0]
-    assert isinstance(
-        halted, Halted
-    ), "read-authorizes-delete twin: getter-only property must not complete delete"
-    assert halted.effect.exception_type_coordinate == _identity("AttributeError")
+    _the_dispatched_attribute_delete(_attr_door(receiver))
 
 
 def test_discrimination_writable_field_is_not_attributeerror_delete() -> None:
@@ -797,9 +809,7 @@ def test_discrimination_writable_field_is_not_attributeerror_delete() -> None:
         methods=(),
         allocation=FRAME_FRESH,
     )
-    exits = _attr_door(receiver)
-    assert isinstance(exits.exits[0], Completed)
-    assert not isinstance(exits.exits[0], Halted)
+    _the_dispatched_attribute_delete(_attr_door(receiver))
 
 
 # ===========================================================================

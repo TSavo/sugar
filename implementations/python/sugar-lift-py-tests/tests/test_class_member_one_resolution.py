@@ -312,7 +312,13 @@ def test_a_new_whose_call_runs_a_source_init_is_no_returned_new() -> None:
 # --- 5. the receiver keeps its class ----------------------------------------------
 
 
-def test_delattr_and_the_helper_rebuild_keep_the_class() -> None:
+def test_delattr_of_a_held_field_is_the_dispatched_delete_never_the_lift_removal() -> (
+    None
+):
+    """``del o.x`` is ``type(o).__delattr__(o, "x")``: the lift never decides
+    it is ``object``'s plain removal of the field (#7757 H1c).  Both faces
+    are kept, no ``AttributeError`` is named here, and no completed face is
+    the instance with the field removed."""
     box = _bare_class_value(_classes("class Box:\n    pass\n")["Box"])
     receiver = ObjectValue(
         "Box",
@@ -322,11 +328,18 @@ def test_delattr_and_the_helper_rebuild_keep_the_class() -> None:
         allocation=FRAME_FRESH,
     )
 
-    after = receiver.delattr("x", "del-site", None).completed_value()
-    assert after.defining_class is box
-    assert after.fields == () and "x" in after.deleted_instance_fields
-    assert after.allocation is receiver.allocation
-
+    outcome = receiver.delattr("x", "del-site", None)
+    assert outcome.halts(), outcome
+    assert "AttributeError" not in _halt_names(outcome)
+    completed = [face for face in outcome.exits if not isinstance(face, Halted)]
+    assert completed, outcome
+    for face in completed:
+        after = face.value
+        assert not (
+            isinstance(after, ObjectValue)
+            and after.allocation is not None
+            and "x" not in {field.name for field in after.fields}
+        ), after
 
 
 def _delete_site():

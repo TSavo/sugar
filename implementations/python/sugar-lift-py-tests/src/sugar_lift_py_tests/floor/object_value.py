@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 # ``object.__class__``: the one builtin data descriptor whose delete is read
 # here.  Its setter (``object_set_class``) refuses a missing value with
-# ``TypeError`` whatever the object (``ObjectValue._builtin_descriptor_delete``).
+# ``TypeError`` whatever the object (``ObjectValue._deletes_object_class_slot``).
 _OBJECT_CLASS_SLOT = vars(object)["__class__"]
 
 
@@ -70,14 +70,6 @@ class ObjectValue(FloorValue):
     methods: tuple[ObjectMethodValue, ...] = ()
     class_fields: tuple[ObjectField, ...] = ()
     identity: str = ""
-    # Instance field names removed by an authenticated delattr: names the
-    # instance's ``__dict__`` does not hold now.  A read of one, like any
-    # name no field holds, is the dispatched read whose absence prove's one
-    # walk of the order decides (``attribute``; ``receiver_dispatch.
-    # class_value`` leaves these out of the fields it states).
-    deleted_instance_fields: tuple[str, ...] = dataclass_field(
-        default=(), compare=False
-    )
     # Definition-owned class identity transported by ClassDefinitionValue.
     # This is never reconstructed from class_name.
     defining_class: object | None = dataclass_field(
@@ -296,8 +288,8 @@ class ObjectValue(FloorValue):
         (``undecided_attribute_result``).
 
         Every other name -- a ``def`` the class wrote (plain, static, class
-        method or property), or no class member at all, or a field a delete
-        removed -- is the dispatched read (``_dispatched_call(read=True)``):
+        method or property), or no class member at all -- is the dispatched
+        read (``_dispatched_call(read=True)``):
         which member it finds, how it binds, and whether it raises
         ``AttributeError`` are decided once, at prove, by the one walk of the
         order (``consistency::dispatch_walk``, #7757 L3), never here.  Where
@@ -347,8 +339,7 @@ class ObjectValue(FloorValue):
 
                 return ExitSet.completed(BoundMethodValue(self, name, class_value))
             return ExitSet.completed(class_value)
-        # No recorded field answers the name (a field a delete removed
-        # included), and the one class-namespace lookup found no class-field
+        # No recorded field answers the name, and the one class-namespace lookup found no class-field
         # value for it: a ``def`` the class wrote (plain, ``staticmethod``,
         # ``classmethod``, ``property``) or nothing.  Which member that is,
         # what kind it binds as, and whether the read raises
@@ -358,7 +349,7 @@ class ObjectValue(FloorValue):
         # decide, at prove (``consistency::dispatch_walk``, #7757 NEW-7/L3):
         # the read is the dispatched read on this instance, its class and the
         # fields its ``__dict__`` may hold now (``receiver_dispatch.
-        # class_value``: a deleted field is not one of them), both faces
+        # class_value``), both faces
         # kept.  Where it names no class, the one undecided read.
         dispatched = self._dispatched_call(name, (), (), site, read=True)
         if dispatched is not None:
@@ -422,15 +413,12 @@ class ObjectValue(FloorValue):
                 fix="reach the store through ObjectValue.setattr",
             )
         remaining = tuple(field for field in self.fields if field.name != name)
-        # Restore retires the deleted-field mark for this name.
-        still_deleted = tuple(d for d in self.deleted_instance_fields if d != name)
         return ObjectValue(
             self.class_name,
             (*remaining, ObjectField(name, value)),
             self.methods,
             self.class_fields,
             self.identity,
-            still_deleted,
             self.defining_class,
             # The same object: it keeps its ``allocation`` and ``arrival``,
             # and the field is known on it from here (``stored_fields``).
@@ -449,17 +437,6 @@ class ObjectValue(FloorValue):
         if not decided:
             return None
         return method is not None and method.descriptor_kind == "property"
-
-    def _refuse_undecided_store(self, name: str, site, owner: str) -> NoReturn:
-        """A store or delete of ``name`` whose class member the one lookup
-        does not decide: refused by name, never an instance-field store."""
-        self._floor_gap(
-            owner=owner,
-            blame=site,
-            observed=f"{self.class_name}.{name}: class member not decided",
-            requested="the class member the one class-namespace lookup selects",
-            fix="decide the class's namespace for the name (ClassDef.namespace_binds)",
-        )
 
     def setitem(self, index, value, site, ctx):
         """``self[index] = value``: CPython calls ``type(self).__setitem__``
@@ -768,91 +745,56 @@ class ObjectValue(FloorValue):
         (``PyObject_SetAttr`` with no value), an implicit lookup on the type
         that no instance field shadows.
 
-        Where the one class-namespace lookup does not decide that
-        ``__delattr__`` is ``object``'s (``_delattr_is_generic``) -- a source
-        class of the order binds it, a builtin base other than ``object``
-        does, the lookup is not decided -- the delete is that call: the one
-        dispatched ``__delattr__`` (``_dispatched_delattr``), whose member
-        prove's one walk of the order decides (``consistency::dispatch_walk``),
-        never an instance-field delete or an ``AttributeError`` decided here.
+        Every delete is that call: the one dispatched ``__delattr__``
+        (``_dispatched_delattr``), whose member, binding and halts prove's
+        one walk of the order decides (``consistency::dispatch_walk``), as a
+        formal's delete is (``store_effect_sugar.attribute_mutation``).  The
+        lift never decides that the delete is ``object``'s plain removal of
+        an instance field, that a property's delete raises
+        ``AttributeError``, or that a name is absent (#7757 H1c: one way,
+        the walk at prove; L3: the lift never decides a member's absence).
+        The object after it is what the call states, else unknown
+        (``after_field_store_call``).
 
-        Under ``object``'s ``__delattr__`` (``PyObject_GenericSetAttr``):
-        properties are data descriptors: a getter without an authenticated
-        deleter raises ``AttributeError`` on the **delete** path -- never by
-        consulting :meth:`attribute` / the read path.  A field the recorded
-        fields hold is removed.  A name they do not hold is not decided here
-        to be absent (#7757 L3: the lift never decides a member's absence):
-        it is the dispatched ``__delattr__`` too, both faces kept.
-
-        Whether a field is held is read off the recorded fields only when
-        they are the object's fields now (``object_identity.contents_current``).
-        On an instance that arrived by binding, another alias may have
-        stored or deleted the name since: the delete is undecided
-        (``_undecided_delattr``), never decided from the fields it arrived
-        with.
-
-        A name a builtin owner binds to a data descriptor
-        (``_class_data_descriptor``: ``object.__class__``) is that
-        descriptor's delete, never the instance-field delete
-        (``_builtin_descriptor_delete``); so is one ``object`` binds to a
-        data descriptor on a receiver built with no class statement whose
-        roster binds nothing for it (``_unread_object_descriptor``).
+        One delete is builtin semantics, not the class walk: ``del
+        o.__class__`` where ``object`` binds both ``__class__`` and
+        ``__delattr__`` for the receiver's class
+        (``_deletes_object_class_slot``) raises ``TypeError`` whatever the
+        object is.
         """
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        from .object_identity import contents_current
-
-        if not self._delattr_is_generic():
-            return self._dispatched_delattr(name, site)
-        descriptor = self._store_descriptor(name)
-        if descriptor is None:
-            self._refuse_undecided_store(name, site, "ObjectValue.delattr")
-        if descriptor:
+        if self._deletes_object_class_slot(name):
             from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
             return ground_exceptional_exit(
-                exception_name="AttributeError",
+                exception_name="TypeError",
                 site=site,
                 owner="ObjectValue.delattr",
             )
-        if self._class_data_descriptor(name) or self._unread_object_descriptor(name):
-            return self._builtin_descriptor_delete(name, site)
-        current = contents_current(self)
-        remaining = tuple(field for field in self.fields if field.name != name)
-        if current and len(remaining) == len(self.fields):
-            # No recorded field holds ``name``: whether the delete raises
-            # ``AttributeError`` -- or a class field's own ``__delete__``
-            # answers it -- is not decided here (#7757 L3).
-            return self._dispatched_delattr(name, site)
-        deleted = (
-            self.deleted_instance_fields
-            if name in self.deleted_instance_fields
-            else (*self.deleted_instance_fields, name)
-        )
-        from dataclasses import replace
+        return self._dispatched_delattr(name, site)
 
-        # The same object: it keeps its class (``defining_class``, which the
-        # one class-namespace lookup reads), its ``allocation`` and
-        # ``arrival``, and its own kind of receiver.
-        after = replace(self, fields=remaining, deleted_instance_fields=deleted)
-        if not current:
-            return self._undecided_delattr(name, after, site)
-        return ExitSet.completed(after)
-
-    def _delattr_is_generic(self) -> bool:
-        """Whether the one class-namespace lookup decides that
-        ``type(self).__delattr__`` is ``object``'s
-        (``PyObject_GenericSetAttr``), as ``field_store_route`` decides
-        ``__setattr__``.  A receiver built with no class statement has only
-        its own roster (``class_member``): a ``__delattr__`` there, or a
-        lookup of it that does not decide, is not ``object``'s.  False
-        whenever the lookup does not decide, or names any other owner."""
+    def _deletes_object_class_slot(self, name) -> bool:
+        """Whether ``del self.name`` is ``object.__class__``'s delete under
+        ``object``'s ``__delattr__`` (``PyObject_GenericSetAttr``): the one
+        class-namespace lookup decides that ``object`` binds both ``name``
+        and ``__delattr__`` for this receiver's class, and ``name`` is the
+        ``__class__`` slot (``_OBJECT_CLASS_SLOT``).  Its setter
+        (``object_set_class``, Objects/typeobject.c) is called with no value
+        and raises ``TypeError`` ("can't delete __class__ attribute") before
+        anything changes, whatever the object.  False for a receiver built
+        with no class statement, whose type's MRO no lookup reads."""
+        if vars(object).get(name) is not _OBJECT_CLASS_SLOT:
+            return False
         definition = getattr(self.defining_class, "class_definition", None)
         if definition is None:
-            decided, method, value = self.class_member("__delattr__")
-            return decided and method is None and value is None
-        decided, owner = definition.namespace_owner("__delattr__")
-        return decided and isinstance(owner, str) and owner == "object"
+            return False
+        decided, owner = definition.namespace_owner(name)
+        delattr_decided, delattr_owner = definition.namespace_owner("__delattr__")
+        return (
+            decided
+            and delattr_decided
+            and owner == "object"
+            and delattr_owner == "object"
+        )
 
     def _dispatched_delattr(self, name, site):
         """``del self.name`` as the one dispatched call
@@ -883,98 +825,6 @@ class ObjectValue(FloorValue):
                 owner="ObjectValue.delattr",
             )
         return self._after_attribute_call(dispatched, site)
-
-    def _builtin_descriptor_delete(self, name, site):
-        """``del self.name`` where a builtin owner binds ``name`` to a data
-        descriptor (``_class_data_descriptor``).  The delete is
-        ``type(self).__delattr__(self, name)`` (``PyObject_SetAttr`` with no
-        value), an implicit lookup on the type.
-
-        Where the one class-namespace lookup decides that ``__delattr__`` is
-        ``object``'s (``PyObject_GenericSetAttr``) and the descriptor is
-        ``object.__class__`` (``_OBJECT_CLASS_SLOT``), its setter
-        (``object_set_class``, Objects/typeobject.c) is called with no value
-        and raises ``TypeError`` ("can't delete __class__ attribute") before
-        anything changes, whatever the object: the certain halt.
-
-        Anything else -- a ``__delattr__`` the lookup does not decide to be
-        ``object``'s, another builtin descriptor whose ``__delete__`` is not
-        read here, a receiver built with no class statement, whose type's
-        MRO no lookup reads (``_unread_object_descriptor``) -- is the one
-        unanswered call ``type(self).__delattr__`` (two-faced, owed), the
-        object after it the one ``after_field_store_call`` states.  Nothing
-        is guessed of what it runs."""
-        from .string_value import StringValue
-
-        definition = getattr(self.defining_class, "class_definition", None)
-        decided = delattr_decided = False
-        owner = delattr_owner = None
-        if definition is not None:
-            decided, owner = definition.namespace_owner(name)
-            delattr_decided, delattr_owner = definition.namespace_owner(
-                "__delattr__"
-            )
-        if (
-            decided
-            and delattr_decided
-            and owner == "object"
-            and delattr_owner == "object"
-            and vars(object).get(name) is _OBJECT_CLASS_SLOT
-        ):
-            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-
-            return ground_exceptional_exit(
-                exception_name="TypeError",
-                site=site,
-                owner="ObjectValue.delattr",
-            )
-        return self._after_attribute_call(
-            self.unanswered_method_call("__delattr__", (StringValue(name),), (), site),
-            site,
-        )
-
-    def _undecided_delattr(self, name, after, site):
-        """``del self.name`` on an instance whose fields are not current: two
-        faces (``ExitSet.two_faced``), both owing the ``undecided`` member.
-
-        Whether ``name`` is in the instance's ``__dict__`` now is not
-        decided here, so the delete may complete or raise.  It completes,
-        leaving ``after`` -- the same object with ``name`` gone, still not
-        current, keeping its ``arrival`` -- only under
-        ``python:delattr.completes(python:delattr(<receiver>, <name>,
-        <site>))``, the receiver named by its identity (``identity_term``)
-        and the atom keyed on the exact source site; the complement halts
-        with an ``UndeterminedRaiseEffect``.  No ``AttributeError`` is
-        named."""
-        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-        from sugar_lift_py_tests.ir import atomic, ctor, str_const
-        from sugar_lift_py_tests.occurrence import occurrence_key
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        from .object_identity import identity_term
-
-        receiver_term = identity_term(self, site, "receiver", owner=str(site))
-        key = occurrence_key(site)
-        completes = atomic(
-            "python:delattr.completes",
-            [
-                ctor(
-                    "python:delattr",
-                    (receiver_term, str_const(name), str_const(key)),
-                )
-            ],
-        )
-        return ExitSet.two_faced(
-            after,
-            UndeterminedRaiseEffect(
-                blame=str(site),
-                occurrence=key,
-                producer_node_owner="ObjectValue.delattr",
-                site=site,
-            ),
-            guard=completes,
-            site=site,
-        )
 
     def iter_with(
         self, operation: IteratorOperation, ctx: ReduceContext | None
