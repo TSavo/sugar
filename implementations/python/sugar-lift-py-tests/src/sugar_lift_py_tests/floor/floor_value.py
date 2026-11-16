@@ -653,8 +653,9 @@ class FloorValue:
         # Default: this value does not stand on the attribute floor -- it cannot
         # answer what it yields at `.name`. A symbolic receiver stays the
         # py.getattr coordinate; a value that owns a field folds; absence here is
-        # the honest "no".  ``ctx`` is the reading caller's context: a member
-        # that applies a body (a property getter) applies under it.
+        # the honest "no".  ``ctx`` is the reading caller's context; no
+        # member applies a body here (a property getter is the dispatched
+        # read prove's walk decides, ``ObjectValue.attribute``).
         del name, ctx
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
