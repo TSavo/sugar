@@ -40,18 +40,15 @@ name: Main scorecard
 # environment, everything was measured from scratch, and the row was written
 # only after the slowest job. Now:
 #
-# 1. Incremental. tools/scorecard_carry.py records, per pytest test and per
-#    pandas board file, the fingerprint of every first-party function it
-#    executed and the blob of every tracked file it read, in a
-#    content-addressed store on the runner host. A run reruns only the tests
-#    and board files whose recorded dependencies changed in this SHA and
-#    carries every other result forward; a test file whose every test is
-#    carried never starts pytest. The numbers are always full totals for the
-#    SHA, and the row says how many were rerun and how many carried. The
-#    store is keyed by interpreter + installed distributions + the carry
-#    module: a new key starts empty, so that run re-measures everything once
-#    and refills it. (The pandas-walking unit tests are carried like any
-#    other test: the corpus is pinned by the key.)
+# 1. Nothing is carried (#8416, 2026-11-16). A carry recorder
+#    (tools/scorecard_carry.py, sys.monitoring re-instrumenting live bytecode
+#    on every test) used to fingerprint what each test and board file ran and
+#    carry unchanged results forward. It carried nothing (every row said
+#    carried=suite:0, every test opaque to it) and was the prime suspect for
+#    the suite shards' intermittent segfaults (exit 139, runs 43832361876 and
+#    43841836171). It is deleted: every test runs on every run, the row's
+#    rerun= is each measure's total and carried= is 0. Only the federation
+#    example's PASS is still carried, by a tree key (the federation job).
 # 2. Zero setup. tools/main_scorecard_env.sh keeps one persistent venv per
 #    dependency key in the cache directory every runner shares (pandas
 #    pinned with it) and puts gh on PATH; the sugar binary comes from
@@ -132,8 +129,6 @@ permissions:
 env:
   PYTHONUNBUFFERED: "1"
   SUITE_SHARD_COUNT: "8"
-  # More test files than this to rerun -> fan out to SUITE_SHARD_COUNT jobs.
-  SUITE_INLINE_MAX_FILES: "40"
   SCORECARD_ISSUE_TITLE: "Main scorecard"
   # The numbers this workflow reports; the board is main-scorecard-board.yml.
   SCORECARD_MEASURES: "suite,twins,federation,rust"
@@ -185,17 +180,14 @@ jobs:
         run: bash tools/main_scorecard_schedule_gate.sh main-scorecard.yml
 
   # ------------------------------------- (1) package suite + (2) solver twins
-  # The plan: which files must run (carry), packed onto the shards by
-  # measured cost. Few files: they run here, on one runner, and this job
-  # posts the suite and twins numbers. Otherwise they fan out.
+  # The plan: every file, packed onto the SUITE_SHARD_COUNT shards by
+  # measured cost. The shards run them; the join posts the numbers.
   suite:
     name: package suite + twins (plan)
     needs: [gate]
     if: ${{ !cancelled() && needs.gate.outputs.measure != 'false' }}
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 120
-    outputs:
-      fanout: ${{ steps.plan.outputs.fanout }}
+    timeout-minutes: 30
     steps:
       - name: Start the job clock
         shell: bash
@@ -209,47 +201,19 @@ jobs:
       - name: Scorecard environment (persistent venv, gh)
         shell: bash
         run: bash tools/main_scorecard_env.sh
-      - name: Plan (which test files run, on which shard)
-        id: plan
+      - name: Plan (which test files run on which shard)
         shell: bash
         run: bash tools/main_scorecard_suite.sh plan
-      - name: Set up Rust toolchain (only when tests run here)
-        if: steps.plan.outputs.rerun != '0' && steps.plan.outputs.fanout == 'false'
-        uses: ./.github/actions/setup-rust-cache
-      - name: Install z3 (cached on the runner)
-        if: steps.plan.outputs.rerun != '0' && steps.plan.outputs.fanout == 'false'
-        shell: bash
-        run: tools/ci-apt-install.sh z3
-      - name: Run the files with a changed dependency
-        if: steps.plan.outputs.rerun != '0' && steps.plan.outputs.fanout == 'false'
-        shell: bash
-        run: bash tools/main_scorecard_suite.sh run 0
-      - name: Post the suite and twins numbers
-        if: ${{ !cancelled() && steps.plan.outputs.fanout != 'true' }}
-        shell: bash
-        run: bash tools/main_scorecard_suite.sh post
-      - name: Upload logs
-        # always(): a crashed pytest's log (faulthandler stacks, the test it
-        # was running) survives whatever happened to the job.
-        if: ${{ always() && steps.plan.outputs.rerun != '0' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: main-scorecard-suite
-          path: |
-            suite.log
-            twins.log
-            twin-evidence/**
-          if-no-files-found: ignore
       - name: Job wall time
         if: ${{ !cancelled() }}
         shell: bash
         run: echo "job wall $(( $(date +%s) - JOB_T0 ))s"
 
-  # Many files to run: they fan out over the shards the plan packed.
+  # The files fan out over the shards the plan packed.
   suite-shard:
     name: suite shard ${{ matrix.shard }}
     needs: [suite]
-    if: ${{ !cancelled() && needs.suite.outputs.fanout == 'true' }}
+    if: ${{ !cancelled() && needs.suite.result == 'success' }}
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 120
     strategy:
@@ -297,7 +261,7 @@ jobs:
   suite-join:
     name: suite join
     needs: [suite, suite-shard]
-    if: ${{ !cancelled() && needs.suite.outputs.fanout == 'true' }}
+    if: ${{ !cancelled() && needs.suite.result == 'success' }}
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
     steps:
@@ -552,5 +516,9 @@ jobs:
         run: |
           set +e -uo pipefail
           if [ $(( GITHUB_RUN_NUMBER % 20 )) -ne 0 ]; then echo "housekeeping skipped"; exit 0; fi
-          python tools/scorecard_carry.py gc --store "$SCORECARD_STORE"
+          # The store holds only the federation verdicts; whatever else is
+          # there is the deleted carry recorder's records (#8416).
+          for entry in "$SCORECARD_STORE"/*; do
+            [ -e "$entry" ] && [ "$(basename "$entry")" != verdicts ] && rm -rf "$entry"
+          done
           find "$SCORECARD_CACHE/runs" -mindepth 1 -maxdepth 1 -type d -mtime +2 -exec rm -rf {} +

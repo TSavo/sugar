@@ -1,20 +1,12 @@
-"""pytest plugin: carry unchanged test results forward (see tools/scorecard_carry.py).
+"""pytest plugin: the main scorecard's per-shard summary (see tools/scorecard_carry.py).
 
-Enable with ``-p scorecard_carry_pytest --carry-store DIR --carry-summary FILE``.
+Enable with ``-p scorecard_carry_pytest --carry-label L --carry-summary FILE``.
 
-* After collection, every test whose stored record is still valid for this
-  tree is deselected and reported as carried with its recorded outcome.
-* Every test that runs is recorded with its depset: what it executed, plus
-  what its collectors (module import, parametrization) and its higher-scoped
-  fixtures executed, plus everything executed before collection began.
-* Every collected test file is recorded with the node IDs it produced, so
-  ``scorecard_carry.py suite-plan`` can skip a file without starting pytest.
-* ``--carry-summary`` names every node ID with its buckets and whether it was
-  carried or rerun; ``scorecard_carry.py summarize`` turns summaries into
-  totals.
-
-Outcome buckets follow tools/python_package_suite_report.py exactly.
-
+* ``--carry-summary`` names every node ID that ran with its outcome buckets,
+  every collection error and pytest's exit status;
+  ``scorecard_carry.py summarize`` turns summaries into totals, and
+  tools/main_scorecard_shard_plan.py reads them to check every shard reported
+  and to refresh the per-file test-count ledger.
 * Every test file that ran has its wall seconds (setup + call + teardown of
   its tests) written to the LPT cost prior when ``SUGAR_LPT_PRIOR_DIR`` is
   set (tools/lpt_file_shards.py), so the next scorecard run packs its shards
@@ -22,6 +14,11 @@ Outcome buckets follow tools/python_package_suite_report.py exactly.
 * The PYTEST line names the peak resident memory of pytest and of its
   children (``max_rss_mb``, ``children_max_rss_mb``): the memory floor a
   runner seat needs.
+
+Nothing is recorded or carried and no bytecode is instrumented: the
+``sys.monitoring`` carry recorder this plugin used to run was deleted (#8416).
+
+Outcome buckets follow tools/python_package_suite_report.py exactly.
 """
 
 from __future__ import annotations
@@ -40,44 +37,28 @@ _ERROR_PHASES = {"setup", "teardown"}
 
 
 def pytest_addoption(parser: Any) -> None:
-    group = parser.getgroup("scorecard-carry", "carry unchanged results forward")
-    group.addoption(
-        "--carry-store",
-        default=None,
-        help="fingerprint store directory; enables carrying and recording",
-    )
+    group = parser.getgroup("scorecard-carry", "the main scorecard's shard summary")
     group.addoption(
         "--carry-label",
         default="suite",
-        help="part of the store key (one label per invocation shape)",
+        help="the population this pytest measures (suite, twins)",
     )
     group.addoption(
         "--carry-summary",
         default=None,
-        help="write every node ID's buckets and carried/rerun here",
+        help="write every node ID's buckets here",
     )
 
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_configure(config: Any) -> None:
-    store = config.getoption("--carry-store")
     summary = config.getoption("--carry-summary")
-    if store or summary:
-        config.pluginmanager.register(
-            CarryPlugin(config, store, summary), "sugar-scorecard-carry"
-        )
+    if summary:
+        config.pluginmanager.register(SummaryPlugin(config, summary), "sugar-scorecard-carry")
 
 
-def _ancestor(collector_nodeid: str, file: str) -> bool:
-    if collector_nodeid in ("", "."):
-        return True
-    if collector_nodeid == file or collector_nodeid.startswith(file + "::"):
-        return True
-    return file.startswith(collector_nodeid.rstrip("/") + "/")
-
-
-class CarryPlugin:
-    def __init__(self, config: Any, store_root: str | None, summary_path: str | None):
+class SummaryPlugin:
+    def __init__(self, config: Any, summary_path: str):
         self.t0 = time.perf_counter()
         self.config = config
         self.summary_path = summary_path
@@ -85,62 +66,7 @@ class CarryPlugin:
         self.items_out: dict[str, dict[str, Any]] = {}
         self.buckets: dict[str, list[str]] = {}
         self.collection_errors: list[str] = []
-        self.opaque: dict[str, str] = {}
         self.file_seconds: dict[str, float] = {}
-        self.collector_sinks: dict[str, carry.Sink] = {}
-        self.fixture_sinks: dict[int, carry.Sink] = {}
-        self._collecting: list[carry.Sink] = []
-        self.session: carry.CarrySession | None = None
-        self.baseline: carry.Sink | None = None
-        if store_root:
-            rootdir = str(config.rootpath)
-            self.session = carry.CarrySession.open(
-                store_root,
-                start=rootdir,
-                extra=lambda tree: carry.pytest_key_extra(tree, rootdir, self.label),
-            )
-            if self.session is not None and self.session.recorder is not None:
-                self.baseline = self.session.recorder.push()
-
-    @property
-    def _recorder(self) -> carry.Recorder | None:
-        return self.session.recorder if self.session is not None else None
-
-    # -- collection -------------------------------------------------------
-
-    @pytest.hookimpl(tryfirst=True)
-    def pytest_collection(self, session: Any) -> None:
-        if self.baseline is not None and self._recorder is not None:
-            self._recorder.pop(self.baseline)
-
-    @pytest.hookimpl(hookwrapper=True)
-    def pytest_make_collect_report(self, collector: Any):
-        # Collector sinks never nest: pytest collects children inside the
-        # parent's report, and a parent sink holding every child's imports
-        # would make each test depend on every test file. The parent is
-        # suspended while a child collects and resumed after.
-        recorder = self._recorder
-        parent = self._collecting[-1] if self._collecting else None
-        sink = None
-        if recorder is not None:
-            if parent is not None:
-                recorder.pop(parent)
-            sink = recorder.push()
-            self._collecting.append(sink)
-        try:
-            yield
-        finally:
-            if sink is not None and recorder is not None:
-                recorder.pop(sink)
-                self._collecting.pop()
-                if parent is not None:
-                    recorder.resume(parent)
-        if sink is not None:
-            existing = self.collector_sinks.get(collector.nodeid)
-            if existing is None:
-                self.collector_sinks[collector.nodeid] = sink
-            else:
-                existing.merge(sink)
 
     def pytest_collectreport(self, report: Any) -> None:
         if report.failed:
@@ -148,88 +74,8 @@ class CarryPlugin:
             if nodeid not in self.collection_errors:
                 self.collection_errors.append(nodeid)
 
-    @pytest.hookimpl(tryfirst=True)
-    def pytest_collection_modifyitems(self, session: Any, config: Any, items: list) -> None:
-        if self.session is None:
-            return
-        self._record_files(items)
-        kept, carried = [], []
-        for item in items:
-            payload = self.session.lookup("test", item.nodeid)
-            buckets = payload.get("buckets") if isinstance(payload, dict) else None
-            if isinstance(buckets, list):
-                self.items_out[item.nodeid] = {"buckets": list(buckets), "how": "carried"}
-                carried.append(item)
-            else:
-                kept.append(item)
-        if carried:
-            items[:] = kept
-            config.hook.pytest_deselected(items=carried)
-        carry.narrate(
-            f"SCORECARD CARRY COLLECTED label={self.label} carried={len(carried)} "
-            f"to_run={len(kept)}"
-        )
-
-    def _record_files(self, items: list) -> None:
-        by_file: dict[str, list[str]] = {}
-        rootdir = str(self.config.rootpath)
-        for arg in self.config.args:
-            path = arg.split("::", 1)[0]
-            if path.endswith(".py") and os.path.isfile(path):
-                rel = os.path.relpath(os.path.abspath(path), rootdir).replace(os.sep, "/")
-                by_file.setdefault(rel, [])
-        for item in items:
-            by_file.setdefault(item.nodeid.split("::", 1)[0], []).append(item.nodeid)
-        failed = {error.split("::", 1)[0] for error in self.collection_errors}
-        for file, nodeids in by_file.items():
-            if file in failed or "<root>" in failed:
-                continue
-            sinks = [self.baseline] + [
-                sink for nodeid, sink in self.collector_sinks.items() if _ancestor(nodeid, file)
-            ]
-            self.session.record("file", file, sinks, {"nodeids": nodeids})  # type: ignore[union-attr]
-
-    # -- execution --------------------------------------------------------
-
-    @pytest.hookimpl(hookwrapper=True)
-    def pytest_fixture_setup(self, fixturedef: Any, request: Any):
-        recorder = self._recorder
-        if recorder is None or fixturedef.scope == "function":
-            yield
-            return
-        sink = recorder.push()
-        try:
-            yield
-        finally:
-            recorder.pop(sink)
-        self.fixture_sinks.setdefault(id(fixturedef), carry.Sink()).merge(sink)
-
-    @pytest.hookimpl(hookwrapper=True)
-    def pytest_runtest_protocol(self, item: Any, nextitem: Any):
-        recorder = self._recorder
-        sink = recorder.push() if recorder is not None else None
-        try:
-            yield
-        finally:
-            if sink is not None and recorder is not None:
-                recorder.pop(sink)
-        nodeid = item.nodeid
-        buckets = list(self.buckets.get(nodeid, []))
-        self.items_out[nodeid] = {"buckets": buckets, "how": "rerun"}
-        if sink is None or not buckets or self.session is None:
-            return
-        chain = {node.nodeid for node in item.listchain() if node is not item}
-        sinks = [self.baseline, sink]
-        sinks.extend(s for nid, s in self.collector_sinks.items() if nid in chain)
-        info = getattr(item, "_fixtureinfo", None)
-        for defs in (getattr(info, "name2fixturedefs", None) or {}).values():
-            for fixturedef in defs:
-                fixture_sink = self.fixture_sinks.get(id(fixturedef))
-                if fixture_sink is not None:
-                    sinks.append(fixture_sink)
-        reason = self.session.record("test", nodeid, sinks, {"buckets": buckets})
-        if reason is not None:
-            self.opaque[nodeid] = reason
+    def pytest_runtest_logfinish(self, nodeid: str, location: Any) -> None:
+        self.items_out[nodeid] = {"buckets": list(self.buckets.get(nodeid, []))}
 
     def pytest_runtest_logreport(self, report: Any) -> None:
         file = report.nodeid.split("::", 1)[0]
@@ -250,38 +96,28 @@ class CarryPlugin:
         elif report.when == "call":
             add("xpassed" if xfail else "passed")
 
-    # -- summary ----------------------------------------------------------
-
     def pytest_sessionfinish(self, session: Any, exitstatus: int) -> None:
         wall = round(time.perf_counter() - self.t0, 3)
-        carried = sum(1 for e in self.items_out.values() if e["how"] == "carried")
-        rerun = len(self.items_out) - carried
-        recorded = self.session.recorded if self.session is not None else 0
         # ru_maxrss is KiB on Linux.
         own_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
         children_mb = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss // 1024
         carry.narrate(
-            f"SCORECARD CARRY PYTEST label={self.label} carried={carried} rerun={rerun} "
-            f"recorded={recorded} opaque={len(self.opaque)} "
+            f"SCORECARD CARRY PYTEST label={self.label} ran={len(self.items_out)} "
             f"collection_errors={len(self.collection_errors)} wall_s={wall} "
             f"max_rss_mb={own_mb} children_max_rss_mb={children_mb}"
         )
         self._write_cost_prior()
-        if self.summary_path:
-            carry._write_json(
-                self.summary_path,
-                {
-                    "schema": carry.SUMMARY_SCHEMA,
-                    "label": self.label,
-                    "items": self.items_out,
-                    "collectionErrors": self.collection_errors,
-                    "opaque": self.opaque,
-                    "pytestExitStatus": int(exitstatus),
-                    "wallSeconds": wall,
-                },
-            )
-        if self.session is not None:
-            self.session.close()
+        carry._write_json(
+            self.summary_path,
+            {
+                "schema": carry.SUMMARY_SCHEMA,
+                "label": self.label,
+                "items": self.items_out,
+                "collectionErrors": self.collection_errors,
+                "pytestExitStatus": int(exitstatus),
+                "wallSeconds": wall,
+            },
+        )
 
     def _write_cost_prior(self) -> None:
         """Each file's measured wall seconds into the shared LPT prior."""
