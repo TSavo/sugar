@@ -4440,6 +4440,12 @@ struct CallArguments {
     /// the caller names that operand by its key, the contract by the
     /// parameter (#7757 step 7).
     keyed: Vec<(String, String)>,
+    /// Each positional argument's key (its position in decimal digits)
+    /// paired with the parameter it binds, where no argument spreads (a
+    /// spread moves the positions the caller counts): the key a caller that
+    /// does not know the callee's signature names the operand by
+    /// (`left_unchanged_states`, #7757 step 7).
+    positions: Vec<(String, String)>,
 }
 
 /// The reading `call_argument_formals` documents, with the argument key of
@@ -4502,6 +4508,7 @@ fn read_call_arguments(formals: &[String], args: &[Json]) -> Option<CallArgument
     // What `*args` and `**kwargs` take: the arguments no parameter takes.
     let mut packed_positional: Vec<Json> = Vec::new();
     let mut packed_keyword: Vec<(String, Json)> = Vec::new();
+    let mut positions: Vec<(String, String)> = Vec::new();
     for arg in &expanded {
         match class_argument(arg) {
             Some(Ok(class)) => {
@@ -4521,7 +4528,10 @@ fn read_call_arguments(formals: &[String], args: &[Json]) -> Option<CallArgument
             None => {
                 positional += 1;
                 match by_position.get(positional - 1) {
-                    Some(parameter) => ((*parameter).to_string(), arg.clone()),
+                    Some(parameter) => {
+                        positions.push(((positional - 1).to_string(), (*parameter).to_string()));
+                        ((*parameter).to_string(), arg.clone())
+                    }
                     None if star_name.is_some() => {
                         packed_positional.push(arg.clone());
                         continue;
@@ -4615,7 +4625,14 @@ fn read_call_arguments(formals: &[String], args: &[Json]) -> Option<CallArgument
         supplied.push((formal, class));
         keyed.push((spelled, parameter));
     }
-    Some(CallArguments { supplied, keyed })
+    if spread {
+        positions.clear();
+    }
+    Some(CallArguments {
+        supplied,
+        keyed,
+        positions,
+    })
 }
 
 /// The value a contract states for each `global:<name>` input it decides
@@ -4680,6 +4697,9 @@ struct BoundCall {
     /// Each argument key the call names an operand by, with the parameter
     /// that operand binds (`CallArguments::keyed`).
     keyed: Vec<(String, String)>,
+    /// Each positional argument's key with the parameter it binds
+    /// (`CallArguments::positions`).
+    positions: Vec<(String, String)>,
 }
 
 /// The one binder (`bind_call_arguments`), with the argument key of each
@@ -4690,7 +4710,11 @@ fn bind_call(formals: &[String], stated: &[(String, Json)], args: &[Json]) -> Op
         .map(String::as_str)
         .filter(|formal| !is_contract_input(formal))
         .collect();
-    let CallArguments { supplied, keyed } = read_call_arguments(formals, args)?;
+    let CallArguments {
+        supplied,
+        keyed,
+        positions,
+    } = read_call_arguments(formals, args)?;
     let mut bound: std::collections::BTreeMap<String, Json> = supplied.into_iter().collect();
     for (formal, value) in stated {
         if formals.contains(formal) && !bound.contains_key(formal) {
@@ -4721,7 +4745,11 @@ fn bind_call(formals: &[String], stated: &[(String, Json)], args: &[Json]) -> Op
         bindings.push(((*parameter).to_string(), actual));
     }
     bindings.extend(bound);
-    Some(BoundCall { bindings, keyed })
+    Some(BoundCall {
+        bindings,
+        keyed,
+        positions,
+    })
 }
 
 /// `python:after(<out>, "<key>") = python:after(<out>, "<parameter>")` for
@@ -4756,6 +4784,84 @@ fn argument_key_aliases(out: &str, keyed: &[(String, String)]) -> Vec<Json> {
             json!({"kind": "atomic", "name": "=", "args": [after(key), after(parameter)]})
         })
         .collect()
+}
+
+/// `python:after(<out>, "<formal>") = <formal>` for each formal the
+/// contract states it leaves (`python:leaves("<formal>")`, a top-level
+/// conjunct of its `post`, the kit's `tree_enumerate.
+/// parameters_left_unchanged`) that the call binds (`bindings`): a
+/// parameter, a captured cell's `cell:<name>` or a module global's
+/// `global:<name>` input (#7757 step 7).
+///
+/// The contract states it never changes the object that formal binds, on
+/// any path, and never rebinds it: the object as the call left it is the
+/// object as the call handed it. A caller reads an operand after the call
+/// by that formal (`python:after(<call result>, "<formal>")`, the kit's
+/// `lambda_callable._after_labels`: a same-file definition's parameter, a
+/// cell, a global); the join substitutes `out` with the call's result and
+/// the formal with what the call binds it to, so the caller's read is the
+/// operand as it stood at the call. A caller that names a positional
+/// operand by its key (a dispatched call's receiver `"0"`) reads it so too:
+/// each `(key, parameter)` of `positions` whose parameter the contract
+/// leaves, for arguments bound as they stand (`DispatchReceiver::AsCalled`;
+/// the caller passes none otherwise).
+///
+/// A variadic formal (`*args`, `**kwargs`) binds a display the call packs,
+/// which no caller reads after the call: nothing is stated of it. A formal
+/// the call does not bind states nothing (no value nobody gave).
+fn left_unchanged_states(
+    out: &str,
+    post: &Json,
+    formals: &[String],
+    bindings: &[(String, Json)],
+    positions: &[(String, String)],
+) -> Vec<Json> {
+    let leaves: Vec<String> = top_level_conjuncts(post.clone())
+        .iter()
+        .filter(|conjunct| {
+            conjunct.get("kind").and_then(Json::as_str) == Some("atomic")
+                && conjunct.get("name").and_then(Json::as_str) == Some(PYTHON_LEAVES)
+        })
+        .filter_map(|conjunct| match conjunct.get("args").and_then(Json::as_array) {
+            Some(args) if args.len() == 1 => const_str(&args[0]).map(str::to_string),
+            _ => None,
+        })
+        .collect();
+    let stated = |formal: &str| {
+        leaves.iter().any(|left| left == formal)
+            && bindings.iter().any(|(bound, _)| bound == formal)
+            && !formals
+                .iter()
+                .any(|declared| is_variadic_formal(declared) && bound_name(declared) == formal)
+    };
+    let after = |label: &str| {
+        json!({
+            "kind": "ctor",
+            "name": PYTHON_AFTER,
+            "args": [{"kind": "var", "name": out}, string_const_term(label)],
+        })
+    };
+    let mut states = Vec::new();
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for formal in &leaves {
+        if stated(formal) && seen.insert(formal.clone()) {
+            states.push(json!({
+                "kind": "atomic",
+                "name": "=",
+                "args": [after(formal), {"kind": "var", "name": formal}],
+            }));
+        }
+    }
+    for (key, parameter) in positions {
+        if key != parameter && stated(parameter) && seen.insert(key.clone()) {
+            states.push(json!({
+                "kind": "atomic",
+                "name": "=",
+                "args": [after(key), {"kind": "var", "name": parameter}],
+            }));
+        }
+    }
+    states
 }
 
 /// A function's own row bound through the one binder with no caller (step
@@ -8807,7 +8913,11 @@ fn linked_ambient_post_instances_for_inv(
             // parameters and inputs (step 4): one binder for every call. A
             // dispatched answer binds them as the kind of function it
             // resolved to takes them (`post_arguments`, step 8).
-            let Some(BoundCall { bindings, keyed }) = post_arguments(post, args).and_then(|args| {
+            let Some(BoundCall {
+                bindings,
+                keyed,
+                positions,
+            }) = post_arguments(post, args).and_then(|args| {
                 bind_call(&post.binding.formals, &post.binding.stated_inputs, &args)
             }) else {
                 dropped.push(DroppedAmbientPost {
@@ -8889,6 +8999,37 @@ fn linked_ambient_post_instances_for_inv(
                 if !aliases.is_empty() {
                     let mut conjuncts = vec![instance];
                     conjuncts.extend(aliases);
+                    instance = IrFormula::And(conjuncts).to_value();
+                }
+            }
+            // What the contract states it leaves unchanged (`python:leaves`)
+            // is, after the call, the operand the call bound it to (step 7):
+            // the caller's `python:after(<call>, <formal>)` is that operand.
+            // Stated only where the result term and that operand are closed:
+            // an equation over a variable no caller binds would open an
+            // instance that was closed without it (`formula_is_closed`
+            // below), and drop a join the contract answered.
+            if formula_is_closed(result_term, &mut Vec::new()) {
+                let closed: Vec<(String, Json)> = bindings
+                    .iter()
+                    .filter(|(_, value)| formula_is_closed(value, &mut Vec::new()))
+                    .cloned()
+                    .collect();
+                let keys: &[(String, String)] = if post.receiver == DispatchReceiver::AsCalled {
+                    &positions
+                } else {
+                    &[]
+                };
+                let left = left_unchanged_states(
+                    &post.binding.out_binding,
+                    &post.post,
+                    &post.binding.formals,
+                    &closed,
+                    keys,
+                );
+                if !left.is_empty() {
+                    let mut conjuncts = vec![instance];
+                    conjuncts.extend(left);
                     instance = IrFormula::And(conjuncts).to_value();
                 }
             }
@@ -16664,6 +16805,66 @@ mod tests {
         )
         .unwrap();
         assert!(bare.keyed.is_empty());
+    }
+
+    #[test]
+    fn a_formal_the_contract_leaves_is_the_operand_after_the_call() {
+        // Step 7: `python:leaves("<formal>")` states the call never changes
+        // the object the formal binds, so after the call it is the operand
+        // the call bound: by the formal (a same-file caller's label) and by
+        // a positional key (a dispatched caller's `"0"`). A variadic formal
+        // and a formal the contract does not leave state nothing.
+        let contract = formals(&["self", "k", "global:G", "*rest"]);
+        let leaves = |formal: &str| {
+            json!({"kind": "atomic", "name": PYTHON_LEAVES, "args": [string_const(formal)]})
+        };
+        let post = json!({"kind": "and", "operands": [
+            {"kind": "atomic", "name": "=", "args": [var("out"), var("k")]},
+            leaves("self"),
+            leaves("global:G"),
+            leaves("rest"),
+        ]});
+        let after = |label: &str| {
+            json!({"kind": "ctor", "name": PYTHON_AFTER, "args": [var("out"), string_const(label)]})
+        };
+        let eq = |left: Json, right: Json| {
+            json!({"kind": "atomic", "name": "=", "args": [left, right]})
+        };
+        let bound = bind_call(
+            &contract,
+            &[],
+            &[var("b"), int(4), named_arg("py.global", "G", var("g"))],
+        )
+        .unwrap();
+        assert_eq!(
+            bound.positions,
+            vec![("0".to_string(), "self".to_string()), ("1".to_string(), "k".to_string())]
+        );
+        assert_eq!(
+            left_unchanged_states("out", &post, &contract, &bound.bindings, &bound.positions),
+            vec![
+                eq(after("self"), var("self")),
+                eq(after("global:G"), var("global:G")),
+                eq(after("0"), var("self")),
+            ]
+        );
+        // The global the call does not supply, and the contract states no
+        // value for, is bound to nothing: nothing is stated of it.
+        let unsupplied = bind_call(&contract, &[], &[var("b"), int(4)]).unwrap();
+        assert_eq!(
+            left_unchanged_states("out", &post, &contract, &unsupplied.bindings, &[]),
+            vec![eq(after("self"), var("self"))]
+        );
+        // A spread moves the positions a caller counts: no key is paired.
+        let spread = bind_call(
+            &contract,
+            &[],
+            &[json!({"kind": "ctor", "name": PYTHON_STARRED_ARG, "args": [
+                {"kind": "ctor", "name": PYTHON_TUPLE_DISPLAY, "args": [var("b"), int(4)]}
+            ]})],
+        )
+        .unwrap();
+        assert!(spread.positions.is_empty());
     }
 
     fn namespace(mro: &[&str], binds: &[(&str, &str, &str)]) -> ClassNamespace {
