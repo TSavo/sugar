@@ -2792,6 +2792,34 @@ mod tests {
     }
 
     #[test]
+    fn a_keyed_comparison_carried_as_a_value_is_the_truth_of_that_value() {
+        // `out.append(c == 0)` carries the keyed comparison as a value (the
+        // same-name ctor, `PredicateValue.to_term`) while a claim states the
+        // same head as an atom. One head in term and in boolean position was
+        // declared once, Int-valued, and applied in Bool position: z3 and
+        // vampire rejected the script and cvc5 hung up on its stdin (the
+        // deferred-operation compare twins). The atom is the truth of the
+        // value it carries: the script is well-formed (`solve` refuses any
+        // `(error ...`), and the stored value's truth is the comparison's.
+        let args = || {
+            vec![
+                string_const("Eq"),
+                var("c"),
+                int_const(0),
+                string_const("k#1"),
+            ]
+        };
+        let stored = eq(var("x"), ctor(PYTHON_COMPARE_RESULT, args()));
+        let compared = atomic(PYTHON_COMPARE_RESULT, args());
+        let truth_of_x = atomic("py.truthy", vec![var("x")]);
+        assert_twin(
+            all_of(vec![stored.clone(), compared.clone(), truth_of_x.clone()]),
+            all_of(vec![stored, compared, not_formula(truth_of_x)]),
+            "the truth of a stored c == 0 is the comparison's truth",
+        );
+    }
+
+    #[test]
     fn python_str_subscript_is_smt_string_index() {
         let at = |i: i64| ctor("py.subscript", vec![string_const("xyz"), int_const(i)]);
         assert_twin(

@@ -99,7 +99,20 @@ impl Solver for SubprocessSolver {
         };
 
         if let Some(mut stdin) = child.stdin.take() {
-            if let Err(e) = stdin.write_all(smt.as_bytes()) {
+            // A solver that rejects its input (a parse or sort error) prints
+            // the error and exits before it has read the rest: the write
+            // ends on a broken pipe. That is the solver's answer about OUR
+            // script -- an emitter defect, never a missing seat -- so it
+            // falls through to the exit and the output it printed, and is
+            // read as the unrecognized verdict it is. Any other write error
+            // is the machine failing to feed the seat.
+            if let Err(e) = stdin
+                .write_all(smt.as_bytes())
+                .or_else(|e| match e.kind() {
+                    std::io::ErrorKind::BrokenPipe => Ok(()),
+                    _ => Err(e),
+                })
+            {
                 return SolveResult::with_evidence(
                     ObligationVerdict::Undecidable,
                     self.name.clone(),
@@ -295,6 +308,41 @@ mod refusal_tests {
             r.error().contains("no discharger") && r.error().contains("map_err"),
             "refusal must name the undischarjable construct, got: {}",
             r.error()
+        );
+    }
+
+    // A seat that rejects its input and exits before reading all of it (cvc5
+    // on an ill-sorted script) breaks the pipe the script is written to. That
+    // is the solver's answer about the script, read from what it printed --
+    // never `stdin-error`, which the portfolio counts as a seat that was not
+    // there.
+    #[test]
+    fn a_seat_that_rejects_its_input_is_its_answer_not_a_missing_seat() {
+        let solver = SubprocessSolver::new(
+            "rejecting",
+            "sh",
+            "0",
+            "smt-lib-v2.6",
+            vec![
+                "-c".into(),
+                "echo '(error \"line 1 column 1: rejected\")'; exit 1".into(),
+            ],
+            None,
+        );
+        // Far past any pipe buffer: the write outlives the reader.
+        let script = "(assert true)\n".repeat(1 << 16);
+        let r = solver.solve(&script);
+        assert_eq!(
+            r.exit.kind,
+            SolverExitKind::UnrecognizedVerdict,
+            "a rejected script is the seat's answer, got {:?} (error: {})",
+            r.exit.kind,
+            r.error()
+        );
+        assert!(
+            r.solver_stdout().contains("rejected"),
+            "the rejection is read from what the seat printed: {}",
+            r.solver_stdout()
         );
     }
 
