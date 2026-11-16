@@ -2,7 +2,6 @@ import pytest
 
 from sugar_lift_py_tests.floor import ObjectMethodValue, TermValue
 from sugar_lift_py_tests.outcome import ExitSet, Halted
-from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.tree import SourceFile
 
@@ -27,7 +26,8 @@ def _sites(tmp_path):
 
 
 def _value(site):
-    return ObjectMethodValue("method", ("self",), TrueBoolLiteralSugar(site=site))
+    del site
+    return ObjectMethodValue("method", ("self",))
 
 
 @pytest.mark.parametrize(

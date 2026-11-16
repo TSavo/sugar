@@ -39,51 +39,6 @@ def _builtin_binds_data_descriptor(owner: str, name: str) -> bool:
     return hasattr(held, "__set__") or hasattr(held, "__delete__")
 
 
-def _sugar_receiver_field_names(value, seen: set[int] | None = None) -> set[str]:
-    """Read authenticated helper-body store shape without executing the helper:
-    the fields the one field store (``ReceiverFieldStoreSugar``) puts on the
-    helper's own receiver -- a receiver read through its binding coordinate,
-    after any stores before it (``ReceiverFieldStoreStateSugar``)."""
-    from dataclasses import fields, is_dataclass
-
-    from sugar_lift_py_tests.sugar.binding_coordinate_ref_sugar import (
-        BindingCoordinateRefSugar,
-    )
-    from sugar_lift_py_tests.sugar.constructed_receiver_ref_sugar import (
-        ConstructedReceiverRefSugar,
-    )
-    from sugar_lift_py_tests.sugar.receiver_field_store_state_sugar import (
-        ReceiverFieldStoreStateSugar,
-    )
-    from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
-        ReceiverFieldStoreSugar,
-    )
-    from sugar_lift_py_tests.sugar.sugar_base import Sugar
-    from sugar_lift_py_tests.sugar_body import SugarBody
-
-    if isinstance(value, ReceiverFieldStoreSugar):
-        receiver = value.receiver
-        while isinstance(receiver, ReceiverFieldStoreStateSugar):
-            receiver = receiver.receiver
-        if isinstance(receiver, (BindingCoordinateRefSugar, ConstructedReceiverRefSugar)):
-            return {value.attr}
-    if isinstance(value, (tuple, list)):
-        return set().union(*(_sugar_receiver_field_names(item, seen) for item in value))
-    if not isinstance(value, (Sugar, SugarBody)) or not is_dataclass(value):
-        return set()
-    seen = set() if seen is None else seen
-    if id(value) in seen:
-        return set()
-    seen.add(id(value))
-    return set().union(
-        *(
-            _sugar_receiver_field_names(getattr(value, item.name), seen)
-            for item in fields(value)
-            if item.compare
-        )
-    )
-
-
 @dataclass(frozen=True)
 class ObjectValue(FloorValue):
     class_name: str
@@ -91,7 +46,6 @@ class ObjectValue(FloorValue):
     methods: tuple[ObjectMethodValue, ...] = ()
     class_fields: tuple[ObjectField, ...] = ()
     identity: str = ""
-    deferred_helper_fields: tuple[str, ...] = dataclass_field(default=(), compare=False)
     # Instance field names removed by an authenticated delattr.  Reading one
     # of these is AttributeError (delete readback).  Any other name no field
     # holds is AttributeError only by Python's absence rule
@@ -417,13 +371,7 @@ class ObjectValue(FloorValue):
                 site=site,
                 owner="ObjectValue.attribute",
             )
-        if name in self.deferred_helper_fields:
-            from sugar_lift_py_tests.floor.getattr_coordinate import (
-                getattr_coordinate,
-            )
-
-            return getattr_coordinate(self, name, owner=str(site))
-        # No recorded field, delete or helper deferral answers the name, and
+        # No recorded field or delete answers the name, and
         # the one class-namespace lookup selected no member for it.  Python
         # decides the read only by its absence rule (``_absence_raises``):
         # ``AttributeError``, a halt at the read's fragment.  Every other
@@ -549,7 +497,6 @@ class ObjectValue(FloorValue):
             self.methods,
             self.class_fields,
             self.identity,
-            self.deferred_helper_fields,
             still_deleted,
             self.defining_class,
             # The same object: it keeps its ``allocation`` and ``arrival``,
@@ -992,25 +939,6 @@ class ObjectValue(FloorValue):
             guard=completes,
             site=site,
         )
-
-    def with_deferred_helper_fields(self) -> "ObjectValue":
-        from dataclasses import replace
-
-        # The same object: it keeps its class (``defining_class``), its
-        # ``allocation`` and ``arrival``, and its own kind of receiver.
-        return replace(
-            self, deferred_helper_fields=self.helper_receiver_field_names()
-        )
-
-    def helper_receiver_field_names(self) -> tuple[str, ...]:
-        names = set().union(
-            *(
-                _sugar_receiver_field_names(method.body)
-                for method in self.methods
-                if method.name not in {"__init__", "__enter__", "__exit__"}
-            )
-        )
-        return tuple(sorted(names))
 
     def iter_with(
         self, operation: IteratorOperation, ctx: ReduceContext | None

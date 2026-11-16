@@ -1,25 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
-
-from sugar_lift_py_tests.sugar_body import SugarBody
-
-if TYPE_CHECKING:
-    from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 from .floor_value import FloorValue
 
 
 @dataclass(frozen=True)
 class ObjectMethodValue(FloorValue):
+    """A source method of a class's roster, as the one method door binds it
+    (``object_value.bind_method_call``): its name, its formals and its frame.
+    It carries no body: a call of it is its coordinate and edge
+    (``object_value.method_edge_call``, #7757 step 6), and what its body
+    does is its own universe's contract, joined at prove."""
+
     name: str
     parameters: tuple[str, ...]
-    # build_body returns SugarBody[Any]; Any
-    # is the open membrane here, matching FactoryBuildResult.sugar, since a
-    # method body's reduction shape varies with the SugarRole it was built
-    # under and is not known at this seam.
-    body: SugarBody[Any] | Sugar
     source_call_frame_cid: str | None = None
     formal_coordinate_cids: tuple[str, ...] = ()
     source_call_frame: object | None = field(default=None, compare=False, repr=False)
@@ -28,12 +23,6 @@ class ObjectMethodValue(FloorValue):
     # defining class rather than being rebound to the runtime receiver class;
     # this is the authenticated ``__class__`` cell used by zero-arg super().
     defining_class: object | None = field(default=None, compare=False, repr=False)
-
-    def __post_init__(self) -> None:
-        from sugar_lift_py_tests.sugar.sugar_base import Sugar
-
-        if not isinstance(self.body, (SugarBody, Sugar)):
-            raise TypeError("ObjectMethodValue body must be constructor-built")
 
     def setitem(self, index, value, site, ctx):
         del index, value, ctx

@@ -135,7 +135,7 @@ def _store(receiver, value, site, after=None):
 
 
 def _method(name, *parameters):
-    return ObjectMethodValue(name=name, parameters=parameters, body=_Body())
+    return ObjectMethodValue(name=name, parameters=parameters)
 
 
 # --- the plain store ------------------------------------------------------
@@ -174,7 +174,7 @@ def test_a_class_field_that_is_no_data_descriptor_is_the_plain_store():
 
 def test_a_property_with_no_selected_setter_refuses_and_runs_no_code():
     getter = ObjectMethodValue(
-        name="x", parameters=("self",), body=_Body(), descriptor_kind="property"
+        name="x", parameters=("self",), descriptor_kind="property"
     )
     receiver = ObjectValue("R", (), methods=(getter,), allocation=FRAME_FRESH)
     assert receiver.field_store_route("x") == ("refused", None)
@@ -252,7 +252,6 @@ def test_a_setattr_that_is_no_plain_function_is_not_decided():
     setter = ObjectMethodValue(
         name="__setattr__",
         parameters=("name", "value"),
-        body=_Body(),
         descriptor_kind="staticmethod",
     )
     receiver = ObjectValue("R", (), methods=(setter,), allocation=FRAME_FRESH)

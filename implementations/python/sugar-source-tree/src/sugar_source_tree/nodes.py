@@ -10369,17 +10369,19 @@ class FunctionDef(Statement):
         return _arguments_projection(self.params)
 
     def source_visible_call_frame(self):
-        """Construct this callable body through the ordinary node/Sugar door.
+        """This definition's call frame: its signature, the coordinates its
+        formals and captured cells are read through, and its defaults' keys
+        -- what a call of it binds by the one binder (``bind_call``) and
+        supplies on its edge (``definition_edge_call``).  It holds no body:
+        the body is substituted and constructed once, in the function's own
+        universe (``_construct_sugar``), and no call applies it (#7757 step
+        6).
 
-        RECURSION IS A SEAT, NOT AN UNFOLDING. A same-module callee's frame is
-        constructed inline at its call; along a recursive call graph
-        (``ensure_key_mapped`` <-> ``_ensure_key_mapped_multiindex`` in pandas
-        core/sorting.py) that re-enters this door for a definition whose frame
-        is still under construction and unfolds until RecursionError (6 files
-        on the 2026-09-05 board). The fixpoint reference is the definition
-        itself: re-entry raises ``SourceCallFrameCycle``, and the call that
-        asked carries the definition with a ``call-graph-cycle`` seat -- never
-        a second body.
+        RECURSION IS A SEAT. A call of the definition while its own universe
+        is under construction (a call of ``f`` inside ``f``) re-enters this
+        door with the definition open: it raises ``SourceCallFrameCycle``,
+        and the call that asked carries the definition with a
+        ``call-graph-cycle`` seat (``Call._recursion_seat_call``).
         """
         definition_cid = self.fragment.seal().cid
         if _frame_is_under_construction(definition_cid):
@@ -10387,21 +10389,10 @@ class FunctionDef(Statement):
 
         # ONE FRAME PER CONSTRUCTION COORDINATE, not one per call site.  The
         # frame is a function of this definition's coordinate -- the same key
-        # ``sugar()`` answers the roll by -- and of which frames were open
-        # above it, because an open frame turns a call into a recursion seat.
-        # Without this row every call site rebuilt its callee's whole frame,
-        # and every call inside that frame rebuilt its callee's: the cost of
-        # one call was the size of the call graph below it, paid once per
-        # path (pandas/_testing/asserters.py: 92% of an 87 s run, unfinished).
-        #
-        # A remembered frame answers only a traversal that would have asked
-        # the same questions and heard the same answers: every definition the
-        # first construction asked about is open or closed now as it was
-        # then, and so is every other ambient value it read -- the one rule
-        # every memo row keeps (``construction_cache.serve``).  Any other
-        # traversal constructs its own variant.  So a recursion seat never
-        # leaks into a traversal where that definition is not open, and a
-        # full body never replaces a seat.
+        # ``sugar()`` answers the roll by -- and of the ambient values its
+        # construction read.  A remembered frame answers only a traversal that
+        # would have asked the same questions and heard the same answers --
+        # the one rule every memo row keeps (``construction_cache.serve``).
         from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
         cache, key, _ = self._coordinate()
@@ -10419,8 +10410,7 @@ class FunctionDef(Statement):
 
         computation = open_row()
         # Opening its own frame is this construction's act, so whether it is
-        # open is never ambient to it: its own recursion is decided inside,
-        # never by the traversal above (the door refused above if it were
+        # open is never ambient to it (the door refused above if it were
         # open).
         _FRAMES_UNDER_CONSTRUCTION.add(definition_cid)
         try:
@@ -10446,20 +10436,19 @@ class FunctionDef(Statement):
         return frame
 
     def _source_visible_call_frame_unguarded(self):
-        """Construct this callable body through the ordinary node/Sugar door.
-
-        Parameterized frames require the shared BindingCoordinateV1 owner.  The
-        coordinate-free zero-parameter arm can already carry its exact body;
-        it is built from the same substituted statement nodes as `_construct_sugar`.
+        """The frame ``source_visible_call_frame`` remembers: the signature
+        and nothing of the body.
 
         Every formal is a parameter: a ``classmethod``'s ``cls`` is bound by
         the one method door (``object_value.implicit_arguments``), never
-        dropped from the frame.  The body is the definition's whole body: a
-        nested ``def`` statement in it is inert and binds its name
-        (``_sugar_body_statement``), so a call of the nested function reaches
-        its body through the one call routine.  Each default reads the value
-        the ``def`` statement bound under its evaluation key
-        (``_default_evaluation_key``, ``DefaultValueSugar``).
+        dropped from the frame.  Each formal and each captured cell is read
+        through its own coordinate (``BindingCoordinateV1``,
+        ``_captured_bindings``), and each default reads the value the ``def``
+        statement bound under its evaluation key (``_default_evaluation_key``,
+        ``DefaultValueSugar``).  The body is not substituted or constructed
+        here: it is the function's own universe's, built once
+        (``_construct_sugar``), and a fact a caller needs of it is read off
+        that universe's contract, joined at prove (#7757).
         """
         from sugar_lift_py_tests.context_manager_resolution import (
             SourceFragmentCoordinateV1,
@@ -10483,29 +10472,6 @@ class FunctionDef(Statement):
             for index, param in enumerate(params)
         )
         captured_names, captured_coordinates = self._captured_bindings()
-        formal_scope = {
-            **self._captured_scope(),
-            **{
-                param.name: self._make_coordinate_ref(param, coordinate)
-                for param, coordinate in zip(params, coordinates, strict=True)
-            },
-        }
-        from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
-            SourceVisibleFunctionBodySugar,
-        )
-
-        substituted_body, _changed, final = FunctionDef._substitute_body_to_end(
-            self, self.body, formal_scope
-        )
-        # A generator function's body is constructed as every function
-        # body is: its call is the definition's coordinate and edge, joined
-        # at prove (#7757 step 6), so no call runs it here.
-        body = SourceVisibleFunctionBodySugar(
-            tuple(
-                self._sugar_body_statement(statement) for statement in substituted_body
-            ),
-            self.fragment,
-        )
         return SourceVisibleCallFrameV1(
             source_identity_cid=self.unit.source_cid,
             definition_site=site,
@@ -10531,7 +10497,7 @@ class FunctionDef(Statement):
                 param.default.fragment.seal().cid if param.default is not None else None
                 for param in params
             ),
-            body=body,
+            body=None,
             owner=self,
             captured_names=captured_names,
             captured_coordinates=captured_coordinates,
@@ -23293,11 +23259,7 @@ class Call(Expression):
 
         A callee name ``scope`` does not bind is the call by name of the
         ``def`` the call applies (``_named_function_value``: the
-        lexical row, ``SourceUnit.source_function_definition_for_call``).  A
-        call frame's body (``_source_visible_call_frame_unguarded``) is
-        threaded without the function's lexical locals, so a local ``def``
-        in it binds no name there; its call still applies that ``def``'s
-        value, and reads its cells here, at the call."""
+        lexical row, ``SourceUnit.source_function_definition_for_call``)."""
         from .binding_state import unwrap_binding_state
 
         func = self.func

@@ -303,7 +303,6 @@ def test_delattr_and_the_helper_rebuild_keep_the_class() -> None:
     assert after.fields == () and "x" in after.deleted_instance_fields
     assert after.allocation is receiver.allocation
 
-    assert receiver.with_deferred_helper_fields().defining_class is box
 
 
 def _delete_site():

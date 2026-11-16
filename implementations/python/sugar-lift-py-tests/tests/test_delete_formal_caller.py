@@ -729,7 +729,6 @@ def test_read_does_not_authorize_delete_on_getter_only_property() -> None:
             ObjectMethodValue(
                 name="field",
                 parameters=("self",),
-                body=_GetterBody(),
                 descriptor_kind="property",
             ),
         ),

@@ -11,7 +11,7 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.gap.info import GapKind, GapLocus
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_py_tests.ir import ctor, make_var, str_const
+from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.tree import SourceFile
@@ -69,19 +69,6 @@ def test_deleted_field_keeps_authenticated_attribute_error(tmp_path):
     assert isinstance(halt.effect, RaiseEffect)
     assert isinstance(halt.effect, RaiseEffect)
     assert halt.effect.exception_name == "AttributeError"
-
-
-def test_deferred_helper_field_keeps_its_coordinate_not_a_missing_field_panic(tmp_path):
-    site = _site(tmp_path, "payload")
-    receiver = ObjectValue(
-        "Renamed", (), deferred_helper_fields=("payload",), allocation=FRAME_FRESH
-    )
-    outcome = receiver.attribute("payload", site, None)
-    value = outcome.completed_value()
-    assert value is not None
-    assert value.to_term(owner="test") == ctor(
-        "py.getattr", [receiver.to_term(owner="test"), str_const("payload")]
-    )
 
 
 def test_unknown_receiver_type_is_the_two_faced_unanswered_read(tmp_path):

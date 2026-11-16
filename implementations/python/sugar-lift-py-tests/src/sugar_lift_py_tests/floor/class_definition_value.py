@@ -394,7 +394,6 @@ class ClassDefinitionValue(GuardStableValue):
         return ObjectMethodValue(
             method.name,
             frame.parameters,
-            frame.body,
             frame.frame_cid,
             tuple(coordinate.cid for coordinate in frame.formal_coordinates),
             frame,

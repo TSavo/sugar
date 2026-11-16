@@ -1809,16 +1809,14 @@ def test_outer():
 """
 
 
-def test_a_frame_keeps_a_nested_def_it_calls() -> None:
-    """Before, the frame dropped a nested ``def`` its body calls by name; the
-    statement is now in the frame, inert, as in the function's own body."""
-    from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
-
+def test_a_frame_holds_no_body() -> None:
+    """A ``def``'s frame is its signature (#7757): its body, the nested
+    ``def`` statement among it, is the function's own universe's, never
+    rebuilt in the frame for a call."""
     tree = _tree(_OUTER)
     frame = _function_named(tree, "outer").source_visible_call_frame()
-    statements = frame.body.statements
-    assert len(statements) == 2
-    assert isinstance(statements[0], InertSugar)
+    assert frame.body is None
+    assert frame.parameters == ()
 
 
 def test_a_call_into_a_frame_reaches_its_nested_def_through_the_call(
