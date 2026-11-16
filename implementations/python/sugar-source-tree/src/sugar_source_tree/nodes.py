@@ -18311,6 +18311,31 @@ class Try(Statement):
                     prior=_read_of(before),
                     conditions=[(call.receiver, (call.method, False, True))],
                 )
+        # A module global the statement's call may have changed is in no
+        # scope before it: a read of it resolves to the global, and the
+        # statement binds it only after the call
+        # (``container_mutation._rebind``, its ``prior`` the global's read,
+        # ``_global_read``).  The loop above never meets it, so a halt
+        # inside the statement carried the global as the frame's entry read
+        # it: ``try: g()  except E: return G[0]`` with ``g`` storing into
+        # ``G`` and then raising read the entry's contents in the handler
+        # and refuted the truth (#7757 H7).  The call may change it and THEN
+        # raise, so the halt holds it as the call left it, by the same rule
+        # as a name bound before the statement: the post-state the call's
+        # rules decide (read at the halt through the record the call's
+        # halted face carries, ``call_site_value.bind_after_call``), else
+        # the unknown.
+        for name, after in post.items():
+            if not isinstance(name, str) or name in pre or name in binding:
+                continue
+            state = unwrap_binding_state(after)
+            kind = getattr(state, "kind", None)
+            if kind not in Try._MID_STATEMENT_MUTATION_KINDS:
+                continue
+            kept = kind == "ReceiverAfterCall" and getattr(state, "rules", None)
+            if compound and getattr(statement, "kind", None) != "If":
+                kept = False
+            binding[name] = state if kept else _havoc(statement, name, tags)
         if not binding:
             return net
         binding = statement._binding_entries(binding, pre)
