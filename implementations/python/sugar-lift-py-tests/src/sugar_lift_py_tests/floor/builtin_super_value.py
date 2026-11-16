@@ -13,13 +13,19 @@ class BuiltinSuperMethodValue(BoundMethodValue):
 
 _OWNER = "BuiltinSuperValue.call_method_value"
 
-#: ``python:super_check_of(<class>, "<cell class>", <occurrence>)``: the
-#: ``supercheck`` of a ``super()`` whose receiver is a parameter whose class
-#: is an input of the contract (``class:<p>``): its completion
-#: (``python:super_check_of.completes``) is decided at prove where the input
-#: is bound to a class whose order holds the cell's class
-#: (``consistency::super_check_facts``, #7757).
+#: ``python:super_check_of(<class>, "<cell class>", <occurrence>)``: THE one
+#: statement of the ``supercheck`` of a zero-argument ``super()`` (#7757).
+#: ``<class>`` is what the check tests against the cell's class
+#: (``super_check_class``).  Its completion
+#: (``python:super_check_of.completes``) is decided at prove, both ways,
+#: where the class is bound (``consistency::super_check_facts``); the lift
+#: never decides it.
 SUPER_CHECK_OF = "python:super_check_of"
+
+#: ``python:super_receiver_class(<occurrence>)``: the class of a ``super()``
+#: receiver the lift does not read, uninterpreted: nothing at prove decides a
+#: check over it, so the check stays owed.
+SUPER_RECEIVER_CLASS = "python:super_receiver_class"
 
 
 def formal_class_input(receiver, site):
@@ -53,6 +59,47 @@ def formal_class_input(receiver, site):
     return make_var(input_formal(CLASS_INPUT, coordinate.declared_name))
 
 
+def super_check_class(receiver, site):
+    """What ``supercheck`` tests against ``__class__`` for ``receiver``, as
+    the one check term states it (``SUPER_CHECK_OF``), never decided here:
+
+    - a parameter whose class is the contract's input: ``class:<p>``
+      (``formal_class_input``), bound by the caller;
+    - a class object (``super()`` given the class): the class object's own
+      term (``ClassDefinitionValue.to_term``), the term its namespace row
+      states (``python:class_object``);
+    - an instance whose class is decided here (``receiver_class_decided``),
+      or a same-file class call's result: its class as a dispatched call
+      supplies it (``receiver_dispatch.class_value``:
+      ``python:instance("<D>", ...)``, ``python:constructed("<D>")``);
+    - anything else (an instance that arrived by binding, a value of no
+      decided class, the ``.0`` iterator no value here holds):
+      ``python:super_receiver_class(<occurrence>)``, a class not read."""
+    from sugar_lift_py_tests.floor.class_definition_value import (
+        ClassDefinitionValue,
+    )
+    from sugar_lift_py_tests.floor.object_value import (
+        ObjectValue,
+        receiver_class_decided,
+    )
+    from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.occurrence import occurrence_term
+    from sugar_lift_py_tests.receiver_dispatch import class_value
+
+    formal = formal_class_input(receiver, site)
+    if formal is not None:
+        return formal
+    if isinstance(receiver, ClassDefinitionValue):
+        return receiver.to_term(owner=str(site))
+    if receiver is not None and (
+        not isinstance(receiver, ObjectValue) or receiver_class_decided(receiver)
+    ):
+        decided = class_value(receiver)
+        if decided is not None:
+            return decided
+    return ctor(SUPER_RECEIVER_CLASS, (occurrence_term(site),))
+
+
 @dataclass(frozen=True)
 class BuiltinSuperValue(FloorValue):
     """Authenticated zero-argument ``super()``: ``super(__class__, obj)``.
@@ -75,52 +122,40 @@ class BuiltinSuperValue(FloorValue):
     @classmethod
     def constructed(cls, current_class, receiver, site):
         """``super()`` built over ``current_class`` and ``receiver``: CPython's
-        ``supercheck`` (``super_check``).  It completes with the super object
-        when ``obj`` is an instance or subclass of ``__class__``; a check that
-        fails is CPython's ``TypeError: super(type, obj): obj must be an
-        instance or subtype of type``; a check not decided here is two-faced,
-        owing the ``undecided`` member (``ExitSet.two_faced``) -- the check's
-        last resort reads ``obj.__class__``, which may run anything."""
+        ``supercheck``, stated once and decided at prove (#7757).  It
+        completes with the super object when ``obj`` is an instance or
+        subclass of ``__class__``; otherwise it raises (CPython's
+        ``TypeError``, or whatever reading ``obj.__class__`` raises in its
+        last resort).  Both faces are kept, two-faced and owed
+        (``ExitSet.two_faced``), under the one check atom
+        ``python:super_check_of.completes(python:super_check_of(<class>,
+        "<cell class>", <occurrence>))`` (``super_check_class``), which
+        ``consistency::super_check_facts`` decides -- or its negation --
+        where the proofs state the class's order.  Nothing here reads an
+        order to decide it.  A cell class that names no join symbol (no
+        workspace root) is spelled ``""``: no row states it, so the check
+        stays owed."""
+        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+        from sugar_lift_py_tests.ir import atomic, ctor, str_const
+        from sugar_lift_py_tests.occurrence import occurrence_key, occurrence_term
         from sugar_lift_py_tests.outcome import ExitSet
 
-        verdict = super_check(current_class, receiver)
-        if verdict is True:
-            return ExitSet.completed(cls(current_class, receiver))
-        if verdict is False:
-            from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-
-            return ground_exceptional_exit(
-                exception_name="TypeError",
-                site=site,
-                owner="BuiltinSuperValue.supercheck",
-            )
-        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-        from sugar_lift_py_tests.ir import atomic, ctor
-        from sugar_lift_py_tests.occurrence import occurrence_key, occurrence_term
-
-        from sugar_lift_py_tests.ir import str_const
-
         key = occurrence_key(site)
-        class_term = formal_class_input(receiver, site)
         cell = getattr(current_class, "class_definition", None)
         cell_symbol = None if cell is None else cell.bridge_source_symbol()
-        if class_term is not None and cell_symbol is not None:
-            # The receiver's class is the contract's input: the check is
-            # decided at prove where the caller binds it (#7757).
-            completes = atomic(
-                SUPER_CHECK_OF + ".completes",
-                [
-                    ctor(
-                        SUPER_CHECK_OF,
-                        (class_term, str_const(cell_symbol), occurrence_term(site)),
-                    )
-                ],
-            )
-        else:
-            completes = atomic(
-                "python:super_check.completes",
-                [ctor("python:super_check", (occurrence_term(site),))],
-            )
+        completes = atomic(
+            SUPER_CHECK_OF + ".completes",
+            [
+                ctor(
+                    SUPER_CHECK_OF,
+                    (
+                        super_check_class(receiver, site),
+                        str_const(cell_symbol or ""),
+                        occurrence_term(site),
+                    ),
+                )
+            ],
+        )
         return ExitSet.two_faced(
             cls(current_class, receiver),
             UndeterminedRaiseEffect(
@@ -557,47 +592,3 @@ class BuiltinSuperValue(FloorValue):
                 namespace=namespace,
             )
         )
-
-
-def super_check(current_class, receiver) -> "bool | None":
-    """CPython's ``supercheck`` (Objects/typeobject.c) for ``super(__class__,
-    obj)``, read off the one base walk: whether ``__class__``'s class
-    statement stands in the MRO ``super`` would walk (``ClassDef.mro_holds``,
-    matched by source occurrence).
-
-    - ``obj`` a class whose MRO holds ``__class__``: True.
-    - ``obj`` an instance (``ObjectValue``) whose class's MRO holds it: True.
-      Whose class's order, read whole, does not, and whose ``obj.__class__``
-      is ``object``'s own (no class of the order before ``object`` binds
-      ``__class__`` or ``__getattribute__``, so the last resort reads
-      ``type(obj)`` again): False, CPython's ``TypeError``.
-    - Anything else -- a class not decided a subclass (its metaclass is not
-      read), a receiver whose class is not carried or whose MRO is not read,
-      a ``__class__`` value with no class statement: None, not decided.
-    """
-    from sugar_lift_py_tests.floor.class_definition_value import (
-        ClassDefinitionValue,
-    )
-    from sugar_lift_py_tests.floor.object_value import ObjectValue
-
-    cell = getattr(current_class, "class_definition", None)
-    if cell is None:
-        return None
-    if isinstance(receiver, ClassDefinitionValue):
-        definition = receiver.class_definition
-        if definition is not None and definition.mro_holds(cell) is True:
-            return True
-        return None
-    if not isinstance(receiver, ObjectValue):
-        return None
-    definition = getattr(receiver.defining_class, "class_definition", None)
-    if definition is None:
-        return None
-    held = definition.mro_holds(cell)
-    if held is not False:
-        return held
-    for read in ("__class__", "__getattribute__"):
-        decided, owner = definition.namespace_owner(read)
-        if not decided or owner != "object":
-            return None
-    return False

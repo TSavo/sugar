@@ -9436,20 +9436,36 @@ fn class_read_runs_no_code(namespaces: &BTreeMap<String, ClassNamespace>, symbol
 }
 
 /// `python:super_check_of(<class>, "<C>", <occurrence>)` (the Python kit's
-/// `builtin_super_value.SUPER_CHECK_OF`): the `supercheck` of a `super()`
-/// whose receiver is a parameter whose class is its contract's input,
-/// `<class>` that input as the call bound it and `<C>` the class the
-/// `__class__` cell holds.
+/// `builtin_super_value.SUPER_CHECK_OF`): THE one statement of the
+/// `supercheck` of a zero-argument `super()` (#7757). `<C>` is the join
+/// symbol of the class the `__class__` cell holds, and `<class>` is what
+/// the check tests against it: the receiver's class (a contract's
+/// `class:<p>` input as the call bound it, `python:instance("<D>", ...)`,
+/// `python:constructed("<D>")`), or the receiver itself where it is a class
+/// object (`python:class-definition(<cid>)`), or a class the lift did not
+/// read (`python:super_receiver_class(<occurrence>)`). The lift never
+/// decides it; `super_check_facts` does.
 const PYTHON_SUPER_CHECK_OF: &str = "python:super_check_of";
 
 /// The ground instances of the super check law `inv` reads (#7757): for each
 /// `python:super_check_of.completes(python:super_check_of(<class>, "<C>",
-/// <occ>))` whose `<class>` is an instance of exactly one class `D`
-/// (`python:instance("<D>", ...)` or `python:constructed("<D>")`) whose
-/// order (its own namespace row, headed by `D`) holds `C`, that atom:
-/// CPython's `supercheck` (Objects/typeobject.c) passes where `type(obj)` is
-/// a subtype of `__class__`, before anything else runs. Anything else is
-/// left as it stands: the check stays owed.
+/// <occ>))`, CPython's `supercheck` (Objects/typeobject.c) where the proofs
+/// decide it:
+///
+/// - `<class>` an instance of exactly one class `D`
+///   (`python:instance("<D>", ...)` or `python:constructed("<D>")`) whose
+///   order (its own namespace row, headed by `D`) holds `C`: the atom.
+///   `type(obj)` is a subtype of `__class__`, before anything else runs.
+/// - the same, where that order does not hold `C`, `C` is a class some row
+///   states, and reading `obj.__class__` runs nothing but `object`'s getter
+///   (`class_read_runs_no_code`): the atom's negation. The slow path reads
+///   `type(obj)` again, which is no subtype either: the `TypeError`.
+/// - `<class>` a class object some row states (`python:class_object`) whose
+///   order, headed by its own symbol, holds `C`: the atom (`obj` is a type
+///   and a subtype of `__class__`).
+///
+/// Anything else is left as it stands: the check stays owed, both faces
+/// kept.
 fn super_check_facts(inv: &Json, namespaces: &BTreeMap<String, ClassNamespace>) -> Vec<Json> {
     let completes_name = format!("{PYTHON_SUPER_CHECK_OF}.completes");
     let mut facts: Vec<Json> = Vec::new();
@@ -9476,21 +9492,44 @@ fn super_check_facts(inv: &Json, namespaces: &BTreeMap<String, ClassNamespace>) 
                 else {
                     continue;
                 };
-                let subject = match ctor_parts(class) {
+                let instance_of = match ctor_parts(class) {
                     Some((PYTHON_INSTANCE | PYTHON_CONSTRUCTED, args)) => {
                         args.first().and_then(const_str)
                     }
                     _ => None,
                 };
-                let Some(subject) = subject else {
+                let (subject, instance) = match instance_of {
+                    Some(subject) => (subject, true),
+                    None => {
+                        // A class object: the row that states it as its own.
+                        let Some((symbol, _)) = namespaces
+                            .iter()
+                            .find(|(_, namespace)| namespace.object.as_ref() == Some(class))
+                        else {
+                            continue;
+                        };
+                        (symbol.as_str(), false)
+                    }
+                };
+                let Some(order) = namespaces
+                    .get(subject)
+                    .map(|namespace| &namespace.mro)
+                    .filter(|mro| mro.first().map(String::as_str) == Some(subject))
+                else {
                     continue;
                 };
-                let holds = namespaces.get(subject).is_some_and(|namespace| {
-                    namespace.mro.first().map(String::as_str) == Some(subject)
-                        && namespace.mro.iter().any(|entry| entry == cell)
-                });
-                if holds && !facts.contains(node) {
-                    facts.push(node.clone());
+                let fact = if order.iter().any(|entry| entry == cell) {
+                    node.clone()
+                } else if instance
+                    && namespaces.get(cell).is_some_and(|stated| !stated.mro.is_empty())
+                    && class_read_runs_no_code(namespaces, subject)
+                {
+                    IrFormula::Not(node.clone()).to_value()
+                } else {
+                    continue;
+                };
+                if !facts.contains(&fact) {
+                    facts.push(fact);
                 }
             }
             _ => {}
@@ -16882,6 +16921,80 @@ mod tests {
             string_const("m.py:3:11")
         ]});
         assert!(isinstance_law_facts(&unstated, &namespaces).is_empty());
+    }
+
+    #[test]
+    fn the_super_check_is_decided_once_at_prove_both_ways() {
+        // #7757: `python:super_check_of(<class>, "<C>", <occ>)` is the one
+        // statement of `supercheck`. It passes where the class tested is an
+        // exact class whose order holds `C`, or a class object whose order
+        // does; it fails (negated) only for an exact instance class whose
+        // order does not hold `C` and whose `__class__` read runs no code;
+        // anything else is left owed.
+        let mut namespaces = BTreeMap::new();
+        let mut base = namespace(&["python:m.Base", "builtins.object"], &[]);
+        base.object = Some(class_object("cid-base"));
+        namespaces.insert("python:m.Base".to_string(), base);
+        namespaces.insert(
+            "python:m.Derived".to_string(),
+            namespace(&["python:m.Derived", "python:m.Base", "builtins.object"], &[]),
+        );
+        namespaces.insert(
+            "python:m.Other".to_string(),
+            namespace(&["python:m.Other", "builtins.object"], &[]),
+        );
+        namespaces.insert(
+            "python:m.Masked".to_string(),
+            namespace(
+                &["python:m.Masked", "builtins.object"],
+                &[("__class__", "property", "python:m.Masked.__class__")],
+            ),
+        );
+        let check = |class: Json| {
+            json!({"kind": "atomic", "name": "python:super_check_of.completes", "args": [
+                {"kind": "ctor", "name": "python:super_check_of", "args": [
+                    class, string_const("python:m.Base"), string_const("m.py:5:15")
+                ]}
+            ]})
+        };
+        let instance = |symbol: &str| {
+            json!({"kind": "ctor", "name": PYTHON_INSTANCE, "args": [string_const(symbol)]})
+        };
+        let constructed = |symbol: &str| {
+            json!({"kind": "ctor", "name": PYTHON_CONSTRUCTED, "args": [string_const(symbol)]})
+        };
+        let not = |atom: Json| json!({"kind": "not", "operands": [atom]});
+
+        // Passes: an exact instance whose order holds `Base`.
+        let passes = check(instance("python:m.Derived"));
+        assert_eq!(super_check_facts(&passes, &namespaces), vec![passes.clone()]);
+        let built = check(constructed("python:m.Base"));
+        assert_eq!(super_check_facts(&built, &namespaces), vec![built.clone()]);
+        // Passes: the class object `Base` itself.
+        let on_class = check(class_object("cid-base"));
+        assert_eq!(super_check_facts(&on_class, &namespaces), vec![on_class.clone()]);
+        // Fails: `Other`'s order holds no `Base`, `__class__` is `object`'s.
+        let fails = check(instance("python:m.Other"));
+        assert_eq!(super_check_facts(&fails, &namespaces), vec![not(fails.clone())]);
+        // Owed: a `__class__` read that may run code, a class no row states,
+        // a class object no row states, a class the lift did not read.
+        for owed in [
+            check(instance("python:m.Masked")),
+            check(instance("python:m.Unstated")),
+            check(class_object("cid-unstated")),
+            check(json!({"kind": "ctor", "name": "python:super_receiver_class", "args": [
+                string_const("m.py:5:15")
+            ]})),
+        ] {
+            assert!(super_check_facts(&owed, &namespaces).is_empty(), "{owed:?}");
+        }
+        // Owed: a cell class no row states is never decided to fail.
+        let unstated_cell = json!({"kind": "atomic", "name": "python:super_check_of.completes", "args": [
+            {"kind": "ctor", "name": "python:super_check_of", "args": [
+                instance("python:m.Other"), string_const(""), string_const("m.py:5:15")
+            ]}
+        ]});
+        assert!(super_check_facts(&unstated_cell, &namespaces).is_empty());
     }
 
     #[test]
