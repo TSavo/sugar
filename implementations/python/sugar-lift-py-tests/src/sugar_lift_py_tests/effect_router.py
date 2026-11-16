@@ -220,6 +220,13 @@ def regroup_except_star(original, effects) -> GroupedRaiseEffect:
 def _observed_effect(entry):
     # A record holds no halt (#7826): a raise reaches a boundary as a halted
     # arm, never as a record entry, so only a warning observation is read here.
+    # A statement's entry carries the writes its value carried
+    # (``expr_statement_sugar.record_statement_value``): ``warnings.warn``'s
+    # record of what the call may have changed (``bind_after_call``, #7757
+    # H7) rides the observation, which is the value beneath it.
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+
+    _binds, entry = peel_walrus_binds(entry)
     if isinstance(entry, WarningObservationValue):
         return (
             "warning",

@@ -85,10 +85,31 @@ class GroupedRaiseSugar(Sugar):
                 f":{memento.source_cid}:{memento.cid}"
             )
             return members.and_then(
-                lambda effects: self._group(message_value, tuple(effects), occurrence)
+                lambda effects: self._group_after(
+                    message_value, tuple(effects), occurrence
+                )
             )
 
         return self.message.desugar(ctx).and_then(build)
+
+    def _group_after(self, message_value, members, occurrence) -> ExitSet:
+        """The group built from the message and members as they present
+        beneath the writes they carry, through the one operand door
+        (``consume_operands``): a call's record of what it may have changed
+        (``call_site_value.bind_after_call``), a callee's store.  The writes
+        ride the group's completed effect (to an enclosing group, or the
+        raise, ``desugar``), and every halt of the construction carries
+        them; the class of a member is read off the value beneath them,
+        never off the carrier, which names none (#7757 H7)."""
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+        )
+
+        return consume_operands(
+            lambda message, *effects: self._group(message, tuple(effects), occurrence),
+            message_value,
+            *members,
+        )
 
     def _group(self, message_value, members, occurrence) -> ExitSet:
         """What the group constructor does once its arguments were
@@ -267,8 +288,19 @@ class GroupedRaiseSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
-        """Raise the group ``constructed`` builds, on each arm it is built."""
-        return self.constructed(ctx).and_then(lambda group: ExitSet.halted(group))
+        """Raise the group ``constructed`` builds, on each arm it is built.
+
+        The writes its message and members carried (``_group_after``) were
+        made before the raise: its halt carries them, through the one
+        operand door (``consume_operands``), recorded where the raise halted
+        with them applied."""
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+        )
+
+        return self.constructed(ctx).and_then(
+            lambda group: consume_operands(ExitSet.halted, group)
+        )
 
 
 def _builtin_group_name(coordinate) -> str | None:

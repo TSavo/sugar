@@ -258,6 +258,31 @@ class NamedExpressionValue(FloorValue):
             lambda presented: presented.attribute(name, site, ctx), self
         )
 
+    def guarded(self, formula):
+        """This value as a record entry of an ``if`` arm, riding under the
+        arm's guard ``formula``: the value it presents, guarded by that
+        value's own law (a call stays its coordinate, a warning observation
+        takes the guard).  A callee's store it carries rides on, guarded by
+        the store's own law, as a store entry of the arm is.
+
+        Its other writes -- a walrus's bind, a call's record
+        (``call_site_value.bind_after_call``) -- are not carried again.  They
+        were applied where the arm's statement ran (``BlockValue.
+        extend_scope`` as the arm's block reduced), and what an arm wrote
+        reaches the code after the ``if`` through the join of the arms
+        alone, under the guard of the arms that wrote it
+        (``if_sugar._arm_evaluations``; a call's record,
+        ``_record_on_its_arms``).  Carried on the guarded entry, a later
+        ``extend_scope`` of the ``if``'s record would bind the arm's write on
+        every path, the call's record on a path that never ran the call
+        (#7757 H7)."""
+        binds, presented = peel_walrus_binds(self)
+        _walrus, stores = caller_stores_of(binds)
+        return carry_caller_stores(
+            tuple(store.guarded(formula) for store in stores),
+            presented.guarded(formula),
+        )
+
 
 # A walrus nested in a larger expression (``y = (x := 5)``, ``f((x := 5))``,
 # ``[(x := 5)]``, ``(x := 5) + 1``, a comprehension's element) completes inside
