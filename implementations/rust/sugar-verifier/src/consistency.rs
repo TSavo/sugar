@@ -5335,7 +5335,8 @@ const TYPE_DATA_DESCRIPTORS: [&str; 19] = [
 ///   function, a function field or a `staticmethod` to nothing (the written
 ///   arguments as they stand), a `classmethod` to the class
 ///   (`DispatchReceiver::Prepend`). A property read off its class is the
-///   property object, which is not callable: not decided here.
+///   property object, which is not callable: no member runs (the walk's
+///   `TypeError`, `dispatch_walk`).
 ///
 /// `None` -- the call stays owed -- wherever the lookup is not decided by
 /// what the proofs state: `class` is not a decided instance (a free input,
@@ -5346,7 +5347,11 @@ const TYPE_DATA_DESCRIPTORS: [&str; 19] = [
 /// other than `object` stands in the order searched; `<after>` is not in
 /// the order; no class binds `method`, or binds it with no join symbol; a
 /// `classmethod` of a class no proof states the object of; a read of
-/// anything but a property on an instance from its first class.
+/// anything but a property on an instance from its first class. Where the
+/// lookup itself raises (the absent member, a property called off its
+/// class) no member runs: `None` here, and the raise is the one walk's
+/// (`dispatch_walk`, `DispatchFound::Raises`), which `dispatch_answer`
+/// answers the call with.
 fn dispatched_target(
     namespaces: &BTreeMap<String, ClassNamespace>,
     method: &str,
@@ -5354,6 +5359,68 @@ fn dispatched_target(
     class: Option<&Json>,
     lookup: &DispatchLookup,
 ) -> Option<DispatchTarget> {
+    match dispatch_walk(namespaces, method, read, class, lookup)? {
+        DispatchFound::Member(target) => Some(target),
+        DispatchFound::Raises(_) => None,
+    }
+}
+
+/// What prove's one walk of an order (`dispatch_walk`) answers for a
+/// dispatched call or read (step 8, #7757 NEW-7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DispatchFound {
+    /// The member that runs and how the call's arguments bind it.
+    Member(DispatchTarget),
+    /// The lookup itself raises the builtin exception named, whatever the
+    /// arguments: no member runs (`raising_dispatch_answer`).
+    Raises(&'static str),
+}
+
+/// `AttributeError`: no class of the order searched binds the name.
+const DISPATCH_ABSENT_RAISES: &str = "AttributeError";
+/// `TypeError`: a property read off its class is the property object, and
+/// a property object is not callable.
+const DISPATCH_NOT_CALLABLE_RAISES: &str = "TypeError";
+
+/// Whether `name` is spelled `__<x>__`. `object`, `type` and `super` bind
+/// only such names of their own besides `type.mro`, so a name of any other
+/// spelling no class of a stated order binds is bound nowhere `object` or
+/// the `super` object answers.
+fn is_dunder_name(name: &str) -> bool {
+    name.len() > 4 && name.starts_with("__") && name.ends_with("__")
+}
+
+/// THE one walk of a dispatched call's order (step 8, #7757): the member
+/// `dispatched_target` names, or the raise the lookup itself takes
+/// (`DispatchFound::Raises`), decided once, here, from what the proofs
+/// state. The lift states the dispatched call or read and nothing about
+/// which member it finds (#7757 NEW-7):
+///
+/// - The absent member, `AttributeError`: the order searched is stated
+///   class by class (each a namespace row) and ends in `object`, no class of
+///   it binds `method`, and `method` is no `__<x>__` name (`object` and the
+///   `super` object bind no other name). On an instance from its first
+///   class, besides: the instance's `__dict__` may not hold it (the fields
+///   `class` names) and no class of the order binds `__getattr__` or
+///   `__getattribute__`. After a class (`super()`), `super_getattro` reads
+///   neither the instance's `__dict__` nor any hook, and falls back to the
+///   `super` object's own attributes (all `__<x>__`). Never on a class
+///   object: its metaclass (which no row states) answers a name its order
+///   does not bind.
+/// - A property called off its class object, `TypeError`: `Cls.p(...)` (and
+///   `super().p(...)` in a `classmethod`) reads the property object
+///   (`property.__get__(None, cls)` is the property), which is not
+///   callable.
+///
+/// `None` wherever `dispatched_target` says the lookup is not decided and no
+/// raise is decided either.
+fn dispatch_walk(
+    namespaces: &BTreeMap<String, ClassNamespace>,
+    method: &str,
+    read: bool,
+    class: Option<&Json>,
+    lookup: &DispatchLookup,
+) -> Option<DispatchFound> {
     let mut shadowed = false;
     let subject: &str = match &lookup.on_class {
         Some(on_class) => {
@@ -5380,9 +5447,6 @@ fn dispatched_target(
     };
     // `super()`'s lookup reads no instance `__dict__` and no attribute hook.
     let plain = lookup.on_class.is_none() && lookup.after.is_none();
-    if !plain && read {
-        return None;
-    }
     let order = &namespaces.get(subject)?.mro;
     if order.first().map(String::as_str) != Some(subject) {
         return None;
@@ -5395,12 +5459,24 @@ fn dispatched_target(
         None => order,
     };
     let mut found: Option<(String, String)> = None;
+    // `object` reached with no class before it binding `method`.
+    let mut reached_object = false;
+    // A class of the order binds `__getattr__`: a lookup that finds nothing
+    // falls to it.
+    let mut hooked = false;
     for entry in searched {
         if let Some(builtin) = entry.strip_prefix(BUILTIN_CLASS_PREFIX) {
-            if found.is_none() || builtin != "object" {
+            if builtin != "object" {
                 return None;
             }
+            if found.is_none() {
+                reached_object = true;
+            }
             continue;
+        }
+        if reached_object {
+            // A class after `object`: no order Python computes.
+            return None;
         }
         let namespace = namespaces.get(entry)?;
         if namespace.mro.is_empty()
@@ -5408,6 +5484,9 @@ fn dispatched_target(
             || (read && namespace.binds.contains_key("__getattr__"))
         {
             return None;
+        }
+        if namespace.binds.contains_key("__getattr__") {
+            hooked = true;
         }
         if found.is_none() {
             if let Some((kind, target)) = namespace.binds.get(method) {
@@ -5418,7 +5497,17 @@ fn dispatched_target(
             }
         }
     }
-    let (kind, symbol) = found?;
+    let Some((kind, symbol)) = found else {
+        let absent = reached_object
+            && lookup.on_class.is_none()
+            && !is_dunder_name(method)
+            && (!plain || (!shadowed && !hooked));
+        return absent.then_some(DispatchFound::Raises(DISPATCH_ABSENT_RAISES));
+    };
+    // A `super()` read binds no getter here: only its absence is decided.
+    if !plain && read {
+        return None;
+    }
     let class_object = || namespaces.get(subject).and_then(|namespace| namespace.object.clone());
     let receiver = if lookup.on_class.is_some() {
         match kind.as_str() {
@@ -5426,6 +5515,9 @@ fn dispatched_target(
                 DispatchReceiver::AsCalled
             }
             DISPATCH_CLASS_KIND => DispatchReceiver::Prepend(class_object()?),
+            DISPATCH_PROPERTY_KIND => {
+                return Some(DispatchFound::Raises(DISPATCH_NOT_CALLABLE_RAISES));
+            }
             _ => return None,
         }
     } else {
@@ -5438,7 +5530,7 @@ fn dispatched_target(
             _ => return None,
         }
     };
-    Some(DispatchTarget { symbol, receiver })
+    Some(DispatchFound::Member(DispatchTarget { symbol, receiver }))
 }
 
 /// Whether `arg` is a positional argument of a call term: no named argument
@@ -6419,13 +6511,18 @@ fn dispatch_answer(post: &AmbientPost, call: &Json) -> Option<AmbientPost> {
             None => class,
         })
     };
-    let target = dispatched_target(
+    let target = match dispatch_walk(
         &dispatch.table.namespaces,
         &dispatch.method,
         dispatch.read,
         class.as_ref(),
         &lookup,
-    )?;
+    )? {
+        DispatchFound::Member(target) => target,
+        DispatchFound::Raises(exception) => {
+            return Some(raising_dispatch_answer(post, &dispatch.method, exception));
+        }
+    };
     let (mut binding, answer, halt_guards, every_halt_guarded, typed_halts) =
         dispatch.table.answers.get(&target.symbol)?.clone()?;
     let rebound = dispatched_arguments(&target.receiver, args)?;
@@ -6463,6 +6560,53 @@ fn dispatch_answer(post: &AmbientPost, call: &Json) -> Option<AmbientPost> {
         value_calls: None,
         operation_site: None,
     })
+}
+
+/// The target a raising lookup's answer names in place of a contract CID.
+const DISPATCH_RAISES_TARGET_PREFIX: &str = "dispatch-raises:";
+
+/// The answer of a dispatched call or read whose lookup itself raises the
+/// builtin `exception` (`DispatchFound::Raises`: the absent member's
+/// `AttributeError`, a property called off its class's `TypeError`), as a
+/// contract answers an edge: it takes any arguments (`*args`, `**kwargs`:
+/// the lookup raises before any is bound), states nothing of a completed
+/// arm, and its one halt has no condition and raises exactly `exception`
+/// (`typed_halts`). Every halt is guarded, so the call completes nowhere
+/// (`completes <-> not(true)`): the halt face is the one the call keeps,
+/// typed where a handler tests it (`raised_type_facts`) (#7757 NEW-7).
+fn raising_dispatch_answer(post: &AmbientPost, method: &str, exception: &str) -> AmbientPost {
+    let always = IrFormula::And(Vec::new()).to_value();
+    let raised = json!({
+        "kind": "ctor",
+        "name": PYTHON_EXCEPTION_TYPE_IDENTITY,
+        "args": [string_const_term("builtins"), string_const_term(exception)],
+    });
+    AmbientPost {
+        binding: BridgeBinding {
+            source_symbol: format!("{DISPATCH_SYMBOL_PREFIX}{method}"),
+            target_cid: format!("{DISPATCH_RAISES_TARGET_PREFIX}{exception}"),
+            target_proof_cid: None,
+            formals: vec![
+                format!("{VARIADIC_POSITIONAL_MARK}args"),
+                format!("{VARIADIC_KEYWORD_MARK}kwargs"),
+            ],
+            out_binding: BUILTIN_LAW_OUT.to_string(),
+            stated_inputs: Vec::new(),
+            definition: None,
+        },
+        post: always.clone(),
+        halt_guards: vec![always.clone()],
+        every_halt_guarded: true,
+        typed_halts: vec![(raised, always)],
+        member_cid: post.member_cid.clone(),
+        site_cid: post.site_cid.clone(),
+        refusal: None,
+        dispatch: None,
+        receiver: DispatchReceiver::AsCalled,
+        plain_stores: None,
+        value_calls: None,
+        operation_site: None,
+    }
 }
 
 // ── A dispatched call on a builtin list or dict (step 7, #7757) ────────────
@@ -8928,12 +9072,30 @@ fn raised_type_facts(inv: &Json, ambient: &[AmbientPost]) -> Vec<Json> {
         let Some(args) = call.get("args").and_then(|v| v.as_array()) else {
             continue;
         };
-        for post in answers_at(ambient, site_cid, Some(call))
-            .into_iter()
+        // What answers the call: a contract, or, where none does, a
+        // dispatched member the class its receiver is bound to here decides
+        // (`dispatch_answer`), as the join answers it (step 8).
+        let at_site = answers_at(ambient, site_cid, Some(call));
+        let mut answering: Vec<AmbientPost> = at_site
+            .iter()
+            .copied()
             .filter(|post| post.refusal.is_none())
-        {
+            .cloned()
+            .collect();
+        if answering.is_empty() {
+            answering = at_site
+                .iter()
+                .copied()
+                .filter(|post| post.dispatch.is_some())
+                .filter_map(|post| dispatch_answer(post, call))
+                .collect();
+        }
+        for post in &answering {
+            let Some(bound) = post_arguments(post, args) else {
+                continue;
+            };
             let Some(bindings) =
-                bind_call_arguments(&post.binding.formals, &post.binding.stated_inputs, args)
+                bind_call_arguments(&post.binding.formals, &post.binding.stated_inputs, &bound)
             else {
                 continue;
             };
@@ -16356,6 +16518,169 @@ mod tests {
             "name": PYTHON_LOOKUP,
             "args": [string_const(on), string_const(after)],
         })
+    }
+
+    #[test]
+    fn the_one_walk_decides_the_absent_member_and_a_property_called_off_its_class() {
+        // #7757 NEW-7: the lift states the dispatched call and nothing about
+        // which member it finds; prove's one walk decides the member, and
+        // where the lookup itself raises: no class of a stated order binds
+        // the name (`AttributeError`), or a property is called off its
+        // class (`TypeError`).
+        let mut namespaces = BTreeMap::new();
+        namespaces.insert(
+            "python:m.A".to_string(),
+            namespace(
+                &["python:m.A", "builtins.object"],
+                &[("m", "function", "python:m.A.m"), ("p", "property", "python:m.A.p")],
+            ),
+        );
+        namespaces.insert(
+            "python:m.B".to_string(),
+            namespace(&["python:m.B", "python:m.A", "builtins.object"], &[]),
+        );
+        namespaces.insert(
+            "python:m.Hooked".to_string(),
+            namespace(
+                &["python:m.Hooked", "builtins.object"],
+                &[("__getattr__", "function", "python:m.Hooked.__getattr__")],
+            ),
+        );
+        namespaces.insert(
+            "python:m.D".to_string(),
+            namespace(&["python:m.D", "builtins.dict", "builtins.object"], &[]),
+        );
+        let plain = DispatchLookup::default();
+        let after_b = DispatchLookup {
+            on_class: None,
+            after: Some("python:m.B".to_string()),
+        };
+        let on_b = DispatchLookup {
+            on_class: Some("python:m.B".to_string()),
+            after: None,
+        };
+        let absent = Some(DispatchFound::Raises(DISPATCH_ABSENT_RAISES));
+        let b = instance("python:m.B", &[]);
+
+        // Absent: `b.gone()`, `super().gone()` after B, a read `b.gone`.
+        assert_eq!(dispatch_walk(&namespaces, "gone", false, Some(&b), &plain), absent);
+        assert_eq!(dispatch_walk(&namespaces, "gone", false, Some(&b), &after_b), absent);
+        assert_eq!(dispatch_walk(&namespaces, "gone", true, Some(&b), &plain), absent);
+        // `super()` reads no instance `__dict__`: a field never answers it.
+        let holding = instance("python:m.B", &["gone"]);
+        assert_eq!(dispatch_walk(&namespaces, "gone", false, Some(&holding), &after_b), absent);
+        // No member runs: `dispatched_target` names none.
+        assert_eq!(dispatched_target(&namespaces, "gone", false, Some(&b), &plain), None);
+        // A member found is the target `dispatched_target` names.
+        assert_eq!(
+            dispatch_walk(&namespaces, "m", false, Some(&b), &plain),
+            dispatched_target(&namespaces, "m", false, Some(&b), &plain).map(DispatchFound::Member)
+        );
+        assert!(dispatched_target(&namespaces, "m", false, Some(&b), &plain).is_some());
+
+        // Not decided: the instance's `__dict__` may hold it, a class of the
+        // order binds `__getattr__`, a `__<x>__` name (`object` or the
+        // `super` object may bind it), a builtin other than `object` in the
+        // order, a class object (its metaclass is not stated).
+        assert_eq!(dispatch_walk(&namespaces, "gone", false, Some(&holding), &plain), None);
+        let hooked = instance("python:m.Hooked", &[]);
+        assert_eq!(dispatch_walk(&namespaces, "gone", false, Some(&hooked), &plain), None);
+        assert_eq!(dispatch_walk(&namespaces, "__len__", false, Some(&b), &plain), None);
+        let d = instance("python:m.D", &[]);
+        assert_eq!(dispatch_walk(&namespaces, "gone", false, Some(&d), &plain), None);
+        assert_eq!(dispatch_walk(&namespaces, "gone", false, None, &on_b), None);
+
+        // A property called off its class is the property object: `TypeError`.
+        assert_eq!(
+            dispatch_walk(&namespaces, "p", false, None, &on_b),
+            Some(DispatchFound::Raises(DISPATCH_NOT_CALLABLE_RAISES))
+        );
+        assert_eq!(dispatched_target(&namespaces, "p", false, None, &on_b), None);
+    }
+
+    #[test]
+    fn a_raising_lookup_answers_the_call_with_its_one_typed_halt() {
+        // #7757 NEW-7: `super().gone()` on a `B` (no class after B binds
+        // `gone`) is answered at prove by the walk's raise: any arguments
+        // bind, the call completes nowhere, and its halt is
+        // `AttributeError`, which types a handler's test.
+        let mut namespaces = BTreeMap::new();
+        namespaces.insert(
+            "python:m.A".to_string(),
+            namespace(&["python:m.A", "builtins.object"], &[]),
+        );
+        namespaces.insert(
+            "python:m.B".to_string(),
+            namespace(&["python:m.B", "python:m.A", "builtins.object"], &[]),
+        );
+        let table = DispatchTable {
+            namespaces: Arc::new(namespaces),
+            ..DispatchTable::default()
+        };
+        let mut owed = joined_post("python:dispatch:gone", JOIN_SITE, json!(true), Vec::new());
+        owed.refusal = Some(DroppedAmbientPostReason::Unanswered);
+        owed.dispatch = Some(Arc::new(DispatchEdge {
+            method: "gone".to_string(),
+            read: false,
+            table: Arc::new(table),
+            shares: Vec::new(),
+        }));
+        let call = json!({"kind": "ctor", "name": "call:dispatch:gone", "args": [
+            var("o"),
+            int(4),
+            lookup("", "python:m.B"),
+            {"kind": "ctor", "name": PYTHON_CLASS, "args": [
+                string_const("0"),
+                instance("python:m.B", &[]),
+            ]},
+        ]});
+        let answer = dispatch_answer(&owed, &call).expect("the walk's raise answers the call");
+        let always = IrFormula::And(Vec::new()).to_value();
+        assert_eq!(answer.halt_guards, vec![always.clone()]);
+        assert!(answer.every_halt_guarded);
+        assert_eq!(answer.receiver, DispatchReceiver::AsCalled);
+        let args = call.get("args").and_then(|v| v.as_array()).unwrap();
+        assert!(bind_call_arguments(&answer.binding.formals, &[], args).is_some());
+        let attribute_error = json!({"kind": "ctor", "name": PYTHON_EXCEPTION_TYPE_IDENTITY, "args": [
+            string_const_term("builtins"),
+            string_const_term("AttributeError"),
+        ]});
+        assert_eq!(answer.typed_halts, vec![(attribute_error.clone(), always)]);
+
+        // A handler's test of what the call raised is typed by that halt.
+        let raised = json!({"kind": "ctor", "name": PYTHON_RAISED, "args": [
+            call.clone(),
+            {"kind": "ctor", "name": PYTHON_OCCURRENCE, "args": [string_const(JOIN_SITE)]},
+        ]});
+        let test = json!({"kind": "atomic", "name": PYTHON_IS_TYPE_PREDICATE, "args": [
+            raised, attribute_error
+        ]});
+        let facts = raised_type_facts(&test, std::slice::from_ref(&owed));
+        assert_eq!(facts.len(), 1, "{facts:?}");
+        assert!(facts[0].to_string().contains("\"implies\""));
+
+        // A member some class binds is no raise: the call stays owed here
+        // (no answer states its function).
+        let mut found = owed.clone();
+        let mut namespaces = BTreeMap::new();
+        namespaces.insert(
+            "python:m.A".to_string(),
+            namespace(&["python:m.A", "builtins.object"], &[("gone", "function", "python:m.A.gone")]),
+        );
+        namespaces.insert(
+            "python:m.B".to_string(),
+            namespace(&["python:m.B", "python:m.A", "builtins.object"], &[]),
+        );
+        found.dispatch = Some(Arc::new(DispatchEdge {
+            method: "gone".to_string(),
+            read: false,
+            table: Arc::new(DispatchTable {
+                namespaces: Arc::new(namespaces),
+                ..DispatchTable::default()
+            }),
+            shares: Vec::new(),
+        }));
+        assert!(dispatch_answer(&found, &call).is_none());
     }
 
     #[test]

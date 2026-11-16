@@ -107,10 +107,13 @@ class BuiltinSuperValue(FloorValue):
     ``current_class`` is the class value the frame's ``__class__`` cell holds
     (PEP 3135), ``receiver`` the frame's first argument ``obj``.  Every lookup
     walks ``type(obj).__mro__`` from the class after ``__class__``
-    (``super_getattro``, Objects/typeobject.c): the receiver's class's one
-    base walk (``ClassDef.namespace_owner(name, after=...)``, #8069), so
-    ``super()`` in ``B.m`` on a ``D(B, C)`` with ``B(A)``, ``C(A)`` reaches
-    ``C``, never ``B``'s own base ``A``.  When the receiver's MRO is not read,
+    (``super_getattro``, Objects/typeobject.c), so ``super()`` in ``B.m`` on
+    a ``D(B, C)`` with ``B(A)``, ``C(A)`` reaches ``C``, never ``B``'s own
+    base ``A``.  That walk is prove's, once (``consistency::dispatch_walk``,
+    #7757 NEW-7): the lift states the dispatched call after ``__class__``
+    and reads no source class's namespace; only a tail of builtins, which
+    no namespace row states, is answered here by the floor
+    (``_builtin_tail_member``).  When the receiver's class is not decided,
     the lookup is the one unanswered call.
 
     Built through ``constructed``, which is CPython's ``supercheck``.
@@ -169,13 +172,55 @@ class BuiltinSuperValue(FloorValue):
         )
 
     def attribute(self, name, site, ctx):
-        del ctx
-        from sugar_lift_py_tests.outcome import ExitSet
+        """``super().<name>`` read, not called (#7757 NEW-7).
 
-        decided, found, _holder, _method, _value = self._lookup(name)
-        if decided and found is None:
-            return self._absent(name, site)
-        return ExitSet.completed(BuiltinSuperMethodValue(self, name))
+        - A builtin method of a tail of the receiver's order after
+          ``__class__`` that holds no source class (``_builtin_tail_member``):
+          the super method value, which the floor's builtin semantics answer
+          when called.
+        - Otherwise the dispatched read after ``__class__``
+          (``receiver_dispatch.dispatch_edge_call`` with ``read`` and
+          ``after``) on an instance whose class is decided here or a
+          parameter whose class is the contract's input: two-faced, its
+          completed face the super method value.  Prove's one walk of the
+          receiver's order (``consistency::dispatch_walk``) decides whether
+          no class after ``__class__`` binds ``name`` (the ``AttributeError``
+          face, the one it keeps); any other read stays owed.  Nothing here
+          walks the order for a source class's member.
+        - Anything else (a class receiver, a receiver whose class is not
+          decided, no join symbol, no site): the one undecided attribute
+          read, two-faced and owed."""
+        del ctx
+        from sugar_lift_py_tests.floor.class_definition_value import (
+            ClassDefinitionValue,
+        )
+        from sugar_lift_py_tests.floor.object_value import receiver_class_decided
+        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.receiver_dispatch import (
+            class_value,
+            dispatch_edge_call,
+        )
+
+        method = BuiltinSuperMethodValue(self, name)
+        if self._builtin_tail_member(name) is not None:
+            return ExitSet.completed(method)
+        definition = getattr(self.current_class, "class_definition", None)
+        after = None if definition is None else definition.bridge_source_symbol()
+        receiver_class = None
+        if (
+            after is not None
+            and site is not None
+            and not isinstance(self.receiver, ClassDefinitionValue)
+        ):
+            receiver_class = formal_class_input(self.receiver, site)
+            if receiver_class is None and receiver_class_decided(self.receiver):
+                receiver_class = class_value(self.receiver)
+        if receiver_class is None:
+            return self.undecided_attribute(name, site, owner=_OWNER)
+        read = dispatch_edge_call(
+            name, self.receiver, receiver_class, (), (), site, read=True, after=after
+        )
+        return read.and_then(lambda _read: ExitSet.completed(method))
 
     def call_method_value(
         self,
@@ -188,6 +233,15 @@ class BuiltinSuperValue(FloorValue):
         keywords=(),
         required_frame=None,
     ):
+        """``super().<name>(...)`` (#7757 NEW-7): the builtin method of a
+        tail of the receiver's order after ``__class__`` that holds no
+        source class, where the floor writes it (``_builtin_tail_member``,
+        ``_builtin_method``); otherwise the one dispatched call after
+        ``__class__`` (``_dispatched``).  The lift never walks the order for
+        a source class's member: prove's one walk
+        (``consistency::dispatch_walk``) decides which member runs, how it
+        binds, and whether no class after ``__class__`` binds ``name``
+        (``AttributeError``, the halt the call keeps)."""
         del owner
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
@@ -199,67 +253,10 @@ class BuiltinSuperValue(FloorValue):
                 requested="authenticated builtin super method",
                 fix="model the selected base method or keep it loud",
             )
-        decided, found, holder, method, value = self._lookup(name)
-        if not decided and formal_class_input(self.receiver, blame) is not None:
-            # The receiver is a parameter whose class is the contract's input:
-            # the one dispatched call after ``__class__``, looked up at prove
-            # on the class the caller binds (#7757 entry 6).
-            return self._dispatched(name, arguments, keywords, blame)
-        if not decided:
-            # Not read, or the selected class holds ``name`` but not as its
-            # body bound it (a decorator wrote it -- a dataclass's generated
-            # ``__init__`` -- or creation or a store may have), or no class
-            # value here carries it: nothing is run.
-            return self._unanswered(name, arguments, keywords, blame)
-        if found is None:
-            return self._absent(name, blame)
-        if isinstance(found, str):
-            return self._builtin_method(found, name, arguments, keywords, blame, ctx)
-        return self._selected_call(
-            holder, name, method, value, arguments, keywords, blame
-        )
-
-    def _selected_call(self, holder, name, method, value, arguments, keywords, blame):
-        """``super().<name>(...)`` whose member the one class-namespace
-        lookup selected (``ClassDefinitionValue.namespace_member`` from the
-        class after ``__class__``), bound to the original receiver as
-        ``super_getattro`` binds it (``__get__(obj, starttype)``).
-
-        - A ``def`` the order holds for ``name``, and a function the holding
-          class's namespace holds as a field (``f = lambda self: 1``,
-          ``m = some_def``), are the one dispatched call (``_dispatched``):
-          prove looks ``name`` up on the receiver's order from the class
-          after ``__class__`` and binds it by the kind its namespace row
-          states, as ``super_getattro`` binds it (a ``field`` to the
-          instance, or unbound where the receiver is the class); a field
-          whose row states no kind stays owed.  The lookup here only tells
-          that a method call is what this is (#7757 entry 6).
-        - Any other value refuses by name."""
-        from sugar_lift_py_tests.floor.lambda_callable import LambdaCallable
-        from sugar_source_tree.panic import SugarNotWritten
-
-        def refuse(*, owner, blame, observed, requested, fix):
-            raise SugarNotWritten(
-                owner=owner,
-                blame=blame,
-                observed=observed,
-                requested=requested,
-                fix=fix,
-            )
-
-        if method is not None or isinstance(value, LambdaCallable):
-            # A ``def`` or a function field of the receiver's order after
-            # ``__class__``: the one dispatched call, looked up after
-            # ``__class__`` at prove, never the function selected or applied
-            # here (#7757 entry 6: one MRO lookup).
-            return self._dispatched(name, arguments, keywords, blame)
-        refuse(
-            owner=_OWNER,
-            blame=blame,
-            observed=f"{holder.class_name}.{name}",
-            requested="the source method zero-argument super selected",
-            fix=f"construct a diggable body for `{holder.class_name}.{name}` or keep loud",
-        )
+        entry = self._builtin_tail_member(name)
+        if entry is not None:
+            return self._builtin_method(entry, name, arguments, keywords, blame, ctx)
+        return self._dispatched(name, arguments, keywords, blame)
 
     def _dispatched(self, name, arguments, keywords, site):
         """``super().<name>(...)`` as the one dispatched call (#7757 entry 6,
@@ -358,41 +355,35 @@ class BuiltinSuperValue(FloorValue):
                 return type_value, definition
         return None, None
 
-    def _lookup(self, name):
-        """``(decided, found, holder, method, value)``: the member of
-        ``type(obj).__mro__`` after ``__class__`` for ``name`` -- the one
-        class-namespace lookup every reader of a class member reads
-        (``ClassDefinitionValue.namespace_member`` with ``after``): ``found``
-        the class whose namespace binds it (a ``ClassDef`` or a builtin class
-        name, None when no class of the order binds it), the member its body
-        left last.  Not decided when the receiver's MRO is not read."""
-        type_value, definition = self._receiver_type()
-        if definition is None:
-            return False, None, None, None, None
-        return type_value.namespace_member(
-            name, after=self.current_class.class_definition
+    def _builtin_tail_member(self, name):
+        """The builtin class (``"object"``, ``"dict"``, ``"type"``, a builtin
+        exception) of ``type(obj).__mro__`` after ``__class__`` whose own
+        ``__dict__`` holds ``name``, where every class of that tail is a
+        builtin, or None.
+
+        A tail of builtins holds no namespace row, so prove's walk answers
+        no member of it (``consistency::dispatch_walk``): what the floor
+        writes of a builtin's method is the one way a call into it is
+        answered (``_builtin_method``).  A tail that holds any source class
+        is never read here, nor is a name no builtin of it holds: both are
+        the dispatched call, decided by prove's one walk.  Read only on a
+        receiver whose class is decided here (``receiver_class_decided``):
+        an instance that arrived by binding may be of a subclass whose order
+        puts a source class after ``__class__``."""
+        from sugar_lift_py_tests.floor.object_value import receiver_class_decided
+
+        if not receiver_class_decided(self.receiver):
+            return None
+        _type_value, definition = self._receiver_type()
+        cell = getattr(self.current_class, "class_definition", None)
+        if definition is None or cell is None:
+            return None
+        # A class statement of the tail answers "not read": only a tail of
+        # builtins is decided, by each builtin's own ``__dict__``.
+        decided, found = definition._namespace_owner(
+            name, lambda _entry: None, after=cell
         )
-
-    def _absent(self, name, site):
-        """No class of ``type(obj).__mro__`` after ``__class__`` binds
-        ``name``: ``super_getattro`` falls back to the super object's own
-        attributes, and a name it has not either is CPython's
-        ``AttributeError``."""
-        if hasattr(super, name):
-            from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-            construction_panic_gap(
-                owner=_OWNER,
-                blame=site,
-                observed=f"super.{name}",
-                requested="the super object's own attribute semantics",
-                fix="model the super object's own attribute or keep it loud",
-            )
-        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-
-        return ground_exceptional_exit(
-            exception_name="AttributeError", site=site, owner=_OWNER
-        )
+        return found if decided and isinstance(found, str) else None
 
     def _unanswered(self, name, arguments, keywords, site):
         """``super().<name>(...)`` whose receiver's MRO is not read, or not
