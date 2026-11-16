@@ -4,9 +4,10 @@ to #8166).
 1. A name bound to a call holds what the callee's value decides: a call of a
    source class whose own ``__new__`` lookup decides an instance
    (``ClassDef.call_yields_an_instance``), a builtin whose result type the
-   language fixes, a module ``def`` whose returns hold no class -- none of
-   them a class.  A call the tree cannot decide stays any class the module
-   hands on (#8166's answer).
+   language fixes, an ``async def``'s coroutine -- none of them a class.  A
+   call of a module ``def`` is its contract's, never read off its body, and
+   like any call the tree cannot decide stays any class the module hands on
+   (#8166's answer).
 2. A name a class body binds is that class body's, never the module's.
 3. A dataclass constructor frame rebuilt for a call keeps the fields of its
    generated ``__init__``.
@@ -67,7 +68,7 @@ def test_an_instance_of_a_source_class_is_no_class() -> None:
     assert classes["Box"].namespace_binds("y") is False
 
 
-def test_a_builtin_or_a_def_returning_an_instance_is_no_class() -> None:
+def test_a_builtin_is_no_class_and_a_def_s_call_is_its_contract_s() -> None:
     classes = _statements(
         _HANDED
         + "d = dict()\n"
@@ -84,12 +85,22 @@ def test_a_builtin_or_a_def_returning_an_instance_is_no_class() -> None:
         "\n"
         "g = items()\n"
         "g.z = 1\n"
+        "\n"
+        "async def fetch():\n"
+        "    return Box\n"
+        "\n"
+        "c = fetch()\n"
+        "c.w = 1\n"
     )
 
     assert classes["Box"].namespace_binds("x") is False
-    assert classes["Box"].namespace_binds("y") is False
-    # A generator function's call is a generator, never what it yields.
-    assert classes["Box"].namespace_binds("z") is False
+    # A module ``def``'s call is a call like any other (#7757, the owner's
+    # ruling of 2026-11-15): what it returns is its contract's to state,
+    # never read here off its body, so it may be any class handed on.
+    assert classes["Box"].namespace_binds("y") is None
+    assert classes["Box"].namespace_binds("z") is None
+    # An ``async def``'s call is a coroutine, by its header.
+    assert classes["Box"].namespace_binds("w") is False
 
 
 def test_a_def_returning_a_class_holds_that_class() -> None:

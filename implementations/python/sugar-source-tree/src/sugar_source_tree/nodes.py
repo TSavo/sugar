@@ -655,11 +655,6 @@ _ESCAPED = frozenset({_ESCAPED_CLASS})
 # ``nonlocal`` name), as ``class_namespace_stores`` keys it.
 _ENCLOSING_SCOPE = "<enclosing function>"
 
-# The row ``class_namespace_stores`` keys a function's returned values under,
-# beside its names: ``(function occurrence, _RETURNED_VALUE)``.  No name is
-# spelled so.
-_RETURNED_VALUE = "<returned value>"
-
 
 @dataclass(frozen=True)
 class _ClassCallResult:
@@ -1329,10 +1324,6 @@ def _stores_after_the_field(region, attr: str, inputs):
       a cited pure builtin over constants, a builtin exception class
       constructed by BaseException's law, an operation over values builtin
       all the way down);
-    - a call of a source ``def`` by name, undecorated, whose every
-      operation, and every operation of each source function it calls by
-      name, is such a call or runs no code (``container_mutation._closure``
-      closed): it reaches no object to change, so its contract takes none;
     - a field store ``q.g = v`` on a parameter in ``inputs`` (``g`` no
       dunder name, and never ``attr``: another parameter may hold the same
       object), which the contract states only under its plain-store guard,
@@ -1340,19 +1331,18 @@ def _stores_after_the_field(region, attr: str, inputs):
     - a read of an import's member (``container_mutation._import_member``).
 
     Anything else -- a method call, a field read (``type(q).__getattribute__``
-    and whatever it finds), a call of anything else, an operator or a truth
-    test over a value that is not builtin all the way down (any parameter
-    may hold the object), a statement outside ``_FIELD_REGION_STATEMENTS``,
-    an unpacking target -- may change the field, which is then not
-    stated."""
+    and whatever it finds), a call of anything else (a same-file source
+    function's included: its body is never read here for what it may reach,
+    #7757, the owner's ruling of 2026-11-15), an operator or a truth test
+    over a value that is not builtin all the way down (any parameter may
+    hold the object), a statement outside ``_FIELD_REGION_STATEMENTS``, an
+    unpacking target -- may change the field, which is then not stated."""
     from sugar_lift_py_tests.receiver_dispatch import is_dunder
 
     from .container_mutation import (
-        _closure,
         _import_member,
         _runs_no_code,
         _sites_at,
-        _source_callee,
     )
 
     nodes: list = []
@@ -1391,13 +1381,6 @@ def _stores_after_the_field(region, attr: str, inputs):
             continue
         for site in _sites_at(node):
             if _runs_no_code(site):
-                continue
-            callee = _source_callee(site, {})
-            if (
-                type(callee) is FunctionDef
-                and not callee.decorators
-                and _closure(callee)[2]
-            ):
                 continue
             return None
     return tuple(stores)
@@ -3400,8 +3383,11 @@ class SourceUnit:
         of a source class whose own ``__new__`` lookup decides an instance
         (``ClassDef.call_yields_an_instance``) holds no class; a builtin
         whose result type the language fixes (``_CALLS_NEVER_A_CLASS``:
-        ``list()``, ``dict()``, ``str()``) holds none; a module ``def``
-        holds what its returns hold, a generator or ``async def`` none.
+        ``list()``, ``dict()``, ``str()``) holds none; an ``async def``'s
+        call (a coroutine) none.  A call of a module ``def`` is a call like
+        any other: what it returns is its contract's to state, never read
+        here off its body (#7757, the owner's ruling of 2026-11-15), so its
+        result may be any class the module hands on.
 
         Every other name whose value may be a class may be any class whose
         object the module hands on (``_class_read_kept``: anything but a call
@@ -3412,7 +3398,7 @@ class SourceUnit:
         assignment's target, a leaf of an unpack whose sides do not pair up
         (``K, J = pair``), and a name bound to any value that may be a class
         (``_value_may_be_a_class``: a call the callee's value does not
-        decide, ``K = make()`` of an unread ``make``; an attribute, a
+        decide, ``K = make()`` of a module ``def`` ``make``; an attribute, a
         subscript, an ``await``).  A store through one is a
         store on every such class -- on every class when an expression that
         yields a class from an instance (``type(o)``, ``o.__class__``,
@@ -3476,9 +3462,6 @@ class SourceUnit:
         classes: list = []
         functions: list = []
         pairs: list = []
-        # Every ``return <value>``: a call of the function that runs it holds
-        # what the value holds.
-        returns: list = []
         target_names: set = set()
         kept_groups: set = set()
         imported: set = set()
@@ -3496,9 +3479,6 @@ class SourceUnit:
                 imported.update(
                     alias.asname or alias.name.split(".")[0] for alias in node.names
                 )
-            elif isinstance(node, Return):
-                if node.value is not None:
-                    returns.append(node)
             elif isinstance(node, Lambda):
                 own = frozenset(param.name for param in node.params)
                 own_scope.update(
@@ -3681,10 +3661,11 @@ class SourceUnit:
 
         # A call's callee as its value decides it, read once per call:
         # ``("none",)`` a builtin (by its binding, ``Call.language_callee``)
-        # whose result is never a class, a generator or coroutine function;
+        # whose result is never a class, a coroutine function (an ``async
+        # def``: its call is a coroutine, by its header);
         # ``("class", result)`` a source class (``_ClassCallResult``);
-        # ``("returns", key)`` a module ``def``'s returned values; ``None``
-        # anything else.
+        # ``None`` anything else -- a module ``def`` included: what its call
+        # returns is its contract's to state, never read off its body here.
         callees: dict = {}
 
         def callee_of(call):
@@ -3702,18 +3683,10 @@ class SourceUnit:
                         "class",
                         _ClassCallResult(occurrence_of(definition), definition),
                     )
-                elif isinstance(
-                    definition, (FunctionDef, AsyncFunctionDef)
-                ) and call_applies_own_frame(definition):
-                    if isinstance(
-                        definition, AsyncFunctionDef
-                    ) or FunctionDef._owns_yield(definition.body):
-                        callee = ("none",)
-                    else:
-                        callee = (
-                            "returns",
-                            (occurrence_of(definition), _RETURNED_VALUE),
-                        )
+                elif isinstance(definition, AsyncFunctionDef) and (
+                    call_applies_own_frame(definition)
+                ):
+                    callee = ("none",)
             callees[id(call)] = callee
             return callee
 
@@ -3742,25 +3715,16 @@ class SourceUnit:
                     return _ESCAPED
                 if callee[0] == "none":
                     return frozenset()
-                if callee[0] == "class":
-                    return frozenset({callee[1]})
-                return tables.get(callee[1], frozenset())
+                return frozenset({callee[1]})
             return _ESCAPED if _value_may_be_a_class(value) else frozenset()
 
         # Each bound value with what its binding writes: an alias's target
-        # name (keyed where it stands, ``read_of``), a function's returned
-        # values (keyed by the function).
+        # name (keyed where it stands, ``read_of``).
         bound_values = list(pairs)
-        for statement in returns:
-            owner = self.innermost_function_containing(statement.line_col_span())
-            if owner is not None:
-                bound_values.append(
-                    ((occurrence_of(owner), _RETURNED_VALUE), statement.value)
-                )
 
         # The classes each binding table may hold: every ``class`` statement
-        # under its name, then aliases of aliases and returned values, read
-        # again until none reaches a new class.  Filled once.
+        # under its name, then aliases of aliases, read again until none
+        # reaches a new class.  Filled once.
         for klass in classes:
             target = klass.binding_target
             key = (
