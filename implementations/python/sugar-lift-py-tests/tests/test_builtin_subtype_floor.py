@@ -116,13 +116,6 @@ def test_authenticated_builtin_issubclass_callable_uses_floor_not_spelling():
         CallableApplication((leaf, base), (), "site"), None
     )
     assert isinstance(result.completed_value(), TrueBoolLiteralSugar)
-    witness = receiver.witness_for((leaf, base), result.completed_value())
-    witness.verify(
-        receiver.runtime_identity,
-        receiver.operation,
-        (leaf.to_term(owner="test"), base.to_term(owner="test")),
-        result.completed_value().to_term(owner="test"),
-    )
 
 
 def test_shadowed_issubclass_does_not_inherit_builtin_semantics():

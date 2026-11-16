@@ -57,12 +57,12 @@ def test_a_site_with_no_witness_is_named() -> None:
     """The lying twin: a site that passes neither is found, and a spread of
     anything but the evidence bundle is not taken for one."""
     lying = (
-        "AppendRuntimeEffect('no witness')\n"
-        "AppendRuntimeEffect('other spread', **fields)\n"
-        "AppendRuntimeEffect('bundle', **runtime_effect_evidence('py.append', v, s))\n"
-        "AppendRuntimeEffect('keyword', witness=w, runtime_operand=o)\n"
+        "KeyErrorRuntimeEffect('no witness')\n"
+        "KeyErrorRuntimeEffect('other spread', **fields)\n"
+        "KeyErrorRuntimeEffect('bundle', **runtime_effect_evidence('py.sub', v, s))\n"
+        "KeyErrorRuntimeEffect('keyword', witness=w, runtime_operand=o)\n"
     )
     assert _sites_without_a_witness(lying, "lying.py") == [
-        "lying.py:1:AppendRuntimeEffect",
-        "lying.py:2:AppendRuntimeEffect",
+        "lying.py:1:KeyErrorRuntimeEffect",
+        "lying.py:2:KeyErrorRuntimeEffect",
     ]

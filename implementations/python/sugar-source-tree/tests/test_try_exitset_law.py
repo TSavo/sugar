@@ -674,14 +674,14 @@ def _restore_the_one_finally(real):
     try_sugar._and_finally_with_raise_context = real
 
 
-def test_try_finally_routes_through_the_shared_exitset_and_finally():
+def test_try_finally_routes_through_the_one_finally():
     """``finally`` is the one ``finally`` (``_and_finally_with_raise_context``),
     consulted once.
 
     It is handed the post-handler-routing ExitSet -- both edges of the body
-    partition -- rather than a pre-decided single face.  (It was once
-    ``ExitSet.and_finally``; main composes the ``finally`` beneath every arm
-    through ``ExitSet.and_then``, in one place for ``try`` and ``try*``.)
+    partition -- rather than a pre-decided single face, and composes the
+    ``finally`` beneath every arm through ``ExitSet.and_then``, in one place
+    for ``try`` and ``try*``.
     """
     from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 

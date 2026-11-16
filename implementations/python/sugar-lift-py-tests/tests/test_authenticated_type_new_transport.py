@@ -4,7 +4,7 @@
 ``super().__new__(mcs, name, bases, namespace)`` in a metaclass's
 ``__new__`` reaches ``type.__new__``: the order after ``__class__`` (``type``,
 ``object``) holds no source class.  The lift used to answer that call by the
-floor's own ``type.__new__`` (a ``RuntimeClassValue`` over the namespace),
+floor's own ``type.__new__`` (a class value over the namespace),
 beside the dispatched call the same lookup takes through any source class.
 Now it is the one dispatched call after ``__class__`` for every tail; with no
 workspace root (these classes name no join symbol) it is the one unanswered
@@ -19,7 +19,6 @@ from sugar_lift_py_tests.floor import (
     BuiltinSuperValue,
     CallSiteValue,
     DictValue,
-    RuntimeClassValue,
     StringValue,
     TermValue,
     TupleValue,
@@ -63,7 +62,6 @@ def _the_one_call(outcome) -> None:
     assert halt.effect.producer_node_owner == "UnknownCallee:super.__new__"
     _binds, call = peel_walrus_binds(done.value)
     assert isinstance(call, CallSiteValue), type(call)
-    assert not isinstance(call, RuntimeClassValue)
     assert call.body is None
     assert outcome.owed_items()
 

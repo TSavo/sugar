@@ -334,7 +334,7 @@ def runtime_effect_evidence(
 class RuntimeEffect(ABC):
     """A runtime effect: a value that does not exist until the program runs. Abstract
     by class machinery (ABC), so a generic RuntimeEffect is unrepresentable: only a
-    named subclass (OSExitRuntimeEffect, ...) that declares its kind can be built.
+    named subclass (KeyErrorRuntimeEffect, ...) that declares its kind can be built.
     The KIND of runtime effect is a TYPE, not a reason string.
     """
 

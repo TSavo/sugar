@@ -26,7 +26,7 @@ def test_the_split_is_disjoint_and_conserves_the_total() -> None:
     axis = DesugarAxis()
     axis._tally("SomeSugar", "desugar-call:pkg/m.py:10:4")
     axis._tally("SomeSugar", "desugar-call:pkg/m.py:20:4")
-    axis._tally("AppendRuntimeEffect", "pkg/m.py:11:8#store")
+    axis._tally("KeyErrorRuntimeEffect", "pkg/m.py:11:8#store")
     axis._tally("RaiseEffect", "pkg/m.py:12:8#raise")
     axis._tally("RaiseEffect", "pkg/m.py:13:8#raise")
 
