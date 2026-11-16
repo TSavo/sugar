@@ -194,7 +194,13 @@ def _class(key: str, name: str):
 
 
 def _call(program: str, actuals: str):
-    tree = _tree(program + f"\nhelper({actuals})\n")
+    """``helper({actuals})`` in a caller's body, reduced alone.
+
+    The call sits in a function body so its callee name reads ``helper``'s
+    ``def`` (``SourceUnit.function_definition_for_read``): a call the module
+    body runs is answered as the module-level read is, not at all, the
+    unanswered call (#9007 decision 1), and binds no actual to a formal."""
+    tree = _tree(program + f"\ndef caller():\n    return helper({actuals})\n")
     call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
     return call.sugar().desugar(None)
 

@@ -187,9 +187,14 @@ def _class(key: str, name: str):
 
 
 def _call(actuals: str):
-    """A module-body call reduced alone: where the binder refuses the call
-    (a missing or ill-kinded actual) it refuses here, by name."""
-    tree = _tree(HELPER + f"\nhelper({actuals})\n")
+    """``helper({actuals})`` in a caller's body, the call reduced alone:
+    where the binder refuses the call (a missing or ill-kinded actual) it
+    refuses here, by name.  The call sits in a function body so its callee
+    name reads ``helper``'s ``def`` (``SourceUnit.function_definition_for_read``):
+    a call the module body runs is answered as the module-level read is, not
+    at all, the unanswered call (#9007 decision 1), which binds no actual and
+    so refuses no kind."""
+    tree = _tree(HELPER + f"\n\ndef caller():\n    return helper({actuals})\n")
     call = tuple(node for node in tree.nodes() if isinstance(node, Call))[-1]
     return call.sugar().desugar(None)
 
