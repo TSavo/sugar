@@ -596,58 +596,10 @@ class SymbolicValue(FloorValue):
     def project_sequence_with(self, operation, ctx):
         return operation.project_symbolic(self, ctx)
 
-    def setitem(self, index, value, site, ctx):
-        """Rebind a symbolic container after ``xs[k] = v``.
-
-        Concrete containers fold post-state. A symbolic formal (for example
-        ``**kwargs``) has no element history, but the assignment still rebinds
-        the name: carry prior coordinate, index, and value on ``py.setitem``.
-        Do not invent members; do not hide the gap — silence stays illegal.
-        """
-        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        index_term = index.to_term(owner="SymbolicValue.setitem index")
-        value_term = value.to_term(owner="SymbolicValue.setitem value")
-        return ExitSet.completed(
-            CallSiteValue(
-                target_name="setitem",
-                arg_values=(self, index, value),
-                parameters=(),
-                term=ctor(
-                    "py.setitem",
-                    [self.to_term(owner=str(site)), index_term, value_term],
-                    symbol_kind="method-coordinate",
-                ),
-                body=None,
-                site=site,
-            )
-        )
-
-    def delitem(self, index, site, ctx):
-        """Rebind a symbolic container after ``del xs[k]``.
-
-        A symbolic receiver has no element history to fold, but deletion still
-        constructs a post-state. Carry that state as the same ``py.delitem``
-        coordinate used for opaque callsite receivers.
-        """
-        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        index_term = index.to_term(owner="SymbolicValue.delitem index")
-        return ExitSet.completed(
-            CallSiteValue(
-                target_name="delitem",
-                arg_values=(self, index),
-                parameters=(),
-                term=ctor(
-                    "py.delitem",
-                    [self.to_term(owner=str(site)), index_term],
-                    symbol_kind="method-coordinate",
-                ),
-                body=None,
-                site=site,
-            )
-        )
+    # No ``setitem``/``delitem`` here: a symbolic receiver's type is not
+    # decided, so its item store or delete is the one item mutation's
+    # undecided arm (``store_effect_sugar.item_mutation``: completes under
+    # its own atom or raises something undetermined, owed), or its
+    # dispatched edge where its class is an input.  A path that reaches the
+    # floor's own method instead refuses by name (``FloorValue.setitem``),
+    # never completes with the halt dropped (#7757 step 7).

@@ -52,6 +52,17 @@ def _stands_on_append_floor(face) -> bool:
     return narrowed() if callable(narrowed) else True
 
 
+def _item_mutation_on_arm(method, arm, operands, site, ctx):
+    """One arm's item store or delete (``__setitem__``/``__delitem__``)
+    through the one item mutation, in the module the store stands in (its
+    site's unit), as the statement's own door passes it."""
+    from sugar_lift_py_tests.sugar.store_effect_sugar import item_mutation
+
+    return item_mutation(
+        method, arm, operands, site, ctx, unit=getattr(site, "unit", None)
+    )
+
+
 def _deferred(outcome) -> bool:
     """Whether an arm's operation still waits on its caller's actual: a
     parameter arm answered through its operation's door with the carrier."""
@@ -210,8 +221,12 @@ class GuardedValue(FloorValue):
     def _map_over(self, operand, operate, *, operation: str, blame):
         """Distribute ``operate(arm, operand)`` over both arms, a guarded
         ``operand`` split first: each of its arms meets both of this value's
-        arms, and the results rejoin under the operand's own guard.  Both of
-        the operand's arms are always evaluated (:func:`_siblings`)."""
+        arms, and the results rejoin under the operand's own guard by the
+        same rule as :meth:`_map`: only two single-valued outcomes join into
+        one value; anything else (a halt, a two-faced undecided operation, a
+        partition :meth:`_map` already kept as siblings) keeps every exit
+        under its own polarity.  Both of the operand's arms are always
+        evaluated (:func:`_siblings`)."""
         if not isinstance(operand, GuardedValue):
             return self._map(
                 lambda arm: operate(arm, operand), operation=operation, blame=blame
@@ -225,7 +240,10 @@ class GuardedValue(FloorValue):
         )
         if _deferred(true_outcome) or _deferred(false_outcome):
             return _beside(operand.guard, true_outcome, false_outcome)
-        if _all_halt(true_outcome) or _all_halt(false_outcome):
+        if (
+            true_outcome.completed_value() is None
+            or false_outcome.completed_value() is None
+        ):
             return _siblings(operand.guard, true_outcome, false_outcome)
         return _joined(
             operand.guard, true_outcome, false_outcome, owner=owner, blame=blame
@@ -534,19 +552,31 @@ class GuardedValue(FloorValue):
         )
 
     def setitem(self, index, value, site, ctx):
-        """Rebind both statically known receiver faces after a subscript store."""
+        """``guarded[index] = value``: each arm stores through the one item
+        mutation (``store_effect_sugar.item_mutation``), a guarded index split
+        first, exactly as that arm would store unguarded.  An arm whose type
+        nothing here decides (a symbolic, a call result) is the undecided
+        mutation, its undetermined halt kept under the arm's polarity beside
+        the other arm's exits; a class-input arm is its dispatched edge; a
+        decided arm is its floor's own store.  An arm's own ``setitem`` is
+        never called past the door (#7757 step 7)."""
         return self._map_over(
             index,
-            lambda arm, index: arm.setitem(index, value, site, ctx),
+            lambda arm, index: _item_mutation_on_arm(
+                "__setitem__", arm, (index, value), site, ctx
+            ),
             operation="setitem",
             blame=site,
         )
 
     def delitem(self, index, site, ctx):
-        """Rebind both statically known receiver faces after a subscript delete."""
+        """``del guarded[index]``: each arm deletes through the one item
+        mutation, as :meth:`setitem` stores."""
         return self._map_over(
             index,
-            lambda arm, index: arm.delitem(index, site, ctx),
+            lambda arm, index: _item_mutation_on_arm(
+                "__delitem__", arm, (index,), site, ctx
+            ),
             operation="delitem",
             blame=site,
         )

@@ -188,7 +188,12 @@ def item_mutation(
       member.  No operation waits on a caller's actual.
     - A receiver whose type the lift decides is its floor's own store or
       delete, every face of it (an ``IndexError``, a ``KeyError``, a
-      ``TypeError``) kept.
+      ``TypeError``) kept.  A value that only carries others (a guarded
+      choice, ``GuardedValue``; a walrus, ``NamedExpressionValue``; an
+      authenticated exception-type operand) takes each value it carries
+      through this door again, never that value's own ``setitem`` or
+      ``delitem``: a symbolic arm of a guarded receiver is the undecided
+      mutation here as it is unguarded, its halt kept.
 
     ``label`` names the receiver's unknown post-state where a dispatched
     call leaves no ``after`` term."""

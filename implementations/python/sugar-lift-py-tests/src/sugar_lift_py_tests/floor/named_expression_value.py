@@ -230,13 +230,40 @@ class NamedExpressionValue(FloorValue):
         )
 
     def setitem(self, index, value, site, ctx):
+        """``(name := v)[k] = x``: the presented value stores through the one
+        item mutation (``store_effect_sugar.item_mutation``), the walrus bind
+        riding the outcome (``consume_operands``).  A presented value whose
+        type is not decided is the undecided mutation, its halt kept; its own
+        ``setitem`` is never called past the door (#7757 step 7)."""
+        from sugar_lift_py_tests.sugar.store_effect_sugar import item_mutation
+
         return consume_operands(
-            lambda presented: presented.setitem(index, value, site, ctx), self
+            lambda presented: item_mutation(
+                "__setitem__",
+                presented,
+                (index, value),
+                site,
+                ctx,
+                unit=getattr(site, "unit", None),
+            ),
+            self,
         )
 
     def delitem(self, index, site, ctx):
+        """``del (name := v)[k]``: the presented value deletes through the one
+        item mutation, as :meth:`setitem` stores."""
+        from sugar_lift_py_tests.sugar.store_effect_sugar import item_mutation
+
         return consume_operands(
-            lambda presented: presented.delitem(index, site, ctx), self
+            lambda presented: item_mutation(
+                "__delitem__",
+                presented,
+                (index,),
+                site,
+                ctx,
+                unit=getattr(site, "unit", None),
+            ),
+            self,
         )
 
     def attribute(self, name, site, ctx):

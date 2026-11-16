@@ -20,10 +20,33 @@ class AuthenticatedExceptionTypeValue(FloorValue):
         return self.value.to_term(owner=owner)
 
     def setitem(self, index, value, site, ctx):
-        return self.value.setitem(index, value, site, ctx)
+        """The carried type operand stores through the one item mutation
+        (``store_effect_sugar.item_mutation``), never its own ``setitem``
+        past the door: an operand whose type is not decided keeps the
+        undecided mutation's halt (#7757 step 7)."""
+        from sugar_lift_py_tests.sugar.store_effect_sugar import item_mutation
+
+        return item_mutation(
+            "__setitem__",
+            self.value,
+            (index, value),
+            site,
+            ctx,
+            unit=getattr(site, "unit", None),
+        )
 
     def delitem(self, index, site, ctx):
-        return self.value.delitem(index, site, ctx)
+        """The carried type operand deletes through the one item mutation."""
+        from sugar_lift_py_tests.sugar.store_effect_sugar import item_mutation
+
+        return item_mutation(
+            "__delitem__",
+            self.value,
+            (index,),
+            site,
+            ctx,
+            unit=getattr(site, "unit", None),
+        )
 
     def setattr(self, name, value, site, ctx):
         return self.value.setattr(name, value, site, ctx)
