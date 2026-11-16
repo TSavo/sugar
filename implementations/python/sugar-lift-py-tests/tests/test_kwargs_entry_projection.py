@@ -67,15 +67,44 @@ def test_each_collected_keyword_is_paired_with_its_variadic_keyword_projection()
 
 
 def test_a_double_star_expansion_entry_is_projected_too():
+    """``**d`` reaches the binder expanded, by the one ``**`` reader
+    (``spread_sugar._call_keywords``): its entries are keywords as written,
+    and each one ``**named`` collects is projected like any other."""
+    from sugar_lift_py_tests.sugar.spread_sugar import _call_keywords
+
     frame = _kwargs_frame()
     precision = TermValue(3)
-    bound = frame.bind_actuals(
-        (TermValue(1),),
-        (("**", fresh(DictValue, ((StringValue("precision"), precision),))),),
+    keywords = _call_keywords(
+        (("double-star", None, None),),
+        (fresh(DictValue, ((StringValue("precision"), precision),)),),
     )
+    assert keywords == (("precision", precision),)
+    bound = frame.bind_actuals((TermValue(1),), keywords)
     (pair,) = bound.projected_pairs
     assert pair.coordinate == frame.formal_coordinates[2].project("variadic-keyword", 0)
     assert pair.actual is precision
+
+
+def test_a_double_star_operand_whose_contents_are_not_current_has_no_roster():
+    """A dict that arrived (``allocation`` None: a global, a field, a
+    callee's return) holds entries code this frame does not see may have
+    changed: the one ``**`` reader gives no keyword roster, and the call is
+    the one unanswered call (#7757 H2)."""
+    from sugar_lift_py_tests.sugar.spread_sugar import _call_keywords
+
+    arrived = DictValue(((StringValue("precision"), TermValue(3)),), allocation=None)
+    assert _call_keywords((("double-star", None, None),), (arrived,)) is None
+
+
+def test_the_binder_never_reads_an_unexpanded_double_star_operand():
+    """The binder has no ``**`` reader of its own: an operand nothing
+    expanded is refused by name (#7757 H2)."""
+    frame = _kwargs_frame()
+    with pytest.raises(SourceCallBindingGap, match="unexpanded"):
+        frame.bind_actuals(
+            (TermValue(1),),
+            (("**", fresh(DictValue, ((StringValue("precision"), TermValue(3)),))),),
+        )
 
 
 def test_a_named_formal_takes_its_keyword_before_kwargs_collects():
