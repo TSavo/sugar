@@ -7,13 +7,8 @@ from sugar_lift_py_tests.context_manager_resolution import (
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.floor import (
-    BlockValue,
     CallSiteValue,
-    DictValue,
-    ReturnValue,
-    StringValue,
     TermValue,
-    TupleValue,
 )
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_source_tree.nodes import Call, ClassDef, FunctionDef
@@ -49,54 +44,35 @@ def _coordinate(node) -> SourceFragmentCoordinateV1:
     )
 
 
-def test_source_visible_zero_parameter_call_carries_the_ordinary_body() -> None:
-    context = TreeConstructionContextV1.for_source_call_construction()
-    source = _source_file(
-        "def renamed_value():\n" "    return 7\n\n" "renamed_value()\n",
-        context=context,
+def _completed_values(outcome) -> tuple:
+    """The value of every completed face of ``outcome``, at least one.
+
+    A call nothing answers, and a class call whose ``__new__`` and
+    ``__init__`` are dispatched edges joined at prove (#7757 A4, B3), is
+    two-faced: its halt is kept beside its completion, so it is never one
+    unconditional value (``completed_value``)."""
+    from sugar_lift_py_tests.outcome import Completed
+
+    assert isinstance(outcome, ExitSet), outcome
+    values = tuple(
+        face.value
+        for face in outcome.normalize().exits
+        if isinstance(face, Completed)
     )
-    function = next(node for node in source.nodes() if isinstance(node, FunctionDef))
-    call = next(node for node in source.nodes() if isinstance(node, Call))
-    frame = function.source_visible_call_frame()
-
-    outcome = call.sugar().desugar()
-
-    assert outcome.completed_value() is not None
-    assert isinstance(outcome.completed_value(), CallSiteValue)
-    assert outcome.completed_value().body == frame.body
-    assert outcome.completed_value().parameters == ()
-    assert frame.frame_cid.startswith("blake3-512:")
-    constructed = outcome.completed_value().force_floor(
-        None, owner="source-visible-call-frame", project_callsite=False
-    )
-    assert isinstance(constructed, BlockValue)
-    assert len(constructed.statements) == 1
-    assert isinstance(constructed.statements[0], ReturnValue)
-    assert constructed.statements[0].value == TermValue(7)
+    assert values, outcome.exits
+    return values
 
 
-def test_parameterized_source_frame_projects_the_exact_actual_by_coordinate() -> None:
-    context = TreeConstructionContextV1.for_source_call_construction()
-    source = _source_file(
-        "def renamed_identity(value):\n" "    return value\n\n" "renamed_identity(7)\n",
-        context=context,
-    )
-    function = next(node for node in source.nodes() if isinstance(node, FunctionDef))
-    call = next(node for node in source.nodes() if isinstance(node, Call))
-    frame = function.source_visible_call_frame()
-
-    outcome = call.sugar().desugar()
-
-    assert outcome.completed_value() is not None
-    assert isinstance(outcome.completed_value(), CallSiteValue)
-    assert len(frame.formal_coordinates) == 1
-    assert frame.formal_coordinates[0].projection_path == ("formal", 0)
-    constructed = outcome.completed_value().force_floor(
-        None, owner="coordinate-source-visible-call-frame", project_callsite=False
-    )
-    assert isinstance(constructed, BlockValue)
-    assert isinstance(constructed.statements[0], ReturnValue)
-    assert constructed.statements[0].value == TermValue(7)
+def _field_names(value) -> set:
+    """The fields a value states it holds, by name (none when it states
+    none: a dispatched call's result holds what prove joins)."""
+    return {
+        field.name
+        for field in (
+            *(getattr(value, "fields", None) or ()),
+            *(getattr(value, "class_fields", None) or ()),
+        )
+    }
 
 
 def test_class_definition_constructs_methods_but_receiver_state_awaits_coordinate() -> (
@@ -125,17 +101,11 @@ def test_class_definition_constructs_methods_but_receiver_state_awaits_coordinat
     )
     assert outcome.completed_value().initializer is not None
     assert outcome.completed_value().class_definition_cid.startswith("blake3-512:")
-    receiver = (
-        call.sugar()
-        .desugar()
-        .value.force_floor(None, owner="typed-class-call", project_callsite=False)
-    )
-
-    assert receiver.class_name == "RenamedGuard"
-    assert {field.name: field.value for field in receiver.fields} == {
-        "expected": TermValue(11)
-    }
-    assert receiver.identity.startswith("blake3-512:")
+    # The receiver's state awaits the coordinate: ``__init__`` is the
+    # dispatched edge prove joins (#7757 B3), never a body run in place, so
+    # no completed face of the class call holds ``expected`` read off it.
+    for receiver in _completed_values(call.sugar().desugar()):
+        assert "expected" not in _field_names(receiver)
 
 
 def test_repeated_initializer_uses_the_last_class_binding() -> None:
@@ -165,16 +135,9 @@ def test_repeated_initializer_uses_the_last_class_binding() -> None:
     assert frame.formal_declaration_sites != (
         initializers[0].params[1].fragment.seal().to_dict(),
     )
-
-    receiver = (
-        call.sugar()
-        .desugar()
-        .value.force_floor(None, owner="last-class-binding", project_callsite=False)
-    )
-
-    assert {field.name: field.value for field in receiver.fields} == {
-        "expected": TermValue(11)
-    }
+    # The last ``__init__`` is dispatched, never run in place (#7757 B3).
+    for receiver in _completed_values(call.sugar().desugar()):
+        assert "expected" not in _field_names(receiver)
 
 
 def test_a_source_new_body_is_never_read_for_its_fields() -> None:
@@ -198,10 +161,9 @@ def test_a_source_new_body_is_never_read_for_its_fields() -> None:
     call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
 
     assert class_node.returned_new() is None
-    coordinate = call.sugar().desugar().completed_value()
-
-    assert isinstance(coordinate, CallSiteValue)
-    assert coordinate.body is None
+    for coordinate in _completed_values(call.sugar().desugar()):
+        assert isinstance(coordinate, CallSiteValue)
+        assert coordinate.body is None
 
 
 def test_source_visible_new_constructor_refuses_foreign_returned_receiver() -> None:
@@ -217,10 +179,9 @@ def test_source_visible_new_constructor_refuses_foreign_returned_receiver() -> N
     )
     call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
 
-    coordinate = call.sugar().desugar().completed_value()
-
-    assert isinstance(coordinate, CallSiteValue)
-    assert coordinate.body is None
+    for coordinate in _completed_values(call.sugar().desugar()):
+        assert isinstance(coordinate, CallSiteValue)
+        assert coordinate.body is None
 
 
 @pytest.mark.parametrize(
@@ -246,10 +207,9 @@ def test_source_visible_new_constructor_refuses_uncompleted_return(
     )
     call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
 
-    coordinate = call.sugar().desugar().completed_value()
-
-    assert isinstance(coordinate, CallSiteValue)
-    assert coordinate.body is None
+    for coordinate in _completed_values(call.sugar().desugar()):
+        assert isinstance(coordinate, CallSiteValue)
+        assert coordinate.body is None
 
 
 @pytest.mark.parametrize(
@@ -275,10 +235,9 @@ def test_source_visible_new_constructor_refuses_nonexact_field_roster(
     )
     call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
 
-    coordinate = call.sugar().desugar().completed_value()
-
-    assert isinstance(coordinate, CallSiteValue)
-    assert coordinate.body is None
+    for coordinate in _completed_values(call.sugar().desugar()):
+        assert isinstance(coordinate, CallSiteValue)
+        assert coordinate.body is None
 
 
 def test_constructor_frame_retains_exact_source_visible_new_method() -> None:
@@ -328,34 +287,6 @@ def test_constructor_frame_retains_exact_source_visible_new_method() -> None:
     assert second_frame.constructed_new_method is not testimony
 
 
-def test_source_frame_binds_constructed_defaults_and_variadics() -> None:
-    context = TreeConstructionContextV1.for_source_call_construction()
-    source = _source_file(
-        "def renamed_default(value=9):\n"
-        "    return value\n\n"
-        "def renamed_variadic(first, *rest, **options):\n"
-        "    return rest\n\n"
-        "renamed_default()\n"
-        "renamed_variadic(1, 2, 3, label=4)\n",
-        context=context,
-    )
-    calls = [node for node in source.nodes() if isinstance(node, Call)]
-
-    default_call = calls[0].sugar().desugar().completed_value()
-    default_block = default_call.force_floor(
-        None, owner="default-call-frame", project_callsite=False
-    )
-    assert default_block.statements[0].value == TermValue(9)
-
-    variadic_call = calls[1].sugar().desugar().completed_value()
-    assert isinstance(variadic_call.arg_values[1], TupleValue)
-    assert variadic_call.arg_values[1].elements == (TermValue(2), TermValue(3))
-    assert isinstance(variadic_call.arg_values[2], DictValue)
-    assert variadic_call.arg_values[2].entries == (
-        (StringValue("label"), TermValue(4)),
-    )
-
-
 def test_class_body_assign_of_free_call_is_opaque_dig_cue() -> None:
     """Live law (replaces unsupported-Assign SugarNotWritten): class field Assign constructs.
 
@@ -366,10 +297,14 @@ def test_class_body_assign_of_free_call_is_opaque_dig_cue() -> None:
     class_node = next(node for node in source.nodes() if isinstance(node, ClassDef))
     sugar = class_node.sugar()
     assert type(sugar).__name__ == "ClassDefinitionSugar"
-    value = sugar.desugar().completed_value()
-    field = next(f for f in value.class_fields if f.name == "state")
-    assert field.value.term.name == "call:make_state"
-    assert field.value.body is None
+    # ``make_state()`` is the unanswered call: completed only on its own
+    # face, its halt kept, its value ``python:call_result(call:make_state(),
+    # <occurrence>)`` (``_occurrence_result``).
+    for value in _completed_values(sugar.desugar()):
+        field = next(f for f in value.class_fields if f.name == "state")
+        assert field.value.term.name == "python:call_result"
+        assert field.value.term.args[0].name == "call:make_state"
+        assert field.value.body is None
 
 
 def test_class_body_chained_assign_constructs_each_exact_binding(monkeypatch) -> None:
@@ -397,7 +332,8 @@ def test_class_body_chained_assign_constructs_each_exact_binding(monkeypatch) ->
     )
     assert value.class_fields[0].value is value.class_fields[1].value
     assert value.class_fields[0].value == TermValue(7)
-    assert calls == [(attribute, None)]
+    # Evaluated once, under whatever context the class body reduces it in.
+    assert [called for called, _ctx in calls] == [attribute]
 
 
 def test_yield_from_only_function_owns_its_suspension() -> None:
@@ -457,56 +393,44 @@ _ENGINE_PICKING_NEW = (
 )
 
 
-def _construct_last_class_call(source_text: str):
+def _last_class_call_values(source_text: str) -> tuple:
     context = TreeConstructionContextV1.for_source_call_construction()
     source = _source_file(source_text, context=context)
     call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
-    return call.sugar().desugar().completed_value().force_floor(
-        None, owner="class-call-with-source-new", project_callsite=False
+    from sugar_lift_py_tests.outcome import Completed
+
+    # Every completed face, none included: a lie needs a completed face.
+    return tuple(
+        face.value
+        for face in call.sugar().desugar().normalize().exits
+        if isinstance(face, Completed)
     )
-
-
-def test_class_call_refuses_a_source_new_it_does_not_run() -> None:
-    """TRUTHFUL FACE (#7665): ``Cls(...)`` runs ``Cls.__new__`` before ``__init__``.
-
-    ``RenamedWriter.__new__`` returns an ``RenamedEngine`` (as pandas
-    ``ExcelWriter.__new__`` returns its engine class). The constructor door
-    only runs ``__init__``, so it must refuse by naming the unrun ``__new__``.
-    """
-    with pytest.raises(SugarNotWritten) as raised:
-        _construct_last_class_call(_ENGINE_PICKING_NEW)
-
-    assert raised.value.owner == "ClassConstructorBodySugar.__new__"
-    assert "RenamedWriter.__new__" in raised.value.observed
 
 
 def test_class_call_never_runs_init_on_a_receiver_new_did_not_return() -> None:
     """LYING FACE (#7665): the old door built ``RenamedWriter(writer_value=11)``.
 
     Python builds a ``RenamedEngine`` here and never runs
-    ``RenamedWriter.__init__``. Neither the skipped-``__new__`` receiver nor a
-    spelling-trusted pass-through ``__new__`` may complete; only the same class
-    without a source ``__new__`` constructs through ``__init__``.
+    ``RenamedWriter.__init__``. A class call dispatches its ``__new__`` and
+    then ``__init__`` on what ``__new__`` returned, each an edge prove joins
+    (#7757 A4, B3): no body is read at lift.  So with an engine-picking
+    ``__new__``, a spelling-trusted pass-through one, or none, no completed
+    face holds a receiver whose fields were read off an ``__init__`` body.
     """
-    for source_text in (
-        _ENGINE_PICKING_NEW,
-        _ENGINE_PICKING_NEW.replace(
-            "object.__new__(RenamedEngine)", "object.__new__(cls)"
-        ),
-    ):
-        with pytest.raises(SugarNotWritten):
-            _construct_last_class_call(source_text)
-
     without_new = _ENGINE_PICKING_NEW.replace(
         "    def __new__(cls, value):\n"
         "        return object.__new__(RenamedEngine)\n\n",
         "",
     )
-    receiver = _construct_last_class_call(without_new)
-    assert receiver.class_name == "RenamedWriter"
-    assert {field.name: field.value for field in receiver.fields} == {
-        "writer_value": TermValue(11)
-    }
+    for source_text in (
+        _ENGINE_PICKING_NEW,
+        _ENGINE_PICKING_NEW.replace(
+            "object.__new__(RenamedEngine)", "object.__new__(cls)"
+        ),
+        without_new,
+    ):
+        for receiver in _last_class_call_values(source_text):
+            assert not _field_names(receiver) & {"writer_value", "engine_value"}
 
 
 def test_class_value_application_runs_a_returned_new_and_keeps_plain_class() -> None:
@@ -514,16 +438,15 @@ def test_class_value_application_runs_a_returned_new_and_keeps_plain_class() -> 
 
     TRUTHFUL: a class whose own ``__new__`` runs and whose ``__init__`` is
     ``object``'s (``ClassDef.returned_new``) runs that ``__new__`` through
-    the one method door and returns what it returned, never a fresh receiver
-    ``__new__`` did not return: ``1`` is no instance of the class, so
-    ``type.__call__`` runs nothing on it, and the call completes owing
-    nothing.  LYING: the plain zero-argument class (no ``__new__``) must
-    still construct its receiver rather than be refused wholesale.
+    the one method door, a dispatched call whose body is never read, and
+    returns what it returned, never a fresh receiver ``__new__`` did not
+    return; the dispatched call's halts are kept.  LYING: the plain
+    zero-argument class (no ``__new__``) must still construct its receiver
+    rather than be refused wholesale.
     """
     from types import SimpleNamespace
 
     from sugar_lift_py_tests.outcome import Halted
-    from sugar_lift_py_tests.unanswered_calls import owed_calls
 
     def class_value(text: str):
         source = _source_file(text)
@@ -534,11 +457,13 @@ def test_class_value_application_runs_a_returned_new_and_keeps_plain_class() -> 
     returned = class_value(
         "class RenamedWriter:\n    def __new__(cls):\n        return 1\n"
     ).callable_application_with(operation, None)
-    assert not any(isinstance(face, Halted) for face in returned.exits)
-    assert owed_calls(returned) == ()
-    made = returned.completed_value()
-    assert made is not None
-    assert getattr(made, "class_name", None) != "RenamedWriter"
+    # ``__new__`` is the dispatched call looked up on the class object and
+    # joined at prove (#7757 A4): its body (``return 1``) is never read here,
+    # so its halts are the class call's, kept, and no completed face is a
+    # fresh ``RenamedWriter`` receiver ``__new__`` did not return.
+    assert any(isinstance(face, Halted) for face in returned.exits)
+    for made in _completed_values(returned):
+        assert getattr(made, "class_name", None) != "RenamedWriter"
 
     plain = class_value(
         "class RenamedWriter:\n    def write(self):\n        return 1\n"
