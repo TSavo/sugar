@@ -27,7 +27,8 @@ class GeneratorValue(FloorValue):
     raise) and what it owes.  It is stated where the generator is pulled,
     never where it is made: ``next_with`` hands it to the consumer's one
     iterator path.  ``term`` is the generator expression's own coordinate
-    (``py.generatorexp(<occurrence>)``, ``ComprehensionSugar._own_coordinate``).
+    (``py.generatorexp(<occurrence>, <evaluation key>)``,
+    ``ComprehensionSugar._own_coordinate``).
 
     Every consumer that iterates pulls through ``next_with``, the one
     iterator path (``iterator_operation.stepped``): a ``for``, a

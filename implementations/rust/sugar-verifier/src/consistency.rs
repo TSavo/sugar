@@ -7241,6 +7241,123 @@ fn call_result_parts(term: &Json) -> Option<(&Json, &str)> {
     Some((call, site))
 }
 
+/// The kit's terms that name one evaluation of a comprehension
+/// (`ComprehensionSugar._own_coordinate`, `_symbolic_writes`): a list, set,
+/// dict or generator the comprehension made, and the last write a walrus in
+/// it carried out. Each carries that evaluation as a
+/// `python:occurrence(<site CID>, <path>…)` argument
+/// (`ComprehensionSugar._evaluation_key`).
+const PER_EVALUATION_TERMS: [&str; 6] = [
+    "py.listcomp",
+    "py.setcomp",
+    "py.dictcomp",
+    "py.generatorexp",
+    "python:comprehension.last_write",
+    "python.comprehension.wrote",
+];
+
+/// The occurrence path a callee's frame adds for the call whose result is
+/// `result_term` (`python:call_result(<call>, python:occurrence(<site CID>,
+/// <path>…))`): the call's own path, then `call:<site CID>`, as the kit
+/// spells a callee frame (`occurrence.call_frame_path`). `None` when the
+/// term is not that shape.
+fn call_frame_path(result_term: &Json) -> Option<Vec<Json>> {
+    let occurrence = result_term.get("args")?.as_array()?.get(1)?;
+    if occurrence.get("kind")?.as_str()? != "ctor"
+        || occurrence.get("name")?.as_str()? != PYTHON_OCCURRENCE
+    {
+        return None;
+    }
+    let (site, path) = occurrence.get("args")?.as_array()?.split_first()?;
+    let site = site.get("value")?.as_str()?;
+    let mut frame = path.to_vec();
+    frame.push(string_const_term(&format!("call:{site}")));
+    Some(frame)
+}
+
+/// `formula`, a contract about to be instantiated at the call whose result
+/// is `result_term`, with every evaluation it states keyed by that call
+/// (step 9). A function's contract is reduced once for every caller, so a
+/// comprehension in its body carries the evaluation key it had there (no
+/// frame); two calls of the function make two lists, never one
+/// (`f(a) is not f(b)` is true in Python). Each per-evaluation term's
+/// `python:occurrence` argument takes the call's frame
+/// (`call_frame_path`) after its site and before its own path, as the kit
+/// keys a site evaluated inside a callee frame (`occurrence.py`). Applied
+/// before the formals and `out` are bound, so no caller term is rewritten.
+/// A term of no other kind is unchanged.
+fn at_its_call(formula: &Json, result_term: &Json) -> Json {
+    match call_frame_path(result_term) {
+        Some(frame) => in_call_frame(formula, &frame),
+        None => formula.clone(),
+    }
+}
+
+fn in_call_frame(node: &Json, frame: &[Json]) -> Json {
+    match node {
+        Json::Array(items) => Json::Array(
+            items
+                .iter()
+                .map(|item| in_call_frame(item, frame))
+                .collect(),
+        ),
+        Json::Object(fields) => {
+            let per_evaluation = fields
+                .get("name")
+                .and_then(Json::as_str)
+                .is_some_and(|name| PER_EVALUATION_TERMS.contains(&name));
+            let mut out = serde_json::Map::with_capacity(fields.len());
+            for (key, value) in fields {
+                let mut value = in_call_frame(value, frame);
+                if per_evaluation && key == "args" {
+                    value = evaluation_in_call_frame(value, frame);
+                }
+                out.insert(key.clone(), value);
+            }
+            Json::Object(out)
+        }
+        other => other.clone(),
+    }
+}
+
+/// The arguments of a per-evaluation term with its evaluation key
+/// (`python:occurrence(<site>, <path>…)`) taken into the call's frame:
+/// `python:occurrence(<site>, <frame>…, <path>…)`.
+fn evaluation_in_call_frame(args: Json, frame: &[Json]) -> Json {
+    let Json::Array(args) = args else {
+        return args;
+    };
+    Json::Array(
+        args.into_iter()
+            .map(|arg| {
+                let is_key = arg.get("kind").and_then(Json::as_str) == Some("ctor")
+                    && arg.get("name").and_then(Json::as_str) == Some(PYTHON_OCCURRENCE);
+                let keyed: Option<Vec<Json>> = if is_key {
+                    arg.get("args")
+                        .and_then(Json::as_array)
+                        .and_then(|key| key.split_first())
+                        .map(|(site, path)| {
+                            let mut keyed = vec![site.clone()];
+                            keyed.extend(frame.iter().cloned());
+                            keyed.extend(path.iter().cloned());
+                            keyed
+                        })
+                } else {
+                    None
+                };
+                match keyed {
+                    Some(keyed) => {
+                        let mut qualified = arg;
+                        qualified["args"] = Json::Array(keyed);
+                        qualified
+                    }
+                    None => arg,
+                }
+            })
+            .collect(),
+    )
+}
+
 /// Whether the call term `call` names the target symbol `symbol`: the
 /// lifter's one call speller (`call_symbol.py`) spells the call of a target
 /// `call:<target>`, and a Python target symbol is `python:<target>` (a
@@ -7605,6 +7722,10 @@ fn linked_ambient_post_instances_for_inv(
                     instance = IrFormula::And(conjuncts).to_value();
                 }
             }
+            // Each evaluation the contract states (a comprehension's own
+            // coordinate) is this call's: keyed by the call's frame before
+            // any caller term enters (`at_its_call`).
+            instance = at_its_call(&instance, result_term);
             instance = substitute_call_bindings(&instance, &bindings);
             instance = crate::instantiate::substitute_formula_pub(
                 &instance,
@@ -14731,6 +14852,44 @@ mod tests {
         );
         // A claim over decided values reads none.
         assert!(undetermined_states_read(&json!({"inv": eqf(int(1), int(1))})).is_empty());
+    }
+
+    #[test]
+    fn a_comprehension_a_contract_states_is_each_calls_own() {
+        // `def f(xs): return [x for x in xs]`: f's post states its own
+        // coordinate, keyed by the evaluation it had in f's reduction (no
+        // frame). Two calls of f make two lists.
+        let key = |segments: &[&str]| {
+            let args: Vec<Json> = segments.iter().copied().map(str_const).collect();
+            json!({"kind": "ctor", "name": "python:occurrence", "args": args})
+        };
+        let listcomp = json!({"kind": "ctor", "name": "py.listcomp", "args": [
+            {"kind": "ctor", "name": "python:source-occurrence", "args": [str_const("src")]},
+            key(&["comp-site"]),
+        ]});
+        let post = eqf(json!({"kind": "var", "name": "out"}), listcomp);
+        let result = |segments: &[&str]| {
+            json!({"kind": "ctor", "name": "python:call_result", "args": [
+                {"kind": "ctor", "name": "call:f", "args": [{"kind": "var", "name": "a"}]},
+                key(segments),
+            ]})
+        };
+        let first = at_its_call(&post, &result(&["site-a"]));
+        let second = at_its_call(&post, &result(&["site-b", "loop:item#0"]));
+        assert_ne!(first, second);
+        // The call's frame follows the site: the call's own path, then the call.
+        assert_eq!(first["args"][1]["args"][1], key(&["comp-site", "call:site-a"]));
+        assert_eq!(
+            second["args"][1]["args"][1],
+            key(&["comp-site", "loop:item#0", "call:site-b"])
+        );
+        // Its occurrence and `out` are untouched; so is every other term.
+        assert_eq!(first["args"][0], post["args"][0]);
+        assert_eq!(first["args"][1]["args"][0], post["args"][1]["args"][0]);
+        let other = eqf(json!({"kind": "var", "name": "out"}), result(&["inner"]));
+        assert_eq!(at_its_call(&other, &result(&["site-a"])), other);
+        // A result that is no call's leaves the contract as it is.
+        assert_eq!(at_its_call(&post, &int(1)), post);
     }
 
     #[test]

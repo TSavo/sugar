@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sugar_lift_py_tests.call_symbol import call_symbol
 
@@ -25,10 +25,20 @@ class ComprehensionValue(GuardStableValue):
     ``finite_elements`` is present only when the comprehension owner projected
     every member of an exact finite iterable; ``None`` means no such testimony
     exists and must never be treated as an empty collection.
+
+    ``term`` is the comprehension's own coordinate at its evaluation,
+    ``<kind>(<occurrence>, <evaluation key>)``
+    (``ComprehensionSugar._own_coordinate``), finite or not: what every
+    reader of its kind reads.  ``display`` is the list or set a comprehension
+    whose every member is in hand built (``ComprehensionSugar._finite_map``):
+    decided whole, it is what the proof states for it (``to_term``), never
+    the coordinate.  A generator has none: it is never consumed where it is
+    made, and states its coordinate.
     """
 
     term: object
     finite_elements: tuple | None = None
+    display: object = field(default=None, compare=False)
 
     def denotes_value(self) -> bool:
         """A constructed fold denotes the sequence it builds.
@@ -40,7 +50,10 @@ class ComprehensionValue(GuardStableValue):
         return True
 
     def to_term(self, *, owner: str):
-        del owner
+        """What the proof states for this value: the display a decided list
+        or set built (``display``), else its own coordinate."""
+        if self.display is not None:
+            return self.display.to_term(owner=owner)
         return self.term
 
     def length(self, site):
@@ -79,13 +92,19 @@ class ComprehensionValue(GuardStableValue):
         whose iteration order or members are not testified, or no finite
         testimony) is an undecided RHS -- never ``TypeError``."""
         del ctx
+        from dataclasses import replace
+
         from sugar_lift_py_tests.ir import _Ctor
         from sugar_lift_py_tests.outcome import ExitSet
 
         name = self.term.name if type(self.term) is _Ctor else None
-        if self.finite_elements is not None and name in ("py.listcomp", "py.genexp"):
+        ordered = ("py.listcomp", "py.generatorexp")
+        if self.finite_elements is not None and name in ordered:
             return ExitSet.completed(tuple(self.finite_elements))
-        return _undecided_slice_rhs(operation, self)
+        # The order a set's members are assigned in is not testified: the
+        # undecided RHS names the comprehension by its own coordinate, never
+        # by its display (a ground term is no runtime operand).
+        return _undecided_slice_rhs(operation, replace(self, display=None))
 
     def project_sequence_with(self, operation, ctx):
         """`a, b = <comprehension>` -- the comprehension owns the cardinality.
@@ -125,7 +144,7 @@ class ComprehensionValue(GuardStableValue):
                                 item.to_term(
                                     owner="ComprehensionValue.contains member"
                                 ),
-                                self.term,
+                                self.to_term(owner=str(site)),
                             ],
                         ),
                         site,
@@ -151,7 +170,7 @@ class ComprehensionValue(GuardStableValue):
                     "py.in",
                     [
                         item.to_term(owner="ComprehensionValue.contains member"),
-                        self.term,
+                        self.to_term(owner=str(site)),
                     ],
                 ),
                 site,
@@ -165,8 +184,11 @@ class ComprehensionValue(GuardStableValue):
         Finite literal comprehensions fold to concrete collection floors before
         truth is asked. A residual comprehension keeps its constructor term and
         emits the same truthy atom as other opaque coordinates — never invent
-        emptiness, never panic for a lawful ``if history:`` face.
+        emptiness, never panic for a lawful ``if history:`` face.  A list or
+        set decided whole (``display``) is that display's truth.
         """
+        if self.display is not None:
+            return self.display.truth(site)
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import py_truthy
         from sugar_lift_py_tests.outcome import ExitSet
@@ -200,6 +222,9 @@ class ComprehensionValue(GuardStableValue):
         )
 
     def add(self, other, site, ctx):
+        if self.display is not None:
+            # A list decided whole adds as the list it is.
+            return self.display.add(other, site, ctx)
         from sugar_lift_py_tests.floor.list_value import ListValue
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import ExitSet
@@ -264,7 +289,10 @@ class ComprehensionValue(GuardStableValue):
         return super().bitwise_or(other, site, ctx)
 
     def multiply(self, other, site, ctx):
-        """Preserve repetition when the count is a constructed Python integer."""
+        """Preserve repetition when the count is a constructed Python integer.
+        A list decided whole repeats as the list it is."""
+        if self.display is not None:
+            return self.display.multiply(other, site, ctx)
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.floor.term_value import TermValue
 

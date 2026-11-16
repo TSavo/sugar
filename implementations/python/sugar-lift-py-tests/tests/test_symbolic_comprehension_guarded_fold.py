@@ -16,9 +16,9 @@ face the one before it completed on, and each halt is an arm of the
 comprehension at lift (#7757: a halt is never dropped).
 
 What the comprehension accumulates is not interpreted at prove: the proof
-states the comprehension's own coordinate, its kind over its occurrence
-(``ComprehensionSugar._own_coordinate``), and reading it owes the undecided
-member (#8916).  None of the recurrence is stated inside that term.
+states the comprehension's own coordinate, its kind over its occurrence and
+evaluation (``ComprehensionSugar._own_coordinate``), and reading it owes the
+undecided member (#8916).  None of the recurrence is stated inside that term.
 
 The binding target is the capability under test. A generator target is the
 SAME binding problem a statement loop's target solves, so a tuple/list target
@@ -173,10 +173,11 @@ def _has_lambda(term) -> bool:
 
 def _own(post):
     """The kind of the comprehension's own coordinate this post binds: its
-    kind over its occurrence, and nothing else."""
+    kind over its occurrence and this evaluation of it, and nothing else."""
     coordinate = post.args[1]
-    (occurrence,) = coordinate.args
+    occurrence, evaluation = coordinate.args
     assert occurrence.name == "python:source-occurrence", coordinate
+    assert evaluation.name == "python:occurrence", coordinate
     return coordinate.name
 
 

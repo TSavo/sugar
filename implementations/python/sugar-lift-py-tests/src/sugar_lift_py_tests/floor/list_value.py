@@ -224,6 +224,9 @@ class ListValue(GuardStableValue):
             )
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
 
+        if type(other) is ComprehensionValue and other.display is not None:
+            # A comprehension decided whole is the list (or set) it built.
+            return self.add(other.display, site, ctx)
         if type(other) is ComprehensionValue:
             # A constructed comprehension is already a sequence coordinate
             # (symbolic fold). Concatenate as another coordinate — never mint

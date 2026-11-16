@@ -210,14 +210,16 @@ def test_nonfinite_iterable_with_undecided_filter_owes_the_filter_read() -> None
     assert "python:iter.completes" in repr(done.guard), done.guard
     assert "python:attribute.completes" in repr(done.guard), done.guard
     # Nothing is projected: the value is the comprehension's own coordinate,
-    # its kind over its occurrence.  The filter's read is stated where it
-    # ran (its halt and its debt, above), never inside that term.
+    # its kind over its occurrence and this evaluation of it.  The filter's
+    # read is stated where it ran (its halt and its debt, above), never
+    # inside that term.
     value = peel_walrus_binds(done.value)[1]
     assert isinstance(value, ComprehensionValue), value
     assert value.finite_elements is None
     assert value.term.name == "py.listcomp", value.term
-    (occurrence,) = value.term.args
+    occurrence, evaluation = value.term.args
     assert occurrence.name == "python:source-occurrence", value.term
+    assert evaluation.name == "python:occurrence", value.term
     assert "attr:keep" not in repr(value.term), value.term
     # Every arm owes the read as the one ``undecided`` member (no symbol: a
     # read is not an import-bound call).

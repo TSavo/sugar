@@ -153,8 +153,9 @@ def holds_recurrence_value(value) -> bool:
     A comprehension's symbolic fold is the same recurrence over the same
     iterator path (``iterator_operation.iterated``, ``stepped``): a
     ``ComprehensionValue`` with no finite members holds the comprehension's
-    own coordinate, ``py.listcomp(<occurrence>)`` (or its set, dict or
-    generator kind, ``ComprehensionSugar._own_coordinate``), a constructor
+    own coordinate, ``py.listcomp(<occurrence>, <evaluation key>)`` (or its
+    set, dict or generator kind, ``ComprehensionSugar._own_coordinate``), a
+    constructor
     prove does not interpret, so the list, set or dict it accumulates (and
     what a generator yields) is a value the solver chooses.  One whose owner
     projected every member (``finite_elements``) is decided.
