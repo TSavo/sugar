@@ -457,9 +457,12 @@ class ClassDefinitionValue(GuardStableValue):
           callable and refuses by name).  A frame the call form
           authenticated must be the selected function's own.
         - A function the class namespace holds as a field (``f = lambda x:
-          x``, ``m = some_def``), read off its class, is the function itself,
-          unbound: the function's own call applies the written actuals
-          (``LambdaCallable.callable_application_with``).
+          x``, ``m = some_def``), read off its class, is the same one
+          dispatched call (``_dispatched_on_class``), as it is read off an
+          instance (``ObjectValue.call_member``): prove binds it unbound,
+          the written actuals as they stand, where its namespace row states
+          the ``field`` kind, and leaves it owed otherwise.  Nothing here
+          selects or applies the function (#7757 entry 6).
         - A lookup it does not decide is the unanswered call; a name no
           source class of the order holds, a property (the property object
           is not callable) and any other value refuse by name."""
@@ -504,16 +507,11 @@ class ClassDefinitionValue(GuardStableValue):
         from sugar_lift_py_tests.floor.lambda_callable import LambdaCallable
 
         if isinstance(value, LambdaCallable) and required_frame is None:
-            from sugar_lift_py_tests.callable_application import CallableApplication
-
-            return value.callable_application_with(
-                CallableApplication(
-                    (*arguments, *(actual for _keyword, actual in keywords)),
-                    tuple(keyword for keyword, _actual in keywords),
-                    blame,
-                ),
-                ctx,
-            )
+            # A function held as a class field, read off the class: the same
+            # one dispatched call, looked up on this class object at prove and
+            # bound there by the ``field`` kind its row states, never the
+            # function applied here (#7757 entry 6: one MRO lookup).
+            return self._dispatched_on_class(name, arguments, keywords, blame)
         raise SugarNotWritten(
             owner=owner,
             blame=blame,

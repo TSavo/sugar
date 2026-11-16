@@ -181,32 +181,25 @@ class BuiltinSuperValue(FloorValue):
         if isinstance(found, str):
             return self._builtin_method(found, name, arguments, keywords, blame, ctx)
         return self._selected_call(
-            holder, name, method, value, arguments, keywords, blame, ctx
+            holder, name, method, value, arguments, keywords, blame
         )
 
-    def _selected_call(
-        self, holder, name, method, value, arguments, keywords, blame, ctx
-    ):
+    def _selected_call(self, holder, name, method, value, arguments, keywords, blame):
         """``super().<name>(...)`` whose member the one class-namespace
         lookup selected (``ClassDefinitionValue.namespace_member`` from the
         class after ``__class__``), bound to the original receiver as
         ``super_getattro`` binds it (``__get__(obj, starttype)``).
 
-        - A ``def`` the order holds for ``name`` is the one dispatched call
-          (``_dispatched``): prove looks ``name`` up on the receiver's order
-          from the class after ``__class__`` and binds it by the kind its
-          namespace row states, as ``super_getattro`` binds it.  The lookup
-          here only tells that a method call is what this is.
-        - A function the holding class's namespace holds as a field
-          (``f = lambda self: 1``, ``m = some_def``) is bound to the receiver
-          when it is an instance -- the receiver its first actual -- and is
-          the function itself when the receiver is the class (``super()`` in
-          a classmethod: ``__get__(None, starttype)``); the function's own
-          call applies it.
+        - A ``def`` the order holds for ``name``, and a function the holding
+          class's namespace holds as a field (``f = lambda self: 1``,
+          ``m = some_def``), are the one dispatched call (``_dispatched``):
+          prove looks ``name`` up on the receiver's order from the class
+          after ``__class__`` and binds it by the kind its namespace row
+          states, as ``super_getattro`` binds it (a ``field`` to the
+          instance, or unbound where the receiver is the class); a field
+          whose row states no kind stays owed.  The lookup here only tells
+          that a method call is what this is (#7757 entry 6).
         - Any other value refuses by name."""
-        from sugar_lift_py_tests.floor.class_definition_value import (
-            ClassDefinitionValue,
-        )
         from sugar_lift_py_tests.floor.lambda_callable import LambdaCallable
         from sugar_source_tree.panic import SugarNotWritten
 
@@ -219,31 +212,12 @@ class BuiltinSuperValue(FloorValue):
                 fix=fix,
             )
 
-        if method is not None:
-            # A ``def`` of the receiver's order after ``__class__``: the one
-            # dispatched call, looked up after ``__class__`` at prove, never
-            # the function selected here (#7757 entry 6: one MRO lookup).
+        if method is not None or isinstance(value, LambdaCallable):
+            # A ``def`` or a function field of the receiver's order after
+            # ``__class__``: the one dispatched call, looked up after
+            # ``__class__`` at prove, never the function selected or applied
+            # here (#7757 entry 6: one MRO lookup).
             return self._dispatched(name, arguments, keywords, blame)
-        if isinstance(value, LambdaCallable):
-            from sugar_lift_py_tests.callable_application import CallableApplication
-
-            bound = (
-                ()
-                if isinstance(self.receiver, ClassDefinitionValue)
-                else (self.receiver,)
-            )
-            return value.callable_application_with(
-                CallableApplication(
-                    (
-                        *bound,
-                        *arguments,
-                        *(actual for _keyword, actual in keywords),
-                    ),
-                    tuple(keyword for keyword, _actual in keywords),
-                    blame,
-                ),
-                ctx,
-            )
         refuse(
             owner=_OWNER,
             blame=blame,

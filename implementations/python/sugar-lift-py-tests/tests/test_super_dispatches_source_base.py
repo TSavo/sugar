@@ -172,6 +172,48 @@ def test_super_is_looked_up_after_the_cell_at_prove(tmp_path) -> None:
     assert call.arg_values[-1] == StringValue("v")
 
 
+_FIELD_BASE = (
+    "class Base:\n"
+    "    m = lambda self, n: n // 0\n"
+    "\n"
+    "class Derived(Base):\n"
+    "    def m(self, n):\n"
+    "        return super().m(n)\n"
+)
+
+
+def test_super_of_a_function_class_field_is_the_dispatched_call(tmp_path) -> None:
+    # ``Base`` holds ``m`` as a lambda field.  ``super().m(3)`` is the same
+    # one dispatched call a ``def`` there is, looked up after ``Derived`` at
+    # prove and bound by the ``field`` kind ``Base``'s namespace row states
+    # (#7757 entry 6): the receiver is the first operand, never the lambda
+    # applied here.
+    context, (_base, derived) = _constructed(_FIELD_BASE, tmp_path)
+    receiver = derived.fresh_receiver("receiver", allocation=FRAME_FRESH)
+
+    call = _edge_call(
+        BuiltinSuperValue(current_class=derived, receiver=receiver).call_method_value(
+            "m",
+            (StringValue("v"),),
+            owner="test",
+            blame="super-m",
+            ctx=context,
+        )
+    )
+
+    assert call.target_name == "dispatch:m", call.target_name
+    term = call.term
+    if getattr(term, "name", None) == "python:call_result":
+        term = term.args[0]
+    (lookup,) = (arg for arg in term.args if getattr(arg, "name", None) == "py.lookup")
+    assert [part.value for part in lookup.args] == [
+        "",
+        "python:super_dispatch.Derived",
+    ]
+    assert call.arg_values[0] is receiver
+    assert call.arg_values[-1] == StringValue("v")
+
+
 def test_super_names_no_function_without_a_join_symbol() -> None:
     # No workspace root: no class names a join symbol, so nothing can name
     # where the method is looked up -- the one unanswered call, owed.
