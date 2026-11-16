@@ -505,18 +505,14 @@ def _method_callsite(
 ):
     """The method coordinate ``call:<name>(receiver, args)`` of this call."""
     from sugar_lift_py_tests.floor import CallSiteValue
-    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.floor.object_identity import call_operand_terms
+    from sugar_lift_py_tests.ir import ctor
 
     owner = str(site)
-    kwarg_terms = [
-        ctor("py.kwarg", [str_const(key), value.to_term(owner=owner)])
-        for key, value in kw_values
-    ]
+    # The receiver and each actual as the call finds it (``identity_term``).
     term = ctor(
         call_symbol(name),
-        [receiver.to_term(owner=owner)]
-        + [value.to_term(owner=owner) for value in positional]
-        + kwarg_terms,
+        call_operand_terms((receiver, *positional), kw_values, site, owner=owner),
         symbol_kind="method-coordinate",
     )
     return CallSiteValue(

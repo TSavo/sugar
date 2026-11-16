@@ -834,6 +834,7 @@ def dispatch_edge_call(
     owed (``consistency::dispatch_answer``)."""
     from sugar_lift_py_tests.call_symbol import call_symbol
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.object_identity import call_operand_terms
     from sugar_lift_py_tests.ir import ctor, str_const
     from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
 
@@ -854,12 +855,11 @@ def dispatch_edge_call(
             *kw_values,
         )
     )
+    # Each operand as the call finds it (``object_identity.identity_term``):
+    # a container whose contents are not current by its identity, never by
+    # contents prove would read on the method's formal (#7757 H7).
     arguments = (
-        [value.to_term(owner=owner) for value in (*received, *positional)]
-        + [
-            ctor("py.kwarg", [str_const(keyword), value.to_term(owner=owner)])
-            for keyword, value in kw_values
-        ]
+        call_operand_terms((*received, *positional), kw_values, site, owner=owner)
         + (
             [lookup_term(on_class, after)]
             if on_class is not None or after is not None

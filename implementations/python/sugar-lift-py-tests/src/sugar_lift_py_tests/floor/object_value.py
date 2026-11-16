@@ -1073,8 +1073,10 @@ class ObjectValue(FloorValue):
         answer.  ``halted_at``: where its halt leaves when ``site`` is a
         synthetic call's slot id (``call_method_value``)."""
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
+
+        from .object_identity import call_operand_terms
 
         target = f"{self.class_name}.{name}"
         term_owner = str(site)
@@ -1084,14 +1086,11 @@ class ObjectValue(FloorValue):
             parameters=(),
             term=ctor(
                 call_symbol(target),
-                [value.to_term(owner=term_owner) for value in (self, *arguments)]
-                + [
-                    ctor(
-                        "py.kwarg",
-                        [str_const(keyword), value.to_term(owner=term_owner)],
-                    )
-                    for keyword, value in keywords
-                ],
+                # The receiver and each actual as the call finds it
+                # (``identity_term``).
+                call_operand_terms(
+                    (self, *arguments), keywords, site, owner=term_owner
+                ),
                 symbol_kind="coordinate",
             ),
             body=None,
@@ -1267,9 +1266,12 @@ def bind_call(
             )
         arg_values = bound_source_actuals.actuals
     if term is None:
+        from .object_identity import call_operand_terms
+
+        # Each actual in formal order as the call finds it (``identity_term``).
         term = ctor(
             call_symbol(target_name),
-            [value.to_term(owner=f"{owner} call argument") for value in arg_values],
+            call_operand_terms(arg_values, (), blame, owner=f"{owner} call argument"),
             symbol_kind="contract-target",
         )
     return CallSiteValue(

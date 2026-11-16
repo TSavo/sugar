@@ -57,7 +57,11 @@ class ReturnSugar(Sugar):
 
         def returned(value):
             # The caller holds the returned value by binding: what this frame
-            # made is not current in the caller's (``object_identity``).
-            return ExitSet.completed(ReturnValue(arrived(value, self.site)))
+            # made is not current in the caller's (``object_identity``).  The
+            # post states the value as this frame holds it at the return
+            # (``return_value.returned_term``).
+            return ExitSet.completed(
+                ReturnValue(arrived(value, self.site), held=value, site=self.site)
+            )
 
         return valued.and_then(returned)

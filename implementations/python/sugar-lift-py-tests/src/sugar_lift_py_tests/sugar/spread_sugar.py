@@ -272,10 +272,19 @@ class SpreadCollectionSugar(ConstructedTermSugar):
                     ),
                     *values,
                 )
+            from sugar_lift_py_tests.floor.object_identity import identity_term
+
             owner = str(self.site)
             terms = []
-            for (wrapper, _), value in zip(self.elements, values):
-                term = value.to_term(owner=owner)
+            # Each operand as the display finds it (``identity_term``): a
+            # spread container whose contents are not current by its
+            # identity, never by contents prove would read as the display's.
+            for position, ((wrapper, _), value) in enumerate(
+                zip(self.elements, values)
+            ):
+                term = identity_term(
+                    value, self.site, f"element{position}", owner=owner
+                )
                 terms.append(ctor(wrapper, [term]) if wrapper is not None else term)
             return ExitSet.completed(
                 SymbolicValue(ctor(f"python:{self.kind}", terms))
@@ -363,16 +372,27 @@ class SpreadDictSugar(ConstructedTermSugar):
                     ),
                     *values,
                 )
+            from sugar_lift_py_tests.floor.object_identity import identity_term
+
             owner = str(self.site)
             value_iter = iter(values)
             terms = []
-            for key, _ in self.entries:
+            # Each operand as the display finds it (``identity_term``): a
+            # ``**d`` whose contents are not current by its identity, never
+            # by entries prove would read as the display's (#7757 H7).
+            for position, (key, _) in enumerate(self.entries):
                 if key is None:
                     key_term = ctor("None", [])
-                    value_term = next(value_iter).to_term(owner=owner)
+                    value_term = identity_term(
+                        next(value_iter), self.site, f"spread{position}", owner=owner
+                    )
                 else:
-                    key_term = next(value_iter).to_term(owner=owner)
-                    value_term = next(value_iter).to_term(owner=owner)
+                    key_term = identity_term(
+                        next(value_iter), self.site, f"key{position}", owner=owner
+                    )
+                    value_term = identity_term(
+                        next(value_iter), self.site, f"value{position}", owner=owner
+                    )
                 terms.append(ctor("python:dict_entry", [key_term, value_term]))
             return ExitSet.completed(SymbolicValue(ctor("python:dict", terms)))
 
@@ -517,17 +537,22 @@ class SpreadCallSugar(ConstructedTermSugar):
                 ctx,
             )
         from sugar_lift_py_tests.floor import CallSiteValue
+        from sugar_lift_py_tests.floor.object_identity import identity_term
         from sugar_lift_py_tests.ir import ctor, str_const
 
         owner = str(self.site)
         callee_term = (
             str_const(self.callee_name)
             if self.callee_name is not None
-            else callee_value.to_term(owner=owner)
+            else identity_term(callee_value, self.site, "callee", owner=owner)
         )
         arg_terms = []
-        for (role, name, _), value in zip(self.arguments, values):
-            term = value.to_term(owner=owner)
+        # Each operand as the call finds it (``identity_term``): a ``*xs`` or
+        # ``**d`` whose contents are not current by its identity (#7757 H7).
+        for position, ((role, name, _), value) in enumerate(
+            zip(self.arguments, values)
+        ):
+            term = identity_term(value, self.site, f"argument{position}", owner=owner)
             if role == "star":
                 term = ctor("python:starred_arg", [term])
             elif role == "double-star":

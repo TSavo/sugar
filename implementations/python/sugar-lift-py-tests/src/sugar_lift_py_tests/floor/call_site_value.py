@@ -856,8 +856,11 @@ class CallSiteValue(FloorValue):
         return (self,)
 
     def linear_method_call(self, method_name: str, args: tuple, site):
-        """Name the next link in a timeless receiver-method rewrite."""
+        """Name the next link in a timeless receiver-method rewrite, each
+        operand as the call finds it (``object_identity.identity_term``)."""
         from sugar_lift_py_tests.ir import ctor
+
+        from .object_identity import call_operand_terms
 
         return CallSiteValue(
             target_name=method_name,
@@ -865,10 +868,7 @@ class CallSiteValue(FloorValue):
             parameters=(),
             term=ctor(
                 call_symbol(method_name),
-                [
-                    self.to_term(owner=str(site)),
-                    *(arg.to_term(owner=str(site)) for arg in args),
-                ],
+                call_operand_terms((self, *args), (), site, owner=str(site)),
                 symbol_kind="method-coordinate",
             ),
             body=None,

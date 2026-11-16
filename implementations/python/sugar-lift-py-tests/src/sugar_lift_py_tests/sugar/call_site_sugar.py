@@ -662,18 +662,16 @@ class CallSiteSugar(ConstructedTermSugar):
                 ),
                 ctx,
             )
-        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.floor.object_identity import call_operand_terms
+        from sugar_lift_py_tests.ir import ctor
 
         owner = str(self.site)
-        kwarg_terms = [
-            ctor("py.kwarg", [str_const(name), value.to_term(owner=owner)])
-            for name, value in kw_values
-        ]
         # The head is classified by the callee's binding, never its spelling:
-        # a ``len`` the module rebinds is a coordinate, not the builtin.
+        # a ``len`` the module rebinds is a coordinate, not the builtin.  Each
+        # actual is named as the call finds it (``identity_term``).
         term = ctor(
             call_symbol(self.spelled_target),
-            [value.to_term(owner=owner) for value in positional] + kwarg_terms,
+            call_operand_terms(positional, kw_values, self.site, owner=owner),
             symbol_kind=(
                 "builtin" if self._builtin_reference() is not None else "coordinate"
             ),
@@ -1551,6 +1549,7 @@ def stated_global_values(definition) -> tuple:
     module body does not decide (read through its undecided key,
     ``nodes.undecided_module_binding_key``) is never stated, and the run is
     not asked for it."""
+    from sugar_lift_py_tests.floor.object_identity import holds_stale, instance_stale
     from sugar_source_tree.nodes import undecided_module_binding_key
 
     stated = []
@@ -1568,6 +1567,11 @@ def stated_global_values(definition) -> tuple:
             continue
         value = read.completed_value()
         if value is None:
+            continue
+        # A container whose contents the run did not leave current (a call
+        # it was handed may have changed it) states no contents: the input
+        # is not stated, and a claim that reads it is not decided (#7757 H7).
+        if holds_stale(value) or instance_stale(value):
             continue
         stated.append((item.formal, value.to_term(owner="stated_global_values")))
     return tuple(stated)
@@ -1647,21 +1651,37 @@ def global_value_at_call(callee, name: str, ctx, *, module_site, call_site):
     input (``bind_global_inputs``).  Where the keys hold no one value, the
     term is a variable no contract binds (named by the call's ``call_site``),
     so the join's instance is open and the call stays owed: never the
-    module-final value where the call may run before it."""
+    module-final value where the call may run before it.  The value is
+    named as the call finds it (``object_identity.identity_term``): a
+    container the run did not leave current by its identity, never by
+    contents the callee would read at prove (#7757 H7)."""
     from sugar_lift_py_tests.ir import make_var
     from sugar_lift_py_tests.occurrence import site_coordinate_cid
 
-    value = global_read_at_call(callee, name, ctx, module_site=module_site)
+    value = global_read_at_call(
+        callee, name, ctx, module_site=module_site, call_site=call_site
+    )
     if value is not None:
-        return value.to_term(owner="global_value_at_call")
+        return _global_term(value, name, call_site)
     return make_var(f"undecided:global:{name}@{site_coordinate_cid(call_site)}")
 
 
-def global_read_at_call(callee, name: str, ctx, *, module_site):
-    """The one value a call of ``callee`` reads for its ``global:<name>``
-    input where the call runs: every key the binding reads through
-    (``global_input_keys``) holds a value in the caller's ``ctx``, and all of
-    them state one term.  None otherwise.  What ``global_value_at_call``
+def _global_term(value, name: str, call_site):
+    """``value``, the binding of the module global ``name`` a call at
+    ``call_site`` reads, as the call carries it (``identity_term``)."""
+    from sugar_lift_py_tests.floor.object_identity import identity_term
+
+    return identity_term(
+        value, call_site, f"global:{name}", owner="global_value_at_call"
+    )
+
+
+def global_read_at_call(callee, name: str, ctx, *, module_site, call_site):
+    """The one value a call of ``callee`` at ``call_site`` reads for its
+    ``global:<name>`` input where the call runs: every key the binding reads
+    through (``global_input_keys``) holds a value in the caller's ``ctx``,
+    and all of them state one term as the call carries it
+    (``_global_term``).  None otherwise.  What ``global_value_at_call``
     states as the input's term, and what the alias rule asks of the call
     with its actuals (``object_identity.shared_pairs``,
     ``lambda_callable.definition_edge_call``): an actual that is, or holds,
@@ -1680,7 +1700,7 @@ def global_read_at_call(callee, name: str, ctx, *, module_site):
         values.append(value)
     if not values:
         return None
-    terms = [value.to_term(owner="global_value_at_call") for value in values]
+    terms = [_global_term(value, name, call_site) for value in values]
     if any(term != terms[0] for term in terms[1:]):
         return None
     return values[0]

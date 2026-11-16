@@ -156,7 +156,16 @@ def identity_term(value, site, role: str, *, owner: str):
     arrival tells two objects one read meets apart (a ``match``'s patterns
     all read at the match).  The one place every undecided form (subscript,
     iteration, ``next``, truth, attribute, membership, length, equality, a
-    binary or set operation) mints an operand's term.
+    binary or set operation) mints an operand's term, and the one place
+    every call and edge mints the term of what it carries
+    (``call_operand_terms``): an actual, a keyword actual, a default, a
+    captured cell, a module global, a callee, a receiver.  Prove reads a
+    display it is handed as its contents (a caller's actual joined on a
+    formal), so a stale container a call carried by its old contents would
+    let a claim over what the callee reads come back ``sat`` on contents the
+    object may no longer hold (#7757 H7).  A container whose contents are
+    current still carries its display.  Every other projection of a stale
+    container refuses by name (``refuse_stale_projection``).
 
     A stale operand of a read with no site is the lifter's own gap: it
     cannot key the object, so it refuses by name.  So does a stale container
@@ -185,6 +194,57 @@ def identity_term(value, site, role: str, *, owner: str):
     from sugar_lift_py_tests.occurrence import occurrence_key
 
     return _named(value, occurrence_key(site), role, owner, site).to_term(owner=owner)
+
+
+def call_operand_terms(positional, keywords, site, *, owner: str, first: int = 0):
+    """The terms a call or edge at ``site`` carries for its actuals, each
+    named by ``identity_term``: every positional actual in order under the
+    role ``argument<i>`` (``i`` from ``first``, a receiver the call form
+    supplied being ``argument0``), then every keyword actual as
+    ``py.kwarg(<name>, <term>)`` under ``kwarg:<name>``."""
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    terms = [
+        identity_term(value, site, f"argument{first + index}", owner=owner)
+        for index, value in enumerate(positional)
+    ]
+    terms += [
+        ctor(
+            "py.kwarg",
+            [
+                str_const(name),
+                identity_term(value, site, f"kwarg:{name}", owner=owner),
+            ],
+        )
+        for name, value in keywords
+    ]
+    return terms
+
+
+def refuse_stale_projection(value, *, owner: str):
+    """Refuse, by name, to project the contents of ``value``, a
+    ``list``/``dict``/``set`` whose contents are not current
+    (``contents_stale``): its ``to_term`` reaches here.
+
+    A projection is a display prove reads as the object's contents; the
+    object's contents now are not the ones it holds, so the projection
+    would state a fact the program may no longer hold.  Every term that
+    names an operand goes through ``identity_term``, which names a stale
+    container by its identity and never reaches this; a projection that
+    does is a site that did not, and it is loud here, never a lie
+    (#7757 H7)."""
+    from sugar_source_tree.panic import SugarNotWritten
+
+    raise SugarNotWritten(
+        blame=owner,
+        owner=owner,
+        observed=(
+            f"the contents of a {type(value).__name__} that are not current "
+            f"(arrival {value.arrival!r}) projected as a term"
+        ),
+        requested="the object's term, never contents it may no longer hold",
+        fix="name the operand by object_identity.identity_term at its site",
+    )
 
 
 def _named(value, key: str, path: str, owner: str, site, depth=0):

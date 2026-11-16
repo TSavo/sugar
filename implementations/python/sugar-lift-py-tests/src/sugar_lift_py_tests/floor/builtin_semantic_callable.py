@@ -869,6 +869,7 @@ def _builtin_callsite(operation, name, language_callee, *, target_symbol=None):
     symbol when the callee is import-bound (``target_symbol``)."""
     from sugar_lift_py_tests.call_symbol import call_symbol
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.object_identity import call_operand_terms
     from sugar_lift_py_tests.ir import ctor
 
     args = operation.arguments
@@ -879,7 +880,8 @@ def _builtin_callsite(operation, name, language_callee, *, target_symbol=None):
         parameters=(),
         term=ctor(
             call_symbol(name),
-            [value.to_term(owner=owner) for value in args],
+            # Each actual as the call finds it (``identity_term``).
+            call_operand_terms(args, (), operation.site, owner=owner),
             symbol_kind="builtin",
         ),
         body=None,

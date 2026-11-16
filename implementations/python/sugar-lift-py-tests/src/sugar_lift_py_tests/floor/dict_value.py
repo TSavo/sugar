@@ -256,9 +256,15 @@ class DictValue(GuardStableValue):
         return builtin_attribute_store_exit(name, site=site, owner="DictValue.delattr")
 
     def to_term(self, *, owner: str):
-        # Project as python:dict of entry pairs (layout-preserving coordinate).
+        # Project as python:dict of entry pairs (layout-preserving coordinate)
+        # -- only of contents that are the object's now
+        # (``object_identity.refuse_stale_projection``).
         from sugar_lift_py_tests.ir import ctor
 
+        from .object_identity import contents_stale, refuse_stale_projection
+
+        if contents_stale(self):
+            refuse_stale_projection(self, owner=owner)
         return ctor(
             "python:dict",
             [

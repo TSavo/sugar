@@ -162,6 +162,18 @@ class LambdaCallable(FloorValue):
         )
         if len(defaulted) != len(self.defaults):
             return None
+        # A default holding a builtin container is an object every call of
+        # the function shares: what an earlier call left in it is not this
+        # value's to state, so the contents its ``def`` gave it are no input
+        # of a call (``definition_edge_call`` names it by its identity at
+        # each call).  The function's symbol is not stated; a call of the
+        # value stays owed (#7757 H7).
+        from .object_identity import arrived_as, holds_stale
+
+        if any(
+            holds_stale(arrived_as(value, "default")) for _key, value in self.defaults
+        ):
+            return None
         inputs = [
             ctor(
                 "py.default",
@@ -224,6 +236,10 @@ class LambdaCallable(FloorValue):
     def _apply_to(self, operation, arguments, frame, ctx):
         """The application of ``callable_application_with`` over
         ``arguments``, the call's actuals as operation receivers."""
+        from sugar_lift_py_tests.floor.object_identity import (
+            call_operand_terms,
+            identity_term,
+        )
         from sugar_lift_py_tests.ir import ctor, str_const
         from sugar_lift_py_tests.sugar.call_site_sugar import (
             enter_source_frame,
@@ -242,16 +258,21 @@ class LambdaCallable(FloorValue):
         # What the body reads from its enclosing scope is an input of this
         # call as its actuals are: two calls that read different values are
         # two coordinates (``ComputedCallSugar``'s ``py.closure`` operands).
+        # Every operand is named as the call finds it (``identity_term``).
         term = ctor(
             "py.call",
             [self.to_term(owner=site)]
-            + [value.to_term(owner=site) for value in positional]
+            + call_operand_terms(positional, keywords, operation.site, owner=site)
             + [
-                ctor("py.kwarg", [str_const(name), value.to_term(owner=site)])
-                for name, value in keywords
-            ]
-            + [
-                ctor("py.closure", [str_const(name), value.to_term(owner=site)])
+                ctor(
+                    "py.closure",
+                    [
+                        str_const(name),
+                        identity_term(
+                            value, operation.site, f"closure:{name}", owner=site
+                        ),
+                    ],
+                )
                 for name, _cid, value in operation.captured
             ],
             symbol_kind="coordinate",
@@ -422,6 +443,11 @@ def definition_edge_call(
     source operand is."""
     from sugar_lift_py_tests.call_symbol import call_symbol
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.object_identity import (
+        arrived,
+        call_operand_terms,
+        identity_term,
+    )
     from sugar_lift_py_tests.ir import ctor, str_const
     from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
     from sugar_lift_py_tests.sugar.call_site_sugar import (
@@ -447,6 +473,26 @@ def definition_edge_call(
             *((name, value) for name, value in keywords),
         )
     )
+    supplied = set(parameters[: len(positional)]) | {name for name, _value in keywords}
+    defaulted = {
+        parameter.name
+        for parameter in getattr(signature, "params", ())
+        if getattr(parameter, "default", None) is not None
+    }
+
+    def default_object(name, value):
+        """A formal the call omits is bound to the object its ``def``
+        statement made, which every call of the function shares: what an
+        earlier call left in it is not this frame's to know, so it reaches
+        the call by binding (``arrived``) and a container in it is named by
+        its identity, never by the contents the ``def`` gave it."""
+        if name in supplied or name not in defaulted:
+            return value
+        return arrived(value, site)
+
+    # Every operand the call carries is named as the call finds it
+    # (``identity_term``): a container whose contents are not current by its
+    # identity, never by contents prove would read on the callee's formal.
     if packed:
         # A formal ``*args`` / ``**kwargs`` is the packed value the call
         # binds, never one positional actual: every formal by name, each
@@ -455,33 +501,44 @@ def definition_edge_call(
         arguments = [
             ctor(
                 "py.packed" if name in packed else "py.kwarg",
-                [str_const(name), value.to_term(owner=owner_name)],
+                [
+                    str_const(name),
+                    identity_term(
+                        default_object(name, value),
+                        site,
+                        f"formal:{name}",
+                        owner=owner_name,
+                    ),
+                ],
             )
             for name, value in zip(parameters, actuals)
         ]
     else:
-        supplied = set(parameters[: len(positional)]) | {
-            name for name, _value in keywords
-        }
-        defaulted = {
-            parameter.name
-            for parameter in getattr(signature, "params", ())
-            if getattr(parameter, "default", None) is not None
-        }
-        arguments = (
-            [value.to_term(owner=owner_name) for value in positional]
-            + [
-                ctor("py.kwarg", [str_const(name), value.to_term(owner=owner_name)])
-                for name, value in keywords
-            ]
-            + [
-                ctor("py.default", [str_const(name), value.to_term(owner=owner_name)])
-                for name, value in zip(parameters, actuals)
-                if name not in supplied and name in defaulted
-            ]
-        )
+        arguments = call_operand_terms(positional, keywords, site, owner=owner_name)
+        arguments += [
+            ctor(
+                "py.default",
+                [
+                    str_const(name),
+                    identity_term(
+                        default_object(name, value),
+                        site,
+                        f"default:{name}",
+                        owner=owner_name,
+                    ),
+                ],
+            )
+            for name, value in zip(parameters, actuals)
+            if name not in supplied and name in defaulted
+        ]
     arguments += [
-        ctor("py.closure", [str_const(name), value.to_term(owner=owner_name)])
+        ctor(
+            "py.closure",
+            [
+                str_const(name),
+                identity_term(value, site, f"closure:{name}", owner=owner_name),
+            ],
+        )
         for name, _cid, value in captured
     ]
     # The class of each actual whose class is decided here, keyed by the
@@ -524,6 +581,7 @@ def definition_edge_call(
                         item.coordinate.name,
                         caller_ctx,
                         module_site=module_site,
+                        call_site=site,
                     ),
                 )
                 for item in _global_inputs(signature)

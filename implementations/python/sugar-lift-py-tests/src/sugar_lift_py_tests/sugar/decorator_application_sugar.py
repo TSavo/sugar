@@ -559,6 +559,7 @@ def _unanswered_call(symbol, spelling, arguments, site, ctx) -> ExitSet:
     (the import table's or the builtin door's target symbol, None where the
     decorator has none), completing with this call's own result."""
     from sugar_lift_py_tests.call_symbol import call_symbol
+    from sugar_lift_py_tests.floor.object_identity import call_operand_terms
     from sugar_lift_py_tests.ir import ctor
     from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
     from sugar_lift_py_tests.sugar.call_site_sugar import bind_source_frame_call
@@ -579,7 +580,7 @@ def _unanswered_call(symbol, spelling, arguments, site, ctx) -> ExitSet:
         blame=site,
         term=ctor(
             call_symbol(name),
-            [value.to_term(owner=owner) for value in arguments],
+            call_operand_terms(tuple(arguments), (), site, owner=owner),
             symbol_kind="coordinate",
         ),
         authenticated_target_symbol=symbol,

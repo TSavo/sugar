@@ -360,7 +360,8 @@ class BuiltinSuperValue(FloorValue):
         direct base nor any other class is assumed to answer."""
         from sugar_lift_py_tests.call_symbol import call_symbol
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.floor.object_identity import call_operand_terms
+        from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
 
         target = f"super.{name}"
@@ -371,14 +372,8 @@ class BuiltinSuperValue(FloorValue):
             parameters=(),
             term=ctor(
                 call_symbol(target),
-                [value.to_term(owner=term_owner) for value in arguments]
-                + [
-                    ctor(
-                        "py.kwarg",
-                        [str_const(keyword), value.to_term(owner=term_owner)],
-                    )
-                    for keyword, value in keywords
-                ],
+                # Each actual as the call finds it (``identity_term``).
+                call_operand_terms(arguments, keywords, site, owner=term_owner),
                 symbol_kind="coordinate",
             ),
             body=None,

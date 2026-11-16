@@ -562,7 +562,11 @@ class ConstructedInstanceValue(FloorValue):
         its ``__dict__`` holds, where the face decides them;
         ``python:class_undecided(python:after(out, "out"))`` where it does
         not.  Prove binds a caller's dispatch over the result to them."""
-        from sugar_lift_py_tests.floor.object_identity import contents_current
+        from sugar_lift_py_tests.floor.object_identity import (
+            contents_current,
+            holds_stale,
+            instance_stale,
+        )
         from sugar_lift_py_tests.floor.object_value import ObjectValue
         from sugar_lift_py_tests.ir import and_, atomic, implies, str_const
         from sugar_lift_py_tests.receiver_dispatch import (
@@ -590,6 +594,12 @@ class ConstructedInstanceValue(FloorValue):
         class_term = None if "__class__" in latest else class_value(instance)
         for name, value in latest.items():
             if not current and name not in instance.stored_fields:
+                continue
+            # A field holding a container whose contents are not current (a
+            # global, an object a call may have changed) is not stated: its
+            # display would be contents the object may no longer hold, and a
+            # read of it stays owed (#7757 H7).
+            if holds_stale(value) or instance_stale(value):
                 continue
             term = value.to_term(owner="ConstructedInstanceValue.post")
             if _names_an_object(term):
