@@ -537,14 +537,20 @@ class ConstructedInstanceValue(FloorValue):
         - ``attr:<name>(python:after(out, "out")) == <value>``: the field of
           the instance as the construction left it
           (``source_call_resolution.object_after_call``), #7757 step 7;
-        - where a read of the name is the ``__dict__`` entry by Python's own
-          rule (``ObjectValue.reads_plain_field``), that every such read --
+        - under ``python:plain_read(<class>, "<name>")`` (``receiver_dispatch.
+          PLAIN_READ``, ``<class>`` the instance's class term,
+          ``receiver_dispatch.class_value``), that every read of the name --
           the one undecided read over that object (``CallSiteValue.
           attribute``) -- is the field and completes: ``forall k.
           python:attribute_result(<name>, python:after(out, "out"), k) ==
           attr:<name>(...)`` and its ``python:attribute_op.completes`` atom
-          (``stored_field_facts``), ``k`` the read's key, so the caller's
-          read is answered at prove.
+          (``stored_field_facts``), ``k`` the read's key.  Prove decides
+          the guard on the namespace rows (``consistency::plain_read_holds``:
+          no ``__getattribute__``, ``__getattr__``, ``__slots__``,
+          ``__dict__`` and no binding of the name in the order); the lift
+          never decides whether the read is the ``__dict__`` entry (#7757
+          H1).  Where no class term is decided (an instance not current, a
+          stored ``__class__``), the read is not stated and stays owed.
 
         A field the construction did not decide, or one whose value names an
         object of this reduction, is not stated: a read of it stays owed.
@@ -558,8 +564,12 @@ class ConstructedInstanceValue(FloorValue):
         not.  Prove binds a caller's dispatch over the result to them."""
         from sugar_lift_py_tests.floor.object_identity import contents_current
         from sugar_lift_py_tests.floor.object_value import ObjectValue
-        from sugar_lift_py_tests.ir import and_
-        from sugar_lift_py_tests.receiver_dispatch import constructed_class_facts
+        from sugar_lift_py_tests.ir import and_, atomic, implies, str_const
+        from sugar_lift_py_tests.receiver_dispatch import (
+            PLAIN_READ,
+            class_value,
+            constructed_class_facts,
+        )
         from sugar_lift_py_tests.source_call_resolution import (
             CALL_RESULT_LABEL,
             object_after_call,
@@ -574,6 +584,10 @@ class ConstructedInstanceValue(FloorValue):
         latest = {}
         for item in instance.fields:
             latest[item.name] = item.value
+        # The class term prove decides each read's plainness over: none
+        # where the face does not decide the instance's class (as
+        # ``constructed_class_facts``), and then no read is stated.
+        class_term = None if "__class__" in latest else class_value(instance)
         for name, value in latest.items():
             if not current and name not in instance.stored_fields:
                 continue
@@ -584,8 +598,9 @@ class ConstructedInstanceValue(FloorValue):
                 continue
             value_fact, read_completes = stored_field_facts(constructed, name, term)
             facts.append(value_fact)
-            if instance.reads_plain_field(name):
-                facts.append(read_completes)
+            if class_term is not None:
+                plain = atomic(PLAIN_READ, [class_term, str_const(name)])
+                facts.append(implies(plain, read_completes))
         return and_(facts)
 
 
