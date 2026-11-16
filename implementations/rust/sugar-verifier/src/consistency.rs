@@ -4865,11 +4865,15 @@ const PYTHON_INSTANCE: &str = "python:instance";
 /// The symbol prefix of a dispatched method call's `undecided` member:
 /// `python:dispatch:<method>`. No join symbol is spelled so.
 const DISPATCH_SYMBOL_PREFIX: &str = "python:dispatch:";
-/// The mark after which a dispatched call's member names the operands that
-/// may share an object, by argument key (the kit's
-/// `receiver_dispatch.DISPATCH_SHARES_MARK`): `python:dispatch:<m>#0~1,0~k`.
-/// No Python name holds `#`.
+/// The mark after which a Python call's member names the operands that may
+/// share an object, by key (the kit's `receiver_dispatch.DISPATCH_SHARES_MARK`,
+/// spelled by its one `shares_mark`): `python:dispatch:<m>#0~1,0~k` for a
+/// dispatched call, `python:<f>#0~1,0~global:G` for a same-file definition's
+/// (#7757: the alias risk is decided here, for every call). No Python name
+/// holds `#`.
 const DISPATCH_SHARES_MARK: char = '#';
+/// The namespace of a Python symbol: only its members carry the shares mark.
+const PYTHON_SYMBOL_PREFIX: &str = "python:";
 /// The join of one pair's two argument keys (the kit's
 /// `receiver_dispatch.DISPATCH_SHARED_PAIR`).
 const DISPATCH_SHARED_PAIR: char = '~';
@@ -4898,15 +4902,18 @@ fn dispatch_shares(member: &str) -> (&str, Vec<(String, String)>) {
     (member, shares)
 }
 
-/// Whether the function a dispatched call resolved to changes the shared
-/// object through neither operand of every pair that may share one (#7757
-/// step 8, the alias rule's own test, `object_identity.shared_pairs`): its
-/// contract states it never changes the parameter the operand's key binds
+/// Whether the contract a call joins changes the shared object through
+/// neither operand of every pair that may share one (#7757 step 9, the alias
+/// rule's own test, `object_identity.shared_pairs`; the one decision, for a
+/// dispatched call's resolved function and a same-file definition's
+/// contract alike): its contract states it never changes the parameter the
+/// operand's key binds, or the `cell:`/`global:` input the key names
 /// (`python:leaves`, a top-level conjunct of its `post`), or the operand's
 /// decided class holds no object (`OBJECTLESS_BUILTINS`). A key that binds
-/// no plain parameter (out of range, a variadic one, no parameter by that
-/// keyword) is never left unchanged. Only for arguments bound as they stand
-/// (`DispatchReceiver::AsCalled`): the keys count the call's own positions.
+/// no plain parameter nor names a stated input (out of range, a variadic
+/// one, no parameter by that keyword) is never left unchanged. Only for
+/// arguments bound as they stand (`DispatchReceiver::AsCalled`): the keys
+/// count the call's own positions.
 fn shared_operands_left_unchanged(
     shares: &[(String, String)],
     formals: &[String],
@@ -4951,6 +4958,13 @@ fn shared_operands_left_unchanged(
             key.parse::<usize>()
                 .ok()
                 .and_then(|position| parameters.get(position).copied())
+        } else if is_contract_input(key) {
+            // A captured cell or a module global the call binds
+            // (`cell:<n>`, `global:<n>`): the contract's input of that name.
+            formals
+                .iter()
+                .map(String::as_str)
+                .find(|formal| *formal == key)
         } else {
             parameters.iter().copied().find(|parameter| *parameter == key)
         };
@@ -6401,16 +6415,25 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
             owed.push(post);
             continue;
         }
+        // A same-file definition's call on operands that may share an object
+        // names the pairs after its symbol (`dispatch_shares`, the kit's
+        // `receiver_dispatch.shares_mark`): the bridge is joined by the
+        // symbol, and the call is its contract's only where that contract
+        // states it changes neither (`shared_operands_left_unchanged`, the
+        // one decision a dispatched call's resolved function is asked).
+        let (symbol, shares) = if edge.symbol.starts_with(PYTHON_SYMBOL_PREFIX) {
+            dispatch_shares(&edge.symbol)
+        } else {
+            (edge.symbol.as_str(), Vec::new())
+        };
         let bridges: Vec<&sugar_proof_envelope::StoredMember> = pool
             .bridge_members()
-            .filter(|(_, bridge)| {
-                bridge.field("sourceSymbol").and_then(|v| v.as_str()) == Some(edge.symbol.as_str())
-            })
+            .filter(|(_, bridge)| bridge.field("sourceSymbol").and_then(|v| v.as_str()) == Some(symbol))
             .map(|(_, bridge)| bridge)
             .collect();
         let Some(first) = bridges.first() else {
             owed.push(owed_post(
-                &edge.symbol,
+                symbol,
                 &edge.member_cid,
                 &edge.site_cid,
                 DroppedAmbientPostReason::Unanswered,
@@ -6427,9 +6450,23 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                 DroppedAmbientPostReason::AmbiguousTarget,
             ))
         } else {
-            bridge_answer(pool, &edge.symbol, first)
+            bridge_answer(pool, symbol, first)
         };
         match answer {
+            // Operands that may share an object the contract does not state
+            // it leaves (the alias rule, step 9): owed, as a dispatched
+            // call's that its resolved function may change.
+            Ok(Some((binding, post, ..)))
+                if !shares.is_empty()
+                    && !shared_operands_left_unchanged(&shares, &binding.formals, &post, &[]) =>
+            {
+                owed.push(owed_post(
+                    symbol,
+                    &edge.member_cid,
+                    &edge.site_cid,
+                    DroppedAmbientPostReason::Unanswered,
+                ))
+            }
             Ok(Some((binding, post, halt_guards, every_halt_guarded, typed_halts))) => {
                 // A contract that guards a field it stores (step 7) is
                 // decided on what the proofs state about classes.
@@ -6454,14 +6491,14 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                 })
             }
             Ok(None) => owed.push(owed_post(
-                &edge.symbol,
+                symbol,
                 &edge.member_cid,
                 &edge.site_cid,
                 DroppedAmbientPostReason::Unanswered,
             )),
             Err((target_cid, reason)) => posts.push(AmbientPost {
                 binding: BridgeBinding {
-                    source_symbol: edge.symbol.clone(),
+                    source_symbol: symbol.to_string(),
                     target_cid,
                     target_proof_cid: None,
                     formals: Vec::new(),
@@ -14925,6 +14962,21 @@ mod tests {
         // A pair that does not read as two keys is never left unchanged.
         let (_member, unread) = dispatch_shares("check#0");
         assert!(!shared_operands_left_unchanged(&unread, &formals, &both, &args));
+        // A same-file definition's member (#7757): the same split and the
+        // same decision, with a module global the call binds keyed by its
+        // input. `g(G)` where `g` changes `a`: owed; where `g`'s contract
+        // states it leaves both `a` and `global:G`: joined.
+        let (symbol, shares) = dispatch_shares("python:m.g#0~global:G");
+        assert_eq!(symbol, "python:m.g");
+        assert_eq!(shares, vec![("0".to_string(), "global:G".to_string())]);
+        let formals = vec!["a".to_string(), "global:G".to_string()];
+        let reads = post(vec![leaves("a"), leaves("global:G")]);
+        assert!(shared_operands_left_unchanged(&shares, &formals, &reads, &[]));
+        let changes_a = post(vec![leaves("global:G")]);
+        assert!(!shared_operands_left_unchanged(&shares, &formals, &changes_a, &[]));
+        // An input the contract does not have is never left unchanged.
+        let (_symbol, cell) = dispatch_shares("python:m.g#0~cell:G");
+        assert!(!shared_operands_left_unchanged(&cell, &formals, &reads, &[]));
     }
 
     #[test]

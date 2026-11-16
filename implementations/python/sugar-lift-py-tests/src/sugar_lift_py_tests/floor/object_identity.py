@@ -474,38 +474,20 @@ def as_bound_formals(actuals, arrivals) -> tuple:
     )
 
 
-def actuals_share_an_object(actuals, changes=None) -> bool:
-    """Whether another of ``actuals`` may be, or hold, one of the objects
-    some actual is or holds (``_objects``: ``f(xs, xs)``, ``f(xs, [xs])``,
-    ``o.m(o)``, ``o.m(o.items)``) where the callee may change it through one
-    of the two: the alias rule's own test (``as_bound_formals``), for a call
-    joined at prove.  ``actuals`` are every value the call binds a formal or
-    an input of the callee's contract to: a same-file definition's actuals,
-    captured cells and the module globals the callee reads
-    (``lambda_callable.definition_edge_call``: ``g(G)`` where ``g`` reads
-    ``G``), and a dispatched method call's receiver with its actuals
-    (``receiver_dispatch.dispatch_edge_call``).  The callee's contract
-    states them as distinct objects, which is a lie only where it states a
-    change of the object through one while it reads it through the other.
-
-    ``changes``: for each actual, whether the callee may change the object
-    the formal or input it binds holds, or rebind that input
-    (``lambda_callable._actual_changes``, read off the callee's body by
-    ``nodes._names_a_call_may_change``).  None where the callee is not read
-    here (a dispatched call: prove picks the function): every one may.  Two
-    actuals that share an object neither of which the callee changes are
-    one value read twice, which a contract over distinct formals states
-    truly (``mul(n, n)``)."""
-    return any(_shared(tuple(actuals), changes))
-
-
 def shared_pairs(actuals) -> tuple:
     """``((i, j), ...)``, ``i < j``: each pair of ``actuals`` one of which
     may be, or hold, one of the objects the other is or holds (``_objects``,
-    ``_reaches``) -- the pairs ``actuals_share_an_object`` counts where every
-    actual may be changed.  A dispatched call names them on its member
-    (``receiver_dispatch.dispatch_edge_call``), and prove asks of the
-    function it resolves whether it changes either (#7757 step 8)."""
+    ``_reaches``: ``f(xs, xs)``, ``f(xs, [xs])``, ``o.m(o)``,
+    ``o.m(o.items)``, ``g(G)`` where ``g`` reads ``G``) -- the alias rule's
+    own test (``as_bound_formals``), for a call joined at prove.
+    ``actuals`` are every value the call binds a formal or an input of the
+    callee's contract to.  Every call names them on its member
+    (``receiver_dispatch.shares_mark``: a dispatched call's and a same-file
+    definition's alike), and prove asks of the contract it joins whether it
+    states either left unchanged (``python:leaves``, #7757 step 9): the
+    contract states its formals as distinct objects, a lie only where it
+    states a change of the object through one while it reads it through the
+    other."""
     reached = tuple(_objects(actual) for actual in actuals)
     return tuple(
         (left, right)
@@ -515,21 +497,14 @@ def shared_pairs(actuals) -> tuple:
     )
 
 
-def _shared(actuals, changes=None) -> tuple:
+def _shared(actuals) -> tuple:
     """For each of ``actuals``, whether another of them may be, or hold, one
     of the objects it is or holds (``_objects``): two objects one of which
-    is the other, or a field of it (``_reaches``), where ``changes`` (None:
-    every actual) says the callee may change at least one of the two."""
+    is the other, or a field of it (``_reaches``)."""
     reached = tuple(_objects(actual) for actual in actuals)
-    if changes is None:
-        changes = (True,) * len(reached)
-    changes = tuple(changes)
-    if len(changes) != len(reached):
-        changes = (True,) * len(reached)
     return tuple(
         any(
-            (changes[index] or changes[position])
-            and _reaches(reached[index], other)
+            _reaches(reached[index], other)
             for position, other in enumerate(reached)
             if position != index
         )
