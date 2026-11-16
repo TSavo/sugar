@@ -122,6 +122,20 @@ class LambdaCallable(FloorValue):
             [str_const(self.construction_identity), *encoded_parameters],
         )
 
+    def truth(self, site):
+        """``bool(f)`` of a function is ``True``: the builtin ``function``
+        type binds neither ``__bool__`` nor ``__len__``, so
+        ``object.__bool__``'s fallback answers, and a function's type is
+        never anything else (a decorated ``def`` is its decorator's result,
+        never this value).  ``if f:`` and ``f or g`` are decided, never a
+        construction panic (#7757 H12)."""
+        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        return ExitSet.completed(TrueBoolLiteralSugar(site=site))
+
     def _function_term(self):
         """This function value as its join symbol (#7757 step 9):
         ``python:function(<symbol>, py.default(<param>, <value>)...,

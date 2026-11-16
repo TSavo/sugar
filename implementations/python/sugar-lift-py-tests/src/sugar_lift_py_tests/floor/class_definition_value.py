@@ -652,6 +652,25 @@ class ClassDefinitionValue(GuardStableValue):
             site=site,
         )
 
+    def truth(self, site):
+        """``bool(Cls)``: a class's truth is its metaclass's ``__bool__``,
+        else its ``__len__``, else ``True``.  The metaclass ``type`` binds
+        neither, so where the metaclass is decided to be ``type``
+        (``_metaclass_is_type``) the truth is ``True``.  Where it is not (a
+        ``metaclass=`` keyword, or a base the lifter does not read), the
+        metaclass may bind either, so the truth is the one undecided truth,
+        both faces owed.  Never a construction panic (#7757 H12)."""
+        if self._metaclass_is_type():
+            from sugar_lift_py_tests.outcome import ExitSet
+            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                TrueBoolLiteralSugar,
+            )
+
+            return ExitSet.completed(TrueBoolLiteralSugar(site=site))
+        from sugar_lift_py_tests.sugar.bool_op_sugar import _unanswered_truth
+
+        return _unanswered_truth(self, site, owner="ClassDefinitionValue.truth")
+
     def to_term(self, *, owner: str):
         del owner
         return class_definition_term(self.class_definition_cid)
