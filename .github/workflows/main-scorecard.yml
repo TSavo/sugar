@@ -137,6 +137,28 @@ name: Main scorecard
 # runner's own rustup with no network when the pin is installed
 # (tools/ci-rust-toolchain.sh); the shards still need it on PATH, because
 # bin/sugarbin keys and resolves the sugar binary through cargo and rustc.
+#
+# WORKERS CLAIM BINS FROM ONE QUEUE (#8416, 2026-11-16)
+#
+# Run 43946664351 (c0785ffcf) took 1919s against ~1172s on 49413757d. The
+# three runners held, in order, plan + shards 2, 4, 5 (busy until +1896s),
+# rust + shards 7, 3, 1 (+1632s), federation + shards 0, 6 (+1400s): eight
+# fixed shards, each four single-threaded pytests in a row (mostly the
+# suite's), in three waves on a 32-thread host. The plan was
+# balanced on paper (8 x 382.6s, 841 of 868 files with a measured cost) but
+# shard 5 reran its whole suite pytest after a SIGSEGV (+320s) and shard 2
+# waited 208s for the release binary the federation job was building (the
+# range changed Rust; that build is also why federation took 347s), and both
+# losses landed on the last runner to finish. Now the plan cuts every file
+# into population-pure bins of SUITE_BIN_SECONDS (longest first), and each
+# of four suite workers runs SUITE_LANES lanes that claim the next unclaimed
+# bin until the queue is empty (tools/main_scorecard_suite.sh). A rerun or a
+# slow bin costs one lane one bin, the runners finish within about a bin of
+# each other, and each runner sets up and resolves the binary once. A bin's
+# results are a shard's results; a bin no lane measured is `incomplete:`.
+# The cost estimate falls back from the content-addressed prior to the
+# path-keyed seconds of the file's last run (an edited file no longer drops
+# to a size guess) and counts each file's collection.
 
 on:
   push:
@@ -156,7 +178,13 @@ permissions:
 
 env:
   PYTHONUNBUFFERED: "1"
-  SUITE_SHARD_COUNT: "8"
+  # The plan cuts every file into population-pure bins of about this many
+  # measured seconds, longest first; each suite worker runs SUITE_LANES lanes
+  # that claim the next bin until none is left (WORKERS CLAIM BINS FROM ONE
+  # QUEUE below). Two lanes on each of three runners is six pytests on the
+  # 32-thread host; a suite pytest peaks near 4.5 GB.
+  SUITE_BIN_SECONDS: "150"
+  SUITE_LANES: "2"
   SCORECARD_ISSUE_TITLE: "Main scorecard"
   # The numbers this workflow reports; the board is main-scorecard-board.yml.
   # `tree` is implementations/python/sugar-source-tree/tests, run on the
@@ -164,10 +192,10 @@ env:
   # `source` is implementations/python/sugar-lift-python-source/tests, the
   # same way.
   SCORECARD_MEASURES: "suite,twins,federation,rust,tree,source"
-  # Each shard's source-tree pytest is interrupted past this wall (a hung
-  # tree test marks the tree incomplete; the shard's suite still counts).
+  # Each source-tree bin's pytest is interrupted past this wall (a hung
+  # tree test marks the tree incomplete; every other bin still counts).
   TREE_SHARD_BUDGET_SECONDS: "900"
-  # The same for each shard's sugar-lift-python-source pytest.
+  # The same for each sugar-lift-python-source bin's pytest.
   SOURCE_SHARD_BUDGET_SECONDS: "900"
   GH_TOKEN: ${{ github.token }}
   GH_REPO: ${{ github.repository }}
@@ -217,8 +245,9 @@ jobs:
         run: bash tools/main_scorecard_schedule_gate.sh main-scorecard.yml
 
   # ------------------------------------- (1) package suite + (2) solver twins
-  # The plan: every file, packed onto the SUITE_SHARD_COUNT shards by
-  # measured cost. The shards run them; the join posts the numbers.
+  # The plan: every file, packed into bins of SUITE_BIN_SECONDS by measured
+  # cost, longest first. The workers' lanes claim and run them; the join
+  # posts the numbers.
   suite:
     name: package suite + twins (plan)
     needs: [gate]
@@ -246,9 +275,12 @@ jobs:
         shell: bash
         run: echo "job wall $(( $(date +%s) - JOB_T0 ))s"
 
-  # The files fan out over the shards the plan packed.
-  suite-shard:
-    name: suite shard ${{ matrix.shard }}
+  # Each worker takes a runner as one frees up (after the plan, the rust job,
+  # the federation job) and its lanes drain the plan's bin queue. Four
+  # workers for three runners: the fourth starts when the queue is nearly
+  # empty and leaves at once, and a fourth runner, when there is one, is used.
+  suite-worker:
+    name: suite worker ${{ matrix.worker }}
     needs: [suite]
     if: ${{ !cancelled() && needs.suite.result == 'success' }}
     runs-on: [self-hosted, Linux, X64]
@@ -256,7 +288,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+        worker: [0, 1, 2, 3]
     steps:
       - name: Start the job clock
         shell: bash
@@ -275,25 +307,18 @@ jobs:
       - name: Install z3 (cached on the runner)
         shell: bash
         run: tools/ci-apt-install.sh z3
-      - name: Shard ${{ matrix.shard }}
+      - name: Worker ${{ matrix.worker }} (lanes claim bins until none is left)
         shell: bash
-        run: bash tools/main_scorecard_suite.sh run ${{ matrix.shard }}
-      - name: Upload shard logs
-        # always(): a crashed shard's log (faulthandler stacks, the test it
+        run: bash tools/main_scorecard_suite.sh run ${{ matrix.worker }}
+      - name: Upload bin logs
+        # always(): a crashed bin's log (faulthandler stacks, the test it
         # was running) survives whatever happened to the job.
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: main-scorecard-suite-shard-${{ matrix.shard }}
+          name: main-scorecard-suite-worker-${{ matrix.worker }}
           path: |
-            suite.log
-            twins.log
-            tree.log
-            source.log
-            suite.crash.log
-            twins.crash.log
-            tree.crash.log
-            source.crash.log
+            scorecard-logs/**
             twin-evidence/**
           if-no-files-found: ignore
       - name: Job wall time
@@ -303,7 +328,7 @@ jobs:
 
   suite-join:
     name: suite join
-    needs: [suite, suite-shard]
+    needs: [suite, suite-worker]
     if: ${{ !cancelled() && needs.suite.result == 'success' }}
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
@@ -534,7 +559,7 @@ jobs:
   # a measure that never reported becomes unmeasured, and is compared.
   scorecard:
     name: scorecard (final row)
-    needs: [gate, suite, suite-shard, suite-join, federation, rust]
+    needs: [gate, suite, suite-worker, suite-join, federation, rust]
     if: ${{ !cancelled() && needs.gate.outputs.measure != 'false' }}
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15

@@ -2,32 +2,61 @@
 # The package suite, the solver twins, the source-tree tests and the
 # sugar-lift-python-source tests of the main scorecard (#8416).
 #
-#   main_scorecard_suite.sh plan        every file, packed onto the shards
-#   main_scorecard_suite.sh run <i>     run shard i's files
+#   main_scorecard_suite.sh plan        every file, packed into bins (the shards)
+#   main_scorecard_suite.sh run <w>     worker w: its lanes claim bins until none is left
 #   main_scorecard_suite.sh post        post the suite, twins, tree and source numbers
+#
+# WORKERS CLAIM BINS FROM ONE QUEUE (#8416, run 43946664351: wall 1919s)
+#
+# The fast lane has three runners on one 32-thread host. Eight fixed shards
+# (~420s each, four pytests in a row, one process at a time) ran in three
+# waves behind the rust and federation jobs, so the row waited for
+# 8 x 420s / 3 runners plus whatever went wrong on the last shard of the
+# slowest runner: shard 5 lost 320s to a fault-signal rerun of its whole
+# suite pytest, shard 2 waited 208s for the release binary federation was
+# building, and one runner finished 8 minutes before the other. Now the plan
+# cuts the files into population-pure bins of about SUITE_BIN_SECONDS of
+# measured cost (one pytest each, longest first, <plan>/queue.txt), and each
+# worker job runs SUITE_LANES lanes in parallel; a lane claims the next
+# unclaimed bin (an atomic mkdir under <plan>/claims/attempt-<n>, in the cache
+# directory every runner shares) and runs it, until the queue is empty. A
+# slow bin or a fault rerun costs only its own lane one bin; the runners
+# finish within about one bin of each other; and every runner does its
+# checkout, environment and binary resolution once, not once per shard.
+#
+# A bin's results are <results>/<population>/shard-<ii>.json and .exit, as a
+# shard's were, so `post` and main_scorecard_shard_plan.py check are the same:
+# a bin no lane ran, or whose pytest did not run its tests, makes its
+# population `incomplete:`. The worker that ran such a bin fails, and "re-run
+# failed jobs" starts a new attempt whose claims are fresh: it runs every bin
+# without a measured result (exit 0, 1 or 5 and a summary) and nothing else.
+#
+# Lanes share the worker's checkout; each has its own TMPDIR (/tmp/sc-lane-<n>), and each bin
+# its own log (scorecard-logs/bin-<ii>.<population>.log) and twin evidence
+# directory (twin-evidence/bin-<ii>).
 #
 # THE SOURCE TREE'S TESTS ARE THEIR OWN NUMBER
 #
 # The 183 test files under implementations/python/sugar-source-tree/tests ran
 # in no CI job, so a stale test there was invisible. They are the `tree`
-# population: packed by measured cost onto the same shards as the suite (no
-# serial job), run by their own pytest on each shard after the suite and
-# twins, and posted as `tree=P/T`, so `suite=` keeps counting exactly the
+# population: packed by measured cost into their own bins on the same queue
+# as the suite (no serial job), each bin its own pytest, and posted as
+# `tree=P/T`, so `suite=` keeps counting exactly the
 # files it always counted. The tree runs under its own package config
 # (-c sugar-source-tree/pyproject.toml: its pythonpath, prepend import mode,
 # so its sibling helper modules import), not implementations/python/pytest.ini
 # (importlib mode), with the rootdir kept at implementations/python.
-# Each shard's tree pytest has a wall budget (TREE_SHARD_BUDGET_SECONDS,
+# Each tree bin's pytest has a wall budget (TREE_SHARD_BUDGET_SECONDS,
 # default 900): a hung tree test is interrupted (SIGINT, so pytest prints
-# where it was) and the tree is marked incomplete, while the shard's suite
-# results, already written, still count.
+# where it was) and the tree is marked incomplete, while every other bin's
+# results still count.
 #
 # THE LIFTER PACKAGE'S TESTS ARE THEIR OWN NUMBER TOO
 #
 # The 114 test files under implementations/python/sugar-lift-python-source/tests
 # ran only under `make test-python`, which no workflow calls. They are the
-# `source` population, the same way as the tree: packed by measured cost onto
-# the same shards, run by their own pytest last on each shard under
+# `source` population, the same way as the tree: packed by measured cost into
+# their own bins on the same queue, each bin's pytest under
 # SOURCE_SHARD_BUDGET_SECONDS (default 900), posted as `source=P/T`. The
 # package has no pytest table of its own, so `make test-python`'s pytest in
 # the package directory resolves implementations/python/pytest.ini (importlib
@@ -45,11 +74,12 @@
 #
 # * The twins number is the suite's own results for the twin files in the
 #   suite tree (scorecard_carry.py summarize --filtered/--only-files), plus
-#   the twin files outside the suite tree, which run once, as `twins`, on
-#   whichever shard the plan puts them.
-# * The plan packs every file onto the SUITE_SHARD_COUNT shards by measured
+#   the twin files outside the suite tree, which run once, as `twins`, in
+#   their own bins.
+# * The plan packs every file into bins of SUITE_BIN_SECONDS by measured
 #   cost (tools/main_scorecard_shard_plan.py on the LPT prior in
-#   $SCORECARD_CACHE/lpt-file-costs, which every pytest here refreshes).
+#   $SCORECARD_CACHE/lpt-file-costs and the path-keyed seconds in the
+#   ledger, which every pytest here refreshes); see WORKERS CLAIM BINS above.
 #
 # NOTHING IS CARRIED (#8416): every file of the plan runs on every run. The
 # carry recorder (sys.monitoring re-instrumenting live bytecode per test)
@@ -121,9 +151,9 @@ count_lines() {
 
 cmd_plan() {
   set -e
-  rm -rf "$results"
+  rm -rf "$results" "$plan/claims"
   mkdir -p "$results/suite" "$results/twins" "$results/tree" "$results/source" "$plan"
-  rm -f "$plan"/shard-*.txt "$plan/shards.json"
+  rm -f "$plan"/shard-*.txt "$plan/shards.json" "$plan/queue.txt"
   cd "$py"
   python "$repo/tools/python_package_suite_shards.py" \
     --repo-root "$repo" --shard-count 1 --shard-index 0 \
@@ -158,20 +188,20 @@ cmd_plan() {
   python "$repo/tools/main_scorecard_shard_plan.py" pack --cwd "$py" \
     --suite "$plan/suite-paths.txt" --twins "$plan/twins-extra.txt" \
     --tree "$plan/tree-paths.txt" --source "$plan/source-paths.txt" \
-    --shard-count "$SUITE_SHARD_COUNT" --out "$plan" --ledger "$ledger"
+    --bin-seconds "${SUITE_BIN_SECONDS:-150}" --out "$plan" --ledger "$ledger"
   echo "files to run: $(( $(count_lines "$plan/suite-paths.txt") + $(count_lines "$plan/twins-extra.txt") + $(count_lines "$plan/tree-paths.txt") + $(count_lines "$plan/source-paths.txt") ))" \
-    "over $SUITE_SHARD_COUNT shards"
+    "in $(count_lines "$plan/queue.txt") bins"
 }
 
 run_pytest() {
-  # run_pytest <label> <list> <summary> <log> <budget seconds, 0 = none> [pytest args...];
+  # run_pytest <label (the population)> <list> <summary> <log> <budget seconds, 0 = none> [pytest args...];
   # returns 1 when pytest did not run its tests (exit other than 0 passed,
   # 1 failed, 5 no tests collected).
-  local label="$1" list="$2" summary="$3" log="$4" budget="$5" rc
+  local label="$1" name="$1${BIN_TAG:+ bin $BIN_TAG}" list="$2" summary="$3" log="$4" budget="$5" rc
   shift 5
   local -a paths=() limit=()
   [ -f "$list" ] && mapfile -t paths < "$list"
-  echo "$label files to run: ${#paths[@]}"
+  echo "$name files to run: ${#paths[@]}"
   [ "${#paths[@]}" -gt 0 ] || return 0
   # Over budget: SIGINT, so pytest reports where it was and writes its
   # summary (exit 2); KILL a minute later if it does not stop. timeout exits 124.
@@ -205,76 +235,137 @@ run_pytest() {
     esac
     [ "$attempt" -eq 1 ] || break
     mv "$log" "${log%.log}.crash.log"
-    echo "::warning::$label pytest killed by signal $((rc - 128)) in: $(grep -a -m1 'Fatal Python error' "${log%.log}.crash.log" || echo '(no faulthandler dump in the log)'); running it once more in a fresh process (crash log: $(basename "${log%.log}.crash.log"))"
+    echo "::warning::$name pytest killed by signal $((rc - 128)) in: $(grep -a -m1 'Fatal Python error' "${log%.log}.crash.log" || echo '(no faulthandler dump in the log)'); running it once more in a fresh process (crash log: $(basename "${log%.log}.crash.log"))"
     awk '/^Current thread/ { on = 1 } on && /^$/ { exit } on' "${log%.log}.crash.log"
   done
   echo "$rc" > "${summary%.json}.exit"
-  echo "$label pytest exit $rc"
+  echo "$name pytest exit $rc"
   grep -a 'SCORECARD CARRY' "$log"
   case "$rc" in
     0 | 1 | 5) return 0 ;;
   esac
   if [ "$rc" -eq 124 ]; then
-    echo "::error::$label pytest ran past its ${budget}s wall budget and was interrupted; the last -v line before KeyboardInterrupt in $(basename "$log") is the test it was running"
+    echo "::error::$name pytest ran past its ${budget}s wall budget and was interrupted; the last -v line before KeyboardInterrupt in $(basename "$log") is the test it was running"
   fi
   if [ "$rc" -gt 128 ]; then
     # Killed by a signal: the test it was running is the -v line the
     # faulthandler dump interrupts; the crashing thread's stack follows.
-    echo "::error::$label pytest killed by signal $((rc - 128)) in: $(grep -a -m1 'Fatal Python error' "$log" || echo '(no faulthandler dump in the log)')"
+    echo "::error::$name pytest killed by signal $((rc - 128)) in: $(grep -a -m1 'Fatal Python error' "$log" || echo '(no faulthandler dump in the log)')"
     awk '/^Current thread/ { on = 1 } on && /^$/ { exit } on' "$log"
   fi
-  echo "::error::$label pytest exit $rc: this shard's tests did not run (full log in the uploaded $(basename "$log")); the row marks $label incomplete"
+  echo "::error::$name pytest exit $rc: this bin's tests did not run (full log in the uploaded $(basename "$log")); the row marks $label incomplete"
   return 1
 }
 
+bin_population() {
+  # The population of bin <tag>: the one list the plan wrote for it.
+  local p
+  for p in suite twins tree source; do
+    if [ -s "$plan/shard-$1.$p.txt" ]; then
+      echo "$p"
+      return 0
+    fi
+  done
+  return 1
+}
+
+bin_measured() {
+  # bin_measured <tag> <population>: an earlier attempt left a summary and an
+  # exit status after which its tests ran (0 passed, 1 failed, 5 none collected).
+  [ -f "$results/$2/shard-$1.json" ] && grep -qxE '0|1|5' "$results/$2/shard-$1.exit" 2>/dev/null
+}
+
+run_bin() {
+  # run_bin <tag> <population>: one pytest over the bin's files.
+  local tag="$1" pop="$2" budget=0 t0=$SECONDS rc=0
+  local -a config=()
+  case "$pop" in
+    # The source tree under its own package config, with a wall budget. The
+    # rootdir stays implementations/python (the cwd) so node IDs are
+    # sugar-source-tree/tests/... like the plan's paths (the ledger, the cost
+    # prior and the twins' file filter key on them); the config's pythonpath
+    # entries resolve against the config file's own directory.
+    tree)
+      budget="${TREE_SHARD_BUDGET_SECONDS:-900}"
+      config=(-c sugar-source-tree/pyproject.toml --rootdir .)
+      ;;
+    # The lifter package's tests, under the config `make test-python`
+    # resolves for them (implementations/python/pytest.ini: the package has
+    # no pytest table), with their own wall budget; node IDs are
+    # sugar-lift-python-source/tests/... like the plan's paths.
+    source)
+      budget="${SOURCE_SHARD_BUDGET_SECONDS:-900}"
+      config=(-c pytest.ini --rootdir .)
+      ;;
+  esac
+  # This bin's results from an earlier attempt are replaced, never kept.
+  rm -f "$results/$pop/shard-$tag".*
+  # Each twin keeps its source, lift doc and prove doc here; uploaded with
+  # the logs so a failing twin is diagnosed from CI's artifact.
+  export SUGAR_WITNESS_EVIDENCE_DIR="$repo/twin-evidence/bin-$tag"
+  BIN_TAG="$tag"
+  run_pytest "$pop" "$plan/shard-$tag.$pop.txt" "$results/$pop/shard-$tag.json" \
+    "$repo/scorecard-logs/bin-$tag.$pop.log" "$budget" "${config[@]}" || rc=1
+  echo "SCORECARD BIN shard=$tag population=$pop wall_s=$((SECONDS - t0)) lane=$LANE rc=$rc"
+  return "$rc"
+}
+
+run_lane() {
+  # run_lane <lane>: claim the next unclaimed bin of the queue (longest
+  # first) and run it, until every bin is claimed. Runs in its own subshell.
+  LANE="$1"
+  local claims="$plan/claims/attempt-${GITHUB_RUN_ATTEMPT:-1}" index tag pop status=0 ran=0
+  local -a queue=()
+  mapfile -t queue < "$plan/queue.txt"
+  # Its own temp root (pytest's basetemp and every mkdtemp), kept short.
+  export TMPDIR="/tmp/sc-lane-$LANE"
+  rm -rf "$TMPDIR"
+  mkdir -p "$TMPDIR"
+  for index in "${queue[@]}"; do
+    [ -n "$index" ] || continue
+    tag="$(printf '%02d' "$index")"
+    if ! pop="$(bin_population "$tag")"; then
+      echo "::error::no file list for bin $tag in $plan"
+      status=1
+      continue
+    fi
+    # A re-run attempt runs only what no earlier attempt measured.
+    bin_measured "$tag" "$pop" && continue
+    mkdir "$claims/bin-$tag" 2>/dev/null || continue
+    echo "${WORKER:-?}/$LANE" > "$claims/bin-$tag/by"
+    run_bin "$tag" "$pop" || status=1
+    ran=$((ran + 1))
+  done
+  echo "SCORECARD LANE worker=${WORKER:-?} lane=$LANE bins_run=$ran status=$status"
+  return "$status"
+}
+
 cmd_run() {
-  local tag suite_list twins_list tree_list source_list
-  tag="$(printf '%02d' "$1")"
-  suite_list="$plan/shard-$tag.suite.txt"
-  twins_list="$plan/shard-$tag.twins.txt"
-  tree_list="$plan/shard-$tag.tree.txt"
-  source_list="$plan/shard-$tag.source.txt"
-  if [ ! -f "$suite_list" ] || [ ! -f "$twins_list" ] || [ ! -f "$tree_list" ] \
-    || [ ! -f "$source_list" ]; then
-    echo "::error::no plan for shard $tag in $plan"
+  WORKER="$1"
+  local lanes="${SUITE_LANES:-2}" lane pid status=0
+  local -a pids=()
+  if [ ! -f "$plan/shards.json" ] || [ ! -f "$plan/queue.txt" ]; then
+    echo "::error::no plan (shards.json, queue.txt) in $plan"
     exit 1
   fi
-  mkdir -p "$results/suite" "$results/twins" "$results/tree" "$results/source"
-  # This shard's results from an earlier attempt are replaced, never kept.
-  rm -f "$results"/suite/shard-"$tag".* "$results"/twins/shard-"$tag".* \
-    "$results"/tree/shard-"$tag".* "$results"/source/shard-"$tag".*
-  # A crash log is this run's only (the self-hosted workspace persists).
-  rm -f "$repo/suite.crash.log" "$repo/twins.crash.log" "$repo/tree.crash.log" \
-    "$repo/source.crash.log"
+  mkdir -p "$results/suite" "$results/twins" "$results/tree" "$results/source" \
+    "$plan/claims/attempt-${GITHUB_RUN_ATTEMPT:-1}"
+  # Logs and twin evidence are this run's only (the self-hosted workspace persists).
+  rm -rf "$repo/scorecard-logs" "$repo/twin-evidence"
+  mkdir -p "$repo/scorecard-logs" "$repo/twin-evidence"
   cd "$py"
-  if [ -s "$suite_list" ] || [ -s "$twins_list" ] || [ -s "$tree_list" ] \
-    || [ -s "$source_list" ]; then
+  if [ -s "$plan/queue.txt" ]; then
     SUGAR_BIN="$("$repo/bin/sugarbin" --profile release)"
     export SUGAR_BIN
   fi
-  # Each twin keeps its source, lift doc and prove doc here; uploaded with
-  # the logs so a failing twin is diagnosed from CI's artifact.
-  rm -rf "$repo/twin-evidence"
-  export SUGAR_WITNESS_EVIDENCE_DIR="$repo/twin-evidence"
-  local status=0
-  run_pytest suite "$suite_list" "$results/suite/shard-$tag.json" "$repo/suite.log" 0 || status=1
-  run_pytest twins "$twins_list" "$results/twins/shard-$tag.json" "$repo/twins.log" 0 || status=1
-  # The source tree under its own package config, last, with a wall budget:
-  # the suite and twins above are already written. The rootdir stays
-  # implementations/python (the cwd) so node IDs are sugar-source-tree/tests/...
-  # like the plan's paths (the ledger, the cost prior and the twins' file
-  # filter key on them); the config's pythonpath entries resolve against the
-  # config file's own directory.
-  run_pytest tree "$tree_list" "$results/tree/shard-$tag.json" "$repo/tree.log" \
-    "${TREE_SHARD_BUDGET_SECONDS:-900}" \
-    -c sugar-source-tree/pyproject.toml --rootdir . || status=1
-  # The lifter package's tests, under the config `make test-python` resolves
-  # for them (implementations/python/pytest.ini: the package has no pytest
-  # table), with their own wall budget; node IDs are
-  # sugar-lift-python-source/tests/... like the plan's paths.
-  run_pytest source "$source_list" "$results/source/shard-$tag.json" "$repo/source.log" \
-    "${SOURCE_SHARD_BUDGET_SECONDS:-900}" \
-    -c pytest.ini --rootdir . || status=1
+  for ((lane = 0; lane < lanes; lane++)); do
+    run_lane "$lane" &
+    pids+=("$!")
+  done
+  for pid in "${pids[@]}"; do
+    wait "$pid" || status=1
+  done
+  echo "SCORECARD WORKER worker=$WORKER lanes=$lanes status=$status"
   return "$status"
 }
 

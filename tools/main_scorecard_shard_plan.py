@@ -1,8 +1,31 @@
 #!/usr/bin/env python3
 """Pack the scorecard's test files onto its shards, and check every shard reported.
 
-    main_scorecard_shard_plan.py pack  --cwd PY --suite F --twins F [--tree F] [--source F] --shard-count N --out PLAN
+    main_scorecard_shard_plan.py pack  --cwd PY --suite F --twins F [--tree F] [--source F] --bin-seconds S --out PLAN
     main_scorecard_shard_plan.py check --plan PLAN --results DIR --result suite=F --result twins=F [--result tree=F] [--result source=F]
+
+A SHARD IS A BIN ON A SHARED QUEUE (#8416, run 43946664351: wall 1919s)
+
+The fast lane has three runners. Eight fixed shards of about 420s each ran
+in three waves behind the rust and federation jobs, one single-threaded
+pytest at a time on a 32-thread host, and whatever went wrong on one shard
+(a fault-signal rerun of its whole suite pytest: +320s on shard 5; a 208s
+wait for the release binary federation was building: shard 2) went straight
+onto that runner's tail. The plan now cuts the files into many small
+population-pure bins (``--bin-seconds`` of measured cost each, so each bin
+is ONE pytest under its population's config), numbered longest first; the
+workers (main_scorecard_suite.sh run) each run several lanes that claim the
+next unclaimed bin until none is left. The longest bins start first, a slow
+bin delays only its lane, and the runners finish within about one bin of
+each other. ``check`` is unchanged: every bin is a "shard" of shards.json
+and must leave its results.
+
+A bin is estimated from, in order: the content-addressed prior (this exact
+file's last measured seconds), the path-keyed seconds in the ledger (the
+file's last measured seconds before an edit changed its content: an edited
+twin used to fall back to a size guess several times too small), then the
+file's size. Measured seconds include the file's collection (its import and
+module-level work), not only its tests' setup, call and teardown.
 
 WHY THIS EXISTS (#8416)
 
@@ -29,14 +52,12 @@ population is implementations/python/sugar-lift-python-source/tests, which
 likewise ran in no CI job (only ``make test-python``): packed and posted the
 same way, as its own ``source`` number.
 
-Writes, for each shard i, ``<out>/shard-<ii>.suite.txt``,
-``<out>/shard-<ii>.twins.txt``, ``<out>/shard-<ii>.tree.txt`` and
-``<out>/shard-<ii>.source.txt`` (paths
-relative to implementations/python, one per line; any may be empty), and
-``<out>/shards.json``: how many
-shards the plan made and, per shard and population, how many files and about
-how many tests it was planned to run (from the ledger of each file's last
-measured test count).
+Writes, for each shard (bin) i of population P, ``<out>/shard-<ii>.<P>.txt``
+(paths relative to implementations/python, one per line), ``<out>/queue.txt``
+(the bin indices in the order lanes claim them: longest estimate first), and
+``<out>/shards.json``: how many shards the plan made and, per shard and
+population, how many files and about how many tests it was planned to run
+(from the ledger of each file's last measured test count).
 
 A LOST SHARD IS NEVER A SMALLER TOTAL (#8416, run 43832361876)
 
@@ -62,6 +83,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -94,9 +116,67 @@ def write_json(path: Path, doc: dict) -> None:
     os.replace(tmp, path)
 
 
-def cmd_pack(args: argparse.Namespace) -> int:
-    from lpt_file_shards import ContentAddressedCostPrior, assign_files, narrate_assignment
+def is_seconds(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0
 
+
+def estimate_costs(
+    keys: list[str], resolver: dict[str, Path], ledger_seconds: dict
+) -> tuple[dict[str, float], dict[str, int]]:
+    """Each key's estimated wall seconds, and how many estimates came from each source.
+
+    The content-addressed prior first (this exact file was measured), then the
+    path-keyed ledger (this path was measured before its content changed),
+    then the size estimate lpt_file_shards calibrates from the measured files.
+    """
+    from lpt_file_shards import (
+        ContentAddressedCostPrior,
+        calibrate_size_cost_bins,
+        estimate_cost_from_size,
+        safe_unknown_cost_floor,
+    )
+
+    existing = {key: path for key, path in resolver.items() if path.is_file()}
+    prior = ContentAddressedCostPrior()
+    costs: dict[str, float] = {}
+    if prior.enabled:
+        costs, _hits, _misses = prior.costs_for_paths(existing)
+    sources = {"prior": len(costs), "ledger": 0, "size": 0}
+    for key in keys:
+        if key not in costs and is_seconds(ledger_seconds.get(key)):
+            costs[key] = float(ledger_seconds[key])
+            sources["ledger"] += 1
+    floor_s = safe_unknown_cost_floor(list(costs.values()))
+    size_pairs: list[tuple[int, float]] = []
+    for key, cost in costs.items():
+        path = existing.get(key)
+        if path is None:
+            continue
+        try:
+            size_pairs.append((path.stat().st_size, float(cost)))
+        except OSError:
+            continue
+    size_bins = calibrate_size_cost_bins(size_pairs)
+    for key in keys:
+        if key in costs:
+            continue
+        path = existing.get(key)
+        try:
+            size = path.stat().st_size if path is not None else None
+        except OSError:
+            size = None
+        costs[key] = (
+            floor_s if size is None else estimate_cost_from_size(size, size_bins, floor_s=floor_s)
+        )
+        sources["size"] += 1
+    return costs, sources
+
+
+def cmd_pack(args: argparse.Namespace) -> int:
+    from lpt_file_shards import lpt_bins
+
+    if args.bin_seconds <= 0:
+        sys.exit("::error::--bin-seconds must be positive")
     keys: list[str] = []
     resolver: dict[str, Path] = {}
     listings = (
@@ -115,48 +195,77 @@ def cmd_pack(args: argparse.Namespace) -> int:
             keys.append(key)
             resolver[key] = (args.cwd / rel).resolve()
 
-    assignment = assign_files(
-        keys,
-        shard_count=args.shard_count,
-        path_resolver={k: p for k, p in resolver.items() if p.is_file()},
-        prior=ContentAddressedCostPrior(),
-    )
-    narrate_assignment(assignment, population="main-scorecard")
+    ledger_doc = (read_json(args.ledger) or {}) if args.ledger else {}
+    ledger_counts = ledger_doc.get("files") if isinstance(ledger_doc.get("files"), dict) else {}
+    ledger_seconds = ledger_doc.get("seconds") if isinstance(ledger_doc.get("seconds"), dict) else {}
+    costs, sources = estimate_costs(keys, resolver, ledger_seconds)
 
-    ledger = (read_json(args.ledger) or {}).get("files", {}) if args.ledger else {}
+    # Population-pure bins: each bin is one pytest under its population's
+    # config. A population gets as many bins as its measured cost needs
+    # (ceil(cost / bin seconds)), packed longest-first; one file costlier
+    # than a bin is a bin of its own.
+    bins: list[tuple[str, list[str], float]] = []
+    for population in POPULATIONS:
+        members = [key for key in keys if key.split("\t", 1)[0] == population]
+        if not members:
+            continue
+        total = sum(costs[key] for key in members)
+        count = max(1, min(len(members), math.ceil(total / args.bin_seconds)))
+        for bucket in lpt_bins(members, costs, count, missing_cost=0.0):
+            if bucket:
+                bins.append((population, sorted(bucket), sum(costs[key] for key in bucket)))
+    # Bin 0 is the longest: the queue is claimed in index order, so the long
+    # poles start first and the short bins fill the tail.
+    bins.sort(key=lambda b: (-b[2], b[0], b[1][0]))
+
     args.out.mkdir(parents=True, exist_ok=True)
     shards = []
-    for index in range(args.shard_count):
-        bucket = assignment.bins[index] if index < len(assignment.bins) else []
-        by_population: dict[str, list[str]] = {population: [] for population in POPULATIONS}
-        for key in bucket:
-            population, rel = key.split("\t", 1)
-            by_population[population].append(rel)
-        entry: dict[str, object] = {"index": index}
-        tests_planned = 0
-        for population, rels in by_population.items():
-            (args.out / f"shard-{index:02d}.{population}.txt").write_text(
-                "".join(f"{rel}\n" for rel in sorted(rels)), encoding="utf-8"
-            )
-            counts = [ledger.get(f"{population}\t{rel}") for rel in rels]
-            planned = sum(n for n in counts if isinstance(n, int))
-            tests_planned += planned
-            entry[population] = {
-                "files": len(rels),
-                "testsPlanned": planned,
-                "filesWithoutCount": sum(1 for n in counts if not isinstance(n, int)),
+    for index, (population, bucket, estimate) in enumerate(bins):
+        rels = [key.split("\t", 1)[1] for key in bucket]
+        (args.out / f"shard-{index:02d}.{population}.txt").write_text(
+            "".join(f"{rel}\n" for rel in rels), encoding="utf-8"
+        )
+        counts = [ledger_counts.get(key) for key in bucket]
+        planned = sum(n for n in counts if isinstance(n, int))
+        shards.append(
+            {
+                "index": index,
+                "population": population,
+                "estimatedSeconds": round(estimate, 1),
+                population: {
+                    "files": len(rels),
+                    "testsPlanned": planned,
+                    "filesWithoutCount": sum(1 for n in counts if not isinstance(n, int)),
+                },
             }
-        shards.append(entry)
-        loads = assignment.estimated_loads or ()
-        load = loads[index] if index < len(loads) else 0.0
+        )
         print(
-            f"SCORECARD SHARD PLAN shard={index} suite_files={len(by_population['suite'])} "
-            f"twins_files={len(by_population['twins'])} tree_files={len(by_population['tree'])} "
-            f"source_files={len(by_population['source'])} tests_planned~{tests_planned} "
-            f"estimated_s={load:.1f} mode={assignment.mode}",
+            f"SCORECARD SHARD PLAN shard={index} population={population} files={len(rels)} "
+            f"tests_planned~{planned} estimated_s={estimate:.1f}",
             flush=True,
         )
-    write_json(args.out / "shards.json", {"schema": PLAN_SCHEMA, "shardCount": args.shard_count, "shards": shards})
+    (args.out / "queue.txt").write_text(
+        "".join(f"{index}\n" for index in range(len(bins))), encoding="utf-8"
+    )
+    totals = {
+        population: sum(b[2] for b in bins if b[0] == population) for population in POPULATIONS
+    }
+    print(
+        f"SCORECARD SHARD PLAN bins={len(bins)} bin_seconds={args.bin_seconds:g} "
+        f"estimated_s_total={sum(totals.values()):.1f} "
+        + " ".join(f"{population}_s={seconds:.1f}" for population, seconds in totals.items())
+        + f" estimates: prior={sources['prior']} ledger={sources['ledger']} size={sources['size']}",
+        flush=True,
+    )
+    write_json(
+        args.out / "shards.json",
+        {
+            "schema": PLAN_SCHEMA,
+            "shardCount": len(bins),
+            "binSeconds": args.bin_seconds,
+            "shards": shards,
+        },
+    )
     return 0
 
 
@@ -252,11 +361,26 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 
 def update_ledger(ledger_path: Path, results: Path, populations: list[str]) -> None:
-    """Each run test file's test count, from the shards of complete populations."""
-    if not populations:
-        return
+    """Each run test file's test count, from the shards of complete populations,
+    and each run test file's measured seconds (``fileSeconds`` of every summary
+    left, complete population or not: a file's seconds are its own), keyed by
+    path so an edited file is still estimated by what it cost last time."""
     ledger = read_json(ledger_path) or {}
     files = ledger.get("files") if isinstance(ledger.get("files"), dict) else {}
+    seconds = ledger.get("seconds") if isinstance(ledger.get("seconds"), dict) else {}
+    measured = 0
+    for population in POPULATIONS:
+        for summary_path in sorted((results / population).glob("shard-*.json")):
+            summary = read_json(summary_path) or {}
+            file_seconds = summary.get("fileSeconds")
+            if not isinstance(file_seconds, dict):
+                continue
+            for rel, value in file_seconds.items():
+                if isinstance(rel, str) and is_seconds(value):
+                    seconds[f"{population}\t{rel}"] = round(float(value), 3)
+                    measured += 1
+    if not populations and not measured:
+        return
     for population in populations:
         counts: dict[str, int] = {}
         for summary_path in sorted((results / population).glob("shard-*.json")):
@@ -267,7 +391,10 @@ def update_ledger(ledger_path: Path, results: Path, populations: list[str]) -> N
         for rel, n in counts.items():
             files[f"{population}\t{rel}"] = n
     try:
-        write_json(ledger_path, {"schema": "sugar-main-scorecard-test-counts/v1", "files": files})
+        write_json(
+            ledger_path,
+            {"schema": "sugar-main-scorecard-test-counts/v1", "files": files, "seconds": seconds},
+        )
     except OSError as exc:
         print(f"::warning::could not write the test-count ledger {ledger_path}: {exc}")
 
@@ -283,7 +410,12 @@ def main(argv: list[str] | None = None) -> int:
     pack.add_argument(
         "--source", type=Path, default=None, help="sugar-lift-python-source test files to run"
     )
-    pack.add_argument("--shard-count", type=int, required=True)
+    pack.add_argument(
+        "--bin-seconds",
+        type=float,
+        required=True,
+        help="target measured seconds per bin (each bin is one pytest a lane claims)",
+    )
     pack.add_argument("--out", type=Path, required=True)
     pack.add_argument("--ledger", type=Path, default=None, help="per-file test counts")
     check = sub.add_parser("check", help="did every planned shard report its tests?")
