@@ -5486,26 +5486,7 @@ fn single_bridge_answer(pool: &MementoPool, symbol: &str) -> Option<BridgeAnswer
 
 /// The dispatch table over `pool` (step 8).
 fn dispatch_table(pool: &MementoPool) -> DispatchTable {
-    let namespaces = collect_class_namespaces(pool);
-    // The instance each class's constructor contract states it makes: the
-    // class row is the contract a call of the class joins (its bridge
-    // answers the class's own symbol).
-    let mut constructed: BTreeMap<String, Option<Json>> = BTreeMap::new();
-    let mut constructed_fields: BTreeMap<String, std::collections::BTreeSet<String>> =
-        BTreeMap::new();
-    for class in namespaces.keys() {
-        let answer = single_bridge_answer(pool, class);
-        let instance = answer.as_ref().and_then(|(binding, post, ..)| {
-            constructed_instance(post, &binding.out_binding, class)
-        });
-        if let (Some(_), Some((binding, post, ..))) = (&instance, &answer) {
-            let fields = constructed_stated_fields(post, &binding.out_binding);
-            if !fields.is_empty() {
-                constructed_fields.insert(class.clone(), fields);
-            }
-        }
-        constructed.insert(class.clone(), instance);
-    }
+    let namespaces = Arc::new(collect_class_namespaces(pool));
     let mut answers: BTreeMap<String, Option<BridgeAnswer>> = BTreeMap::new();
     for namespace in namespaces.values() {
         for (kind, symbol) in namespace.binds.values() {
@@ -5523,12 +5504,306 @@ fn dispatch_table(pool: &MementoPool) -> DispatchTable {
             answers.insert(symbol.clone(), called_function_answer(pool, symbol));
         }
     }
+    // The instance each class's constructor contract states it makes: the
+    // class row is the contract a call of the class joins (its bridge
+    // answers the class's own symbol). Where the row leaves the instance's
+    // fields to the `__init__` it dispatches on it (#7757 B3), they are what
+    // that `__init__`'s contract states it leaves (`initialized_instance`).
+    let mut constructed: BTreeMap<String, Option<Json>> = BTreeMap::new();
+    let mut constructed_fields: BTreeMap<String, std::collections::BTreeSet<String>> =
+        BTreeMap::new();
+    for class in namespaces.keys() {
+        let answer = single_bridge_answer(pool, class);
+        let mut instance = answer.as_ref().and_then(|(binding, post, ..)| {
+            constructed_instance(post, &binding.out_binding, class)
+        });
+        let mut fields = std::collections::BTreeSet::new();
+        let read = instance.clone();
+        if let (Some(stated), Some((binding, post, ..))) = (read.as_ref(), answer.as_ref()) {
+            fields = constructed_stated_fields(post, &binding.out_binding);
+            match initializer_call_class(post) {
+                None => {}
+                Some(None) => instance = None,
+                Some(Some(receiver_class)) => {
+                    match initialized_instance(&namespaces, &answers, class, &receiver_class) {
+                        Some((held, stored)) => {
+                            instance = Some(instance_with_fields(stated, &held));
+                            fields.extend(stored);
+                        }
+                        None => instance = None,
+                    }
+                }
+            }
+        }
+        if instance.is_some() && !fields.is_empty() {
+            constructed_fields.insert(class.clone(), fields);
+        }
+        constructed.insert(class.clone(), instance);
+    }
     DispatchTable {
-        namespaces: Arc::new(namespaces),
+        namespaces,
         answers,
         constructed,
         constructed_fields,
     }
+}
+
+/// The ctor of the dispatched `__init__` call a class's constructor contract
+/// makes on the fresh instance it allocates (#7757 B3, the kit's
+/// `ClassConstructorBodySugar`): `call:dispatch:__init__(<instance>,
+/// <actuals>..., py.class("0", python:instance(<class>)))`, joined at prove
+/// as every dispatched call is.
+const INITIALIZER_CALL: &str = "call:dispatch:__init__";
+/// `python:holds_decided(<object>)`: the `python:may_hold` facts stated
+/// beside it of `<object>` are every name its `__dict__` may hold beyond what
+/// it held before the call (the kit's `receiver_dispatch.HOLDS_DECIDED`): an
+/// `__init__`'s contract states it of its receiver (#7757 B2).
+const PYTHON_HOLDS_DECIDED: &str = "python:holds_decided";
+
+/// The class a constructor contract's `__init__` call is dispatched over:
+/// `None` where `post` makes no such call (the row states the instance it
+/// makes itself); `Some(None)` where it makes more than one distinct such
+/// call or one whose receiver class (`py.class("0", <class>)`) is not
+/// stated; `Some(Some(<class>))` otherwise.
+fn initializer_call_class(post: &Json) -> Option<Option<Json>> {
+    let mut calls: Vec<&Json> = Vec::new();
+    let mut pending: Vec<&Json> = vec![post];
+    while let Some(node) = pending.pop() {
+        match node {
+            Json::Array(items) => pending.extend(items.iter()),
+            Json::Object(map) => {
+                if let Some((INITIALIZER_CALL, args)) = ctor_parts(node) {
+                    // A call that names where it looks `__init__` up
+                    // (`super().__init__()`, `Cls.__init__(...)`) is no
+                    // construction's own dispatch.
+                    if !args.iter().any(|arg| lookup_argument(arg).is_some())
+                        && !calls.contains(&node)
+                    {
+                        calls.push(node);
+                    }
+                    continue;
+                }
+                pending.extend(map.values());
+            }
+            _ => {}
+        }
+    }
+    let first = *calls.first()?;
+    if calls.len() != 1 {
+        return Some(None);
+    }
+    let Some((_, args)) = ctor_parts(first) else {
+        return Some(None);
+    };
+    let receiver = args.iter().find_map(|arg| match class_argument(arg) {
+        Some(Ok((ClassKey::Position(0), class))) => Some(class),
+        _ => None,
+    });
+    Some(receiver)
+}
+
+/// Whether `term` is `python:after(<out>, "<label>")`: an object as the
+/// contract whose out-binding is `out` leaves it, named by `label`.
+fn names_the_object_after(term: &Json, out: &str, label: &str) -> bool {
+    let Some((PYTHON_AFTER, args)) = ctor_parts(term) else {
+        return false;
+    };
+    match args.as_slice() {
+        [object, named] => {
+            object.get("kind").and_then(|v| v.as_str()) == Some("var")
+                && object.get("name").and_then(|v| v.as_str()) == Some(out)
+                && const_str(named) == Some(label)
+        }
+        _ => false,
+    }
+}
+
+/// Whether `node` is a `python:plain_store` or `python:plain_read` atom over
+/// the class input `class:<receiver>`: the guards an `__init__`'s contract
+/// states what it leaves in its receiver under.
+fn is_receiver_plain_atom(node: &Json, receiver: &str) -> bool {
+    node.get("kind").and_then(|v| v.as_str()) == Some("atomic")
+        && matches!(
+            node.get("name").and_then(|v| v.as_str()),
+            Some(PYTHON_PLAIN_STORE | PYTHON_PLAIN_READ)
+        )
+        && node
+            .get("args")
+            .and_then(|v| v.as_array())
+            .and_then(|args| args.first())
+            .is_some_and(|class| {
+                class.get("kind").and_then(|v| v.as_str()) == Some("var")
+                    && class.get("name").and_then(|v| v.as_str())
+                        == Some(format!("{CLASS_INPUT_PREFIX}{receiver}").as_str())
+            })
+}
+
+/// What the `__init__` a class's constructor contract dispatches on its
+/// fresh instance leaves in it (#7757 B3): `(may_hold, fields)`, read off
+/// that `__init__`'s contract where every completed face is decided.
+///
+/// `receiver_class` is the class the call is dispatched over; it must be the
+/// fresh instance of `class`, `python:instance(<class>)` with no field (the
+/// `__dict__` `type.__call__` hands `__init__` is empty). The `__init__` is
+/// the one dispatched method (`dispatched_target`) bound as called, whose
+/// answer is one contract (`answers`). Over its receiver formal `<self>` (its
+/// first formal) and `o = python:after(out, "<self>")`, its post states
+/// (the kit's `UniverseValue.receiver_holds_facts`):
+///
+/// - `python:holds_decided(o)` and `python:may_hold(o, <name>)` per name,
+///   under plain-store and plain-read guards over `class:<self>`, each of
+///   which must hold for `receiver_class` (`plain_store_holds`,
+///   `plain_read_holds`): then the names are every name the instance's
+///   `__dict__` may hold;
+/// - each field `attr:<f>(o) == <v>` it states unconditionally, or under an
+///   implication whose antecedent is only such guards: the fields a caller's
+///   `field:<p>.<f>` input may be bound through
+///   (`constructed_field_inputs`).
+///
+/// `None` -- the instance is not decided, and a dispatch over a call of the
+/// class stays owed -- where the receiver class is not the fresh instance,
+/// no `__init__` resolves, its answer is not one contract, it states no
+/// `python:holds_decided`, or a guard does not hold.
+fn initialized_instance(
+    namespaces: &Arc<BTreeMap<String, ClassNamespace>>,
+    answers: &BTreeMap<String, Option<BridgeAnswer>>,
+    class: &str,
+    receiver_class: &Json,
+) -> Option<(std::collections::BTreeSet<String>, std::collections::BTreeSet<String>)> {
+    let (name, args) = ctor_parts(receiver_class)?;
+    if name != PYTHON_INSTANCE || args.len() != 1 || const_str(&args[0]) != Some(class) {
+        return None;
+    }
+    let target = dispatched_target(
+        namespaces,
+        "__init__",
+        false,
+        Some(receiver_class),
+        &DispatchLookup::default(),
+    )?;
+    if target.receiver != DispatchReceiver::AsCalled {
+        return None;
+    }
+    let (binding, post, ..) = answers.get(&target.symbol)?.as_ref()?;
+    let receiver = binding.formals.first()?;
+    if is_variadic_formal(receiver) || is_contract_input(receiver) {
+        return None;
+    }
+    let out = binding.out_binding.as_str();
+    let guards = DispatchTable {
+        namespaces: namespaces.clone(),
+        ..DispatchTable::default()
+    };
+    let mut decided = false;
+    let mut held = std::collections::BTreeSet::new();
+    let mut pending: Vec<&Json> = vec![post];
+    while let Some(node) = pending.pop() {
+        match node {
+            Json::Array(items) => pending.extend(items.iter()),
+            Json::Object(map) => {
+                if is_receiver_plain_atom(node, receiver) {
+                    let args = node.get("args").and_then(|v| v.as_array())?;
+                    let field = const_str(args.get(1)?)?;
+                    let holds = match node.get("name").and_then(|v| v.as_str()) {
+                        Some(PYTHON_PLAIN_STORE) => {
+                            plain_store_holds(&guards, receiver_class, field)
+                        }
+                        _ => plain_read_holds(&guards, receiver_class, field),
+                    };
+                    if !holds {
+                        return None;
+                    }
+                    continue;
+                }
+                let atom = node.get("kind").and_then(|v| v.as_str()) == Some("atomic");
+                let subject = node
+                    .get("args")
+                    .and_then(|v| v.as_array())
+                    .and_then(|args| args.first())
+                    .is_some_and(|subject| names_the_object_after(subject, out, receiver));
+                if atom && subject {
+                    match node.get("name").and_then(|v| v.as_str()) {
+                        Some(PYTHON_HOLDS_DECIDED) => decided = true,
+                        Some(PYTHON_MAY_HOLD) => {
+                            let args = node.get("args").and_then(|v| v.as_array())?;
+                            held.insert(const_str(args.get(1)?)?.to_string());
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+                pending.extend(map.values());
+            }
+            _ => {}
+        }
+    }
+    if !decided {
+        return None;
+    }
+    // The fields it states its receiver holds where it leaves, unconditionally
+    // or under the guards decided above only.
+    let mut fields = std::collections::BTreeSet::new();
+    let mut stated = |node: &Json| {
+        for conjunct in conjuncts(node) {
+            if conjunct.get("kind").and_then(|v| v.as_str()) != Some("atomic")
+                || conjunct.get("name").and_then(|v| v.as_str()) != Some("=")
+            {
+                continue;
+            }
+            for side in conjunct.get("args").and_then(|v| v.as_array()).into_iter().flatten() {
+                let Some((name, args)) = ctor_parts(side) else {
+                    continue;
+                };
+                let Some(field) = name.strip_prefix(ATTRIBUTE_CTOR_PREFIX) else {
+                    continue;
+                };
+                if matches!(args.as_slice(), [object] if names_the_object_after(object, out, receiver))
+                {
+                    fields.insert(field.to_string());
+                }
+            }
+        }
+    };
+    for conjunct in conjuncts(post) {
+        if conjunct.get("kind").and_then(|v| v.as_str()) == Some("implies") {
+            let Some([antecedent, consequent]) = conjunct
+                .get("operands")
+                .and_then(|v| v.as_array())
+                .map(Vec::as_slice)
+                .and_then(|operands| <&[Json; 2]>::try_from(operands).ok())
+            else {
+                continue;
+            };
+            if conjuncts(antecedent)
+                .into_iter()
+                .all(|guard| is_receiver_plain_atom(guard, receiver))
+            {
+                stated(consequent);
+            }
+        } else {
+            stated(conjunct);
+        }
+    }
+    Some((held, fields))
+}
+
+/// `python:instance(<class>, <field>...)` with the fields `instance` names
+/// and every one of `held`, in name order.
+fn instance_with_fields(instance: &Json, held: &std::collections::BTreeSet<String>) -> Json {
+    let Some((name, args)) = ctor_parts(instance) else {
+        return instance.clone();
+    };
+    let Some((class, named)) = args.split_first() else {
+        return instance.clone();
+    };
+    let mut fields: std::collections::BTreeSet<String> = named
+        .iter()
+        .filter_map(|field| const_str(field).map(str::to_string))
+        .collect();
+    fields.extend(held.iter().cloned());
+    let mut out = vec![class.clone()];
+    out.extend(fields.iter().map(|field| string_const_term(field)));
+    json!({"kind": "ctor", "name": name, "args": out})
 }
 
 /// `python:constructed(<class symbol>)` (the kit's
@@ -15736,6 +16011,119 @@ mod tests {
             "name": PYTHON_PLAIN_STORE,
             "args": [class, string_const(field)],
         })
+    }
+
+    /// `Box.__init__(self, n)` storing `self.n = n`, as its contract states
+    /// it (the kit's `UniverseValue.receiver_holds_facts` and
+    /// `field_facts`, #7757 B2): the field and what `self.__dict__` may hold,
+    /// under the plain-store guard; undecided under its complement.
+    fn box_init_answers() -> BTreeMap<String, Option<BridgeAnswer>> {
+        let o = json!({"kind": "ctor", "name": PYTHON_AFTER, "args": [var("out"), string_const("self")]});
+        let atom = |name: &str, args: Vec<Json>| json!({"kind": "atomic", "name": name, "args": args});
+        let guard = plain_store(var("class:self"), "n");
+        let field = json!({"kind": "ctor", "name": "attr:n", "args": [o.clone()]});
+        let post = json!({"kind": "and", "operands": [
+            {"kind": "implies", "operands": [guard.clone(), atom("=", vec![field, var("n")])]},
+            {"kind": "implies", "operands": [guard.clone(), {"kind": "and", "operands": [
+                atom(PYTHON_HOLDS_DECIDED, vec![o.clone()]),
+                atom(PYTHON_MAY_HOLD, vec![o.clone(), string_const("n")]),
+            ]}]},
+            {"kind": "implies", "operands": [
+                {"kind": "not", "operands": [guard]},
+                atom(PYTHON_CLASS_UNDECIDED, vec![o]),
+            ]},
+        ]});
+        let binding = BridgeBinding {
+            source_symbol: "python:m.Box.__init__".to_string(),
+            target_cid: String::new(),
+            target_proof_cid: None,
+            formals: vec!["self".to_string(), "n".to_string(), "class:self".to_string()],
+            out_binding: "out".to_string(),
+            stated_inputs: Vec::new(),
+        };
+        let mut answers = BTreeMap::new();
+        answers.insert(
+            "python:m.Box.__init__".to_string(),
+            Some((binding, post, Vec::new(), true, Vec::new())),
+        );
+        answers
+    }
+
+    #[test]
+    fn a_constructed_instance_holds_what_its_dispatched_init_leaves() {
+        // #7757 B3: the class row states the class of the fresh instance and
+        // dispatches `__init__` on it; what its `__dict__` holds, and the
+        // fields a caller's `field:` input may be bound through, are what
+        // the `__init__`'s contract states it leaves in `self`.
+        let mut namespaces = BTreeMap::new();
+        namespaces.insert(
+            "python:m.Box".to_string(),
+            namespace(
+                &["python:m.Box", "builtins.object"],
+                &[("__init__", "function", "python:m.Box.__init__")],
+            ),
+        );
+        let namespaces = Arc::new(namespaces);
+        let answers = box_init_answers();
+        let fresh = instance("python:m.Box", &[]);
+        let (held, fields) =
+            initialized_instance(&namespaces, &answers, "python:m.Box", &fresh).unwrap();
+        assert_eq!(held.into_iter().collect::<Vec<_>>(), vec!["n".to_string()]);
+        assert_eq!(fields.into_iter().collect::<Vec<_>>(), vec!["n".to_string()]);
+        assert_eq!(
+            instance_with_fields(&fresh, &["n".to_string()].into_iter().collect()),
+            instance("python:m.Box", &["n"])
+        );
+        // Only over the fresh instance of the class itself.
+        assert!(initialized_instance(
+            &namespaces,
+            &answers,
+            "python:m.Box",
+            &instance("python:m.Box", &["n"])
+        )
+        .is_none());
+        assert!(initialized_instance(&namespaces, &answers, "python:m.Other", &fresh).is_none());
+    }
+
+    #[test]
+    fn a_constructed_instance_whose_init_store_runs_code_is_undecided() {
+        // A `__setattr__` on the class: `self.n = n` runs it, and it may
+        // store any name, so nothing is concluded about the `__dict__`.
+        let mut namespaces = BTreeMap::new();
+        namespaces.insert(
+            "python:m.Box".to_string(),
+            namespace(
+                &["python:m.Box", "builtins.object"],
+                &[
+                    ("__init__", "function", "python:m.Box.__init__"),
+                    ("__setattr__", "function", "python:m.Box.__setattr__"),
+                ],
+            ),
+        );
+        let namespaces = Arc::new(namespaces);
+        let fresh = instance("python:m.Box", &[]);
+        assert!(
+            initialized_instance(&namespaces, &box_init_answers(), "python:m.Box", &fresh)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_constructor_contract_names_the_class_its_init_call_is_dispatched_over() {
+        let fresh = instance("python:m.Box", &[]);
+        let call = json!({"kind": "ctor", "name": INITIALIZER_CALL, "args": [
+            var("obj"),
+            var("n"),
+            {"kind": "ctor", "name": PYTHON_CLASS, "args": [string_const("0"), fresh.clone()]},
+        ]});
+        let post = json!({"kind": "atomic", "name": "=", "args": [var("out"), call.clone()]});
+        assert_eq!(initializer_call_class(&post), Some(Some(fresh)));
+        // No `__init__` call: the row states its instance itself.
+        assert_eq!(initializer_call_class(&var("out")), None);
+        // Two distinct calls: not decided.
+        let other = json!({"kind": "ctor", "name": INITIALIZER_CALL, "args": [var("obj")]});
+        let both = json!({"kind": "and", "operands": [post, {"kind": "atomic", "name": "=", "args": [var("x"), other]}]});
+        assert_eq!(initializer_call_class(&both), Some(None));
     }
 
     #[test]
