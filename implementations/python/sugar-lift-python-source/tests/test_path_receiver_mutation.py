@@ -894,7 +894,7 @@ def _traced_substitution(source, name):
 
 
 def test_an_object_place_handed_to_an_opaque_call_is_rebound_by_the_one_rule():
-    # No class attribute: ``C()`` is an object place.  ``g(c)`` used to mark
+    # No class attribute: ``C()`` is an object state.  ``g(c)`` used to mark
     # the place invalidated by its own rule; the one exposure rule now
     # rebinds ``c`` and its alias to their value after the call.  A place has
     # no invalidation (nor any field) of its own any more.
@@ -912,10 +912,8 @@ def test_an_object_place_handed_to_an_opaque_call_is_rebound_by_the_one_rule():
         "    return (alias, c)\n"
     )
     substituted = _traced_substitution(source, "f")
-    places = [
-        node for node in substituted.walk() if node.kind == "ObjectPlaceStateV1"
-    ]
-    assert places, "C() is an object place"
+    places = [node for node in substituted.walk() if node.kind == "OpaqueObjectStateV1"]
+    assert places, "C() is an object state"
     returned = next(
         statement
         for statement in reversed(substituted.body)

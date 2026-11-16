@@ -16,7 +16,7 @@ class ReceiverFieldStoreStateSugar(ConstructedTermSugar):
     again.  A read of a whole object after its field stores is these folded
     over the object's own read (``ReceiverFieldStoreState``, the one field
     store's post-state, whatever the receiver was given: an object a
-    constructor call built, ``ObjectPlaceStateV1``, is read through its
+    call built, ``OpaqueObjectStateV1``, is read through its
     assignment's key underneath).
 
     The store itself ran at its statement (``ReceiverFieldStoreSugar``); this

@@ -18,7 +18,7 @@ The law has two halves, and this module owns both:
   the statement completed with, never the RHS inlined at the read and
   evaluated again against whatever was rebound since.  A call's result kept
   as its object identity (``Assign.refine_binding_entries``,
-  ``OpaqueObjectStateV1``, ``ObjectPlaceStateV1``) reads the same key; a
+  ``OpaqueObjectStateV1``) reads the same key; a
   stored field or a container's contents after a store read the store's key
   (``place``), and an object after its field stores is that key with each
   store's key read folded over it.  A path's root after a path mutation is

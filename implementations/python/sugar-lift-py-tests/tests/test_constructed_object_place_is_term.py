@@ -1,4 +1,4 @@
-"""An object place reads its assignment's key; AttributeSugar.receiver stays
+"""An object state reads its assignment's key; AttributeSugar.receiver stays
 ConstructedTermSugar.
 
 ``ConstructedObjectPlaceSugar`` (a value constructed at substitution, sealed
@@ -70,13 +70,21 @@ def test_no_value_constructed_at_substitution_is_a_node() -> None:
     assert "ConstructedValueProjectionV1" not in names
 
 
-def test_object_place_state_reads_its_assignment_key() -> None:
-    """ObjectPlaceStateV1 reads the value its constructor call completed with
-    at the assignment, through the assignment's key (#7757 item 7): never the
-    constructed value computed at substitution.  A read of the object folds
-    every field store on it over that read (``ReceiverFieldStoreStateSugar``)."""
-    returns = _construct_sugar_returns("ObjectPlaceStateV1", "_object_sugar")
-    assert "EvaluationRefSugar" in returns, returns
-    assert "ConstructedObjectPlaceSugar" not in returns, returns
-    construct = _construct_sugar_returns("ObjectPlaceStateV1")
+def test_object_state_reads_its_assignment_key() -> None:
+    """The object an assignment's call made (``OpaqueObjectStateV1``, the one
+    object state whatever the callee, #7757) reads the value the call
+    completed with at the assignment, through the assignment's key (#7757
+    item 7): never a value constructed at substitution.  A read of the
+    object folds every field store on it over that read
+    (``ReceiverFieldStoreStateSugar``)."""
+    construct = _construct_sugar_returns("OpaqueObjectStateV1")
+    assert "EvaluationRefSugar" in construct, construct
     assert "ConstructedObjectPlaceSugar" not in construct, construct
+
+
+def test_one_object_state() -> None:
+    """The second object state, chosen by a second answer to what the callee
+    denotes, is deleted (#7757 audit 4 L1)."""
+    tree = ast.parse(_NODES.read_text(encoding="utf-8"))
+    names = {n.name for n in ast.walk(tree) if isinstance(n, ast.ClassDef)}
+    assert "ObjectPlaceStateV1" not in names
