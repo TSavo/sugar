@@ -16194,6 +16194,7 @@ mod tests {
             formals: vec!["self".to_string(), "n".to_string(), "class:self".to_string()],
             out_binding: "out".to_string(),
             stated_inputs: Vec::new(),
+            definition: None,
         };
         let mut answers = BTreeMap::new();
         answers.insert(
