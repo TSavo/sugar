@@ -7,7 +7,7 @@ from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
-def refuse_unrun_source_new(definition, *, new_method, runs_new, site, owner):
+def refuse_unrun_source_new(definition, *, new_method, site, owner):
     """Refuse a class call that would skip the class's own source ``__new__``.
 
     ``Cls(...)`` is ``type.__call__``: it runs ``Cls.__new__`` first and only
@@ -15,11 +15,13 @@ def refuse_unrun_source_new(definition, *, new_method, runs_new, site, owner):
     source ``__new__`` may return an instance of another class (pandas
     ``ExcelWriter.__new__`` returns ``object.__new__(get_writer(engine))``),
     so running ``Cls.__init__`` on a fresh ``Cls`` receiver constructs an
-    object Python never builds.  The only ``__new__`` arm constructed today is
-    the authenticated allocation-then-field-stores shape on a class without
-    ``__init__``; every other source ``__new__`` refuses here by name.
+    object Python never builds.  The one ``__new__`` arm is the dispatched
+    one (``ClassDef.returned_new``, ``ClassConstructorBodySugar.
+    _returned_by_new``), which never reaches here; every other source
+    ``__new__`` refuses here by name (#7757 A4: no ``__new__`` body is read
+    in place).
     """
-    if new_method is None or runs_new:
+    if new_method is None:
         return
     from sugar_source_tree.panic import SugarNotWritten
 
@@ -68,18 +70,13 @@ class ClassConstructorBodySugar(Sugar):
     # call's positional actuals as ``args`` (Objects/exceptions.c), so the
     # instance the call makes carries them.
     exception_args_coordinate_cid: str | None = field(default=None, compare=False)
-    # The class statement whose body defines the function this body runs:
-    # the PEP 3135 ``__class__`` cell a zero-argument ``super()`` in it reads:
-    # the class itself for its own ``__new__``.  None when the body is no
-    # source function's (a dataclass's generated stores have no cell, and a
-    # source ``__init__`` is dispatched, never run here).
-    cell_class_definition: object | None = field(default=None, compare=False)
     # The object the class call returns where a dataclass's generated
     # ``__init__`` runs here: a read of the receiver after its last store
     # (``nodes._read_where_the_body_ends``), reduced in the context the
     # stores' end record left (``_receiver_where_it_ends``).  None for any
-    # other constructor (a source ``__new__`` returns its own; a source
-    # ``__init__`` is dispatched, ``initializer_formals``).
+    # other constructor (a source ``__new__`` is dispatched,
+    # ``returned_new_formal_cids``; a source ``__init__`` is dispatched,
+    # ``initializer_formals``).  No source ``def``'s body runs here.
     receiver_at_end: Sugar | None = field(default=None, compare=False)
     # The source ``__init__`` this call runs, as the dispatched
     # ``type(obj).__init__(obj, *args, **kw)`` on the fresh instance it
@@ -95,11 +92,11 @@ class ClassConstructorBodySugar(Sugar):
     # initializer's own universe): that receiver reached ``__init__`` by
     # binding and its fields are not current.
     call_site: object | None = field(default=None, compare=False)
-    # The class's own ``def __new__`` whose result the call returns as it is
-    # (``ClassDef.returned_new``): the frame's formal coordinates, its
-    # formals after ``cls``, in order.  The call runs that ``__new__`` on
-    # the actuals bound there (``_returned_by_new``).  None for every other
-    # constructor.
+    # The class's own ``def __new__`` the call runs (``ClassDef.
+    # returned_new``): the frame's formal coordinates, its formals after
+    # ``cls``, in order.  The call dispatches that ``__new__`` on the actuals
+    # bound there, then ``__init__`` on what it returned
+    # (``_returned_by_new``).  None for every other constructor.
     returned_new_formal_cids: tuple | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
@@ -141,47 +138,6 @@ class ClassConstructorBodySugar(Sugar):
                 lambda value, _body: self._dispatched_initializer(value, ctx)
             )
 
-        def project_new_return(definition, block):
-            """The receiver the authenticated source ``__new__`` returns.
-
-            The body seated for it is everything ``__new__`` runs after its
-            allocation -- its field stores and its ``return``
-            (``ClassDef._source_visible_body``) -- so the value is what that
-            ``return`` returns, the one authenticated return of the block
-            (``project_authenticated_source_return``): the receiver after
-            the stores.  A block is never read as the return, and no
-            statement of it stands for one.  Only the authenticated source
-            ``__new__`` arm may return this value; a dataclass's generated
-            stores return the receiver as they left it
-            (``_receiver_where_it_ends``).
-            """
-            if (
-                self.constructed_new_method is None
-                or definition.initializer is not None
-            ):
-                return None
-            from sugar_lift_py_tests.floor import ObjectValue
-            from sugar_lift_py_tests.floor.source_return_projection import (
-                project_authenticated_source_return,
-            )
-
-            returned = project_authenticated_source_return(block)
-            if (
-                isinstance(returned, ObjectValue)
-                and getattr(returned.defining_class, "class_definition_cid", None)
-                == definition.class_definition_cid
-            ):
-                return returned
-            from sugar_source_tree.panic import SugarNotWritten
-
-            raise SugarNotWritten(
-                blame=self.site,
-                owner="ClassConstructorBodySugar.__new__",
-                observed=type(returned).__name__,
-                requested="the authenticated immutable receiver returned by source __new__",
-                fix="preserve the shadow receiver binding through the source return",
-            )
-
         def initialize(value, initializer_ctx):
             from sugar_lift_py_tests.caller_parameter_contract import (
                 NativeOperationExitCarrierV1,
@@ -208,14 +164,15 @@ class ClassConstructorBodySugar(Sugar):
             records = reduce_block_to_exitset(
                 self.initializer_body.statements, initializer_ctx
             )
+            del value
             if isinstance(records, NativeOperationExitCarrierV1):
                 # Each face it completes on is the suite's record
                 # (``block_values``).  What runs here is a dataclass's
-                # generated stores or a source ``__new__``'s stores, never a
-                # source ``__init__`` (dispatched, ``_dispatched_initializer``),
-                # so no ``assert`` of a body is split here: an ``__init__``'s
-                # asserts are halts of its own contract (#8961), reached
-                # through its edge.
+                # generated stores, never a source ``def``'s body (a source
+                # ``__init__`` and a source ``__new__`` are dispatched,
+                # ``_dispatched_initializer``, ``_returned_by_new``), so no
+                # ``assert`` of a body is split here: their asserts are halts
+                # of their own contracts (#8961), reached through their edges.
                 return records.and_then(
                     lambda state: ExitSet.completed(block_record(state))
                 )
@@ -257,13 +214,6 @@ class ClassConstructorBodySugar(Sugar):
                         ),
                         fix="keep overload-only or stub-only constructors typed loud",
                     )
-                returned = project_new_return(value, block)
-                if returned is not None:
-                    # The object the call made: named by its construction,
-                    # whatever the state ``__new__`` returned carried.
-                    from dataclasses import replace
-
-                    return ExitSet.completed(replace(returned, **self._made()))
                 return self._receiver_where_it_ends(record, initializer_ctx)
 
             # ``Cls(x)`` is a call: the initializer's halted faces are the
@@ -280,8 +230,7 @@ class ClassConstructorBodySugar(Sugar):
         last store gives it (``receiver_at_end``), reduced in the context the
         face's end record left (``record.context``).  The stores hold no
         ``return``, so every completed face falls through.  A constructor
-        whose end binds no receiver (a source ``__new__`` whose return is not
-        the authenticated receiver) is refused by name."""
+        whose end binds no receiver is refused by name."""
         from sugar_source_tree.panic import SugarNotWritten
 
         if self.receiver_at_end is None:
@@ -340,15 +289,16 @@ class ClassConstructorBodySugar(Sugar):
 
     def enter_initializer(self, ctx, initialize) -> ExitSet:
         """The class call up to what it runs here on the receiver it makes: a
-        dataclass's generated stores or a source ``__new__``'s stores (a
-        source ``__init__`` is dispatched instead,
-        ``_dispatched_initializer``).
+        dataclass's generated stores, the class's own code with no source
+        ``def`` (a source ``__init__`` and a source ``__new__`` are
+        dispatched instead, ``_dispatched_initializer``,
+        ``_returned_by_new``).
 
         On the class this constructor was entered on (``enter``), an unrun
         source ``__new__`` is refused by name, the fresh receiver is seated at
-        the receiver coordinate with the PEP 3135 ``__class__`` cell, and
-        ``initialize(value, ctx)`` runs the stores in that context.  A class
-        with nothing to run completes with the fresh receiver itself.
+        the receiver coordinate, and ``initialize(value, ctx)`` runs the
+        stores in that context.  A class with nothing to run completes with
+        the fresh receiver itself.
         """
 
         def construct(value):
@@ -357,10 +307,6 @@ class ClassConstructorBodySugar(Sugar):
             refuse_unrun_source_new(
                 value,
                 new_method=self.constructed_new_method,
-                runs_new=(
-                    getattr(value, "initializer", None) is None
-                    and self.initializer_body is not None
-                ),
                 site=self.site,
                 owner="ClassConstructorBodySugar.__new__",
             )
@@ -371,30 +317,10 @@ class ClassConstructorBodySugar(Sugar):
                 if self.exception_args_coordinate_cid is not None:
                     receiver = self._carrying_exception_args(receiver, ctx)
                 return ExitSet.completed(receiver)
-            # The stores read the receiver through its coordinate; a source
-            # ``__new__``'s zero-argument ``super()`` reads the PEP 3135
-            # ``__class__`` cell.
+            # The stores read the receiver through its coordinate.
             temporal = ctx.temporal.bind_value(
                 self.receiver_coordinate_cid, receiver
             )
-            from sugar_lift_py_tests.floor.class_definition_value import (
-                ClassDefinitionValue,
-            )
-
-            # The cell is the class whose body defines the function the call
-            # runs (``cell_class_definition``), read as the class value this
-            # call's MRO holds for that statement (#7757).
-            cell = (
-                value.class_value_of_statement(self.cell_class_definition)
-                if isinstance(value, ClassDefinitionValue)
-                else None
-            )
-            if cell is not None:
-                temporal = temporal.bind_value(
-                    "__class__",
-                    cell,
-                    blame=f"{cell.class_name}.__new__",
-                )
             return initialize(value, ctx.with_temporal(temporal))
 
         return self.enter(lambda value, _body: construct(value))
@@ -427,23 +353,13 @@ class ClassConstructorBodySugar(Sugar):
         CPython's ``TypeError: __init__() should return None``.  Prove
         decides the guard where the ``__init__``'s contract is joined; where
         it is not, both faces stand."""
-        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-        from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
-        from sugar_lift_py_tests.floor.none_value import NoneValue
-        from sugar_lift_py_tests.ir import eq, not_
-        from sugar_lift_py_tests.occurrence import occurrence_key
-        from sugar_lift_py_tests.outcome.exit_set import partition
-        from sugar_lift_py_tests.receiver_dispatch import (
-            module_attribute_names,
-            receiver_after_dispatch,
-        )
+        from sugar_lift_py_tests.receiver_dispatch import module_attribute_names
         from sugar_source_tree.panic import SugarNotWritten
 
         owner = "ClassConstructorBodySugar.__init__"
         refuse_unrun_source_new(
             value,
             new_method=self.constructed_new_method,
-            runs_new=False,
             site=self.site,
             owner="ClassConstructorBodySugar.__new__",
         )
@@ -489,6 +405,27 @@ class ClassConstructorBodySugar(Sugar):
             # store its ``__class__`` (a dynamic module).
             symbol = definition.bridge_source_symbol()
 
+        return call.and_then(self._initialized(receiver, symbol, site, owner))
+
+    def _initialized(self, receiver, symbol, site, owner):
+        """``type.__call__``'s tail over one completed face of the
+        ``__init__`` call it dispatched on ``receiver`` (the fresh instance,
+        ``_dispatched_initializer``, or what a source ``__new__`` returned,
+        ``_returned_by_new``): under ``<result> is None`` the class call
+        completes with the instance as the call left it
+        (``InitializedInstanceValue``: ``symbol`` the class it is stated of,
+        None where that is not decided); under its complement it raises
+        CPython's ``TypeError: __init__() should return None``.  Prove
+        decides the guard where the ``__init__``'s contract is joined; where
+        it is not, both faces stand."""
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+        from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+        from sugar_lift_py_tests.ir import eq, not_
+        from sugar_lift_py_tests.occurrence import occurrence_key
+        from sugar_lift_py_tests.outcome.exit_set import partition
+        from sugar_lift_py_tests.receiver_dispatch import receiver_after_dispatch
+
         def initialized(result):
             after = receiver_after_dispatch(receiver, result)
             returned = peel_walrus_binds(result)[1]
@@ -505,22 +442,33 @@ class ClassConstructorBodySugar(Sugar):
             ).guarded(not_(returned_none), other)
             return instance.union(raised)
 
-        return call.and_then(initialized)
+        return initialized
 
     def _returned_by_new(self, value, ctx) -> ExitSet:
         """``Cls(*args)`` over a class whose own ``def __new__`` runs and
-        whose ``__init__`` is ``object``'s (``ClassDef.returned_new``):
-        ``type.__call__`` calls ``Cls.__new__(Cls, *args)`` -- the function
-        read off its class, through the one method door
-        (``ClassDefinitionValue.call_method_value``), on the actuals the
-        class call bound to the frame's formals -- and every face of that
-        call, halts included, is the class call's.
+        whose ``__init__`` is ``object``'s (``ClassDef.returned_new``, the
+        one ``__new__`` door, #7757 A4), as ``type.__call__`` runs it:
 
-        On each completed face the object ``__new__`` returned is what the
-        class call returns where ``returned_as_it_is`` decides it.  Anywhere
-        else ``type(obj).__init__`` may run on it, which nothing here read:
-        that face is the one unanswered call of the class (two-faced, owed),
-        and no completion is invented for it."""
+        1. ``obj = Cls.__new__(Cls, *args)``: the static method read off its
+           class through the one method door (``ClassDefinitionValue.
+           call_method_value``), the one dispatched call looked up on the
+           class object at prove (``_dispatched_on_class``), on the actuals
+           the class call bound to the frame's formals.  Its body is never
+           read here; every face of that call, halts included (its asserts
+           and raises, its own contract's panic loci), is the class call's.
+        2. ``type(obj).__init__(obj, *args)`` on each completed face: the one
+           dispatched method call on what ``__new__`` returned
+           (``receiver_dispatch.dispatch_edge_call``).  Python runs it only
+           where ``obj`` is an instance of ``Cls``, by ``obj``'s own class;
+           neither is decided here, so no class is stated for its receiver
+           (no ``py.class("0", ...)``): prove resolves no ``__init__`` for it
+           and the call stays owed, both faces standing, never a resolved
+           ``__init__`` of a class nothing decided.
+        3. ``type.__call__``'s tail (``_initialized``): the call completes
+           with ``obj`` as that call left it, its class undecided
+           (``InitializedInstanceValue`` with no class symbol), under
+           ``<result> is None``; ``TypeError`` under the complement."""
+        from sugar_lift_py_tests.receiver_dispatch import dispatch_edge_call
         from sugar_source_tree.panic import SugarNotWritten
 
         owner = "ClassConstructorBodySugar.__new__"
@@ -539,14 +487,13 @@ class ClassConstructorBodySugar(Sugar):
                 fix="bind the class call's actuals to its constructor frame first",
             )
 
-        def returned(made):
-            if returned_as_it_is(made):
-                return ExitSet.completed(made)
-            return value._unanswered_call(value.class_name, actuals, (), site)
+        def initialize(made):
+            call = dispatch_edge_call("__init__", made, None, actuals, (), site)
+            return call.and_then(self._initialized(made, None, site, owner))
 
         return value.call_method_value(
             "__new__", (value, *actuals), owner=owner, blame=site, ctx=ctx
-        ).and_then(returned)
+        ).and_then(initialize)
 
     def _carrying_exception_args(self, receiver, ctx):
         """``receiver`` with ``args``: the tuple the frame's ``*args`` formal
@@ -570,43 +517,6 @@ class ClassConstructorBodySugar(Sugar):
                 fix="bind the inherited-exception frame's *args before construction",
             )
         return replace(receiver, fields=(*receiver.fields, ObjectField("args", args)))
-
-
-def returned_as_it_is(made) -> bool:
-    """Whether ``type.__call__`` returns ``made``, what a class's own
-    ``__new__`` returned (``ClassDef.returned_new``), as it is.
-
-    ``type_call`` (Objects/typeobject.c) returns the object at once when it
-    is no instance of the class.  The class's order is source classes and
-    ``object`` alone (``ClassDef.returned_new``), so every instance of it
-    has a source class in its MRO, and a value a literal made has none: an
-    ``int`` or ``float`` (a ``TermValue`` holding exactly one), ``None``,
-    ``True``, ``False``.  The value is read as an operation reads it: past
-    the writes it carries (``peel_walrus_binds``), a call's value the one
-    authenticated return its body's reduction retained
-    (``project_operation_receiver_outcome``).
-
-    False for anything else: an object of a class whose ``__init__`` may
-    then run on it, or a value whose class is not decided here."""
-    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
-    from sugar_lift_py_tests.floor.none_value import NoneValue
-    from sugar_lift_py_tests.floor.term_value import TermValue
-    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
-        FalseBoolLiteralSugar,
-    )
-    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
-        TrueBoolLiteralSugar,
-    )
-
-    presented = peel_walrus_binds(made)[1]
-    project = getattr(presented, "project_operation_receiver_outcome", None)
-    if project is not None:
-        presented = project(
-            None, owner="ClassConstructorBodySugar.__new__"
-        ).completed_value()
-    if type(presented) is TermValue:
-        return type(presented.value) in (int, float)
-    return type(presented) in (NoneValue, TrueBoolLiteralSugar, FalseBoolLiteralSugar)
 
 
 @dataclass(frozen=True)
@@ -696,16 +606,19 @@ class ConstructedInstanceValue(FloorValue):
 @dataclass(frozen=True)
 class InitializedInstanceValue(FloorValue):
     """What a class's constructor contract returns on a completed arm where
-    the class call dispatched its source ``__init__`` on the fresh instance
-    it made (``ClassConstructorBodySugar._dispatched_initializer``, #7757
-    B3): ``instance``, that fresh instance; ``after``, the instance as the
+    the class call dispatched ``__init__`` on the object it made: the fresh
+    instance (``ClassConstructorBodySugar._dispatched_initializer``, #7757
+    B3) or what its source ``__new__`` returned (``_returned_by_new``,
+    #7757 A4).  ``instance``, that object; ``after``, the object as the
     ``__init__`` call left it (``receiver_dispatch.receiver_after_dispatch``,
     ``python:after(<call>, "0")``), or None where no dispatched edge names it;
     ``class_symbol``, the join symbol of the class the call made it of, or
-    None where code may store its ``__class__``.
+    None where code may store its ``__class__`` or a source ``__new__`` made
+    it (its class is not decided here).
 
     The post never states which object it is (each call makes a fresh one)
-    and never reads ``__init__``'s body (``post_formula``)."""
+    and never reads ``__init__``'s or ``__new__``'s body
+    (``post_formula``)."""
 
     instance: FloorValue
     after: FloorValue | None
@@ -727,7 +640,7 @@ class InitializedInstanceValue(FloorValue):
           (``class_symbol``) and a dispatched edge names the instance
           (``after``), ``python:class_undecided(<it>)`` otherwise: a row
           stating ``type_is`` with no ``__init__`` edge reads as an instance
-          holding nothing (``consistency::constructed_instance``);
+          holding nothing (``consistency::initialized_instance``);
         - ``<it> == python:after(<__init__ call>, "0")`` where the dispatched
           edge names the instance after it (``after``): every field a
           caller reads of the result is the field the ``__init__``'s

@@ -2,8 +2,8 @@
 
 Regression: recursive Name-calls (def f: ... f(...)) used to make
 ``source_allocation_definition_for_call`` return the enclosing FunctionDef from
-``function_nodes``. Callers then invoked ClassDef-only
-``_authenticated_new_constructor_shape`` → AttributeError, blinding recensus
+``function_nodes``. Callers then invoked a ClassDef-only method (the
+``__new__`` allocation-shape probe, since deleted) → AttributeError, blinding recensus
 (instrument-defect) and factory_walk on real pandas (e.g. _normalize.py:267).
 """
 
@@ -97,12 +97,14 @@ def test_module_class_call_still_resolves_classdef_allocation() -> None:
     )
 
 
-def test_recursive_name_call_sugar_does_not_raise_authenticated_new_shape() -> None:
+def test_recursive_name_call_sugar_does_not_raise_attribute_error() -> None:
     """Integration: Call.sugar on recursive Name-call must not AttributeError.
 
     This is the path recensus/factory_walk hit (Call.sugar|construction|...).
     Full Module.sugar may still be incomplete for other reasons; the forbidden
-    signal is AttributeError: _authenticated_new_constructor_shape.
+    signal is an AttributeError from a ClassDef-only method reached on a
+    FunctionDef (the ``__new__`` allocation-shape probe this was written
+    against is gone, #7757 A4).
     """
     source = _source_file(
         "def f(n):\n"
@@ -124,10 +126,10 @@ def test_recursive_name_call_sugar_does_not_raise_authenticated_new_shape() -> N
         try:
             call.sugar()
         except AttributeError as exc:
-            assert (
-                str(exc) != "_authenticated_new_constructor_shape"
-            ), "recursive Name-call must not trip ClassDef-only method on FunctionDef"
-            raise
+            raise AssertionError(
+                "recursive Name-call must not trip a ClassDef-only method on "
+                f"FunctionDef: {exc}"
+            ) from exc
 
 
 def test_functiondef_is_not_authenticated_default_attribute_class() -> None:

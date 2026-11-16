@@ -1,7 +1,9 @@
-"""L0a: authenticated constructor shape door — construct or panic, never AttributeError.
+"""L0a: the class-call door constructs or panics, never AttributeError.
 
-_authenticated_new_constructor_shape is ClassDef's __new__ allocation pattern.
-Non-class nodes must answer None (base method), not AttributeError.
+A class whose own ``__new__`` the call runs is read through the one
+``__new__`` door (``ClassDef.returned_new``): the class row dispatches it as
+a static method on the class and never reads its body in place (#7757 A4,
+which deleted the ``__new__`` allocation shape and its base-class probe).
 retain_registered_node_from must enroll CollectingReporter file-open
 occurrences into a ConstructionTestimony consumer roll (same door that
 blocked module materialize on real pandas).
@@ -10,12 +12,11 @@ blocked module materialize on real pandas).
 from __future__ import annotations
 
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.backend import materialize
 from sugar_source_tree.binding_state import (
     ConstructionTestimonyReporterV1,
     SubstitutionTraceBuilderV1,
 )
-from sugar_source_tree.nodes import Call, ClassDef, FunctionDef, Name, Node
+from sugar_source_tree.nodes import Call, ClassDef, FunctionDef, Name
 from sugar_source_tree.panic import BackendDefect
 from sugar_source_tree.reporter import CollectingReporter
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -26,26 +27,9 @@ def _sf(source: str, name: str = "l0a.py") -> SourceFile:
     return SourceFile((source, name, blake3_512_of(source.encode("utf-8"))), construction_context=TreeConstructionContextV1.for_test_without_workspace())
 
 
-def test_non_class_nodes_answer_none_for_constructor_shape() -> None:
-    """Base door: FunctionDef / Call never AttributeError on the shape probe."""
-    source = _sf(
-        "def f(n):\n"
-        "    if n:\n"
-        "        return f(n - 1)\n"
-        "    return 0\n"
-        "\n"
-        "f(2)\n"
-    )
-    for node in source.nodes():
-        if isinstance(node, ClassDef):
-            continue
-        # Must not raise AttributeError
-        shape = node._authenticated_new_constructor_shape()
-        assert shape is None, f"{type(node).__name__} must answer None, got {shape!r}"
-
-
-def test_classdef_with_authenticated_new_shape_constructs() -> None:
-    """Truthful twin: recognized __new__ allocation shape is non-None and sugars."""
+def test_classdef_with_a_source_new_constructs_through_the_one_new_door() -> None:
+    """Truthful twin: a class whose own ``__new__`` runs (once the allocation
+    shape) is the ``__new__`` the class row dispatches, and it sugars."""
     source = _sf(
         "class Box:\n"
         "    def __new__(cls, value):\n"
@@ -56,8 +40,9 @@ def test_classdef_with_authenticated_new_shape_constructs() -> None:
         "Box(1)\n"
     )
     cls = next(n for n in source.nodes() if isinstance(n, ClassDef) and n.name == "Box")
-    shape = cls._authenticated_new_constructor_shape()
-    assert shape is not None
+    new = cls.returned_new()
+    assert isinstance(new, FunctionDef) and new.name == "__new__"
+    assert cls.constructor_definition() is new
     sugar = cls.sugar()
     assert sugar is not None
     call = next(

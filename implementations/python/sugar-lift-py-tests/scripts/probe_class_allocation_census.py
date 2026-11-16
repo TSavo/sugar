@@ -15,7 +15,8 @@ Classification, closed set, an unrecognised shape RAISES rather than being
 bucketed as "other":
 
     own-init            the ClassDef body defines `__init__` -- IN POPULATION
-    own-new             no `__init__`, but an authenticated `__new__` shape
+    own-new             no `__init__`, but a `__new__` the class row dispatches
+                        (`ClassDef.returned_new`)
     inherited-exception no `__init__`, authenticated BaseException ancestry
     inherited-object    no `__init__`, no exception ancestry -- zero formals
 
@@ -93,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         if has_init:
             return "own-init"
-        if definition._authenticated_new_constructor_shape() is not None:
+        if definition.returned_new() is not None:
             return "own-new"
         if definition._inherits_default_exception_constructor():
             return "inherited-exception"

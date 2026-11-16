@@ -381,14 +381,16 @@ _FIVE_OPEN = {
         "(test_f's h(g)) binds f"
     ),
     "raising-new": (
-        "Box's own contract runs its source __new__ as an edge (step 6), so "
-        "what it returned is not seen at the lift and type.__call__'s "
-        "type(obj).__init__ face is the unanswered call, owed. It shares the "
-        "__new__ edge's site, and prove's join keys answers by the site and "
-        "the target symbol the call names, so the face reads its own owed "
+        "Box's own contract dispatches its source __new__ as a static method "
+        "on the class (step 6, #7757 A4), so what it returned is not seen at "
+        "the lift, and type.__call__'s type(obj).__init__ is the dispatched "
+        "call on that result with no class stated for it: prove resolves no "
+        "__init__ without the receiver's class, so the call is owed. It "
+        "shares the __new__ edge's site, and prove's join keys answers by the "
+        "site and the target symbol the call names, so it reads its own owed "
         "member, never __new__'s contract. Decided at step 9 once a "
-        "type.__call__ law relates __new__'s returned value to the __init__ "
-        "face"
+        "type.__call__ law relates __new__'s returned value to the class "
+        "__init__ is dispatched over"
     ),
 }
 

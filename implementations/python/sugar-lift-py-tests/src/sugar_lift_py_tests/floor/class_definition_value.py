@@ -120,8 +120,8 @@ class ClassDefinitionValue(GuardStableValue):
         value was built and is never reduced again here.
 
         A class whose constructor its own statement does not decide (no
-        source ``__new__`` shape, no ``dataclass``-written ``__init__``) and
-        whose MRO does not construct by the laws the lifter reads
+        ``dataclass``-written ``__init__``) and whose MRO does not construct
+        by the laws the lifter reads
         (``ClassDef.construction_order`` is None: a base the lifter cannot
         read, or ``OSError``/``SyntaxError``/... anywhere in it) is the one
         unanswered call (``UnknownCalleeCallV1``), exactly as the same class

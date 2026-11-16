@@ -1220,12 +1220,15 @@ def class_universe_outcome(cls):
     fresh instance and dispatches ``type(obj).__init__(obj, ...)`` on it, an
     edge joined at prove to the ``__init__``'s own contract (#7757 B3,
     ``ClassConstructorBodySugar._dispatched_initializer``), whose halts are
-    this call's halts.  Each completed arm returns the instance: its class
-    and its state as the ``__init__`` call left it
-    (``InitializedInstanceValue``), or, where the construction runs here (a
-    dataclass's generated stores, a source ``__new__``), the fields it set
-    (``ConstructedInstanceValue``), never its identity; each halt of the
-    constructor is a halted arm (its panic locus).
+    this call's halts.  Nor is a source ``__new__``: the construction
+    dispatches it as a static method on the class, then ``type(obj).
+    __init__`` on what it returned, both edges joined at prove (#7757 A4,
+    ``ClassConstructorBodySugar._returned_by_new``).  Each completed arm
+    returns the instance: its class and its state as the ``__init__`` call
+    left it (``InitializedInstanceValue``), or, where the construction runs
+    here (a dataclass's generated stores, which no source ``def`` states),
+    the fields it set (``ConstructedInstanceValue``), never its identity;
+    each halt of the constructor is a halted arm (its panic locus).
 
     The module globals the signature's ``def`` reads are free inputs, bound
     at the entry (``bind_global_inputs``) before the definition keys and

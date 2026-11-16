@@ -1,4 +1,4 @@
-"""Occurrence-keyed node relational identity (#7346 Decisions A, B, C).
+"""Occurrence-keyed node relational identity (#7346 Decisions A, B).
 
 A durable semantic relation over source nodes is keyed by the SOURCE
 OCCURRENCE the node denotes -- pinned source CID + exact span + node kind --
@@ -7,21 +7,24 @@ fresh ShadowNode and ``materialize`` a fresh typed shell for the SAME source
 occurrence (rewrite explicitly borrows the origin span), so every relation
 keyed on shell identity silently loses its rows across substitution.
 
-Three arms, all of which must move together:
+Two arms, which must move together:
 
 * **A** -- ``SourceUnit.lexical_class_owner_for`` joins the producer-owned
   ``function_class_owners`` relation.
 * **B** -- an ``__init__``'s receiver is its ordinary formal in every shell,
   live or overwritten, rewritten or not (#7757 B2: an ``__init__`` is an
   ordinary method, reached from a class call by the dispatched edge).
-* **C** -- ``ClassDef._authenticated_new_constructor_shape`` admits the
-  source-owned ``__new__`` shape against ``module_direct_bindings``.
 
-Each arm carries its negative twin: a genuinely FOREIGN occurrence, a
-genuinely OVERWRITTEN initializer, and a genuinely SHADOWED class must keep
-their existing answers.  Absence and lookup failure never share a
-representation: one row with ``owner=None`` is authenticated no-owner, zero
-rows stays a loud ``BackendDefect``.
+Decision C (the source ``__new__`` allocation shape admitted against
+``module_direct_bindings``) is gone with the shape (#7757 A4): a source
+``__new__`` is a static method the class row dispatches, never a body read
+in place, so no admission of its shape remains.
+
+Each arm carries its negative twin: a genuinely FOREIGN occurrence and a
+genuinely OVERWRITTEN initializer must keep their existing answers.
+Absence and lookup failure never share a representation: one row with
+``owner=None`` is authenticated no-owner, zero rows stays a loud
+``BackendDefect``.
 """
 
 from __future__ import annotations
@@ -46,10 +49,6 @@ def _fn(tree: SourceFile, name: str) -> FunctionDef:
     return next(
         n for n in tree.nodes() if isinstance(n, FunctionDef) and n.name == name
     )
-
-
-def _cls(tree: SourceFile, name: str) -> ClassDef:
-    return next(n for n in tree.nodes() if isinstance(n, ClassDef) and n.name == name)
 
 
 _BOX = (
@@ -143,51 +142,3 @@ def test_an_overwritten_initializer_s_receiver_is_its_formal_too() -> None:
     for init in inits:
         entry = init._make_parameter_entry(init.params[0], 0, {})
         assert isinstance(entry, FormalRef)
-
-
-_NEW_SHAPE = (
-    "class Cell:\n"
-    "    def __new__(cls, value):\n"
-    "        self = super(Cell, cls).__new__(cls)\n"
-    "        self.value = value\n"
-    "        return self\n"
-)
-
-
-# --------------------------------------------------------------------------
-# Decision C -- authenticated __new__ admission
-# --------------------------------------------------------------------------
-
-
-def test_rewritten_class_keeps_authenticated_new_admission() -> None:
-    """`bindings[0] is self` cannot see a reconstructed shell of the class."""
-    tree = _sf(_NEW_SHAPE, "occ_new.py")
-    cell = _cls(tree, "Cell")
-    assert cell._authenticated_new_constructor_shape() is not None
-
-    rewritten = rewrite(cell)
-    assert rewritten._authenticated_new_constructor_shape() is not None, (
-        "the reconstructed ClassDef denotes the authenticated source occurrence"
-    )
-
-
-def test_shadowed_class_binding_stays_unauthenticated() -> None:
-    """Negative twin: two module bindings for the name -- admission refused."""
-    tree = _sf(_NEW_SHAPE + "\nCell = 1\n", "occ_new_shadowed.py")
-    cell = _cls(tree, "Cell")
-    assert cell._authenticated_new_constructor_shape() is None
-    assert rewrite(cell)._authenticated_new_constructor_shape() is None
-
-
-def test_foreign_class_occurrence_stays_unauthenticated() -> None:
-    """Negative twin: a same-named class from another source is not this one."""
-    foreign_tree = _sf(_NEW_SHAPE, "occ_new_foreign.py")
-    foreign = _cls(foreign_tree, "Cell")
-    home = _sf(_NEW_SHAPE, "occ_new_home.py")
-    bindings = (home.unit.module_direct_bindings or {}).get("Cell", ())
-    assert len(bindings) == 1
-    from sugar_source_tree.occurrence import SourceOccurrenceIdentityV1
-
-    assert SourceOccurrenceIdentityV1.of(bindings[0]) != (
-        SourceOccurrenceIdentityV1.of(foreign)
-    )

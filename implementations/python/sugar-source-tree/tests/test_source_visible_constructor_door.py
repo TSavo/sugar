@@ -10,7 +10,6 @@ from sugar_lift_py_tests.floor import (
     BlockValue,
     CallSiteValue,
     DictValue,
-    ObjectValue,
     ReturnValue,
     StringValue,
     TermValue,
@@ -178,7 +177,13 @@ def test_repeated_initializer_uses_the_last_class_binding() -> None:
     }
 
 
-def test_source_visible_new_constructor_retains_exact_instance_field() -> None:
+def test_a_source_new_body_is_never_read_for_its_fields() -> None:
+    """#7757 A4: a source ``__new__`` is a static method the class row
+    dispatches, never a body whose stores are applied in place.  Over an
+    ``int`` base no ``__new__`` door admits it (``ClassDef.returned_new``:
+    the order holds a builtin whose own constructor law runs), so the call
+    is the unanswered call, as every sibling shape below is: never an
+    instance whose ``label`` was read off ``__new__``'s body."""
     context = TreeConstructionContextV1.for_source_call_construction()
     source = _source_file(
         "class RenamedToken(int):\n"
@@ -192,16 +197,11 @@ def test_source_visible_new_constructor_retains_exact_instance_field() -> None:
     class_node = next(node for node in source.nodes() if isinstance(node, ClassDef))
     call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
 
-    receiver = (
-        call.sugar()
-        .desugar()
-        .value.force_floor(None, owner="source-visible-new", project_callsite=False)
-    )
+    assert class_node.returned_new() is None
+    coordinate = call.sugar().desugar().completed_value()
 
-    assert receiver.class_name == "RenamedToken"
-    label = receiver.attribute("label", call.fragment, None)
-    assert label.value == StringValue("seven")
-    assert class_node.source_visible_constructor_frame().owner is class_node
+    assert isinstance(coordinate, CallSiteValue)
+    assert coordinate.body is None
 
 
 def test_source_visible_new_constructor_refuses_foreign_returned_receiver() -> None:
@@ -221,31 +221,6 @@ def test_source_visible_new_constructor_refuses_foreign_returned_receiver() -> N
 
     assert isinstance(coordinate, CallSiteValue)
     assert coordinate.body is None
-
-
-def test_source_visible_new_constructor_retains_exact_bound_name_field() -> None:
-    context = TreeConstructionContextV1.for_source_call_construction()
-    source = _source_file(
-        "class NamedIntConstant(int):\n"
-        "    def __new__(cls, value, name):\n"
-        "        self = super(NamedIntConstant, cls).__new__(cls, value)\n"
-        "        self.name = name\n"
-        "        return self\n\n"
-        "NamedIntConstant(7, 'seven')\n",
-        context=context,
-    )
-    call = tuple(node for node in source.nodes() if isinstance(node, Call))[-1]
-
-    receiver = (
-        call.sugar()
-        .desugar()
-        .value.force_floor(None, owner="named-int-field-store", project_callsite=False)
-    )
-
-    assert isinstance(receiver, ObjectValue)
-    assert tuple((field.name, field.value) for field in receiver.fields) == (
-        ("name", StringValue("seven")),
-    )
 
 
 @pytest.mark.parametrize(
