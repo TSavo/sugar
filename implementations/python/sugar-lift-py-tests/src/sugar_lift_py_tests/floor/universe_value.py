@@ -256,6 +256,12 @@ UNDETERMINED_STATES = frozenset(
 _UNSTATED_SLOTS = frozenset({"python:branch_result"})
 _UNSTATED_PREFIXES = ("py.object", "python:loop.", "python:loop-")
 
+#: ``python:leaves("<parameter>")``: the function never changes the object
+#: its parameter binds nor rebinds it (``tree_enumerate.
+#: parameters_left_unchanged``), stated beside its post and read by prove's
+#: dispatch (``consistency::PYTHON_LEAVES``).
+LEAVES = "python:leaves"
+
 
 def stated_by_its_inputs(term, formals) -> bool:
     """Whether ``term`` is a value a contract over ``formals`` (its
@@ -546,6 +552,7 @@ def exit_arms_payload_rows(
     def_memento,
     unreached_assertion_sites,
     halted_guards,
+    leaves=(),
 ):
     """Every arm of one reduction, projected to the wire (#7766): ONE row.
 
@@ -565,7 +572,11 @@ def exit_arms_payload_rows(
 
     * post: the conjunction over completed arms of ``g_i -> post_i``, and
       nothing else. A halted arm adds nothing to it, so a function that only
-      halts states the empty conjunction: no claim about any result.
+      halts states the empty conjunction: no claim about any result. Beside
+      it, one ``python:leaves("<parameter>")`` per parameter the body never
+      changes (``leaves``, ``tree_enumerate.parameters_left_unchanged``):
+      what prove asks of a dispatched call binding one object to two formals
+      (step 8). It states nothing about a result.
     * every halted arm: one ``panicLoci`` entry on the function-contract row,
       the existing panic-locus shape: the site it halted at, the raised type,
       and the arm's guard as its path condition. A halt is never dropped.
@@ -718,6 +729,12 @@ def exit_arms_payload_rows(
             reached.add(key)
             never_held.append(InvValue(no_halt, site))
     assertions.extend(assertion_claims(name, formals, never_held))
+    if leaves:
+        from sugar_lift_py_tests.ir import atomic, str_const
+
+        post = and_(
+            [post, *(atomic(LEAVES, [str_const(parameter)]) for parameter in leaves)]
+        )
     return [
         function_contract_row(
             name=name,

@@ -499,6 +499,22 @@ def actuals_share_an_object(actuals, changes=None) -> bool:
     return any(_shared(tuple(actuals), changes))
 
 
+def shared_pairs(actuals) -> tuple:
+    """``((i, j), ...)``, ``i < j``: each pair of ``actuals`` one of which
+    may be, or hold, one of the objects the other is or holds (``_objects``,
+    ``_reaches``) -- the pairs ``actuals_share_an_object`` counts where every
+    actual may be changed.  A dispatched call names them on its member
+    (``receiver_dispatch.dispatch_edge_call``), and prove asks of the
+    function it resolves whether it changes either (#7757 step 8)."""
+    reached = tuple(_objects(actual) for actual in actuals)
+    return tuple(
+        (left, right)
+        for left in range(len(reached))
+        for right in range(left + 1, len(reached))
+        if _reaches(reached[left], reached[right])
+    )
+
+
 def _shared(actuals, changes=None) -> tuple:
     """For each of ``actuals``, whether another of them may be, or hold, one
     of the objects it is or holds (``_objects``): two objects one of which

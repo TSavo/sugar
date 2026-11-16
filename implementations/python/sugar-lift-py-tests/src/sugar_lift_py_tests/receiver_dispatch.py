@@ -40,6 +40,16 @@ DISPATCH_TARGET_PREFIX = "dispatch:"
 #: (``consistency::DISPATCH_READ_MARK``).  No Python name starts with ``.``.
 DISPATCH_READ_MARK = "."
 
+#: The mark after which a dispatched call's member symbol names the operands
+#: that may share an object (``object_identity.shared_pairs``):
+#: ``python:dispatch:<m>#0~1,0~k`` -- each pair by its argument keys (a
+#: position, or a keyword), joined by ``DISPATCH_SHARED_PAIR``.  Which
+#: function runs is decided at prove, so it is prove that asks whether that
+#: function may change the shared object through either
+#: (``consistency::DISPATCH_SHARES_MARK``).  No Python name holds ``#``.
+DISPATCH_SHARES_MARK = "#"
+DISPATCH_SHARED_PAIR = "~"
+
 #: ``python:instance(<class symbol>, <field>...)``: a decided instance's
 #: class, as a caller binds a class input to it; the fields are every name
 #: its ``__dict__`` may hold at the call (``consistency::PYTHON_INSTANCE``).
@@ -804,30 +814,44 @@ def dispatch_edge_call(
     The method's contract states its receiver and its other formals as
     distinct objects.  A call whose receiver is, or holds, an object an
     actual is or holds -- ``o.m(o)``, ``o.m(o.items)`` where ``m`` stores
-    through ``self.items`` -- is not that contract's call: a store through
-    one would leave the other's entry value standing at prove, a lie.  It
-    is the call no contract answers, owed and joined to nothing (no symbol),
-    by the alias rule's own test (``object_identity.
-    actuals_share_an_object``), the one a same-file definition's edge asks
-    (``lambda_callable.definition_edge_call``).  It is asked of every pair
-    here (no ``changes``): which function runs is decided at prove, on the
-    class a caller binds, so no body is read here for what the call may
-    change (``nodes._names_a_call_may_change``)."""
+    through ``self.items`` -- is that contract's call only where the
+    function changes the shared object through neither formal: a store
+    through one would leave the other's entry value standing at prove, a
+    lie.  That is the alias rule's own test (``object_identity.
+    shared_pairs``), the one a same-file definition's edge asks
+    (``lambda_callable.definition_edge_call``), with the callee's half
+    decided where the callee is known: which function runs is decided at
+    prove, on the class a caller binds, so the member's symbol names every
+    pair that may share (``DISPATCH_SHARES_MARK``) and prove joins the
+    function it resolves only where its contract states it leaves both
+    formals unchanged (``python:leaves``, ``tree_enumerate.
+    parameters_left_unchanged``) or the operand's class holds nothing a
+    call could change; anything else stays owed
+    (``consistency::dispatch_answer``)."""
     from sugar_lift_py_tests.call_symbol import call_symbol
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-    from sugar_lift_py_tests.floor.object_identity import actuals_share_an_object
+    from sugar_lift_py_tests.floor.object_identity import shared_pairs
     from sugar_lift_py_tests.ir import ctor, str_const
     from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
 
     owner = str(site)
     target = DISPATCH_TARGET_PREFIX + (DISPATCH_READ_MARK if read else "") + name
-    symbol = (
-        None
-        if actuals_share_an_object(
-            (receiver, *positional, *(value for _name, value in kw_values))
-        )
-        else "python:" + target
+    # Each operand by its argument key: the receiver ``0``, each positional
+    # actual by its position, each keyword actual by its keyword (the keys
+    # its ``py.class`` rides under, ``class_arguments``).
+    keys = (
+        "0",
+        *(str(index + 1) for index in range(len(positional))),
+        *(keyword for keyword, _value in kw_values),
     )
+    pairs = shared_pairs(
+        (receiver, *positional, *(value for _name, value in kw_values))
+    )
+    symbol = "python:" + target
+    if pairs:
+        symbol += DISPATCH_SHARES_MARK + ",".join(
+            keys[left] + DISPATCH_SHARED_PAIR + keys[right] for left, right in pairs
+        )
     arguments = (
         [receiver.to_term(owner=owner)]
         + [value.to_term(owner=owner) for value in positional]
