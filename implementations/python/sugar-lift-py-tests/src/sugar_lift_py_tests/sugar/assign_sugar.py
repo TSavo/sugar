@@ -82,10 +82,8 @@ class MultiAssignSugar(Sugar):
     stays a loud gap on the node.
     """
 
-    # tuple of (name, value_sugar) pairs, in evaluation order; a name of None
-    # is evaluated in its place and bound to no name: what a comprehension
-    # the unroll dissolved into a display the unpack consumes evaluates
-    # before the display's members (``Assign._unpacked_in_order``).
+    # tuple of (name, value_sugar) pairs, in evaluation order
+    # (``Assign._unpacked_in_order``).
     bindings: tuple
     site: object = dataclass_field(compare=False)
     evaluations: tuple = ()  # (name, key) per Name target, as AssignSugar's
@@ -117,7 +115,6 @@ class MultiAssignSugar(Sugar):
         bind = tuple(
             (name, next(i for i, v in enumerate(values) if v is value))
             for name, value in self.bindings
-            if name is not None
         )
         return evaluate_assignment_values(
             values,
@@ -508,10 +505,7 @@ class UnpackStoreAssignSugar(Sugar):
     One temporal model: names thread, stores effect — no second door.
     """
 
-    # (name, value_sugar) — provenance; substitute spent them.  A name of None
-    # is evaluated before every member, bound to no name: what a
-    # comprehension the unroll dissolved into the display carries
-    # (``MultiAssignSugar``).
+    # (name, value_sugar) — provenance; substitute spent them.
     bindings: tuple
     stores: tuple  # each store leaf's own statement's sugar, left to right
     site: object = dataclass_field(compare=False)
@@ -553,23 +547,19 @@ class UnpackStoreAssignSugar(Sugar):
         # here in source order and each store leaf's bound under its member
         # key; the leaves are then assigned in their order, a store reading
         # its member there and evaluating only its own target.
-        first = tuple(value for name, value in self.bindings if name is None)
-        named = tuple(
-            (name, value) for name, value in self.bindings if name is not None
-        )
         values = sorted(
             (
-                *(value for _name, value in named),
+                *(value for _name, value in self.bindings),
                 *(value for _key, value in self.members),
             ),
             key=_source_start,
         )
-        values = (*first, *_distinct_in_order(values))
+        values = _distinct_in_order(values)
 
         def index(value):
             return next(i for i, v in enumerate(values) if v is value)
 
-        bind = tuple((name, index(value)) for name, value in named)
+        bind = tuple((name, index(value)) for name, value in self.bindings)
         members = tuple((key, index(value)) for key, value in self.members)
         if not self.stores:
             return evaluate_assignment_values(

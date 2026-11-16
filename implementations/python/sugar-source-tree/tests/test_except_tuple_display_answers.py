@@ -5,8 +5,7 @@ built as one matcher of the arm (``Try._authenticated_handler_specs``), and
 the display is never built as a whole, so it never answered (the board's
 first absentees ``core/algorithms.py:1504:15``
 ``except (TypeError, decimal.InvalidOperation):``,
-``core/indexes/datetimes.py:1594:15``).  That consumption is its discharge,
-as a loop's iterable display is (``For._iterable_evaluated``).
+``core/indexes/datetimes.py:1594:15``).  That consumption is its discharge.
 """
 
 import tempfile
