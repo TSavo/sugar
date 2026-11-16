@@ -322,7 +322,16 @@ class Interpreter:
             tuple[str, tuple[tuple[Atom, ...], ...]], AbstractValue
         ] = {}
         self.summary_revision = 0
-        self.active: set[tuple[str, tuple[tuple[Atom, ...], ...]]] = set()
+        # The interpreter's own call stack: each callee on it maps to the
+        # summary key of its one live frame.  A callee is never entered twice:
+        # a re-entry, under any arguments, is answered by the live frame.
+        self.active: dict[str, tuple[str, tuple[tuple[Atom, ...], ...]]] = {}
+        # Arguments a re-entry carried into a live frame.  The frame's next
+        # evaluation runs under its own arguments joined with these, so the
+        # summary that answers the re-entry covers it at the fixed point.
+        self.reentry_args: dict[
+            tuple[str, tuple[tuple[Atom, ...], ...]], tuple[AbstractValue, ...]
+        ] = {}
         self.tables: dict[tuple[str, str], AbstractValue] = {}
         self._initialize_modules()
         self._structural_admission_roots = self._derive_structural_admission_roots()
@@ -370,15 +379,44 @@ class Interpreter:
         sink_slice: bool,
     ) -> AbstractValue:
         fn = self.index.functions[fid]
-        key = self._key(fid, args)
-        if key in self.active:
-            return self.summaries.get(key, AbstractValue())
-        self.active.add(key)
         params = [
             *fn.node.args.posonlyargs,
             *fn.node.args.args,
             *fn.node.args.kwonlyargs,
         ]
+        live = self.active.get(fid)
+        if live is not None:
+            # Recursion through the interpreted source: answer from the live
+            # frame's summary and never re-enter, so the interpreter's depth
+            # is bounded by the number of distinct callees, not by how many
+            # argument sets a recursive chain can grow through.  The arguments
+            # are joined into the live frame, and the summary revision moves
+            # when they widen it, so ``_fixed_call`` re-evaluates the frame
+            # under them: the answer stays an over-approximation ("may
+            # produce"), never a cut that reads as "produces nothing".
+            width = len(params)
+            carried = tuple(
+                args[i] if i < len(args) else ORDINARY for i in range(width)
+            )
+            previous_args = self.reentry_args.get(live)
+            widened = (
+                carried
+                if previous_args is None
+                else tuple(old.join(new) for old, new in zip(previous_args, carried))
+            )
+            if widened != previous_args:
+                self.reentry_args[live] = widened
+                self.summary_revision += 1
+            answered = self.summaries.get(live, AbstractValue())
+            return answered.stepped(f"return <- {fid}", rpc=bool(answered.entries))
+        key = self._key(fid, args)
+        carried_in = self.reentry_args.get(key)
+        if carried_in is not None:
+            args = tuple(
+                carried_in[i].join(args[i] if i < len(args) else ORDINARY)
+                for i in range(len(carried_in))
+            )
+        self.active[fid] = key
         env = dict(self.index.module_values[fn.module])
         for i, param in enumerate(params):
             if i == 0 and fn.owner:
@@ -398,15 +436,17 @@ class Interpreter:
                 env[param.arg] = args[i].stepped(f"argument -> {fid}.{param.arg}")
             else:
                 env[param.arg] = ORDINARY
-        result = self.exec_block(
-            fn.module, fn.node.body, env, chain + (fid,), sink_slice=sink_slice
-        )
+        try:
+            result = self.exec_block(
+                fn.module, fn.node.body, env, chain + (fid,), sink_slice=sink_slice
+            )
+        finally:
+            del self.active[fid]
         previous = self.summaries.get(key, AbstractValue())
         result = previous.join(result)
         self.summaries[key] = result
         if result != previous:
             self.summary_revision += 1
-        self.active.remove(key)
         return result.stepped(f"return <- {fid}", rpc=bool(result.entries))
 
     def exec_block(
