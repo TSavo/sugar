@@ -44,7 +44,7 @@ def _call_outcomes(calls: str):
     )
 
 
-def _the_call_edge(outcome: object) -> tuple[Completed, Halted]:
+def _the_call_edge(outcome: object) -> tuple[CallSiteValue, Halted]:
     """#7757 step 5 (#8705, the owner's ruling "Edge, join at prove"): a call
     of a same-file def is its coordinate and edge, never the callee's body
     applied to the actuals.  It is the one unanswered call: it completes under
@@ -52,18 +52,33 @@ def _the_call_edge(outcome: object) -> tuple[Completed, Halted]:
     and halts under the complement with nothing named here.  Which branch
     the actuals select, and the ``TypeError`` of ``None < 2``, are stated by
     the callee's contract over its formals (its two faces below) and decided at
-    prove, where the join binds the actuals."""
+    prove, where the join binds the actuals.
+
+    Desugared with no context, its completed value carries its record that
+    it may reach every module global (#9108, ``bind_after_call``); the call
+    is the value beneath that record."""
+    from sugar_lift_py_tests.floor.call_site_value import AfterCallRecordValue
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        peel_walrus_binds,
+    )
+
     assert isinstance(outcome, ExitSet)
     assert len(outcome.exits) == 2
     (completed,) = (face for face in outcome.exits if isinstance(face, Completed))
     (halted,) = outcome.halts()
     assert completed.guard.name == "python:unknown_callee_call.completes"
-    assert isinstance(completed.value, CallSiteValue)
-    assert completed.value.body is None
-    assert completed.value.term.name == "python:call_result"
+    binds, value = peel_walrus_binds(completed.value)
+    assert any(
+        isinstance(bind.assigned_value, AfterCallRecordValue)
+        and bind.assigned_value.reaches_every_global()
+        for bind in binds
+    ), binds
+    assert isinstance(value, CallSiteValue)
+    assert value.body is None
+    assert value.term.name == "python:call_result"
     assert type(halted.effect) is UndeterminedRaiseEffect
     assert halted.effect.exception_name is None
-    return completed, halted
+    return value, halted
 
 
 def test_formal_ordering_condition_creates_no_carrier() -> None:
@@ -92,10 +107,10 @@ def test_a_call_of_the_helper_is_its_coordinate_and_edge() -> None:
     assert len(outcomes) == 3
     terms = []
     for outcome in outcomes:
-        completed, _halted = _the_call_edge(outcome)
-        (call_term, _occurrence) = completed.value.term.args
+        value, _halted = _the_call_edge(outcome)
+        (call_term, _occurrence) = value.term.args
         assert call_term.name.startswith("call:")
-        assert len(completed.value.arg_values) == 2
+        assert len(value.arg_values) == 2
         terms.append(call_term)
     assert len(set(map(repr, terms))) == 3
     assert "TypeError" not in repr(outcomes)

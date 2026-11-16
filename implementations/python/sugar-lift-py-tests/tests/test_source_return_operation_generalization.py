@@ -116,12 +116,28 @@ def _row_return(outcome):
 
 
 def _edge(outcome) -> CallSiteValue:
-    """A same-file call's value: its coordinate and edge, two-faced."""
+    """A same-file call's value: its coordinate and edge, two-faced.
+
+    Desugared with no context, the call is the one unanswered call: no
+    contract here states what it reaches, so its completed value carries
+    its record that it may reach every module global (#9108,
+    ``call_site_value.bind_after_call``), and the call is the value beneath
+    that record."""
+    from sugar_lift_py_tests.floor.call_site_value import AfterCallRecordValue
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        peel_walrus_binds,
+    )
+
     assert isinstance(outcome, ExitSet), type(outcome)
     assert outcome.halts(), outcome
     completed = [face for face in outcome.exits if isinstance(face, Completed)]
     assert len(completed) == 1, outcome
-    value = completed[0].value
+    binds, value = peel_walrus_binds(completed[0].value)
+    assert any(
+        isinstance(bind.assigned_value, AfterCallRecordValue)
+        and bind.assigned_value.reaches_every_global()
+        for bind in binds
+    ), binds
     assert isinstance(value, CallSiteValue), type(value)
     assert value.body is None
     return value

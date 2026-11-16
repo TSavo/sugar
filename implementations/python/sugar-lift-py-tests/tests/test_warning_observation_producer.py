@@ -43,7 +43,15 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 
 
 def _entries(tmp_path: Path, source: str, stem: str = "warn_case"):
-    """Every record entry of every completed face, from real lifted source."""
+    """Every record entry of every completed face, from real lifted source,
+    as the value it presents: a statement's entry carries the writes its
+    value carried, and ``warnings.warn`` -- which may run code that changes
+    any module global (a replaced ``warnings.showwarning``) -- carries its
+    record of what it may have changed (#9108,
+    ``call_site_value.bind_after_call``), as the boundary reads it
+    (``effect_router._observed_effect``)."""
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+
     path = tmp_path / f"{stem}.py"
     path.write_text(source, encoding="utf-8")
     function = next(
@@ -54,7 +62,7 @@ def _entries(tmp_path: Path, source: str, stem: str = "warn_case"):
     )
     exits = reduce_block_to_exitset(function.sugar().statements, None)
     return tuple(
-        entry
+        peel_walrus_binds(entry)[1]
         for face in exits.exits
         if isinstance(face, Completed)
         for entry in getattr(face.value, "entries", ())
