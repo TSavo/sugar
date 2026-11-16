@@ -49,10 +49,30 @@ class AuthenticatedExceptionTypeValue(FloorValue):
         )
 
     def setattr(self, name, value, site, ctx):
-        return self.value.setattr(name, value, site, ctx)
+        """The carried type operand stores through the one attribute store
+        (``store_effect_sugar.project_setattr``), never its own ``setattr``
+        past the door: a formal operand waits as the ``setattr_named``
+        carrier, an undecided one keeps the store's two faces (#7757)."""
+        from sugar_lift_py_tests.receiver_dispatch import stored_class_input
+        from sugar_lift_py_tests.sugar.store_effect_sugar import project_setattr
+
+        return project_setattr(
+            self.value,
+            name,
+            value,
+            site,
+            ctx,
+            plain_store_input=stored_class_input(
+                self.value, name, getattr(site, "unit", None)
+            ),
+        )
 
     def delattr(self, name, site, ctx):
-        return self.value.delattr(name, site, ctx)
+        """The carried type operand deletes through the one attribute delete
+        (``delete_effect_sugar.project_delattr``)."""
+        from sugar_lift_py_tests.sugar.delete_effect_sugar import project_delattr
+
+        return project_delattr(self.value, name, site, ctx)
 
     def exception_type_identity(self) -> Term:
         return self.identity

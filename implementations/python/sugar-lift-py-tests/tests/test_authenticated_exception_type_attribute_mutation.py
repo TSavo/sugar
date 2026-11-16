@@ -60,6 +60,33 @@ def test_authenticated_exception_type_attribute_mutations_dispatch_to_exact_carr
     assert effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
 
+@pytest.mark.parametrize("operation", ("setattr", "delattr"))
+def test_undecided_carried_operand_mutates_through_the_one_attribute_door(
+    tmp_path, operation
+):
+    """A carried operand whose type is not decided goes through the one
+    attribute door (``project_setattr`` / ``project_delattr``): the store's
+    two faces, its halt kept, never the carried value's own floor gap."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.outcome import Completed
+
+    store_site, delete_site = _sites(tmp_path)
+    value = AuthenticatedExceptionTypeValue(
+        SymbolicValue(make_var("exc_type")), str_const("exception-type")
+    )
+    outcome = (
+        value.setattr("attr", TermValue(7), store_site, None)
+        if operation == "setattr"
+        else value.delattr("attr", delete_site, None)
+    )
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
+    completed = [exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)]
+    assert len(completed) == 1
+
+
 def test_authenticated_exception_type_attribute_mutations_reject_wrong_site(tmp_path):
     store_site, delete_site = _sites(tmp_path)
     value = _value()
