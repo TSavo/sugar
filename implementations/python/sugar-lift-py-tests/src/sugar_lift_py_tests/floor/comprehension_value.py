@@ -321,9 +321,22 @@ class ComprehensionValue(GuardStableValue):
         # members (an out-of-range index its ``IndexError``), a set's
         # ``TypeError``.  Before #8957 the rewrite dissolved such a
         # comprehension into the display itself; the one way projects it in
-        # the reduction, and its readers read what it projected (#7757).
+        # the reduction, and its readers read what it projected (#7757).  The
+        # display is read through the one subscript door
+        # (``discharge_subscript``), never its subscript protocol directly: a
+        # parameter index defers to the caller as a source subscript's does.
         if self.display is not None:
-            return self.display.subscript(index, site)
+            from sugar_lift_py_tests.operations.subscript_operation import (
+                discharge_subscript,
+            )
+
+            return discharge_subscript(
+                self.display,
+                index,
+                site,
+                None,
+                owner="ComprehensionValue.subscript",
+            )
         # A runtime comprehension still has Python collection semantics, but
         # neither its members nor its cardinality are available at lift time.
         # Preserve the real lookup as a proof-bearing coordinate; do not invent
