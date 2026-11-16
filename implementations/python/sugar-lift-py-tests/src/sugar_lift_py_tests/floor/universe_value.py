@@ -164,7 +164,7 @@ class UniverseValue(FloorValue):
         entry: on the fresh instance a class call makes, every name it
         holds.  Prove composes them with the class row's ``python:type_is``
         into the instance a caller's ``python:constructed(<class>)`` is bound
-        to (``consistency::constructed_instance``).  Nothing for any other
+        to (``consistency::initialized_instance``).  Nothing for any other
         function."""
         if self.receiver_holds is None:
             return ()

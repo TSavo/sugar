@@ -4999,8 +4999,6 @@ class SourceUnit:
         # here is not "no default attributes" — it is not an allocation at all.
         if not isinstance(definition, ClassDef):
             return False
-        if definition._authenticated_new_constructor_shape() is not None:
-            return True
         forbidden_methods = {
             "__new__",
             "__getattr__",
@@ -5074,8 +5072,6 @@ class SourceUnit:
         """
         if not isinstance(definition, ClassDef):
             return False
-        if definition._authenticated_new_constructor_shape() is not None:
-            return True
         order = definition.construction_order()
         if order is None:
             return False
@@ -5157,20 +5153,16 @@ class SourceUnit:
         decide as a source ``def`` or a builtin's
         (``ClassDef.initializer_entry`` is None: a store to it, a
         conditional ``def``, a base's ``__init_subclass__``) carries no frame
-        either, unless its source ``__new__`` shape constructs it: that call
-        is the unanswered call.  So is a class whose ``__new__`` the lookup
-        does not decide as its own ``def`` or a builtin's
-        (``ClassDef.new_entry``: a store to it, a base's ``def __new__``).
+        either: that call is the unanswered call.  So is a class whose
+        ``__new__`` the lookup does not decide as its own ``def`` or a
+        builtin's (``ClassDef.new_entry``: a store to it, a base's ``def
+        __new__``).
         """
         if definition.decorators:
             return False
         if isinstance(definition, ClassDef) and not definition.new_entry()[0]:
             return False
-        if (
-            isinstance(definition, ClassDef)
-            and definition._authenticated_new_constructor_shape() is None
-            and definition.initializer_entry() is None
-        ):
+        if isinstance(definition, ClassDef) and definition.initializer_entry() is None:
             return False
         return SourceUnit.source_class_has_authenticated_default_attribute_behavior(
             definition
@@ -9238,15 +9230,6 @@ class Node(Typed):
             span.end_col,
         )
 
-    def _authenticated_new_constructor_shape(self):
-        """Source-owned ``__new__`` allocation shape, or None.
-
-        Only ``ClassDef`` implements a real shape. Every other node answers
-        None so callers never AttributeError when an allocation door is
-        mis-routed to a non-class definition (L0a / construct-or-panic).
-        """
-        return None
-
     def _construct_sugar(self) -> object:
         """This node's sugar, constructed by the node itself.
 
@@ -11318,17 +11301,13 @@ class ClassDef(Statement):
     def constructor_definition(self):
         """The ``def`` whose formals after its first a call of this class
         binds (``source_visible_constructor_frame``): the source
-        ``__init__``, else the source ``__new__`` whose shape the constructor
-        reads, else the ``__new__`` whose result the call returns as it is
+        ``__init__``, else the source ``__new__`` the class row dispatches
         (``returned_new``).  None when no source ``def`` states the call's
         signature (a dataclass's generated ``__init__``, an inherited
         exception constructor, ``object``'s)."""
         initializer = self._source_initializer()
         if initializer is not None:
             return initializer
-        new_shape = self._authenticated_new_constructor_shape()
-        if new_shape is not None:
-            return new_shape[0]
         return self.returned_new()
 
     def constructor_is_read(self) -> bool:
@@ -11336,18 +11315,17 @@ class ClassDef(Statement):
         runs (``ClassDefinitionValue.callable_application_with``,
         ``tree_enumerate.class_universe_outcome``): a ``dataclass`` whose
         ``__new__`` is a builtin's (``dataclass_new_entry``); else a
-        ``__new__`` the one lookup decides (``new_entry``) and either a source
-        ``__new__`` shape the constructor reads or an MRO that constructs by
-        the laws the lifter reads (``construction_order``) with an
-        ``__init__`` the lookup decides (``initializer_entry``).  Where it is
-        False the call is the one unanswered call and no constructor
-        contract is stated."""
+        ``__new__`` the one lookup decides (``new_entry``) and an MRO that
+        constructs by the laws the lifter reads (``construction_order``)
+        with an ``__init__`` the lookup decides (``initializer_entry``).
+        Where it is False the call is the one unanswered call and no
+        constructor contract is stated."""
         if self._dataclass_generated_init_fields() is not None:
             new_decided, own_new = self.dataclass_new_entry()
             return new_decided and own_new is None
         if not self.new_entry()[0]:
             return False
-        return self._authenticated_new_constructor_shape() is not None or (
+        return (
             self.construction_order() is not None
             and self.initializer_entry() is not None
         )
@@ -11445,86 +11423,6 @@ class ClassDef(Statement):
             self.unit.language_callee_of(decorator) in _IDENTITY_DECORATORS
             for decorator in method.decorators
         )
-
-    def _authenticated_new_constructor_shape(self):
-        """One source-owned ``__new__`` allocation followed by field stores.
-
-        The ``__new__`` is the one the class call runs, read through the one
-        class-namespace lookup (``new_entry``: this statement's own ``def``,
-        the binding its body leaves), and the ``__init__`` the call runs
-        after it is ``object``'s (``initializer_entry``): any other -- a
-        source ``__init__`` of this class or a base, a builtin exception's,
-        one not decided -- runs on the object ``__new__`` returns, which this
-        shape does not read."""
-        _decided, constructor = self.new_entry()
-        if constructor is None or self.initializer_entry() != "object":
-            return None
-        if len(constructor.params) < 2 or len(constructor.body) < 3:
-            return None
-        allocation = constructor.body[0]
-        returned = constructor.body[-1]
-        if (
-            not isinstance(allocation, Assign)
-            or len(allocation.targets) != 1
-            or not isinstance(allocation.targets[0], Name)
-            or not isinstance(returned, Return)
-            or not isinstance(returned.value, Name)
-            or returned.value.id != allocation.targets[0].id
-            or not isinstance(allocation.value, Call)
-            or allocation.value.keywords
-            or len(allocation.value.args) < 1
-            or not isinstance(allocation.value.func, Attribute)
-            or allocation.value.func.attr != "__new__"
-            or not isinstance(allocation.value.func.value, Call)
-        ):
-            return None
-        super_call = allocation.value.func.value
-        class_param = constructor.params[0]
-        if (
-            # The builtin ``super`` by its binding: a module or function that
-            # binds its own ``super`` reaches no language callee.
-            super_call.language_callee() is not LanguageCallee.BUILTIN_SUPER
-            or super_call.keywords
-            or len(super_call.args) != 2
-            or not isinstance(super_call.args[0], Name)
-            or super_call.args[0].id != self.name
-            or not isinstance(super_call.args[1], Name)
-            or super_call.args[1].id != class_param.name
-            or not isinstance(allocation.value.args[0], Name)
-            or allocation.value.args[0].id != class_param.name
-        ):
-            return None
-        # Admission is decided on the SOURCE OCCURRENCE (#7346-C).  The name is
-        # bound exactly once at module level AND that one binding must be THIS
-        # occurrence -- a reconstructed shell of the same class is admitted, a
-        # foreign or shadowed class is not.
-        bindings = (self.unit.module_direct_bindings or {}).get(self.name, ())
-        if len(bindings) != 1 or not isinstance(bindings[0], Node):
-            return None
-        if SourceOccurrenceIdentityV1.of(bindings[0]) != (
-            SourceOccurrenceIdentityV1.of(self)
-        ):
-            return None
-        field_body = constructor.body[1:-1]
-        receiver_name = allocation.targets[0].id
-        formal_names = {param.name for param in constructor.params[1:]}
-        field_names = []
-        for statement in field_body:
-            if (
-                not isinstance(statement, Assign)
-                or len(statement.targets) != 1
-                or not isinstance(statement.targets[0], Attribute)
-                or not isinstance(statement.targets[0].value, Name)
-                or statement.targets[0].value.id != receiver_name
-                or not isinstance(statement.value, Name)
-                or statement.value.id not in formal_names
-                or statement.targets[0].attr != statement.value.id
-            ):
-                return None
-            field_names.append(statement.targets[0].attr)
-        if len(field_names) != len(set(field_names)):
-            return None
-        return constructor, allocation.targets[0], field_body
 
     def substitute(self, scope):
         """A class: decorators and type params evaluate in the enclosing scope;
@@ -12579,27 +12477,25 @@ class ClassDef(Statement):
         return True, binder
 
     def returned_new(self) -> "FunctionDef | None":
-        """The ``def __new__`` of this class statement whose result a call of
-        the class returns as it is, else None.
+        """The ``def __new__`` of this class statement a call of the class
+        runs, as the static method the class row dispatches, else None: the
+        one ``__new__`` door (#7757 A4).
 
         ``Cls(*args)`` is ``type.__call__``: ``obj = Cls.__new__(Cls,
         *args)``, then, only when ``obj`` is an instance of ``Cls``,
         ``type(obj).__init__(obj, *args)`` (``type_call``,
         Objects/typeobject.c).  It is this statement's own ``def __new__``
-        the one lookup selects (``new_entry``), not the authenticated
-        allocation shape (``_authenticated_new_constructor_shape``, its own
-        frame), when the ``__init__`` the lookup selects is ``object``'s
-        (``initializer_entry``) and the order is source classes and
-        ``object`` alone (``construction_order``): no builtin base whose own
-        constructor law runs.  Its formals are positional (no ``*``, ``**``
-        or keyword-only formal), so the class call binds its actuals to them
-        as its own (``source_visible_constructor_frame``) and the one method
-        door passes them on (``ClassConstructorBodySugar``).  What the call
-        returns is then read off what ``__new__`` returned
-        (``class_constructor_body_sugar.returned_as_it_is``).
+        the one lookup selects (``new_entry``), when the ``__init__`` the
+        lookup selects is ``object``'s (``initializer_entry``) and the order
+        is source classes and ``object`` alone (``construction_order``): no
+        builtin base whose own constructor law runs.  Its formals are
+        positional (no ``*``, ``**`` or keyword-only formal), so the class
+        call binds its actuals to them as its own
+        (``source_visible_constructor_frame``) and the one method door passes
+        them on (``ClassConstructorBodySugar._returned_by_new``).  Its body is
+        never read here: the class row dispatches it, then dispatches
+        ``__init__`` on what it returned, and prove joins both.
         """
-        if self._authenticated_new_constructor_shape() is not None:
-            return None
         decided, constructor = self.new_entry()
         if not decided or constructor is None:
             return None
@@ -13246,15 +13142,12 @@ class ClassDef(Statement):
         from sugar_source_tree.binding_provenance import BindingCoordinateV1
 
         initializer = self._source_initializer()
-        new_shape = self._authenticated_new_constructor_shape()
         # The ``def`` whose signature the call binds (``constructor_definition``).
-        # A ``def __new__`` whose result the call returns as it is
-        # (``returned_new``): the call's formals are its formals after
-        # ``cls``, and the body runs it (``ClassConstructorBodySugar``).
+        # The ``def __new__`` the class row dispatches (``returned_new``):
+        # the call's formals are its formals after ``cls``, and the body
+        # dispatches it, never reads it (``ClassConstructorBodySugar``).
         constructor = self.constructor_definition()
-        returned_new = (
-            constructor if initializer is None and new_shape is None else None
-        )
+        returned_new = constructor if initializer is None else None
         owner_cid = self.fragment.seal().cid
         span = self.line_col_span()
         site = SourceFragmentCoordinateV1(
@@ -13264,7 +13157,7 @@ class ClassDef(Statement):
             span.end_line,
             span.end_col,
         )
-        if initializer is None and new_shape is None:
+        if initializer is None:
             dataclass_fields = self._dataclass_generated_init_fields()
             if dataclass_fields is not None:
                 # The generated ``__init__`` runs on what the class's
@@ -13458,10 +13351,8 @@ class ClassDef(Statement):
         # The source ``__init__`` the call dispatches on its fresh instance
         # (#7757 B3): the formals it forwards, ``((cid, kind, name), ...)``.
         dispatched_initializer = None
-        # The class statement whose body defines the function the body runs:
-        # its ``__class__`` cell (PEP 3135).  A dataclass's generated
-        # ``__init__`` is no source function and has none.
-        cell_class_definition = None
+        # A source ``__new__`` is never read here: the class row dispatches
+        # it (``returned_new_formal_cids``, #7757 A4).
         # The object the class call returns where a dataclass's generated
         # stores run here: a read of the receiver after the last of them
         # (``_read_where_the_body_ends``).
@@ -13515,42 +13406,6 @@ class ClassDef(Statement):
             )
             receiver_coordinate_cid = coordinate.cid
             dispatched_initializer = tuple(initializer_formals or ())
-        else:
-            new_shape = self._authenticated_new_constructor_shape()
-            if new_shape is not None:
-                from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
-                    SourceVisibleFunctionBodySugar,
-                )
-
-                constructor, receiver_target, _field_body = new_shape
-                coordinate = BindingCoordinateV1.mint(
-                    self.fragment.seal().cid,
-                    receiver_target.fragment,
-                    ("receiver", 0),
-                )
-                receiver = self._make_constructed_receiver_ref(coordinate.cid)
-                receiver_coordinate_cid = coordinate.cid
-                constructor_scope = {
-                    receiver_target.id: BindingEntryV1(coordinate, receiver, None),
-                    **scope,
-                }
-                # Everything ``__new__`` runs after its allocation: the field
-                # stores and its ``return``.  The value the class call gets
-                # is what that ``return`` returns (the receiver after the
-                # stores), never the stores' block read as the return
-                # (``ClassConstructorBodySugar.desugar``).
-                substituted_body, _ = constructor._substitute_body(
-                    constructor.body[1:], constructor_scope
-                )
-                initializer_body = SourceVisibleFunctionBodySugar(
-                    tuple(
-                        _body_statement_sugar(statement)
-                        for statement in substituted_body
-                    ),
-                    constructor.fragment,
-                )
-                # This class's own ``__new__``.
-                cell_class_definition = self
         return ClassConstructorBodySugar(
             definition=self.sugar(),
             initializer_body=initializer_body,
@@ -13558,7 +13413,6 @@ class ClassDef(Statement):
             site=self.fragment,
             constructed_new_method=constructed_new_method,
             exception_args_coordinate_cid=exception_args_coordinate_cid,
-            cell_class_definition=cell_class_definition,
             receiver_at_end=receiver_at_end,
             returned_new_formal_cids=returned_new_formal_cids,
             initializer_formals=dispatched_initializer,
@@ -25071,7 +24925,7 @@ def _receiver_holds(definition):
     instance may hold after its dispatched ``__init__`` edge, which prove
     composes with the class row's ``python:type_is`` into the instance a
     caller's ``python:constructed(<class>)`` is bound to
-    (``consistency::constructed_instance``).
+    (``consistency::initialized_instance``).
 
     None for any definition that is no ``__init__`` written in a class body
     with a positional receiver.  Else ``(receiver, names, stores, reads)``:

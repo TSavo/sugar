@@ -5550,14 +5550,15 @@ struct DispatchTable {
     /// where the call may run).
     answers: BTreeMap<String, Option<BridgeAnswer>>,
     /// Each class a namespace row states, with the instance its constructor
-    /// contract states it makes (`constructed_instance`): what a caller's
+    /// contract states it makes (`initialized_instance`): what a caller's
     /// `python:constructed(<class>)` is bound to. `None` where the contract
     /// does not decide it on every completed face, or no single bridge
     /// answers the class's symbol.
     constructed: BTreeMap<String, Option<Json>>,
     /// Each class `constructed` decides, with the fields whose value its
     /// constructor contract states on every completed face
-    /// (`constructed_stated_fields`): what a `field:<p>.<f>` input of a
+    /// (`constructed_stated_fields`) or the `__init__` it dispatches leaves
+    /// (`initializer_holds`): what a `field:<p>.<f>` input of a
     /// dispatched answer is bound to where `class:<p>` is that class's
     /// `python:constructed(<class>)` (`constructed_field_inputs`).
     constructed_fields: BTreeMap<String, std::collections::BTreeSet<String>>,
@@ -5604,38 +5605,26 @@ fn dispatch_table(pool: &MementoPool) -> DispatchTable {
     }
     // The instance each class's constructor contract states it makes: the
     // class row is the contract a call of the class joins (its bridge
-    // answers the class's own symbol). Where the row leaves the instance's
-    // fields to the `__init__` it dispatches on it (#7757 B3), they are what
-    // that `__init__`'s contract states it leaves (`initialized_instance`).
+    // answers the class's own symbol), read one way (`initialized_instance`,
+    // #7757 A4): the class it states, composed with what the `__init__` it
+    // dispatches on the instance leaves (#7757 B3).
     let mut constructed: BTreeMap<String, Option<Json>> = BTreeMap::new();
     let mut constructed_fields: BTreeMap<String, std::collections::BTreeSet<String>> =
         BTreeMap::new();
     for class in namespaces.keys() {
         let answer = single_bridge_answer(pool, class);
-        let mut instance = answer.as_ref().and_then(|(binding, post, ..)| {
-            constructed_instance(post, &binding.out_binding, class)
+        let read = answer.as_ref().and_then(|(binding, post, ..)| {
+            initialized_instance(&namespaces, &answers, class, post, &binding.out_binding)
         });
-        let mut fields = std::collections::BTreeSet::new();
-        let read = instance.clone();
-        if let (Some(stated), Some((binding, post, ..))) = (read.as_ref(), answer.as_ref()) {
-            fields = constructed_stated_fields(post, &binding.out_binding);
-            match initializer_call_class(post) {
-                None => {}
-                Some(None) => instance = None,
-                Some(Some(receiver_class)) => {
-                    match initialized_instance(&namespaces, &answers, class, &receiver_class) {
-                        Some((held, stored)) => {
-                            instance = Some(instance_with_fields(stated, &held));
-                            fields.extend(stored);
-                        }
-                        None => instance = None,
-                    }
+        let instance = match read {
+            Some((instance, fields)) => {
+                if !fields.is_empty() {
+                    constructed_fields.insert(class.clone(), fields);
                 }
+                Some(instance)
             }
-        }
-        if instance.is_some() && !fields.is_empty() {
-            constructed_fields.insert(class.clone(), fields);
-        }
+            None => None,
+        };
         constructed.insert(class.clone(), instance);
     }
     DispatchTable {
@@ -5738,7 +5727,8 @@ fn is_receiver_plain_atom(node: &Json, receiver: &str) -> bool {
 
 /// What the `__init__` a class's constructor contract dispatches on its
 /// fresh instance leaves in it (#7757 B3): `(may_hold, fields)`, read off
-/// that `__init__`'s contract where every completed face is decided.
+/// that `__init__`'s contract where every completed face is decided. Read
+/// only by the one reading of a constructed instance (`initialized_instance`).
 ///
 /// `receiver_class` is the class the call is dispatched over; it must be the
 /// fresh instance of `class`, `python:instance(<class>)` with no field (the
@@ -5762,7 +5752,7 @@ fn is_receiver_plain_atom(node: &Json, receiver: &str) -> bool {
 /// class stays owed -- where the receiver class is not the fresh instance,
 /// no `__init__` resolves, its answer is not one contract, it states no
 /// `python:holds_decided`, or a guard does not hold.
-fn initialized_instance(
+fn initializer_holds(
     namespaces: &Arc<BTreeMap<String, ClassNamespace>>,
     answers: &BTreeMap<String, Option<BridgeAnswer>>,
     class: &str,
@@ -5872,27 +5862,97 @@ fn initialized_instance(
     Some((held, fields))
 }
 
-fn instance_with_fields(instance: &Json, held: &std::collections::BTreeSet<String>) -> Json {
-    let Some((name, args)) = ctor_parts(instance) else {
-        return instance.clone();
-    };
-    let Some((class, named)) = args.split_first() else {
-        return instance.clone();
-    };
-    let mut fields: std::collections::BTreeSet<String> = named
-        .iter()
-        .filter_map(|field| const_str(field).map(str::to_string))
-        .collect();
-    fields.extend(held.iter().cloned());
-    let mut out = vec![class.clone()];
-    out.extend(fields.iter().map(|field| string_const_term(field)));
-    json!({"kind": "ctor", "name": name, "args": out})
+/// THE one reading of the instance a class call makes (#7757 A4, step 8):
+/// `(python:instance(<class>, <field>...), fields)`, read off the class's
+/// constructor contract `post` (out-binding `out`), what a caller's
+/// `python:constructed(<class>)` is bound to.
+///
+/// Each step of `type.__call__` is read off the contract that states it,
+/// never off a callee's body:
+///
+/// - the class: every completed face states `python:type_is(python:after(
+///   out, "out"), <class>)` (the kit's `receiver_dispatch.
+///   constructed_class_facts`, `InitializedInstanceValue`);
+/// - what the class's own construction left, where no source `def` states
+///   it (a dataclass's generated stores, `BaseException`'s `args`: the kit's
+///   `ConstructedInstanceValue`): each `python:may_hold(python:after(out,
+///   "out"), <name>)` the row states, and the fields it states on every
+///   completed face (`constructed_stated_fields`);
+/// - what the `__init__` it dispatches on the fresh instance leaves
+///   (`initializer_call_class`, `initializer_holds`, #7757 B3), composed in.
+///
+/// A source `__new__` is a dispatched edge too: the row states no class for
+/// what it returned (`python:class_undecided`), so nothing is concluded.
+///
+/// `None` -- the dispatch over the result stays owed -- where a face states
+/// `python:class_undecided`, a face names another class, a name is not a
+/// string constant, nothing states the class, the row makes more than one
+/// `__init__` call or one over no stated class, or the `__init__`'s contract
+/// does not decide what it leaves.
+fn initialized_instance(
+    namespaces: &Arc<BTreeMap<String, ClassNamespace>>,
+    answers: &BTreeMap<String, Option<BridgeAnswer>>,
+    class: &str,
+    post: &Json,
+    out: &str,
+) -> Option<(Json, std::collections::BTreeSet<String>)> {
+    let mut stated = false;
+    let mut held: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut pending: Vec<&Json> = vec![post];
+    while let Some(node) = pending.pop() {
+        match node {
+            Json::Array(items) => pending.extend(items.iter()),
+            Json::Object(map) => {
+                let atom = node.get("kind").and_then(|v| v.as_str()) == Some("atomic");
+                let name = node.get("name").and_then(|v| v.as_str());
+                let args = node.get("args").and_then(|v| v.as_array());
+                let about = args
+                    .and_then(|args| args.first())
+                    .is_some_and(|subject| names_the_constructed_instance(subject, out));
+                if atom && about {
+                    let operand = args.and_then(|args| args.get(1));
+                    match name {
+                        Some(PYTHON_CLASS_UNDECIDED) => return None,
+                        Some(PYTHON_TYPE_IS) => {
+                            if const_str(operand?)? != class {
+                                return None;
+                            }
+                            stated = true;
+                        }
+                        Some(PYTHON_MAY_HOLD) => {
+                            held.insert(const_str(operand?)?.to_string());
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+                pending.extend(map.values());
+            }
+            _ => {}
+        }
+    }
+    if !stated {
+        return None;
+    }
+    let mut fields = constructed_stated_fields(post, out);
+    match initializer_call_class(post) {
+        None => {}
+        Some(None) => return None,
+        Some(Some(receiver_class)) => {
+            let (left, stored) = initializer_holds(namespaces, answers, class, &receiver_class)?;
+            held.extend(left);
+            fields.extend(stored);
+        }
+    }
+    let mut args = vec![string_const_term(class)];
+    args.extend(held.iter().map(|field| string_const_term(field)));
+    Some((json!({"kind": "ctor", "name": PYTHON_INSTANCE, "args": args}), fields))
 }
 
 /// `python:constructed(<class symbol>)` (the kit's
 /// `receiver_dispatch.CONSTRUCTED`): the class of a same-file class call's
 /// result as its construction left it. Bound to the instance the class's
-/// constructor contract states (`constructed_instance`) before a method on
+/// constructor contract states (`initialized_instance`) before a method on
 /// it is dispatched (`dispatch_answer`).
 const PYTHON_CONSTRUCTED: &str = "python:constructed";
 /// `python:type_is(<object>, <class symbol>)`: `type(<object>)` is that
@@ -5936,60 +5996,6 @@ fn names_the_constructed_instance(term: &Json, out: &str) -> bool {
         }
         _ => false,
     }
-}
-
-/// The instance a class's constructor contract states it makes (#7757 step
-/// 8): `python:instance(<class>, <field>...)`, read off its `post`, where
-/// every completed face states `python:type_is(python:after(out, "out"),
-/// <class>)` and one `python:may_hold(python:after(out, "out"), <name>)` per
-/// name its `__dict__` holds (the kit's `receiver_dispatch.
-/// constructed_class_facts`). The fields are every name any completed face
-/// states (what the `__dict__` may hold). `None` -- the dispatch over the
-/// result stays owed -- where a face states `python:class_undecided`, a face
-/// names another class, a name is not a string constant, or nothing states
-/// the class.
-fn constructed_instance(post: &Json, out: &str, class: &str) -> Option<Json> {
-    let mut stated = false;
-    let mut fields: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut pending: Vec<&Json> = vec![post];
-    while let Some(node) = pending.pop() {
-        match node {
-            Json::Array(items) => pending.extend(items.iter()),
-            Json::Object(map) => {
-                let atom = node.get("kind").and_then(|v| v.as_str()) == Some("atomic");
-                let name = node.get("name").and_then(|v| v.as_str());
-                let args = node.get("args").and_then(|v| v.as_array());
-                let about = args
-                    .and_then(|args| args.first())
-                    .is_some_and(|subject| names_the_constructed_instance(subject, out));
-                if atom && about {
-                    let operand = args.and_then(|args| args.get(1));
-                    match name {
-                        Some(PYTHON_CLASS_UNDECIDED) => return None,
-                        Some(PYTHON_TYPE_IS) => {
-                            if const_str(operand?)? != class {
-                                return None;
-                            }
-                            stated = true;
-                        }
-                        Some(PYTHON_MAY_HOLD) => {
-                            fields.insert(const_str(operand?)?.to_string());
-                        }
-                        _ => {}
-                    }
-                    continue;
-                }
-                pending.extend(map.values());
-            }
-            _ => {}
-        }
-    }
-    if !stated {
-        return None;
-    }
-    let mut args = vec![string_const_term(class)];
-    args.extend(fields.iter().map(|field| string_const_term(field)));
-    Some(json!({"kind": "ctor", "name": PYTHON_INSTANCE, "args": args}))
 }
 
 /// The operands of `node` read as a conjunction: each operand of an `and`,
@@ -16076,22 +16082,24 @@ mod tests {
                 ]},
             ]},
         ]});
-        assert_eq!(
-            constructed_instance(&post, "out", "python:m.Box"),
-            Some(instance("python:m.Box", &["k", "n"]))
-        );
+        // The one reading (`initialized_instance`, #7757 A4): a row that
+        // dispatches no `__init__` states what its own construction left.
+        let namespaces: Arc<BTreeMap<String, ClassNamespace>> = Arc::new(BTreeMap::new());
+        let answers: BTreeMap<String, Option<BridgeAnswer>> = BTreeMap::new();
+        let read = |post: &Json, class: &str| {
+            initialized_instance(&namespaces, &answers, class, post, "out")
+                .map(|(instance, _)| instance)
+        };
+        assert_eq!(read(&post, "python:m.Box"), Some(instance("python:m.Box", &["k", "n"])));
         // A face that does not decide it: nothing is bound.
         let undecided = json!({"kind": "and", "operands": [
             class_atom(PYTHON_TYPE_IS, Some("python:m.Box")),
             class_atom(PYTHON_CLASS_UNDECIDED, None),
         ]});
-        assert_eq!(constructed_instance(&undecided, "out", "python:m.Box"), None);
+        assert_eq!(read(&undecided, "python:m.Box"), None);
         // Another class, or no class stated: nothing is bound.
-        assert_eq!(constructed_instance(&post, "out", "python:m.Other"), None);
-        assert_eq!(
-            constructed_instance(&class_atom(PYTHON_MAY_HOLD, Some("n")), "out", "python:m.Box"),
-            None
-        );
+        assert_eq!(read(&post, "python:m.Other"), None);
+        assert_eq!(read(&class_atom(PYTHON_MAY_HOLD, Some("n")), "python:m.Box"), None);
     }
 
     #[test]
@@ -16742,22 +16750,42 @@ mod tests {
         let answers = box_init_answers();
         let fresh = instance("python:m.Box", &[]);
         let (held, fields) =
-            initialized_instance(&namespaces, &answers, "python:m.Box", &fresh).unwrap();
+            initializer_holds(&namespaces, &answers, "python:m.Box", &fresh).unwrap();
         assert_eq!(held.into_iter().collect::<Vec<_>>(), vec!["n".to_string()]);
         assert_eq!(fields.into_iter().collect::<Vec<_>>(), vec!["n".to_string()]);
-        assert_eq!(
-            instance_with_fields(&fresh, &["n".to_string()].into_iter().collect()),
-            instance("python:m.Box", &["n"])
-        );
         // Only over the fresh instance of the class itself.
-        assert!(initialized_instance(
+        assert!(initializer_holds(
             &namespaces,
             &answers,
             "python:m.Box",
             &instance("python:m.Box", &["n"])
         )
         .is_none());
-        assert!(initialized_instance(&namespaces, &answers, "python:m.Other", &fresh).is_none());
+        assert!(initializer_holds(&namespaces, &answers, "python:m.Other", &fresh).is_none());
+        // The one reading of the class row (#7757 A4): the class it states,
+        // composed with what the `__init__` it dispatches leaves.
+        let call = json!({"kind": "ctor", "name": INITIALIZER_CALL, "args": [
+            var("obj"),
+            var("n"),
+            {"kind": "ctor", "name": PYTHON_CLASS, "args": [string_const("0"), fresh.clone()]},
+        ]});
+        let row = json!({"kind": "and", "operands": [
+            class_atom(PYTHON_TYPE_IS, Some("python:m.Box")),
+            {"kind": "atomic", "name": "=", "args": [made(), call]},
+        ]});
+        let (constructed, fields) =
+            initialized_instance(&namespaces, &answers, "python:m.Box", &row, "out").unwrap();
+        assert_eq!(constructed, instance("python:m.Box", &["n"]));
+        assert_eq!(fields.into_iter().collect::<Vec<_>>(), vec!["n".to_string()]);
+        // A row whose class is undecided (a source `__new__` made it) binds
+        // nothing, whatever it dispatches.
+        let undecided = json!({"kind": "and", "operands": [
+            class_atom(PYTHON_CLASS_UNDECIDED, None),
+            {"kind": "atomic", "name": "=", "args": [made(), var("x")]},
+        ]});
+        assert!(
+            initialized_instance(&namespaces, &answers, "python:m.Box", &undecided, "out").is_none()
+        );
     }
 
     #[test]
@@ -16778,8 +16806,7 @@ mod tests {
         let namespaces = Arc::new(namespaces);
         let fresh = instance("python:m.Box", &[]);
         assert!(
-            initialized_instance(&namespaces, &box_init_answers(), "python:m.Box", &fresh)
-                .is_none()
+            initializer_holds(&namespaces, &box_init_answers(), "python:m.Box", &fresh).is_none()
         );
     }
 

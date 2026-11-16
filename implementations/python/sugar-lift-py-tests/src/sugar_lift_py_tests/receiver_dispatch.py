@@ -343,7 +343,7 @@ def constructed_class_facts(instance, constructed):
     - ``python:may_hold(<constructed>, <name>)`` for every name its
       ``__dict__`` holds where it is left (``class_value``'s fields).
 
-    Prove reads them off the row (``consistency::constructed_instance``):
+    Prove reads them off the row (``consistency::initialized_instance``):
     the class and the union of the names over every completed face is the
     ``python:instance(<class symbol>, <field>...)`` a caller's
     ``python:constructed(<class>)`` is bound to before a method on the
@@ -795,6 +795,13 @@ def dispatch_edge_call(
     answers, ``call:dispatch:.<name>(<receiver>, py.class("0", ...))``
     (``DISPATCH_READ_MARK``), with no other actual.
 
+    A receiver whose class is not decided here (``receiver_class`` None:
+    what a source ``__new__`` returned, on which ``type.__call__`` runs
+    ``type(obj).__init__``, ``ClassConstructorBodySugar._returned_by_new``)
+    rides with no ``py.class("0", ...)``: prove resolves no method without
+    the receiver's class (``consistency::dispatch_answer``), so the call is
+    owed, both faces standing.
+
     Where the method is looked up is part of the term (``lookup_term``), and
     prove's one resolution reads it (``consistency::dispatched_target``):
 
@@ -861,7 +868,7 @@ def dispatch_edge_call(
         )
         + (
             [ctor(CLASS_ARGUMENT, [str_const("0"), receiver_class])]
-            if received
+            if received and receiver_class is not None
             else []
         )
         + class_arguments(tuple(positional), tuple(kw_values), shift=len(received))

@@ -253,7 +253,8 @@ def test_new_is_read_through_the_one_lookup() -> None:
 
     decided, own = classes["Own"].new_entry()
     assert decided and isinstance(own, FunctionDef) and own.name == "__new__"
-    assert classes["Own"]._authenticated_new_constructor_shape() is not None
+    # The one ``__new__`` door: the class row dispatches it (#7757 A4).
+    assert classes["Own"].returned_new() is own
     # ``object.__new__`` runs: no source ``__new__``.
     assert classes["Base"].new_entry() == (True, None)
 
@@ -273,16 +274,17 @@ def test_a_stored_new_is_undecided() -> None:
     classes = _classes(_NEW)
 
     assert classes["Stored"].new_entry() == (False, None)
-    assert classes["Stored"]._authenticated_new_constructor_shape() is None
+    assert classes["Stored"].returned_new() is None
     assert not SourceUnit.source_class_admits_source_constructor_frame(
         classes["Stored"]
     )
 
 
-def test_a_new_shape_whose_call_runs_a_source_init_is_not_the_shape() -> None:
-    # Base's ``__init__`` runs on what ``__new__`` returns: the shape does
-    # not read it.
-    assert _classes(_NEW)["Inited"]._authenticated_new_constructor_shape() is None
+def test_a_new_whose_call_runs_a_source_init_is_no_returned_new() -> None:
+    # Base's ``__init__`` runs on what ``__new__`` returns: the one ``__new__``
+    # door does not admit it, and the class call refuses it by name
+    # (``refuse_unrun_source_new``).
+    assert _classes(_NEW)["Inited"].returned_new() is None
 
 
 # --- 5. the receiver keeps its class ----------------------------------------------
