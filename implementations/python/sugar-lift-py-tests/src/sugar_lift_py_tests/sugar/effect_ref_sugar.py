@@ -36,7 +36,11 @@ class EffectRefSugar(ConstructedTermSugar):
             EffectCoordinate,
             ObservedEffectValue,
         )
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import effect_slot_here
 
+        # This evaluation of the slot: one per live loop item around it
+        # (``effect_slot_here``), so two items' ``e`` are never one object.
+        slot = effect_slot_here(self.slot_id)
         # Observed-effect identity: the bound name projects the same RaiseEffect
         # the handler (or effect boundary) routed into this slot. No ambient
         # table — only the explicit context preimage deposited at the route.
@@ -50,9 +54,9 @@ class EffectRefSugar(ConstructedTermSugar):
             if exception_value is not None:
                 return ExitSet.completed(exception_value)
             return ExitSet.completed(
-                ObservedEffectValue(slot_id=self.slot_id, effect=effect, site=self.site)
+                ObservedEffectValue(slot_id=slot, effect=effect, site=self.site)
             )
-        return ExitSet.completed(EffectCoordinate(slot_id=self.slot_id, site=self.site))
+        return ExitSet.completed(EffectCoordinate(slot_id=slot, site=self.site))
 
 
 @dataclass(frozen=True)
@@ -84,18 +88,24 @@ class ObservationRefSugar(ConstructedTermSugar):
             ExceptionInfoCoordinate,
             ObservedExceptionInfoValue,
         )
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import effect_slot_here
 
+        # This evaluation of the slot: one per live loop item around it
+        # (``effect_slot_here``), so two items' ``e`` or ``x`` are never one
+        # object.  The deposit is read by the slot as constructed: it was
+        # made in this same item.
+        slot = effect_slot_here(self.slot_id)
         if self.projection == "exception_info":
             reader = getattr(ctx, "observed_effect_for", None)
             effect = reader(self.slot_id) if reader is not None else None
             if effect is not None:
                 return ExitSet.completed(
                     ObservedExceptionInfoValue(
-                        slot_id=self.slot_id, effect=effect, site=self.site
+                        slot_id=slot, effect=effect, site=self.site
                     )
                 )
             return ExitSet.completed(
-                ExceptionInfoCoordinate(slot_id=self.slot_id, site=self.site)
+                ExceptionInfoCoordinate(slot_id=slot, site=self.site)
             )
         from sugar_lift_py_tests.context_manager_contract import ENTER_RESULT
 
@@ -109,4 +119,4 @@ class ObservationRefSugar(ConstructedTermSugar):
             if entered is not None:
                 return ExitSet.completed(entered)
         # warning_observation / effect: pure coordinate until binding facts exist
-        return ExitSet.completed(EffectCoordinate(slot_id=self.slot_id, site=self.site))
+        return ExitSet.completed(EffectCoordinate(slot_id=slot, site=self.site))

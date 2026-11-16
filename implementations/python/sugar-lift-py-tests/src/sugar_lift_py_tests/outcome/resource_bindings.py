@@ -65,8 +65,11 @@ class EnterResultBinding:
         from sugar_lift_py_tests.floor.effect_coordinate import EffectCoordinate
         from sugar_lift_py_tests.floor.inv_value import InvValue
         from sugar_lift_py_tests.ir import eq
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import effect_slot_here
 
-        slot = EffectCoordinate(slot_id=self.slot_id).to_term(
+        # Stated on this evaluation of the slot (``effect_slot_here``): the
+        # coordinate a read of ``x`` in the same live loop item projects.
+        slot = EffectCoordinate(slot_id=effect_slot_here(self.slot_id)).to_term(
             owner="EnterResultBinding"
         )
         term = self.enter_value.to_term(owner="EnterResultBinding")

@@ -176,6 +176,40 @@ def branch_slot_here(slot, table=None):
     return slot.in_item("/".join(segments))
 
 
+_LIVE_ITEM_QUALIFIER = "@loop:"
+
+
+def effect_slot_here(slot_id: str) -> str:
+    """The effect slot ``slot_id`` (an ``except ... as e`` handler's, a
+    ``with ... as x`` enter result's, a ``pytest.raises ... as e``
+    observation's) as one evaluation of it in the reduction running now: the
+    construct-time slot, qualified by the live loop items around it, as
+    ``evaluation_here`` qualifies a statement's key and ``branch_slot_here``
+    an ``if``'s slot.
+
+    A live loop's body is constructed once for every item, so a handler or a
+    ``with`` in it carries one construct-time slot; each item routes its own
+    effect and enters its own manager.  Every term that names the slot --
+    the coordinate a read of ``e`` or ``x`` projects (``EffectRefSugar``,
+    ``ObservationRefSugar``) and every fact stated on it (``EffectBinding``,
+    ``EnterResultBinding``) -- is minted here, in the item, so two items'
+    ``e`` are two slots, never one object.  The deposit a handler or a
+    ``with`` makes for its body is read in that same item, by the slot as
+    constructed.  Outside every live item it is the slot itself."""
+    from sugar_lift_py_tests.occurrence import live_iterations
+
+    segments = live_iterations()
+    if not segments:
+        return slot_id
+    return f"{slot_id}@{'/'.join(segments)}"
+
+
+def effect_slot_source(slot_id: str) -> str:
+    """The construct-time slot of ``slot_id`` (``effect_slot_here``): the
+    slot its source occurrence names, with no live item's qualification."""
+    return slot_id.split(_LIVE_ITEM_QUALIFIER, 1)[0]
+
+
 def evaluation_read_here(temporal, evaluation: str) -> str:
     """The key a read of ``evaluation`` reads in the reduction running now.
 

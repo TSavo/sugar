@@ -73,7 +73,13 @@ class EffectBinding:
         pinned. It stayed latent only because a decided handler scan never
         emitted two fact-carrying arms that had to normalize together.
         """
-        slot = str_const(self.slot_id)
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import effect_slot_here
+
+        # The facts are stated on this evaluation's slot (``effect_slot_here``):
+        # the term a read of the ``as`` name in the same live loop item
+        # projects.  The deposit (``ObservedEffectBinding``) stays keyed by
+        # the slot as constructed: it is read in this item.
+        slot = str_const(effect_slot_here(self.slot_id))
         facts = [
             InvValue(
                 eq(ctor("effect_slot_kind", [slot]), str_const(self.kind)),
