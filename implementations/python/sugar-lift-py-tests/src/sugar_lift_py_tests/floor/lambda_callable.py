@@ -668,6 +668,7 @@ def definition_edge_call(
         site=site,
         call_occurrence=call_occurrence,
         authenticated_target_symbol=member_symbol,
+        definition_edge=True,
         after_labels=(
             ()
             if symbol is None
@@ -739,7 +740,10 @@ def _after_labels(
       the object changed though it never rebinds the name.  A later call
       that reads the global is handed it as this call left it
       (``call_site_sugar._global_after_call``), never the contents the
-      caller held before (#7757 H7)."""
+      caller held before (#7757 H7);
+    - ``EVERY_GLOBAL_SLOT``: where an operand the call is handed may be or
+      hold an object this frame did not make (``_made_here_all_the_way_down``
+      is False), through which the call may change any module global."""
     from sugar_lift_py_tests.contract_input import (
         CELL_INPUT,
         GLOBAL_INPUT,
@@ -768,7 +772,61 @@ def _after_labels(
     for name, value in read_globals:
         if name not in declared and global_may_change(signature.unit, name, value):
             labels.append((("global", name), input_formal(GLOBAL_INPUT, name)))
+    # An operand the call is handed (a positional actual, the receiver a
+    # method call supplies among them, a keyword actual, a captured cell)
+    # that may be, or hold, an object this frame did not make here may be a
+    # module global's object, or code that reaches one (a function value, an
+    # instance whose methods run): through it the call may change a global
+    # its contract never reads as one (``def g(xs): xs[0] = 2`` handed
+    # ``G``; ``b = Box(G); b.bump()``).  The call then may reach every
+    # module global (``EVERY_GLOBAL_SLOT``), and a later call reads each
+    # mutable one as this call left it, never as it was before (#7757 H7).
+    from sugar_lift_py_tests.floor.call_site_value import EVERY_GLOBAL_SLOT
+
+    handed = (
+        *positional,
+        *(value for _name, value in keywords),
+        *(value for _name, _cid, value in captured),
+    )
+    if any(not _made_here_all_the_way_down(value) for value in handed):
+        labels.append((EVERY_GLOBAL_SLOT, None))
     return tuple(labels)
+
+
+def _made_here_all_the_way_down(value, depth=0) -> bool:
+    """Whether ``value`` is immutable all the way down
+    (``builtin_container_call_sugar._immutable``), or a builtin container
+    this frame made whose contents are current
+    (``object_identity.contents_current``) and hold only such values: no
+    object it is or holds can be a module global's, and none runs code.
+    Anything else -- a formal, an object that arrived by binding, a call's
+    result, an instance of a source class, a function or class value, an
+    undecided read -- may be or reach one."""
+    from sugar_lift_py_tests.floor.dict_value import DictValue
+    from sugar_lift_py_tests.floor.list_value import ListValue
+    from sugar_lift_py_tests.floor.object_identity import contents_current
+    from sugar_lift_py_tests.floor.set_value import SetValue
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+    from sugar_lift_py_tests.sugar.builtin_container_call_sugar import _immutable
+
+    if _immutable(value):
+        return True
+    if depth > 32:
+        return False
+    kind = type(value)
+    if kind is TupleValue:
+        members = value.elements
+    elif kind in (ListValue, SetValue):
+        if not contents_current(value):
+            return False
+        members = value.elements
+    elif kind is DictValue:
+        if not contents_current(value):
+            return False
+        members = tuple(member for entry in value.entries for member in entry)
+    else:
+        return False
+    return all(_made_here_all_the_way_down(member, depth + 1) for member in members)
 
 
 def _declared_nonlocal(definition) -> frozenset:

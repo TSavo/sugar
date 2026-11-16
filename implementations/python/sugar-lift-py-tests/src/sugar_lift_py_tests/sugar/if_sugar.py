@@ -193,15 +193,30 @@ def _arm_evaluations(arms, incoming) -> tuple:
     loop in a suite that leaves by a ``break`` on one path and by
     exhaustion on another binds its key to a different value on each, and
     the read after the ``if`` takes each path's value under its guard.
+
+    A call's record (``AfterCallRecordValue``) is no name's value: what it
+    states is read by every later call that reads a module global the call
+    may have changed (``call_site_sugar._global_after_call``), not by the
+    phi's arm for its suite alone.  Where some completed arm did not bind it
+    (``if c: bump()``), it is carried under the guard of the arms that did
+    (``_record_on_its_arms``): the global is the call's state there and the
+    state before the ``if`` on every other arm, never the call's state on a
+    path that never ran the call (#7757 H7).
     """
+    from sugar_lift_py_tests.floor.call_site_value import AfterCallRecordValue
     from sugar_lift_py_tests.outcome import Completed
 
     before = getattr(incoming, "temporal", None)
     made: dict = {}
+    # How many completed arms the ``if`` has (an empty suite's included, which
+    # carries no context and binds nothing): a record fewer arms bound
+    # stands only on the arms that bound it.
+    completed_arms = 0
     for arm in arms:
         for exit_ in getattr(arm, "exits", ()):
             if not isinstance(exit_, Completed):
                 continue
+            completed_arms += 1
             context = getattr(exit_.value, "context", None)
             temporal = getattr(context, "temporal", None)
             if temporal is None:
@@ -215,8 +230,36 @@ def _arm_evaluations(arms, incoming) -> tuple:
                 made.setdefault(binding.name, []).append(
                     Completed(exit_.guard, binding.value, exit_.faces)
                 )
-    joined = ((key, _joined_evaluation(bound)) for key, bound in made.items())
-    return tuple((key, value) for key, value in joined if value is not None)
+    carried = []
+    for key, bound in made.items():
+        value = _joined_evaluation(bound)
+        if value is None:
+            continue
+        if isinstance(value, AfterCallRecordValue) and len(bound) < completed_arms:
+            value = _record_on_its_arms(value, bound)
+        carried.append((key, value))
+    return tuple(carried)
+
+
+def _record_on_its_arms(record, bound):
+    """``record`` (a call's ``AfterCallRecordValue``, bound by the
+    completed arms ``bound`` of an ``if`` and by no other) standing only
+    where one of those arms ran: guarded by the disjunction of their guards,
+    each conjoined with the guard the record already stood under (an ``if``
+    nested in the arm).  ``record`` itself where the arms bound different
+    values (the one join, ``_joined_evaluation``, answered something else).
+    """
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.ir import and_, or_
+
+    if any(arm.value is not record for arm in bound):
+        return record
+    guards = [
+        arm.guard if record.guard is None else and_([arm.guard, record.guard])
+        for arm in bound
+    ]
+    return replace(record, guard=guards[0] if len(guards) == 1 else or_(guards))
 
 
 def _arm_readings(arms, incoming, own=()) -> tuple:

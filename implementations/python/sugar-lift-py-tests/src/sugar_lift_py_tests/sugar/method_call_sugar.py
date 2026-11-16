@@ -226,17 +226,27 @@ class MethodCallSugar(ConstructedTermSugar):
                     value,
                 )
             )
-        return dispatch_method_call(
-            self.name,
-            receiver,
-            positional,
-            kw_values,
+        from sugar_lift_py_tests.floor.call_site_value import bind_after_call
+
+        # The method call's completed face carries its record under this
+        # call's key, as a call by name's does (``CallSiteSugar.
+        # _collect_kwargs``): what a same-file method's contract names of
+        # what it was handed, and, for a call no contract here states, every
+        # module global it may reach (#7757 H7).
+        return bind_after_call(
+            dispatch_method_call(
+                self.name,
+                receiver,
+                positional,
+                kw_values,
+                self.site,
+                ctx,
+                source_call_frame=self.source_call_frame,
+                exception_type_coordinate=self.exception_type_coordinate,
+                exception_type_mro=self.exception_type_mro,
+                unit=self.unit,
+            ),
             self.site,
-            ctx,
-            source_call_frame=self.source_call_frame,
-            exception_type_coordinate=self.exception_type_coordinate,
-            exception_type_mro=self.exception_type_mro,
-            unit=self.unit,
         )
 
 

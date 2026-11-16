@@ -213,6 +213,14 @@ class CallSiteValue(FloorValue):
     # (``bind_after_call``), and the caller reads each object after the call
     # as ``python:after(<call result>, <formal>)`` (#7757 step 7).
     after_labels: tuple = dataclass_field(default=(), compare=False, repr=False)
+    # True only on a same-file definition's edge
+    # (``lambda_callable.definition_edge_call``): what the call may reach of
+    # the module's globals is what its contract names (``after_labels``).
+    # Any other call -- a callee nothing here answers, an import-bound or a
+    # builtin call over undecided operands, a class construction, a value
+    # call -- runs code no contract here states, which may reach every
+    # module global (``bind_after_call``, #7757 H7).
+    definition_edge: bool = dataclass_field(default=False, compare=False, repr=False)
 
     def denotes_value(self) -> bool:
         """A call result denotes a Python runtime value."""
@@ -1123,10 +1131,27 @@ class AfterCallRecordValue(FloorValue):
     Bound under the call's key on the call's completed face only
     (``bind_after_call``), so a halted face never reads it.  No source name
     holds it: the exposure rule reads it for each object the call may have
-    changed (``stated_after_call``)."""
+    changed (``stated_after_call``), and a later call that reads a module
+    global reads the global after it (``call_site_sugar._global_after_call``).
+
+    A call that may reach every module global (``EVERY_GLOBAL_SLOT`` among
+    its labels: a call no contract here states, or a same-file call handed
+    an object that may be or hold one, ``lambda_callable._after_labels``)
+    names each global ``global:<name>``, the formal a contract binds the
+    global to: what no contract states of it is the free
+    ``python:after(<call result>, "global:<name>")``.
+
+    ``guard``: where the record stands only on some of the paths that reach
+    a read -- the call ran in one arm of an ``if`` and the other arm did not
+    run it -- the formula under which it stands
+    (``if_sugar._arm_evaluations``); None where it stands on every one.  A
+    read after the join takes the global as this call left it under the
+    guard and as it was before the ``if`` under its complement: the phi of
+    the arms, never one arm's state on both (#7757 H7)."""
 
     result: Term
     labels: tuple
+    guard: object = None
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor
@@ -1136,12 +1161,39 @@ class AfterCallRecordValue(FloorValue):
             "python:after-call-record", (self.result,), symbol_kind="coordinate"
         )
 
+    def names(self, slot) -> bool:
+        """Whether a label names the operand ``slot`` itself."""
+        return any(tuple(known) == tuple(slot) for known, _formal in self.labels)
+
+    def reaches_every_global(self) -> bool:
+        """Whether the call may reach every module global
+        (``EVERY_GLOBAL_SLOT``)."""
+        return self.names(EVERY_GLOBAL_SLOT)
+
     def formal_of(self, slot):
-        """The formal the binder bound the operand ``slot`` to, or None."""
+        """The formal the binder bound the operand ``slot`` to, or None.  A
+        module global no label names, of a call that may reach every one, is
+        its ``global:<name>`` formal."""
         for known, formal in self.labels:
             if tuple(known) == tuple(slot):
                 return formal
+        slot = tuple(slot)
+        if (
+            len(slot) == 2
+            and slot[0] == "global"
+            and slot != EVERY_GLOBAL_SLOT
+            and self.reaches_every_global()
+        ):
+            from sugar_lift_py_tests.contract_input import GLOBAL_INPUT, input_formal
+
+            return input_formal(GLOBAL_INPUT, slot[1])
         return None
+
+
+# The label of a call that may reach every module global
+# (``AfterCallRecordValue.reaches_every_global``): ``*`` is no Python name,
+# so no global's own slot (``("global", <name>)``) is ever this one.
+EVERY_GLOBAL_SLOT = ("global", "*")
 
 
 def bind_after_call(outcome, site):
@@ -1152,7 +1204,18 @@ def bind_after_call(outcome, site):
     call's key (``Call.after_call_key``) where the statement applies its
     writes (``bind_walrus_binds``).  A halted face carries nothing: what the
     call left in what it was handed is stated only where it completed
-    (#7757 step 7).  Every other outcome comes back as it is."""
+    (#7757 step 7).
+
+    Every other completed call -- one that is no same-file definition's
+    edge (``CallSiteValue.definition_edge``): a callee nothing here answers
+    (a formal, an unbound name, an import, a builtin over undecided
+    operands, a method no class here answers), a class construction, a
+    value call -- runs code no contract here states, which may reach every
+    module global: its record names ``EVERY_GLOBAL_SLOT``, and a later call
+    that reads a mutable global reads it as this call left it
+    (``call_site_sugar._global_after_call``: ``python:after(<call result>,
+    "global:<name>")``, which no contract states), never as it was before
+    (#7757 H7).  Every other outcome comes back as it is."""
     from sugar_lift_py_tests.outcome import ExitSet
 
     from .named_expression_value import (
@@ -1167,12 +1230,23 @@ def bind_after_call(outcome, site):
 
     def carrying(value):
         binds, presented = peel_walrus_binds(value)
-        if not isinstance(presented, CallSiteValue) or not presented.after_labels:
+        if not isinstance(presented, CallSiteValue):
+            return ExitSet.completed(value)
+        labels = tuple(presented.after_labels)
+        # A call result the floor answers by its own law (a subclass:
+        # ``TupleLengthValue``, ``tuple.__len__``) ran no code.
+        if (
+            type(presented) is CallSiteValue
+            and not presented.definition_edge
+            and EVERY_GLOBAL_SLOT not in (tuple(known) for known, _formal in labels)
+        ):
+            labels = (*labels, (EVERY_GLOBAL_SLOT, None))
+        if not labels:
             return ExitSet.completed(value)
         key = after_call_key()
         record = NamedExpressionValue(
             key,
-            AfterCallRecordValue(presented.term, presented.after_labels),
+            AfterCallRecordValue(presented.term, labels),
             evaluation=key,
         )
         return ExitSet.completed(carry_walrus_binds((*binds, record), presented))
