@@ -38,10 +38,6 @@ from __future__ import annotations
 import pytest
 
 from frame_fresh import fresh
-from sugar_lift_py_tests.caller_parameter_contract import (
-    NativeOperationExitCarrierV1,
-    _NATIVE_OPERATION_PROJECTORS,
-)
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
     DictValue,
@@ -93,7 +89,6 @@ def _dispatched_halt(outcome, method: str = "__setitem__"):
     from sugar_lift_py_tests.unanswered_calls import owed_calls
 
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()
@@ -144,7 +139,6 @@ def _undecided_halt(program: str):
 
     _function, outcome = _helper(program)
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()
@@ -292,7 +286,6 @@ def test_helper_star_alone_is_undischarged_setitem_with_variadic_positional() ->
     )
 
     _undecided_halt(UNDECIDED_STAR)
-    assert "setitem" not in _NATIVE_OPERATION_PROJECTORS
 
 
 def test_helper_kw_alone_is_undischarged_setitem_with_variadic_keyword() -> None:

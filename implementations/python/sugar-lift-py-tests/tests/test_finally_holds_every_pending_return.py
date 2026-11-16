@@ -25,7 +25,6 @@ with its halt kept (#7757, audit 2 row NEW-1), and the ``try`` is read as an
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
     GuardedReturn,
@@ -51,7 +50,6 @@ def _own_exits(source: str) -> ExitSet:
     undecided ordering's two faces where it runs, never a carrier waiting on
     a caller (#7757, audit row NEW-1)."""
     exits = _function(source).sugar().desugar(None)
-    assert not isinstance(exits, NativeOperationExitCarrierV1), type(exits)
     assert isinstance(exits, ExitSet), type(exits)
     return exits
 
@@ -149,7 +147,6 @@ def _assert_the_finally_read_is_undecided(exits) -> None:
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.outcome.exit_set import Halted
 
-    assert not isinstance(exits, NativeOperationExitCarrierV1), type(exits)
     assert isinstance(exits, ExitSet), type(exits)
     (record,) = _returns(exits)
     (entry,) = record

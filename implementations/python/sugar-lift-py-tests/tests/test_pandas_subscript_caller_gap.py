@@ -10,9 +10,6 @@ import pytest
 
 from frame_fresh import fresh
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
-from sugar_lift_py_tests.caller_parameter_contract import (
-    NativeOperationExitCarrierV1,
-)
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
     EffectBoundaryDisposition,
@@ -256,7 +253,6 @@ def _assert_two_faced_read(exits, owner: str) -> None:
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.unanswered_calls import owed_calls
 
-    assert not isinstance(exits, NativeOperationExitCarrierV1), type(exits)
     (halt,) = [arm for arm in exits.exits if isinstance(arm, Halted)]
     (done,) = [arm for arm in exits.exits if isinstance(arm, Completed)]
     assert type(halt.effect) is UndeterminedRaiseEffect
@@ -441,7 +437,6 @@ def _source_function_outcome(source: str, name: str):
 def _assert_read_with_its_halt(outcome) -> None:
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 
-    assert not isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
     assert any(
         isinstance(arm, Halted) and type(arm.effect) is UndeterminedRaiseEffect
         for arm in outcome.exits

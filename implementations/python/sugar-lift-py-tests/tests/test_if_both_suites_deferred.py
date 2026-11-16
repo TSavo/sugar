@@ -11,7 +11,6 @@ halt dropped.
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.ir import str_const
@@ -50,7 +49,6 @@ def _undetermined_owners(outcome) -> set[str]:
 
 def test_both_suites_on_a_formal_lift_with_no_carrier() -> None:
     outcome = _helper_outcome(HELPER)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
     assert isinstance(outcome, ExitSet), type(outcome)
     assert any(isinstance(face, Completed) for face in outcome.exits), outcome
 

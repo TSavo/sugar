@@ -58,7 +58,6 @@ from __future__ import annotations
 import pytest
 
 from frame_fresh import fresh
-from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
     EffectBoundaryDisposition,
@@ -129,7 +128,6 @@ def _unpack_store_halt() -> tuple[ExitSet, Halted]:
     the block's record."""
     exits = _desugared(UNPACK_SETITEM, "unpack_store_seed.py")
     assert isinstance(exits, ExitSet)
-    assert not isinstance(exits, NativeOperationExitCarrierV1)
     assert len(exits.exits) == 1
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
@@ -382,7 +380,6 @@ def test_r2_source_try_helper_alone_still_defers_as_setitem_carrier() -> None:
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     outcome = function.sugar().desugar(None)
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     assert "python:dispatch:__setitem__" in {
         call.symbol for call in owed_calls(outcome)
     }
@@ -435,7 +432,6 @@ def test_formal_seed_is_the_undecided_store_with_its_state() -> None:
 
     outcome = _desugared(UNPACK_SETITEM_FORMAL, "unpack_store_formal.py")
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()

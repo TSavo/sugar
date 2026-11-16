@@ -255,11 +255,8 @@ def test_subscript_store_target_on_a_formal_is_the_undecided_store():
     is no input of the contract, so the store is the undecided item mutation
     (``store_effect_sugar.item_mutation``): owed, its halt kept, never a
     carrier waiting on a caller's actual (#7757 step 7)."""
-    from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
-
     outcome = _fn("def A(xs):\n    xs[0] = 1\n    return xs\n").sugar().desugar()
 
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     assert "UndecidedSetitem" in repr(outcome)
 
 

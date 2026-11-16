@@ -973,25 +973,12 @@ class ExitSet(Generic[T]):
         halt's ``owed`` first. This is the one composition of a continuation
         beneath an arm; there is no second way to carry a prefix's debts.
 
-        A step or ``consume`` that answers a deferred native-operation carrier
-        (a loop or ``with`` body still waiting on its caller's actual) is
-        composed through the carrier's own ``after_discharge``: once it
-        discharges, its exits are composed beneath that arm exactly as an
-        ``ExitSet``'s are, beside every other arm's continuation in arm order,
-        and the answer is that carrier. Anything else that is not an
+        A step or ``consume`` that answers anything that is not an
         ``ExitSet`` cannot compose and is refused by name
         (``_require_exit_set``, owner ``ExitSet.and_then``).
-
-        Never refused for its shape: a carrier answered beneath one arm of
-        several composes beside the others exactly as beneath a sole arm, so
-        every face, halts included, stands once the carrier discharges.
-        Beneath ONE plain arm (truth, no faces, owing nothing) the composition
-        is the continuation itself, so a carrier answered there is handed on
-        as itself.
         """
 
         exits: list[Exit[U]] = []
-        deferred: list | None = None
         for exit_ in self.exits:
             if isinstance(exit_, Halted):
                 continued = None if consume is None else consume(exit_)
@@ -1000,21 +987,12 @@ class ExitSet(Generic[T]):
                     continue
             else:
                 continued = step(exit_.value)
-            if isinstance(continued, ExitSet):
-                _extend_beneath(exits, exit_, continued)
-                continue
-            # Where this arm's continuation goes once its carrier discharges:
-            # after every arm already composed, before every later one.
-            if deferred is None:
-                deferred = []
-            deferred.append((len(exits), exit_, _carrier_or_refuse(continued)))
-        if deferred is None:
-            return ExitSet(tuple(exits)).normalize()
-        if not exits and len(deferred) == 1 and _is_plain(deferred[0][1]):
-            # Beneath one plain arm with nothing beside it, the composition is
-            # the carrier itself.
-            return deferred[0][2]
-        return _compose_after_discharge(tuple(exits), tuple(deferred))
+            _extend_beneath(
+                exits,
+                exit_,
+                _require_exit_set(continued, owner="ExitSet.and_then"),
+            )
+        return ExitSet(tuple(exits)).normalize()
 
     def and_finally(
         self,
@@ -1311,8 +1289,7 @@ class ExitSet(Generic[T]):
 def _extend_beneath(target: list, prefix: Exit, continued: ExitSet) -> None:
     """Append ``continued``'s arms as the continuation beneath ``prefix``.
 
-    The one composition ``and_then`` performs per arm, whether the
-    continuation was answered at once or after a carrier discharged.
+    The one composition ``and_then`` performs per arm.
     """
     for following in continued.exits:
         guard = _and_guards(prefix.guard, following.guard)
@@ -1324,83 +1301,6 @@ def _extend_beneath(target: list, prefix: Exit, continued: ExitSet) -> None:
             target.append(Completed(guard, following.value, faces, owed))
         else:
             target.append(Halted(guard, following.effect, following.state, faces, owed))
-
-
-def _is_plain(exit_: Exit) -> bool:
-    """A completed arm under truth, with no faces, owing nothing: beneath it
-    a continuation is itself."""
-    return (
-        isinstance(exit_, Completed)
-        and _is_true(exit_.guard)
-        and not exit_.faces
-        and not exit_.owed
-    )
-
-
-def _carrier_or_refuse(outcome):
-    """A deferred native-operation carrier ``and_then`` can compose, or the
-    refusal of anything else that is not an ``ExitSet``."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-
-    if isinstance(outcome, NativeOperationExitCarrierV1):
-        return outcome
-    return _require_exit_set(outcome, owner="ExitSet.and_then")
-
-
-def _compose_after_discharge(resolved: tuple, deferred: tuple):
-    """``and_then``'s answer when arms' continuations wait on carriers.
-
-    ``resolved`` holds every arm composed already; each ``deferred`` entry is
-    ``(position, prefix arm, carrier)``, its position the slot in
-    ``resolved`` its continuation fills. The first carrier composes the
-    rest through its ``after_discharge`` (``_SequencedBeside``): once it
-    discharges, its exits go beneath their prefix arm at that slot, and a
-    later carrier answered from there is discharged by the same caller in
-    turn (``discharge`` discharges a carrier an ``after_discharge`` step
-    answers). A carrier whose caller has no actual still discharges, to its
-    cited unanswered face, so every resolved arm stands (#7825).
-    """
-    position, prefix, carrier = deferred[0]
-    return carrier.after_discharge(
-        _SequencedBeside(resolved, position, prefix, deferred[1:])
-    )
-
-
-@dataclass(frozen=True, eq=False)
-class _SequencedBeside:
-    """The step that composes a carrier's exits beside ``and_then``'s arms.
-
-    ``resolved`` is every arm ``and_then`` composed already, ``position``
-    the slot the carrier's exits fill beneath ``prefix``, and ``rest`` the
-    later ``(position, prefix arm, carrier)`` entries still waiting.
-    """
-
-    resolved: tuple
-    position: int
-    prefix: object
-    rest: tuple
-
-    def __call__(self, projected):
-        inserted: list = []
-        _extend_beneath(
-            inserted,
-            self.prefix,
-            _require_exit_set(projected, owner="ExitSet.and_then"),
-        )
-        composed = (
-            *self.resolved[: self.position],
-            *inserted,
-            *self.resolved[self.position :],
-        )
-        if not self.rest:
-            return ExitSet(composed).normalize()
-        shift = len(inserted)
-        return _compose_after_discharge(
-            composed,
-            tuple((later + shift, arm, waiting) for later, arm, waiting in self.rest),
-        )
 
 
 def sole_completed_value(outcome: ExitSet):
@@ -1460,58 +1360,28 @@ def factored_operand(outcome):
     ``ExitSetFactoringGap`` still refuses loudly when an operand's completed
     arms are not provably pairwise exclusive.
 
-    The factored operand stays an ``ExitSet``. A
-    deferred native-operation carrier is not an ``ExitSet`` and passes through
-    as itself, which is why the operand folds call this door rather than
-    ``factor_completed`` directly.
+    The factored operand stays an ``ExitSet``; anything else is refused by
+    name (``_require_exit_set``).
     """
-    if not isinstance(outcome, ExitSet):
-        return outcome
-    return outcome.factor_completed()
+    return _require_exit_set(outcome, owner="factored_operand").factor_completed()
 
 
 def _require_exit_set(outcome, *, owner: str = "ExitSet.and_then") -> ExitSet:
     """The one refusal of something that is not exits where exits are needed.
 
-    The one composition (``ExitSet.and_then``) composes
-    a carrier a step answers and refuses anything else here (owner
-    ``ExitSet.and_then``); every position that reads an outcome's arms
-    directly (``.exits``, ``completed_value()``) and cannot hand a deferred
-    carrier on through the carrier's own ``and_then`` / ``after_discharge``
-    refuses through here too, under its own ``owner``.
+    The one composition (``ExitSet.and_then``) refuses anything a step
+    answers that is not exits here (owner ``ExitSet.and_then``); every
+    position that reads an outcome's arms directly (``.exits``,
+    ``completed_value()``) refuses through here too, under its own ``owner``.
 
     Not a conversion: an ``ExitSet`` is handed back as itself and nothing
-    else is ever turned into one. A deferred native-operation carrier is
-    refused as the undischarged demand it is; anything else by its type.
+    else is ever turned into one; anything else is refused by its type.
     """
     if isinstance(outcome, ExitSet):
         return outcome
 
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
     from sugar_lift_py_tests.gap.info import GapKind
     from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-    if isinstance(outcome, NativeOperationExitCarrierV1):
-
-        construction_panic_gap(
-            owner=owner,
-            blame=outcome.demand.source_node,
-            observed=(
-                "undischarged native operation demand: "
-                f"{type(outcome).__name__} demand="
-                f"{type(outcome.demand).__name__}"
-            ),
-            requested=(
-                "an ExitSet projected from authenticated caller actual operands"
-            ),
-            fix=(
-                "retain the carrier through caller discharge; do not treat the "
-                "absence of a halted edge as normal completion"
-            ),
-            gap_kind=GapKind.FLOOR,
-        )
 
     construction_panic_gap(
         owner=owner,

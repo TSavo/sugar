@@ -1,18 +1,13 @@
 """Twins: a deferred operation on a formal inside a live loop's item is its
 own evaluation per item, never one term for all of them (#7757, step 6).
 
-An operation whose operand is a formal waits for the caller's actual
-(``NativeOperationExitCarrierV1``).  The function's own proof discharges it
-at the function's end (``tree_enumerate.as_its_own_proof_states``), outside
-every live item, and ``_unanswered_exits`` keyed its result, its completes
-atom and its halt with ``occurrence_key(site)`` under the path the discharge
-ran under.  So every item's ``c + 0`` was ``python:binary_result("+", c, 0,
-<site>)``: one term.  Python evaluates ``c.__add__(0)`` once per item, and a
-``__add__`` that counts returns 1, then 2: the truth ``r[0] != r[1]`` could
-read ``unsat``.  The carrier now keeps the occurrence path it was minted
-under (``NativeOperationExitCarrierV1.occurrence``) and discharges its own
-operation under it, as its enrolled work already runs
-(``_at_its_occurrence``): each item's operation is its own.
+An operation whose operand is a formal once waited for the caller's actual
+on a deferred carrier, discharged at the function's end, outside every live
+item, so every item's ``c + 0`` was one term.  Python evaluates
+``c.__add__(0)`` once per item, and a ``__add__`` that counts returns 1,
+then 2: the truth ``r[0] != r[1]`` could read ``unsat``.  The carrier is
+deleted (#7757 NEW-1): every operation on a formal is evaluated where it
+stands, keyed under the live item it runs in.
 
 A method call on a formal mints no carrier (#7757 NEW-1): it is the
 dispatched edge where the formal's class is an input, else the one
@@ -362,17 +357,3 @@ def test_each_item_evaluates_its_own_deferred_operation(
         assert verdict != "unsat", result.prove_doc
         assert whole != "unsat", result.prove_doc
 
-
-def test_a_minted_carrier_keeps_the_path_it_was_minted_under() -> None:
-    # The key of the operation is read where it was evaluated: a carrier
-    # minted inside an item carries that item's path to its discharge.
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-    from sugar_lift_py_tests.occurrence import current_path, entered
-
-    with entered("loop:item-path-probe#1"):
-        path = current_path()
-    assert path[-1] == "loop:item-path-probe#1"
-    field = NativeOperationExitCarrierV1.__dataclass_fields__["occurrence"]
-    assert field.default is None

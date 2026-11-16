@@ -48,22 +48,12 @@ class ReturnSugar(Sugar):
         # ``header_ran``), as a call in statement position lays them
         # (``record_statement_value``).  The return holds the value the
         # header presents beneath its writes.
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
         from sugar_lift_py_tests.floor.object_identity import arrived
-        from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            header_applied,
-            header_ran,
-        )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import header_applied
 
         headed, valued = header_applied(self, "value", ctx)
         if headed is not None:
             return headed
-        if isinstance(valued, NativeOperationExitCarrierV1):
-            # A value whose completion waits on the caller's actuals takes
-            # the same step on the value it discharges to.
-            return valued.and_then(lambda value: header_ran(self, "value", value, ctx))
 
         def returned(value):
             # The caller holds the returned value by binding: what this frame

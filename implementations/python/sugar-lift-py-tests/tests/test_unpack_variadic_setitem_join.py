@@ -35,10 +35,6 @@ from __future__ import annotations
 import pytest
 
 from frame_fresh import fresh
-from sugar_lift_py_tests.caller_parameter_contract import (
-    NativeOperationExitCarrierV1,
-    _NATIVE_OPERATION_PROJECTORS,
-)
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
     ListValue,
@@ -106,7 +102,6 @@ def _dispatched_call(outcome, method: str = "__setitem__"):
     from sugar_lift_py_tests.unanswered_calls import owed_calls
 
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()
@@ -135,7 +130,6 @@ def _undecided_store(outcome):
     from sugar_lift_py_tests.unanswered_calls import owed_calls
 
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()
@@ -267,7 +261,6 @@ def test_helper_alone_retains_setitem_with_variadic_value() -> None:
         assert isinstance(face.value, UniverseValue), face.value
         assert _returned(face.value).value.term.name == "p"
     # The carrier's projector is deleted: no item store is minted as one.
-    assert "setitem" not in _NATIVE_OPERATION_PROJECTORS
 
 
 def test_helper_alone_is_not_completed_discrimination() -> None:

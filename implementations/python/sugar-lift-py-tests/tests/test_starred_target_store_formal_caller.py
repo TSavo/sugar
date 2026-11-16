@@ -468,9 +468,6 @@ def test_missing_wrong_positional_coordinate_is_loud() -> None:
     from types import SimpleNamespace
 
     from sugar_lift_py_tests.call_symbol import call_symbol
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
     from sugar_lift_py_tests.ir import make_var, str_const
     from sugar_lift_py_tests.operations.positional_unpack_operation import (
@@ -515,7 +512,6 @@ def test_missing_wrong_positional_coordinate_is_loud() -> None:
     # with its halt and the state the store began from kept.
     _, outcome = _helper(program)
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     dispatched = [
         face
         for face in outcome.halts()
@@ -559,7 +555,6 @@ def test_missing_wrong_positional_coordinate_is_loud() -> None:
         "__setitem__", formal_receiver, (formal_index, member), site, None, unit=None
     )
     assert isinstance(out, ExitSet), out
-    assert not isinstance(out, NativeOperationExitCarrierV1)
     assert out.completed_value() is None
     assert len(out.exits) == 2
     (done,) = [face for face in out.exits if isinstance(face, Completed)]

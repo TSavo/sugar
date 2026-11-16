@@ -7,7 +7,6 @@ from sugar_lift_py_tests.outcome import (
     Completed,
     ExitSet,
     Halted,
-    NativeOperationExitCarrierV1,
 )
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
@@ -62,7 +61,6 @@ def test_function_definition_is_the_undecided_ordering_two_faces() -> None:
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
 
     outcome = function.sugar().desugar(None)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     assert isinstance(outcome, ExitSet)
     (halted,) = outcome.halts()
     assert type(halted.effect) is UndeterminedRaiseEffect

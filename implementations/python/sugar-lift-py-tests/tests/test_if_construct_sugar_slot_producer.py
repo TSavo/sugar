@@ -185,9 +185,6 @@ def _call_and_callee(source: str):
     ordering, two-faced on ``value < 1`` before either branch is entered (no
     carrier, #7757 audit row NEW-1), so a halt of the condition is stated
     ahead of both bodies."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
     from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
     from sugar_source_tree.nodes import FunctionDef
 
@@ -203,7 +200,6 @@ def _call_and_callee(source: str):
     assert halted.effect.exception_name is None
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     own = function.sugar().desugar(None)
-    assert not isinstance(own, NativeOperationExitCarrierV1)
     assert isinstance(own, ExitSet)
     condition_halts = [
         face

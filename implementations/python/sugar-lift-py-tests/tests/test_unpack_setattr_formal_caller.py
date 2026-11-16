@@ -39,10 +39,6 @@ from __future__ import annotations
 
 import pytest
 
-from sugar_lift_py_tests.caller_parameter_contract import (
-    NativeOperationExitCarrierV1,
-    _NATIVE_OPERATION_PROJECTORS,
-)
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import (
@@ -95,7 +91,6 @@ def _undecided_store(outcome) -> Halted:
     from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
 
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()
@@ -190,7 +185,6 @@ def test_helper_alone_is_the_undecided_store_over_obj() -> None:
         assert getattr(receiver, "name", None) == "obj", receiver
         assert name == str_const("field")
     # The carrier, its mint and its projector are deleted.
-    assert "setattr_named" not in _NATIVE_OPERATION_PROJECTORS
     assert not hasattr(store_effect_sugar, "mint_setattr_named_carrier")
 
 

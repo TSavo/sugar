@@ -204,17 +204,9 @@ def _projected(outcome):
 
 
 def _each(outcome, step):
-    """``step`` on each completed arm of ``outcome``.  An operation that
-    waits on its caller's actual (a native-operation carrier) enrolls
-    ``step`` to run once it discharges; an ``ExitSet`` sequences it (its
-    halts stand).  A pattern's item read never waits: it is the one
+    """``step`` on each completed arm of ``outcome``, an ``ExitSet`` that
+    sequences it (its halts stand).  A pattern's item read is the one
     subscript door's answer (``_read``)."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-
-    if isinstance(outcome, NativeOperationExitCarrierV1):
-        return outcome.and_then(step)
     return _projected(outcome).and_then(step)
 
 
@@ -1158,10 +1150,10 @@ class MatchSugar(Sugar):
             reduce_block_to_exitset,
         )
 
-        # The case reads the pattern's faces one by one: a pattern still
-        # waiting on its caller's actual (a projection's carrier) is refused
-        # here by name, never read as no face. A projection's halt is before
-        # any case body ran: it carries the record where it halted.
+        # The case reads the pattern's faces one by one: anything but
+        # exits is refused here by name, never read as no face. A
+        # projection's halt is before any case body ran: it carries the
+        # record where it halted.
         tested = halts_recorded(
             _projected(match_pattern(case.pattern, subject, self.site, ctx)),
             halt_record(ctx),
@@ -1226,22 +1218,14 @@ class MatchSugar(Sugar):
         completed arm confirms the route slots (``_route_facts``) and decides
         them for the code after it (``try_sugar._ground_route_on_faces``), so
         a phi after the match (``Match.substitute``) reads that case's
-        binding there.  A body still waiting on its caller's actuals is
-        routed once they discharge it."""
+        binding there."""
         if self.route_site is None:
             return exits
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
         from sugar_lift_py_tests.sugar.try_sugar import (
             _ground_route_on_faces,
             _prepend_facts,
         )
 
-        if isinstance(exits, NativeOperationExitCarrierV1):
-            return exits.after_discharge(
-                lambda discharged: self._routed(arm, discharged)
-            )
         return _ground_route_on_faces(
             _prepend_facts(exits, self._route_facts(arm)),
             self.route_site,

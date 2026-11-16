@@ -31,10 +31,6 @@ from __future__ import annotations
 import pytest
 
 from frame_fresh import fresh
-from sugar_lift_py_tests.caller_parameter_contract import (
-    NativeOperationExitCarrierV1,
-    _NATIVE_OPERATION_PROJECTORS,
-)
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import ListValue, TermValue
@@ -103,7 +99,6 @@ def _dispatched_halt(outcome, method: str = "__setitem__"):
     from sugar_lift_py_tests.unanswered_calls import owed_calls
 
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()
@@ -138,7 +133,6 @@ def _undecided_store(outcome) -> Halted:
     from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
 
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()
@@ -303,7 +297,6 @@ def test_helper_alone_is_undischarged_setitem_with_parameter_kinds() -> None:
     _undecided_store(undecided_outcome)
     kinds = tuple(c.parameter_kind for c in undecided.sugar().formal_coordinates)
     assert kinds == ("positional-only", "positional-or-keyword", "keyword-only")
-    assert "setitem" not in _NATIVE_OPERATION_PROJECTORS
 
 
 def test_helper_alone_is_not_completed_discrimination() -> None:

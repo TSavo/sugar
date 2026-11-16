@@ -312,9 +312,6 @@ def test_formal_receiver_stays_undischarged_not_completed(tmp_path: Path) -> Non
     either: it is the undecided mutation (``item_mutation``), two-faced and
     owed; no store waits on a caller's actual (#7757 step 7).
     """
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
     from sugar_lift_py_tests.unanswered_calls import owed_calls
 
     sugar = _function_sugar(
@@ -324,7 +321,6 @@ def test_formal_receiver_stays_undischarged_not_completed(tmp_path: Path) -> Non
     )
     outcome = sugar.desugar(None)
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     assert "python:dispatch:__setitem__" in {
         call.symbol for call in owed_calls(outcome)
     }
@@ -503,9 +499,6 @@ def test_lying_completed_face_for_undecided_receiver_is_not_the_law(
     tmp_path: Path,
 ) -> None:
     """Lying twin 2: emit completed when formal store is still undischarged."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
 
     sugar = _function_sugar(
         tmp_path,
@@ -518,7 +511,6 @@ def test_lying_completed_face_for_undecided_receiver_is_not_the_law(
 
     outcome = sugar.desugar(None)
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     assert "python:dispatch:__setitem__" in {
         call.symbol for call in owed_calls(outcome)
     }

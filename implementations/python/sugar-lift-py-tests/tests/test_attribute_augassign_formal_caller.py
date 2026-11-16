@@ -15,9 +15,6 @@ from dataclasses import dataclass
 
 import pytest
 
-from sugar_lift_py_tests.caller_parameter_contract import (
-    NativeOperationExitCarrierV1,
-)
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
     ObjectField,
@@ -474,12 +471,7 @@ def test_production_store_halt_is_incomplete_not_complete_raisevalue() -> None:
 
 
 def _own_exits(outcome) -> ExitSet:
-    """The helper's own proof's exits: a carrier another operation of the
-    chain still mints (the in-place ``iadd`` over a formal ``rhs``, not this
-    family) discharged with no actual, every arm composed beside it kept
-    (#7825); an ``ExitSet`` as it stands."""
-    if isinstance(outcome, NativeOperationExitCarrierV1):
-        return outcome.discharge(None, {})
+    """The helper's own proof's exits: an ``ExitSet`` as it stands."""
     assert isinstance(outcome, ExitSet), type(outcome)
     return outcome
 
@@ -610,9 +602,6 @@ def test_formal_operands_mint_no_carrier() -> None:
     """Inverted from the deleted ``iadd`` mint (#7757, audit row NEW-1): a
     formal's ``cell += rhs`` is the operator's own in-place edge, the
     undecided binary law's two faces, owing the undecided member."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        _NATIVE_OPERATION_PROJECTORS,
-    )
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.outcome import Halted
     from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
@@ -645,7 +634,6 @@ def test_formal_operands_mint_no_carrier() -> None:
     left = SymbolicValue(make_var("cell"), _coord("cell", 0))
     right = SymbolicValue(make_var("rhs"), _coord("rhs", 1))
     out = project_augmented(left, right, projector=_project_iadd, site=site, ctx=None)
-    assert not isinstance(out, NativeOperationExitCarrierV1)
     assert isinstance(out, ExitSet), type(out)
     (completed,) = [face for face in out.exits if isinstance(face, Completed)]
     assert completed.value.term.name == "python:binary_result"
@@ -654,7 +642,6 @@ def test_formal_operands_mint_no_carrier() -> None:
     assert isinstance(halted.effect, UndeterminedRaiseEffect)
     assert halted.effect.producer_node_owner == "UndecidedBinary:+"
     assert unanswered_call(None, site) in owed_calls(out)
-    assert "iadd" not in _NATIVE_OPERATION_PROJECTORS
 
 
 def test_notimplemented_fallback_twins_via_production_projector() -> None:

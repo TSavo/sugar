@@ -72,11 +72,8 @@ def owed_calls(outcome) -> tuple[UnansweredCallV1, ...]:
     """Every unanswered call a reduction's final outcome owes, in arm order.
 
     Read off the arms' ``owed`` slot by the one reader,
-    ``ExitSet.owed_items``. A function's reduction is always a set of arms
-    (``tree_enumerate.as_its_own_proof_states``): an operation that waits on
-    a caller's actual is its own arms there, owing what it owes, so nothing
-    is read off a deferred carrier's internals. Anything that is not a set
-    of arms is refused by name (``_require_exit_set``).
+    ``ExitSet.owed_items``. A function's reduction is always a set of arms;
+    anything that is not is refused by name (``_require_exit_set``).
     """
     from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 

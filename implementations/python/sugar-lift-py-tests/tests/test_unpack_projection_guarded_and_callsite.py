@@ -171,12 +171,8 @@ def _discharged_on_an_undecided_condition(tmp_path: Path, source: str, stem: str
     waits on a caller's actual.  Its completed truth is
     ``python:truth_result(c, <key>)``, keyed per evaluation;
     the arms join under that formula, and its halt is kept beside them."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
 
     outcome = _outcome(tmp_path, source, stem)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
     return outcome
 
 

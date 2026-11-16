@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
     EffectBoundaryDisposition,
@@ -292,7 +291,6 @@ def test_formal_boolop_takes_the_two_faced_truth_and_mints_no_carrier() -> None:
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 
     outcome, _formal, evaluations, right, left = _formal_boolop()
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     assert evaluations == ["left", "right"]
     halted = [face for face in outcome.exits if isinstance(face, Halted)]
     assert len(halted) == 1

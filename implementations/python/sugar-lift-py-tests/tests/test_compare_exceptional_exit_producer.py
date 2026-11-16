@@ -478,9 +478,6 @@ def test_formal_ordering_is_the_undecided_two_faces_not_a_carrier() -> None:
     NEW-1): an ordering is the rich method, then its reflection, which no
     one dispatched method states, so ``left < container`` over two
     parameters is the undecided ordering's two faces where it runs."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
 
     node = _synthetic_compare("left < container")
     left_coordinate = _formal_coordinate(node, "left", 0)
@@ -492,7 +489,6 @@ def test_formal_ordering_is_the_undecided_two_faces_not_a_carrier() -> None:
         node.fragment,
     ).desugar(None)
 
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     _assert_dual_dispatch(outcome, atom="py.lt", blame=str(node.fragment))
 
 
@@ -565,9 +561,6 @@ def test_formal_membership_records_authenticated_contains_receiver_order() -> No
     """``item in container`` over two parameters is the container's
     undecided ``__contains__``, two-faced, with ``py.in(item, container)``
     in that order; no carrier waits on a caller (#7757, audit row NEW-1)."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
     from sugar_lift_py_tests.outcome.exit_set import Completed
 
     node = _synthetic_compare("left in container")
@@ -580,7 +573,6 @@ def test_formal_membership_records_authenticated_contains_receiver_order() -> No
         node.fragment,
     ).desugar(None)
 
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     _assert_dual_dispatch(outcome, atom="py.in", blame=str(node.fragment))
     completed = next(exit_ for exit_ in outcome.exits if isinstance(exit_, Completed))
     # ``python:compare_result("In", item, container, <key>)``.
@@ -595,9 +587,6 @@ def test_formal_equality_keeps_py_eq_solver_work_beside_its_halt() -> None:
     under its own atom beside the undetermined halt, never deferred to a
     caller (#7757, audit row NEW-1).  The decided pair the frame holds
     (``1 == 2``) folds on its floor."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 
     node = _synthetic_compare("left == 2")
@@ -608,7 +597,6 @@ def test_formal_equality_keeps_py_eq_solver_work_beside_its_halt() -> None:
         node.fragment,
     ).desugar(None)
 
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     _assert_dual_dispatch(outcome, atom="py.eq", blame=str(node.fragment))
     decided = EqualityOpSugar(
         _ValueSugar(TermValue(1)), _ValueSugar(TermValue(2)), node.fragment
@@ -656,9 +644,6 @@ def test_formal_ordering_keeps_swapped_operands_distinct() -> None:
 
 def test_formal_identity_remains_total_without_a_native_operation_carrier() -> None:
     """A formal binding does not make ``is`` acquire a fabricated raise face."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
 
     node = _synthetic_compare("left is container")
     left_coordinate = _formal_coordinate(node, "left", 0)
@@ -670,7 +655,6 @@ def test_formal_identity_remains_total_without_a_native_operation_carrier() -> N
     ).desugar(None)
 
     assert outcome.completed_value() is not None
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
 
 
 def test_identity_never_gains_an_exceptional_dispatch_edge() -> None:

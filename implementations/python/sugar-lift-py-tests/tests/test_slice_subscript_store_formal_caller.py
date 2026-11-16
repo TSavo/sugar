@@ -35,7 +35,6 @@ from dataclasses import dataclass
 import pytest
 
 from frame_fresh import fresh
-from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
     BytesValue,
@@ -84,7 +83,6 @@ def _dispatched_call(outcome, method: str = "__setitem__"):
     from sugar_lift_py_tests.unanswered_calls import owed_calls
 
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()
@@ -116,7 +114,6 @@ def _undecided_halt(source: str):
 
     _function, outcome = _helper(source)
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()
@@ -855,7 +852,6 @@ def test_the_store_on_the_formal_bound_slice_is_the_dispatched_edge() -> None:
     from sugar_lift_py_tests.outcome import Halted
 
     function, outcome = _helper("def helper(obj, lo, value):\n    obj[lo:3] = value\n")
-    assert not isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
     assert isinstance(outcome, ExitSet), type(outcome)
     assert len(outcome.exits) == 2, outcome
     assert sum(isinstance(face, Completed) for face in outcome.exits) == 1

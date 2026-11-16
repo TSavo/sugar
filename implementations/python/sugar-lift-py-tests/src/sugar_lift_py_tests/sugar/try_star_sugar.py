@@ -1,6 +1,6 @@
 """``except*`` subgroup routing over authenticated ``GroupedRaiseEffect`` trees.
 
-Laws (owned here; ExitSet/carrier untouched):
+Laws (owned here; ExitSet untouched):
 
 - Partition each body ``GroupedRaiseEffect`` by authenticated handler type.
   A leaf whose match the one matcher retains splits the face two ways
@@ -55,8 +55,8 @@ class _StarFace:
 def _matcher_read(matcher, ctx):
     """One ``except*`` type operand's read: every face of it.
 
-    The operand is read here, never retained for a caller: a deferred
-    native-operation carrier is refused by name.  Each face keeps its guard,
+    The operand is read here, never retained for a caller: anything but
+    exits is refused by name.  Each face keeps its guard,
     faces and ``owed`` (the undecided read of a class only a star import may
     bind owes the ``undecided`` member; a read that may raise has a halted
     face), so the router continues beneath every face, as ordinary
@@ -168,9 +168,6 @@ class TryStarSugar(Sugar):
         return ()
 
     def desugar(self, ctx=None):
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
         from sugar_lift_py_tests.effect.grouped_raise_effect import (
             GroupedRaiseEffect,
             is_exception_effect,
@@ -424,9 +421,7 @@ class TryStarSugar(Sugar):
                 # The handler runs beneath this split's path: ``and_then``
                 # conjoins the path's guard, faces and ``owed`` onto every
                 # handler arm. One next face per composed arm.  The frontier
-                # is built from the handler's arms now: a handler still
-                # waiting on its caller's actuals, whose carrier ``and_then``
-                # composed, is refused by name here.
+                # is built from the handler's arms now.
                 composed = _require_exit_set(
                     path.and_then(lambda _state, exits=handler_exits: exits),
                     owner="TryStarSugar.handler",
@@ -486,21 +481,12 @@ class TryStarSugar(Sugar):
 
         def close(result):
             """The ``finally`` over every arm the try* composed, then its own
-            faces.  An ``else`` suite still waiting on its caller's actuals
-            (``and_then`` handed its carrier on) is closed once it discharges."""
-            if isinstance(result, NativeOperationExitCarrierV1):
-                return result.after_discharge(
-                    lambda projected: close(
-                        _require_exit_set(projected, owner="TryStarSugar.orelse")
-                    )
-                )
+            faces."""
             if self.finalbody:
                 # The one ``finally`` (``try_sugar``): it continues from the
                 # state each arm brings it -- a completed record, or the
                 # record a halt carries -- and re-emits that arm's exit after
-                # it unless it exits itself. A ``finally`` still waiting on
-                # the caller's actuals is composed once they discharge
-                # (``_finally_beneath``).  A halted arm runs the copy
+                # it unless it exits itself.  A halted arm runs the copy
                 # substituted for the halted faces (``finalbody_halted``),
                 # a completed arm the completion copy.  The rewrite's
                 # ``try-route`` and ``try-edge`` slots are not grounded
@@ -515,8 +501,7 @@ class TryStarSugar(Sugar):
                 )
             # The try*'s own faces, read the one way a ``try``'s are
             # (``_try_outcome``): a halt stays a halted arm, never an entry
-            # of a completed record (#7826), and faces still waiting on the
-            # caller's actuals are read once they discharge.
+            # of a completed record (#7826).
             return _try_outcome(result)
 
         def route(body):
@@ -526,14 +511,4 @@ class TryStarSugar(Sugar):
             empty arm set is never a completion, so none is made up."""
             return close(body.and_then(after_body, consume=handled))
 
-        if isinstance(body, NativeOperationExitCarrierV1):
-            # The body still waits on its caller's actuals: once it discharges,
-            # its faces are routed exactly as a body reduced here is, so every
-            # halt it raises reaches the handlers with its guard, faces and
-            # ``owed``.
-            return body.after_discharge(
-                lambda projected: route(
-                    _require_exit_set(projected, owner="TryStarSugar.body")
-                )
-            )
         return route(_require_exit_set(body, owner="TryStarSugar.body"))

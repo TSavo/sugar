@@ -79,12 +79,9 @@ class Projected:
     def __post_init__(self) -> None:
         if self.outcome is None:
             raise TypeError("Projected transports an ExitSet, never None")
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
         from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
-        if not isinstance(self.outcome, (ExitSet, NativeOperationExitCarrierV1)):
+        if not isinstance(self.outcome, ExitSet):
             raise TypeError(
                 "Projected transports an ExitSet; got "
                 f"{type(self.outcome).__name__}"

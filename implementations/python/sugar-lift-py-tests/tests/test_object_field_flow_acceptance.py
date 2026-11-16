@@ -263,19 +263,14 @@ def _returned_values(result) -> list:
 
 def _claims_no_field_value(result) -> bool:
     """The read of a field no construction authenticates is answered with
-    no value for it: refused by name or typed loud (``_is_typed_loud``); an
-    undischarged demand waiting on the caller's actual
-    (``NativeOperationExitCarrierV1``: a formal receiver, a formal key --
-    never a completion); or completed arms that each return an undecided
+    no value for it: refused by name or typed loud (``_is_typed_loud``); or
+    completed arms that each return an undecided
     value -- never the stored constant, which an opaque call or an opaque
     alias may have changed (``mutator(item)``, ``alias_factory(original)``)."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
     from sugar_lift_py_tests.floor import TermValue
     from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
 
-    if _is_typed_loud(result) or isinstance(result, NativeOperationExitCarrierV1):
+    if _is_typed_loud(result):
         return True
     if not isinstance(result, ExitSet):
         return False
@@ -560,15 +555,11 @@ def _item_store_on_a_class_call_result(outcome) -> None:
     ``__setitem__`` (or none, CPython's ``TypeError``) the store runs is
     dispatch on a class call's result, decided at prove (step 8, not
     merged).  Until then the store is undecided: the outcome keeps a halt
-    for the raise Python takes (or waits on a formal as its own proof states
-    it), and never completes with the stored item read back."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
+    for the raise Python takes, and never completes with the stored item
+    read back."""
 
-    assert isinstance(outcome, (ExitSet, NativeOperationExitCarrierV1)), outcome
-    if isinstance(outcome, ExitSet):
-        assert outcome.halts(), outcome
+    assert isinstance(outcome, ExitSet), outcome
+    assert outcome.halts(), outcome
     assert _claims_no_field_value(outcome), outcome
 
 
@@ -648,16 +639,11 @@ def _formal_key_type_error(path: Path, statement: str, message: str) -> None:
             native["boundary"](key)
 
     outcome = _outcome_or_panic(path, "boundary")
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
 
-    # Undecided until step 8: a halt kept for the raise, or the operation
-    # waiting on the formal ``key`` as its own proof states it; never a
-    # completion with the raise gone.
-    assert isinstance(outcome, (ExitSet, NativeOperationExitCarrierV1)), outcome
-    if isinstance(outcome, ExitSet):
-        assert outcome.halts(), outcome
+    # Undecided until step 8: a halt kept for the raise; never a completion
+    # with the raise gone.
+    assert isinstance(outcome, ExitSet), outcome
+    assert outcome.halts(), outcome
 
 
 def test_symbolic_subscript_key_store_raises_type_error_at_once(tmp_path):

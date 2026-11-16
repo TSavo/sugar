@@ -90,23 +90,17 @@ def _coordinate(name: str, ordinal: int) -> FormalParameterCoordinateV1:
     )
 
 
-def _carrier():
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
+def _undecided_add(site):
+    """``left + right`` over two parameters: the undecided binary law's two
+    faces (``undecided_binary_faces``), owing the operation at ``site``."""
+    from sugar_lift_py_tests.floor.floor_value import undecided_binary_faces
 
-    left = _coordinate("left", 0)
-    right = _coordinate("right", 1)
-    carrier = NativeOperationExitCarrierV1.mint(
-        site=_site(),
-        operator="add",
-        operands=(
-            SymbolicValue(make_var("left"), left),
-            SymbolicValue(make_var("right"), right),
-        ),
-        coordinates=(left, right),
+    return undecided_binary_faces(
+        SymbolicValue(make_var("left"), _coordinate("left", 0)),
+        SymbolicValue(make_var("right"), _coordinate("right", 1)),
+        site,
+        "+",
     )
-    return carrier, left, right
 
 
 # --- if: the completed face joins its sibling suites (a join, not a sequence)
@@ -177,41 +171,6 @@ def test_a_grouped_raise_owes_what_every_member_construction_owed() -> None:
     assert isinstance(halt.effect, GroupedRaiseEffect)
     assert halt.effect.children == (first, second)
     assert halt.owed == ("debt:a", "debt:b")
-
-
-# --- native operation: the resolution continues beneath the projector halt
-
-
-def test_a_decided_raise_resolution_owes_what_the_projector_halt_owed(
-    monkeypatch,
-) -> None:
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        _NATIVE_OPERATION_PROJECTORS,
-    )
-
-    # A projector's parameters are its operands, then the site and the
-    # caller's context (``_native_operation_projector_arity``).
-    def owing_raise(left, right, site, ctx):
-        del left, right, site, ctx
-        return ExitSet(
-            (
-                Halted(
-                    true_guard(),
-                    RaiseEffect.for_builtin("TypeError", occurrence="test:op:7825"),
-                    None,
-                    owed=("debt:op",),
-                ),
-            )
-        )
-
-    monkeypatch.setitem(_NATIVE_OPERATION_PROJECTORS, "add", owing_raise)
-    carrier, left, right = _carrier()
-    exits = carrier.discharge(
-        None,
-        {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)},
-    )
-    assert exits.halts() and exits.halts() == exits.exits, exits.exits
-    assert all(halt.owed == ("debt:op",) for halt in exits.halts()), exits.exits
 
 
 # --- guarded value: both arms' predicates ran before the joined predicate
@@ -289,23 +248,17 @@ def test_a_flattened_receiver_face_owes_its_enclosing_face_debt() -> None:
     ]
 
 
-# --- owed_calls: a deferred carrier is read once it is a set of arms (#7766)
+# --- owed_calls: an undecided operation owes its prefix arms' debts (#7766)
 
 
-def test_a_deferred_carrier_owes_its_prefix_arms_debts() -> None:
-    """``owed_calls`` reads a set of arms and refuses a deferred carrier by
-    name. Discharged with no actual, as a function's own proof states it
-    (``tree_enumerate.as_its_own_proof_states``), the carrier owes its prefix
-    arms' debts and its own operation, at its site."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
-
+def test_an_undecided_operation_owes_its_prefix_arms_debts() -> None:
+    """``owed_calls`` reads a set of arms: an operation on two parameters
+    composed beneath a prefix (the undecided two faces, #7757 NEW-1) owes
+    its prefix arms' debts and its own operation, at its site."""
     first = unanswered_calls.unanswered_call("python:first", None)
     second = unanswered_calls.unanswered_call("python:second", None)
     prefix_guard = atomic("test:prefix:7825", [])
-    carrier, _left, _right = _carrier()
+    site = _site()
     prefix = ExitSet(
         (
             Completed(prefix_guard, TermValue(1), owed=(first,)),
@@ -317,19 +270,12 @@ def test_a_deferred_carrier_owes_its_prefix_arms_debts() -> None:
             ),
         )
     )
-    composed = prefix.and_then(lambda _value: carrier)
-    assert isinstance(composed, NativeOperationExitCarrierV1)
-    try:
-        unanswered_calls.owed_calls(composed)
-    except ConstructionPanic as refused:
-        assert refused.info.owner == "unanswered_calls.owed_calls"
-    else:
-        raise AssertionError("a deferred carrier is not a set of arms")
-    owed = unanswered_calls.owed_calls(composed.discharge(None, {}))
+    composed = prefix.and_then(lambda _value: _undecided_add(site))
+    owed = unanswered_calls.owed_calls(composed)
     assert len(owed) == 3
     assert first in owed
     assert second in owed
-    assert carrier.unanswered_call() in owed
+    assert unanswered_calls.unanswered_call(None, site) in owed
 
 
 # --- match: patterns, equalities and guards are steps of one path

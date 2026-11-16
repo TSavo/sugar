@@ -122,10 +122,7 @@ def _subscript_store_outcome():
     (``store_effect_sugar.item_mutation``, #7757 step 7), never a carrier
     waiting on a caller's actuals -- the dispatched ``__setitem__`` where
     ``xs``'s class is an input, the undecided mutation where it is not."""
-    from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
-
     outcome = _fn("def A(xs, i, v):\n    xs[i] = v\n    return v\n").sugar().desugar()
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     return outcome
 
 

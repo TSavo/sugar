@@ -14,7 +14,6 @@ under its complement.  No face is dropped and no state is fabricated.
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import CallSiteValue, TermValue
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
@@ -53,7 +52,6 @@ def _helper_outcome(helper: str = HELPER):
     )
     outcome = function_universe_outcome(function)
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     return outcome
 
 

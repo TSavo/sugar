@@ -485,18 +485,12 @@ def test_not_of_a_two_arm_method_body_stands_on_the_call() -> None:
 
 
 def _deferred_lookup_method_callsite():
-    """A source-backed method whose body is an undischarged deferred operation
-    on an exit-value slot.  The operator is only a fixture of the carrier
-    machinery: an attribute read mints no carrier any more (#7757 audit 2
-    row NEW-1), so the deferred operation is a ``subscript``
-    (``exc["message"]``), whose operator the projector table still holds."""
+    """A source-backed method whose body is an undecided operation on an
+    exit-value slot: ``exc.message``, the one two-faced undecided read
+    (``ExitValueCoordinate.attribute``, #7757 audit 2 row NEW-1)."""
     from dataclasses import dataclass
 
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
     from sugar_lift_py_tests.claim import SugarRole
-    from sugar_lift_py_tests.floor import StringValue
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.floor.manager_coordinate import ExitValueCoordinate
     from sugar_lift_py_tests.ir import ctor
@@ -522,13 +516,7 @@ def _deferred_lookup_method_callsite():
             return None
 
         def desugar(self, ctx=None):
-            del ctx
-            return NativeOperationExitCarrierV1.mint(
-                site=site,
-                operator="subscript",
-                operands=(coordinate, StringValue("message")),
-                coordinates=(coordinate, None),
-            )
+            return coordinate.attribute("message", site, ctx)
 
         def to_term(self, *, owner: str):
             del owner

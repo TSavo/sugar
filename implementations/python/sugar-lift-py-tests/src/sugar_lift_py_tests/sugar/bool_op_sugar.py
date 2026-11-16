@@ -169,9 +169,6 @@ def select_boolop_operand(
     on_continue,
 ):
     """Truth-test one already-evaluated operand and select its Python face."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
     from sugar_lift_py_tests.outcome.exit_set import (
         complement_guard,
         false_guard,
@@ -236,13 +233,6 @@ def select_boolop_operand(
         stopped = ExitSet.completed(
             selected_operand, complement_guard(rhs_guard)
         )
-        if isinstance(continued, NativeOperationExitCarrierV1):
-            return continued.short_circuit(
-                continuing_guard=rhs_guard,
-                stopped=stopped,
-                continuing_face=rhs_face,
-                stopped_face=stop_face,
-            )
         rhs = continued.guarded(rhs_guard, rhs_face)
         return rhs.union(stopped.guarded(true_guard(), stop_face))
 

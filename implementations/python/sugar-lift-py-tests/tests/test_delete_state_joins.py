@@ -51,7 +51,6 @@ from __future__ import annotations
 import pytest
 from frame_fresh import fresh
 
-from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
     EffectBoundaryDisposition,
@@ -176,7 +175,6 @@ def _dispatched_halt(source: str):
     )
     outcome = function.sugar().desugar(None)
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()
@@ -219,7 +217,6 @@ def _delitem_keyerror_halt(source: str = DELITEM_MISSING) -> Halted:
     before the delete -- never a carrier waiting on a caller."""
     _function, exits = _reduced(source)
     assert isinstance(exits, ExitSet), type(exits)
-    assert not isinstance(exits, NativeOperationExitCarrierV1)
     assert len(exits.exits) == 1, exits
     halted = exits.exits[0]
     assert isinstance(halted, Halted), halted
@@ -253,7 +250,6 @@ def _undecided_halt(source: str) -> Halted:
 
     _function, outcome = _reduced(source, "delitem_undecided.py")
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()

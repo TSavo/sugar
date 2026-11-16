@@ -568,16 +568,12 @@ def test_formal_subscript_unpack_desugar_stays_undischarged(tmp_path: Path) -> N
     prove binds the class a caller supplies -- no longer the ``setitem``
     carrier, which stands only where the class is no input.
     """
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
     from sugar_lift_py_tests.unanswered_calls import owed_calls
 
     sugar = _function_sugar(
         tmp_path, "def f(a, i, p, q):\n    x, a[i] = p, q\n    return x\n", "formal_sub"
     )
     outcome = sugar.desugar(None)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     assert "python:dispatch:__setitem__" in {
         call.symbol for call in owed_calls(outcome)
     }

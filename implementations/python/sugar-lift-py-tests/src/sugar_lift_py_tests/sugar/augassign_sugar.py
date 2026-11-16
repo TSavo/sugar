@@ -130,7 +130,7 @@ class AttributeAugAssignSugar(Sugar):
       2. Evaluate ``rhs``
       3. ``result = current OP rhs`` via ``project_augmented`` / inplace edge
 
-    Composition is outcome/carrier ``and_then`` only — no control-kind ladder.
+    Composition is ``ExitSet.and_then`` only — no control-kind ladder.
     """
 
     current: Sugar

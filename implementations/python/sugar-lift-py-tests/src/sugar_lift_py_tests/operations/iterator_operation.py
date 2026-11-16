@@ -304,9 +304,6 @@ def stepped(
     current (``source_call_resolution.iterates_without_raising``: a list,
     tuple, ``str``, ``bytes``, set or dict iterator), or a decided builtin
     iterator (``ListIteratorValue``, ``TupleIteratorValue``)."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.floor.iterator_value import (
         ListIteratorValue,
@@ -338,13 +335,6 @@ def stepped(
             return exhausted()
         return None if left is None else left(halt)
 
-    def compose(outcome):
-        return outcome.and_then(lambda _value: follow(), consume=halted)
-
-    if isinstance(step, NativeOperationExitCarrierV1):
-        return step.after_discharge(
-            lambda projected: compose(
-                _require_exit_set(projected, owner=f"{owner}.next")
-            )
-        )
-    return compose(_require_exit_set(step, owner=f"{owner}.next"))
+    return _require_exit_set(step, owner=f"{owner}.next").and_then(
+        lambda _value: follow(), consume=halted
+    )

@@ -51,11 +51,7 @@ def _call_and_callee(signature: str, function_body: str, actuals: str):
     assert type(halted.effect) is UndeterminedRaiseEffect
     assert halted.effect.exception_name is None
     function = next(node for node in source.nodes() if isinstance(node, FunctionDef))
-    from sugar_lift_py_tests.tree_enumerate import as_its_own_proof_states
-
-    return completed, halted, as_its_own_proof_states(
-        function.sugar().desugar(None), None
-    )
+    return completed, halted, function.sugar().desugar(None)
 
 
 def test_authenticated_call_publishes_its_source_body_halt() -> None:

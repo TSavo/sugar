@@ -34,8 +34,7 @@ def _reduce_into(element_sugars, ctx, build, evaluated_first=()):
     LAW: an element's outcome is not one unconditional value. ``and_then`` is the
     one door: an ``ExitSet`` threads every completed arm (a constructed raise
     keeps the control-flow value and evaluates no enclosing step) while halted
-    arms bypass and never run the tail; a deferred native-operation carrier
-    retains the tail until its caller discharges it.
+    arms bypass and never run the tail.
 
     Reading ``.value`` off the outcome instead assumed exactly one arm, which is
     false the moment an element can halt: `[a, d[k] := f()]`, an element whose

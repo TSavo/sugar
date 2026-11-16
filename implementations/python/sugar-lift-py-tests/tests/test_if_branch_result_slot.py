@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import GuardedReturn, ReturnValue, TermValue
 from sugar_lift_py_tests.ir import not_
@@ -70,7 +69,6 @@ def test_undecidable_if_elif_else_retains_complementary_faces() -> None:
     )
     exits = function.sugar().desugar(None)
     # A parameter operand is no deferred operation (#7757, audit row NEW-1).
-    assert not isinstance(exits, NativeOperationExitCarrierV1)
     assert isinstance(exits, ExitSet)
     # ``left < right`` over two operands of undecided type selects
     # ``__lt__`` from types nobody looked at, so the comparison itself may
@@ -136,7 +134,6 @@ def test_condition_halt_bypasses_every_if_elif_else_body() -> None:
     assert halted.effect.exception_name is None
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
     own = function.sugar().desugar(None)
-    assert not isinstance(own, NativeOperationExitCarrierV1)
     assert isinstance(own, ExitSet)
     (condition_halt,) = own.halts()
     assert condition_halt.effect.producer_node_owner == "UndecidedCompare:Lt"

@@ -85,20 +85,10 @@ def test_spread_keyword_args_build_reference_method_call():
     ``z.get`` on the formal ``z`` was an ``attribute_named`` carrier waiting
     on a caller's actual.  It is the one two-faced undecided read
     (``SymbolicValue.attribute``): its halt, naming ``z`` and ``get``, is
-    kept, and nothing completes with one value.  Whatever the call with
-    ``**d`` still defers (another family's operation) is discharged with no
-    actual, every arm beside it kept (#7825)."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
+    kept, and nothing completes with one value."""
     from sugar_lift_py_tests.outcome import ExitSet
 
     outcome = _fn("def A(z, d):\n    return z.get(1, **d)\n").sugar().desugar()
-    assert getattr(getattr(outcome, "demand", None), "operator", None) != (
-        "attribute_named"
-    )
-    if isinstance(outcome, NativeOperationExitCarrierV1):
-        outcome = outcome.discharge(None, {})
     assert isinstance(outcome, ExitSet), outcome
     assert outcome.completed_value() is None
     (halt,) = [

@@ -341,3 +341,29 @@ def test_sequence_consumes_an_owned_halt_beneath_its_guard_and_debts():
     (stood,) = result.halts()
     assert stood.effect is foreign
     assert stood.owed == ("foreign-debt",)
+
+
+def test_and_then_refuses_an_uncomposable_step_by_name():
+    """A step that answers anything but exits is refused by name: nothing
+    else composes (the native-operation carrier is deleted, #7757 NEW-1)."""
+    import pytest
+
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    body = ExitSet.completed(TermValue(0), guard=atomic("test.prefix", []))
+    with pytest.raises(ConstructionPanic) as excinfo:
+        body.and_then(lambda _value: object())
+    assert excinfo.value.info.owner == "ExitSet.and_then"
+
+
+def test_and_then_refuses_an_uncomposable_consume_by_name():
+    import pytest
+
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    body = ExitSet.halted(
+        RaiseEffect.for_builtin("RuntimeError", occurrence="uncomposable")
+    )
+    with pytest.raises(ConstructionPanic) as excinfo:
+        body.and_then(ExitSet.completed, consume=lambda _halt: object())
+    assert excinfo.value.info.owner == "ExitSet.and_then"

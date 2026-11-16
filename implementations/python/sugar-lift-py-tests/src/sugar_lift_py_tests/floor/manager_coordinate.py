@@ -95,8 +95,7 @@ class ExitValueCoordinate(FloorValue):
         descriptor effects, or rich comparison dispatch, so the read may
         complete with any member or raise anything; no completed getattr
         term is minted outside its completes atom.  Nothing fills the slot
-        later: no frame discharges an operation on it, so the read waits on
-        no actual (#7757).
+        later, so the read waits on no actual (#7757).
         """
         del ctx
         return self.undecided_attribute(

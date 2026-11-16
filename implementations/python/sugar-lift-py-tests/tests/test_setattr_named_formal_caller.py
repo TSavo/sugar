@@ -48,10 +48,6 @@ import pytest
 
 from frame_fresh import FRAME_FRESH
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
-from sugar_lift_py_tests.caller_parameter_contract import (
-    NativeOperationExitCarrierV1,
-    _NATIVE_OPERATION_PROJECTORS,
-)
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import (
@@ -125,7 +121,6 @@ def _undecided_store(outcome) -> Halted:
     from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
 
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()
@@ -289,10 +284,8 @@ def test_field_store_mints_no_setattr_carrier() -> None:
     """The ``setattr_named`` carrier, its mint and its projector are deleted
     (#7757 NEW-1): no store waits on a caller's actual."""
     _, outcome = _helper_definition()
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     assert not hasattr(store_effect_sugar, "mint_setattr_named_carrier")
     assert not hasattr(store_effect_sugar, "project_setattr")
-    assert "setattr_named" not in _NATIVE_OPERATION_PROJECTORS
 
 
 def test_undecided_store_names_the_receiver_formal() -> None:

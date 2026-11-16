@@ -35,7 +35,6 @@ Acceptance (each with a discrimination twin where noted):
 from __future__ import annotations
 
 from frame_fresh import fresh
-from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
     EffectBoundaryDisposition,
@@ -119,7 +118,6 @@ def _dispatched_halt(outcome, method: str = "__setitem__"):
     from sugar_lift_py_tests.unanswered_calls import owed_calls
 
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()
@@ -154,7 +152,6 @@ def _undecided_store(outcome) -> Halted:
     from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
 
     assert isinstance(outcome, ExitSet), type(outcome)
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [
         face
         for face in outcome.halts()

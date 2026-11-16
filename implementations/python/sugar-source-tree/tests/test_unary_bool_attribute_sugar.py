@@ -15,7 +15,6 @@ from sugar_source_tree.tree import SourceFile
 
 from native_carrier_testimony import (
     atoms_named,
-    native_carrier_for,
     undecided_outcome,
     undetermined_owners,
 )
@@ -28,24 +27,16 @@ def _fn(src: str):
     return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
 
 
-def _carrier(src, operator):
-    return native_carrier_for(_fn(src), operator=operator)
-
-
 # ---- UnaryOp -----------------------------------------------------------------
 
 
 def _undecided_owners(src):
     """The owners of the undetermined halts of ``src``'s function, which
     mints no carrier (#7757 NEW-1)."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.outcome import ExitSet, Halted
 
     outcome = _fn(src).sugar().desugar()
-    assert not isinstance(outcome, NativeOperationExitCarrierV1), outcome
     assert isinstance(outcome, ExitSet), outcome
     assert outcome.owed_items(), outcome
     return {
@@ -144,13 +135,9 @@ def _undecided_read(source):
     ``attribute_named`` carrier waiting on a caller's actual (#7757 audit 2
     row NEW-1): its halt kept, never one completed value.  Returns the
     ``(receiver, name)`` the read's halt names."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
     from sugar_lift_py_tests.outcome import ExitSet
 
     outcome = _fn(source).sugar().desugar()
-    assert not isinstance(outcome, NativeOperationExitCarrierV1), outcome
     assert isinstance(outcome, ExitSet), outcome
     assert outcome.completed_value() is None
     (halt,) = [

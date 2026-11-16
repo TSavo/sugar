@@ -18,11 +18,6 @@ from dataclasses import dataclass
 
 import pytest
 
-from sugar_lift_py_tests.caller_parameter_contract import (
-    NativeOperationExitCarrierV1,
-    _NATIVE_OPERATION_PROJECTORS,
-    production_native_operation_operators,
-)
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import SymbolicValue, TermValue
@@ -209,7 +204,6 @@ def _two_faced(outcome, owner: str) -> None:
     (``owner``) beside its completion, and owes the operation."""
     from sugar_lift_py_tests.unanswered_calls import owed_calls
 
-    assert not isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
     assert isinstance(outcome, ExitSet), type(outcome)
     assert _undecided_halts(outcome, owner), outcome
     assert any(isinstance(arm, Completed) for arm in outcome.exits), outcome
@@ -343,18 +337,3 @@ def test_discrimination_open_symbol_is_not_silent_neg_coordinate() -> None:
         out = UnaryOpSugar("USub", _FloorSugar(open_sym), site).desugar(None)
         # Lying claim: open symbol completed as a success coordinate.
         assert out.completed_value() is not None
-
-
-# ---------------------------------------------------------------------------
-# Projector / production equality tooth
-# ---------------------------------------------------------------------------
-
-
-def test_unary_operators_mint_no_carrier_and_have_no_projector() -> None:
-    """#7757 NEW-1: no unary operator (nor ``not``'s truth) is minted onto
-    the carrier, so none is projected; the equality holds both ways."""
-    production = production_native_operation_operators()
-    assert production == frozenset(_NATIVE_OPERATION_PROJECTORS)
-    for name in ("unary_minus", "unary_plus", "bitwise_invert", "unary_truth"):
-        assert name not in production
-        assert name not in _NATIVE_OPERATION_PROJECTORS

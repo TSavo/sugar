@@ -31,10 +31,6 @@ from dataclasses import dataclass, field
 import pytest
 
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
-from sugar_lift_py_tests.caller_parameter_contract import (
-    NativeOperationExitCarrierV1,
-    NativeOperationResolutionV1,
-)
 from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
@@ -51,7 +47,6 @@ from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSug
 from sugar_lift_py_tests.sugar.unary_op_sugar import UnaryOpSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import UnaryOp
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -388,7 +383,6 @@ def test_formal_not_is_the_two_faced_truth_then_negate() -> None:
     from sugar_lift_py_tests.ir import not_
 
     outcome, _formal_coordinate = _formal_not()
-    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halted = [face for face in outcome.exits if isinstance(face, Halted)]
     completed = [face for face in outcome.exits if isinstance(face, Completed)]
     assert len(halted) == 1 and len(completed) == 1
@@ -479,60 +473,6 @@ def test_lying_boundary_exception_type_is_not_truth_origin() -> None:
     )
     assert boundary_type == floor_type  # equality alone proves nothing
 
-    operation_origin = fragment
-    truthful_resolution = NativeOperationResolutionV1.exceptional(
-        exception_type_coordinate=floor_type,
-        operation_occurrence=operation_origin,
-    )
-    # Lying: same type coordinate content, but occurrence is the *assertion*
-    # site (boundary), not the UnaryOp / truth raise occurrence.
-    boundary_origin = _Site(line=fragment.line + 10)
-    lying_resolution = NativeOperationResolutionV1.exceptional(
-        exception_type_coordinate=boundary_type,
-        operation_occurrence=boundary_origin,
-    )
-
-    truthful_halt = truthful_resolution.project(source_node=fragment).exits[0]
-    lying_halt = lying_resolution.project(source_node=fragment).exits[0]
-    assert isinstance(truthful_halt, Halted)
-    assert isinstance(lying_halt, Halted)
-    # Same type name — origin (occurrence) still distinguishes them.
-    assert (
-        truthful_halt.effect.exception_type_coordinate
-        == lying_halt.effect.exception_type_coordinate
-    )
-    assert truthful_halt.effect.occurrence != lying_halt.effect.occurrence
-
-    # An implementation that only checks type equality would treat these as
-    # interchangeable.  The law requires the operation occurrence from the
-    # truth dispatch site — the lying twin is therefore not the same exit.
-    assert truthful_resolution.raise_occurrence_coordinate != (
-        lying_resolution.raise_occurrence_coordinate
-    )
-
-
-def test_lying_expected_type_substitution_does_not_authenticate_nameless_halt() -> None:
-    """If only the boundary type is substituted into a nameless halt, stay undischarged."""
-    boundary_type = ctor(
-        "python:exception_type_identity",
-        [str_const("builtins"), str_const("TypeError")],
-    )
-    # Nameless undischarged cannot be upgraded by stuffing the boundary type.
-    nameless = NativeOperationResolutionV1.undischarged(
-        "native operation exception identity unproven"
-    )
-    assert not nameless.has_authenticated_exception_type
-    with pytest.raises(SugarNotWritten, match="identity unproven"):
-        nameless.project(source_node=_Site())
-    # Constructing exceptional requires *both* coordinates at mint time — there
-    # is no door that accepts type-only from the boundary.
-    with pytest.raises(ValueError, match="authenticated type and occurrence"):
-        NativeOperationResolutionV1(
-            kind="exceptional",
-            exception_type_coordinate=boundary_type,
-            raise_occurrence_coordinate=None,
-        )
-
 
 # ---------------------------------------------------------------------------
 # Method wiring: producer / consumer names
@@ -541,14 +481,9 @@ def test_lying_expected_type_substitution_does_not_authenticate_nameless_halt() 
 
 def test_producer_and_consumer_methods_are_the_named_seams() -> None:
     """Document the exact methods this law owns."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        _NATIVE_OPERATION_PROJECTORS,
-    )
 
     assert hasattr(UnaryOpSugar, "desugar")
     assert not hasattr(FloorValue, "unary_truth")
     assert hasattr(FloorValue, "truth")
     assert callable(getattr(TrueBoolLiteralSugar(_Site()), "negate"))
     assert callable(getattr(FalseBoolLiteralSugar(_Site()), "negate"))
-    # ``not`` on a parameter mints no carrier, so it has no projector.
-    assert "unary_truth" not in _NATIVE_OPERATION_PROJECTORS
