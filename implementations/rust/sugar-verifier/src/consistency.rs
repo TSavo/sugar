@@ -5838,55 +5838,40 @@ fn initialized_instance(
     if !decided {
         return None;
     }
-    // The fields it states its receiver holds where it leaves, unconditionally
-    // or under the guards decided above only.
+    // The fields it states its receiver holds where it leaves, read off the
+    // post with its class input bound to the fresh instance's class and the
+    // guards that class decides folded (`decide_plain_stores`): a store's
+    // completion `or(plain_store, <completes>)` is `true`, so the arm it
+    // guards is the post itself. A field stated only under a guard that does
+    // not fold (an arm of several) is not read: its `field:` input stays
+    // free and the read owed.
+    let bound = substitute_call_bindings(
+        post,
+        &[(format!("{CLASS_INPUT_PREFIX}{receiver}"), receiver_class.clone())],
+    );
+    let folded = decide_plain_stores(&bound, Some(&guards));
     let mut fields = std::collections::BTreeSet::new();
-    let mut stated = |node: &Json| {
-        for conjunct in conjuncts(node) {
-            if conjunct.get("kind").and_then(|v| v.as_str()) != Some("atomic")
-                || conjunct.get("name").and_then(|v| v.as_str()) != Some("=")
-            {
-                continue;
-            }
-            for side in conjunct.get("args").and_then(|v| v.as_array()).into_iter().flatten() {
-                let Some((name, args)) = ctor_parts(side) else {
-                    continue;
-                };
-                let Some(field) = name.strip_prefix(ATTRIBUTE_CTOR_PREFIX) else {
-                    continue;
-                };
-                if matches!(args.as_slice(), [object] if names_the_object_after(object, out, receiver))
-                {
-                    fields.insert(field.to_string());
-                }
-            }
+    for conjunct in conjuncts(&folded) {
+        if conjunct.get("kind").and_then(|v| v.as_str()) != Some("atomic")
+            || conjunct.get("name").and_then(|v| v.as_str()) != Some("=")
+        {
+            continue;
         }
-    };
-    for conjunct in conjuncts(post) {
-        if conjunct.get("kind").and_then(|v| v.as_str()) == Some("implies") {
-            let Some([antecedent, consequent]) = conjunct
-                .get("operands")
-                .and_then(|v| v.as_array())
-                .map(Vec::as_slice)
-                .and_then(|operands| <&[Json; 2]>::try_from(operands).ok())
-            else {
+        for side in conjunct.get("args").and_then(|v| v.as_array()).into_iter().flatten() {
+            let Some((name, args)) = ctor_parts(side) else {
                 continue;
             };
-            if conjuncts(antecedent)
-                .into_iter()
-                .all(|guard| is_receiver_plain_atom(guard, receiver))
-            {
-                stated(consequent);
+            let Some(field) = name.strip_prefix(ATTRIBUTE_CTOR_PREFIX) else {
+                continue;
+            };
+            if matches!(args.as_slice(), [object] if names_the_object_after(object, out, receiver)) {
+                fields.insert(field.to_string());
             }
-        } else {
-            stated(conjunct);
         }
     }
     Some((held, fields))
 }
 
-/// `python:instance(<class>, <field>...)` with the fields `instance` names
-/// and every one of `held`, in name order.
 fn instance_with_fields(instance: &Json, held: &std::collections::BTreeSet<String>) -> Json {
     let Some((name, args)) = ctor_parts(instance) else {
         return instance.clone();
@@ -6760,6 +6745,100 @@ const NAMESPACE_CREATION_KIND: &str = "creation";
 
 /// Whether `node` states a `python:plain_store` or `python:plain_read`
 /// atom anywhere: the guards the namespaces decide (`decide_plain_stores`).
+/// `python:call_leaves(<call>, "<key>")` (the Python kit's
+/// `universe_value.CALL_LEAVES`): the dispatched call `<call>` leaves the
+/// object its operand keyed `<key>` binds unchanged. A contract states a
+/// field it stored before such a call only under it (#7757): the field is
+/// what it stored only where nothing the call runs changes that object.
+const PYTHON_CALL_LEAVES: &str = "python:call_leaves";
+
+/// Whether `python:call_leaves(<call>, <key>)` holds: `<call>` (a
+/// `call:dispatch:<m>(...)` term, or its `python:call_result(...)`) carries
+/// the class of its receiver (`py.class("0", <class>)`), bound to a decided
+/// instance (a class call's result read through the instance its
+/// constructor contract states, as `dispatch_answer` reads it), on which
+/// `<m>` resolves (`dispatched_target`, with the call's own `py.lookup`) to
+/// a function bound as called whose one answer states `python:leaves` of the
+/// parameter the operand keyed `<key>` binds (its position among the
+/// parameters, as `shared_operands_left_unchanged` counts it). False
+/// whenever any of that is not decided: the field stays unstated.
+fn call_leaves_holds(table: &DispatchTable, call: &Json, key: &str) -> bool {
+    let call = match ctor_parts(call) {
+        Some((PYTHON_CALL_RESULT, args)) => match args.first() {
+            Some(inner) => inner,
+            None => return false,
+        },
+        _ => call,
+    };
+    let Some((name, args)) = ctor_parts(call) else {
+        return false;
+    };
+    let Some(method) = name.strip_prefix("call:dispatch:") else {
+        return false;
+    };
+    if method.is_empty() || method.starts_with(DISPATCH_READ_MARK) {
+        return false;
+    }
+    let mut class = None;
+    let mut lookup = DispatchLookup::default();
+    for arg in args {
+        match class_argument(arg) {
+            Some(Ok((ClassKey::Position(0), stated))) => class = Some(stated),
+            Some(Err(())) => return false,
+            _ => {}
+        }
+        match lookup_argument(arg) {
+            Some(Ok(read)) => lookup = read,
+            Some(Err(())) => return false,
+            None => {}
+        }
+    }
+    let Some(class) = class else {
+        return false;
+    };
+    let class = match constructed_class_symbol(&class) {
+        Some(symbol) => match table.constructed.get(symbol) {
+            Some(Some(instance)) => instance.clone(),
+            _ => return false,
+        },
+        None => class,
+    };
+    let Some(target) = dispatched_target(&table.namespaces, method, false, Some(&class), &lookup)
+    else {
+        return false;
+    };
+    if target.receiver != DispatchReceiver::AsCalled {
+        return false;
+    }
+    let Some(Some((binding, post, ..))) = table.answers.get(&target.symbol) else {
+        return false;
+    };
+    let parameters: Vec<&str> = binding
+        .formals
+        .iter()
+        .map(String::as_str)
+        .filter(|formal| !is_contract_input(formal))
+        .collect();
+    let Some(parameter) = key
+        .parse::<usize>()
+        .ok()
+        .and_then(|position| parameters.get(position).copied())
+    else {
+        return false;
+    };
+    if variadic_formal(parameter).is_some() {
+        return false;
+    }
+    top_level_conjuncts(post.clone()).iter().any(|conjunct| {
+        conjunct.get("kind").and_then(Json::as_str) == Some("atomic")
+            && conjunct.get("name").and_then(Json::as_str) == Some(PYTHON_LEAVES)
+            && conjunct
+                .get("args")
+                .and_then(Json::as_array)
+                .is_some_and(|args| args.len() == 1 && const_str(&args[0]) == Some(parameter))
+    })
+}
+
 fn mentions_plain_store(node: &Json) -> bool {
     match node {
         Json::Object(map) => {
@@ -6833,6 +6912,7 @@ fn decided_plain_stores(node: &Json, table: &DispatchTable) -> (Json, bool) {
                 match node.get("name").and_then(|v| v.as_str()) {
                     Some(PYTHON_PLAIN_STORE) => plain_store_holds,
                     Some(PYTHON_PLAIN_READ) => plain_read_holds,
+                    Some(PYTHON_CALL_LEAVES) => call_leaves_holds,
                     _ => return (node.clone(), false),
                 };
             let decided = match node
@@ -7588,20 +7668,44 @@ pub(crate) fn joined_member_cids(pool: &MementoPool) -> std::collections::BTreeS
 // member is answered by the contract its symbol joins. Where the join leaves
 // the operand undecided, nothing is proved and the member stays owed.
 
-/// The site an operation's completes atom is keyed on: an atomic
-/// `<p>.completes(<p>(…, <key>))` whose key (the protocol term's last
-/// argument, the kit's `occurrence_key`) is the site's coordinate CID, alone
-/// or followed by `@<occurrence path>`. `None` when the atom is not that
-/// shape.
+/// The site an operation's completes atom is keyed on, in each spelling the
+/// kit keys one by (the site's coordinate CID, alone or followed by
+/// `@<occurrence path>`):
+///
+/// - `<p>.completes(<p>(…, <key>))`: the protocol term's last argument, a
+///   string constant (the kit's `occurrence_key`);
+/// - `<p>.completes(<p>(…, python:occurrence(<site>, <path>…)))`: the
+///   occurrence term's first argument (`occurrence.occurrence_term`: a field
+///   store's carrier, an unanswered native operation);
+/// - `<p>.completes(<p>(…), <key>)`: the atom's own second argument, a string
+///   constant (`python:isinstance.completes`).
+///
+/// `None` when the atom is not one of these shapes.
 fn completes_atom_site(atom: &Json) -> Option<&str> {
     let protocol = atom.get("name")?.as_str()?.strip_suffix(".completes")?;
-    let [operation] = atom.get("args")?.as_array()?.as_slice() else {
-        return None;
+    let (operation, own_key) = match atom.get("args")?.as_array()?.as_slice() {
+        [operation] => (operation, None),
+        [operation, key] => (operation, Some(key)),
+        _ => return None,
     };
     if operation.get("kind")?.as_str()? != "ctor" || operation.get("name")?.as_str()? != protocol {
         return None;
     }
-    let key = operation.get("args")?.as_array()?.last()?.get("value")?.as_str()?;
+    let key = match own_key {
+        Some(key) => key.get("value")?.as_str()?,
+        None => {
+            let args = operation.get("args")?.as_array()?;
+            match args.last()?.get("value").and_then(|v| v.as_str()) {
+                Some(key) => key,
+                None => args.iter().find_map(|arg| match ctor_parts(arg) {
+                    Some((PYTHON_OCCURRENCE, parts)) => {
+                        parts.first().and_then(|site| site.get("value")?.as_str())
+                    }
+                    _ => None,
+                })?,
+            }
+        }
+    };
     Some(key.split_once('@').map_or(key, |(site, _path)| site))
 }
 
@@ -8571,6 +8675,7 @@ fn next_join_read(
 /// (`refuse_dropped_answers`), naming the owed member.
 fn settle_owed_operations(
     partition: &mut AmbientPostInstances,
+    class_namespaces: &BTreeMap<String, ClassNamespace>,
     plan: &SolverPlan,
     registry: &HashMap<SolverSeat, SolverHandle>,
     compilers: &CompilerRegistry,
@@ -8579,14 +8684,21 @@ fn settle_owed_operations(
     if owed.is_empty() {
         return;
     }
-    let context = IrFormula::And(
-        partition
-            .kept
-            .iter()
-            .map(|post| post.instantiated_post.clone())
-            .collect(),
-    )
-    .to_value();
+    // What the joined posts state, with the isinstance law's instances they
+    // read (`with_isinstance_law`): a type test's completion over a joined
+    // class's instance is that law's conclusion, as the row's own solve
+    // reads it (#7757).
+    let context = with_isinstance_law(
+        IrFormula::And(
+            partition
+                .kept
+                .iter()
+                .map(|post| post.instantiated_post.clone())
+                .collect(),
+        )
+        .to_value(),
+        class_namespaces,
+    );
     for (entry, atom) in owed {
         if !joined_context_decides(&context, &atom, plan, registry, compilers) {
             partition.dropped.push(entry);
@@ -8674,31 +8786,10 @@ fn owed_in_definition(
         .collect()
 }
 
-/// The site an operation's completes atom is keyed on, read either way the
-/// kit keys one: a string constant last (`completes_atom_site`), or the
-/// operation's `python:occurrence(<site>, <path>...)` term (the kit's
-/// `occurrence.occurrence_term`, the store carrier's and the unanswered
-/// native operation's), whose first argument is the site.
+/// The site an operation's completes atom is keyed on, owned
+/// (`completes_atom_site`, which reads every spelling the kit keys one by).
 fn completes_atom_any_site(atom: &Json) -> Option<String> {
-    if let Some(site) = completes_atom_site(atom) {
-        return Some(site.to_string());
-    }
-    let protocol = atom.get("name")?.as_str()?.strip_suffix(".completes")?;
-    let [operation] = atom.get("args")?.as_array()?.as_slice() else {
-        return None;
-    };
-    let (name, args) = ctor_parts(operation)?;
-    if name != protocol {
-        return None;
-    }
-    args.iter().find_map(|arg| match ctor_parts(arg) {
-        Some((PYTHON_OCCURRENCE, parts)) => parts.first().and_then(const_str).map(|key| {
-            key.split_once('@')
-                .map_or(key, |(site, _path)| site)
-                .to_string()
-        }),
-        _ => None,
-    })
+    completes_atom_site(atom).map(str::to_string)
 }
 
 /// Every site a completes atom of `node` is keyed on, outside a quantifier
@@ -9944,7 +10035,7 @@ fn process_consistency_group(
                 .collect();
             let (inv, mut ambient_partition) =
                 with_ambient_posts_with_instances(inv, &ambient_posts);
-            settle_owed_operations(&mut ambient_partition, plan, registry, compilers);
+            settle_owed_operations(&mut ambient_partition, class_namespaces, plan, registry, compilers);
             let inv = with_raised_types(inv, ambient_posts);
             let inv = with_exception_ancestry(inv, exception_ancestry);
             let inv = with_isinstance_law(inv, class_namespaces);
@@ -10029,7 +10120,7 @@ fn process_consistency_group(
                     ground_callsite_witness_keys(&original_inv, &scope, candidate.provenance_kind);
                 let (inv, mut ambient_partition) =
                     with_ambient_posts_with_instances(original_inv.clone(), &ambient_posts);
-                settle_owed_operations(&mut ambient_partition, plan, registry, compilers);
+                settle_owed_operations(&mut ambient_partition, class_namespaces, plan, registry, compilers);
                 let inv = with_raised_types(inv, ambient_posts);
                 let inv = with_exception_ancestry(inv, exception_ancestry);
                 let inv = with_isinstance_law(inv, class_namespaces);
@@ -14825,7 +14916,7 @@ mod tests {
     fn prove_joined(inv: Json, ambient: &[AmbientPost]) -> ConsistencyResult {
         let (inv, mut partition) = with_ambient_posts_with_instances(inv, ambient);
         let (plan, registry) = z3_plan_and_registry();
-        settle_owed_operations(&mut partition, &plan, &registry, &test_compilers());
+        settle_owed_operations(&mut partition, &BTreeMap::new(), &plan, &registry, &test_compilers());
         let mut result = check_inv_consistency(
             "ident-claim".to_string(),
             "consistency:test_ident",
@@ -16395,6 +16486,84 @@ mod tests {
         let mut sites = std::collections::BTreeSet::new();
         completes_sites(&guard, &mut sites);
         assert_eq!(sites.into_iter().collect::<Vec<_>>(), vec!["site-a".to_string()]);
+        // `python:isinstance.completes(python:isinstance(<x>, <C>), <key>)`:
+        // the key is the atom's own second argument.
+        let isinstance = json!({
+            "kind": "atomic",
+            "name": "python:isinstance.completes",
+            "args": [
+                {"kind": "ctor", "name": "python:isinstance", "args": [var("x"), string_const("C")]},
+                string_const("site-b@call:f"),
+            ],
+        });
+        assert_eq!(completes_atom_site(&isinstance), Some("site-b"));
+    }
+
+    #[test]
+    fn a_dispatched_call_leaves_what_its_resolved_method_states_it_leaves() {
+        // `Box.check(self, n)` states `python:leaves("self")` only: the call
+        // `self.check(n)` on a fresh `Box` leaves its receiver (key "0") and
+        // nothing is decided of its actual `n` (key "1") (#7757).
+        let mut namespaces = BTreeMap::new();
+        namespaces.insert(
+            "python:m.Box".to_string(),
+            namespace(
+                &["python:m.Box", "builtins.object"],
+                &[("check", "function", "python:m.Box.check")],
+            ),
+        );
+        let leaves = json!({"kind": "atomic", "name": PYTHON_LEAVES, "args": [string_const("self")]});
+        let post = json!({"kind": "and", "operands": [
+            {"kind": "atomic", "name": "=", "args": [var("out"), var("n")]},
+            leaves,
+        ]});
+        let binding = BridgeBinding {
+            source_symbol: "python:m.Box.check".to_string(),
+            target_cid: String::new(),
+            target_proof_cid: None,
+            formals: vec!["self".to_string(), "n".to_string()],
+            out_binding: "out".to_string(),
+            stated_inputs: Vec::new(),
+            definition: None,
+        };
+        let mut answers = BTreeMap::new();
+        answers.insert(
+            "python:m.Box.check".to_string(),
+            Some((binding, post, Vec::new(), true, Vec::new())),
+        );
+        let table = DispatchTable {
+            namespaces: Arc::new(namespaces),
+            answers,
+            constructed: BTreeMap::new(),
+            constructed_fields: BTreeMap::new(),
+        };
+        let call = json!({"kind": "ctor", "name": "call:dispatch:check", "args": [
+            var("o"),
+            var("n"),
+            {"kind": "ctor", "name": PYTHON_CLASS, "args": [
+                string_const("0"),
+                instance("python:m.Box", &[]),
+            ]},
+        ]});
+        assert!(call_leaves_holds(&table, &call, "0"));
+        assert!(!call_leaves_holds(&table, &call, "1"));
+        // Read through its result term too.
+        let result = json!({"kind": "ctor", "name": PYTHON_CALL_RESULT, "args": [
+            call.clone(),
+            string_const("site"),
+        ]});
+        assert!(call_leaves_holds(&table, &result, "0"));
+        // No class stated for the receiver: nothing resolves.
+        let bare = json!({"kind": "ctor", "name": "call:dispatch:check", "args": [var("o")]});
+        assert!(!call_leaves_holds(&table, &bare, "0"));
+        // The guard folds where it holds.
+        let guard = json!({"kind": "atomic", "name": PYTHON_CALL_LEAVES, "args": [call, string_const("0")]});
+        let field = json!({"kind": "atomic", "name": "=", "args": [var("x"), int(3)]});
+        let stated = json!({"kind": "implies", "operands": [
+            {"kind": "and", "operands": [plain_store(instance("python:m.Box", &[]), "n"), guard]},
+            field.clone(),
+        ]});
+        assert_eq!(decide_plain_stores(&stated, Some(&table)), field);
     }
 
     /// `Box.__init__(self, n)` storing `self.n = n`, as its contract states
