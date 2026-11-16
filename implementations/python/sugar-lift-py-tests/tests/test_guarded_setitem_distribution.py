@@ -59,9 +59,18 @@ def test_a_guarded_receiver_s_undecided_arm_keeps_its_halt(
     mutation, so it raises something undetermined under its own polarity and
     completes only under its own completes atom.  Before, the distribution
     called the arm's own ``setitem``/``delitem``, which completed with no
-    halt face: the claim "this store always completes" stood (#7757 step 7)."""
+    halt face: the claim "this store always completes" stood (#7757 step 7).
+
+    The dict arm holds ``k``, so its own delete completes: ``del {}["k"]`` is
+    the ground ``KeyError``, whose exit cites a fragment it can re-read, and
+    ``_Site`` states no source to cite (that arm's refusal is the lifter's
+    right answer, not this test's subject)."""
     guard = atomic("selected", [])
-    receiver = GuardedValue(guard, _undecided_arm(kind), fresh(DictValue, ()))
+    receiver = GuardedValue(
+        guard,
+        _undecided_arm(kind),
+        fresh(DictValue, ((StringValue("k"), TermValue(1)),)),
+    )
     if method == "setitem":
         outcome = receiver.setitem(StringValue("k"), TermValue(7), _Site(), None)
         owner = "UndecidedSetitem"

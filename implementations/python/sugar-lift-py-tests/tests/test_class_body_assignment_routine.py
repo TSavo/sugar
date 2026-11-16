@@ -217,10 +217,17 @@ def test_naming_the_raising_class_without_calling_it_halts_with_the_import(
 
 
 def _returned_value(outcome):
+    """The returned value on the function's one completed arm.  That arm is
+    guarded: a read of the class's key completes under the guard of the
+    module run's arms that bound it (``_module_end_value``, #8971), here the
+    prelude's ``os.environ`` reads completing, so ``completed_value()`` (an
+    unguarded completion only) is not the read."""
     from sugar_lift_py_tests.floor.return_value import ReturnValue
     from sugar_lift_py_tests.floor.universe_value import UniverseValue
+    from sugar_lift_py_tests.outcome import Completed
 
-    universe = outcome.completed_value()
+    (face,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    universe = face.value
     assert isinstance(universe, UniverseValue), outcome
     (returned,) = [
         entry
