@@ -574,11 +574,19 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         # container in hand, or the ints a ground ``range(...)`` yields
         # (``in_hand_iterable``) -- within the one unroll budget
         # (``within_unroll_budget``); anything else runs as the recurrence
-        # below.  No rewrite unrolls the loop before it gets here.
-        if runtime is not None:
+        # below.  No rewrite unrolls the loop before it gets here.  An item
+        # hands the next only the names the loop carries: a loop whose item
+        # leaves changed a name it does not carry (a name a call in the body
+        # may rebind, a ``match`` capture: ``uncarried_item_changes``) never
+        # runs in hand, where a later item would read that name as it stood
+        # before the loop.  It runs as its recurrence.
+        in_hand = runtime is not None and not getattr(
+            runtime, "uncarried_item_changes", ()
+        )
+        if in_hand:
             iterable = in_hand_iterable(iterable)
         if (
-            runtime is not None
+            in_hand
             and not isinstance(iterable, (SymbolicValue, CallSiteValue, GeneratorValue))
             and not contents_stale(iterable)
             and within_unroll_budget(iterable)

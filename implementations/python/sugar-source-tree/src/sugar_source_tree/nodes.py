@@ -7369,6 +7369,52 @@ def _loop_header_bindings(loop, names, scope, kept=frozenset()) -> dict:
     return headers
 
 
+def _uncarried_item_changes(net, carried) -> tuple:
+    """The names one item of a live loop leaves changed that the loop does
+    not carry, in name order.
+
+    ``net`` is what the threading of the loop body (``_substitute_body_tracked``)
+    left changed; ``carried`` the names the loop carries through its header
+    (``For._stmts_bound_names`` of the body, and every name a substituted
+    write writes).  An item hands the next only what it carries: the latch
+    reads each carried name's write keys (``LoopRecurrenceSugar._latched``).
+    Anything else the threading changed -- a name a call in the body may
+    rebind (``container_mutation.havoc_after``: a global, a cell, an object
+    the caller holds), a ``match`` capture, a ``del`` -- is not handed on, so
+    a later item run in hand would read it as it stood before the loop.  A
+    loop with such a name does not run its items in hand
+    (``LiveForRuntimeV1.uncarried_item_changes``); it runs as its recurrence,
+    whose reads are owed, never read stale."""
+    return tuple(
+        sorted(
+            name
+            for name in net
+            if isinstance(name, str)
+            and name.isidentifier()
+            and not (name.startswith("__") and name.endswith("__"))
+            and name not in carried
+        )
+    )
+
+
+def _with_item_carry(loop, uncarried, changed):
+    """``loop`` with its substituted children ``changed`` and, as the leaf
+    ``uncarried_item_changes``, the names an item leaves changed that the
+    loop does not carry (``_uncarried_item_changes``): what decides whether
+    its items run in hand (``live_loop_construction``).  A re-substitution
+    replaces the leaf it was given."""
+    from .shadow import rewrite_with_leaves
+
+    leaves = (
+        {"uncarried_item_changes": uncarried}
+        if uncarried or getattr(loop, "uncarried_item_changes", None)
+        else {}
+    )
+    if not changed and not leaves:
+        return loop
+    return rewrite_with_leaves(loop, leaves, **changed)
+
+
 @dataclass(frozen=True)
 class ModuleBindingStatesV1:
     """The module body threaded once (``SourceUnit.module_run``).
@@ -16882,8 +16928,6 @@ class For(Statement):
         evaluation of it, so the body reads what the item began with."""
         from sugar_lift_py_tests.engine_log import reduction_span
 
-        from .shadow import rewrite
-
         lc = self.line_col_span()
         where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
 
@@ -16973,12 +17017,15 @@ class For(Statement):
                         ),
                         **targets,
                     }
+                    # The body's threading also reports every name it left
+                    # changed (``net``): what an item hands the next is read
+                    # off it (``_uncarried_item_changes``).
+                    new_body, body_changed, body_net = self._substitute_body_tracked(
+                        self.body, body_scope
+                    )
                     suites = {
-                        f: self._substitute_body(getattr(self, f), field_scope)
-                        for f, field_scope in (
-                            ("body", body_scope),
-                            ("orelse", else_scope),
-                        )
+                        "body": (new_body, body_changed),
+                        "orelse": self._substitute_body(self.orelse, else_scope),
                     }
                     # A mutation statement writes every name bound to the
                     # object it changes (``ContainerMutationStatement.
@@ -17002,10 +17049,9 @@ class For(Statement):
                 for f, (new, d) in suites.items():
                     if d:
                         changed[f] = new
-                if not changed:
-                    return self
-                rewritten = rewrite(self, **changed)
-                return rewritten
+                return _with_item_carry(
+                    self, _uncarried_item_changes(body_net, bound), changed
+                )
 
     def _answer_discarded_rounds(self, sources, rounds, last) -> None:
         """Answer the roll for what the discarded rounds of a live loop's
@@ -17307,8 +17353,6 @@ class While(Statement):
         first item begins leaves the loop its recurrence (step 6, #7757
         new 6).  `i = 0; while i < 3: i = i + 1` runs three items there;
         `return i` reads 3."""
-        from .shadow import rewrite
-
         # The while: keep the node; mask the carried
         # names (any name the body rebinds) so the update stays symbolic.  The
         # test runs at the start of every item and the ``else`` once after the
@@ -17359,12 +17403,12 @@ class While(Statement):
                 repeated=True,
                 operated=True,
             )
+            new_body, body_changed, body_net = self._substitute_body_tracked(
+                self.body, body_scope
+            )
             suites = {
-                f: self._substitute_body(getattr(self, f), field_scope)
-                for f, field_scope in (
-                    ("body", body_scope),
-                    ("orelse", else_scope),
-                )
+                "body": (new_body, body_changed),
+                "orelse": self._substitute_body(self.orelse, else_scope),
             }
             # A mutation statement writes every name bound to the object it
             # changes (``ContainerMutationStatement.written_keys``), which
@@ -17384,7 +17428,7 @@ class While(Statement):
         for f, (new, d) in suites.items():
             if d:
                 changed[f] = new
-        return self if not changed else rewrite(self, **changed)
+        return _with_item_carry(self, _uncarried_item_changes(body_net, bound), changed)
 
     def _ground_truth(self, test):
         """Decide a GROUND condition structurally, or None. Constants only --
