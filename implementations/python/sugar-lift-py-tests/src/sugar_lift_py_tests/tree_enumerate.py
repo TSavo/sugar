@@ -1480,11 +1480,24 @@ def reduction_rows(outcome, *, owner, blame, def_memento, definition):
                 requested="the function body's UniverseValue",
                 fix="complete a function body arm with its universe",
             )
-    stated = arms[0][1] if arms else owner
+    # The formals are the contract's whatever arms the reduction leaves: a
+    # completed arm's universe states its parameters and its inputs
+    # (``FunctionUniverseSugar.desugar``), and with no completed arm the
+    # owner states the same tuple (``contract_formals``).  Its parameters
+    # alone would leave a halt guard over an input (a ``global:`` read, a
+    # captured cell) outside the row's scope, and the whole function refused.
+    if arms:
+        stated = arms[0][1]
+        formals = tuple(stated.formals)
+        formal_coordinates = tuple(stated.formal_coordinates)
+    else:
+        stated = owner
+        formals = tuple(owner.contract_formals())
+        formal_coordinates = tuple(owner.contract_formal_coordinates())
     halt_loci = tuple(
         halt_locus(
             arm,
-            formals=tuple(stated.formals),
+            formals=formals,
             def_memento=def_memento,
             blame=blame,
         )
@@ -1495,16 +1508,16 @@ def reduction_rows(outcome, *, owner, blame, def_memento, definition):
         unreached = unreached_assertion_sites(definition, halted)
     return exit_arms_payload_rows(
         name=stated.name,
-        formals=tuple(stated.formals),
+        formals=formals,
         bridge_source_symbol=stated.bridge_source_symbol,
-        formal_coordinates=tuple(stated.formal_coordinates),
+        formal_coordinates=formal_coordinates,
         arms=arms,
         halted_assertion_sites=halted_sites,
         halt_loci=halt_loci,
         def_memento=def_memento,
         unreached_assertion_sites=unreached,
         halted_guards=tuple(arm.guard for arm in halted),
-        leaves=parameters_left_unchanged(definition, tuple(stated.formals)),
+        leaves=parameters_left_unchanged(definition, formals),
     )
 
 

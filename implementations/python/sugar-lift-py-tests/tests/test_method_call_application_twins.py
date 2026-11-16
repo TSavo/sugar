@@ -793,15 +793,22 @@ def test_a_method_selected_through_an_arrived_self_is_undecided_in_process(
 #
 # What the rule claims, through the solver: what is asserted after the call is
 # asserted on the call's completing face, and that face stands under
-# ``python:unanswered_native_operation.completes`` (the ``method_call``
-# operation over the receiver's ``global:`` input, #8843), which nothing here
-# decides.  So a
+# ``python:unknown_callee_call.completes`` over the call's term, whose
+# receiver is the function's ``global:`` input (#8843, #9011), which nothing
+# here decides.  So a
 # true claim after the call is not decided (``open``): nothing proves the call
 # completes.  A false claim is refuted on every face (``unsat``).  Before this
 # change the call completed alone and the true claim came back ``sat``: a
 # verdict for a program whose call may raise.  ``open`` is this twin stating
 # "not bridged"; it is not a green truthful half, and it becomes ``sat`` only
 # when something decides the call.
+#
+# The false claim leaves no completed arm, so its row is stated off the
+# function's own formals (``tree_enumerate.reduction_rows``): the parameters
+# and the ``global:`` input the halt guards read.  That path used to state
+# the parameters alone; once #9011's unanswered call put the input in those
+# guards, the whole function was refused as an illegal free variable and the
+# false claim read ``open``.
 #
 # The call's other face is a raise.  A raise is not a refutation, and the
 # solver gives no verdict on it until halted arms are emitted from the
@@ -862,14 +869,12 @@ def test_unknown_receiver_method_call_is_two_faced_in_process() -> None:
 
     A receiver the lifter does not hold -- here a global only a star import
     may bind, the function's ``global:undefined_registry`` input with no
-    stated value (#8843) -- is an operand that waits for its value as a
-    parameter does: the call is the ``method_call`` operation over that
-    input (``NativeOperationExitCarrierV1``), and in the function's own
-    proof, with no value, it completes only under
-    ``python:unanswered_native_operation.completes`` and raises otherwise,
-    undetermined (``_unanswered_exits``).  Before #8843 the receiver was a
-    free operand and the call the plain unknown call
-    (``python:unknown_callee_call.completes``, ``UnknownCallee:lookup``).
+    stated value (#8843) -- is no class input, so the call is the one
+    unanswered call (``UnknownCalleeCallV1.faces``, #9011): it completes
+    only under ``python:unknown_callee_call.completes`` and raises
+    otherwise, undetermined, owned ``UnknownCallee:lookup``.  No method call
+    waits for a caller's actual: the ``method_call`` carrier over the input
+    (``python:unanswered_native_operation.completes``, #8888) is deleted.
     A receiver made by a same-file class call (``Registry()``) no longer
     completes alone: the class call is its coordinate and edge and the method
     of its result is not dispatched at the reduction (#7757 step 6, #8738), so
@@ -886,13 +891,16 @@ def test_unknown_receiver_method_call_is_two_faced_in_process() -> None:
     halted = [face for face in outcome.exits if isinstance(face, Halted)]
     assert completed and halted
     assert all(
-        "python:unanswered_native_operation.completes" in repr(face.guard)
+        "python:unknown_callee_call.completes" in repr(face.guard)
         for face in completed
+    )
+    assert not any(
+        "python:unanswered_native_operation" in repr(face.guard)
+        for face in outcome.exits
     )
     assert any(
         isinstance(face.effect, UndeterminedRaiseEffect)
         and face.effect.exception_name is None
-        and face.effect.producer_node_owner
-        == "UnansweredNativeOperation:method_call"
+        and face.effect.producer_node_owner == "UnknownCallee:lookup"
         for face in halted
     )
