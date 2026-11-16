@@ -376,7 +376,7 @@ def test_the_listcomp_retention_control_still_projects_finite_elements():
 def test_a_lawful_reason_is_not_spent_as_a_refusal():
     """An iterable whose members are not in hand is the one gate's lawful
     answer (``in_hand_members`` is ``None``): the members do not run in hand
-    and the comprehension stays its symbolic fold. Nothing is refused, and
+    and the comprehension runs as its recurrence. Nothing is refused, and
     ``_run_in_hand`` is never handed it."""
     from sugar_lift_py_tests.operations.iterator_operation import in_hand_members
 

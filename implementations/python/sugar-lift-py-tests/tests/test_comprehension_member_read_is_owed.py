@@ -1,18 +1,20 @@
 """A comprehension's symbolic member, read, is the undecided member, never a
 free term (#7757, step 6).
 
-Over an iterable whose members are not in hand a comprehension is evaluated
-once, over its symbolic member (``ComprehensionSugar._symbolic_member``).  On
-the arms that complete, the comprehension's own read owes (#8916).  An
-element's or condition's halt arm never reaches it: its guard reads the
-member free.  Where the
-iterable's ``iter`` and ``next`` are decided (a ``range`` past the unroll
-budget) and the halt's own operation is decided (a ground ``1 // 0`` under a
-test of the member), nothing else on that arm owed, and a claim about the
-halt -- an ``except`` around the comprehension -- could read ``sat`` for a
-lie by the solver choosing the member.  A read of the member now owes the
-undecided member by the one rule (``read_of_bound_value``), so every arm
-that follows the read, the halt included, owes; the halt still stands.
+Over an iterable whose members are not in hand a comprehension runs as the
+loop's recurrence (``ComprehensionSugar._recurrence``): its member is the
+recurrence's one symbolic item, ``python:loop.item(<generator coordinate>,
+<iterable>)`` (``loop_recurrence_sugar.loop_item``), the value a ``for``'s
+symbolic item stands as.  On the arms that complete, the comprehension's
+own read owes (#8916).  An element's or condition's halt arm never reaches
+it: its guard reads the member free.  Where the iterable's ``iter`` and
+``next`` are decided (a ``range`` past the unroll budget) and the halt's own
+operation is decided (a ground ``1 // 0`` under a test of the member),
+nothing else on that arm owed, and a claim about the halt -- an ``except``
+around the comprehension -- could read ``sat`` for a lie by the solver
+choosing the member.  A read of the item owes the undecided member by the
+one rule (``read_of_bound_value``), so every arm that follows the read, the
+halt included, owes; the halt still stands.
 """
 
 from __future__ import annotations
@@ -27,8 +29,9 @@ from sugar_lift_py_tests.witness_harness import run_source_through_real_solver
 def _member():
     from sugar_lift_py_tests.floor import SymbolicValue
     from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.sugar.loop_recurrence_sugar import loop_item
 
-    return SymbolicValue(make_var("member"), recurrence_member=True)
+    return loop_item("generator", SymbolicValue(make_var("xs")))
 
 
 def test_a_read_of_the_symbolic_member_is_owed() -> None:

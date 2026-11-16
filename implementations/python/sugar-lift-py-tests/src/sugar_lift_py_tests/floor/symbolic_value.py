@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from sugar_lift_py_tests.call_symbol import call_symbol
 from sugar_lift_py_tests.ir import Term
@@ -44,16 +44,6 @@ class SymbolicValue(FloorValue):
 
     term: Term
     formal_coordinate: object | None = None
-    # A comprehension's symbolic member, as the comprehension binds it before
-    # any read (``ComprehensionSugar._symbolic_member``): the member ``next``
-    # yielded, and each leaf's projection of it.  Nothing binds it and no
-    # input decides it, so a read of it owes the
-    # undecided member (``loop_recurrence_sugar.holds_recurrence_value``,
-    # #7757).  So does its final member, what a lambda made in the
-    # comprehension reads after it (``ComprehensionSugar._symbolic_final_ctx``,
-    # ``python:comprehension.final_member``).  Not part of the value's
-    # identity.
-    recurrence_member: bool = field(default=False, compare=False)
 
     def denotes_value(self) -> bool:
         """This floor value denotes a Python runtime value."""

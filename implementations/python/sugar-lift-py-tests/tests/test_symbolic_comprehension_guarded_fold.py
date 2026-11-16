@@ -33,7 +33,7 @@ import tempfile
 
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
-from sugar_lift_py_tests.ir import _Lambda, _Var, ctor as _ctor, make_var, num
+from sugar_lift_py_tests.ir import _Lambda, ctor as _ctor, make_var, num
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
@@ -61,7 +61,8 @@ def _post_of(source, path=None):
 
 
 # The owner of the halt of a member that does not destructure into the
-# target (``ComprehensionSugar._symbolic_member``, ``runtime_unpack_faces``).
+# target: the one unpack a loop item takes (``ComprehensionSugar.
+# _member_unpack``, ``project_iteration_target``, ``runtime_unpack_faces``).
 _UNPACK = "ComprehensionSugar.target.unpack"
 
 # The owners of the halts an undecided ``iter`` of the iterable states: over
@@ -82,9 +83,9 @@ def _completed(outcome):
     A call whose callee nothing resolved (``g``, ``p``, ``h``) may raise: it
     halts with an ``UndeterminedRaiseEffect`` under the complement of its
     completion atom, beside the completion this file inspects.  So may
-    ``iter`` of a symbolic iterable, which the fold runs before any member
-    (``ComprehensionSugar._iterated``), and the unpack of a member into a
-    destructuring target."""
+    ``iter`` of a symbolic iterable, which the recurrence runs before any
+    item (``ComprehensionSugar._recurrence``), and the unpack of a member
+    into a destructuring target."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.outcome import Completed, Halted
 
@@ -306,13 +307,16 @@ def test_nested_generators_preserve_ordering_and_binding_dependency():
     # The second generator's iterable is the FIRST generator's member: a
     # symbolic value that is no formal, so its ``iter`` is the undecided read
     # of that member (``SymbolicValue.iter``), never the formal's.  The
-    # element reads both members, each its own coordinate.
+    # element reads both members, each its generator's recurrence item
+    # (``python:loop.item``, a ``for``'s symbolic item), the inner one over
+    # the outer one.
     outcome = _outcome_of("def f(xs):\n    return [g(x, y) for x in xs for y in x]\n")
     assert _halts(outcome, "SymbolicValue.iter"), _owners(outcome)
     x, y = _call_args(outcome, "g")
-    assert isinstance(x, _Var) and isinstance(y, _Var), (x, y)
+    assert x.name == y.name == "python:loop.item", (x, y)
     assert x != y, "each generator binds its own coordinate"
     assert make_var("xs") not in (x, y)
+    assert y.args[1] == x, "the inner generator iterates the outer member"
 
 
 def test_target_variable_does_not_leak_out_of_the_comprehension():
@@ -391,15 +395,19 @@ def test_list_shaped_target_destructures_like_a_tuple_target():
 def test_nested_destructuring_unpacks_a_projection_after_its_outer_unpack():
     # `for a, (b, c) in xs`: the outer unpack runs first, because the member
     # must unpack before position 1 exists to unpack again.  Each unpack
-    # raises the one undetermined raise at the target's site, so the two
-    # halts are one destination: one arm whose guard is the disjunction of
-    # the outer unpack failing and, where it completed, the inner one failing
-    # (``ExitSet.normalize`` merges equal halts by disjoining their guards;
-    # neither face is dropped).  The guard names both unpacks: the outer of
-    # the member, the inner of its position 1.
+    # raises the one undetermined raise at its own target's site, as a loop
+    # item's nested unpack does (``project_iteration_target``): the outer
+    # unpack's halt, and the inner one's beneath the outer one's completed
+    # arm.  Neither face is dropped.  The guards name both unpacks: the outer
+    # of the member, the inner of its position 1.
     outcome = _outcome_of("def f(xs):\n    return [g(a, b, c) for a, (b, c) in xs]\n")
-    (halt,) = _halts(outcome, _UNPACK)
-    destructures = set(_terms_named(halt.guard, "python:unpack.destructure"))
+    halts = _halts(outcome, _UNPACK)
+    assert halts, _owners(outcome)
+    destructures = {
+        destructure
+        for halt in halts
+        for destructure in _terms_named(halt.guard, "python:unpack.destructure")
+    }
     (outer_destructure,) = {
         destructure
         for destructure in destructures
@@ -411,7 +419,7 @@ def test_nested_destructuring_unpacks_a_projection_after_its_outer_unpack():
     inner_destructure = _ctor(
         "python:unpack.destructure", [position, num(2)], symbol_kind="coordinate"
     )
-    assert destructures == {outer_destructure, inner_destructure}, halt.guard
+    assert destructures == {outer_destructure, inner_destructure}, halts
     assert _call_args(outcome, "g") == (
         _project(member, 0, 2),
         _project(position, 0, 2),

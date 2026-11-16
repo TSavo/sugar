@@ -67,7 +67,7 @@ def _value(outcome):
     """The value of ``outcome``'s one completed arm.
 
     The generator runs ``iter`` on the formal ``unknown`` first, which waits
-    on the caller's actual (``ComprehensionSugar._iterated``): with none it
+    on the caller's actual (``ComprehensionSugar._recurrence``): with none it
     stands as its two faces (``as_its_own_proof_states``), and the value is
     the completed arm beside that halt."""
     from sugar_lift_py_tests.outcome.exit_set import Completed

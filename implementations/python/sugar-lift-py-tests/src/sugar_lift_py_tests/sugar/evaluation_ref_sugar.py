@@ -20,8 +20,8 @@ reference read in the callee's frame.
 A comprehension's element and conditions read a target name the same way
 (``member``): the comprehension binds every member, finite or symbolic, under
 the generator's (or the target leaf's) coordinate before any read of it
-(``ComprehensionSugar._member_unpack``,
-``ComprehensionSugar._symbolic_member``).
+(``ComprehensionSugar._member_unpack``; a symbolic member is the loop
+recurrence's one symbolic item, ``ComprehensionSugar._recurrence``).
 A member reference reads that coordinate only. It never reads the name, so a
 binding of the same spelling by an enclosing statement cannot leak in, and a
 member reference whose coordinate is unbound is a construction panic, not a
@@ -50,8 +50,9 @@ Its body's read names both coordinates (``current``: the member's; the
 evaluation: its final one, ``sugar_source_tree.nodes.final_member_coordinate``,
 which the comprehension binds before the element is reduced:
 ``ComprehensionSugar._final_member_ctx``, the last finite member;
-``ComprehensionSugar._symbolic_final_ctx``, the final member of a symbolic
-iterable), and the cell is read at each call: inside the
+``ComprehensionSugar._recurrence_final_ctx``, the recurrence's value of the
+member over an iterable not in hand), and the cell is read at each call:
+inside the
 evaluation of the comprehension that made the lambda -- the evaluation the
 lambda carries is the one running (``ComprehensionSugar._evaluation_ctx``) --
 the member current at the call; with no evaluation of the comprehension

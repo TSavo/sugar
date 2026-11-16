@@ -277,8 +277,8 @@ def runtime_unpack_faces(
     they complete.  No member is assumed: each is its position's projection,
     readable only on the completed face -- ``python:unpack.project(term,
     index, arity)`` for a leaf ``index`` from the start (the coordinate a
-    comprehension's symbolic destructure reads:
-    ``comprehension_sugar._projection``), ``python:unpack.rest(term, prefix,
+    recurrence's symbolic item destructures into:
+    ``loop_recurrence_sugar.project_iteration_target``), ``python:unpack.rest(term, prefix,
     arity)`` for the star's list, and ``python:unpack.project_end(term,
     distance, arity)`` for a leaf after the star, ``distance`` from the end
     (1 is the last)."""
