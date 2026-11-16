@@ -216,6 +216,3 @@ class ClassValue(FloorValue):
     def extend_scope(self, ctx):
         # Bind the class name so later statements can resolve it.
         return replace(ctx, temporal=ctx.temporal.bind_value(self.name, self))
-
-    def base_terms(self):
-        return tuple(base.to_term(owner=self.name) for base in self.bases)

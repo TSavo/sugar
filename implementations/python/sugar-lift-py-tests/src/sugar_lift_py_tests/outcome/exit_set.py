@@ -691,22 +691,6 @@ class ExitSet(Generic[T]):
                 )
         return ExitSet(tuple(exits)).normalize()
 
-    def with_partition_face(self, partition_id: object, face: int) -> "ExitSet[T]":
-        """Stamp every completed arm with one face of ``partition(partition_id)``.
-
-        Face is 0/1 for then/else of one producer-owned branch: the then and
-        else faces ``partition`` mints for that owner. The stamp joins the
-        arm's ``faces`` (it never replaces them), so nested joins accumulate
-        faces and two arms are exclusive when they lie on different sides of a
-        shared split (``_faces_exclusive``). Halted arms stand unchanged. The
-        stamp is a continuation beneath each completed arm, so every arm keeps
-        its guard and ``owed``.
-        """
-        stamp = partition(partition_id)[face]
-        return self.and_then(
-            lambda value: ExitSet.completed(value).guarded(true_guard(), stamp)
-        )
-
     def factor_completed(self) -> "ExitSet[T]":
         """Collapse the completed FACE into one arm carrying a guarded value.
 

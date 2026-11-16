@@ -80,15 +80,6 @@ def test_missing_effect_coordinate_throws() -> None:
     assert minted.exception_type_coordinate == identity
 
 
-def test_never_suppresses_restores_even_with_coordinate() -> None:
-    effect = _value_error()
-    restored = exit_disposition_effect(
-        ExitSuppressionContract.never_suppresses(),
-        Halted(_guard(), effect, halt_record(None)),
-    )
-    assert restored is effect
-
-
 def test_contract_door_stores_coordinates_not_names() -> None:
     contract = ExitSuppressionContract.suppresses(("ValueError",))
     identity, _ = _builtin_exception_identity("ValueError")

@@ -86,10 +86,6 @@ class ExitSuppressionContract:
     exception_type_coordinates: frozenset
 
     @classmethod
-    def never_suppresses(cls) -> "ExitSuppressionContract":
-        return cls(frozenset())
-
-    @classmethod
     def suppresses(cls, exception_names: tuple[str, ...]) -> "ExitSuppressionContract":
         """ONE door: resolve source-facing names to type coordinates at mint."""
         if not exception_names:

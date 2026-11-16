@@ -124,28 +124,6 @@ def imported_module_value(name: str):
     return SymbolicValue(ctor("python:module", (str_const(name),)))
 
 
-def module_value_name(value):
-    """``<name>`` when ``value`` is exactly ``python:module(<name>)``, else None.
-
-    Only that structural coordinate is a module here: any other value (an
-    opaque call result, a string, ``None``) is not read as one.
-    """
-    from .floor.symbolic_value import SymbolicValue
-    from .ir import _ConstStr, _Ctor
-
-    if type(value) is not SymbolicValue:
-        return None
-    term = value.term
-    if (
-        type(term) is not _Ctor
-        or term.name != "python:module"
-        or len(term.args) != 1
-        or type(term.args[0]) is not _ConstStr
-    ):
-        return None
-    return term.args[0].value
-
-
 def cpython_cited_fold(
     unprojected,
     arg_values,

@@ -7,7 +7,7 @@ xs`` and ``n = 3; for i in range(n)`` stopped unrolling, a local constant
 stopped deciding a branch at substitution, and a starred unpack of a name
 gave its targets nothing to decide with.  The key reference carries the
 right-hand side it was given (``of``); where that is ground, substitution asks
-the reference for it (``EvaluationRef.ground_value``) and uses it only to
+the reference for it (``_ground_value``) and uses it only to
 decide the shape.
 
 Since #8957 (#7757 new 6) a loop has one mechanism: no rewrite unrolls it.
@@ -31,7 +31,13 @@ from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.temporal.temporal_context import projection_key
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.source_oracle import workspace_path_source
-from sugar_source_tree.nodes import Assign, EvaluationRef, FunctionDef, Return
+from sugar_source_tree.nodes import (
+    Assign,
+    EvaluationRef,
+    FunctionDef,
+    Return,
+    _ground_value,
+)
 from sugar_source_tree.tree import SourceFile
 
 TWO, THREE = TermValue(2), TermValue(3)
@@ -222,7 +228,7 @@ def test_the_key_answers_its_ground_value() -> None:
     ret = body[-1]
     assert isinstance(ret, Return)
     assert isinstance(ret.value, EvaluationRef)
-    ground = ret.value.ground_value()
+    ground = _ground_value(ret.value)
     assert ground is not None
     assert ground.kind == "Constant"
     assert ground.value is False
@@ -268,7 +274,7 @@ def test_a_starred_unpack_of_a_display_unpacks() -> None:
     body = _body("def f():\n    a, *b = [1, 2, 3]\n    return b\n")
     ret = body[-1]
     assert isinstance(ret.value, EvaluationRef)
-    ground = ret.value.ground_value()
+    ground = _ground_value(ret.value)
     assert ground is not None
     assert ground.kind == "List"
     assert [element.value for element in ground.elts] == [2, 3]

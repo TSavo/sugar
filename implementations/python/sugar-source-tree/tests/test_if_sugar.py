@@ -18,6 +18,7 @@ import tempfile
 from pathlib import Path
 
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+from sugar_source_tree.nodes import _ground_value
 
 
 def _fn(src: str):
@@ -50,8 +51,8 @@ def test_if_else_assignment_becomes_a_phi():
     # Each arm reads its assignment's key: the reference whose ground
     # value is the literal assigned (``EvaluationRef``, ``_ground_value``).
     assert ret.value.body.kind == "EvaluationRef"
-    assert ret.value.body.ground_value().value == 5  # then arm
-    assert ret.value.orelse.ground_value().value == 6  # else arm
+    assert _ground_value(ret.value.body).value == 5  # then arm
+    assert _ground_value(ret.value.orelse).value == 6  # else arm
 
 
 def test_one_armed_if_uses_the_prior_binding_for_the_missing_arm():
@@ -60,8 +61,8 @@ def test_one_armed_if_uses_the_prior_binding_for_the_missing_arm():
         _fn("def A(c):\n    x = 9\n    if c:\n        x = 5\n    return x\n")
     )
     assert ret.value.kind == "IfExp"
-    assert ret.value.body.ground_value().value == 5  # bound under c
-    assert ret.value.orelse.ground_value().value == 9  # prior binding under not c
+    assert _ground_value(ret.value.body).value == 5  # bound under c
+    assert _ground_value(ret.value.orelse).value == 9  # prior binding under not c
 
 
 def test_one_armed_if_with_no_prior_is_an_honest_gap_not_a_guess():

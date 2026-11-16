@@ -1,51 +1,66 @@
-"""A comparison consumer must retain native Floor outcomes, not invent exits."""
+"""A comparison consumer must retain native Floor outcomes, not invent exits.
+
+Every test reaches the consumer the way a lifted file does: the ``Compare``
+node's own sugar applied to its reduced operands (``apply_reduced``), which
+routes ``==`` / ``!=`` through the equality law and ``in`` / ``not in``
+through the membership law.
+"""
 
 import pytest
 
 from sugar_lift_py_tests.canonicalizer import blake3_512_of
 from sugar_lift_py_tests.floor import (
     PredicateValue,
-    StringValue,
     SymbolicValue,
 )
 from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.ir import atomic, make_var
 from sugar_lift_py_tests.outcome import ExitSet, Halted
-from sugar_lift_py_tests.sugar.comparison_op_sugar import (
-    publish_undecided_comparison_edges,
-)
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect import RaiseEffect
 
 
-def _comparison(op):
-    operator = {"Eq": "==", "NotEq": "!=", "In": "in", "NotIn": "not in"}[op]
-    source = f'left {operator} "needle"\n'
+def _comparison(operator):
+    source = f"left {operator} right\n"
     tree = SourceFile(
         (source, "native-comparison.py", blake3_512_of(source.encode())),
         construction_context=TreeConstructionContextV1.for_test_without_workspace(),
     )
-    return next(node for node in tree.nodes() if node.kind == "Compare").fragment
+    return next(node for node in tree.nodes() if node.kind == "Compare")
 
 
-@pytest.mark.parametrize("op", ["Eq", "NotEq", "In", "NotIn"])
+def _operands(outcome):
+    """Two undecided operands whose floor answers ``outcome`` for both the
+    equality (``left.equals``) and the membership (``right.contains``) law."""
+
+    class Operand(SymbolicValue):
+        def equals(self, other, site, ctx):
+            return outcome
+
+        def contains(self, other, site):
+            return outcome
+
+    return Operand(make_var("left")), Operand(make_var("right"))
+
+
+@pytest.mark.parametrize("operator", ["==", "!=", "in", "not in"])
 @pytest.mark.parametrize("exception", ["ValueError", "LookupError"])
 @pytest.mark.parametrize("shape", ["raise-value", "exit-set"])
 def test_native_comparison_exception_testimony_survives_undecided_operands(
-    op, exception, shape
+    operator, exception, shape
 ):
-    site = _comparison(op)
-    left, right = SymbolicValue(make_var("left")), StringValue("needle")
+    comparison = _comparison(operator)
+    site = comparison.fragment
     native = ground_exceptional_exit(
         exception_name=exception, site=site, owner="NativeComparison"
     )
     assert native.halts() == native.exits
     (native_halt,) = native.halts()
     assert isinstance(native_halt.effect, RaiseEffect)
-    # This seam receives an already-constructed outcome from the native Floor.
-    # Operand undecidability must not erase its authenticated type/occurrence.
+    # The floor hands the consumer an already-constructed outcome.  Operand
+    # undecidability must not erase its authenticated type/occurrence.
     effect = native_halt.effect
     if shape == "exit-set":
         from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
@@ -53,7 +68,8 @@ def test_native_comparison_exception_testimony_survives_undecided_operands(
         state = _ReducedBlock((), True, ())
         guard = atomic("native.comparison.raises", ())
         native = ExitSet((Halted(guard, effect, state=state),))
-    result = publish_undecided_comparison_edges(left, right, site, op, native)
+    left, right = _operands(native)
+    result = comparison.sugar().apply_reduced(left, right)
     assert result is native
     if shape == "exit-set":
         assert result.exits[0].effect is effect
@@ -67,24 +83,29 @@ def test_native_comparison_exception_testimony_survives_undecided_operands(
     assert effect.exception_name == exception
 
 
-@pytest.mark.parametrize("op", ["Eq", "NotEq", "In", "NotIn"])
-def test_undecided_comparison_predicate_is_not_native_completion_testimony(op):
-    site = _comparison(op)
-    left, right = SymbolicValue(make_var("left")), StringValue("needle")
-    unproven = ExitSet.completed(
-        PredicateValue(atomic("py.eq", (left.term, right.to_term(owner="right"))), site)
+@pytest.mark.parametrize(("operator", "op"), [("==", "Eq"), ("in", "In")])
+def test_undecided_comparison_predicate_is_not_native_completion_testimony(
+    operator, op
+):
+    comparison = _comparison(operator)
+    site = comparison.fragment
+    terms = (
+        SymbolicValue(make_var("left")).term,
+        SymbolicValue(make_var("right")).term,
     )
+    unproven = ExitSet.completed(PredicateValue(atomic("py.eq", terms), site))
+    left, right = _operands(unproven)
     # The predicate alone is not testimony that dispatch completes: the
     # undecided ``__eq__``/``__contains__`` may raise anything.  It completes
     # only under ``python:compare.completes`` and halts undetermined (no
     # invented exception type) under the complement -- the #7585 two faces.
-    result = publish_undecided_comparison_edges(left, right, site, op, unproven)
+    result = comparison.sugar().apply_reduced(left, right)
     assert isinstance(result, ExitSet)
     (completed,) = [face for face in result.exits if not isinstance(face, Halted)]
     (halted,) = [face for face in result.exits if isinstance(face, Halted)]
     # The same predicate, keyed per evaluation at the halt's key (#7757
     # NEW-1): the truth of the comparison's value, ``python:truth_result(
-    # python:compare_result("Eq", left, "needle", <key>), <key>)``.
+    # python:compare_result("Eq", left, right, <key>), <key>)``.
     stated = unproven.completed_value()
     assert type(completed.value) is type(stated)
     assert completed.value.site is stated.site

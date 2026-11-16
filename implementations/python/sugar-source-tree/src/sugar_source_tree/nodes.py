@@ -6039,7 +6039,7 @@ def _evaluation_ref(
     lambda a call through the name applies (``Call._construct_sugar``).  It
     is a leaf, not a child: nothing walks into it and its sugar is never
     built from it.  Where ``of`` is ground, substitution asks the reference
-    for that value to decide a shape (``EvaluationRef.ground_value``), and
+    for that value to decide a shape (``_ground_value``), and
     for nothing else.
 
     ``at_halt`` marks the read, at a halt inside the statement that binds
@@ -7112,9 +7112,8 @@ def _at_module_execution_site(node, sugar):
     ``__next__``), a ``with`` (``__enter__``, ``__exit__``), a store or a
     delete through a target.  Its dunder runs only when it reduces, so the
     reducer reduces this copy under the stamped site
-    (``reduce_at_stamped_module_execution_site``), and the dunder's frame is
-    read again there (``frame_at_current_module_execution_site``): its body
-    reads a module global as the module binds it at this point.  A ``Call``
+    (``reduce_at_stamped_module_execution_site``): the dunder's body reads a
+    module global as the module binds it at this point.  A ``Call``
     is stamped too: the callee body it reduces runs at its site, and so do
     the dunders that body reaches.
 
@@ -24088,12 +24087,6 @@ class EvaluationRef(Expression):
 
             return rewrite_with_leaves(self, {"carried_cells": ()})
         return self
-
-    def ground_value(self) -> "Optional[Node]":
-        """The ground literal this key holds (``_ground_value``), or None:
-        the value an assignment's ``of`` gives, when it is ground.  Asked
-        only to decide a shape; the read is still this reference."""
-        return _ground_value(self)
 
     def _construct_sugar(self):
         from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
