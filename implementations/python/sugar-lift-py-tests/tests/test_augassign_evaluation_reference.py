@@ -79,23 +79,38 @@ def test_statement_sugar_carries_its_evaluation_key() -> None:
     assert key.startswith(EVALUATION_PREFIX)
 
 
-def test_each_unrolled_iteration_is_its_own_evaluation() -> None:
-    rewritten = _function(
-        "def f():\n    t = 0\n    for v in [1, 2]:\n        t += v\n    return t\n"
-    ).substitute({})
-    augs = _augs(rewritten.body)
-    assert len(augs) == 2
-    assert augs[0].evaluation != augs[1].evaluation
-    ret = rewritten.body[-1]
-    assert isinstance(ret, Return)
-    assert isinstance(ret.value, EvaluationRef)
-    assert ret.value.evaluation == augs[1].evaluation
+LOOP = "def f():\n    t = 0\n    for v in [1, 2]:\n        t += v\n    return t\n"
+
+
+def _loop_augs(source: str):
+    """The one loop statement the rewrite keeps (#8957: no rewrite unrolls a
+    loop) and the ``x += e`` statements of its body."""
+    body = _function(source).substitute({}).body
+    assert _augs(body) == []
+    (loop,) = [node for node in body if node.kind == "LoopRecurrenceStatement"]
+    return loop, _augs(loop.loop.body)
+
+
+def test_each_item_binds_the_one_key_the_latch_reads() -> None:
+    # ``t += v`` stands once, in the loop's body, keyed by its evaluation.
+    # The reduction binds that key in each item, qualified by the item
+    # (``evaluation_here``), so each item's ``t += v`` is its own evaluation,
+    # and the latch hands the next item the latest write of ``t``
+    # (``LiveForRuntimeV1.carried_evaluations``).
+    loop, augs = _loop_augs(LOOP)
+    (aug,) = augs
+    assert aug.rebinds == "t"
+    assert aug.evaluation.startswith(EVALUATION_PREFIX)
+    runtime = loop.construction.loop_runtime
+    _header, writes, _else_writes = runtime.carried_evaluations[
+        runtime.carried_names.index("t")
+    ]
+    assert aug.evaluation in writes
 
 
 def test_the_same_source_gives_the_same_keys() -> None:
-    source = "def f():\n    t = 0\n    for v in [1, 2]:\n        t += v\n    return t\n"
-    first = [node.evaluation for node in _augs(_function(source).substitute({}).body)]
-    second = [node.evaluation for node in _augs(_function(source).substitute({}).body)]
+    first = [node.evaluation for node in _loop_augs(LOOP)[1]]
+    second = [node.evaluation for node in _loop_augs(LOOP)[1]]
     assert first and first == second
 
 

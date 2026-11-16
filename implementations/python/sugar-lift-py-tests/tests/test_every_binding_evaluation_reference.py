@@ -12,8 +12,9 @@ name they read was rebound:
    evaluates its right-hand side and is keyed like ``Assign``
    (``AnnAssign.target_evaluations``).
 3. An unrolled ``for y in [x]`` bound ``y`` to the display member, read again
-   wherever ``y`` was read.  Each iteration opens with its own keyed binding
-   of its item (``For._iteration_unpacks``).
+   wherever ``y`` was read.  Since #8957 no rewrite unrolls the loop: ``y`` is
+   read through its one per-item key, which the reduction binds in each item
+   to the member that item took (``LoopRecurrenceSugar._enter_target``).
 4. A nested ``def`` reading an enclosing local was refused (no captured
    coordinate), and a reference whose key never reached its frame read the
    name.  A call of the local ``def`` in its enclosing body now carries the
@@ -36,12 +37,13 @@ from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.outcome import Completed
 from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
+from sugar_lift_py_tests.sugar.loop_recurrence_sugar import LoopRecurrenceSugar
 from sugar_lift_py_tests.temporal.temporal_context import (
     EVALUATION_PREFIX,
     projection_key,
 )
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.nodes import (
     AnnAssign,
     Assign,
@@ -131,7 +133,7 @@ def _outcome(tmp_path: Path, source: str, stem: str, name: str = "f"):
     path = tmp_path / f"{stem}.py"
     path.write_text(source, encoding="utf-8")
     functions = SourceFile(
-        path_source(str(path)),
+        workspace_path_source(str(path), root=str(tmp_path)),
         construction_context=TreeConstructionContextV1.for_test_without_workspace(),
     ).functions()
     function = next(node for node in functions if node.name == name)
@@ -282,39 +284,40 @@ def test_a_bare_annotation_binds_nothing() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_an_unrolled_name_target_is_keyed_per_iteration() -> None:
-    body = _function(FOR_TARGET_AUGMENTED).substitute({}).body
-    stores = [
+def _target_stores(body) -> list:
+    return [
         node
         for node in body
         if isinstance(node, Assign)
         and node.targets[0].id == "y"
         and isinstance(getattr(node, "evaluation", None), str)
     ]
-    assert len(stores) == 1
-    read = _after_the_rebind(
-        next(
-            node.value
-            for node in body
-            if isinstance(node, Assign) and node.targets[0].id == "r"
-        )
-    )
-    assert isinstance(read, EvaluationRef)
-    assert read.evaluation == projection_key(stores[0].evaluation, "y")
 
 
-def test_two_iterations_have_two_keys() -> None:
+def test_a_for_name_target_is_one_key_bound_per_item_at_reduce() -> None:
+    # No rewrite unrolls the loop (#8957): no item's store of ``y`` stands in
+    # the body.  The target is read through its one per-item key
+    # (``LiveForRuntimeV1.target_evaluations``), which the reduction binds,
+    # qualified by each item (``evaluation_here``), to that item's member.
+    body = _function(FOR_TARGET_AUGMENTED).substitute({}).body
+    assert [node.kind for node in body].count("LoopRecurrenceStatement") == 1
+    assert _target_stores(body) == []
+    (loop,) = [
+        sugar
+        for sugar in _function(FOR_TARGET_AUGMENTED).sugar().statements
+        if isinstance(sugar, LoopRecurrenceSugar)
+    ]
+    (key,) = loop.construction.loop_runtime.target_evaluations
+    assert key.startswith(EVALUATION_PREFIX)
+
+
+def test_two_items_read_one_target_key() -> None:
+    # Two items are two evaluations of the same key, told apart where the
+    # reduction binds it (``evaluation_here``), never two rewrite-time stores.
     source = "def f(p, q):\n    for y in [p, q]:\n        r = y\n    return r\n"
     body = _function(source).substitute({}).body
-    stores = [
-        node
-        for node in body
-        if isinstance(node, Assign)
-        and node.targets[0].id == "y"
-        and isinstance(getattr(node, "evaluation", None), str)
-    ]
-    assert len(stores) == 2
-    assert stores[0].evaluation != stores[1].evaluation
+    assert [node.kind for node in body].count("LoopRecurrenceStatement") == 1
+    assert _target_stores(body) == []
 
 
 def test_an_unrolled_target_after_a_plain_rebind_is_the_old_value(

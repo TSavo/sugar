@@ -4,10 +4,13 @@ Temporal choice 1 (#7661), inventory item 7 (#7757), after #7886 (``x += e``),
 #7911 (the walrus), #7913 (``a, b = f()``) and #7921 (``except``/``raises``
 ``as e``):
 
-- ``for a, b in [p, q]``: an item that is not a display has no members
-  substitution can pair. Before, the unroll refused it. Now each iteration
-  opens with its own keyed unpack of its item, and a read of ``a`` is an
-  ``EvaluationRef`` to ``a``'s projection of that iteration's evaluation.
+- ``for a, b in [p, q]``: since #8957 (#7757 new 6) no rewrite unrolls a
+  loop.  The loop stays its one recurrence statement; a read of ``a`` in the
+  body is an ``EvaluationRef`` to ``a``'s per-item key
+  (``nodes._loop_target_evaluation_key``), which the reduction binds, item by
+  item, to that item's projection (``LoopRecurrenceSugar._enter_target``); a
+  read after the loop is the loop's publication of the target
+  (``GuardedBindingRead``: the last item's projection where an item ran).
 - ``with M() as (a, b)``: the store lowered into the body was keyed as one
   evaluation, but after the ``with`` the targets bound nothing, so a read fell
   to the name's prior state. Now they read the store's projections.
@@ -29,9 +32,7 @@ from __future__ import annotations
 
 from sugar_lift_py_tests.context_manager_contract import ENTER_RESULT
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.sugar.dynamic_unpack_assign_sugar import (
-    DynamicUnpackAssignSugar,
-)
+from sugar_lift_py_tests.sugar.loop_recurrence_sugar import LoopRecurrenceSugar
 from sugar_lift_py_tests.temporal.temporal_context import (
     EVALUATION_PREFIX,
     projection_key,
@@ -42,6 +43,8 @@ from sugar_source_tree.nodes import (
     Assign,
     EvaluationRef,
     FunctionDef,
+    GuardedBindingRead,
+    LoopRecurrenceStatement,
     Name,
     ObservationRef,
     Return,
@@ -119,72 +122,79 @@ def _unpacks(body) -> list:
 # ---------------------------------------------------------------------------
 
 
-def test_each_iteration_unpacks_its_item_as_its_own_evaluation() -> None:
-    body = _function(FOR_ITEMS).substitute({}).body
-    unpacks = _unpacks(body)
-    assert len(unpacks) == 2
-    first, second = unpacks
-    assert first.evaluation.startswith(EVALUATION_PREFIX)
-    assert first.evaluation != second.evaluation
+def _loop(body) -> LoopRecurrenceStatement:
+    """The one loop statement the rewrite keeps: no item of it is unrolled
+    into the body, so no iteration's keyed unpack stands there."""
+    (loop,) = [node for node in body if isinstance(node, LoopRecurrenceStatement)]
+    assert _unpacks(body) == []
+    return loop
 
 
-def test_a_read_in_the_body_is_its_iterations_projection() -> None:
-    body = _function(FOR_ITEMS).substitute({}).body
-    unpacks = _unpacks(body)
-    reads = [
-        node.value for node in body if isinstance(node, Assign) and not _keyed(node)
+def test_the_loop_stays_one_statement_and_unpacks_no_item_at_rewrite() -> None:
+    # Each item's unpack is the reduction's (``LoopRecurrenceSugar.
+    # _project_iteration_target``), keyed per item (``evaluation_here``).
+    _loop(_function(FOR_ITEMS).substitute({}).body)
+
+
+def test_a_read_in_the_body_is_the_targets_per_item_key() -> None:
+    loop = _loop(_function(FOR_ITEMS).substitute({}).body)
+    (read,) = [
+        node.value
+        for node in loop.loop.body
+        if isinstance(node, Assign) and node.targets[0].id == "x"
     ]
-    assert len(reads) == 2
-    for unpack, read in zip(unpacks, reads, strict=True):
-        assert isinstance(read, EvaluationRef)
-        assert read.evaluation == projection_key(unpack.evaluation, "a")
-        assert read.name == "a"
+    assert isinstance(read, EvaluationRef)
+    assert read.name == "a"
+    assert read.evaluation.startswith(EVALUATION_PREFIX)
 
 
-def test_a_read_after_the_loop_is_the_last_iterations_projection() -> None:
-    body = _function(FOR_ITEMS).substitute({}).body
-    unpacks = _unpacks(body)
+def _published_read(source: str, name: str) -> GuardedBindingRead:
+    """``return <name>`` after the loop reads the loop's publication of the
+    target: the last item's projection where an item ran."""
+    body = _function(source).substitute({}).body
+    _loop(body)
     ret = body[-1]
     assert isinstance(ret, Return)
-    assert isinstance(ret.value, EvaluationRef)
-    assert ret.value.evaluation == projection_key(unpacks[-1].evaluation, "b")
+    assert isinstance(ret.value, GuardedBindingRead), ret.value
+    assert ret.value.name == name
+    return ret.value
 
 
-def test_the_same_source_gives_the_same_iteration_keys() -> None:
+def test_a_read_after_the_loop_is_the_loops_publication() -> None:
+    _published_read(FOR_ITEMS, "b")
+
+
+def test_the_same_source_gives_the_same_target_keys() -> None:
     def keys():
-        body = _function(FOR_ITEMS).substitute({}).body
-        return [node.evaluation for node in _unpacks(body)]
+        (statement,) = [
+            sugar
+            for sugar in _function(FOR_ITEMS).sugar().statements
+            if isinstance(sugar, LoopRecurrenceSugar)
+        ]
+        return statement.construction.loop_runtime.target_evaluations
 
     assert keys() == keys()
 
 
-def test_display_items_are_keyed_per_iteration_too() -> None:
-    # A display item is paired by the iteration's own display unpack, keyed
-    # as that iteration's evaluation: the target never inlines the member.
-    body = _function(FOR_DISPLAYS).substitute({}).body
-    unpacks = _unpacks(body)
-    assert len(unpacks) == 2
-    assert unpacks[0].evaluation != unpacks[1].evaluation
-    ret = body[-1]
-    assert isinstance(ret, Return)
-    assert isinstance(ret.value, EvaluationRef)
-    assert ret.value.evaluation == projection_key(unpacks[-1].evaluation, "b")
+def test_display_items_are_read_through_the_publication_too() -> None:
+    # A display item is unpacked by the item's projection at reduce, never
+    # inlined into the target.
+    _published_read(FOR_DISPLAYS, "b")
 
 
-def test_every_item_is_keyed_display_or_not() -> None:
-    body = _function(FOR_MIXED).substitute({}).body
-    unpacks = _unpacks(body)
-    assert len(unpacks) == 2
-    ret = body[-1]
-    assert isinstance(ret.value, EvaluationRef)
-    assert ret.value.evaluation == projection_key(unpacks[-1].evaluation, "b")
+def test_every_item_is_read_through_the_publication_display_or_not() -> None:
+    _published_read(FOR_MIXED, "b")
 
 
-def test_the_iteration_unpack_sugar_carries_its_key() -> None:
+def test_the_loop_sugar_carries_a_key_per_target_leaf() -> None:
     statement = _function(FOR_ITEMS).sugar().statements[0]
-    assert isinstance(statement, DynamicUnpackAssignSugar)
-    assert isinstance(statement.evaluation, str)
-    assert statement.evaluation.startswith(EVALUATION_PREFIX)
+    assert isinstance(statement, LoopRecurrenceSugar)
+    runtime = statement.construction.loop_runtime
+    assert tuple(runtime.target_pattern.names) == ("a", "b")
+    keys = runtime.target_evaluations
+    assert len(keys) == 2
+    assert len(set(keys)) == 2
+    assert all(key.startswith(EVALUATION_PREFIX) for key in keys)
 
 
 # ---------------------------------------------------------------------------
@@ -267,18 +277,16 @@ def _withs(node) -> list[With]:
     return [child for child in node.walk() if isinstance(child, With)]
 
 
-def test_a_with_in_an_unrolled_loop_has_two_exit_faces_and_two_slots() -> None:
+def test_a_with_in_a_loop_is_one_with_at_rewrite() -> None:
+    # No rewrite copies the loop body per item (#8957): the ``with`` stays
+    # one statement, with its source occurrence's face and slot.  Each item's
+    # evaluation of it is the reduction's, under that item's occurrence
+    # segment (``occurrence.loop_iteration_segment``).
     function = _function(WITH_IN_LOOP)
     (source,) = _withs(function)
-    copies = _withs(function.substitute({}))
-    assert len(copies) == 2
-    items = [node.items[0] for node in copies]
-    faces = [item._exit_face_id() for item in items]
-    slots = [item._manager_slot_id() for item in items]
-    assert len(set(faces)) == 2
-    assert len(set(slots)) == 2
-    assert source.items[0]._exit_face_id() not in faces
-    assert source.items[0]._manager_slot_id() not in slots
+    (copy,) = _withs(function.substitute({}))
+    assert copy.items[0]._exit_face_id() == source.items[0]._exit_face_id()
+    assert copy.items[0]._manager_slot_id() == source.items[0]._manager_slot_id()
 
 
 # ---------------------------------------------------------------------------

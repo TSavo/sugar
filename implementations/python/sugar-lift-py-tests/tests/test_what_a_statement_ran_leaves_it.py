@@ -695,13 +695,28 @@ def test_the_ordinary_call_reads_its_receiver_through_the_doors_key() -> None:
 
 
 # ---------------------------------------------------------------------------
-# (4) The unroll keeps the iterable's calls before the first item.
+# (4) A loop evaluates its iterable's calls once, before the first item.
 # ---------------------------------------------------------------------------
 
 
-def test_an_unrolled_for_evaluates_a_later_items_call_before_the_first_item():
+def _the_loop(rewritten):
+    """The one loop statement the rewrite keeps: no rewrite unrolls a loop
+    (#8957), so no item's statement stands in the function body."""
+    (loop,) = [
+        node for node in rewritten.body if node.kind == "LoopRecurrenceStatement"
+    ]
+    return loop
+
+
+def _calls(node) -> list:
+    return [child for child in node.walk() if child.kind == "Call"]
+
+
+def test_a_for_evaluates_a_later_items_call_once_in_its_header():
     # ``break`` leaves after the first item: Python still called ``g`` when
-    # it built the list, before the first item.
+    # it built the list, before the first item.  The call stands once, in the
+    # loop's iterable, which the reduction evaluates once before any item
+    # (``LoopRecurrenceSugar.desugar``); the body never holds it.
     rewritten = _function(
         "def f():\n"
         "    acc = []\n"
@@ -712,21 +727,9 @@ def test_an_unrolled_for_evaluates_a_later_items_call_before_the_first_item():
         "    a.append(1)\n"
         "    return 0\n"
     ).substitute({})
-    stores = [node for node in rewritten.body if isinstance(node, Assign)]
-    called = [
-        index
-        for index, node in enumerate(stores)
-        if getattr(node.value, "kind", None) == "Call"
-    ]
-    first_item = [
-        index
-        for index, node in enumerate(stores)
-        if getattr(node.value, "kind", None) == "Constant"
-        and node.value.value == 1
-    ]
-    assert called, "the later item's call was dropped by the unroll"
-    assert first_item
-    assert called[0] < first_item[0]
+    loop = _the_loop(rewritten).loop
+    assert len(_calls(loop.iter)) == 1, "the later item's call was dropped"
+    assert not [call for statement in loop.body for call in _calls(statement)]
 
 
 def _unrolled_unpacking_function(body: str):
@@ -745,9 +748,8 @@ def _unrolled_unpacking_function(body: str):
 
 
 def _unrolled_unpacking(body: str):
-    """``f``'s assignments and expression statements after substitution:
-    the later item's call is evaluated before the first item as an
-    expression statement held under the item's evaluation key."""
+    """``f``'s assignments and expression statements after substitution, at
+    the function body's level: no item of the loop stands there (#8957)."""
     rewritten = _unrolled_unpacking_function(body)
     return [node for node in rewritten.body if isinstance(node, (Assign, Expr))]
 
@@ -756,42 +758,37 @@ def _value_kind(node):
     return getattr(node.value, "kind", None)
 
 
-def test_an_unrolled_unpacking_for_calls_a_later_item_before_the_first_item():
+def test_an_unpacking_for_calls_a_later_item_once_in_its_header():
     # ``break`` leaves after the first item: Python still called ``g`` when
     # it built the list, whatever the item's shape -- only the unpack of
-    # ``g``'s value belongs to the item that never ran.
-    stores = _unrolled_unpacking("break")
-    called = [index for index, node in enumerate(stores) if _value_kind(node) == "Call"]
-    first_item = [
-        index for index, node in enumerate(stores) if _value_kind(node) == "Tuple"
+    # ``g``'s value belongs to the item that never ran.  The call stands
+    # once, in the iterable the reduction evaluates before any item, and no
+    # item's unpack stands in the function body.
+    assert not [
+        node for node in _unrolled_unpacking("break") if _value_kind(node) == "Tuple"
     ]
-    assert len(called) == 1, "the later item's call was dropped by the unroll"
-    assert first_item
-    assert called[0] < first_item[0]
+    loop = _the_loop(_unrolled_unpacking_function("break")).loop
+    assert len(_calls(loop.iter)) == 1, "the later item's call was dropped"
+    assert not [call for statement in loop.body for call in _calls(statement)]
 
 
-def test_an_unrolled_unpacking_for_unpacks_a_later_item_where_it_is_taken():
-    # The later item's unpack reads the call's one evaluation through its key
-    # where the item is taken: the call is never evaluated twice, and the
-    # unpack (its arity) never runs before the first item's body.
-    stores = _unrolled_unpacking("pass")
-    called = [index for index, node in enumerate(stores) if _value_kind(node) == "Call"]
-    first_item = [
-        index for index, node in enumerate(stores) if _value_kind(node) == "Tuple"
+def test_an_unpacking_for_unpacks_each_item_where_it_is_taken():
+    # Each item's unpack is the reduction's, over the member that item took
+    # (``LoopRecurrenceSugar._project_iteration_target``): the call is never
+    # evaluated twice, and the unpack (its arity) never runs before an
+    # earlier item's body.  The rewrite holds the target's pattern and one
+    # key per leaf, never an unpack statement.
+    rewritten = _unrolled_unpacking_function("pass")
+    loop = _the_loop(rewritten)
+    assert len(_calls(loop.loop.iter)) == 1
+    assert not [
+        node
+        for node in loop.loop.body
+        if isinstance(node, Assign) and _value_kind(node) == "Tuple"
     ]
-    unpacked = [
-        index
-        for index, node in enumerate(stores)
-        if _value_kind(node) == "EvaluationRef"
-    ]
-    assert len(called) == 1
-    assert first_item and unpacked
-    assert called[0] < first_item[0] < unpacked[-1]
-    # The call's value is held under the item's evaluation key, and the
-    # later item's unpack reads that key.
-    held = stores[called[0]]
-    assert isinstance(held, Expr)
-    assert stores[unpacked[-1]].value.evaluation == held.evaluation
+    runtime = loop.construction.loop_runtime
+    assert tuple(runtime.target_pattern.names) == ("a", "b")
+    assert len(runtime.target_evaluations) == 2
 
 
 def test_an_unrolled_unpacking_for_makes_up_no_name():

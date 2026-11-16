@@ -96,28 +96,38 @@ def test_a_keyed_try_star_carries_its_evaluation() -> None:
     assert again.handlers[0]._effect_slot_id() == keyed.handlers[0]._effect_slot_id()
 
 
-def test_each_unrolled_iteration_try_star_reads_its_own_slot() -> None:
+def _loop_tries(rewritten) -> list:
+    """The ``try ... except*`` statements of the one loop statement's body:
+    no rewrite unrolls a loop (#8957), so none stands in the function body."""
+    assert not [node for node in rewritten.body if isinstance(node, TryStar)]
+    (loop,) = [
+        node for node in rewritten.body if node.kind == "LoopRecurrenceStatement"
+    ]
+    return [
+        _statement(node) for node in loop.loop.body if isinstance(_statement(node), TryStar)
+    ]
+
+
+def test_a_try_star_in_a_loop_is_one_statement_with_its_source_slot() -> None:
+    # The rewrite does not copy the loop body per item: the ``try`` stands
+    # once, keyed as the source occurrence.  Each item's evaluation of it is
+    # the reduction's, under that item's occurrence segment
+    # (``occurrence.loop_iteration_segment``).
     function = _function(LOOP_TRY_STAR)
     source_slot = _node(function, ExceptHandler)._effect_slot_id()
-    rewritten = function.substitute({})
-    tries = [node for node in rewritten.body if isinstance(node, TryStar)]
-    assert len(tries) == 2
-    slots = [node.handlers[0]._effect_slot_id() for node in tries]
-    assert slots[0] != slots[1]
-    assert source_slot not in slots
-    assert [_handler_read(node).slot_id for node in tries] == slots
+    (try_node,) = _loop_tries(function.substitute({}))
+    assert try_node.handlers[0]._effect_slot_id() == source_slot
+    assert _handler_read(try_node).slot_id == source_slot
 
 
 def test_the_same_source_gives_the_same_try_star_slots() -> None:
     def slots():
-        rewritten = _function(LOOP_TRY_STAR).substitute({})
         return [
             node.handlers[0]._effect_slot_id()
-            for node in rewritten.body
-            if isinstance(node, TryStar)
+            for node in _loop_tries(_function(LOOP_TRY_STAR).substitute({}))
         ]
 
-    assert slots() == slots()
+    assert slots() and slots() == slots()
 
 
 def test_try_and_try_star_key_handlers_the_one_way() -> None:
