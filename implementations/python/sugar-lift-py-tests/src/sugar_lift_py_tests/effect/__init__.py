@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from .assertion_failed_runtime_effect import AssertionFailedRuntimeEffect
 from .append_runtime_effect import AppendRuntimeEffect
-from .attribute_store_runtime_effect import AttributeStoreRuntimeEffect
-from .attribute_delete_runtime_effect import AttributeDeleteRuntimeEffect
 from .attribute_augassign_runtime_effect import AttributeAugAssignRuntimeEffect
 from .block_operator_runtime_effect import BlockOperatorRuntimeEffect
 from .bitwise_xor_runtime_effect import (
@@ -75,8 +73,6 @@ from .unary_plus_runtime_effect import UnaryPlusRuntimeEffect, runtime_unary_plu
 __all__ = [
     "AssertionFailedRuntimeEffect",
     "AppendRuntimeEffect",
-    "AttributeStoreRuntimeEffect",
-    "AttributeDeleteRuntimeEffect",
     "AttributeAugAssignRuntimeEffect",
     "BlockOperatorRuntimeEffect",
     "BitwiseXorRuntimeEffect",

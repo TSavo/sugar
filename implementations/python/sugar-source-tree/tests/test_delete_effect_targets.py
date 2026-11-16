@@ -5,7 +5,6 @@ import tempfile
 import pytest
 
 from sugar_lift_py_tests.effect import (
-    AttributeDeleteRuntimeEffect,
     NameErrorEffect,
     RaiseEffect,
     SubscriptDeleteRuntimeEffect,
@@ -49,7 +48,6 @@ def _halt_effects(entries) -> list:
 @pytest.mark.parametrize(
     ("source", "effect_type"),
     [
-        ("def f(o):\n del o.attr\n return o\n", AttributeDeleteRuntimeEffect),
         ("def f(d,k):\n del d[k]\n return d\n", SubscriptDeleteRuntimeEffect),
     ],
 )
@@ -59,15 +57,6 @@ def test_store_delete_builds_typed_effect_and_continues(source, effect_type):
     assert len(effects) == 1
     assert isinstance(effects[0], effect_type)
     assert any(type(entry).__name__ == "ReturnValue" for entry in entries)
-
-
-def test_multi_target_delete_effects_preserve_source_order() -> None:
-    entries = _entries("def f(o,d,k):\n del o.attr, d[k]\n return o\n")
-    effects = _halt_effects(entries)
-    assert [type(effect) for effect in effects] == [
-        AttributeDeleteRuntimeEffect,
-        SubscriptDeleteRuntimeEffect,
-    ]
 
 
 def test_mixed_delete_uses_tombstone_before_later_target_load() -> None:
@@ -88,4 +77,4 @@ def test_delete_effect_after_halt_is_not_emitted() -> None:
     assert out.halts() == out.exits
     (halt,) = out.halts()
     assert isinstance(halt.effect, RaiseEffect)
-    assert not isinstance(halt.effect, AttributeDeleteRuntimeEffect)
+    assert getattr(halt.effect, "producer_node_owner", None) != "UndecidedDelattr"

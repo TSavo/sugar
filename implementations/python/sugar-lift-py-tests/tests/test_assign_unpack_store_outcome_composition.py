@@ -8,9 +8,10 @@ Ownership boundary (T's ruling):
     this branch (#6239)    owns tuple/multi-target construction
                            owns unpack sequencing through that composition
 
-The generic algebra -- ``python:store_completed(occurrence, operation)``,
-``FollowStep.halt_guard``, ``Halted(g, effect, prefix_state)`` paired with
-``Completed(not g, state_with_testimony)`` -- is the store branch's work and is
+The generic algebra -- an undecided store's ``python:setattr.completes(
+python:setattr(<receiver>, <attr>, <key>))`` atom (#7757 NEW-4),
+``Halted(not g, effect, prefix_state)`` paired with ``Completed(g, state)``
+-- is the store branch's work and is
 proven there by the SEQUENTIAL twins. What is proven HERE is that the
 tuple/multi-target ``Assign`` construction this branch owns actually flows
 through that composition: a store leaf inside an unpack is not a different kind
@@ -35,7 +36,7 @@ discharge is auditable rather than assumed:
      was re-checked to fail for its own reason (a ``pytest.raises(AssertionError)``
      wrapper is the classic shape that goes green while asking nothing).
   2. ``test_unpack_two_stores_..._discrimination`` only required
-     ``_store_entries(first.state) != 1``, which 0 AND 2 both satisfy. It now
+     ``_store_entries(first) != 1``, which 0 AND 2 both satisfy. It now
      pins the EXACT arm cardinality from both sides.
   3. The law twins had never run past their first assertion. Every line was
      re-measured against the constructed artifact, and each twin was perturbed
@@ -58,10 +59,9 @@ from test_store_outcome_composition import (
     _store_entries,
 )
 
-# Free undecided ``o`` keeps dual-face AttributeStoreRuntimeEffect composition.
-# A formal receiver's store is the undecided store, no carrier
-# (``store_effect_sugar.attribute_mutation``, see
-# test_setattr_named_formal_caller).
+# Free undecided ``o``: its store is the one undecided attribute mutation, as
+# a formal receiver's is (``store_effect_sugar.attribute_mutation``, #7757
+# NEW-4; see test_setattr_named_formal_caller).
 # ``o`` is free only because a star import may bind it (``_FREE_O``): a name
 # nothing in the module binds is a NameError halt, and its store never runs.
 UNPACK_MIXED = (
@@ -126,11 +126,11 @@ def test_unpack_mixed_name_and_store_preserves_both_outcomes(tmp_path) -> None:
     prior_halted, prior_completed = _arms(_exits(tmp_path, prior, "target"))
     survivor = next(h for h in prior_halted if _polarity(h.guard, "y") is False)
     assert _polarity(survivor.guard, "z") is True
-    assert len(_store_entries(survivor.state)) == 1, (
+    assert len(_store_entries(survivor)) == 1, (
         "the store completed before the halting one must survive the halt -- "
         "Python rolls back nothing"
     )
-    assert "attr=z" in _store_entries(survivor.state)[0].effect.reason
+    assert _store_entries(survivor)[0].args[1].value == "z"
     assert len(prior_completed) == 1
 
 
@@ -162,7 +162,7 @@ def test_unpack_mixed_name_and_store_preserves_both_outcomes_discrimination(
     prior_halted, _ = _arms(_exits(tmp_path, prior, "target"))
     survivor = next(h for h in prior_halted if _polarity(h.guard, "y") is False)
     with pytest.raises(AssertionError):
-        assert _store_entries(survivor.state) == [], "assignment rolled back"
+        assert _store_entries(survivor) == [], "assignment rolled back"
 
 
 def test_unpack_two_stores_preserve_both_outcomes_per_store(tmp_path) -> None:
@@ -176,11 +176,11 @@ def test_unpack_two_stores_preserve_both_outcomes_per_store(tmp_path) -> None:
 
     first = next(h for h in halted if _polarity(h.guard, "x") is False)
     assert _polarity(first.guard, "y") is None
-    assert _store_entries(first.state) == []
+    assert _store_entries(first) == []
 
     second = next(h for h in halted if _polarity(h.guard, "y") is False)
     assert _polarity(second.guard, "x") is True
-    assert len(_store_entries(second.state)) == 1
+    assert len(_store_entries(second)) == 1
 
 
 def test_unpack_two_stores_preserve_both_outcomes_per_store_discrimination(
@@ -197,7 +197,7 @@ def test_unpack_two_stores_preserve_both_outcomes_per_store_discrimination(
     first = next(h for h in halted if _polarity(h.guard, "x") is False)
 
     with pytest.raises(AssertionError):
-        assert len(_store_entries(first.state)) == 1, "second target ran anyway"
+        assert len(_store_entries(first)) == 1, "second target ran anyway"
 
     with pytest.raises(AssertionError):
         assert (len(halted), len(completed)) == (0, 1), "stores are infallible"
@@ -233,7 +233,7 @@ def test_unpack_and_sequential_spellings_produce_the_same_arm_structure(
                 (
                     _polarity(h.guard, "x"),
                     _polarity(h.guard, "y"),
-                    len(_store_entries(h.state)),
+                    len(_store_entries(h)),
                 )
                 for h in halted
             ),

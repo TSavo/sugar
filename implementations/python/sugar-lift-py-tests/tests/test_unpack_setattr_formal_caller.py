@@ -44,10 +44,7 @@ from sugar_lift_py_tests.caller_parameter_contract import (
     _NATIVE_OPERATION_PROJECTORS,
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.effect import (
-    AttributeStoreRuntimeEffect,
-    UndeterminedRaiseEffect,
-)
+from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import (
     ObjectField,
     ObjectValue,
@@ -374,16 +371,9 @@ def test_first_store_halt_blocks_later_targets() -> None:
     assert isinstance(halted[0].effect, NameErrorEffect)
     assert halted[0].effect.name == "o"
     assert halted[0] == Halted(true_guard(), halted[0].effect, halted[0].state)
-    # The halt was reached before any store: no AttributeStore testimony.
-    testimonies = [
-        sum(
-            isinstance(getattr(e, "effect", None), AttributeStoreRuntimeEffect)
-            for e in getattr(h.state, "entries", ())
-        )
-        for h in halted
-        if h.state is not None
-    ]
-    assert 0 in testimonies, testimonies
+    # The halt was reached before any store: its guard states no store
+    # (``python:setattr``) completed or halted.
+    assert all("python:setattr" not in repr(h.guard) for h in halted), halted
     # No completed-only reading of the body.
     assert not (len(halted) == 0 and len(completed) == 1)
 

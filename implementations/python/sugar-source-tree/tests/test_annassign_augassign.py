@@ -14,10 +14,7 @@ import tempfile
 import pytest
 
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_lift_py_tests.effect import (
-    AttributeStoreRuntimeEffect,
-    SubscriptStoreRuntimeEffect,
-)
+from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.expr_statement_sugar import ExprStatementSugar
 from sugar_lift_py_tests.sugar.binop_sugar import BinOpSugar
@@ -169,10 +166,23 @@ def test_subscript_aug_assign_formal_get_is_subscript_carrier():
 
 
 def test_annotated_attribute_with_value_builds_store_effect():
-    effects = _red_effects("def A(y):\n    obj.a: int = y\n    return y\n")
+    """``obj.a: int = y`` is the one attribute store
+    (``store_effect_sugar.attribute_mutation``): on a receiver nothing
+    decides it is the one undecided mutation (#7757 NEW-4), completing under
+    its ``python:setattr`` atom and halting, undetermined, under the
+    complement."""
+    outcome = _fn(
+        "def A(obj, y):\n    obj.a: int = y\n    return y\n"
+    ).sugar().desugar()
 
-    assert len(effects) == 1
-    assert isinstance(effects[0], AttributeStoreRuntimeEffect)
+    assert isinstance(outcome, ExitSet)
+    completed = [arm for arm in outcome.exits if arm not in outcome.halts()]
+    assert completed and all(
+        "python:setattr.completes" in repr(arm.guard) for arm in completed
+    )
+    assert "UndecidedSetattr" in [
+        face.effect.producer_node_owner for face in outcome.halts()
+    ]
 
 
 def test_annotated_subscript_store_is_the_one_item_mutation():

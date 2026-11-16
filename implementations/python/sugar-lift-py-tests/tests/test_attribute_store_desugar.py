@@ -2,9 +2,9 @@
 
 Does **not** delete or rewrite store ExitSet composition laws
 (``test_store_outcome_composition``, unpack twins). Those five named laws
-remain the dual-face instrument for undecided formal stores via
-``store_faces`` (``AttributeStoreRuntimeEffect`` testimony, or an undetermined
-raise).
+remain the dual-face instrument for undecided stores via the one undecided
+attribute mutation (``undecided_attribute_mutation_faces``: completes under
+its own atom, or an undetermined raise).
 
 Python semantic law made constructible (PARTIAL):
 
@@ -338,19 +338,21 @@ def test_property_without_setter_raises_attribute_error_not_completed(tmp_path):
 def test_undecided_retains_dual_face_runtime_effect(tmp_path):
     """Dual-face instrument intact — not replaced by SugarNotWritten.
 
-    A store on a receiver whose type nothing decides is the store law's two
-    faces (``store_outcome_coordinate.store_faces``, #8094): it completes
-    under the store occurrence's opaque atom and halts with the undetermined
-    raise under its complement.  Neither face is dropped."""
+    A store on a receiver whose type nothing decides, formal or not, is the
+    one undecided attribute mutation (``store_effect_sugar.
+    undecided_attribute_mutation_faces``, #7757 NEW-4): it completes under
+    ``python:setattr.completes`` and halts with the undetermined raise under
+    its complement.  Neither face is dropped."""
     outcome = _store(
         SymbolicValue(make_var("obj")), TermValue(7), [], _site(tmp_path)
     ).desugar()
     assert len(outcome.exits) == 2
     (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
     assert done.value is not None
+    assert "python:setattr.completes" in repr(done.guard)
     (halt,) = outcome.halts()
     assert isinstance(halt.effect, UndeterminedRaiseEffect)
-    assert halt.effect.producer_node_owner == "AttributeStoreRuntimeEffect"
+    assert halt.effect.producer_node_owner == "UndecidedSetattr"
 
 
 def _undecided_store(outcome):

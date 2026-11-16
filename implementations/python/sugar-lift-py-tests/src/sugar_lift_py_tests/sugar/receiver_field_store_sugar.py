@@ -46,10 +46,9 @@ class ReceiverFieldStoreSugar(Sugar):
       decided), bound under ``after``, the key the receiver's post-state
       reads it through after the statement.
     - any other value takes the one attribute store
-      (``store_effect_sugar.attribute_mutation``): a formal is the undecided
-      store, completing also where prove decides it the plain store, a
-      decided runtime type its floor's store, an undecided one the store's
-      two faces.
+      (``store_effect_sugar.attribute_mutation``): a decided runtime type
+      its floor's store, any other receiver the one undecided store (a
+      formal's completing also where prove decides it the plain store).
 
     ``value`` is the read of what the statement bound under its key
     (``KeyedStoreSugar``) when the statement was substituted, or the
