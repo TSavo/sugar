@@ -707,9 +707,16 @@ def _test_function_outcome(source: str):
 
 
 def _undecided_faces(outcome) -> None:
-    """A completed face under an undecided read's guard, and every halt an
-    undetermined raise: nothing about the read is decided, no exception is
-    named."""
+    """A completed face under an undecided read's guard, and every halt of
+    the read an undetermined raise: nothing about the read is decided, no
+    exception of the method is named.
+
+    The function's own ``assert`` over what the read left is a halt of the
+    function where its test fails (#8961, ``assert_sugar.
+    halts_where_its_asserts_fail``): ``AssertionError`` at the ``assert``,
+    raised by the function itself (``ground_assertion_error``).  Those halts
+    are the function's, never the method's; every other halt is the read's
+    undetermined raise."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
@@ -717,8 +724,16 @@ def _undecided_faces(outcome) -> None:
     assert outcome.completed_value() is None, outcome
     completed = [face for face in outcome.exits if isinstance(face, Completed)]
     halted = [face for face in outcome.exits if isinstance(face, Halted)]
-    assert completed and halted, outcome
-    for halt in halted:
+    own_asserts = [
+        face
+        for face in halted
+        if getattr(face.effect, "producer_node_owner", None) == "ground_assertion_error"
+    ]
+    undecided = [face for face in halted if face not in own_asserts]
+    assert completed and undecided, outcome
+    for halt in own_asserts:
+        assert halt.effect.exception_name == "AssertionError", halt.effect
+    for halt in undecided:
         assert isinstance(halt.effect, UndeterminedRaiseEffect), halt.effect
         assert halt.effect.exception_name is None, halt.effect
 

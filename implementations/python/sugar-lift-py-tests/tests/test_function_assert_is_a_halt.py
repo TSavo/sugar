@@ -24,6 +24,7 @@ import pytest
 
 from sugar_lift_py_tests.witness_harness import (
     claim_verdict,
+    prove_verdict,
     run_source_through_real_solver,
 )
 
@@ -104,6 +105,26 @@ def test_f():
 """
 
 
+_TEST_F_LINE = 6
+
+
+def _test_f_verdict(result) -> str:
+    """The verdict on ``test_f``'s own rows: every row ``f``'s own proof
+    states sits above ``test_f``'s ``def`` (``_TEST_F_LINE``) and is set
+    aside, its claim included.  ``f``'s own assertion row (``n > 0`` over
+    its formal, no caller) is refused as vacuous, a lone claim over a free
+    operand (#3896): that is ``f``'s claim, never ``test_f``'s, and
+    ``claim_verdict`` sets aside only what ``f`` owes, not what it claims.
+    Every row at or below ``test_f``'s ``def`` -- its claim and every member
+    it owes -- is read by the one reader (``prove_verdict``)."""
+    rows = [
+        row
+        for row in result.prove_doc.get("rows") or []
+        if not (isinstance(row.get("line"), int) and row["line"] < _TEST_F_LINE)
+    ]
+    return prove_verdict({**result.prove_doc, "rows": rows})
+
+
 @pytest.mark.parametrize(
     ("actual", "truth", "lie"),
     [(-1, "True", "False"), (1, "False", "True")],
@@ -117,20 +138,17 @@ def test_the_call_halts_where_the_callees_assert_fails(
     call completes (``ok == False``) is never ``sat``.  ``f(1)`` completes:
     the truth that it did is ``sat``, the lie that it raised never ``sat``.
 
-    ``f``'s own proof has no caller, so what it owes over ``n`` sits above
-    ``test_f``'s ``def`` (line 6) and is set aside for the truth
-    (``claim_verdict``), as ``test_assertion_site_rows_twin`` reads
-    ``double``'s; the lie is read on every row, owed members included, and
-    is never ``sat`` either way."""
+    ``f``'s own proof has no caller: its rows sit above ``test_f``'s
+    ``def`` and are set aside for the truth (``_test_f_verdict``); the lie
+    is read on every row, owed members included, and is never ``sat``
+    either way."""
     truthful = run_source_through_real_solver(
         tmp_path / "t", _CALLED.format(actual=actual, claim=truth)
     )
     lying = run_source_through_real_solver(
         tmp_path / "l", _CALLED.format(actual=actual, claim=lie)
     )
-    claimed = claim_verdict(
-        truthful.prove_doc, claims_from_line=6, lift_doc=truthful.lift_doc
-    )
+    claimed = _test_f_verdict(truthful)
     print(
         json.dumps(
             {
@@ -146,6 +164,7 @@ def test_the_call_halts_where_the_callees_assert_fails(
     assert claimed == "sat"
     assert truthful.verdict != "unsat"
     assert lying.verdict != "sat"
+    assert _test_f_verdict(lying) != "sat"
     assert (
         claim_verdict(lying.prove_doc, claims_from_line=6, lift_doc=lying.lift_doc)
         != "sat"

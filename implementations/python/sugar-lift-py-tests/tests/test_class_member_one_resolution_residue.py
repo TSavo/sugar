@@ -48,6 +48,25 @@ def _statements(source: str, name: str = "residue.py") -> dict:
     return {node.name: node for node in tree.root.body if isinstance(node, ClassDef)}
 
 
+def _class_value(outcome):
+    """The class value the class statement completes with.
+
+    A statement whose method a decorator the class body's descriptor table
+    does not model decorates (``functools.cache``) applies it where the
+    class body runs (#8962, ``ClassDef._class_method_statement``): nothing
+    here answers that application, so the statement is two-faced -- it
+    completes under the unanswered call's ``completes`` atom, holding the
+    class, and halts under its complement with the undetermined raise.  The
+    halt is kept; the class is the completed face's."""
+    from sugar_lift_py_tests.outcome import Completed
+
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert len(completed) == 1, outcome
+    for face in outcome.halts():
+        assert isinstance(face.effect, UndeterminedRaiseEffect), face.effect
+    return completed[0].value
+
+
 def _values(source: str, name: str = "residue_values.py"):
     """The context and the class value each module ``class`` statement of
     ``source`` builds, each bound for the next to read as a base."""
@@ -57,7 +76,7 @@ def _values(source: str, name: str = "residue_values.py"):
     for node in tree.root.body:
         if not isinstance(node, ClassDef):
             continue
-        value = node.sugar().desugar(context).completed_value()
+        value = _class_value(node.sugar().desugar(context))
         context.temporal = context.temporal.bind_value(value.class_name, value)
         values[value.class_name] = value
     return context, values

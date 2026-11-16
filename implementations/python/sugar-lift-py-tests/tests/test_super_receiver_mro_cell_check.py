@@ -131,14 +131,23 @@ def _super_m(classes, context, receiver):
     return done.value
 
 
+def _call_term(call):
+    """The dispatched call's own term: its completion is stated over
+    ``python:call_result(<call term>, <occurrence>)`` (#8828), so the call
+    term is that coordinate's first argument."""
+    term = call.term
+    if getattr(term, "name", None) == "python:call_result":
+        return term.args[0]
+    return term
+
+
 def _looked_up(call) -> tuple:
     """``(after, receiver class symbol)`` the dispatched ``call`` names."""
-    (lookup,) = (
-        arg for arg in call.term.args if getattr(arg, "name", None) == "py.lookup"
-    )
+    term = _call_term(call)
+    (lookup,) = (arg for arg in term.args if getattr(arg, "name", None) == "py.lookup")
     (receiver_class,) = (
         arg.args[1]
-        for arg in call.term.args
+        for arg in term.args
         if getattr(arg, "name", None) == "py.class" and arg.args[0].value == "0"
     )
     assert lookup.args[0].value == ""
