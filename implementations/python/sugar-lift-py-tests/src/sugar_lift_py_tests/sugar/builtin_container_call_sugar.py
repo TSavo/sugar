@@ -591,18 +591,38 @@ class PathContainerCallSugar(ConstructedTermSugar):
             # In evaluation order: the stored value first.
             return reduce_operands((value, self.receiver, *keys), ctx).and_then(
                 lambda operands: consume_operands(
-                    lambda stored, receiver, *held: self._apply(
-                        receiver, (*held, stored), ctx
+                    lambda stored, receiver, *held: self._recorded(
+                        self._apply(receiver, (*held, stored), ctx), operands, ctx
                     ),
                     *operands,
                 )
             )
         return reduce_operands((self.receiver, *self.args), ctx).and_then(
             lambda operands: consume_operands(
-                lambda receiver, *held: self._apply(receiver, held, ctx),
+                lambda receiver, *held: self._recorded(
+                    self._apply(receiver, held, ctx), operands, ctx
+                ),
                 *operands,
             )
         )
+
+    def _recorded(self, outcome, operands, ctx):
+        """``outcome`` -- this operation's own reduction, run after
+        ``operands`` -- with each face that ran code the lift did not read
+        (a store or delete dispatched on an instance, the undecided
+        mutation, an in-place operator over an undecided operand, a
+        container method over operands its law does not decide) binding
+        its record of every module global under this operation's key, in
+        the context the operands wrote: the one binder every call takes
+        (``call_site_value.bind_after_call``, #7757 H15).  A container's
+        cited mutation the law decides records nothing."""
+        from sugar_lift_py_tests.floor.call_site_value import bind_after_call
+        from sugar_lift_py_tests.floor.named_expression_value import written_by
+
+        after = ctx
+        for operand in operands:
+            after = written_by(operand, after)
+        return bind_after_call(outcome, self.site, after)
 
     def _read_modify_store(self, ctx) -> ExitSet:
         """``t[k] OP= v`` (``__setitem__`` with an operator, ``args`` the key
@@ -612,7 +632,10 @@ class PathContainerCallSugar(ConstructedTermSugar):
         result on the receiver (``_apply``) -- each once, in Python's order.
         A halt at any step leaves before the store."""
         from sugar_lift_py_tests.floor.named_expression_value import (
+            bind_walrus_binds,
+            carry_walrus_binds,
             consume_operands,
+            peel_walrus_binds,
             reduce_operands,
             written_by,
         )
@@ -620,29 +643,57 @@ class PathContainerCallSugar(ConstructedTermSugar):
             discharge_subscript,
         )
         from sugar_lift_py_tests.sugar.augassign_sugar import project_augmented
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            halts_at_operand_head,
+        )
 
         key_sugar, right_sugar = self.args
         op_site = self.operator_site if self.operator_site is not None else self.site
 
-        def store(receiver, key, after):
-            return discharge_subscript(
-                receiver, key, self.site, after, owner=type(self).__name__
-            ).and_then(
-                lambda current: right_sugar.desugar(after).and_then(
-                    lambda right: consume_operands(
-                        lambda operand: project_augmented(
-                            current,
-                            operand,
-                            projector=self.operator.project_inplace,
-                            site=op_site,
-                            ctx=ctx,
-                        ).and_then(
-                            lambda result: self._apply(receiver, (key, result), ctx)
-                        ),
-                        right,
-                    )
+        # The item read and the store are each an operation that may run
+        # code (``__getitem__``, then ``__setitem__``): each binds its record
+        # where its reduction ran code the lift did not read
+        # (``_recorded``), the read's before ``v`` is evaluated, so ``v``,
+        # the operator and the store all run after it (#7757 H15).
+        def modified(receiver, key, after, read):
+            # The read's record (``bind_after_call``) is bound before ``v``
+            # runs: every halt after it that offers no record halted there
+            # (``halts_at_operand_head``), and the completed store carries
+            # it on, before its own.
+            binds, current = peel_walrus_binds(read)
+            read_after = bind_walrus_binds(binds, after)
+            outcome = right_sugar.desugar(read_after).and_then(
+                lambda right: consume_operands(
+                    lambda operand: project_augmented(
+                        current,
+                        operand,
+                        projector=self.operator.project_inplace,
+                        site=op_site,
+                        ctx=ctx,
+                    ).and_then(
+                        lambda result: self._recorded(
+                            self._apply(receiver, (key, result), ctx),
+                            (right,),
+                            read_after,
+                        )
+                    ),
+                    right,
                 )
             )
+            if not binds:
+                return outcome
+            return halts_at_operand_head(outcome, None, read_after).and_then(
+                lambda result: ExitSet.completed(carry_walrus_binds(binds, result))
+            )
+
+        def store(receiver, key, after):
+            return self._recorded(
+                discharge_subscript(
+                    receiver, key, self.site, after, owner=type(self).__name__
+                ),
+                (),
+                after,
+            ).and_then(lambda read: modified(receiver, key, after, read))
 
         return reduce_operands((self.receiver, key_sugar), ctx).and_then(
             lambda operands: consume_operands(
@@ -789,14 +840,21 @@ class PathContainerCallSugar(ConstructedTermSugar):
                 # through the one operand door.  They reduce left to right
                 # after the receiver (``reduce_operands``'s ``earlier``):
                 # they read its writes, and their halts carry them.
+                # A method the law does not decide over these operands
+                # (``_opaque_pair``: a ``sort`` over undecided members runs
+                # their ``__lt__``) may run code: it records (``_recorded``).
                 return reduce_operands(
                     self.args, ctx, earlier=(receiver,)
                 ).and_then(
                     lambda operands: consume_operands(
-                        lambda *held: law.apply(
-                            kind, self.method, receiver, held, self.site, ctx
-                        )
-                        or _opaque_pair(kind, self.method, self.site),
+                        lambda *held: self._recorded(
+                            law.apply(
+                                kind, self.method, receiver, held, self.site, ctx
+                            )
+                            or _opaque_pair(kind, self.method, self.site),
+                            (receiver, *operands),
+                            ctx,
+                        ),
                         *operands,
                     )
                 )

@@ -21756,6 +21756,22 @@ class Compare(Expression):
 _AFTER_CALL_SUFFIX = "#after-call"
 
 
+def operation_record_key(node) -> str:
+    """The key the evaluation of the operation ``node`` binds its record of
+    what it may have reached under (``call_site_value.bind_after_call``):
+    a call's own (``Call.after_call_key``), and for every other operation
+    the source tree counts as one that may run code
+    (``container_mutation.may_run_code``: an operator, an item access, the
+    one door's store, delete or in-place operator, a ``for``'s ``__iter__``,
+    a ``with``'s ``__enter__``, an ``if``'s truth) its evaluation key, minted
+    as a statement's is (``Statement._evaluation_key``), marked the same
+    way.  One list of operations that may run code, one key for each, one
+    binder (#7757 H15)."""
+    if isinstance(node, Call):
+        return node.after_call_key()
+    return Statement._evaluation_key(node, {}) + _AFTER_CALL_SUFFIX
+
+
 def _carrying_its_evaluation(scope, call):
     """``call`` recording its key (the ``carried_evaluation`` leaf) where
     ``scope`` substitutes a copy of it -- a loop iteration's, a

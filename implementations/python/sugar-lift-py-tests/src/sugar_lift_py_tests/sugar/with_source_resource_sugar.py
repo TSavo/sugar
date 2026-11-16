@@ -78,6 +78,11 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
     carries a body face's debts onto every arm it leaves through, under
     Python's own disposition: the truth of what ``__exit__`` returns.
     """
+    from sugar_lift_py_tests.floor.call_site_value import bind_after_call
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        bind_walrus_binds,
+        peel_walrus_binds,
+    )
     from sugar_lift_py_tests.outcome.exit_set import Halted, _require_exit_set
     from sugar_lift_py_tests.outcome.resource_bindings import (
         EnterResultBinding,
@@ -126,11 +131,21 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
         manager_facts = ManagerBinding(
             resource.manager_slot_id, manager_face.value
         ).to_facts(site=resource.site)
+        # ``__enter__`` is an operation that may run code: where its
+        # reduction ran code the lift did not read, it binds its record of
+        # every module global under the ``with``'s key, by the one binder
+        # every call takes (``bind_after_call``, #7757 H15).  The body, the
+        # exit and what follows the ``with`` run after it; its halt carries
+        # it where it halts.
         enter_es = ExitSet((manager_face,)).and_then(
             lambda manager: halts_recorded(
-                _require_exit_set(
-                    resource.protocol.enter_resource_outcome_for(manager, ctx),
-                    owner="WithReducedManagerSugar.enter",
+                bind_after_call(
+                    _require_exit_set(
+                        resource.protocol.enter_resource_outcome_for(manager, ctx),
+                        owner="WithReducedManagerSugar.enter",
+                    ),
+                    resource.site,
+                    ctx,
                 ),
                 halt_record(ctx),
             )
@@ -139,15 +154,16 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
             if isinstance(enter_face, Halted):
                 parts.append(ExitSet((enter_face,)))
                 continue
-            entered = enter_face.value
+            binds, entered = peel_walrus_binds(enter_face.value)
+            enter_ctx = bind_walrus_binds(binds, ctx)
             enter_value = _as_target(_returned_value(entered.enter_value), entered)
             enter_facts = ()
-            body_ctx = ctx
+            body_ctx = enter_ctx
             if resource.enter_slot_id is not None and enter_value is not None:
                 binding = EnterResultBinding(resource.enter_slot_id, enter_value)
                 enter_facts = binding.to_facts(site=resource.site)
                 # The body reads ``as x`` as the value ``__enter__`` returned.
-                body_ctx = binding.bound_in(ctx)
+                body_ctx = binding.bound_in(enter_ctx)
             # The exit is routed per body face.
             body_es = ExitSet((enter_face,)).and_then(
                 lambda _entered, body_ctx=body_ctx: reduce_block_to_exitset(
@@ -160,13 +176,14 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
                 entered=entered,
                 manager_facts=manager_facts,
                 enter_facts=enter_facts,
+                enter_ctx=enter_ctx,
             ):
                 return _route_exit_over_body(
                     resource,
                     entered,
                     _require_exit_set(body_es, owner="WithReducedManagerSugar.body"),
                     (*manager_facts, *enter_facts),
-                    ctx,
+                    enter_ctx,
                     resume,
                 )
 

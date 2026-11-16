@@ -113,10 +113,26 @@ class BinOpSugar(ConstructedTermSugar):
                 ctx,
             )
 
+        # The operator is an operation that may run code (``__op__`` /
+        # ``__rop__``): where its reduction ran code the lift did not read
+        # (an undecided operand's dunder, a dispatched one), it binds its
+        # record of every module global under its key, in the context its
+        # operands wrote, by the one binder every call takes
+        # (``bind_after_call``, #7757 H15).  ``int + int`` records nothing.
+        from sugar_lift_py_tests.floor.call_site_value import bind_after_call
+
+        def applied(left, right):
+            after = written_by(right, written_by(left, ctx))
+            return consume_operands(
+                lambda left, right: bind_after_call(
+                    apply(left, right), self.site, after
+                ),
+                left,
+                right,
+            )
+
         return self.left.desugar(ctx).and_then(
             lambda left: evaluated_after(
                 (left,), self.right, written_by(left, ctx)
-            ).and_then(
-                lambda right: consume_operands(apply, left, right)
-            )
+            ).and_then(lambda right: applied(left, right))
         )

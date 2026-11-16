@@ -3360,6 +3360,35 @@ def _sites_at(node, headers=()):
         yield node
 
 
+def may_run_code(node) -> bool:
+    """Whether the evaluation of ``node`` is an operation this law counts as
+    one that may run code the caller does not follow: the one list
+    (``_calls``) every exposure reads -- a node ``_sites_at`` yields (a
+    call of any kind, an f-string field, an operator, a comparison, an item
+    or attribute access but an import's member, an ``await``, a ``yield``,
+    a field store or delete, a statement's or a clause's operated value),
+    the one door's operation (``PathContainerCall``: an item store or
+    delete, an in-place operator, a method call through the door), and a
+    compound statement's operation on its header (``_operates_header``: a
+    ``for``'s ``__iter__``, an ``if``'s or ``while``'s truth, a ``with``'s
+    ``__enter__``, a ``match`` subject's dunders).
+
+    Whether such an operation runs code at all is decided at reduce by the
+    values it runs on (a builtin value runs none), never here: the lift
+    binds the record of what it may have reached at each one whose
+    reduction ran code it did not read (``call_site_value.
+    bind_after_call``), an explicit call and an implicit dispatch alike, so
+    a later call reads a module global after it (#7757 H15).  False for
+    anything else (a name, a constant, a display, a simple statement)."""
+    from .nodes import PathContainerCall
+
+    if getattr(node, "kind", None) is None:
+        return False
+    if isinstance(node, PathContainerCall) or _operates_header(node):
+        return True
+    return next(iter(_sites_at(node)), None) is not None
+
+
 def _import_member(node) -> bool:
     """``node`` is an attribute read the unit's import receipt names a
     module's member (``import_value_use_receipt``): a module binding read

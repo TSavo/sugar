@@ -1654,7 +1654,11 @@ def _global_after_call(ctx, name: str, keys, unit=None):
     (``CallSiteValue.after_labels``), and every module global
     (``EVERY_GLOBAL_SLOT``) where it may reach any -- a call no contract
     here states, or a same-file call handed an object that may be or hold
-    one (``lambda_callable._after_labels``).  A record that reaches every
+    one (``lambda_callable._after_labels``).  So does every implicit
+    dispatch whose reduction ran code the lift did not read (an item read
+    or store, an operator, a ``for``'s ``__iter__``, a ``with``'s
+    ``__enter__``, an ``if``'s truth): the one binder of the one list
+    (``container_mutation.may_run_code``, #7757 H15).  A record that reaches every
     global reaches this one only where its object may change at all
     (``global_may_change`` of the binding's value): an ``int`` global is the
     same object after any call.

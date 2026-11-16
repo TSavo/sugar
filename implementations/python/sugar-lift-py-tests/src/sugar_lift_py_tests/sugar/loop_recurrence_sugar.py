@@ -740,15 +740,35 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         # recurrence takes too (``iterator_operation.iterated``): where
         # the iteration is decided never to raise
         # (``iterator_operation.iteration_total``) no ``iter`` is submitted.
+        #
+        # ``iter`` is an operation that may run code (``__iter__``): where
+        # its reduction ran code the lift did not read, it binds its record
+        # of every module global under the loop's key, by the one binder
+        # every call takes (``bind_after_call``, #7757 H15).  The record is
+        # bound where the first item begins, after ``entered``, so the loop
+        # publishes it on every exit it completes by (``_records_made_here``);
+        # its halt carries it where it halts.
+        from sugar_lift_py_tests.floor.call_site_value import bind_after_call
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            bind_walrus_binds,
+            peel_walrus_binds,
+        )
         from sugar_lift_py_tests.operations.iterator_operation import iterated
 
         iteration = halts_recorded(
-            iterated(iterable, ctx, owner="LoopRecurrenceSugar", site=self.site),
+            bind_after_call(
+                iterated(iterable, ctx, owner="LoopRecurrenceSugar", site=self.site),
+                self.site,
+                ctx,
+            ),
             halt_record(ctx),
         )
 
         def after_iter(iterator):
-            return self._recurrence(iterable, ctx, iterator=iterator)
+            binds, iterator = peel_walrus_binds(iterator)
+            return self._recurrence(
+                iterable, bind_walrus_binds(binds, ctx), iterator=iterator
+            )
 
         return _require_exit_set(iteration, owner="LoopRecurrenceSugar.iter").and_then(
             after_iter

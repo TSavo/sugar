@@ -104,9 +104,23 @@ class UnaryOpSugar(ConstructedTermSugar):
         return truth_of(value, self.site, owner="UnaryOpSugar.not")
 
     def desugar(self, ctx: object = None) -> ExitSet:
+        from sugar_lift_py_tests.floor.call_site_value import bind_after_call
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
+            written_by,
         )
+
+        # The operator is an operation that may run code (``__neg__``,
+        # ``__bool__`` for ``not``): where its reduction ran code the lift
+        # did not read, it binds its record of every module global under its
+        # key, in the context its operand wrote, by the one binder every call
+        # takes (``bind_after_call``, #7757 H15).
+        def recorded(step, value):
+            after = written_by(value, ctx)
+            return consume_operands(
+                lambda presented: bind_after_call(step(presented), self.site, after),
+                value,
+            )
 
         operand = self.operand.desugar(ctx)
         if self.op_kind == "Not":
@@ -137,9 +151,9 @@ class UnaryOpSugar(ConstructedTermSugar):
             # the one operand door: a walrus in it binds once, and its bind
             # rides the truth (``NamedExpressionValue.negate`` keeps it).
             return operand.and_then(
-                lambda value: consume_operands(project_not, value)
+                lambda value: recorded(project_not, value)
             ).and_then(lambda predicate: predicate.negate())
         operate = UNARYOP_METHODS[self.op_kind]
         return operand.and_then(
-            lambda value: consume_operands(lambda v: operate(v, self.site), value)
+            lambda value: recorded(lambda v: operate(v, self.site), value)
         )

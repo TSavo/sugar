@@ -122,10 +122,13 @@ def truth_formula(truth, value):
     # and reported `condition folded without a symbolic formula:
     # NamedExpressionValue`, blaming the wrapper for a formula the presented
     # value had all along. Structural: any value that presents another is
-    # projected through, with no table of which ones do.
+    # projected through, with no table of which ones do -- every one it
+    # presents beneath, a walrus's and an operation's record alike
+    # (``bind_after_call``).
     presented = getattr(truth_value, "presented_value", None)
-    if presented is not None:
+    while presented is not None and presented is not truth_value:
         truth_value = presented
+        presented = getattr(truth_value, "presented_value", None)
     formula = getattr(truth_value, "formula", None)
     if formula is None:
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
@@ -458,14 +461,52 @@ class IfSugar(Sugar):
 
         truth = truth_of(condition, self.site, owner="IfSugar.test")
         if isinstance(truth, ExitSet) and plain_completed_value(truth) is None:
+            # Taking the truth is an operation that may run code
+            # (``__bool__``, ``__len__``): where it ran code the lift did not
+            # read, it binds its record of every module global under the
+            # ``if``'s key, by the one binder every call takes
+            # (``bind_after_call``, #7757 H15).
+            from sugar_lift_py_tests.floor.call_site_value import bind_after_call
+
+            truth = bind_after_call(truth, self.site, ctx)
             return halts_recorded(truth, halt_record(ctx)).and_then(
-                lambda truth_value: self._select_suites(
-                    condition,
-                    truth_formula(ExitSet.completed(truth_value), condition),
-                    ctx,
+                lambda truth_value: self._select_after_truth(
+                    condition, truth_value, ctx
                 )
             )
         return self._select_suites(condition, truth_formula(truth, condition), ctx)
+
+    def _select_after_truth(self, condition, truth_value, ctx):
+        """The suites one completed truth face selects (``_select_suites``).
+        Where the truth carries its record (``bind_after_call``), both
+        suites and what follows the ``if`` run after it, as after a header's
+        writes (``function_universe_sugar.header_ran``): in the context the
+        record leaves, the ``if``'s completed faces leaving their record in
+        that context (``statement_record``) (#7757 H15)."""
+        from sugar_lift_py_tests.floor.floor_value import FloorValue
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            peel_walrus_binds,
+            written_by,
+        )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            halt_record,
+            halts_recorded,
+            statement_record,
+        )
+
+        formula = truth_formula(ExitSet.completed(truth_value), condition)
+        if not peel_walrus_binds(truth_value)[0]:
+            return self._select_suites(condition, formula, ctx)
+        headed = written_by(truth_value, ctx)
+        return halts_recorded(
+            self._select_suites(condition, formula, headed), halt_record(headed)
+        ).and_then(
+            lambda completed: ExitSet.completed(
+                statement_record(completed, headed)
+                if isinstance(completed, FloorValue)
+                else completed
+            )
+        )
 
     def _select_suites(self, condition, observed_formula, ctx) -> ExitSet:
         """The ``if`` on ``condition`` whose truth states ``observed_formula``:
