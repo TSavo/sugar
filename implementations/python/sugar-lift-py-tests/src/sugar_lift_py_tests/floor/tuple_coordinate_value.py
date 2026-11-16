@@ -251,10 +251,18 @@ class TupleCoordinateValue(FloorValue):
         return self.subscript_with_occurrence(index, site, None)
 
     def subscript_with_occurrence(self, index, site, occurrence):
+        from sugar_lift_py_tests.floor.floor_value import index_type_undecided
         from sugar_lift_py_tests.floor.slice_value import SliceValue
         from sugar_lift_py_tests.outcome import ExitSet
         from sugar_source_tree.panic import SugarNotWritten
 
+        if index_type_undecided(index):
+            # A key (or a slice bound) whose type nothing here decides -- a
+            # parameter's, an opaque call result's -- may raise anything:
+            # the one undecided read, its halt kept (#7757).
+            return self.undecided_subscript(
+                index, site, owner="TupleCoordinateValue.subscript"
+            )
         if type(index) is not SliceValue:
             from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
             from sugar_lift_py_tests.ir import ctor

@@ -1,19 +1,21 @@
 """Every subscript read goes through the one door (#7757).
 
-``discharge_subscript`` is the one door for ``receiver[index]``: a parameter
-in either operand defers to the caller (``defer_formal_subscript``), else the
-receiver answers.  A pattern's read, a walrus's read, a mapping object's
-``__getitem__``, an opaque operation's downstream read and an append's
-residual read all take it, and no module outside the door calls a floor's
-``subscript`` / ``subscript_with`` on another value (the law below).
+``discharge_subscript`` is the one door for ``receiver[index]``: the
+receiver answers, and nothing waits on a caller's actual (audit 2 row NEW-1).
+A parameter receiver is the one undecided read; a parameter index on a
+receiver the lift decides is that receiver's own read with the symbolic key.
+A pattern's read, a walrus's read, a mapping object's ``__getitem__``, an
+opaque operation's downstream read and an append's residual read all take
+it, and no module outside the door calls a floor's ``subscript`` /
+``subscript_with`` on another value (the law below).
 
-A parameter in a slice bound (``(0, 1, 2)[start:]``) defers the slice itself
-(``construct_slice``, the ``slice`` carrier): the caller's actual decides the
-slice, and the read continues on it.
+A parameter in a slice bound (``(0, 1, 2)[start:]``) stands in the slice as
+its symbolic value (``construct_slice`` never raises, as ``BUILD_SLICE``
+does not), and the slice's reader reads it.
 
 No floor operation is dispatched by its name either (the second law): a
 guarded value reads each arm through the door, never as
-``getattr(arm, "subscript")``, so a parameter arm defers its read too.
+``getattr(arm, "subscript")``, so a parameter arm is read as it is unguarded.
 """
 
 from __future__ import annotations
@@ -77,12 +79,6 @@ def _formal(site, name: str = "key", ordinal: int = 1):
         sort=PrimitiveSort("Value"),
     )
     return SymbolicValue(make_var(name), coordinate), coordinate
-
-
-def _assert_index_deferred(pending, coordinate) -> None:
-    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
-    assert pending.demand.operator == "subscript"
-    assert pending.demand.operand_coordinate_cids == (None, coordinate.coordinate_cid)
 
 
 # ---------------------------------------------------------------------------
@@ -313,68 +309,82 @@ def test_the_law_bites_on_a_call_looked_up_by_name() -> None:
 
 
 # ---------------------------------------------------------------------------
-# A parameter index defers to the caller wherever the read is made
+# A parameter index is read wherever the read is made; nothing waits on a
+# caller's actual (#7757, audit 2 row NEW-1)
 # ---------------------------------------------------------------------------
 
 
-def test_a_match_mapping_read_with_a_parameter_key_defers_to_the_caller() -> None:
+def _assert_undecided_read(exits, site, *, completed: int = 1) -> None:
+    """The one undecided read (``FloorValue.undecided_subscript``), no
+    carrier: a face completing under its own atom and an
+    ``UndeterminedRaiseEffect`` halt, both owing the read's ``undecided``
+    member (reason ``unanswered``) at ``site``.  ``completed`` counts the
+    completed faces (a guarded receiver's decided arm adds its own)."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+    from sugar_lift_py_tests.unanswered_calls import unanswered_call
+
+    assert not isinstance(exits, NativeOperationExitCarrierV1), type(exits)
+    done = [arm for arm in exits.exits if isinstance(arm, Completed)]
+    (halt,) = [arm for arm in exits.exits if isinstance(arm, Halted)]
+    assert len(done) == completed, exits
+    assert isinstance(halt.effect, UndeterminedRaiseEffect), halt.effect
+    assert unanswered_call(None, site) in halt.owed
+
+
+def test_a_match_mapping_read_with_a_parameter_key_is_the_undecided_read() -> None:
+    """``{'a': 1}`` read at a parameter key: the dict's own read, whose key's
+    hash and equality nothing here decides -- the undecided read, its halt
+    kept, never a carrier waiting on the caller."""
     from sugar_lift_py_tests.sugar.match_sugar import _read
 
     site = _site()
-    key, coordinate = _formal(site)
+    key, _coordinate = _formal(site)
     subject = fresh(DictValue, ((StringValue("a"), TermValue(1)),))
 
-    pending = _read(subject, key, site, None)
-
-    _assert_index_deferred(pending, coordinate)
-    exits = pending.discharge(None, {coordinate.coordinate_cid: StringValue("a")})
-    assert exits.completed_value() == TermValue(1)
+    _assert_undecided_read(_read(subject, key, site, None), site)
 
 
-def test_a_match_projection_composes_a_deferred_read() -> None:
-    """A pattern's read that waits on its caller (the carrier) enrolls the
-    pattern's next step, run on the item the caller's actual selects."""
+def test_a_match_projection_composes_the_undecided_read() -> None:
+    """A pattern's read at a parameter key runs the pattern's next step on
+    the read's completed face; its halt face stands."""
     from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import Completed
     from sugar_lift_py_tests.sugar.match_sugar import _each, _read
 
     site = _site()
-    key, coordinate = _formal(site)
+    key, _coordinate = _formal(site)
     subject = fresh(DictValue, ((StringValue("a"), TermValue(1)),))
 
-    pending = _each(
+    exits = _each(
         _read(subject, key, site, None),
         lambda item: ExitSet.completed(("item", item)),
     )
 
-    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
-    exits = pending.discharge(None, {coordinate.coordinate_cid: StringValue("a")})
-    assert exits.completed_value() == ("item", TermValue(1))
+    _assert_undecided_read(exits, site)
+    (done,) = [arm for arm in exits.exits if isinstance(arm, Completed)]
+    assert done.value[0] == "item"
 
 
-def test_a_walrus_read_with_a_parameter_index_defers_to_the_caller() -> None:
+def test_a_walrus_read_with_a_parameter_index_is_the_undecided_read() -> None:
     from sugar_lift_py_tests.floor.named_expression_value import (
         NamedExpressionValue,
     )
 
     site = _site()
-    index, coordinate = _formal(site)
+    index, _coordinate = _formal(site)
     walrus = NamedExpressionValue("ys", fresh(ListValue, (TermValue(1), TermValue(2))))
 
-    pending = walrus.subscript(index, site)
-
-    _assert_index_deferred(pending, coordinate)
-    exits = pending.discharge(None, {coordinate.coordinate_cid: TermValue(1)})
-    read = exits.completed_value()
-    assert isinstance(read, NamedExpressionValue), type(read)
-    assert read.name == "ys"
-    assert read.presented_value == TermValue(2)
+    _assert_undecided_read(walrus.subscript(index, site), site)
 
 
-def test_a_mapping_object_getitem_with_a_parameter_key_defers_to_the_caller() -> None:
+def test_a_mapping_object_getitem_with_a_parameter_key_is_the_undecided_read() -> (
+    None
+):
     from sugar_lift_py_tests.floor.mapping_object_value import MappingObjectValue
 
     site = _site()
-    key, coordinate = _formal(site)
+    key, _coordinate = _formal(site)
     mapping = MappingObjectValue(
         "Registry",
         (),
@@ -382,34 +392,25 @@ def test_a_mapping_object_getitem_with_a_parameter_key_defers_to_the_caller() ->
         allocation=FRAME_FRESH,
     )
 
-    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
-    from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
-
-    owed = (unanswered_call(None, site),)
-    for pending in (
+    for exits in (
         mapping.subscript(key, site),
         mapping.call_method_value(
             "__getitem__", (key,), owner="test", blame=site, ctx=None
         ),
     ):
-        _assert_index_deferred(pending, coordinate)
-        exits = pending.discharge(None, {coordinate.coordinate_cid: StringValue("a")})
         # The dict base's storage is not current
-        # (``MappingObjectValue._builtin_dict``): the caller's key reads it
-        # in the undecided form -- two faces, each owing the ``undecided``
-        # member (reason ``unanswered``) at the read's site -- never the
-        # entry it holds and never a refusal.
-        (done,) = [arm for arm in exits.exits if isinstance(arm, Completed)]
-        (halt,) = [arm for arm in exits.exits if isinstance(arm, Halted)]
+        # (``MappingObjectValue._builtin_dict``) and the key is a parameter:
+        # the undecided read -- two faces, each owing the ``undecided``
+        # member at the read's site -- never the entry it holds, never a
+        # refusal and never a carrier.
+        _assert_undecided_read(exits, site)
         assert exits.completed_value() is None
-        assert done.owed == halt.owed == owed
-        assert owed_calls(exits) == owed
 
 
-def test_a_guarded_parameter_arm_defers_its_read_through_the_door() -> None:
+def test_a_guarded_parameter_arm_is_the_undecided_read_through_the_door() -> None:
     """``(xs if c else (5,))[0]``: each arm is read through the one door, so
-    the parameter arm's read waits on its caller and resolves with the
-    caller's actual, beside the other arm's read under its own polarity."""
+    the parameter arm is the undecided read under its polarity, beside the
+    other arm's read under its own; nothing waits on the caller."""
     from sugar_lift_py_tests.floor import GuardedValue
     from sugar_lift_py_tests.ir import atomic, not_
     from sugar_lift_py_tests.operations.subscript_operation import (
@@ -418,27 +419,60 @@ def test_a_guarded_parameter_arm_defers_its_read_through_the_door() -> None:
     from sugar_lift_py_tests.outcome import Completed
 
     site = _site()
-    receiver, coordinate = _formal(site, "xs", 0)
+    receiver, _coordinate = _formal(site, "xs", 0)
     guard = atomic("chosen", [])
     guarded = GuardedValue(guard, receiver, _tuple(5))
 
-    pending = discharge_subscript(
+    exits = discharge_subscript(
         guarded, TermValue(0), site, None, owner="SubscriptSugar"
     )
 
-    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
-    assert pending.demand.operator == "subscript"
-    assert pending.demand.operand_coordinate_cids == (coordinate.coordinate_cid, None)
-    exits = pending.discharge(None, {coordinate.coordinate_cid: _tuple(7)})
-    assert all(isinstance(face, Completed) for face in exits.exits), exits
-    assert {(face.guard, face.value) for face in exits.exits} == {
-        (guard, TermValue(7)),
-        (not_(guard), TermValue(5)),
+    _assert_undecided_read(exits, site, completed=2)
+    assert (not_(guard), TermValue(5)) in {
+        (face.guard, face.value)
+        for face in exits.exits
+        if isinstance(face, Completed)
     }
 
 
+def test_a_parameter_receiver_read_is_the_undecided_read() -> None:
+    """``p[0]`` and ``p[1:]`` on a parameter: nothing decides ``type(p)`` or
+    its ``__getitem__``, and an item read gives ``p`` no class input
+    (``nodes._receiver_class_parameters``), so the read is the one undecided
+    read -- never a ``subscript`` carrier."""
+    from sugar_lift_py_tests.floor.slice_value import SliceValue
+    from sugar_lift_py_tests.operations.subscript_operation import (
+        discharge_subscript,
+    )
+
+    site = _site()
+    receiver, _coordinate = _formal(site, "xs", 0)
+
+    for index in (TermValue(0), SliceValue(TermValue(1), None, None)):
+        _assert_undecided_read(
+            discharge_subscript(receiver, index, site, None, owner="SubscriptSugar"),
+            site,
+        )
+
+
+def test_the_subscript_mint_and_its_projector_are_gone() -> None:
+    """The deferred read is deleted (#7757, audit 2 row NEW-1): no
+    ``defer_formal_subscript`` mint, no ``subscript`` or ``slice`` projector,
+    and neither operator among the production carrier operators."""
+    from sugar_lift_py_tests import caller_parameter_contract
+    from sugar_lift_py_tests.operations import subscript_operation
+
+    assert not hasattr(subscript_operation, "defer_formal_subscript")
+    for operator in ("subscript", "slice"):
+        assert operator not in caller_parameter_contract._NATIVE_OPERATION_PROJECTORS
+        assert (
+            operator
+            not in caller_parameter_contract.production_native_operation_operators()
+        )
+
+
 # ---------------------------------------------------------------------------
-# A parameter in a slice bound: the slice defers, the read continues on it
+# A parameter in a slice bound: the slice completes, its reader reads it
 # ---------------------------------------------------------------------------
 
 
@@ -446,63 +480,65 @@ def _tuple(*values: int) -> TupleValue:
     return TupleValue(tuple(TermValue(value) for value in values))
 
 
-def test_a_parameter_slice_bound_defers_the_slice_to_the_caller() -> None:
-    from sugar_lift_py_tests.floor.slice_value import construct_slice
+def test_a_parameter_slice_bound_completes_the_slice() -> None:
+    """``BUILD_SLICE`` never raises: a parameter bound stands in the slice
+    as its symbolic value, and no ``slice`` carrier is minted."""
+    from sugar_lift_py_tests.floor.slice_value import SliceValue, construct_slice
 
     site = _site()
-    start, coordinate = _formal(site, "start", 0)
+    start, _coordinate = _formal(site, "start", 0)
 
-    pending = construct_slice(start, None, None, site)
+    outcome = construct_slice(start, None, None)
 
-    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
-    assert pending.demand.operator == "slice"
-    assert pending.demand.operand_coordinate_cids == (
-        coordinate.coordinate_cid,
-        None,
-        None,
-    )
+    assert not isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
+    assert outcome.completed_value() == SliceValue(start, None, None)
 
 
 def test_a_slice_with_no_parameter_bound_completes_here() -> None:
     from sugar_lift_py_tests.floor.slice_value import SliceValue, construct_slice
 
-    outcome = construct_slice(TermValue(1), None, None, _site())
+    outcome = construct_slice(TermValue(1), None, None)
 
     assert outcome.completed_value() == SliceValue(TermValue(1), None, None)
 
 
-def test_a_parameter_slice_read_with_actual_one_is_the_tail() -> None:
-    """``(0, 1, 2)[start:]`` with ``start`` 1 is ``(1, 2)``."""
+def test_a_parameter_slice_read_is_the_undecided_read() -> None:
+    """``(0, 1, 2)[start:]``: the tuple's own read, whose bound's type
+    nothing here decides -- the undecided read, its halt kept.  The same
+    read at a decided bound 1 is ``(1, 2)``."""
     from sugar_lift_py_tests.floor.slice_value import construct_slice
     from sugar_lift_py_tests.operations.subscript_operation import (
         discharge_subscript,
     )
 
     site = _site()
-    start, coordinate = _formal(site, "start", 0)
+    start, _coordinate = _formal(site, "start", 0)
 
-    pending = construct_slice(start, None, None, site).and_then(
-        lambda index: discharge_subscript(
-            _tuple(0, 1, 2), index, site, None, owner="SubscriptSugar"
+    def read(bound):
+        return construct_slice(bound, None, None).and_then(
+            lambda index: discharge_subscript(
+                _tuple(0, 1, 2), index, site, None, owner="SubscriptSugar"
+            )
         )
-    )
-    exits = pending.discharge(None, {coordinate.coordinate_cid: TermValue(1)})
 
-    assert exits.completed_value() == _tuple(1, 2)
+    _assert_undecided_read(read(start), site)
+    assert read(TermValue(1)).completed_value() == _tuple(1, 2)
 
 
-def test_a_source_parameter_slice_bound_reaches_the_slice_carrier() -> None:
+def test_a_source_parameter_slice_bound_is_read_with_its_halt_kept() -> None:
+    """``def tail(start): return (0, 1, 2)[start:]``: no ``slice`` carrier;
+    the read keeps an undetermined halt."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome.exit_set import Halted
+
     source = "def tail(start):\n    return (0, 1, 2)[start:]\n"
     tree = _tree(source, "parameter-slice-helper.py")
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-    (coordinate,) = function.sugar().formal_coordinates
 
     outcome = function.sugar().desugar(None)
 
-    assert isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
-    assert outcome.demand.operator == "slice"
-    assert outcome.demand.operand_coordinate_cids == (
-        coordinate.coordinate_cid,
-        None,
-        None,
-    )
+    assert not isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
+    assert any(
+        isinstance(arm, Halted) and isinstance(arm.effect, UndeterminedRaiseEffect)
+        for arm in outcome.exits
+    ), outcome

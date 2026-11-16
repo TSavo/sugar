@@ -20,6 +20,18 @@ class _Site:
     line_col_span = _Span()
 
 
+def _keyed_read(receiver_term, index_term):
+    """The undecided read's value, keyed per evaluation (#7757, audit 2 row
+    NEW-1): ``python:subscript_result(<receiver>, <index>, <key>)``."""
+    from sugar_lift_py_tests.ir import str_const
+    from sugar_lift_py_tests.occurrence import occurrence_key
+
+    return ctor(
+        "python:subscript_result",
+        [receiver_term, index_term, str_const(occurrence_key(_Site()))],
+    )
+
+
 class _RecordingTermIndex:
     def __init__(self) -> None:
         self.term = make_var("index")
@@ -43,7 +55,7 @@ def test_symbolic_subscript_projects_its_index_through_the_owned_term_door() -> 
     outcome = operation.submit(receiver, None)
 
     (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
-    assert done.value.term == ctor("py.subscript", [receiver.term, index.term])
+    assert done.value.term == _keyed_read(receiver.term, index.term)
     assert index.owners == ["SymbolicValue.subscript"]
 
 
@@ -69,7 +81,7 @@ def test_opaque_callsite_subscript_is_the_one_undecided_read() -> None:
     (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
     (halt,) = [arm for arm in outcome.exits if isinstance(arm, Halted)]
     assert len(outcome.exits) == 2
-    assert done.value.term == ctor("py.subscript", [callsite.term, index.term])
+    assert done.value.term == _keyed_read(callsite.term, index.term)
     assert halt.effect.producer_node_owner == "CallSiteValue.subscript"
     assert index.owners == ["CallSiteValue.subscript"]
 

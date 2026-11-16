@@ -102,8 +102,8 @@ def test_the_identity_post_is_stated_inline(tmp_path: Path) -> None:
 
 def test_a_compound_post_is_stated_inline(tmp_path: Path) -> None:
     # No operation on a formal: a parameter in any operand of a subscript
-    # (``xs[0]``, ``[1, 2][i]``) is decided by its caller's actual (the
-    # ``subscript`` carrier) and states no post of its own.  A container
+    # (``xs[0]``, ``[1, 2][i]``) is the undecided read, owed, and states no
+    # value of its own.  A container
     # built from the formal states a compound term.
     project = tmp_path / "linkunit"
     _stage_cli_project(

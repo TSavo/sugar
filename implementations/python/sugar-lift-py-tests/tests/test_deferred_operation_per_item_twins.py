@@ -28,6 +28,14 @@ per evaluation where it evaluates (``occurrence_key(site)`` under the live
 item's path), as ``undecided_binary_terms`` does: each item's read of
 ``c.count`` is its own ``python:attribute_result("count", c, <key>)``.
 
+A subscript read on a formal (``c[0]``, ``c[0:]``) is no carrier any more
+(#7757, audit 2 row NEW-1): it is the undecided read, whose value is keyed
+per evaluation, ``python:subscript_result(<receiver>, <index>, <key>)``, the
+key ``occurrence_key(site)`` taken where the read evaluates -- inside a live
+item, that item's path.  A ``__getitem__`` that counts returns 1, then 2, and
+the two items' reads are two terms, so the truth ``r[0] != r[1]`` is never
+``unsat`` and the lie ``r[0] == r[1]`` never ``sat``.
+
 A lying claim is never ``sat``; a truthful one is never ``unsat``.  Each
 half goes through ``run_source_through_real_solver``: real ``sugar mint``
 then real ``sugar prove``.
@@ -103,6 +111,22 @@ _SHAPES = {
         "    out = []\n"
         "    for _ in (1, 2):\n"
         "        out.append(c[0])\n"
+        "    return out\n"
+        "\n"
+        "\n"
+        "def test_twice():\n"
+        "    r = twice(Counter())\n"
+        "    assert {claim}\n",
+        "r[0] != r[1]",
+        "r[0] == r[1]",
+    ),
+    # ``c[0:]`` on the formal ``c``: the counting ``__getitem__`` takes the
+    # slice, each item's read its own evaluation (#7757, audit 2 row NEW-1).
+    "slice-per-item": (
+        _COUNTER + "def twice(c):\n"
+        "    out = []\n"
+        "    for _ in (1, 2):\n"
+        "        out.append(c[0:])\n"
         "    return out\n"
         "\n"
         "\n"

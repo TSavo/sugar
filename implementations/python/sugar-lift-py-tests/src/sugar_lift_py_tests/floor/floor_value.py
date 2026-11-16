@@ -415,25 +415,53 @@ class FloorValue:
         opaque-subscript law.  It is the one two-faced unanswered outcome
         (``ExitSet.two_faced``), and the one form every undecided subscript
         takes -- ``SymbolicValue.subscript_with`` and the opaque arm of
-        ``CallSiteValue.subscript_with`` answer through it too: the symbolic
-        ``py.subscript(<receiver>, <index>)`` completes only under
-        ``python:subscript.completes(python:subscript(<term>, <site>))``,
-        keyed on the exact source site so two subscripts of the same term are
-        never forced to agree, and the complement halts with an
-        ``UndeterminedRaiseEffect`` (producer ``owner``); both arms owe the
-        ``undecided`` member (reason ``unanswered``) at the read's site.  No
-        ``KeyError`` or ``IndexError`` is guessed and no member is chosen.
+        ``CallSiteValue.subscript_with`` answer through it too.  Its value is
+        keyed per evaluation (#7757, audit 2 row NEW-1, the owner's key
+        rule): ``python:subscript_result(<receiver>, <index>, <key>)``, the
+        key ``occurrence_key(site)`` taken where the read evaluates (inside a
+        live loop item it carries that item's path), so two evaluations of
+        one read are never one term -- a counting ``__getitem__`` read twice
+        is two unknowns.  It completes only under
+        ``python:subscript_op.completes(python:subscript_op(<result>,
+        <key>))`` (``undecided_result_terms``), and the complement halts with
+        an ``UndeterminedRaiseEffect`` (producer ``owner``, occurrence the
+        same key); both arms owe the ``undecided`` member (reason
+        ``unanswered``) at the read's site.  No ``KeyError`` or
+        ``IndexError`` is guessed and no member is chosen.  ``py.subscript``
+        stays the decided and typed paths' term.
 
         A read that reached the floor with no site is the lifter's own gap:
         it cannot key the completes atom or the debt, so it refuses by name.
         """
-        return self._undecided_protocol_faces(
+        if site is None:
+            _siteless_undecided_read(
+                owner, f"{type(self).__name__}[{type(index).__name__}]", "Subscript"
+            )
+        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+        from sugar_lift_py_tests.floor.object_identity import identity_term
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.occurrence import occurrence_key
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        key = occurrence_key(site)
+        term, completes = undecided_result_terms(
             "subscript",
-            (index,),
-            site,
-            owner=owner,
-            read=f"{type(self).__name__}[{type(index).__name__}]",
-            node="Subscript",
+            (
+                identity_term(self, site, "receiver", owner=owner),
+                identity_term(index, site, "operand0", owner=owner),
+            ),
+            key,
+        )
+        return ExitSet.two_faced(
+            SymbolicValue(term),
+            UndeterminedRaiseEffect(
+                blame=str(site),
+                occurrence=key,
+                producer_node_owner=owner,
+                site=site,
+            ),
+            guard=completes,
+            site=site,
         )
 
     def undecided_iteration(self, site, *, owner: str):
@@ -739,8 +767,8 @@ class FloorValue:
         """Whether this value's type is decided to bind no item method
         ``method`` (``__getitem__``, ``__setitem__``, ``__delitem__``), so
         the item operation raises ``TypeError`` whatever its key is.  The
-        item doors ask it before waiting on a formal key or value: the
-        receiver's own answer needs neither.  Default False: only a value
+        item doors ask it first: the receiver's own answer needs neither the
+        key nor the value.  Default False: only a value
         that reads its type's namespace (a source instance,
         ``ObjectValue.lacks_item_method``) decides absence."""
         del method
@@ -1440,13 +1468,31 @@ def receiver_lacks_item_method(receiver, method: str) -> bool:
     """Whether an item operation's ``receiver`` -- itself no formal -- is a
     floor value whose type is decided to bind no item ``method``
     (``FloorValue.lacks_item_method``).  Each item door (subscript, store,
-    delete) asks it before waiting on a formal key or value: the receiver
-    answers with its ``TypeError`` whatever they are."""
+    delete) asks it first: the receiver answers with its ``TypeError``
+    whatever the key and the value are."""
     return (
         isinstance(receiver, FloorValue)
         and getattr(receiver, "formal_coordinate", None) is None
         and receiver.lacks_item_method(method)
     )
+
+
+def index_type_undecided(index) -> bool:
+    """Whether the lift leaves the runtime type of a read's ``index`` -- or,
+    for a slice, of any bound it carries -- undecided (a parameter's, an
+    opaque call result's): its ``__index__``, ``__hash__`` and ``__eq__``
+    are then not decided, so the read may select any member or raise
+    anything.  A receiver whose own read cannot say more over such a key
+    reads it as the one undecided read (``FloorValue.undecided_subscript``),
+    never as a completion with its halt dropped (#7757)."""
+    from sugar_lift_py_tests.floor.slice_value import SliceValue
+
+    if isinstance(index, SliceValue):
+        return any(
+            isinstance(bound, FloorValue) and not bound.runtime_type_is_decided()
+            for bound in (index.lower, index.upper, index.step)
+        )
+    return isinstance(index, FloorValue) and not index.runtime_type_is_decided()
 
 
 def _siteless_undecided_read(owner: str, read: str, node: str) -> NoReturn:

@@ -642,16 +642,6 @@ def test_helper_alone_slice_store_is_undischarged_setitem() -> None:
     _undecided_halt("def helper(obj, value):\n    obj[1:3] = value\n    return obj\n")
 
 
-def _unanswered(pending, actuals) -> None:
-    """An absent actual leaves the store the cited unanswered face (#7825):
-    owed as an ``undecided`` member, never an unconditional completion."""
-    from sugar_lift_py_tests.unanswered_calls import owed_calls
-
-    exits = pending.discharge(None, actuals)
-    assert pending.unanswered_call() in owed_calls(exits)
-    assert exits.completed_value() is None
-
-
 def test_discrimination_helper_alone_is_not_completed() -> None:
     _, pending = _helper("def helper(obj, value):\n    obj[1:3] = value\n")
     with pytest.raises(AssertionError):
@@ -750,21 +740,6 @@ def test_discrimination_production_slice_store_is_not_identity() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_wrong_coordinate_cannot_discharge_slice_store() -> None:
-    """The store waits on no actual (#7757); the one slice operation that
-    still does is a formal bound's (``slice`` carrier), and an actual under a
-    wrong coordinate leaves it the cited unanswered face."""
-    function, pending = _helper("def helper(obj, lo, value):\n    obj[lo:3] = value\n")
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "slice"
-    lo = next(
-        coordinate
-        for coordinate in function.formal_coordinates()
-        if coordinate.declared_name == "lo"
-    )
-    _unanswered(pending, {f"wrong:{lo.coordinate_cid}": TermValue(1)})
-
-
 def test_missing_actual_does_not_fabricate_completed_slice_store() -> None:
     # With no caller's actual the store is owed, never an unconditional
     # completion: the dispatched edge where ``obj``'s class is an input, the
@@ -849,59 +824,51 @@ def test_per_phase_occurrence_identity_setitem_vs_delitem() -> None:
         assert set_e.producer_node_owner == del_e.producer_node_owner
 
 
-def test_a_formal_slice_bound_defers_the_slice_to_the_caller() -> None:
-    """A parameter bound (``obj[lo:3] = value``) defers the slice itself: the
-    ``slice`` carrier, the bound's coordinate in its slot (#7757).  The helper
-    alone is the cited unanswered face, never a fabricated store."""
-    function, pending = _helper("def helper(obj, lo, value):\n    obj[lo:3] = value\n")
-    lo = next(
-        coordinate
-        for coordinate in function.sugar().formal_coordinates
-        if coordinate.declared_name == "lo"
+def test_a_formal_slice_bound_mints_no_slice_carrier() -> None:
+    """A parameter bound (``obj[lo:3] = value``) waits on no actual (#7757,
+    audit 2 row NEW-1): ``BUILD_SLICE`` never raises, so the slice completes
+    holding ``lo``, and the store is made on it.  ``obj`` is stored into and
+    used no other way, so its class is an input and the store is the
+    dispatched ``__setitem__`` edge, whose operands carry the slice."""
+    _function, outcome = _helper("def helper(obj, lo, value):\n    obj[lo:3] = value\n")
+
+    call = _dispatched_call(outcome)
+    assert "py.slice" in repr(call), call
+    assert outcome.completed_value() is None
+
+
+def test_a_formal_slice_bound_on_an_undecided_receiver_keeps_its_halt() -> None:
+    """``obj`` read bare too: its class is no input, so the store on the
+    slice holding ``lo`` is the undecided item mutation, its halt kept."""
+    _undecided_halt(
+        "def helper(obj, lo, value):\n    obj[lo:3] = value\n    return obj\n"
     )
 
-    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
-    assert pending.demand.operator == "slice"
-    assert pending.demand.operand_coordinate_cids == (lo.coordinate_cid, None, None)
-    _unanswered(pending, {})
 
-
-def test_a_caller_completes_a_store_through_a_formal_slice_bound() -> None:
-    """The ``slice`` carrier discharged with ``lo``: the slice the caller
-    decided, then the store on it.
-
-    Expected shape changed (#8857): ``obj``'s class is an input of
-    ``helper``'s contract, so the store the slice continues into is the
-    dispatched ``__setitem__`` edge, answered at prove by the class the
-    caller binds (``list.__setitem__``'s law, #8864), never a list decided
-    here: it completes under its own ``completes`` atom and halts under the
-    complement, both owed.  The slice carrier binds ``lo`` alone."""
+def test_the_store_on_the_formal_bound_slice_is_the_dispatched_edge() -> None:
+    """``helper(obj, lo, value)`` alone: ``obj``'s class is an input of its
+    contract (#8857), so the store on the slice is the dispatched
+    ``__setitem__`` edge, answered at prove by the class a caller binds
+    (``list.__setitem__``'s law, #8864): it completes under its own
+    ``completes`` atom and halts under the complement, both owed.  No slice
+    carrier binds ``lo`` (#7757, audit 2 row NEW-1)."""
     from sugar_lift_py_tests.outcome import Halted
 
-    function, pending = _helper("def helper(obj, lo, value):\n    obj[lo:3] = value\n")
-    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
-    assert pending.demand.operator == "slice"
-    actuals = {"obj": _ints(0, 1, 2, 3), "lo": TermValue(1), "value": _ints(9)}
-    outcome = pending.discharge(
-        None,
-        {
-            coordinate.coordinate_cid: actuals[coordinate.declared_name]
-            for coordinate in function.formal_coordinates()
-        },
-    )
+    function, outcome = _helper("def helper(obj, lo, value):\n    obj[lo:3] = value\n")
+    assert not isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
     assert isinstance(outcome, ExitSet), type(outcome)
     assert len(outcome.exits) == 2, outcome
     assert sum(isinstance(face, Completed) for face in outcome.exits) == 1
     (halted,) = [face for face in outcome.exits if isinstance(face, Halted)]
     assert halted.effect.producer_node_owner == "UnknownCallee:dispatch:__setitem__"
 
-    # The store's post-state the Floor decides on the caller's list, at the
-    # slice ``lo`` decides: the one item mutation on that list.
+    # The store's post-state the Floor decides on a decided list, at the
+    # slice a decided ``lo`` makes: the one item mutation on that list.
     stored = _stored_list(
         item_mutation(
             "__setitem__",
-            actuals["obj"],
-            (SliceValue(TermValue(1), TermValue(3), None), actuals["value"]),
+            _ints(0, 1, 2, 3),
+            (SliceValue(TermValue(1), TermValue(3), None), _ints(9)),
             function.body[0].fragment,
             None,
             unit=None,

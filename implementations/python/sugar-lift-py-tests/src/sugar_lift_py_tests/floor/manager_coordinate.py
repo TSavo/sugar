@@ -168,6 +168,16 @@ class RaisedExitTypeValue(FloorValue):
         # A class identity alone does not construct its metaclass operations.
         return False
 
+    def subscript(self, index, site):
+        """``C[k]`` on a raised native class: its metaclass's ``__getitem__``
+        and its ``__class_getitem__`` are not constructed from the identity
+        alone, so the read is the one undecided read, its halt kept -- what
+        the ``subscript`` carrier this coordinate deferred as ended as, now
+        without waiting on a caller's actual (#7757)."""
+        return self.undecided_subscript(
+            index, site, owner="ManagerCoordinate.subscript"
+        )
+
     def exception_type_identity(self):
         return self.identity
 

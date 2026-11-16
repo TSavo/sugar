@@ -140,7 +140,7 @@ def test_a_subscript_of_an_arrived_items_field_keeps_its_halt_undecided() -> Non
 
     completed = [arm for arm in outcome.exits if isinstance(arm, Completed)]
     assert all(
-        "python:subscript.completes" in repr(arm.guard) for arm in completed
+        "python:subscript_op.completes" in repr(arm.guard) for arm in completed
     ), completed
 
 

@@ -122,14 +122,13 @@ def test_a_formal_still_enrols_its_link_unit() -> None:
     assert unit.candidates == ()
 
 
-def test_a_formal_subscript_owes_the_carrier_demand_instead() -> None:
-    """``p[0]`` on the formal ``p`` is decided by the caller's actual: the
-    body defers as the ``subscript`` carrier, the one form that replaced the
-    owed contract (#6611).  The function's own proof has no caller, so it
-    states that carrier discharged with no actual (#7766,
-    ``as_its_own_proof_states``): the operation completes only under its own
-    undecided guard, halts under the complement, and owes the one
-    ``undecided`` member.  Its halt is kept."""
+def test_a_formal_subscript_owes_the_undecided_read_instead() -> None:
+    """``p[0]`` on the formal ``p``: nothing decides ``type(p)`` or its
+    ``__getitem__``, so the read is the one undecided read (#7757, audit 2
+    row NEW-1), no carrier waiting on a caller's actual.  The function's own
+    proof states it: the operation completes only under its own undecided
+    guard, halts under the complement, and owes the one ``undecided``
+    member.  Its halt is kept."""
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )
@@ -143,21 +142,18 @@ def test_a_formal_subscript_owes_the_carrier_demand_instead() -> None:
         for node in _tree(_FAMILIES["bare"]).nodes()
         if isinstance(node, nodes.FunctionDef) and node.name == "f"
     ]
-    # What a caller discharges with its actual: the subscript carrier.
-    pending = fn.sugar().desugar(None)
-    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
-    assert pending.demand.operator == "subscript"
-    # What the function's own proof states: the carrier with no actual.
+    # No subscript carrier: the body is read at once.
+    assert not isinstance(fn.sugar().desugar(None), NativeOperationExitCarrierV1)
     outcome = function_universe_outcome(fn)
     assert isinstance(outcome, ExitSet), type(outcome)
     assert len(outcome.exits) == 2
     (completed,) = (exit_ for exit_ in outcome.exits if isinstance(exit_, Completed))
     (halted,) = outcome.halts()
-    # A subscript takes the one form every undecided subscript takes, over
-    # the demand's own operand terms (``_unanswered_exits``): it completes
-    # under ``python:subscript.completes``, never under a second, generic
+    # The one form every undecided subscript takes
+    # (``FloorValue.undecided_subscript``): it completes under
+    # ``python:subscript_op.completes``, never under a generic
     # unanswered-operation guard.
-    assert "python:subscript.completes" in repr(completed.guard)
+    assert "python:subscript_op.completes" in repr(completed.guard)
     assert "python:unanswered_native_operation" not in repr(completed.guard)
     assert type(halted.effect) is UndeterminedRaiseEffect
     assert halted.effect.exception_name is None

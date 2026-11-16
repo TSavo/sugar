@@ -8,8 +8,11 @@ this one calls a floor's ``subscript`` / ``subscript_with`` /
 inside those protocol methods (``test_subscript_one_door_7757``): every read
 (a source subscript, a pattern's projection, a walrus's presented value, a
 mapping object's ``__getitem__``, an opaque operation's downstream value, each
-arm of a guarded value) reaches the receiver through the door, so a parameter
-in either operand defers to the caller wherever the read is made.
+arm of a guarded value) reaches the receiver through the door.  No read waits
+on a caller's actual (#7757): a parameter receiver (``p[k]``, ``p[a:b]``) is
+the one undecided read (``FloorValue.undecided_subscript``), and a parameter
+index or slice bound on a receiver the lift decides is that receiver's own
+read with the symbolic key, wherever the read is made.
 """
 
 from __future__ import annotations
@@ -73,51 +76,23 @@ class SubscriptOperation:
         )
 
 
-def defer_formal_subscript(receiver, index, site):
-    """``receiver[index]`` with a function parameter in either operand: the
-    ``subscript`` carrier, decided by the caller's actual.
-
-    The one mint of the ``subscript`` demand.  A formal receiver (``p[0]``)
-    and a formal index on any receiver (``[1, 2][i]``) defer alike, one
-    coordinate slot per ordered operand; ``None`` when neither operand is a
-    formal, and the receiver answers the read itself.  A parameter inside a
-    slice bound (``xs[start:]``) never reaches here as a formal: the slice it
-    bounds is itself deferred (``construct_slice``, the ``slice`` carrier), and
-    the read runs on the slice the caller's actual decides.
-    """
-    coordinates = (
-        getattr(receiver, "formal_coordinate", None),
-        getattr(index, "formal_coordinate", None),
-    )
-    if all(coordinate is None for coordinate in coordinates):
-        return None
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-
-    return NativeOperationExitCarrierV1.mint(
-        site=site,
-        operator="subscript",
-        operands=(receiver, index),
-        coordinates=coordinates,
-    )
-
-
 def discharge_subscript(
     receiver, index, site, ctx, *, owner: str, use_occurrence=None
 ) -> ExitSet:
     """The one door for ``receiver[index]``, under ``ctx``.
 
-    ``SubscriptSugar`` (a source subscript), the mutation door's
+    ``SubscriptSugar`` (a source subscript) and the mutation door's
     read-modify-store (``obj[k] += v``,
-    ``PathContainerCallSugar._read_modify_store``) and the ``subscript``
-    carrier's projector (a
-    formal's subscript, at the caller's actuals) all answer here, so an
-    actual is asked exactly what the source subscript asks.  A parameter in
-    either operand defers to the caller (:func:`defer_formal_subscript`); an
-    actual that is still its own caller's formal defers again.  Otherwise a
-    receiver that overrides ``subscript_with`` owns the operation edge; any
-    other answers through ``subscript_with_occurrence`` / ``subscript``.
+    ``PathContainerCallSugar._read_modify_store``) both answer here.  A
+    receiver whose type binds no ``__getitem__`` raises its ``TypeError``.
+    Otherwise a receiver that overrides ``subscript_with`` owns the operation
+    edge; any other answers through ``subscript_with_occurrence`` /
+    ``subscript``.  A parameter receiver answers as every receiver whose type
+    nothing here decides does: the one undecided read, both faces, owed
+    (``SymbolicValue.subscript``).  A parameter index (or a slice whose bound
+    is one) on a receiver the lift decides is that receiver's own read with
+    the symbolic key, every halt face of it kept, as an opaque call result's
+    key is.  No read waits on a caller's actual (#7757).
     """
     from sugar_lift_py_tests.floor.floor_value import (
         FloorValue,
@@ -134,12 +109,8 @@ def discharge_subscript(
     )
     if receiver_lacks_item_method(receiver, "__getitem__"):
         # The receiver's type binds no ``__getitem__``: the read raises
-        # ``TypeError`` whatever the index is, so it waits on no formal
-        # index (``ObjectValue.subscript_with``).
+        # ``TypeError`` whatever the index is (``ObjectValue.subscript_with``).
         return receiver.subscript_with(operation, ctx)
-    deferred = defer_formal_subscript(receiver, index, site)
-    if deferred is not None:
-        return deferred
     if (
         isinstance(receiver, FloorValue)
         and type(receiver).subscript_with is not FloorValue.subscript_with

@@ -183,6 +183,14 @@ class ClassValue(FloorValue):
     def subscript(self, index, site):
         # Generic class subscript (Class[T]) is a type coordinate, not a dig.
         # Recognition-era subscription tables are gone; emit the coordinate.
+        # A key (or a slice bound) whose type nothing here decides -- a
+        # parameter's, an opaque call result's -- may make the class's
+        # ``__class_getitem__`` raise anything: the one undecided read, its
+        # halt kept (#7757).
+        from sugar_lift_py_tests.floor.floor_value import index_type_undecided
+
+        if index_type_undecided(index):
+            return self.undecided_subscript(index, site, owner="ClassValue.subscript")
         return self.py_subscript_coordinate(index, site)
 
     def setitem(self, index, value, site, ctx):

@@ -2654,6 +2654,43 @@ mod tests {
     }
 
     #[test]
+    fn python_keyed_subscript_result_is_the_same_read_per_evaluation() {
+        // The kit's undecided read is keyed per evaluation (#7757, audit 2
+        // row NEW-1): `python:subscript_result(<receiver>, <index>, <key>)`
+        // completing under `python:subscript_op.completes(...)`. Over a
+        // decided `str` and `int` it is the same `str[int]` read.
+        let at = |i: i64| {
+            ctor(
+                "python:subscript_result",
+                vec![string_const("xyz"), int_const(i), string_const("k")],
+            )
+        };
+        assert_twin(
+            py_eq(at(1), string_const("y")),
+            py_eq(at(1), string_const("z")),
+            "keyed \"xyz\"[1]",
+        );
+        assert_twin(
+            py_completes("subscript_op", at(2), "k"),
+            py_completes("subscript_op", at(3), "k"),
+            "keyed \"xyz\"[3] completes",
+        );
+        // Over an undecided receiver, two evaluations are two unknowns: a
+        // counting `__getitem__` read twice may differ.
+        let read = |key: &str| {
+            ctor(
+                "python:subscript_result",
+                vec![var("s"), int_const(0), string_const(key)],
+            )
+        };
+        assert_eq!(
+            solve(&not_formula(py_eq(read("k#1"), read("k#2")))),
+            "sat",
+            "two evaluations of an undecided read may differ"
+        );
+    }
+
+    #[test]
     fn python_str_subscript_is_smt_string_index() {
         let at = |i: i64| ctor("py.subscript", vec![string_const("xyz"), int_const(i)]);
         assert_twin(

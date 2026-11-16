@@ -56,7 +56,13 @@ class MutableGlobalValue(FloorValue):
         )
 
     def subscript(self, index, site):
-        if self.kind != "dict":
+        from sugar_lift_py_tests.floor.floor_value import index_type_undecided
+
+        # A key whose type nothing here decides -- a parameter's, an opaque
+        # call result's -- may raise anything from its ``__hash__`` or
+        # ``__eq__``, not only ``KeyError``: the one undecided read, its halt
+        # kept (#7757).
+        if self.kind != "dict" or index_type_undecided(index):
             return self.undecided_subscript(
                 index, site, owner="MutableGlobalValue.subscript"
             )

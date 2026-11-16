@@ -324,7 +324,7 @@ class ComprehensionValue(GuardStableValue):
         # the reduction, and its readers read what it projected (#7757).  The
         # display is read through the one subscript door
         # (``discharge_subscript``), never its subscript protocol directly: a
-        # parameter index defers to the caller as a source subscript's does.
+        # parameter index is read as a source subscript's is.
         if self.display is not None:
             from sugar_lift_py_tests.operations.subscript_operation import (
                 discharge_subscript,
@@ -340,7 +340,16 @@ class ComprehensionValue(GuardStableValue):
         # A runtime comprehension still has Python collection semantics, but
         # neither its members nor its cardinality are available at lift time.
         # Preserve the real lookup as a proof-bearing coordinate; do not invent
-        # an element or silently assume the lookup succeeds.
+        # an element or silently assume the lookup succeeds.  A key (or a
+        # slice bound) whose type nothing here decides -- a parameter's, an
+        # opaque call result's -- may raise anything: the one undecided read,
+        # its halt kept (#7757).
+        from sugar_lift_py_tests.floor.floor_value import index_type_undecided
+
+        if index_type_undecided(index):
+            return self.undecided_subscript(
+                index, site, owner="ComprehensionValue.subscript"
+            )
         return self.py_subscript_coordinate(index, site)
 
     def setitem(  # pyright: ignore[reportIncompatibleMethodOverride]

@@ -176,8 +176,8 @@ class ImportMemberValue(FloorValue):
 
         The member's type and ``__getitem__`` are undecided, so the #7587
         opaque-subscript law applies exactly as to a bodiless call result: the
-        symbolic ``py.subscript(<member>, <key>)`` completes only under
-        ``python:subscript.completes(python:subscript(<term>, <site>))`` and
+        keyed ``python:subscript_result(<member>, <key>, <occurrence>)``
+        completes only under ``python:subscript_op.completes(...)`` and
         the complement halts with an ``UndeterminedRaiseEffect``.  No entry is
         chosen and no ``KeyError`` is guessed: the one undecided read,
         ``undecided_subscript``.  A key with no term refuses by its own name

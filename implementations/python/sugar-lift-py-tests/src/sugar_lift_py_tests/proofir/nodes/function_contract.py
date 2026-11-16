@@ -468,9 +468,13 @@ def _normalize_ir_term(term: IrTerm, env: dict[str, IrTerm]) -> IrTerm | None:
 
 
 def _fold_numeric_ctor(name: str, args: list[IrTerm | None]) -> IrTerm | None:
+    # ``py.subscript(r, i)`` and the keyed undecided read
+    # ``python:subscript_result(r, i, <key>)`` (#7757 NEW-1) are one read.
     if (
-        name == "py.subscript"
-        and len(args) == 2
+        (
+            (name == "py.subscript" and len(args) == 2)
+            or (name == "python:subscript_result" and len(args) == 3)
+        )
         and isinstance(args[0], _Ctor)
         and args[0].name in {"array", "tuple"}
         and isinstance(args[1], _ConstInt)
