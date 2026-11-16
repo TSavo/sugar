@@ -471,9 +471,14 @@ class ComprehensionSugar(ConstructedTermSugar):
           (``_member_unpack``), whose halt is an arm as it is; nothing ties
           it to a member of the iterable, so a read of it owes
           (``read_of_bound_value``).
+        - The item begins from the recurrence's record of the module
+          globals (``loop_recurrence_sugar.entering_the_recurrence``), as a
+          loop's symbolic item does: a call in it reads a global an earlier
+          member's call may have changed as the recurrence left it.
         - What the comprehension completes with is read outside every item,
           by the outermost generator (``_complete``): its own coordinate,
-          whose read owes.
+          whose read owes, carrying the records its calls made
+          (``_records_left``).
 
         No halt is guessed and none is dropped.  An expression's halt offers
         no record of its own: the statement that runs the comprehension
@@ -486,18 +491,27 @@ class ComprehensionSugar(ConstructedTermSugar):
             stepped,
         )
         from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
-        from sugar_lift_py_tests.sugar.loop_recurrence_sugar import loop_item
+        from sugar_lift_py_tests.sugar.loop_recurrence_sugar import (
+            entering_the_recurrence,
+            loop_item,
+        )
 
         owner = "ComprehensionSugar"
         member = loop_item(generator.binding_coordinate_cid, iterable, self.site)
         segment = loop_symbolic_item_segment(generator.binding_coordinate_cid)
+        # The item may follow members whose calls changed a module global: it
+        # begins from the recurrence's record of the globals, the one
+        # starting context a loop's symbolic item begins from too
+        # (``entering_the_recurrence``, #7757 H7), never from the globals as
+        # they stood before the comprehension.
+        begins = entering_the_recurrence(generator.binding_coordinate_cid, ctx)
 
         def item():
             with entered(segment):
                 # The item is unpacked into the target before any condition
                 # or element reads it: the unpack's halt is an arm of the
                 # comprehension as it is.
-                unpacked, enter = self._member_unpack(generator, member, ctx)
+                unpacked, enter = self._member_unpack(generator, member, begins)
                 return unpacked.and_then(
                     lambda leaves: self._desugar_filters(
                         generator,
@@ -515,7 +529,9 @@ class ComprehensionSugar(ConstructedTermSugar):
                 # An inner generator's items are its outer item's: the
                 # outermost generator completes the comprehension.
                 return ran
-            completed = ran.and_then(lambda done: self._complete(done, outer=outer))
+            completed = ran.and_then(
+                lambda done: self._complete(done, generator, outer=outer)
+            )
             return self._generator(completed) if self._pulled_later() else completed
 
         return _require_exit_set(
@@ -1323,10 +1339,13 @@ class ComprehensionSugar(ConstructedTermSugar):
 
         return generator.filters[filter_index].desugar(ctx).and_then(after_guard)
 
-    def _complete(self, ran, *, outer) -> ExitSet:
-        """What the comprehension run as its recurrence completes with, from
-        what its item ran (``ran``, ``_ItemRan``), read outside every item
-        (``_recurrence``)."""
+    def _complete(self, ran, generator, *, outer) -> ExitSet:
+        """What the comprehension run as its recurrence over ``generator``
+        (the outermost) completes with, from what its item ran (``ran``,
+        ``_ItemRan``), read outside every item (``_recurrence``): the calls'
+        records the item made (``_records_left``), then each walrus's last
+        write (``_symbolic_writes``), as a loop publishes its records before
+        its names."""
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
         from sugar_lift_py_tests.floor.named_expression_value import (
             carry_walrus_binds,
@@ -1356,12 +1375,72 @@ class ComprehensionSugar(ConstructedTermSugar):
         if self.kind == "py.generatorexp":
             # A generator's writes wait for it to be consumed.
             return folded
+        owner = str(self.site)
         return folded.and_then(
             lambda fold: ExitSet.completed(
                 carry_walrus_binds(
-                    self._symbolic_writes(writes, outer, owner=str(self.site)), fold
+                    (
+                        *self._records_left(generator, writes, owner=owner),
+                        *self._symbolic_writes(writes, outer, owner=owner),
+                    ),
+                    fold,
                 )
             )
+        )
+
+    def _records_left(self, generator, writes, *, owner) -> tuple:
+        """The calls' records (``AfterCallRecordValue``) the comprehension
+        run as its recurrence over ``generator`` carries out, from
+        ``writes`` (what its item's calls, conditions and element left, in
+        evaluation order): the record the item began from
+        (``loop_recurrence_sugar.global_recurrence``) and each call's, by the
+        one rule a loop's records leave by (``records_left``), each carried
+        as a call carries its record (``bind_after_call``: a write of its
+        key) to the statement that runs the comprehension.
+
+        A walrus's write is carried out by name (``_symbolic_writes``), and a
+        call's record is no name's value: before, every one was skipped, and
+        a call after the comprehension that read a module global a member's
+        call changed was handed the global as it stood before the
+        comprehension (#7757 H14).
+
+        Which members reach a call is not decided here, and the item covers
+        every member and none, so each record stands where some member
+        reached it: guarded by ``python.comprehension.wrote`` of its key, as
+        a walrus's last write is (``_symbolic_writes``), conjoined with the
+        guard it already stood under.  Under the complement the global is
+        what the records before it, or the binding itself, left
+        (``call_site_sugar._global_after_call``)."""
+        from sugar_lift_py_tests.floor.call_site_value import record_under
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            NamedExpressionValue,
+        )
+        from sugar_lift_py_tests.ir import atomic, str_const
+        from sugar_lift_py_tests.sugar.loop_recurrence_sugar import (
+            global_recurrence,
+            records_left,
+        )
+
+        target = generator.binding_coordinate_cid
+        made = (
+            global_recurrence(target),
+            *((bind.name, bind.assigned_value) for bind in writes),
+        )
+        occurrence = self.occurrence_term(owner=owner)
+        this_evaluation = self._evaluation_key()
+        return tuple(
+            NamedExpressionValue(
+                key,
+                record_under(
+                    record,
+                    atomic(
+                        "python.comprehension.wrote",
+                        [occurrence, this_evaluation, str_const(key)],
+                    ),
+                ),
+                evaluation=key,
+            )
+            for key, record in records_left(target, made)
         )
 
     def _symbolic_writes(self, writes, ctx, *, owner) -> tuple:

@@ -1671,22 +1671,36 @@ def _global_after_call(ctx, name: str, keys, unit=None):
     an ``if``, ``if_sugar._arm_evaluations``) is that state under its guard
     and, under the complement, the state the records before it (or the
     binding itself) left: the join of the arms (``GuardedValue``), never
-    one arm's state on the other's path.  Each state is the object the
+    one arm's state on the other's path.  A key the arms of an ``if``
+    bound to different records holds their join (``is_call_record``): the
+    state is each arm's record's on its side of the join's selection, never
+    the join skipped and an older state read in its place (#7757 L4).
+    Each state is the object the
     binding holds, in another state: it keeps that binding's input
     coordinate, so the alias rule (``object_identity._objects``) still
     finds it one object with an actual read of the same global."""
     temporal = getattr(ctx, "temporal", None)
     if temporal is None or not keys:
         return None
-    from sugar_lift_py_tests.floor.call_site_value import AfterCallRecordValue
+    from sugar_lift_py_tests.floor.call_site_value import is_call_record
     from sugar_lift_py_tests.floor.guarded_value import GuardedValue
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
     from sugar_lift_py_tests.source_call_resolution import object_after_call
 
     slot = ("global", name)
     keys = frozenset(keys)
-    # Every record that may name the global, newest first, up to the
-    # newest binding of its keys.
+
+    def leaves(value):
+        # A call's key holds its record, or the join of the records the arms
+        # of an ``if`` bound it to (``is_call_record``): each arm's record.
+        if isinstance(value, GuardedValue):
+            yield from leaves(value.when_true)
+            yield from leaves(value.when_false)
+        else:
+            yield value
+
+    # Every record (or join of records) that may name the global, newest
+    # first, up to the newest binding of its keys.
     reached = []
     entry = None
     for binding in reversed(temporal.bindings):
@@ -1694,10 +1708,10 @@ def _global_after_call(ctx, name: str, keys, unit=None):
             entry = binding
             break
         value = binding.value
-        if isinstance(value, AfterCallRecordValue):
-            formal = value.formal_of(slot)
-            if formal is not None:
-                reached.append((value, formal))
+        if is_call_record(value) and any(
+            record.formal_of(slot) is not None for record in leaves(value)
+        ):
+            reached.append(value)
     if entry is None or not reached:
         return None
     # Read only where a record follows it: a module-final binding asks for
@@ -1705,37 +1719,68 @@ def _global_after_call(ctx, name: str, keys, unit=None):
     # where nothing changed the global.
     held = bound_value_read(entry.value)
     may_change = None
-    states = []
-    for record, formal in reached:
+
+    def formal_of(record):
+        # The global's formal in ``record``, where the call may change it.
+        nonlocal may_change
+        formal = record.formal_of(slot)
+        if formal is None:
+            return None
         if not record.names(slot):
             # It reaches every global: this one only where a call may change
             # the object it holds.
             if may_change is None:
                 may_change = unit is None or global_may_change(unit, name, held)
             if not may_change:
-                continue
-        states.append((record, formal))
-        if record.guard is None:
-            # The state on every path: nothing older is read.
+                return None
+        return formal
+
+    def on_every_path(value):
+        # Whether ``value`` states the global on every path: nothing older
+        # is read past it.
+        if isinstance(value, GuardedValue):
+            return on_every_path(value.when_true) and on_every_path(value.when_false)
+        return value.guard is None and formal_of(value) is not None
+
+    states = []
+    for value in reached:
+        if all(formal_of(record) is None for record in leaves(value)):
+            continue
+        states.append(value)
+        if on_every_path(value):
             break
     if not states:
         return None
     coordinate = getattr(held, "formal_coordinate", None)
-    oldest, _formal = states[-1]
-    if oldest.guard is not None and held is None:
+    if not on_every_path(states[-1]) and held is None:
         # Some path keeps the binding's own value, and it reads no one value:
         # no join of the arms stands, and the call carries the undecided
         # global (``global_value_at_call``).
         return None
-    state = held
-    for record, formal in reversed(states):
-        after = SymbolicValue(
-            object_after_call(record.result, formal), formal_coordinate=coordinate
+
+    def after(value, state):
+        # ``state`` as ``value`` left it: a join, each arm's record on its
+        # own side of the join's selection (#7757 L4); a record, the call's
+        # state where its guard holds, ``state`` under the complement.
+        if isinstance(value, GuardedValue):
+            return GuardedValue(
+                value.guard,
+                after(value.when_true, state),
+                after(value.when_false, state),
+            )
+        formal = formal_of(value)
+        if formal is None:
+            return state
+        changed = SymbolicValue(
+            object_after_call(value.result, formal), formal_coordinate=coordinate
         )
-        if record.guard is None:
-            state = after
-        else:
-            state = GuardedValue(record.guard, after, state)
+        if value.guard is None:
+            return changed
+        return GuardedValue(value.guard, changed, state)
+
+    state = held
+    for value in reversed(states):
+        state = after(value, state)
     return state
 
 

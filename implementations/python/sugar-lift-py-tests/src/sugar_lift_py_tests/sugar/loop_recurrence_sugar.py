@@ -128,8 +128,8 @@ def _else_left_from(runtime, else_ctx, witnesses, halt, *, site):
 RECURRENCE_HEAD = "python:loop.recurrence"
 # The recurrence's one symbolic item of the iterable (``loop_item``).
 LOOP_ITEM = "python:loop.item"
-# The suffix of a loop's own evaluation key of the module globals as its
-# recurrence leaves them (``LoopRecurrenceSugar._global_recurrence``).
+# The suffix of a recurrence's own evaluation key of the module globals as
+# its symbolic item begins from them (``global_recurrence``).
 _GLOBAL_RECURRENCE = "#global-recurrence"
 # The values a live loop's recurrence states and nothing decides.
 _RECURRENCE_VALUES = frozenset({RECURRENCE_HEAD, LOOP_ITEM})
@@ -148,6 +148,78 @@ def recurrence_head(target_cid: str, key: str):
         [str_const(target_cid), str_const(key)],
         symbol_kind="coordinate",
     )
+
+
+def global_recurrence(target_cid: str):
+    """``(key, record)``: the module globals as the items before a
+    recurrence's symbolic item left them -- a ``for``'s or ``while``'s
+    (``LoopRecurrenceSugar``), a comprehension generator's
+    (``ComprehensionSugar._recurrence``), ``target_cid`` naming it as
+    ``recurrence_head`` does -- one call's record (``AfterCallRecordValue``)
+    whose result is the recurrence's fixed point of that state
+    (``recurrence_head``) and which reaches every module global
+    (``EVERY_GLOBAL_SLOT``), under the recurrence's own evaluation key of
+    it (the construct-time key: ``evaluation_here`` qualifies it where it
+    is bound).  A later call that reads a mutable global reads
+    ``python:after(python:loop.recurrence(<target>, <key>),
+    "global:<name>")`` (``call_site_sugar._global_after_call``): the
+    global as an unknown number of earlier items left it, which nothing
+    decides -- never the value from before the recurrence, which an item
+    after the first may no longer see (#7757 H7)."""
+    from sugar_lift_py_tests.floor.call_site_value import (
+        EVERY_GLOBAL_SLOT,
+        AfterCallRecordValue,
+    )
+    from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
+
+    key = f"{EVALUATION_PREFIX}{target_cid}{_GLOBAL_RECURRENCE}"
+    return key, AfterCallRecordValue(
+        recurrence_head(target_cid, key), ((EVERY_GLOBAL_SLOT, None),)
+    )
+
+
+def entering_the_recurrence(target_cid: str, ctx):
+    """``ctx`` (where a recurrence's symbolic item, or a loop
+    recurrence's ``else`` suite, begins) with the recurrence's record of the
+    module globals bound (``global_recurrence``): an item may follow earlier
+    items whose calls changed a global, so a call in it reads the global as
+    the recurrence leaves it, never as it stood before the recurrence.  The
+    one starting context a loop's recurrence and a comprehension's run their
+    symbolic item from.  ``ctx`` itself where it holds no temporal."""
+    if getattr(ctx, "temporal", None) is None:
+        return ctx
+    from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+    from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
+
+    key, record = global_recurrence(target_cid)
+    return ScopeRebind(evaluation_here(key), record).extend_scope(ctx)
+
+
+def records_left(target_cid: str, made) -> tuple:
+    """The calls' records (``AfterCallRecordValue``) a recurrence leaves
+    with, from ``made`` -- the ``(key, value)`` bindings a path through it
+    made, in the order it made them -- in that order: the one rule a loop's
+    (``LoopRecurrenceSugar._records_made_here``) and a comprehension's
+    (``ComprehensionSugar._complete``) records leave by.
+
+    Published, the newest record a later call reads is the last one a path
+    through the recurrence made: on an item that ran in hand, that item's
+    call; on the symbolic item, its call, over the record it began with
+    (``global_recurrence``); a record made under a guard (one arm of an
+    ``if`` in an item) keeps it.
+
+    Nothing where the path made none, or made only the record the
+    recurrence began its item with: the globals then stand as they did
+    before it.  A key an ``if`` in the item joined from arms that bound
+    different records holds their join (``is_call_record``), which leaves
+    as it is."""
+    from sugar_lift_py_tests.floor.call_site_value import is_call_record
+
+    records = tuple((key, value) for key, value in made if is_call_record(value))
+    _began_key, began = global_recurrence(target_cid)
+    if all(value == began for _name, value in records):
+        return ()
+    return records
 
 
 def loop_item(target_cid: str, iterable, site=None):
@@ -1009,9 +1081,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             if test_sugar is None:
                 # The item may follow items whose calls changed a module
                 # global: it begins from the loop's record of the globals
-                # (``_entering_the_recurrence``, #7757 H7).
+                # (``entering_the_recurrence``, #7757 H7).
                 return run_body(
-                    self._entering_the_recurrence(item_ctx),
+                    entering_the_recurrence(self.target_cid, item_ctx),
                     target_bindings,
                     item_guard,
                     recurrence,
@@ -1029,7 +1101,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 item_ctx = ReduceContext.root(owner="LoopRecurrenceSugar.symbolic-test")
             # The test, and the body after it, begin from the loop's record
             # of the globals, as a ``for``'s item does.
-            item_ctx = self._entering_the_recurrence(item_ctx)
+            item_ctx = entering_the_recurrence(self.target_cid, item_ctx)
             with item():
                 tested = self._tested(test_sugar, item_ctx)
             return tested.and_then(
@@ -1159,8 +1231,8 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             )
             # The suite may run after items whose calls changed a module
             # global: it begins from the loop's record of the globals, as
-            # the symbolic item does (``_entering_the_recurrence``, #7757 H7).
-            ctx = self._entering_the_recurrence(ctx)
+            # the symbolic item does (``entering_the_recurrence``, #7757 H7).
+            ctx = entering_the_recurrence(self.target_cid, ctx)
         return ctx, reduce_block_to_exitset(tuple(else_sugars), ctx)
 
     def _after_symbolic_else(self, runtime, context, posted):
@@ -2372,44 +2444,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
         return replace(self, entered=temporal)
 
-    def _global_recurrence(self):
-        """``(key, record)``: the module globals as the items before the
-        recurrence's symbolic item left them, one call's record
-        (``AfterCallRecordValue``) whose result is the loop's fixed point of
-        that state (``recurrence_head``) and which reaches every module
-        global (``EVERY_GLOBAL_SLOT``), under the loop's own evaluation key
-        of it.  A later call that reads a mutable global reads
-        ``python:after(python:loop.recurrence(<target>, <key>),
-        "global:<name>")`` (``call_site_sugar._global_after_call``): the
-        global as an unknown number of earlier items left it, which nothing
-        decides -- never the pre-loop value an item after the first may no
-        longer see (#7757 H7)."""
-        from sugar_lift_py_tests.floor.call_site_value import (
-            EVERY_GLOBAL_SLOT,
-            AfterCallRecordValue,
-        )
-        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
-        from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
-
-        key = f"{EVALUATION_PREFIX}{self.target_cid}{_GLOBAL_RECURRENCE}"
-        return evaluation_here(key), AfterCallRecordValue(
-            recurrence_head(self.target_cid, key), ((EVERY_GLOBAL_SLOT, None),)
-        )
-
-    def _entering_the_recurrence(self, ctx):
-        """``ctx`` (where the symbolic item, or the recurrence's ``else``
-        suite, begins) with the loop's record of the module globals bound
-        (``_global_recurrence``): an item may follow earlier items whose
-        calls changed a global, so a call in it reads the global as the
-        recurrence leaves it, never as it stood before the loop.  ``ctx``
-        itself where it holds no temporal."""
-        if getattr(ctx, "temporal", None) is None:
-            return ctx
-        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
-
-        key, record = self._global_recurrence()
-        return ScopeRebind(key, record).extend_scope(ctx)
-
     def _records_made_here(self, context):
         """The calls' records (``AfterCallRecordValue``) the loop made on the
         path that leaves it in ``context`` -- each bound there and not, to
@@ -2423,33 +2457,27 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         context its items ran in is not carried out, and the records a call
         made in it went with it: after ``for _ in xs: bump()`` a call that
         read a module global was handed the global as it stood before the
-        loop (#7757 H7).  Published, the newest record a later call reads
-        is the last one a path through the loop made: on an item that ran
-        in hand, that item's call; on the recurrence, its symbolic item's,
-        over the record it began with (``_global_recurrence``); a record
-        made under a guard (one arm of an ``if`` in an item) keeps it.
+        loop (#7757 H7).  Which of them leave is the one rule a recurrence's
+        records leave by (``records_left``), which a comprehension's
+        recurrence leaves by too.
 
-        Nothing where the path made none, or made only the record the
-        recurrence began its item with: the globals then stand as they did
-        before the loop.  Nothing where the loop never held where it began
-        (``entered`` None) or ``context`` holds no temporal."""
+        Nothing where the loop never held where it began (``entered`` None)
+        or ``context`` holds no temporal."""
         temporal = getattr(context, "temporal", None)
         if temporal is None or self.entered is None:
             return ()
-        from sugar_lift_py_tests.floor.call_site_value import AfterCallRecordValue
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
 
         before = {binding.name: binding.value for binding in self.entered.bindings}
         made = tuple(
-            binding
+            (binding.name, binding.value)
             for binding in temporal.bindings
-            if isinstance(binding.value, AfterCallRecordValue)
-            and before.get(binding.name) is not binding.value
+            if before.get(binding.name) is not binding.value
         )
-        _key, began = self._global_recurrence()
-        if all(binding.value == began for binding in made):
-            return ()
-        return tuple(ScopeRebind(binding.name, binding.value) for binding in made)
+        return tuple(
+            ScopeRebind(name, record)
+            for name, record in records_left(self.target_cid, made)
+        )
 
     def _publication(self, coordinate_values, posted):
         """What the loop leaves bound for a read after it, on every exit it
