@@ -1776,8 +1776,22 @@ fn smt_quote(name: &str) -> String {
     }
 }
 
+/// A ctor whose argument count varies from one application to the next, so
+/// one `(declare-fun ...)` keyed by its bare name cannot carry every use: a
+/// closure (`closure:<name>`), and a Python dispatched method call
+/// (`call:dispatch:<m>`), whose actuals are the receiver, the written
+/// actuals, an optional `py.lookup` (zero-argument `super()`) and one
+/// `py.class` per decided operand. `Derived()` (`call:dispatch:__init__` over
+/// the instance and its class) and a `super().__init__()` in the same module
+/// (`call:dispatch:__init__` over `self`, `py.lookup`, `py.class`) are two
+/// arities of one name: declared once by the first, the second is z3's
+/// "unknown constant", a refused row (#7757). Each arity is its own symbol.
+fn arity_mangled_ctor(name: &str) -> bool {
+    name.starts_with("closure:") || name.starts_with("call:dispatch:")
+}
+
 fn smt_ctor_head(name: &str, arity: usize) -> String {
-    if name.starts_with("closure:") && !name.contains("#arity") {
+    if arity_mangled_ctor(name) && !name.contains("#arity") {
         smt_quote(&format!("{name}#arity{arity}"))
     } else {
         smt_quote(name)
@@ -1789,7 +1803,7 @@ fn smt_ctor_head_for_signature(name: &str, arity: usize, arg_sorts: &[String]) -
 }
 
 fn ctor_decl_key_for_signature(name: &str, arity: usize, arg_sorts: &[String]) -> String {
-    let mut key = if name.starts_with("closure:") {
+    let mut key = if arity_mangled_ctor(name) {
         format!("{name}#arity{arity}")
     } else {
         name.to_string()

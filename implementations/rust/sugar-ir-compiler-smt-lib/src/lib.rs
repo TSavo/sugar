@@ -519,6 +519,39 @@ mod tests {
         }
     }
 
+    // `Derived()` is `call:dispatch:__init__(<instance>, py.class(...))` and a
+    // `super().__init__()` in the same module is `call:dispatch:__init__(self,
+    // py.lookup(...), py.class(...))`: one name at two arities (#7757). Each
+    // arity is its own declared symbol, so z3 never reads the second as an
+    // "unknown constant" (a refused row).
+    #[test]
+    fn dispatched_calls_at_two_arities_are_two_symbols() {
+        let inv = serde_json::json!({"kind":"and","operands":[
+            eq(ctor("call:dispatch:__init__", vec![var("o"), int_const(1)]), int_const(0)),
+            eq(
+                ctor("call:dispatch:__init__", vec![var("s"), int_const(2), int_const(3)]),
+                int_const(0)
+            )
+        ]});
+        let parts = fixture_compile_asserted_to_parts(&inv).expect("compile");
+        let script = format!("{}{}", parts.preamble, parts.body);
+        assert!(
+            script.contains("|call:dispatch:__init__#arity2|")
+                && script.contains("|call:dispatch:__init__#arity3|")
+                && !script.contains("|call:dispatch:__init__|"),
+            "a dispatched call is declared once per arity:\n{script}"
+        );
+        if let Some(z3) = which_z3() {
+            let out = run_z3(&z3, &script);
+            assert!(
+                !out.to_lowercase().contains("error")
+                    && !out.contains("unknown constant")
+                    && out.contains("sat"),
+                "two arities of one dispatch must lower:\n{out}\n--- script ---\n{script}"
+            );
+        }
+    }
+
     #[test]
     fn string_tainted_vars_drive_method_receiver_declarations() {
         let recv = var("displayed");
