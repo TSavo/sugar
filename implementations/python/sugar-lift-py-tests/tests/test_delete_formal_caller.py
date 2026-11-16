@@ -48,12 +48,12 @@ An attribute delete mints no carrier either (#7757, audit 2 row NEW-1):
      (``undecided_attribute_mutation_faces``): it completes only under
      ``python:delattr.completes(...)`` or raises something undetermined
      (owner ``UndecidedDelattr``), both faces owing the undecided member;
-  3. ``r``'s type decided by the lift -> its floor's own ``delattr``: a
-     present field completes gone, a getter-only property is the named
-     ``AttributeError``; a name the fields do not hold is the dispatched
-     ``__delattr__`` (the lift never decides a member's absence), with no
-     class the instance names the undecided delete (owner
-     ``ObjectValue.delattr``).
+  3. ``r``'s type decided by the lift -> its floor's own ``delattr``: on a
+     source instance every delete is the dispatched ``__delattr__`` (#7757
+     H1c: the lift decides neither a present field's plain removal, nor a
+     getter-only property's ``AttributeError``, nor a member's absence);
+     with no class the instance names, the undecided delete (owner
+     ``ObjectValue.delattr``), both faces kept and owed.
 
 Equality tooth: production-minted operator set == projector-table keys, and
 neither holds ``setitem``, ``delitem`` or ``delattr_named``.
@@ -590,8 +590,20 @@ def test_mutable_dict_receiver_completes_delete_with_key_gone() -> None:
     assert value.entries == ()
 
 
-def test_writable_field_delete_completes_with_attribute_gone() -> None:
-    """``del obj.field`` on writable instance field → field absent."""
+def test_writable_field_delete_is_the_undecided_delattr_never_decided_gone() -> None:
+    """``del obj.field`` on an instance holding ``field``: Python runs
+    ``type(obj).__delattr__(obj, "field")``.
+
+    Expected verdict changed (#7757 H1c, #9056/#9060): the lift no longer
+    decides that the delete is ``object``'s plain removal of an instance
+    field.  ``Widget`` names no class, so nothing here decides the
+    ``__delattr__`` (``ObjectValue._dispatched_delattr``): it is the one
+    undecided attribute mutation, both faces kept and owed, as for a name
+    the fields do not hold.  No completed face states the instance -- with
+    the field gone, or still holding it: what the object holds after the
+    delete is the call's (``receiver_after_call``), never read as it was."""
+    from sugar_lift_py_tests.floor.object_identity import contents_current
+
     receiver = ObjectValue(
         class_name="Widget",
         fields=(ObjectField("field", TermValue(7)),),
@@ -599,16 +611,17 @@ def test_writable_field_delete_completes_with_attribute_gone() -> None:
         allocation=FRAME_FRESH,
     )
     exits = _attr_door(receiver)
-    assert isinstance(exits.exits[0], Completed)
-    stored = exits.exits[0].value
-    record = getattr(stored, "record", None)
-    objs = []
-    if isinstance(stored, ObjectValue):
-        objs = [stored]
-    elif record is not None:
-        objs = [s for s in record.statements if isinstance(s, ObjectValue)]
-    assert objs, f"no ObjectValue post-state: {type(stored).__name__}"
-    assert not any(f.name == "field" for f in objs[-1].fields), objs[-1].fields
+    _undecided_delete(
+        exits,
+        stated=False,
+        owner="ObjectValue.delattr",
+        noun="delattr",
+    )
+    for face in exits.exits:
+        if isinstance(face, Completed):
+            assert not (
+                isinstance(face.value, ObjectValue) and contents_current(face.value)
+            ), face.value
 
 
 def test_discrimination_completed_delete_is_not_halted() -> None:
