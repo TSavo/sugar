@@ -255,14 +255,19 @@ def test_a_name_rebound_from_the_list_constructor_builds_no_decided_list(
 
 
 def test_an_undecided_receiver_stays_opaque_and_is_unknown_after(tmp_path):
-    # The formal's method waits for the caller's actual (the ``method_call``
-    # carrier); once a list is supplied, ``x`` is unknown after the call.
-    from test_formal_method_call_defers import _carrier, _discharge
-
+    # ``x`` is read bare (``return x``), so its class is no input: the
+    # formal's ``append`` is the one unanswered call, two-faced and owed,
+    # never a carrier waiting for the caller's actual (#7757 NEW-1).  ``x``
+    # is unknown after the call.
     source = "def f(x):\n    x.append(1)\n    return x\n"
-    exits = _discharge(_carrier(tmp_path, source), fresh(ListValue, ()))
-    (value,) = [payload for kind, payload, _ in _rows(exits) if kind == "return"]
+    returns, halts = _returns(tmp_path, source)
+    (value,) = returns
     assert _is_unknown_after_call(value, "x")
+    assert [
+        halt.producer_node_owner
+        for halt in halts
+        if isinstance(halt, UndeterminedRaiseEffect)
+    ] == ["UnknownCallee:append"]
 
 
 def test_a_value_that_holds_the_list_is_unknown_after_its_mutation(tmp_path):

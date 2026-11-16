@@ -152,19 +152,6 @@ def _function_outcome(source: str):
     return function.sugar().desugar(None)
 
 
-def _method_call_carrier(source: str):
-    """A method call whose receiver or operand is a formal waits for the
-    caller's actual: the ``method_call`` carrier, never a completion."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-
-    outcome = _function_outcome(source)
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
-    assert outcome.demand.operator == "method_call"
-    return outcome
-
-
 def test_a_head_that_is_not_import_bound_is_an_unbound_name() -> None:
     # THE DISCRIMINATION. `zz` is bound by nothing, so it is never an import
     # coordinate, and it is no free Var either: Python raises ``NameError``
@@ -183,11 +170,21 @@ def test_a_head_that_is_not_import_bound_is_an_unbound_name() -> None:
 def test_a_shadowed_import_alias_is_not_import_bound() -> None:
     # The alias is rebound before the use, so the reaching definition is no
     # longer the import: the head is the formal ``m``, an ordinary receiver.
-    carrier = _method_call_carrier(
+    # ``m`` is read bare (``np = m``, the argument), so its class is no input
+    # of ``turn``'s contract: the call is the one unanswered call, two-faced
+    # and owed (#7757 NEW-1), never a carrier waiting for an actual and never
+    # the closed ``numpy.rot90`` coordinate.
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    outcome = _function_outcome(
         "import numpy as np\n\n\ndef turn(m):\n    np = m\n    return np.rot90(m)\n"
     )
-    assert carrier.demand.operand_coordinate_cids[0] is not None
-    assert carrier.operands[1].value == "rot90"
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    owners = {halt.effect.producer_node_owner for halt in outcome.halts()}
+    assert "UnknownCallee:rot90" in owners
+    assert "UnknownCallee:numpy.rot90" not in owners
 
 
 def test_a_parameter_method_call_is_untouched() -> None:

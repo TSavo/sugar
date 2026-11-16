@@ -11,8 +11,9 @@ the value ``python:call_result(<call term>, <occurrence>)``, and halts with an
 ``UndeterminedRaiseEffect`` (owner ``UnknownCallee:<name>``) under the
 complement.
 
-A formal receiver or operand defers to the caller's actual through the
-``method_call`` carrier; a place a call may have changed stays the coordinate.
+A formal receiver whose class is no input of the function's contract is this
+same two-faced call, never a carrier waiting for the caller's actual (#7757
+NEW-1); a place a call may have changed stays the coordinate.
 """
 
 from __future__ import annotations
@@ -97,12 +98,13 @@ def test_an_unanswered_method_call_is_two_faced_and_owes_one_call(tmp_path):
     assert len(owed_calls(exits)) == 1
 
 
-def test_a_formal_receiver_waits_for_the_caller(tmp_path):
-    # The caller's actual selects the method; this frame mints no face, and
-    # the undischarged ``method_call`` carrier is never a completion.
-    from test_formal_method_call_defers import _carrier
-
-    _carrier(tmp_path, "def f(y):\n    return y.foo()\n")
+def test_a_formal_receiver_whose_class_is_no_input_is_two_faced(tmp_path):
+    # ``y`` is read bare (``z = y``), so nothing binds its class: the call is
+    # the one unanswered call, one completed face and one raise (#7757
+    # NEW-1), never a carrier waiting for the caller's actual.
+    returns, halts = _split(tmp_path, "def f(y):\n    z = y\n    return y.foo()\n")
+    assert len(returns) == 1
+    assert _owners(halts) == ["UnknownCallee:foo"]
 
 
 def test_a_source_method_is_not_this_law(tmp_path):

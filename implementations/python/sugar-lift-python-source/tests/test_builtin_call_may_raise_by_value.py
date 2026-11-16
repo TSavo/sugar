@@ -310,33 +310,38 @@ def test_a_split_result_is_current_and_its_index_folds(tmp_path, monkeypatch):
     assert "cpython_cited_fold:list.index" in applied
 
 
-def test_a_parameters_index_does_not_fold(tmp_path, monkeypatch):
-    # ``xs`` reaches ``f`` by binding: even a list the caller made in its own
-    # frame is not current here, so nothing reads its contents.
-    from test_formal_method_call_defers import _carrier, _discharge, _faces
+def test_a_parameters_index_does_not_fold(monkeypatch):
+    # ``xs`` reaches ``f`` by binding: ``f``'s own call on it is the
+    # dispatched edge (its class is ``f``'s input), and even a list the
+    # caller made in its own frame is not current once it arrives
+    # (``object_identity.arrived``), so nothing reads its contents.
+    from sugar_lift_py_tests.floor.object_identity import arrived
+    from test_formal_method_call_is_undecided import _faces, _on_actual, _Site
     from test_unprojected_method_call_faces import _owners
 
     applied = _recording_host_applied(monkeypatch)
-    carrier = _carrier(tmp_path, "def f(xs):\n    return xs.index(1)\n")
-    actual = ListValue((TermValue(1),), allocation="made-by-the-caller")
-    _completed, halted = _faces(_discharge(carrier, actual))
+    actual = arrived(
+        ListValue((TermValue(1),), allocation="made-by-the-caller"), _Site()
+    )
+    _completed, halted = _faces(_on_actual("index", actual, (TermValue(1),)))
     assert "cpython_cited_fold:list.index" not in applied
     assert _owners(halted) == ["BuiltinMethodCall:list.index"]
 
 
-def test_a_bound_dicts_items_is_not_read_from_its_contents(tmp_path, monkeypatch):
+def test_a_bound_dicts_items_is_not_read_from_its_contents(monkeypatch):
     # ``DictValue.items()`` was read off a dict that reached the frame by
     # binding (#8084's flagged hand path): it is the opaque method now.
     from sugar_lift_py_tests.floor import DictValue
-    from test_formal_method_call_defers import _carrier, _discharge, _faces
+    from sugar_lift_py_tests.floor.object_identity import arrived
+    from test_formal_method_call_is_undecided import _faces, _on_actual, _Site
     from test_unprojected_method_call_faces import _owners
 
     applied = _recording_host_applied(monkeypatch)
-    carrier = _carrier(tmp_path, "def f(d):\n    return d.items()\n")
-    actual = DictValue(
+    made = DictValue(
         ((StringValue("a"), TermValue(1)),), allocation="made-by-the-caller"
     )
-    _completed, halted = _faces(_discharge(carrier, actual))
+    actual = arrived(made, _Site())
+    _completed, halted = _faces(_on_actual("items", actual))
     assert "cpython_cited_fold:dict.items" not in applied
     # Two-faced under the method's own atom: never the pairs the binding held.
     assert _owners(halted) == ["BuiltinMethodCall:dict.items"]

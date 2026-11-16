@@ -14,6 +14,14 @@ under (``NativeOperationExitCarrierV1.occurrence``) and discharges its own
 operation under it, as its enrolled work already runs
 (``_at_its_occurrence``): each item's operation is its own.
 
+A method call on a formal mints no carrier (#7757 NEW-1): it is the
+dispatched edge where the formal's class is an input, else the one
+unanswered call (``UnknownCalleeCallV1``).  Both state their result as
+``python:call_result(<call term>, python:occurrence(<site>, <path>...))``,
+their completes atom over that result, and their halt at
+``occurrence_key(site)``, each read where the call evaluates: inside a live
+item, that item's path.  So each item's ``c.bump()`` is its own term.
+
 A lying claim is never ``sat``; a truthful one is never ``unsat``.  Each
 half goes through ``run_source_through_real_solver``: real ``sugar mint``
 then real ``sugar prove``.
@@ -44,6 +52,10 @@ _COUNTER = (
     "        self.k += 1\n"
     "        return self.k\n"
     "\n"
+    "    def bump(self):\n"
+    "        self.k += 1\n"
+    "        return self.k\n"
+    "\n"
     "\n"
 )
 
@@ -68,6 +80,39 @@ _SHAPES = {
         "    out = []\n"
         "    for _ in (1, 2):\n"
         "        out.append(c[0])\n"
+        "    return out\n"
+        "\n"
+        "\n"
+        "def test_twice():\n"
+        "    r = twice(Counter())\n"
+        "    assert {claim}\n",
+        "r[0] != r[1]",
+        "r[0] == r[1]",
+    ),
+    # ``c`` is read bare (``d = c``), so its class is no input of
+    # ``twice``'s contract: each item's ``c.bump()`` is the unanswered call.
+    "method-call-per-item": (
+        _COUNTER + "def twice(c):\n"
+        "    d = c\n"
+        "    out = []\n"
+        "    for _ in (1, 2):\n"
+        "        out.append(c.bump())\n"
+        "    return out\n"
+        "\n"
+        "\n"
+        "def test_twice():\n"
+        "    r = twice(Counter())\n"
+        "    assert {claim}\n",
+        "r[0] != r[1]",
+        "r[0] == r[1]",
+    ),
+    # ``c`` is read only as a receiver: its class is ``twice``'s input, so
+    # each item's ``c.bump()`` is the dispatched edge.
+    "dispatched-method-call-per-item": (
+        _COUNTER + "def twice(c):\n"
+        "    out = []\n"
+        "    for _ in (1, 2):\n"
+        "        out.append(c.bump())\n"
         "    return out\n"
         "\n"
         "\n"
