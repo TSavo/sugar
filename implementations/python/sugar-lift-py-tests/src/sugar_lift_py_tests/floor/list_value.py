@@ -83,9 +83,15 @@ class ListValue(GuardStableValue):
         return builtin_attribute_store_exit(name, site=site, owner="ListValue.delattr")
 
     def to_term(self, *, owner: str):
-        # Project elements into FOL — assert equality / dig return faces.
+        # Project elements into FOL — assert equality / dig return faces --
+        # only of contents that are the object's now
+        # (``object_identity.refuse_stale_projection``).
         from sugar_lift_py_tests.ir import ctor
 
+        from .object_identity import contents_stale, refuse_stale_projection
+
+        if contents_stale(self):
+            refuse_stale_projection(self, owner=owner)
         return ctor(
             "array",
             [elt.to_term(owner=owner) for elt in self.elements],

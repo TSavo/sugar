@@ -238,7 +238,8 @@ class ClassDefinitionValue(GuardStableValue):
         and owed, its completion the call's own result coordinate."""
         from sugar_lift_py_tests.call_symbol import call_symbol
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.floor.object_identity import call_operand_terms
+        from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
 
         owner = str(site)
@@ -248,11 +249,8 @@ class ClassDefinitionValue(GuardStableValue):
             parameters=(),
             term=ctor(
                 call_symbol(target),
-                [value.to_term(owner=owner) for value in positional]
-                + [
-                    ctor("py.kwarg", [str_const(name), value.to_term(owner=owner)])
-                    for name, value in keywords
-                ],
+                # Each actual as the call finds it (``identity_term``).
+                call_operand_terms(positional, keywords, site, owner=owner),
                 symbol_kind="coordinate",
             ),
             body=None,
