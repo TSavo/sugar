@@ -4,10 +4,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field as dataclass_field
 from typing import ClassVar
 
-from sugar_lift_py_tests.caller_parameter_contract import (
-    NativeOperationExitCarrierV1,
-    _NATIVE_OPERATION_PROJECTORS,
-)
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _assertion_pair
@@ -44,7 +40,6 @@ class AugAssignSugar(Sugar):
     name: str
     left: Sugar
     right: Sugar
-    operator: str
     operation: Callable
     op_site: object = dataclass_field(compare=False)
     site: object = dataclass_field(compare=False)
@@ -69,7 +64,6 @@ class AugAssignSugar(Sugar):
                 lambda right: project_augmented(
                     left,
                     right,
-                    operator=self.operator,
                     projector=self.operation,
                     site=self.op_site,
                     ctx=ctx,
@@ -95,49 +89,25 @@ def project_augmented(
     left,
     right,
     *,
-    operator: str,
     projector: Callable,
     site,
     ctx,
 ) -> ExitSet:
-    """Mint formal i* demand, or project ground through the explicit projector.
+    """``left OP= right`` through the operator's own in-place edge.
 
-    ``operator`` is the carrier name from ``BinaryOperator.inplace_operator``
-    (e.g. ``iadd``).  ``projector`` is the explicit ``project_iadd`` function.
-    Projector absence is an honorable red — never mint ordinary binary.
-    A ground projection applies under ``ctx``, the statement's context; a
-    minted demand discharges later under its own caller's.
+    ``projector`` is the operator's ``BinaryOperator.project_inplace``: the
+    receiver's ``inplace_binary_operator_with`` floor, then the ordinary
+    binary after ``NotImplemented``, applied under ``ctx``, the statement's
+    context.
+
+    A parameter operand, on either side, is not deferred to a caller: ``OP=``
+    is a protocol with a fallback (``__iop__``, then ``__op__``, then the
+    reflected ``__rop__``), which no one dispatched method states.  So it
+    takes the floor's edge like any other operand: over an undecided operand
+    that is the one undecided binary law's two faces, which complete under
+    their own atom and owe the undecided member, or raise something
+    undetermined (#7757, audit row NEW-1).
     """
-    left_coord = getattr(left, "formal_coordinate", None)
-    right_coord = getattr(right, "formal_coordinate", None)
-    if left_coord is not None or right_coord is not None:
-        if operator not in _NATIVE_OPERATION_PROJECTORS:
-            from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-            from sugar_lift_py_tests.gap.panic import construction_panic
-
-            construction_panic(
-                ConstructionGap(
-                    owner="project_augmented",
-                    blame=str(site),
-                    observed=(
-                        f"formal AugAssign requires enrolled projector "
-                        f"operator={operator!r}; projector is ABSENT"
-                    ),
-                    requested=f"explicit project_* enrolled as operator={operator!r}",
-                    fix=(
-                        f"enroll {operator!r} on _NATIVE_OPERATION_PROJECTORS; "
-                        "do not mint ordinary binary as a silent stand-in"
-                    ),
-                    gap_kind=GapKind.FLOOR,
-                    gap_locus=GapLocus.CONSTRUCTION,
-                )
-            )
-        return NativeOperationExitCarrierV1.mint(
-            site=site,
-            operator=operator,
-            operands=(left, right),
-            coordinates=(left_coord, right_coord),
-        )
     return projector(left, right, site, ctx)
 
 
@@ -165,7 +135,6 @@ class AttributeAugAssignSugar(Sugar):
 
     current: Sugar
     rhs: Sugar
-    operator: str
     operation: Callable
     op_site: object = dataclass_field(compare=False)
     site: object = dataclass_field(compare=False)
@@ -184,7 +153,6 @@ class AttributeAugAssignSugar(Sugar):
                 lambda right: project_augmented(
                     current,
                     right,
-                    operator=self.operator,
                     projector=self.operation,
                     site=self.op_site,
                     ctx=ctx,

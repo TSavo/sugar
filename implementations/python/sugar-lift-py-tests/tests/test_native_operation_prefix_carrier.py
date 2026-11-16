@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
+
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
     ReducerPreEffectStateV1,
+    _NATIVE_OPERATION_PROJECTORS,
 )
 from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
@@ -19,6 +22,25 @@ from sugar_lift_py_tests.outcome.exit_set import partition
 from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.tree import SourceFile
+
+
+@pytest.fixture(autouse=True)
+def _stand_in_carrier_operators(monkeypatch):
+    """The carriers composed here are stand-ins: production mints no
+    ``less_than`` or ``add`` carrier (a comparison or binary operator with a
+    parameter operand is the undecided two faces, #7757 audit row NEW-1), so
+    this module enrolls each floor's explicit call as the stand-in's
+    projector for each test.  What is tested is the prefix composition, not
+    the operator."""
+    from sugar_lift_py_tests.floor.floor_value import (
+        BINARY_FLOOR_OPERATIONS,
+        ORDERING_FLOOR_OPERATIONS,
+    )
+
+    monkeypatch.setitem(
+        _NATIVE_OPERATION_PROJECTORS, "less_than", ORDERING_FLOOR_OPERATIONS["less_than"]
+    )
+    monkeypatch.setitem(_NATIVE_OPERATION_PROJECTORS, "add", BINARY_FLOOR_OPERATIONS["add"])
 
 
 def _coordinate(name: str, ordinal: int) -> FormalParameterCoordinateV1:

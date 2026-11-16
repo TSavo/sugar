@@ -181,9 +181,10 @@ def _call_and_callee(source: str):
     ``python:unknown_callee_call.completes`` atom, halts under the complement
     with nothing named), never ``choose``'s body applied to ``None``.  What
     the body does with ``None`` is stated by ``choose``'s contract over its
-    formal and decided at prove: its reduction is the condition's carrier,
-    pending on ``value < 1`` before either branch is entered, so a halt of the
-    condition is stated ahead of both bodies."""
+    formal and decided at prove: its reduction is the condition's undecided
+    ordering, two-faced on ``value < 1`` before either branch is entered (no
+    carrier, #7757 audit row NEW-1), so a halt of the condition is stated
+    ahead of both bodies."""
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )
@@ -201,9 +202,16 @@ def _call_and_callee(source: str):
     assert type(halted.effect) is UndeterminedRaiseEffect
     assert halted.effect.exception_name is None
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-    pending = function.sugar().desugar(None)
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "less_than"
+    own = function.sugar().desugar(None)
+    assert not isinstance(own, NativeOperationExitCarrierV1)
+    assert isinstance(own, ExitSet)
+    condition_halts = [
+        face
+        for face in own.halts()
+        if face.effect.producer_node_owner == "UndecidedCompare:Lt"
+    ]
+    assert len(condition_halts) == 1
+    assert condition_halts[0].effect.exception_name is None
     return tree, outcome, halted
 
 

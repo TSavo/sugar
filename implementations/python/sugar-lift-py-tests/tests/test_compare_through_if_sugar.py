@@ -1,4 +1,5 @@
-"""Formal ordering comparisons retain their one carrier through ``IfSugar``."""
+"""Formal ordering comparisons keep their two undecided faces through
+``IfSugar``; none is a carrier (#7757, audit row NEW-1)."""
 
 from __future__ import annotations
 
@@ -51,7 +52,7 @@ def _the_call_edge(outcome: object) -> tuple[Completed, Halted]:
     its ``python:unknown_callee_call.completes`` atom with the call's result,
     and halts under the complement with nothing named here.  Which branch
     the actuals select, and the ``TypeError`` of ``None < 2``, are stated by
-    the callee's contract over its formals (the carrier below) and decided at
+    the callee's contract over its formals (its two faces below) and decided at
     prove, where the join binds the actuals."""
     assert isinstance(outcome, ExitSet)
     assert len(outcome.exits) == 2
@@ -66,12 +67,20 @@ def _the_call_edge(outcome: object) -> tuple[Completed, Halted]:
     return completed, halted
 
 
-def test_formal_ordering_condition_creates_exactly_one_carrier() -> None:
-    pending = _function_outcome()
+def test_formal_ordering_condition_creates_no_carrier() -> None:
+    """A parameter operand is no deferred operation (#7757, audit row
+    NEW-1): ``left < right`` is the undecided ordering's two faces, one
+    ``UndecidedCompare:Lt`` halt."""
+    outcome = _function_outcome()
 
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "less_than"
-    assert len(pending.demand.operand_coordinate_cids) == 2
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    assert isinstance(outcome, ExitSet)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "UndecidedCompare:Lt"
+    ]
+    assert len(halts) == 1
 
 
 def test_a_call_of_the_helper_is_its_coordinate_and_edge() -> None:
@@ -95,22 +104,10 @@ def test_a_call_of_the_helper_is_its_coordinate_and_edge() -> None:
 
 
 def test_symbolic_if_branches_keep_complementary_guards() -> None:
-    pending = _function_outcome()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-
-    left, right = pending.coordinates
-    from sugar_lift_py_tests.floor import SymbolicValue
-    from sugar_lift_py_tests.ir import make_var
-
-    exits = pending.discharge(
-        None,
-        {
-            left.coordinate_cid: SymbolicValue(make_var("actual_left")),
-            right.coordinate_cid: SymbolicValue(make_var("actual_right")),
-        },
-    )
+    exits = _function_outcome()
     assert isinstance(exits, ExitSet)
-    # ``<`` over two values not decided here is two-faced: it completes under
+    # ``<`` over two parameters, values not decided here, is two-faced: it
+    # completes under
     # its own ``python:compare.completes`` guard, or the comparison itself
     # raises something undetermined.  Both faces are kept.
     assert len(exits.exits) == 2

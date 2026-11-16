@@ -6,9 +6,10 @@ transitive stdlib (enum.py). Bare NameSugar desugar of a formal yields
 ``SugarNotWritten(owner=binary_operation_exception_floor)`` at enum.py:75:16
 and aborted SourceFile open with functionsTotal=0 before any function walk.
 
-Formal-seated formals mint NativeOperationExitCarrierV1. A formal-less
-SymbolicValue + StringValue, and the StringValue + SymbolicValue reverse, take
-the one undecided binary law (two faces), which is also no SNW.
+A SymbolicValue + StringValue, and the StringValue + SymbolicValue reverse,
+take the one undecided binary law (two faces), which is also no SNW, whether
+or not the symbolic is a parameter: no carrier is minted (#7757, audit row
+NEW-1).
 """
 
 from __future__ import annotations
@@ -102,17 +103,43 @@ def _formal(site, name: str):
     )
 
 
-def test_string_plus_a_parameter_mints_native_operation_carrier() -> None:
-    """A parameter operand is the one place the carrier stands: its caller's
-    actual fills the slot."""
+def test_string_plus_a_parameter_is_the_undecided_binary_law() -> None:
+    """A parameter operand mints no carrier either (#7757, audit row NEW-1):
+    the parameter's ``__radd__`` may answer after ``str.__add__``'s
+    ``NotImplemented``, which no one dispatched method states, so ``"." + p``
+    is the one undecided binary law's two faces, over the parameter's own
+    term, whether or not its class is an input."""
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+
     site = _tiny_binop_site()
     formal = _formal(site, "cls_name")
     left = StringValue(".")
     right = SymbolicValue(make_var("cls_name"), formal)
     outcome = left.add(right, site, None)
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
-    assert outcome.demand.operator == "add"
-    assert outcome.coordinates == (None, formal)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    (done,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert "python:binary_op.completes" in repr(done.guard)
+    assert done.value.term.name == "python:binary_result"
+    assert done.value.term.args[2] == right.to_term(owner="test")
+    halts = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert [face.effect.producer_node_owner for face in halts] == [
+        "UndecidedBinary:+"
+    ]
+
+
+def test_a_parameter_plus_string_is_the_undecided_binary_law() -> None:
+    """The reverse, ``p + "."``: the same law, no carrier."""
+    from sugar_lift_py_tests.outcome.exit_set import Halted
+
+    site = _tiny_binop_site()
+    formal = _formal(site, "cls_name")
+    left = SymbolicValue(make_var("cls_name"), formal)
+    outcome = left.add(StringValue("."), site, None)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halts = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert [face.effect.producer_node_owner for face in halts] == [
+        "UndecidedBinary:+"
+    ]
 
 
 def test_symbolic_plus_int_is_the_undecided_binary_law() -> None:
@@ -169,10 +196,10 @@ def test_enum_py_line75_binop_desugar_does_not_snw(tmp_path: Path) -> None:
         # Must not raise SugarNotWritten(binary_operation_exception_floor)
         outcome = sugar.desugar(None)
         assert outcome is not None
-        # Prefer carrier or a completion — never the old SNW abort.
+        # Two faces or a completion — never the old SNW abort.
         if isinstance(outcome, Exception):
             raise AssertionError(outcome)
-        # Nested left is NameSugar/formal-less path; carrier or nested completion.
+        # Nested left is NameSugar/formal-less path: the undecided binary law.
         assert not isinstance(outcome, SugarNotWritten)
 
 
@@ -181,4 +208,4 @@ def test_enum_is_internal_class_function_sugar_still_constructs(tmp_path: Path) 
     function = next(fn for fn in source.functions() if fn.name == "_is_internal_class")
     sugar = function.sugar()
     outcome = sugar.desugar(None)
-    assert isinstance(outcome, NativeOperationExitCarrierV1) or outcome is not None
+    assert outcome is not None

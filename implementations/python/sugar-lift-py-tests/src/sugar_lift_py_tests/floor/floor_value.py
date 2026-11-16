@@ -48,37 +48,10 @@ _BINARY_OPERATOR_COORDINATE = {
 }
 
 
-# The in-place form of each binary operator, keyed by its in-place carrier
-# name (``BinaryOperator.inplace_operator``, the in-place native operation
-# projectors' keys): ``x += y`` over an operand nothing here decides is the
-# one undecided binary form (``undecided_binary_terms``) with the operator
-# spelled ``+=``, over its operand terms, so the inputs a caller binds at
-# prove decide it where their type is decided (a builtin ``int`` or ``str``
-# defines no in-place method: Python runs the binary operator, #7757 step 7).
-_INPLACE_OPERATOR_COORDINATE = {
-    f"i{short}": _BINARY_OPERATOR_COORDINATE[method] + "="
-    for short, method in (
-        ("add", "add"),
-        ("sub", "subtract"),
-        ("mul", "multiply"),
-        ("truediv", "divide"),
-        ("floordiv", "floor_divide"),
-        ("mod", "modulo"),
-        ("pow", "power"),
-        ("matmul", "matrix_multiply"),
-        ("and", "bitwise_and"),
-        ("or", "bitwise_or"),
-        ("xor", "bitwise_xor"),
-        ("lshift", "left_shift"),
-        ("rshift", "right_shift"),
-    )
-}
-
-
 # The one explicit call of each binary-operation floor, keyed by the same floor
 # method name (#7757). A producer that holds the operation as data (BinOpSugar's
-# operator kind, a guarded right operand's rejoin, a dug call result, a
-# formal's carrier at discharge) applies it here: every call is written out,
+# operator kind, a guarded right operand's rejoin, a dug call result) applies
+# it here: every call is written out,
 # so the law tests read it, and no floor method is ever looked up by a string.
 BINARY_FLOOR_OPERATIONS = {
     "add": lambda left, right, site, ctx: left.add(right, site, ctx),
@@ -100,8 +73,7 @@ BINARY_FLOOR_OPERATIONS = {
 
 
 # The one explicit call of each ordering floor, keyed by floor method name, for
-# the same reason (#7757): ``ComparisonOpSugar`` and a formal's carrier at
-# discharge both apply it here.
+# the same reason (#7757): ``ComparisonOpSugar`` applies it here.
 ORDERING_FLOOR_OPERATIONS = {
     "less_than": lambda left, right, site, ctx: left.less_than(right, site, ctx),
     "less_equal": lambda left, right, site, ctx: left.less_equal(right, site, ctx),

@@ -6,8 +6,9 @@ Three REAL acceptance reproducers (not placeholder xfail shells):
   2. RHS evaluated once — no dual-eval of binop rebind + discarded iadd
   3. Halt blocks rebind — no ScopeRebind / tail read of a partial update
 
-Also pins construction (operator-owned ``project_inplace``), formal undischarged
-iadd carrier, and successful binding update through the production path.
+Also pins construction (operator-owned ``project_inplace``), a formal's
+``x += rhs`` as the undecided binary law's two faces (never a carrier, #7757
+audit row NEW-1), and successful binding update through the production path.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ import pytest
 from frame_fresh import fresh
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
-    project_iadd,
+    _NATIVE_OPERATION_PROJECTORS,
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect import CoverageGapEffect
@@ -180,16 +181,14 @@ def _production_name_aug(
     right,
     *,
     name: str = "x",
-    operator: str = "iadd",
-    projector=project_iadd,
+    projector=None,
 ):
     op_site, site = _production_sites()
     return AugAssignSugar(
         name=name,
         left=_FloorSugar(left),
         right=_FloorSugar(right),
-        operator=operator,
-        operation=projector,
+        operation=Add.instance().project_inplace if projector is None else projector,
         op_site=op_site,
         site=site,
     )
@@ -303,8 +302,7 @@ def test_rhs_evaluated_once() -> None:
         name="x",
         left=_FloorSugar(TermValue(3)),
         right=_CountingRhs(),
-        operator="iadd",
-        operation=project_iadd,
+        operation=Add.instance().project_inplace,
         op_site=op_site,
         site=site,
     )
@@ -476,36 +474,33 @@ def test_successful_rebind_threads_into_tail_read() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_helper_alone_is_undischarged_iadd_carrier() -> None:
-    _, pending = _helper_definition()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "iadd"
+def test_helper_alone_is_the_undecided_inplace_faces() -> None:
+    """``x += rhs`` on two formals waits on no caller (#7757, audit row
+    NEW-1): ``+=`` is ``__iadd__``, then ``__add__``, then ``__radd__``,
+    which no one dispatched method states, so it is the undecided binary
+    law's two faces.  Both owe the undecided member; the halt is kept."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.unanswered_calls import owed_calls
 
-    # No caller actual: the iadd is the cited unanswered face (#7825).
-    exits = pending.discharge(None, {})
-    assert pending.unanswered_call() in owed_calls(exits)
-    assert exits.completed_value() is None
+    _, outcome = _helper_definition()
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    assert isinstance(outcome, ExitSet), type(outcome)
+    halted = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert any(
+        isinstance(face.effect, UndeterminedRaiseEffect)
+        and face.effect.producer_node_owner == "UndecidedBinary:+"
+        for face in halted
+    ), outcome.exits
+    assert owed_calls(outcome)
+    assert outcome.completed_value() is None
 
 
-def test_authenticated_formal_discharge_updates_binding() -> None:
-    function, pending = _helper_definition()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "iadd"
-    coords = {
-        c.declared_name: c.coordinate_cid for c in function.sugar().formal_coordinates
-    }
-    exits = pending.discharge(
-        None, {coords["x"]: TermValue(3), coords["rhs"]: TermValue(4)}
-    )
-    assert isinstance(exits, ExitSet)
-    assert len(exits.exits) == 1
-    assert isinstance(exits.exits[0], Completed)
-    from sugar_lift_py_tests.floor.return_value import ReturnValue
-
-    record = exits.exits[0].value.record
-    rets = [s for s in record.statements if isinstance(s, ReturnValue)]
-    assert rets and rets[-1].value == TermValue(7)
+def test_decided_operands_update_the_binding() -> None:
+    """The answer a caller's actuals ``3`` and ``4`` gave the deleted
+    carrier's discharge, read where the frame decides both operands."""
+    outcome = _row_outcome("    rhs = 4\n    x += rhs\n    return x\n", "3")
+    returned = _returned_value(outcome)
+    assert returned == TermValue(7)
 
 
 def test_binding_update_return_sees_augmented_value() -> None:
@@ -631,7 +626,14 @@ def test_name_path_shares_project_inplace_with_add_operator() -> None:
     assert sugar.operator.project_inplace.__func__ is BinaryOperator.project_inplace
 
 
-def test_project_augmented_formal_mints_iadd_not_add() -> None:
+def test_project_augmented_formal_mints_no_carrier() -> None:
+    """Inverted from the deleted ``iadd`` mint (#7757, audit row NEW-1): a
+    formal's ``x += rhs`` through ``project_augmented`` is the operator's own
+    in-place edge, the undecided binary law's two faces over both formals,
+    owing the undecided member at the operator's site.  No ``iadd`` carrier,
+    no ``iadd`` projector."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
     from sugar_lift_py_tests.context_manager_resolution import (
         SourceFragmentCoordinateV1,
     )
@@ -660,9 +662,17 @@ def test_project_augmented_formal_mints_iadd_not_add() -> None:
     left = SymbolicValue(make_var("x"), _coord("x", 0))
     right = SymbolicValue(make_var("rhs"), _coord("rhs", 1))
     out = project_augmented(
-        left, right, operator="iadd", projector=project_iadd, site=site, ctx=None
+        left, right, projector=Add.instance().project_inplace, site=site, ctx=None
     )
-    assert isinstance(out, NativeOperationExitCarrierV1)
-    assert out.demand.operator == "iadd"
-    with pytest.raises(AssertionError):
-        assert out.demand.operator == "add"
+    assert not isinstance(out, NativeOperationExitCarrierV1)
+    assert isinstance(out, ExitSet), type(out)
+    (completed,) = [face for face in out.exits if isinstance(face, Completed)]
+    assert completed.value.term.name == "python:binary_result"
+    assert completed.value.term.args[0].value == "+"
+    assert completed.value.term.args[1] == make_var("x")
+    assert completed.value.term.args[2] == make_var("rhs")
+    (halted,) = [face for face in out.exits if isinstance(face, Halted)]
+    assert isinstance(halted.effect, UndeterminedRaiseEffect)
+    assert halted.effect.producer_node_owner == "UndecidedBinary:+"
+    assert unanswered_call(None, site) in owed_calls(out)
+    assert "iadd" not in _NATIVE_OPERATION_PROJECTORS

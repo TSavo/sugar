@@ -21,7 +21,12 @@ from sugar_lift_py_tests.proofir.terms import term_from_ir
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
-from native_carrier_testimony import completed_function_value, native_carrier_for
+from native_carrier_testimony import (
+    atoms_named,
+    completed_function_value,
+    undecided_outcome,
+    undetermined_owners,
+)
 
 
 def _fn(src):
@@ -46,17 +51,19 @@ def test_filtered_listcomp_keeps_ground_true_elements():
 
 
 def test_undecidable_filtered_listcomp_retains_guard_without_guessing_verdict():
-    """Deleted expectation: an undecided filter was an immediately projectable term."""
-    carrier = native_carrier_for(
-        _fn("def A(limit):\n    return [x for x in [1, 2] if x > limit]\n"),
-        operator="greater_than",
+    """An undecided filter over a formal waits on no caller: ``x > limit`` is
+    the undecided ordering's two faces, its atom over the member and the
+    formal, never a guessed verdict (#7757, audit row NEW-1)."""
+    outcome = undecided_outcome(
+        _fn("def A(limit):\n    return [x for x in [1, 2] if x > limit]\n")
     )
-    left, right = carrier.operands
-    assert left.to_term(owner="comprehension carrier tooth").name == "x"
-    assert right.formal_coordinate.declared_name == "limit"
-    # The block's statement tail waits as an ExitSet-wide step
-    # (``after_discharge``), not as a continuation.
-    assert len(carrier.continuations) == 4
+    assert "UndecidedCompare:Gt" in undetermined_owners(outcome)
+    compares = {
+        (operation.args[0].value, operation.args[1].name, operation.args[2].name)
+        for atom in atoms_named(outcome, "python:compare.completes")
+        for operation in atom.args
+    }
+    assert compares == {("Gt", "x", "limit")}
 
 
 def test_dictcomp_over_concrete_range_dissolves():

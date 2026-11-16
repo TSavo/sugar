@@ -157,20 +157,62 @@ def test_real_pandas_ordering_helper_and_positional_caller_are_content_pinned() 
     )
 
 
+def _compare_dispatch(outcome: ExitSet):
+    """The one ``python:compare(<op>, left, right, <key>)`` the outcome's
+    ``python:compare.completes`` atom names."""
+    found: list = []
+
+    def walk(formula) -> None:
+        if getattr(formula, "name", None) == "python:compare.completes":
+            (dispatch,) = formula.args
+            if dispatch not in found:
+                found.append(dispatch)
+            return
+        for operand in getattr(formula, "operands", None) or ():
+            walk(operand)
+        inner = getattr(formula, "operand", None)
+        if inner is not None:
+            walk(inner)
+
+    for exit_ in outcome.exits:
+        walk(exit_.guard)
+    (dispatch,) = found
+    assert dispatch.name == "python:compare"
+    return dispatch
+
+
+def _assert_undecided_ordering(outcome: object) -> tuple[str, str]:
+    """``helper`` alone over its formals: no carrier (#7757, audit row
+    NEW-1), the undecided ordering's two faces, owing the undecided member.
+    Returns the names of the operands its completes atom states, in order."""
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    assert isinstance(outcome, ExitSet)
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "UndecidedCompare:Lt"
+    ]
+    assert len(halts) == 1, outcome.exits
+    assert halts[0].effect.exception_name is None
+    dispatch = _compare_dispatch(outcome)
+    assert dispatch.args[0] == str_const("Lt")
+    return tuple(term.name for term in dispatch.args[1:3])
+
+
 def test_helper_alone_is_undischarged_and_all_three_bindings_reach_one_demand() -> None:
-    """``helper`` alone is its one carrier over its formals (its contract).
-    Each call is its coordinate, carrying the binding prove's binder binds
-    the carrier's operands with: ``right`` by position, by keyword and by
-    its default all reach the one ``left < right`` demand at the join.
+    """``helper`` alone is the undecided ordering over its formals (its
+    contract), never a carrier.  Each call is its coordinate, carrying the
+    binding prove's binder binds those formals with: ``right`` by position,
+    by keyword and by its default all reach the one ``left < right`` at the
+    join.
 
     Before #8705 each call applied ``helper``'s body here and named the
     ``TypeError`` of ``None < 2`` at the call; that body-following is
     deleted.  Also covers the former ``test_wrong_boundary_type_does_not_
     consume_or_create_the_exception_identity``: the call's halt creates no
     exception identity at all (``_call_term``)."""
-    pending, (positional, keyword, default, normal) = _program_outcomes()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "less_than"
+    helper, (positional, keyword, default, normal) = _program_outcomes()
+    assert _assert_undecided_ordering(helper) == ("left", "right")
 
     positional_call, keyword_call, default_call, normal_call = (
         _call_term(outcome) for outcome in (positional, keyword, default, normal)
@@ -208,7 +250,7 @@ def _int_class(key: str):
     return ctor(CLASS_ARGUMENT, [str_const(key), builtin_class_term("int")])
 
 
-def test_swapped_ordering_retains_distinct_ordered_coordinates() -> None:
+def test_swapped_ordering_retains_distinct_ordered_operands() -> None:
     forward_source = "def helper(left, right=2):\n    return left < right\n"
     swapped_source = "def helper(left, right=2):\n    return right < left\n"
     forward_function = next(
@@ -219,17 +261,17 @@ def test_swapped_ordering_retains_distinct_ordered_coordinates() -> None:
     )
     forward = forward_function.sugar().desugar(None)
     swapped = swapped_function.sugar().desugar(None)
-    assert isinstance(forward, NativeOperationExitCarrierV1)
-    assert isinstance(swapped, NativeOperationExitCarrierV1)
-    assert forward.demand.operand_coordinate_cids == tuple(
-        coordinate.coordinate_cid
+    forward_names = tuple(
+        coordinate.declared_name
         for coordinate in forward_function.formal_coordinates()
     )
-    assert swapped.demand.operand_coordinate_cids == tuple(
-        coordinate.coordinate_cid
+    swapped_names = tuple(
+        coordinate.declared_name
         for coordinate in reversed(swapped_function.formal_coordinates())
     )
-    assert forward.demand.demand_cid != swapped.demand.demand_cid
+    assert _assert_undecided_ordering(forward) == forward_names
+    assert _assert_undecided_ordering(swapped) == swapped_names
+    assert _compare_dispatch(forward) != _compare_dispatch(swapped)
 
 
 def test_identity_law_never_acquires_a_native_operation_carrier() -> None:

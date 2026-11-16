@@ -36,6 +36,11 @@ item, that item's path.  A ``__getitem__`` that counts returns 1, then 2, and
 the two items' reads are two terms, so the truth ``r[0] != r[1]`` is never
 ``unsat`` and the lie ``r[0] == r[1]`` never ``sat``.
 
+A binary operator on a formal (``c + 0``) no longer defers at all: it is the
+undecided two faces where it runs (``undecided_binary_faces``, #7757 audit
+row NEW-1), keyed under the live item it runs in, so the ``binary-per-item``
+twin now reads that law.
+
 A lying claim is never ``sat``; a truthful one is never ``unsat``.  Each
 half goes through ``run_source_through_real_solver``: real ``sugar mint``
 then real ``sugar prove``.

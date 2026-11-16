@@ -13,7 +13,12 @@ from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
-from native_carrier_testimony import native_carrier_for
+from native_carrier_testimony import (
+    atoms_named,
+    native_carrier_for,
+    undecided_outcome,
+    undetermined_owners,
+)
 
 
 def _fn(src: str):
@@ -41,41 +46,47 @@ def test_undecided_unary_ops_are_named_refusals():
         assert carrier.operands[0].to_term(owner="unary carrier tooth").name == "z"
 
 
+def _equalities(src):
+    """The undecided equalities a formal's ``==`` runs as: no carrier waits
+    on a caller (#7757, audit row NEW-1).  Each is ``(left, right)`` as its
+    ``python:compare.completes`` atom names it."""
+    outcome = undecided_outcome(_fn(src))
+    assert "UndecidedCompare:Eq" in undetermined_owners(outcome)
+
+    def spelled(term):
+        return getattr(term, "value", getattr(term, "name", None))
+
+    return {
+        (spelled(operation.args[1]), spelled(operation.args[2]))
+        for atom in atoms_named(outcome, "python:compare.completes")
+        for operation in atom.args
+        if operation.args[0].value == "Eq"
+    }
+
+
 def test_not_is_truth_then_negate():
-    """Deleted expectation: formal equality/truth projected a completed guard."""
-    carrier = _carrier(
-        "def A(z):\n    if not (z == 1):\n        assert z == z\n    return z\n",
-        "equals",
-    )
-    left, right = carrier.operands
-    assert left.to_term(owner="not carrier tooth").name == "z"
-    assert right.value == 1
-    # The block's statement tail waits as an ExitSet-wide step
-    # (``after_discharge``), not as a continuation.
-    assert len(carrier.continuations) >= 5
+    """``not (z == 1)`` takes the truth of the undecided equality and negates
+    it; the guarded body's ``z == z`` is its own undecided equality."""
+    assert _equalities(
+        "def A(z):\n    if not (z == 1):\n        assert z == z\n    return z\n"
+    ) == {("z", 1), ("z", "z")}
 
 
 # ---- BoolOp ------------------------------------------------------------------
 
 
 def test_and_conjoins_operand_truthiness():
-    """Deleted expectation: formal BoolOp projected a completed conjunction."""
-    carrier = _carrier(
-        "def A(z):\n    assert (z == 1) and (z == 3)\n    return z\n", "equals"
-    )
-    assert carrier.operands[0].to_term(owner="and carrier tooth").name == "z"
-    assert carrier.operands[1].value == 1
-    assert len(carrier.continuations) == 5
+    """Each operand of the conjunction is its own undecided equality."""
+    assert _equalities(
+        "def A(z):\n    assert (z == 1) and (z == 3)\n    return z\n"
+    ) == {("z", 1), ("z", 3)}
 
 
 def test_or_disjoins_operand_truthiness():
-    """Deleted expectation: formal BoolOp projected a completed disjunction."""
-    carrier = _carrier(
-        "def A(z):\n    assert (z == 1) or (z == 2)\n    return z\n", "equals"
-    )
-    assert carrier.operands[0].to_term(owner="or carrier tooth").name == "z"
-    assert carrier.operands[1].value == 1
-    assert len(carrier.continuations) == 5
+    """Each operand of the disjunction is its own undecided equality."""
+    assert _equalities(
+        "def A(z):\n    assert (z == 1) or (z == 2)\n    return z\n"
+    ) == {("z", 1), ("z", 2)}
 
 
 def test_bare_operands_refuse_undecided_truth():

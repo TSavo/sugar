@@ -10,7 +10,12 @@ from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
-from native_carrier_testimony import completed_function_value, native_carrier_for
+from native_carrier_testimony import (
+    atoms_named,
+    completed_function_value,
+    undecided_outcome,
+    undetermined_owners,
+)
 
 
 def _fn(src):
@@ -50,17 +55,18 @@ def test_undecidable_filtered_comprehension_is_typed_filter_guard():
     ``[x for x in [1,2] if x > limit]`` constructs as ``py.listcomp`` carrying
     ``python:loop.filter_guard`` — typed residual, not construction silence.
     """
-    # Deleted expectation: the pending comparison already projected py.listcomp.
-    carrier = native_carrier_for(
-        _fn("def A(limit):\n    return [x for x in [1, 2] if x > limit]\n"),
-        operator="greater_than",
+    # The filter over the formal waits on no caller: it is the undecided
+    # ordering's two faces over the member and the formal (#7757 NEW-1).
+    outcome = undecided_outcome(
+        _fn("def A(limit):\n    return [x for x in [1, 2] if x > limit]\n")
     )
-    left, right = carrier.operands
-    assert left.to_term(owner="listcomp carrier tooth").name == "x"
-    assert right.formal_coordinate.declared_name == "limit"
-    # The block's statement tail waits as an ExitSet-wide step
-    # (``after_discharge``), not as a continuation.
-    assert len(carrier.continuations) == 4
+    assert "UndecidedCompare:Gt" in undetermined_owners(outcome)
+    compares = {
+        (operation.args[0].value, operation.args[1].name, operation.args[2].name)
+        for atom in atoms_named(outcome, "python:compare.completes")
+        for operation in atom.args
+    }
+    assert compares == {("Gt", "x", "limit")}
 
 
 def test_symbolic_comprehension_builds_coordinate():

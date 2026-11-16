@@ -13,7 +13,7 @@ from sugar_source_tree.panic import SugarNotWritten
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
-from native_carrier_testimony import native_carrier_for
+from native_carrier_testimony import undecided_function_value
 
 
 def _fn(src):
@@ -24,39 +24,35 @@ def _fn(src):
 
 
 def _invs(src):
-    outcome = _fn(src).sugar().desugar()
-    assert isinstance(outcome, ExitSet), outcome
-    value = outcome.completed_value()
-    assert value is not None, outcome
-    return value.invs()
-
-
-def _first_item_waits(src, first):
-    """Deleted expectation: each range-body formal equality completed with an
-    actual the test supplied. The first item's equality waits on ``z``."""
-    carrier = native_carrier_for(_fn(src), operator="equals")
-    left, right = carrier.operands
-    assert left.to_term(owner="range equality carrier tooth").value == first
-    assert right.to_term(owner="range equality carrier tooth").name == "z"
+    function = _fn(src)
+    outcome = function.sugar().desugar()
+    if isinstance(outcome, ExitSet) and outcome.completed_value() is not None:
+        return outcome.completed_value().invs()
+    # Each range-body equality over the formal is the undecided equality's two
+    # faces: the universe completes under their completes atoms (#7757 NEW-1).
+    return undecided_function_value(function, owner="UndecidedCompare:Eq").invs()
 
 
 def test_range_stop_unrolls_the_body_per_element():
-    _first_item_waits(
-        "def A(z):\n    for i in range(3):\n        assert i == z\n    return z\n", 0
+    invs = _invs(
+        "def A(z):\n    for i in range(3):\n        assert i == z\n    return z\n"
     )
+    assert len(invs) == 3
+    assert [i.args[0].value for i in invs] == [0, 1, 2]
 
 
 def test_range_start_stop_unrolls_the_body_per_element():
-    _first_item_waits(
-        "def A(z):\n    for i in range(2, 5):\n        assert i == z\n    return z\n", 2
+    invs = _invs(
+        "def A(z):\n    for i in range(2, 5):\n        assert i == z\n    return z\n"
     )
+    assert [i.args[0].value for i in invs] == [2, 3, 4]
 
 
 def test_range_start_stop_step_unrolls_the_body_per_element():
-    _first_item_waits(
-        "def A(z):\n    for i in range(10, 0, -3):\n        assert i == z\n    return z\n",
-        10,
+    invs = _invs(
+        "def A(z):\n    for i in range(10, 0, -3):\n        assert i == z\n    return z\n"
     )
+    assert [i.args[0].value for i in invs] == [10, 7, 4, 1]
 
 
 def test_empty_range_states_nothing():

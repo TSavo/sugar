@@ -9,37 +9,16 @@ from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordin
 from sugar_lift_py_tests.context_manager_contract import _json_value
 from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 from sugar_lift_py_tests.floor import FloorValue
-from sugar_lift_py_tests.floor.floor_value import (
-    BINARY_FLOOR_OPERATIONS,
-    ORDERING_FLOOR_OPERATIONS,
-)
 from sugar_lift_py_tests.ir import (
     Formula,
     Term,
     atomic,
     ctor,
     formula_to_value,
-    py_eq,
-    py_ge,
-    py_gt,
-    py_le,
-    py_lt,
     py_truthy,
     str_const,
     term_to_value,
 )
-
-# A comparison operator's demand name -> the operator kind its undecided
-# completes atom names (``python:compare(<kind>, left, right, <key>)``) and
-# the predicate it completes with: the one undecided comparison form
-# (``comparison_op_sugar.undecided_dispatch_faces``).
-_COMPARISON_BY_OPERATOR = {
-    "equals": ("Eq", py_eq),
-    "less_than": ("Lt", py_lt),
-    "less_equal": ("LtE", py_le),
-    "greater_than": ("Gt", py_gt),
-    "greater_equal": ("GtE", py_ge),
-}
 
 
 class NativeOperationResolutionV1:
@@ -354,12 +333,11 @@ def _typed_minted_native_operator_constants(package_root=None) -> frozenset[str]
     Discovers:
 
     * ``NativeOperationExitCarrierV1.mint(operator="...")`` literals
-    * ``defer_formal_native_operation(..., operator="...")`` and other call
-      sites that pass a floor-method name through to ``mint``
+    * other call sites that pass a floor-method name through to ``mint``
 
-    Dynamic ``operator=owner`` / ``operator=method`` paths are not string
-    constants; :func:`production_native_operation_operators` unions the tables
-    those paths draw from so the coverage tooth still closes both directions.
+    No operation on a parameter is minted with a dynamic operator: a binary,
+    in-place or comparison operator with a parameter operand is the
+    undecided two faces, never a carrier (#7757, audit row NEW-1).
 
     Single-character / non-identifier strings (e.g. ``BinaryOperatorOperation``
     term coordinates ``"+"``) are excluded — those are term spellings, not
@@ -412,96 +390,20 @@ def production_native_operation_operators() -> frozenset[str]:
 
     * typed source string constants on
       ``NativeOperationExitCarrierV1.mint(operator=...)``
-    * ``_BINARY_OPERATOR_COORDINATE`` keys (``operator=owner`` formal binary path)
-    * ``COMPARE_METHODS`` values (``operator=method`` formal ordering path)
 
     An item store or delete mints no carrier: it is the one item mutation
     (``store_effect_sugar.item_mutation``, #7757 step 7); nor does an
     attribute store, delete or read (``store_effect_sugar.
     attribute_mutation``, ``AttributeSugar.project_attribute``).
 
+    A binary, in-place or comparison operator with a parameter operand mints
+    no carrier: it is the undecided two faces (#7757, audit row NEW-1).
+
     The projector table's key set must equal this set exactly, both directions.
     """
-    from sugar_lift_py_tests.floor.floor_value import _BINARY_OPERATOR_COORDINATE
-    from sugar_lift_py_tests.sugar.comparison_op_sugar import COMPARE_METHODS
-
     # Equality tooth: this frozenset union MUST equal
     # frozenset(_NATIVE_OPERATION_PROJECTORS) both directions.
-    # AugAssign production mint set — from BinaryOperator class attributes,
-    # NEVER from the projector table (circular equality tooth).
-    from sugar_source_tree.operators import production_augassign_inplace_operators
-
-    contracted_inplace_operators = production_augassign_inplace_operators()
-    return (
-        _typed_minted_native_operator_constants()
-        | frozenset(_BINARY_OPERATOR_COORDINATE)
-        | frozenset(COMPARE_METHODS.values())
-        | contracted_inplace_operators
-    )
-
-
-def _project_inplace(left, right, site, ctx, *, surface):
-    """In-place ``OP=`` through the established floor edge, under the
-    caller's context: the ``__i*__`` method, and the ordinary binary it
-    falls back to, apply under ``ctx``."""
-    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
-        discharge_inplace,
-    )
-
-    return discharge_inplace(left, right, site, ctx, surface=surface)
-
-
-def project_iadd(left, right, site, ctx):
-    """Discharge ``iadd`` via established ``inplace_binary_operator_with`` edge."""
-    return _project_inplace(left, right, site, ctx, surface="+")
-
-
-def project_isub(left, right, site, ctx):
-    return _project_inplace(left, right, site, ctx, surface="-")
-
-
-def project_imul(left, right, site, ctx):
-    return _project_inplace(left, right, site, ctx, surface="*")
-
-
-def project_itruediv(left, right, site, ctx):
-    return _project_inplace(left, right, site, ctx, surface="/")
-
-
-def project_ifloordiv(left, right, site, ctx):
-    return _project_inplace(left, right, site, ctx, surface="//")
-
-
-def project_imod(left, right, site, ctx):
-    return _project_inplace(left, right, site, ctx, surface="%")
-
-
-def project_ipow(left, right, site, ctx):
-    return _project_inplace(left, right, site, ctx, surface="**")
-
-
-def project_iand(left, right, site, ctx):
-    return _project_inplace(left, right, site, ctx, surface="&")
-
-
-def project_ior(left, right, site, ctx):
-    return _project_inplace(left, right, site, ctx, surface="|")
-
-
-def project_ixor(left, right, site, ctx):
-    return _project_inplace(left, right, site, ctx, surface="^")
-
-
-def project_ilshift(left, right, site, ctx):
-    return _project_inplace(left, right, site, ctx, surface="<<")
-
-
-def project_irshift(left, right, site, ctx):
-    return _project_inplace(left, right, site, ctx, surface=">>")
-
-
-def project_imatmul(left, right, site, ctx):
-    return _project_inplace(left, right, site, ctx, surface="@")
+    return _typed_minted_native_operator_constants()
 
 
 def project_iter(receiver, site, ctx):
@@ -530,26 +432,6 @@ def project_next(receiver, site, ctx):
     return discharge_next(receiver, site, ctx, owner="project_next")
 
 
-# Enrolled i* projectors — keys must equal production_augassign_inplace_operators().
-# Selection is operator-owned (BinaryOperator.project_inplace); this table is
-# discharge enrollment only — not a kind ladder.
-_INPLACE_NATIVE_OPERATION_PROJECTORS = {
-    "iadd": project_iadd,
-    "isub": project_isub,
-    "imul": project_imul,
-    "itruediv": project_itruediv,
-    "ifloordiv": project_ifloordiv,
-    "imod": project_imod,
-    "ipow": project_ipow,
-    "iand": project_iand,
-    "ior": project_ior,
-    "ixor": project_ixor,
-    "ilshift": project_ilshift,
-    "irshift": project_irshift,
-    "imatmul": project_imatmul,
-}
-
-
 # Explicit projectors for authenticated native operations.
 #
 # Each entry names its own Floor signature.  A generic
@@ -563,11 +445,9 @@ _INPLACE_NATIVE_OPERATION_PROJECTORS = {
 # store, delete or read (``store_effect_sugar.attribute_mutation``,
 # ``AttributeSugar.project_attribute``).
 #
-# In-place protocol (AugAssign formal path):
-#   explicit project_iadd / project_isub / … each call Floor methods directly.
-#   Production mint names come from BinaryOperator.inplace_operator (independent
-#   equality tooth).  Projector absence must never silent-fallback to minting
-#   ordinary ``add``.
+# No binary, in-place or comparison operator is enrolled: one with a
+# parameter operand is the undecided two faces, never a carrier (#7757,
+# audit row NEW-1).
 #
 # Key set must equal :func:`production_native_operation_operators` exactly.
 #
@@ -638,16 +518,6 @@ _NATIVE_OPERATION_PROJECTORS = {
     # own ``iter_with`` / ``next_with`` edge, under the caller's context.
     "iter": project_iter,
     "next": project_next,
-    # Binary arithmetic / bitwise (_BINARY_OPERATOR_COORDINATE keys), applied
-    # under the caller's context: the one explicit call of each binary floor
-    # (``BINARY_FLOOR_OPERATIONS``), the same one ``BinOpSugar`` applies.
-    **BINARY_FLOOR_OPERATIONS,
-    # Authenticated in-place (AugAssign); binary fallback is inside each projector.
-    **_INPLACE_NATIVE_OPERATION_PROJECTORS,
-    # Equality, ordering, membership (compare / equality sugars).
-    "equals": lambda left, right, site, ctx: left.equals(right, site, ctx),
-    **ORDERING_FLOOR_OPERATIONS,
-    "contains": lambda container, item, site, ctx: container.contains(item, site),
 }
 
 
@@ -890,14 +760,11 @@ class NativeOperationExitCarrierV1:
         ``undecided`` member (``reason: unanswered``) at its site, and the
         halt leaves from the reducer's pre-effect state when one was enrolled.
 
-        A binary operation takes the one form every undecided binary
-        operation takes, over the demand's own operand terms:
-        ``python:binary_result(op, left, right, <key>)`` completing under
-        ``python:binary_op.completes`` (``undecided_binary_terms``). ``==`` and
-        an ordering take the one undecided comparison form, the predicate
-        under ``python:compare.completes(python:compare(<op>, left, right,
-        <key>))``. Any other operator names only the operator and the
-        occurrence. A formal with
+        Any operator other than a truth question names only the operator and
+        the occurrence. (A subscript read, and a binary, in-place or comparison
+        operator, is never a carrier: with a parameter operand it is the
+        undecided read or the undecided two faces where it runs, #7757 audit
+        row NEW-1.) A formal with
         no actual is reduced only in its function's own proof (``FormalRefSugar.desugar``), whose
         formals are the proof's own, so the post states the read over the
         formal, and a caller's actual joined on it (step 9) decides it where
@@ -911,66 +778,12 @@ class NativeOperationExitCarrierV1:
         """
         from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
         from sugar_lift_py_tests.floor import SymbolicValue
-        from sugar_lift_py_tests.floor.floor_value import (
-            _BINARY_OPERATOR_COORDINATE,
-            _INPLACE_OPERATOR_COORDINATE,
-            undecided_binary_terms,
-        )
         from sugar_lift_py_tests.occurrence import occurrence_key, occurrence_term
         from sugar_lift_py_tests.outcome import ExitSet
 
         truth = None
         site = self.demand.source_node
-        # An in-place operator (``x += y``) takes the same one form, spelled
-        # ``+=`` (``_INPLACE_OPERATOR_COORDINATE``): its result names its
-        # operands, so a contract stating it states a value its inputs
-        # determine (#7757 step 7).
-        binary = _BINARY_OPERATOR_COORDINATE.get(
-            self.demand.operator
-        ) or _INPLACE_OPERATOR_COORDINATE.get(self.demand.operator)
-        if binary is not None and len(self.demand.operand_terms) == 2:
-            # A binary operation takes the one undecided form every binary
-            # operation takes (``undecided_binary_terms``), over the demand's
-            # own operand terms: the formals of this proof, so a caller's
-            # actual joined on them decides the operation (step 9, #7763).
-            left, right = self.demand.operand_terms
-            value, guard = undecided_binary_terms(
-                binary, left, right, occurrence_key(site)
-            )
-        elif (
-            self.demand.operator in _COMPARISON_BY_OPERATOR
-            and len(self.demand.operand_terms) == 2
-        ):
-            # ``==`` and an ordering (``<``, ``<=``, ``>``, ``>=``) take the one
-            # form every undecided comparison takes
-            # (``comparison_op_sugar.undecided_dispatch_faces``): the predicate
-            # (``py.eq`` / ``py.lt`` / ``py.le`` / ``py.gt`` / ``py.ge`` over
-            # left and right) completing under
-            # ``python:compare.completes(python:compare(<op>, left, right,
-            # <key>))``, over the demand's own operand terms, so the inputs
-            # bound at prove (a caller's actual, a stated global) decide it.
-            # An ordering over a formal is no second, generic unanswered
-            # operation keyed on its site alone: that form names no operand,
-            # so a caller's actual joined on the formal decided nothing
-            # (#7757 step 9).
-            op_kind, _predicate = _COMPARISON_BY_OPERATOR[self.demand.operator]
-            left, right = self.demand.operand_terms
-            value = None
-            guard = atomic(
-                "python:compare.completes",
-                [
-                    ctor(
-                        "python:compare",
-                        (
-                            str_const(op_kind),
-                            left,
-                            right,
-                            str_const(occurrence_key(site)),
-                        ),
-                    )
-                ],
-            )
-        elif self.demand.operator == "truth" and len(self.demand.operand_terms) == 1:
+        if self.demand.operator == "truth" and len(self.demand.operand_terms) == 1:
             # ``bool(<formal>)`` takes the one form every undecided truth
             # takes (``bool_op_sugar._unanswered_truth``): ``py.truthy`` of the
             # operand completing under ``python:truth.completes(python:truth(
@@ -996,13 +809,6 @@ class NativeOperationExitCarrierV1:
             from sugar_lift_py_tests.floor.predicate_value import PredicateValue
 
             completed = PredicateValue(truth, self.site)
-        elif value is None:
-            from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-
-            _op_kind, predicate = _COMPARISON_BY_OPERATOR[self.demand.operator]
-            completed = PredicateValue(
-                predicate(*self.demand.operand_terms), self.site
-            )
         else:
             completed = SymbolicValue(value)
         return ExitSet.two_faced(

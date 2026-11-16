@@ -1,10 +1,12 @@
 """Discharged native-operation halts retain reducer-owned temporal state.
 
-The carrier read here is a formal ``left + right`` (``add``).  It was a
+The carrier read here is a formal ``~left`` (``bitwise_invert``).  It was a
 formal ``obj.field = value`` (``setattr_named``) until an attribute store
-became the one attribute mutation, which mints no carrier
-(``store_effect_sugar.attribute_mutation``, #7757 NEW-1); the subject --
-the reducer's pre-effect state on a carrier and its halt -- is unchanged."""
+became the one attribute mutation (``store_effect_sugar.attribute_mutation``),
+then a formal ``left + right`` (``add``) until a binary operator on a
+parameter became the undecided two faces (#7757 NEW-1); neither mints a
+carrier.  The subject -- the reducer's pre-effect state on a carrier and its
+halt -- is unchanged."""
 
 from __future__ import annotations
 
@@ -22,7 +24,7 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
-from sugar_lift_py_tests.floor import NoneValue, ObjectValue, TermValue
+from sugar_lift_py_tests.floor import ObjectValue, TermValue
 from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor, str_const
@@ -40,8 +42,8 @@ SOURCE = (
     "    def field(self):\n"
     "        return 1\n"
     "\n"
-    "def helper(left, right):\n"
-    "    return left + right\n"
+    "def helper(left):\n"
+    "    return ~left\n"
 )
 
 
@@ -65,14 +67,14 @@ def _pending_and_receiver():
     pending = helper.sugar().desugar(None)
     assert isinstance(receiver, ObjectValue)
     assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "add"
+    assert pending.demand.operator == "bitwise_invert"
     return pending, receiver
 
 
 def _type_error_discharge():
     pending, receiver = _pending_and_receiver()
-    left_cid, right_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge(None, {left_cid: NoneValue(), right_cid: TermValue(2)})
+    (left_cid,) = pending.demand.operand_coordinate_cids
+    exits = pending.discharge(None, {left_cid: TermValue(1.5)})
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
     halted = exits.exits[0]

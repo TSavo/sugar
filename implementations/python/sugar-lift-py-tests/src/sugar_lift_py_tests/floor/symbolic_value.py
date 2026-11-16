@@ -342,25 +342,14 @@ class SymbolicValue(FloorValue):
             for method, coordinate in _BINARY_OPERATOR_COORDINATE.items()
             if coordinate == operator
         )
-        left_coordinate = self.formal_coordinate
-        right_coordinate = getattr(other, "formal_coordinate", None)
-        if left_coordinate is not None or right_coordinate is not None:
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                NativeOperationExitCarrierV1,
-            )
-
-            return NativeOperationExitCarrierV1.mint(
-                site=site,
-                operator=owner,
-                operands=(self, other),
-                coordinates=(left_coordinate, right_coordinate),
-            )
-        # No formal in either operand: nothing a caller's actual answers, so
-        # the operation is not deferred.  ``undecided + "s"`` takes the one
-        # undecided binary law below like every other pair; a carrier minted
-        # with no coordinate waited on a caller that never answers it, and
-        # every face composed beside it (a slice bound's, the subscript it
-        # bounds) waited with it (#7757).
+        # A parameter operand, on either side, is not deferred to a caller:
+        # a binary operator is a protocol with a fallback (``__op__``, then
+        # the reflected ``__rop__`` after ``NotImplemented``, the subclass
+        # rule first), which no one dispatched method states.  So whether or
+        # not the parameter's class is an input, ``p + q`` takes the one
+        # undecided binary law below, like every other undecided pair: it
+        # completes under its own atom and owes the undecided member, or
+        # raises something undetermined (#7757, audit row NEW-1).
         if isinstance(other, GuardedValue):
             from sugar_lift_py_tests.floor.floor_value import BINARY_FLOOR_OPERATIONS
 

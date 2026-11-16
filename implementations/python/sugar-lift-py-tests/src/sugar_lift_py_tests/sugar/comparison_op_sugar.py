@@ -178,31 +178,6 @@ def construct_identity_comparison(left, right, site, *, negated: bool = False):
     return outcome.and_then(lambda predicate: predicate.negate())
 
 
-def defer_formal_native_operation(left, right, site, *, operator: str):
-    """Preserve one formal-bound native operation for caller discharge.
-
-    A formal's runtime type is supplied outside this frame.  Constructing an
-    immediate normal or exceptional face here would therefore invent caller
-    testimony.  The shared carrier records the ordered Floor operation and
-    lets authenticated actual operands select its real ExitSet later.
-    """
-    left_coordinate = getattr(left, "formal_coordinate", None)
-    right_coordinate = getattr(right, "formal_coordinate", None)
-    if left_coordinate is None and right_coordinate is None:
-        return None
-
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-
-    return NativeOperationExitCarrierV1.mint(
-        site=site,
-        operator=operator,
-        operands=(left, right),
-        coordinates=(left_coordinate, right_coordinate),
-    )
-
-
 def _publish_undecided_dispatch_edges(
     left,
     right,
@@ -320,8 +295,8 @@ def undecided_dispatch_faces(predicate, site, op_kind: str):
     """Two faces for one undecided rich-comparison dispatch.
 
     Shared by the Sugar membrane (a residual predicate over undecided
-    operands) and the Floor's undecided membership / ordering doors, so a
-    deferred formal discharged onto an undecided actual gets the same faces.
+    operands) and the Floor's undecided membership / ordering doors: a
+    parameter operand takes these same faces.
     """
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.ir import atomic, ctor, str_const
@@ -502,12 +477,13 @@ class ComparisonOpSugar(ConstructedTermSugar):
         )
 
     def _membership(self, container, item):
-        """Membership law: container owns containment; undecided dispatch dual-edges."""
-        deferred = defer_formal_native_operation(
-            container, item, self.site, operator="contains"
-        )
-        if deferred is not None:
-            return deferred
+        """Membership law: container owns containment; undecided dispatch dual-edges.
+
+        A parameter on either side is not deferred to a caller: ``in`` is
+        ``__contains__``, then iteration, then the ``__getitem__`` sequence
+        protocol, which no one dispatched method states.  The container's own
+        floor answers it, two-faced wherever a type is undecided (#7757,
+        audit row NEW-1)."""
         outcome = container.contains(item, self.site)
         return publish_undecided_membership_edges(
             item, container, self.site, self.op_kind, outcome
@@ -518,13 +494,12 @@ class ComparisonOpSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.floor.floor_value import ORDERING_FLOOR_OPERATIONS
 
         method = COMPARE_METHODS[self.op_kind]
-        deferred = defer_formal_native_operation(
-            left, right, self.site, operator=method
-        )
-        if deferred is not None:
-            return deferred
         # The ordering floor's own explicit call (#7757), never a method
-        # looked up by its name.
+        # looked up by its name.  A parameter operand is not deferred to a
+        # caller: an ordering is the rich method, then its reflection after
+        # ``NotImplemented`` (the subclass rule first), which no one
+        # dispatched method states, so an undecided operand takes the
+        # undecided ordering's two faces (audit row NEW-1).
         return publish_undecided_ordering_edges(
             left,
             right,
@@ -568,12 +543,9 @@ class ComparisonOpSugar(ConstructedTermSugar):
                     fix="construct __ne__ method order and invoke its source frame",
                 )
             # Equality law: a != b is not (a == b); dual-edge, then negate
-            # the equality result's truth.
-            deferred = defer_formal_native_operation(
-                left, right, self.site, operator="equals"
-            )
-            if deferred is not None:
-                return deferred.and_then(self._negated_truth)
+            # the equality result's truth.  A parameter operand is not
+            # deferred to a caller (``==``'s reflection and identity fallback
+            # are no one dispatched method): an undecided operand dual-edges.
             return publish_undecided_equality_edges(
                 left,
                 right,

@@ -10,22 +10,20 @@ from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
-from native_carrier_testimony import native_carrier_for
-
-
-def _fn(src):
-    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
-        f.write(src)
-        path = f.name
-    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
+from native_carrier_testimony import undecided_function_value
 
 
 def _uni(src):
-    outcome = _fn(src).sugar().desugar()
-    assert isinstance(outcome, ExitSet), outcome
-    value = outcome.completed_value()
-    assert value is not None, outcome
-    return value
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
+        f.write(src)
+        path = f.name
+    function = next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
+    outcome = function.sugar().desugar()
+    if isinstance(outcome, ExitSet) and outcome.completed_value() is not None:
+        return outcome.completed_value()
+    # A formal equality is the undecided equality's two faces: the universe
+    # completes under its own ``python:compare.completes`` atom (#7757 NEW-1).
+    return undecided_function_value(function, owner="UndecidedCompare:Eq")
 
 
 def test_return_true_and_false_are_bool_consts():
@@ -42,15 +40,9 @@ def test_ground_assert_true_states_nothing():
 
 
 def test_bool_composes_in_equality():
-    """Deleted expectation: a formal equality completed with an actual the
-    test supplied; no caller supplies one (the function's own proof
-    discharges the carrier with none). The literal is the equality's operand."""
-    carrier = native_carrier_for(
-        _fn("def A(x):\n    assert x == True\n    return x\n"), operator="equals"
-    )
-    left, right = carrier.operands
-    assert left.to_term(owner="bool equality carrier tooth").name == "x"
-    assert right.to_term(owner="bool equality carrier tooth").value is True
+    v = _uni("def A(x):\n    assert x == True\n    return x\n")
+    assert v.invs()[0].name == "py.eq"
+    assert v.invs()[0].args[1].value is True
 
 
 if __name__ == "__main__":

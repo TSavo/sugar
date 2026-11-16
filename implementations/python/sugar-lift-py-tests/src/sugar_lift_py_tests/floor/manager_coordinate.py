@@ -155,8 +155,10 @@ class RaisedExitTypeValue(FloorValue):
 
     @property
     def formal_coordinate(self):
-        # Rich operators must wait for an actual class/metaclass Floor, on
-        # either side of comparison. Identity against None is total separately.
+        # A binary, in-place or comparison operator over it waits on no
+        # caller: its metaclass operations are undecided
+        # (``runtime_type_is_decided``), so it takes the undecided two faces
+        # (#7757, audit row NEW-1). Identity against None is total separately.
         # Truth waits on no caller: being its own coordinate, it takes the
         # undecided member's two faces (``bool_op_sugar.truth_of``).
         return self
@@ -240,15 +242,32 @@ class RaisedExitTypeValue(FloorValue):
         )
 
     def equals(self, other, site, ctx):
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-        construction_panic_gap(
-            owner="RaisedExitTypeValue.equals",
-            blame=site,
-            observed=type(other).__name__,
-            requested="native class/metaclass equality outcome testimony",
-            fix="construct rich dispatch; a raised type identity is not its outcome",
+        """``<raised class> == other``: the class's metaclass ``__eq__``, the
+        reflection and the identity fallback are not decided here, so it is
+        the undecided equality, two-faced (``undecided_dispatch_faces``):
+        ``py.eq`` over the two operands completes only under its own
+        ``python:compare.completes`` atom and owes the undecided member, or
+        raises something undetermined.  A raised type identity is never its
+        outcome (#7757, audit row NEW-1: the comparison no longer waits on a
+        caller that never answers it)."""
+        del ctx
+        from sugar_lift_py_tests.floor.object_identity import identity_term
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import py_eq
+        from sugar_lift_py_tests.sugar.comparison_op_sugar import (
+            undecided_dispatch_faces,
         )
+
+        owner = str(site)
+        predicate = PredicateValue(
+            py_eq(
+                identity_term(self, site, "left", owner=owner),
+                identity_term(other, site, "right", owner=owner),
+            ),
+            site,
+            operand_callsites=(*self.callsites(), *other.callsites()),
+        )
+        return undecided_dispatch_faces(predicate, site, "Eq")
 
     def is_identical(self, other, site):
         from sugar_lift_py_tests.floor.none_value import NoneValue

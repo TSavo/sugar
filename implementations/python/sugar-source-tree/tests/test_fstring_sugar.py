@@ -5,8 +5,6 @@ import tempfile
 import pytest
 
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
-from sugar_lift_py_tests.floor.string_value import StringValue
-from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.backend import Leaf, MaybeChild, materialize
 from sugar_source_tree.panic import BackendDefect
@@ -112,22 +110,51 @@ def test_string_plus_an_undecided_value_is_the_undecided_binary_law():
     ]
 
 
-def test_string_plus_a_parameter_is_the_native_operation_carrier():
-    """``"n=" + z`` with ``z`` the function's parameter: the caller's actual
-    decides it, so the operation is the ``add`` carrier, with the parameter's
-    coordinate in its slot and the exact operands."""
+def test_string_plus_a_parameter_is_the_undecided_binary_law():
+    """``"n=" + z`` with ``z`` the function's parameter waits on no caller
+    (#7757, audit row NEW-1): ``z``'s ``__radd__`` may answer after
+    ``str.__add__``'s ``NotImplemented``, which no one dispatched method
+    states.  So the function states the one undecided binary law, a
+    completed face and the ``UndecidedBinary:+`` halt, over the exact
+    operands: the literal and the parameter."""
+    from sugar_lift_py_tests.ir import _ConstStr, _Ctor, _Var
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
+
     outcome = _fn('def A(z):\n    return "n=" + z\n').sugar().desugar()
 
-    assert isinstance(outcome, NativeOperationExitCarrierV1), outcome
-    with pytest.raises(AttributeError, match="value"):
-        _ = outcome.value
+    assert not isinstance(outcome, NativeOperationExitCarrierV1), outcome
+    assert isinstance(outcome, ExitSet), type(outcome).__name__
+    assert [face.effect.producer_node_owner for face in outcome.halts()] == [
+        "UndecidedBinary:+"
+    ]
+    (done,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert "python:binary_op.completes" in repr(done.guard)
+    results = [
+        node
+        for node in _terms(done.guard)
+        if isinstance(node, _Ctor) and node.name == "python:binary_result"
+    ]
+    assert results, done.guard
+    operator, left, right, _key = results[0].args
+    assert operator.value == "+"
+    assert isinstance(left, _ConstStr) and left.value == "n="
+    assert isinstance(right, _Var) and right.name == "z"
 
-    assert outcome.demand.operator == "add"
-    left, right = outcome.operands
-    assert isinstance(left, StringValue) and left.value == "n="
-    assert isinstance(right, SymbolicValue)
-    assert right.formal_coordinate is not None
-    assert outcome.coordinates == (None, right.formal_coordinate)
+
+def _terms(root):
+    """Every node of a formula or term, depth first."""
+    import dataclasses
+
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        yield node
+        if isinstance(node, (tuple, list)):
+            stack.extend(node)
+        elif dataclasses.is_dataclass(node) and not isinstance(node, type):
+            stack.extend(
+                getattr(node, field.name, None) for field in dataclasses.fields(node)
+            )
 
 
 def test_fstring_with_only_a_literal_is_the_string():
