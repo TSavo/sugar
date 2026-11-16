@@ -121,7 +121,12 @@ def _builtin_law_answers(sugar, callsite) -> bool:
     Read from the callee's binding, never its spelling: a shape CPython
     documents as never raising (``builtin_call_total`` on the bound
     ``LanguageCallee``: ``type(obj)``, ``id(obj)``, ``callable(obj)``,
-    ``object()``, ...).  A builtin exception class's construction never
+    ``object()``, ...).  ``builtin_call_total`` states each builtin's own
+    operand condition (``str``/``repr``/``bool``/``print``/``all``/``any``
+    only over operands decided all the way down), so this asks the same
+    checked question ``builtin_dunder_call`` asks, never a looser one: it
+    never completes ``str(<formal>)`` (#7757 L2).  A builtin exception
+    class's construction never
     reaches here (``_builtin_exception_construction``).  A builtin binding
     with none of these answers nothing: binding a name to the builtin
     namespace is not a law for what that builtin does."""

@@ -148,11 +148,21 @@ class FormattedValueSugar(ConstructedTermSugar):
                 # ``f'{5}'`` is ``format(5, '')``: ``int.__format__`` with an
                 # empty spec is ``str(5)``, CPython's own, decided here.
                 return ExitSet.completed(StringValue(displayed))
+            from sugar_lift_py_tests.floor.object_identity import identity_term
+
+            # The operand as this read finds it (``identity_term``): a
+            # container whose contents are not current is named by its
+            # identity, never by the contents it arrived with (#7757).
             formatted = SymbolicValue(
                 ctor(
                     "python:fstring_value",
                     [
-                        value.to_term(owner="FormattedValueSugar.value"),
+                        identity_term(
+                            value,
+                            self.site,
+                            "operand",
+                            owner="FormattedValueSugar.value",
+                        ),
                         conversion_term,
                         format_spec_term,
                     ],

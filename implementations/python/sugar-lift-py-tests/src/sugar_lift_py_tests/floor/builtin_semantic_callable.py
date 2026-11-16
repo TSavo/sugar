@@ -218,7 +218,15 @@ class BuiltinSemanticCallable(FloorValue):
         """Construct the exact finite iterator for an authenticated sequence
         that is not ground (a member known only by its type, a finite
         comprehension): its shape decides the pairs.  A ground sequence is
-        the cited fold's (``_ground_call``)."""
+        the cited fold's (``_ground_call``).
+
+        A list whose contents are not current
+        (``object_identity.contents_stale``: it arrived by binding, or code
+        that may have changed it ran) holds no pairs here: its members are
+        not its contents now.  It is the bodiless call that names the list by
+        its identity (``_unhandled_construct``, the door ``set``/``tuple``/
+        ``dict`` take for the same operand), never an iterator over the
+        contents it arrived with (#7757 H8)."""
         if operation.keyword_names or len(operation.arguments) != 1:
             return super().callable_application_with(operation, ctx)
         from sugar_lift_py_tests.floor import (
@@ -228,9 +236,14 @@ class BuiltinSemanticCallable(FloorValue):
             TermValue,
             TupleValue,
         )
+        from sugar_lift_py_tests.floor.object_identity import contents_stale
         from sugar_lift_py_tests.outcome import ExitSet
 
         source = operation.arguments[0]
+        if contents_stale(source):
+            return self._unhandled_construct(
+                operation, *_cited_builtins()[self.operation]
+            )
         if isinstance(source, (ListValue, TupleValue)):
             elements = source.elements
         elif (
