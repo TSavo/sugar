@@ -192,12 +192,6 @@ def test_lying_exception_type_cannot_consume_attribute_halt() -> None:
     )
 
 
-def test_total_attribute_actual_never_acquires_exceptional_edge() -> None:
-    exits = _read(_receiver())
-
-    assert all(isinstance(face, Completed) for face in exits.exits)
-
-
 def test_authenticated_attribute_family_has_a_closed_exit_split() -> None:
     """Every enrolled body ends on one arm, and no arm is a panic.
 

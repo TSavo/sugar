@@ -35,9 +35,28 @@ class _Seal:
         self.end = 1
 
 
+class _Span:
+    def __init__(self, line):
+        self.start_line = line
+        self.start_col = 0
+        self.end_line = line
+        self.end_col = 1
+
+
 class _Site:
+    """A source fragment as the reads key it: its seal for the sugar's own
+    term, and a source coordinate (``source_cid`` and a span) for the
+    occurrence an undecided read is keyed by (``occurrence.named_site_cid``).
+    Since #9092 a recorded field's read on an instance with no class term is
+    the dispatched read, which keys its undecided read by the site: a site
+    naming no coordinate is refused by name there."""
+
+    _lines: dict = {}
+
     def __init__(self, cid):
         self._seal = _Seal(cid)
+        self.source_cid = "source"
+        self.line_col_span = _Span(self._lines.setdefault(cid, len(self._lines) + 1))
 
     def seal(self):
         return self._seal
