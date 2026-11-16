@@ -42,14 +42,21 @@ def test_opaque_operator_arithmetic_cites_coordinates(method, operator) -> None:
     assert halt.effect.producer_node_owner == f"UndecidedBinary:{operator}"
 
 
-def test_opaque_operator_unary_minus_is_named_refusal() -> None:
-    """An opaque call result has no decided runtime type for unary ``-``."""
-    value = OpaqueOpCallsite("len", TermValue(9), computed=None)
-    with pytest.raises(SugarNotWritten) as raised:
-        value.unary_minus("t.py:1")
+def test_opaque_operator_unary_minus_is_the_undecided_two_faces() -> None:
+    """An opaque call result has no decided runtime type for unary ``-``:
+    the one undecided unary, its completed face the result of THIS
+    occurrence over the coordinate, its other face the halt (#7757 NEW-8)."""
+    from sugar_lift_py_tests.outcome.exit_set import sole_completed_value
 
-    assert raised.value.owner == "unary_operation_exception_floor"
-    assert raised.value.observed == "SymbolicValue -"
+    value = OpaqueOpCallsite("len", TermValue(9), computed=None)
+    outcome = value.unary_minus("t.py:1")
+
+    assert sole_completed_value(outcome).to_term(owner="test") == ctor(
+        "python:unary_result",
+        [str_const("-"), ctor("call:len", [num(9)]), str_const("t.py:1")],
+    )
+    (halt,) = outcome.halts()
+    assert halt.effect.producer_node_owner == "SymbolicValue.unary_minus"
 
 
 @pytest.mark.parametrize(("method", "operator"), (("multiply", "*"), ("power", "**")))
