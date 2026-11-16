@@ -264,8 +264,8 @@ class _Visitor(ast.NodeVisitor):
                 "name_or_vendor_gates",
                 node,
                 f"def {node.name}",
-                "match exception_type_coordinate against ExitSuppressionContract "
-                "coordinates minted at the suppresses() door; never suppress by name",
+                "match exception_type_coordinate against the Suppresses matcher "
+                "coordinate; never suppress by name",
                 kind="name_keyed_suppress_api",
             )
         self._function_stack.append(node)
@@ -275,7 +275,7 @@ class _Visitor(ast.NodeVisitor):
     visit_AsyncFunctionDef = visit_FunctionDef
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
-        # Residual after cluster-5 Suppresses fix: ExitSuppressionContract still
+        # Residual after cluster-5 Suppresses fix: a name-keyed contract once
         # decided suppress via suppresses_exception(str) / exception_names.
         # Those shells are deleted; any reintroduction is a name_or_vendor_gate.
         # Retirement of this detector arm: when no production Attribute load of
@@ -286,8 +286,8 @@ class _Visitor(ast.NodeVisitor):
                 "name_or_vendor_gates",
                 node,
                 ast.unparse(node),
-                "match exception_type_coordinate against ExitSuppressionContract "
-                "coordinates minted at the suppresses() door; never suppress by name",
+                "match exception_type_coordinate against the Suppresses matcher "
+                "coordinate; never suppress by name",
                 kind="name_keyed_suppress_api",
             )
         self.generic_visit(node)

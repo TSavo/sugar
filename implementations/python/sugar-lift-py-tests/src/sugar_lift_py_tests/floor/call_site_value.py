@@ -63,58 +63,6 @@ def names_a_string(value) -> bool:
 
 
 @dataclass(frozen=True)
-class ExitSuppressionContract:
-    """Static evidence for one context manager's exceptional exit.
-
-    An empty coordinate set proves propagation. A non-empty set proves that
-    exactly those **authenticated type coordinates** are suppressed. Names
-    enter only through :meth:`suppresses`, which resolves each name to a
-    builtin ``python:exception_type_identity`` once at construction — the
-    one door. Match sites never see a spelling; they compare
-    ``effect.exception_type_coordinate`` against this frozenset.
-
-    Runtime-dependent exits carry no contract at all and therefore remain
-    loud in WithSugar.
-
-    Retirement path for residual name suppress: the deleted
-    ``exception_names`` / ``suppresses_exception(str)`` shell. If a caller
-    needs foreign (non-builtin) types, promote this field to carry
-    source-authenticated coordinates from the tree rather than the builtin
-    table — then the string door can refuse non-empty names entirely.
-    """
-
-    exception_type_coordinates: frozenset
-
-    @classmethod
-    def suppresses(cls, exception_names: tuple[str, ...]) -> "ExitSuppressionContract":
-        """ONE door: resolve source-facing names to type coordinates at mint."""
-        if not exception_names:
-            raise ValueError("a suppressing exit contract must name an exception")
-        from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
-
-        coordinates = []
-        for name in exception_names:
-            if not isinstance(name, str) or not name:
-                raise ValueError(
-                    "ExitSuppressionContract.suppresses requires non-empty "
-                    f"exception type names; got {name!r}"
-                )
-            identity, _mro = _builtin_exception_identity(name)
-            if identity is None:
-                raise ValueError(
-                    f"matcher name {name!r} has no builtin type coordinate; "
-                    "use a language-owned exception or thread an authenticated "
-                    "coordinate into ExitSuppressionContract"
-                )
-            coordinates.append(identity)
-        return cls(frozenset(coordinates))
-
-    def suppresses_coordinate(self, coordinate) -> bool:
-        """True when ``coordinate`` is one of the contract's type identities."""
-        return coordinate in self.exception_type_coordinates
-
-
-@dataclass(frozen=True)
 class CallSiteValue(FloorValue):
     """A callsite as two things at once.
 
@@ -139,9 +87,6 @@ class CallSiteValue(FloorValue):
     # Absent that citation, Python must execute the call to know whether its
     # result is a valid isinstance type operand.
     python_type_coordinate: Term | None = dataclass_field(default=None, compare=False)
-    # Source-authenticated context-manager evidence.  None means undecidable,
-    # never "does not suppress".
-    exit_suppression: ExitSuppressionContract | None = None
     # The receiver whose runtime type selects a method body. Plain calls and
     # exact imported methods leave this absent; it is not inferred from args.
     runtime_dispatch_receiver: FloorValue | None = dataclass_field(
