@@ -196,7 +196,12 @@ def test_authenticated_exception_type_sugar_does_not_force_attribute_floor():
     assert isinstance(value, AuthenticatedExceptionTypeValue)
     assert value.exception_type_identity() == _identity("pyarrow.ArrowInvalid")
     assert value.exception_type_mro() is None
-    assert value.class_value is None
+    # The class value is the one the import identity names
+    # (``_import_bound_exception_floor``), read off the identity itself --
+    # never projected through the ``pa`` receiver's attribute.
+    from sugar_lift_py_tests.floor.exception_class_value import ExceptionClassValue
+
+    assert value.class_value == ExceptionClassValue("pyarrow.ArrowInvalid")
 
 
 def test_live_pandas_arrow_external_error_operands_resolve():

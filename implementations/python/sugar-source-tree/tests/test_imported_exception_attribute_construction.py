@@ -21,8 +21,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
     AuthenticatedExceptionTypeValue,
@@ -161,18 +159,39 @@ def test_importorskip_binding_authenticates_arrow_invalid(tmp_path):
 
 
 def test_import_bound_attribute_body_does_not_invent_member_success(tmp_path):
-    """Lying twin: an import coordinate alone is not member-existence testimony."""
-    from sugar_source_tree.panic import SugarNotWritten
+    """Lying twin: an import coordinate alone is not member-existence testimony.
 
-    path = tmp_path / "body.py"
-    path.write_text(
-        "import pandas as pd\n" "def f():\n" "    return pd.util.foo\n",
-        encoding="utf-8",
+    The lifter holds no module's namespace, so ``pd.util.foo`` is the
+    two-faced undecided read (#7757, ``test_one_import_door``): it completes
+    only under its own ``python:attribute_op.completes`` atom, the complement
+    halts with an undetermined raise (no ``AttributeError`` is named), and
+    what is not decided here is owed once, as the ``undecided`` member under
+    the import table's target symbol.  No face completes unconditionally.
+    (It once refused by name; main carries the undecided read instead.)"""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    outcome = (
+        _function(
+            tmp_path,
+            "body.py",
+            "import pandas as pd\n" "def f():\n" "    return pd.util.foo\n",
+        )
+        .sugar()
+        .desugar()
     )
-    tree = SourceFile(path_source(str(path)))
-
-    with pytest.raises(SugarNotWritten, match="attribute"):
-        _attribute(tree, "foo").sugar().desugar()
+    assert outcome.completed_value() is None, "member success was invented"
+    halts = outcome.halts()
+    assert halts
+    assert all(type(halt.effect) is UndeterminedRaiseEffect for halt in halts)
+    assert all(halt.effect.exception_name is None for halt in halts)
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    assert completed
+    assert all(
+        "python:attribute_op.completes" in repr(face.guard) for face in completed
+    )
+    assert "python:pandas.util.foo" in [call.symbol for call in owed_calls(outcome)]
 
 
 def test_try_import_optional_binding_authenticates_module_attr(tmp_path):
@@ -307,17 +326,16 @@ def test_module_attribute_raise_and_from_imported_raise_meet_one_door(tmp_path):
 def test_except_of_a_from_imported_class_constructs(tmp_path):
     """``except ImportedError`` authenticates through the one lookup instead of
     refusing for lacking an identity."""
-    path = tmp_path / "handler.py"
-    path.write_text(
+    _function(
+        tmp_path,
+        "handler.py",
         "from pyarrow import ArrowInvalid\n"
         "def f(g):\n"
         "    try:\n"
         "        return g()\n"
         "    except ArrowInvalid:\n"
         "        return None\n",
-        encoding="utf-8",
-    )
-    next(SourceFile(path_source(str(path))).functions()).sugar()
+    ).sugar()
 
 
 def test_try_gated_from_builtins_import_is_the_builtin(tmp_path):
@@ -468,13 +486,21 @@ def test_raise_of_a_class_with_an_undecided_base_is_the_unanswered_class_call(
 ):
     """``class E(X)`` with ``X`` undecided: ``raise E('y')`` constructs; the
     call of ``E`` is the one unanswered class call (``UnknownCalleeCallV1``)
-    and owes the member."""
+    and owes the member.
+
+    ``E`` is a module-level class ``f`` reads, so ``f`` is reduced through the
+    entrance the lift reduces every function by (``function_universe_outcome``):
+    its entry binds the class statement's key to what the module's run bound
+    it to.  A bare ``desugar()`` with no entry reads the key unbound and is
+    refused by name, which is the instrument's mistake, not the source's."""
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
     function = _function(
         tmp_path,
         "base_star.py",
         _STAR + "class E(ArrowInvalid):\n    pass\ndef f():\n    raise E('y')\n",
     )
-    outcome = function.sugar().desugar()
+    outcome = function_universe_outcome(function)
     assert any(
         getattr(effect, "producer_node_owner", None) == "UnknownCallee:E"
         for effect in _halt_effects(outcome)
@@ -508,6 +534,7 @@ def test_except_star_of_a_star_imported_class_is_retained_and_owes(tmp_path):
     match against the undecided class is retained (the handler under the
     type test, the unwrapped raise under its complement), and every face
     that passed the arm owes the member at the arm's type."""
+    from sugar_lift_py_tests.effect import GroupedRaiseEffect
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.outcome import Completed, Halted
 
@@ -526,11 +553,17 @@ def test_except_star_of_a_star_imported_class_is_retained_and_owes(tmp_path):
     completed = [face for face in outcome.exits if isinstance(face, Completed)]
     halted = [face for face in outcome.exits if isinstance(face, Halted)]
     assert completed and halted, outcome.exits
-    assert all(
+    # The miss face raises the ValueError itself, never a wrapping group.
+    # Python reads the handler's type whenever the group reaches the arm, and
+    # a read of a name only a star import may bind has a halted face of its
+    # own (``TryStarSugar``: "the halt of a handler type's read"), which
+    # rides beside it.
+    assert any(
         isinstance(face.effect, RaiseEffect)
         and face.effect.exception_name == "ValueError"
         for face in halted
     )
+    assert not any(isinstance(face.effect, GroupedRaiseEffect) for face in halted)
     rendered = repr(outcome)
     assert "adt.is_python_type" in rendered
     assert "value='undecided'" in rendered

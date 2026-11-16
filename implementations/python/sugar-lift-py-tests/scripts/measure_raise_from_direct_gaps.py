@@ -9,7 +9,7 @@ import json
 from collections import Counter
 from pathlib import Path
 
-from sugar_source_tree.panic import SugarNotWritten
+from sugar_source_tree.panic import LifterRefusal, SugarNotWritten
 from sugar_source_tree.reporter import CollectingReporter
 
 
@@ -115,7 +115,12 @@ def measure(root: Path) -> dict[str, object]:
                     # The reporter records the exact direct/descendant locus;
                     # continue so later Raise sites are still measured.
                     pass
-        except Exception as panic:
+        except (Exception, LifterRefusal) as panic:
+            # A lifter refusal (``BackendDefect``, ``ConstructionPanic``, a
+            # ``SugarNotWritten`` the open itself raised) is a
+            # ``BaseException`` so ordinary ``except Exception`` never
+            # swallows it; this census names it per file instead of losing
+            # the run to the first one.
             construction_panics.append(
                 {
                     "path": str(path),

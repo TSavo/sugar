@@ -10,7 +10,8 @@ algebra ``Store`` established and ``With`` rode:
     body
       → reduce_block_to_exitset  (the shared reducer; a halt is a halted arm)
       → handler routing over Halted arms, ``else`` over Completed arms
-      → ExitSet.and_finally      (the shared cleanup fold)
+      → the one ``finally``      (``_and_finally_with_raise_context``, composed
+                                  beneath every arm by ``ExitSet.and_then``)
 
 Every combinator above is shared.  ``TrySugar`` contributes a matcher and an
 arm-selection loop; it contributes **no sequencing**.
@@ -42,7 +43,8 @@ Laws pinned here, each with a discrimination arm that bites:
 - no invented fall-through; no vendor arms
 - ``except*`` stays separately loud, and an ordinary ``except`` never absorbs
   or rewrites a grouped raise
-- **structural**: ``try/finally`` reaches the *shared* ``ExitSet.and_finally``,
+- **structural**: ``try/finally`` reaches the *one* ``finally``
+  (``_and_finally_with_raise_context``),
   consulted exactly once, and is handed BOTH edges of the body partition
   (bite: swap in a behaviour-identical private fold -- every behavioural twin
   stays green and only the routing law goes red)
@@ -92,15 +94,31 @@ def _out(src: str):
 
 
 def _incompletes(v):
-    """The halted arms of the recorded entries in which every arm halts."""
-    from sugar_lift_py_tests.outcome import ExitSet
+    """Every halt ``v`` leaves by.
 
-    return [
-        halt
-        for entry in v.record.contribution()
-        if isinstance(entry, ExitSet) and entry.halts() == entry.exits
-        for halt in entry.halts()
-    ]
+    ``v`` is a function's reduction (an ``ExitSet``: its halted arms, and the
+    all-halting entries each completed arm's record carries) or one completed
+    value (the all-halting entries its record carries).  A body every arm of
+    which halts has no completed value, so its halts are read off the arms."""
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
+
+    if isinstance(v, ExitSet):
+        halts = list(v.halts())
+        values = [face.value for face in v.exits if isinstance(face, Completed)]
+    else:
+        halts = []
+        values = [v]
+    for value in values:
+        record = getattr(value, "record", None)
+        if record is None:
+            continue
+        halts.extend(
+            halt
+            for entry in record.contribution()
+            if isinstance(entry, ExitSet) and entry.halts() == entry.exits
+            for halt in entry.halts()
+        )
+    return halts
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +309,7 @@ def test_finally_on_exit_3_uncaught_raise_restored():
     """(3) Unmatched halt survives inert finally (restore, not invent complete)."""
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 
-    v = _val(
+    v = _out(
         "def A(z):\n"
         "    try:\n"
         "        raise ValueError\n"
@@ -327,7 +345,7 @@ def test_finally_on_exit_5_handler_raise_through_finally():
     """(5) Handler's own raise is the outgoing halt after inert finally."""
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 
-    v = _val(
+    v = _out(
         "def A(z):\n"
         "    try:\n"
         "        raise ValueError\n"
@@ -394,7 +412,7 @@ def test_bare_reraise_preserves_the_same_effect_occurrence():
     assert halt.effect.exception_name == "ValueError"
     # Occurrence is the original raise site (line of ``raise ValueError``),
     # not a reconstructed site at the bare re-raise.
-    assert halt.effect.occurrence.endswith(":6:8")
+    assert halt.effect.occurrence.value.endswith(":6:8")
     assert halt.effect.exception_type_coordinate == _identity("ValueError")
 
 
@@ -412,8 +430,8 @@ def test_bare_reraise_is_not_a_reconstructed_raise_at_handler_site():
     (halt,) = out.halts()
     assert isinstance(halt.effect, RaiseEffect)
     # Bare re-raise is on a later line; occurrence must NOT be that line.
-    assert not halt.effect.occurrence.endswith(":8:8")
-    assert not halt.effect.occurrence.endswith(":8:9")
+    assert not halt.effect.occurrence.value.endswith(":8:8")
+    assert not halt.effect.occurrence.value.endswith(":8:9")
 
 
 # ---------------------------------------------------------------------------
@@ -425,7 +443,7 @@ def test_uncaught_raise_does_not_invent_fallthrough_completion():
     """Mismatch arm leaves the halt — function body after try does not complete."""
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 
-    v = _val(
+    v = _out(
         "def A(z):\n"
         "    try:\n"
         "        raise ValueError\n"
@@ -443,7 +461,7 @@ def test_handler_halt_does_not_invent_post_try_fallthrough():
     """Handler raise is the exit; no fabricated completion after the try."""
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 
-    v = _val(
+    v = _out(
         "def A(z):\n"
         "    try:\n"
         "        raise ValueError\n"
@@ -473,7 +491,7 @@ def test_handler_raise_carries_the_handled_occurrence_as_context():
     assert halt.effect.exception_name == "ValueError"
     assert isinstance(halt.effect.context_effect, RaiseEffect)
     assert halt.effect.context_effect.exception_name == "ImportError"
-    assert halt.effect.context_effect.occurrence.endswith(":6:8")
+    assert halt.effect.context_effect.occurrence.value.endswith(":6:8")
 
 
 # ---------------------------------------------------------------------------
@@ -527,8 +545,8 @@ def test_ordinary_except_does_not_absorb_grouped_raise_silently():
 # ("finally completes -> preserve incoming exit").  Line 6 ("finally
 # terminates -> override incoming exit") has two faces -- a return in the
 # cleanup and a raise in the cleanup -- and each must beat BOTH incoming
-# edges.  These are the ``cleanup_restores`` / cleanup-halt arms of the
-# shared ``ExitSet.and_finally``.
+# edges.  These are the ``_finally_restores`` / cleanup-halt arms of the
+# one ``finally`` (``try_sugar._finally_beneath``).
 # ---------------------------------------------------------------------------
 
 
@@ -551,23 +569,20 @@ def test_finally_return_overrides_an_incoming_halt():
 def test_finally_return_override_bites_when_cleanup_is_read_as_restoring():
     """Bite for the twin above.
 
-    ``TrySugar`` tells ``and_finally`` which cleanup completions are terminal
-    via ``cleanup_restores``.  Force that predicate to the always-restores
-    default -- the shape ``and_finally`` uses when a caller does NOT model
-    return-in-finally -- and the incoming ValueError halt comes back.
+    The one ``finally`` (``try_sugar._finally_beneath``) tells a restoring
+    cleanup completion from a terminal one (return in finally) by
+    ``_finally_restores``.  Force that predicate to always-restores -- the
+    shape of a ``finally`` that does NOT model return-in-finally -- and the
+    incoming ValueError halt comes back.
     """
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+    from sugar_lift_py_tests.sugar import try_sugar
 
-    real = ExitSet.and_finally
-
-    def always_restores(self, cleanup, *, cleanup_restores=None):
-        return real(self, cleanup, cleanup_restores=lambda _v: True)
-
-    ExitSet.and_finally = always_restores
+    real = try_sugar._finally_restores
+    try_sugar._finally_restores = lambda _value: True
     try:
         out = _out(_HALT_THEN_RETURN_IN_FINALLY)
     finally:
-        ExitSet.and_finally = real
+        try_sugar._finally_restores = real
 
     assert out.halts() == out.exits, "perturbation must resurrect the overridden halt"
     (halt,) = out.halts()
@@ -599,7 +614,7 @@ def test_finally_raise_overrides_an_incoming_completion():
     """
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 
-    v = _val(
+    v = _out(
         "def A(z):\n"
         "    try:\n"
         "        pass\n"
@@ -636,34 +651,45 @@ _FINALLY_OVER_A_PARTITION = (
 )
 
 
-def _spy_and_finally():
-    """Install a counting wrapper on the shared ``ExitSet.and_finally``."""
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+def _spy_the_one_finally():
+    """Install a recording wrapper on the one ``finally``
+    (``try_sugar._and_finally_with_raise_context``, the ``finally`` of a
+    ``try`` and of a ``try*``), recording the arms it is handed."""
+    from sugar_lift_py_tests.sugar import try_sugar
 
-    real = ExitSet.and_finally
+    real = try_sugar._and_finally_with_raise_context
     seen = []
 
-    def spy(self, cleanup, **kwargs):
-        seen.append(self)
-        return real(self, cleanup, **kwargs)
+    def spy(pre_finally, *args, **kwargs):
+        seen.append(pre_finally)
+        return real(pre_finally, *args, **kwargs)
 
-    ExitSet.and_finally = spy
+    try_sugar._and_finally_with_raise_context = spy
     return seen, real
 
 
+def _restore_the_one_finally(real):
+    from sugar_lift_py_tests.sugar import try_sugar
+
+    try_sugar._and_finally_with_raise_context = real
+
+
 def test_try_finally_routes_through_the_shared_exitset_and_finally():
-    """``finally`` is the shared ``ExitSet.and_finally``, consulted once.
+    """``finally`` is the one ``finally`` (``_and_finally_with_raise_context``),
+    consulted once.
 
     It is handed the post-handler-routing ExitSet -- both edges of the body
-    partition -- rather than a pre-decided single face.
+    partition -- rather than a pre-decided single face.  (It was once
+    ``ExitSet.and_finally``; main composes the ``finally`` beneath every arm
+    through ``ExitSet.and_then``, in one place for ``try`` and ``try*``.)
     """
-    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 
-    seen, real = _spy_and_finally()
+    seen, real = _spy_the_one_finally()
     try:
-        v = _val(_FINALLY_OVER_A_PARTITION)
+        v = _out(_FINALLY_OVER_A_PARTITION)
     finally:
-        ExitSet.and_finally = real
+        _restore_the_one_finally(real)
 
     assert len(seen) == 1, "finally must consult the shared fold exactly once"
     incoming = seen[0]
@@ -682,60 +708,61 @@ def test_try_finally_routes_through_the_shared_exitset_and_finally():
 def test_shared_fold_spy_bites_on_a_behavior_identical_private_fold():
     """The bite: a private fold that agrees on every observable.
 
-    ``TrySugar.desugar`` is replaced with a copy whose only difference is that
-    it folds the cleanup through a module-private function instead of the
-    shared ``ExitSet.and_finally``.  Behaviour is byte-identical -- every
-    behavioural twin above stays green -- and ONLY the routing law goes red,
-    which is what makes that law load-bearing rather than decorative.
+    ``TrySugar._route_body`` is replaced with a copy whose only difference is
+    that it folds the cleanup through a module-private function instead of
+    the one ``finally``.  Behaviour is byte-identical -- every behavioural
+    twin above stays green -- and ONLY the routing law goes red, which is
+    what makes that law load-bearing rather than decorative.
     """
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+    from sugar_lift_py_tests.sugar import try_sugar
     from sugar_lift_py_tests.sugar.try_sugar import TrySugar
 
-    honest = _val(_FINALLY_OVER_A_PARTITION)
+    honest = _out(_FINALLY_OVER_A_PARTITION)
     honest_reds = [e.effect.exception_name for e in _incompletes(honest)]
 
-    real_and_finally = ExitSet.and_finally
+    real_fold = try_sugar._and_finally_with_raise_context
 
-    def _private_fold(exits, cleanup, *, cleanup_restores=None):
-        # Deliberately NOT ExitSet.and_finally: same law, private door.
-        return real_and_finally(exits, cleanup, cleanup_restores=cleanup_restores)
+    def _private_fold(*args, **kwargs):
+        # Deliberately NOT the module's one finally: same law, private door.
+        return real_fold(*args, **kwargs)
 
-    real_desugar = TrySugar.desugar
+    real_route_body = TrySugar._route_body
 
-    def desugar_via_private_fold(self, ctx=None):
-        from sugar_lift_py_tests.floor.return_value import ReturnValue
-        from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            _ReducedBlock,
-            reduce_block_to_exitset,
-        )
-        from sugar_lift_py_tests.sugar.try_sugar import _route_handlers_over_exits
-
-        body_es = reduce_block_to_exitset(self.body, ctx)
-        pre_finally = _route_handlers_over_exits(
-            body_es, self.handlers, self.orelse, site=self.site, ctx=ctx
+    def route_body_via_private_fold(self, body_es, ctx):
+        arm_effects: list = []
+        pre_finally = try_sugar._route_handlers_over_exits(
+            body_es,
+            self.handlers,
+            self.orelse,
+            site=self.site,
+            ctx=ctx,
+            route_site=self.route_site,
+            edge_keys=self.edge_keys,
+            arm_effects=arm_effects,
         )
         if not self.finalbody:
-            return pre_finally.normalize()
-        cleanup_es = reduce_block_to_exitset(self.finalbody, ctx)
+            return try_sugar._try_outcome(pre_finally)
+        after = _private_fold(
+            pre_finally,
+            self.finalbody,
+            ctx=ctx,
+            site=self.site,
+            edge_keys=self.edge_keys,
+            body_effects=(
+                try_sugar._body_halt_effects(body_es) if self.edge_keys else ()
+            ),
+            arm_effects=tuple(arm_effects),
+            finalbody_halted=self.finalbody_halted,
+        )
+        return try_sugar._try_outcome(after)
 
-        def _restores(value):
-            if isinstance(value, _ReducedBlock):
-                if not value.can_fall_through:
-                    return False
-                return not any(isinstance(e, ReturnValue) for e in value.entries)
-            return True
-
-        return _private_fold(
-            pre_finally, lambda: cleanup_es, cleanup_restores=_restores
-        ).normalize()
-
-    TrySugar.desugar = desugar_via_private_fold
-    seen, real = _spy_and_finally()
+    TrySugar._route_body = route_body_via_private_fold
+    seen, real = _spy_the_one_finally()
     try:
-        perturbed = _val(_FINALLY_OVER_A_PARTITION)
+        perturbed = _out(_FINALLY_OVER_A_PARTITION)
     finally:
-        ExitSet.and_finally = real
-        TrySugar.desugar = real_desugar
+        _restore_the_one_finally(real)
+        TrySugar._route_body = real_route_body
 
     # Behaviour is identical: no behavioural twin can see the private door.
     assert [e.effect.exception_name for e in _incompletes(perturbed)] == honest_reds
@@ -837,20 +864,46 @@ _NO_ARM_AT_ALL = (
 )
 
 
+def _decided_arms(shape):
+    """The arms of ``shape`` no undetermined raise reached: neither a halt of
+    undetermined class (``exception_name`` None) nor an arm under the
+    retained type test ``adt.is_python_type`` such a halt is routed by."""
+    return tuple(
+        arm
+        for arm in shape
+        if not (arm[0] == "Halted" and arm[2] is None)
+        and "adt.is_python_type" not in repr(arm[1])
+    )
+
+
 def test_unmatched_try_and_its_equivalent_spelling_share_arm_structure():
-    """A handler that cannot match leaves the body partition untouched.
+    """A handler that cannot match leaves the body's decided arms untouched.
 
     Same instrument, two spellings: routing a two-edge body through an arm
-    that cannot match yields exactly the arm structure the bare body has.
-    Try adds no arms, drops no arms, and re-guards nothing.
+    that cannot match yields exactly the decided arms the bare body has.
+    Try adds no decided arm, drops none, and re-guards nothing.
+
+    ``if flag`` on a formal is the undecided truth (``python:truth.completes``):
+    ``bool(flag)`` may raise, an exception of a class nobody testified to.
+    ``except KeyError`` cannot decide that it misses such a raise, so the
+    router retains the question ``adt.is_python_type`` over it: the caught
+    face and the residual halt both survive, never absorbed and never
+    dropped.  Those are the only arms the handler adds.
     """
     _node, _body, routed = _routed(_NON_MATCHING_ARM)
     _node2, bare, _routed2 = _routed(_NO_ARM_AT_ALL)
 
-    assert _arm_shape(routed) == _arm_shape(bare)
-    # And it is a genuine two-edge partition, not a degenerate single arm.
-    assert len(routed.normalize().exits) == 2
-    assert {kind for kind, _g, _e in _arm_shape(routed)} == {"Halted", "Completed"}
+    assert _decided_arms(_arm_shape(routed)) == _decided_arms(_arm_shape(bare))
+    # And the decided arms are a genuine two-edge partition.
+    decided = _decided_arms(_arm_shape(routed))
+    assert {kind for kind, _g, _e in decided} == {"Halted", "Completed"}
+    assert [e for kind, _g, e in decided if kind == "Halted"] == ["ValueError"]
+    # The undetermined raise of ``bool(flag)`` is retained, not decided.
+    undetermined = [
+        arm for arm in _arm_shape(routed) if arm[0] == "Halted" and arm[2] is None
+    ]
+    assert undetermined
+    assert all("adt.is_python_type" in repr(arm[1]) for arm in undetermined)
 
 
 def test_matched_handler_routing_equals_the_handler_body_arm_structure():
@@ -882,14 +935,20 @@ def test_equivalence_twin_bites_when_the_unmatched_arm_is_absorbed():
     unmatched spelling then stops agreeing with its bare equivalent, and the
     two-edge partition collapses -- exactly the red these twins exist to give.
     """
+    from sugar_lift_py_tests.authenticated_exception_matching import MatchDecided
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
     from sugar_lift_py_tests.sugar import try_sugar
 
-    real = try_sugar._effect_matches
-    try_sugar._effect_matches = lambda effect, matcher, ctx=None: True
+    real = try_sugar._effect_match_verdict
+    try_sugar._effect_match_verdict = (
+        lambda effect, matcher, ctx=None, *, site=None: ExitSet.completed(
+            MatchDecided(True)
+        )
+    )
     try:
         _node, _body, routed = _routed(_NON_MATCHING_ARM)
     finally:
-        try_sugar._effect_matches = real
+        try_sugar._effect_match_verdict = real
 
     _node2, bare, _r2 = _routed(_NO_ARM_AT_ALL)
     assert _arm_shape(routed) != _arm_shape(bare)
@@ -929,8 +988,9 @@ def test_first_match_is_source_order_and_bites_when_the_arms_are_reversed():
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         reduce_block_to_exitset,
     )
+    from sugar_lift_py_tests.authenticated_exception_matching import MatchDecided
     from sugar_lift_py_tests.sugar.try_sugar import (
-        _effect_matches,
+        _effect_match_verdict,
         _route_handlers_over_exits,
     )
 
@@ -939,10 +999,13 @@ def test_first_match_is_source_order_and_bites_when_the_arms_are_reversed():
     halted = [e for e in body_es.exits if type(e).__name__ == "Halted"]
     assert len(halted) == 1
 
-    # Precondition of the discriminator: BOTH arms genuinely match.
+    # Precondition of the discriminator: BOTH arms genuinely match -- the one
+    # matcher's verdict on each arm's type read is the decided match.
     matchers = [m for m, _b, _s in node.handlers]
     assert all(
-        _effect_matches(halted[0].effect, m, None) for m in matchers
+        _effect_match_verdict(halted[0].effect, m, None).completed_value()
+        == MatchDecided(True)
+        for m in matchers
     ), "both arms must match, else source order is not what is being tested"
 
     forward = _route_handlers_over_exits(
