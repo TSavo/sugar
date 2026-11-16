@@ -3424,6 +3424,70 @@ struct BridgeBinding {
     /// input it decides (`inputValues`, `stated_input_values`): the binder
     /// binds a global the call does not supply to it (step 5).
     stated_inputs: Vec<(String, Json)>,
+    /// The source the answering contract's definition spans (its def
+    /// warrant, `definition_span`): the owed operations at sites inside it
+    /// are what its own proof owes (`owed_in_definition`). `None` where the
+    /// contract states no def warrant.
+    definition: Option<SourceSpan>,
+}
+
+/// A source span: a workspace-relative file and the `(line, column)` it
+/// starts and ends at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SourceSpan {
+    file: String,
+    start: (i64, i64),
+    end: (i64, i64),
+}
+
+impl SourceSpan {
+    /// An `undecided` member's site as a span.
+    fn of_site(site: &sugar_proof_envelope::UndecidedSite) -> Self {
+        Self {
+            file: site.file.clone(),
+            start: (site.start_line, site.start_col),
+            end: (site.end_line, site.end_col),
+        }
+    }
+
+    /// `other` lies inside this span, in the same file.
+    fn contains(&self, other: &SourceSpan) -> bool {
+        self.file == other.file && self.start <= other.start && other.end <= self.end
+    }
+}
+
+/// The span a function contract's definition covers: its def warrant, the
+/// first `sourceWarrants` entry that states no `role` (the `def` memento the
+/// lifter states first, `function_def_memento`; an assertion's warrant
+/// states `role: assertion`). `None` when the contract states none. A span
+/// stated with no end column ends at the end of its last line.
+fn definition_span(body: &Json) -> Option<SourceSpan> {
+    let warrants = body
+        .get("sourceWarrants")
+        .or_else(|| body.get("source_warrants"))?
+        .as_array()?;
+    let warrant = warrants
+        .iter()
+        .find(|warrant| matches!(warrant.get("role"), None | Some(Json::Null)))?;
+    let file = warrant.get("file")?.as_str()?;
+    if file.is_empty() {
+        return None;
+    }
+    let span = warrant.get("span")?;
+    let field = |snake: &str, camel: &str| -> Option<i64> {
+        span.get(snake).or_else(|| span.get(camel)).and_then(Json::as_i64)
+    };
+    let start_line = field("start_line", "startLine")?;
+    let end_line = field("end_line", "endLine").unwrap_or(start_line);
+    let start_col = field("start_col", "startCol").unwrap_or(0);
+    let end_col = field("end_col", "endCol")
+        .filter(|col| *col > 0)
+        .unwrap_or(i64::MAX);
+    Some(SourceSpan {
+        file: file.to_string(),
+        start: (start_line, start_col),
+        end: (end_line, end_col),
+    })
 }
 
 /// Why an ambient vendor post was not conjoined into the obligation (#4148).
@@ -3654,6 +3718,10 @@ struct AmbientPost {
     /// it stands, answered at a read whose call is a call of a function value
     /// stated as its join symbol (`function_value_answer`).
     value_calls: Option<Arc<FunctionAnswers>>,
+    /// `Some` for the owed entry of a member with no symbol: its site's span,
+    /// by which an answering contract whose definition holds it owes it
+    /// (`owed_in_definition`).
+    operation_site: Option<SourceSpan>,
 }
 
 #[derive(Debug, Clone)]
@@ -3821,6 +3889,7 @@ fn bridge_answer(
     let every_halt_guarded = contract_guards_every_halt(&body);
     let typed_halts = contract_typed_halts(&body);
     let stated_inputs = stated_input_values(&body);
+    let definition = definition_span(&body);
     Ok(Some((
         BridgeBinding {
             source_symbol: symbol.to_string(),
@@ -3829,6 +3898,7 @@ fn bridge_answer(
             formals,
             out_binding,
             stated_inputs,
+            definition,
         },
         post,
         halt_guards,
@@ -5989,6 +6059,7 @@ fn function_value_answer(post: &AmbientPost, function: &Json, call: &Json) -> Op
         receiver,
         plain_stores: table.plain_stores.clone(),
         value_calls: None,
+        operation_site: None,
     })
 }
 
@@ -6096,6 +6167,7 @@ fn dispatch_answer(post: &AmbientPost, call: &Json) -> Option<AmbientPost> {
         receiver: target.receiver,
         plain_stores: Some(Arc::clone(&dispatch.table)),
         value_calls: None,
+        operation_site: None,
     })
 }
 
@@ -6224,6 +6296,7 @@ fn builtin_dispatch_answer(
             formals,
             out_binding: BUILTIN_LAW_OUT.to_string(),
             stated_inputs: Vec::new(),
+            definition: None,
         },
         post: answer,
         halt_guards,
@@ -6236,6 +6309,7 @@ fn builtin_dispatch_answer(
         receiver: DispatchReceiver::AsCalled,
         plain_stores: None,
         value_calls: None,
+        operation_site: None,
     })
 }
 
@@ -6679,6 +6753,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                     receiver: DispatchReceiver::AsCalled,
                     plain_stores,
                     value_calls: None,
+                    operation_site: None,
                 })
             }
             Ok(None) => owed.push(owed_post(
@@ -6695,6 +6770,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                     formals: Vec::new(),
                     out_binding: String::new(),
                     stated_inputs: Vec::new(),
+                    definition: None,
                 },
                 post: Json::Null,
                 halt_guards: Vec::new(),
@@ -6707,6 +6783,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
                 receiver: DispatchReceiver::AsCalled,
                 plain_stores: None,
                 value_calls: None,
+                operation_site: None,
             }),
         }
     }
@@ -6730,7 +6807,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
         }
         Some(Arc::new(answers))
     };
-    for (site_cid, (member_cid, subject)) in operations {
+    for (site_cid, (member_cid, subject, span)) in operations {
         let mut post = owed_post(
             &subject,
             &member_cid,
@@ -6738,6 +6815,7 @@ fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
             DroppedAmbientPostReason::Unanswered,
         );
         post.value_calls = values.clone();
+        post.operation_site = Some(span);
         owed.push(post);
     }
     let recursive = recursive_contract_cids(&posts, &owed);
@@ -6783,6 +6861,7 @@ fn owed_post(
             formals: Vec::new(),
             out_binding: String::new(),
             stated_inputs: Vec::new(),
+            definition: None,
         },
         post: Json::Null,
         halt_guards: Vec::new(),
@@ -6795,6 +6874,7 @@ fn owed_post(
         receiver: DispatchReceiver::AsCalled,
         plain_stores: None,
         value_calls: None,
+        operation_site: None,
     }
 }
 
@@ -7227,9 +7307,10 @@ fn collect_completes_atoms<'a>(node: &'a Json, out: &mut Vec<(&'a str, &'a Json)
 }
 
 /// Every `undecided` member with `reason: unanswered` and no symbol, by the
-/// coordinate CID of its site: site CID to the member CID and the site's
-/// `file:line` (what the member is named by, having no symbol).
-fn unanswered_operations(pool: &MementoPool) -> BTreeMap<String, (String, String)> {
+/// coordinate CID of its site: site CID to the member CID, the site's
+/// `file:line` (what the member is named by, having no symbol) and the site's
+/// span (what a definition that holds it owes, `owed_in_definition`).
+fn unanswered_operations(pool: &MementoPool) -> BTreeMap<String, (String, String, SourceSpan)> {
     use sugar_proof_envelope::{UndecidedMember, UndecidedReason};
     let mut operations = BTreeMap::new();
     for (cid, member) in pool.undecided_members() {
@@ -7247,6 +7328,7 @@ fn unanswered_operations(pool: &MementoPool) -> BTreeMap<String, (String, String
             (
                 cid.to_string(),
                 format!("{}:{}", undecided.site.file, undecided.site.start_line),
+                SourceSpan::of_site(&undecided.site),
             ),
         );
     }
@@ -7388,7 +7470,7 @@ pub fn members_answered_at_prove(
         collect_completes_atoms(&claim, &mut stated);
         let mut reads: BTreeMap<String, Vec<&Json>> = BTreeMap::new();
         for (site, atom) in stated {
-            if let Some((member_cid, _subject)) = operations.get(site) {
+            if let Some((member_cid, _subject, _span)) = operations.get(site) {
                 let atoms = reads.entry(member_cid.clone()).or_default();
                 if !atoms.contains(&atom) {
                     atoms.push(atom);
@@ -8041,6 +8123,16 @@ fn linked_ambient_post_instances_for_inv(
                         }
                     }
                 }
+                // What the joined contract's own proof owes that no read in
+                // the instance names (an `is`, which never raises, so states
+                // no completes atom): the post is not a decided fact here,
+                // and the row that reads it is not decided on it
+                // (`owed_in_definition`, #8984).
+                for entry in owed_in_definition(&post.binding, &instance, ambient) {
+                    if !dropped.contains(&entry) {
+                        dropped.push(entry);
+                    }
+                }
                 kept.push(LinkedPostInstance {
                     binding: post.binding.clone(),
                     call: result_term.clone(),
@@ -8116,6 +8208,65 @@ fn settle_owed_operations(
             partition.dropped.push(entry);
         }
     }
+}
+
+/// What the joined contract's own proof owes, read through `instance` (step
+/// 9, #8984): each owed operation (an `undecided` member with no symbol)
+/// whose site lies inside the contract's definition (`binding.definition`)
+/// and that no read in `instance` names, as an owed entry naming that member.
+///
+/// The callee's reduction owes the member on every arm that passed through
+/// it (the lifter's `owed` slot), so its post and its halt guards are stated
+/// over a value nothing decided: an `is` over two formals is an identity atom
+/// the solver may choose either way. Where the member is an operation that
+/// can raise, its completes atom in the post names its site, and the owed
+/// operation is settled against the joined posts (`settle_owed_operations`);
+/// where it is a call, its result term names its site, and the join reads it
+/// in turn. An operation that never raises (an `is`) states no completes
+/// atom, so nothing in the post names it: joined as it stands, the post is
+/// conjoined as if decided and a lie reads `sat`. So, exactly as a
+/// transitive owed answer (#8685), the caller's row is not decided on it:
+/// the entry is dropped as `unanswered` (`refuse_dropped_answers`). A
+/// contract with no def warrant, or no owed operation inside it, joins as
+/// before.
+fn owed_in_definition(
+    binding: &BridgeBinding,
+    instance: &Json,
+    ambient: &[AmbientPost],
+) -> Vec<DroppedAmbientPost> {
+    let Some(definition) = &binding.definition else {
+        return Vec::new();
+    };
+    let mut atoms = Vec::new();
+    collect_completes_atoms(instance, &mut atoms);
+    let results = call_result_terms(instance);
+    let mut named: std::collections::BTreeSet<&str> =
+        atoms.iter().map(|(site, _atom)| *site).collect();
+    named.extend(
+        results
+            .iter()
+            .filter_map(|term| call_result_parts(term).map(|(_call, site)| site)),
+    );
+    ambient
+        .iter()
+        .filter(|owed| owed.refusal.as_ref().is_some_and(|reason| reason.is_owed()))
+        .filter(|owed| {
+            owed.operation_site
+                .as_ref()
+                .is_some_and(|site| definition.contains(site))
+        })
+        .filter(|owed| !named.contains(owed.site_cid.as_str()))
+        .map(|owed| DroppedAmbientPost {
+            source_symbol: owed.binding.source_symbol.clone(),
+            target_cid: String::new(),
+            member_cid: owed.member_cid.clone(),
+            reason: owed
+                .refusal
+                .clone()
+                .unwrap_or(DroppedAmbientPostReason::Unanswered),
+            spelling: binding.source_symbol.clone(),
+        })
+        .collect()
 }
 
 fn with_ambient_posts_with_instances(
@@ -13984,6 +14135,7 @@ mod tests {
                 formals,
                 out_binding: "out".to_string(),
                 stated_inputs: Vec::new(),
+                definition: None,
             },
             post,
             halt_guards: Vec::new(),
@@ -13998,6 +14150,7 @@ mod tests {
             receiver: DispatchReceiver::AsCalled,
             plain_stores: None,
             value_calls: None,
+            operation_site: None,
         }
     }
 
@@ -14039,6 +14192,7 @@ mod tests {
                     formals: vec!["z".to_string()],
                     out_binding: "out".to_string(),
                     stated_inputs: Vec::new(),
+                    definition: None,
                 },
                 eqf(var("out"), var("z")),
                 Vec::new(),
@@ -16875,6 +17029,243 @@ mod tests {
         );
         let lying = the_one_claim(&f_reads_owed_operation_pool(4, true).0);
         assert_eq!(lying.verdict, ObligationVerdict::Unsatisfied, "{}", lying.reason);
+    }
+
+    // ── A joined post over what its callee owes is not decided (#8984) ────
+    // `def same(x): return x.k is x.j` at `test_consumer.py:1-2`, and
+    // `def test_same(): assert same(3) == rhs`. The `is` is owed in same's own
+    // proof: an `undecided` member with no symbol at its site, inside same's
+    // definition. It never raises, so same's post states no completes atom
+    // that names it. Joined as it stands, the identity is a free equality, and
+    // `same(3) == 1` and `same(3) == 0` both read sat.
+
+    /// `def same(x)`, bridged as `python:m.same`, with `post` and a def
+    /// warrant spanning `test_consumer.py:1:0` to `2:40`.
+    fn same_with_definition(pool: &mut MementoPool, post: Json) {
+        let contract_cid = blake3_512_of(b"owed-in-definition-same");
+        pool.insert_unanchored_for_tests(
+            test_cid(&contract_cid),
+            json!({
+                "evidence": {
+                    "kind": "contract",
+                    "body": {
+                        "contractName": "same",
+                        "formals": ["x"],
+                        "outBinding": "out",
+                        "post": post,
+                        "sourceWarrants": [{
+                            "kind": "source-memento",
+                            "file": "test_consumer.py",
+                            "span": {
+                                "start_line": 1,
+                                "start_col": 0,
+                                "end_line": 2,
+                                "end_col": 40
+                            },
+                            "sourceCid": format!("blake3-512:{}", "d".repeat(128)),
+                            "sourceFunctionName": "same"
+                        }]
+                    }
+                }
+            }),
+        );
+        pool.insert_unanchored_for_tests(
+            test_cid(&blake3_512_of(b"owed-in-definition-same-bridge")),
+            json!({
+                "evidence": {
+                    "kind": "bridge",
+                    "body": {
+                        "sourceSymbol": "python:m.same",
+                        "targetContractCid": contract_cid
+                    }
+                }
+            }),
+        );
+    }
+
+    /// same's post: `out = 1` where `x.k is x.j`, `out = 0` where not.
+    fn identity_post() -> Json {
+        let field = |name: &str| {
+            json!({
+                "kind": "ctor",
+                "name": "python:attribute",
+                "args": [var("x"), str_const(name)]
+            })
+        };
+        let same = json!({"kind": "atomic", "name": "identity", "args": [field("k"), field("j")]});
+        IrFormula::And(vec![
+            json!({"kind": "implies", "operands": [same.clone(), eqf(var("out"), int(1))]}),
+            json!({
+                "kind": "implies",
+                "operands": [IrFormula::Not(same).to_value(), eqf(var("out"), int(0))]
+            }),
+        ])
+        .to_value()
+    }
+
+    /// The pool, the claim, and the owed member's CID. `owed_inside` puts the
+    /// owed operation at `test_consumer.py:2` (inside same's definition),
+    /// else at the test's own line 9 (outside it).
+    fn same_owes_pool(rhs: i64, post: Json, owed_inside: bool) -> (MementoPool, Json, String) {
+        let call_site = answered_site(4, 12);
+        let call_site_cid = undecided_site_coordinate_cid(&call_site);
+        let mut owed_site = answered_site(30, 36);
+        if owed_inside {
+            owed_site.start_line = 2;
+            owed_site.end_line = 2;
+            owed_site.start_col = 23;
+            owed_site.end_col = 33;
+        }
+        let mut pool = MementoPool::default();
+        insert_unanswered(&mut pool, Some("python:m.same"), call_site);
+        let owed_member = insert_unanswered(&mut pool, None, owed_site);
+        same_with_definition(&mut pool, post);
+        let claim = same_proof_claim("call:same", rhs, &call_site_cid);
+        insert_contract(
+            &mut pool,
+            "blake3-512:owed-in-definition-test-same",
+            "test_same",
+            claim.clone(),
+        );
+        (pool, claim, owed_member)
+    }
+
+    #[test]
+    fn a_joined_post_over_what_its_callee_owes_never_discharges_the_caller() {
+        for rhs in [0, 1] {
+            let (pool, claim, owed_member) = same_owes_pool(rhs, identity_post(), true);
+            // The post still joins; the owed `is` it reads is named.
+            let partition =
+                linked_ambient_post_instances_for_inv(&claim, &collect_ambient_posts(&pool));
+            assert_eq!(partition.kept.len(), 1, "{partition:?}");
+            assert!(
+                partition.dropped.iter().any(|d| d.member_cid == owed_member
+                    && d.reason == DroppedAmbientPostReason::Unanswered),
+                "{:?}",
+                partition.dropped
+            );
+            let result = the_one_claim(&pool);
+            assert_ne!(
+                result.verdict,
+                ObligationVerdict::Discharged,
+                "same(3) == {rhs} reads same's owed `is`: {}",
+                result.reason
+            );
+            assert_eq!(
+                result.verdict,
+                ObligationVerdict::Undecidable,
+                "same(3) == {rhs} reads same's owed `is`: {}",
+                result.reason
+            );
+            assert!(
+                result.reason.contains("unanswered for test_consumer.py:2"),
+                "{}",
+                result.reason
+            );
+            assert!(result.reason.contains(&owed_member), "{}", result.reason);
+            // same's call is still answered by same; the `is` stays owed.
+            assert!(!joined_member_cids(&pool).contains(&owed_member));
+        }
+    }
+
+    #[test]
+    fn a_decided_post_joins_beside_an_owed_operation_outside_its_definition() {
+        // same states `out = x` and owes nothing inside its definition; the
+        // owed operation stands at the test's own line, which same's post
+        // never reads.
+        let (pool, claim, _owed_member) = same_owes_pool(3, eqf(var("out"), var("x")), false);
+        let partition =
+            linked_ambient_post_instances_for_inv(&claim, &collect_ambient_posts(&pool));
+        assert_eq!(partition.kept.len(), 1, "{partition:?}");
+        assert!(partition.dropped.is_empty(), "{:?}", partition.dropped);
+        let truthful = the_one_claim(&pool);
+        assert_eq!(
+            truthful.verdict,
+            ObligationVerdict::Discharged,
+            "same(3) == 3 under same's `out = x`: {}",
+            truthful.reason
+        );
+        let lying = the_one_claim(&same_owes_pool(4, eqf(var("out"), var("x")), false).0);
+        assert_eq!(
+            lying.verdict,
+            ObligationVerdict::Unsatisfied,
+            "same(3) == 4 under same's `out = x` is refuted: {}",
+            lying.reason
+        );
+    }
+
+    #[test]
+    fn an_owed_operation_the_post_names_is_settled_not_dropped_by_its_definition() {
+        // The owed operation inside same's definition is one the post names
+        // by its completes atom: it is settled against the joined posts
+        // (`settle_owed_operations`), never dropped by the definition alone.
+        let owed_site = {
+            let mut site = answered_site(23, 33);
+            site.start_line = 2;
+            site.end_line = 2;
+            site
+        };
+        let key = undecided_site_coordinate_cid(&owed_site);
+        let completes = json!({
+            "kind": "atomic",
+            "name": "python:compare.completes",
+            "args": [{
+                "kind": "ctor",
+                "name": "python:compare",
+                "args": [str_const("Eq"), var("x"), int(1), str_const(&key)]
+            }]
+        });
+        let post = IrFormula::And(vec![completes, eqf(var("out"), var("x"))]).to_value();
+        let (pool, claim, owed_member) = same_owes_pool(3, post, true);
+        let partition =
+            linked_ambient_post_instances_for_inv(&claim, &collect_ambient_posts(&pool));
+        assert_eq!(partition.kept.len(), 1, "{partition:?}");
+        assert!(
+            partition.dropped.iter().all(|d| d.member_cid != owed_member),
+            "{:?}",
+            partition.dropped
+        );
+        assert!(
+            partition
+                .owed_operations
+                .iter()
+                .any(|(entry, _atom)| entry.member_cid == owed_member),
+            "{:?}",
+            partition.owed_operations
+        );
+    }
+
+    #[test]
+    fn a_definition_span_is_read_off_the_def_warrant() {
+        let body = json!({
+            "sourceWarrants": [
+                {"kind": "source-memento", "role": "assertion", "file": "m.py",
+                 "span": {"start_line": 5, "start_col": 4, "end_line": 5, "end_col": 9}},
+                {"kind": "source-memento", "file": "m.py",
+                 "span": {"start_line": 3, "start_col": 0, "end_line": 6, "end_col": 12}}
+            ]
+        });
+        let span = definition_span(&body).expect("the def warrant states a span");
+        assert_eq!(span.file, "m.py");
+        assert_eq!((span.start, span.end), ((3, 0), (6, 12)));
+        let inside = SourceSpan {
+            file: "m.py".into(),
+            start: (4, 8),
+            end: (4, 14),
+        };
+        let other_file = SourceSpan {
+            file: "n.py".into(),
+            ..inside.clone()
+        };
+        let after = SourceSpan {
+            file: "m.py".into(),
+            start: (6, 4),
+            end: (6, 20),
+        };
+        assert!(span.contains(&inside));
+        assert!(!span.contains(&other_file));
+        assert!(!span.contains(&after));
+        assert!(definition_span(&json!({"formals": ["x"]})).is_none());
     }
 
     // ── A joined callee's halts are the caller's halts at the call ────────
