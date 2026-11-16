@@ -11,12 +11,12 @@ from sugar_lift_py_tests.sugar.witnesses import typed_red_effect_witness
 
 @dataclass(frozen=True)
 class DynamicUnpackAssignSugar(Sugar):
-    """``<name>, <name>, ... = <rhs>`` (optionally with one ``*star``) where
-    the RHS is NOT a display.
+    """``<name>, <name>, ... = <rhs>`` (optionally with one ``*star``),
+    whatever the RHS is, a display among them (#7757 S2).
 
-    The tree cannot pair targets with members here (``Assign._destructured_binding``
-    zips displays only), so ``substitution_binding`` threads nothing and the
-    names are still unbound when this statement reduces. That is exactly what
+    The tree never pairs targets with members, so ``substitution_binding``
+    binds each name to its projection of the statement's evaluation, and
+    the members are not known until this statement reduces. That is exactly what
     the desugar owes: evaluate the RHS ONCE, then ask the reduced value what it
     unpacks to.
 

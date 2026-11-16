@@ -340,22 +340,21 @@ def test_too_few_members_is_the_same_ground_value_error() -> None:
     _ground_value_error(out)
 
 
-def test_a_display_the_tree_does_not_pair_reaches_this_operation() -> None:
+def test_a_display_right_hand_side_reaches_this_operation() -> None:
     """DISCRIMINATING.
 
-    `a, b = (1, 2)` is paired by the TREE (`Assign._destructured_binding` zips
-    displays), so no dynamic unpack is constructed and the operation is not
-    submitted.  A display the tree does not pair (`a, b = (1, 2, 3)`) is no
-    refusal: Python builds it, then unpacks it, so it is the one unpack of
-    the statement's evaluation, and its decided wrong count is the ground
-    ``ValueError`` the unit twins above state (#7757 S2).
+    The tree pairs no display with its targets any more (#7757 S2): Python
+    builds the display, then unpacks it, so every display right-hand side
+    is the one unpack of the statement's evaluation, submitted here once.
+    A display of the targets' arity completes; a wrong count is the ground
+    ``ValueError`` the unit twins above state.
     """
     seen, out = _receivers("def A():\n a, b = (1, 2)\n return a\n")
-    assert seen == []
+    assert len(seen) == 1, seen
     assert out.completed_value() is not None
 
     seen, out = _receivers("def A():\n a, b = [1, 2]\n return a\n")
-    assert seen == []
+    assert len(seen) == 1, seen
     assert out.completed_value() is not None
 
     seen, out = _receivers("def A():\n a, b = (1, 2, 3)\n return a\n")

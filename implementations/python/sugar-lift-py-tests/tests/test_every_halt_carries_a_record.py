@@ -37,8 +37,6 @@ from sugar_lift_py_tests.floor.named_expression_value import carry_caller_stores
 from sugar_lift_py_tests.sugar.assign_sugar import (
     AssignSugar,
     ChainedAssignSugar,
-    MultiAssignSugar,
-    UnpackStoreAssignSugar,
 )
 from sugar_lift_py_tests.sugar.function_universe_sugar import (
     _ReducedBlock,
@@ -567,7 +565,6 @@ def test_a_walrus_free_sugar_holds_no_walrus_and_one_that_runs_it_does() -> None
     assert not holds_a_walrus(_Leaks())
     assert holds_a_walrus(_walrus())
     assert holds_a_walrus(_HaltsAfterItsWalrus(_walrus()))
-    assert holds_a_walrus(MultiAssignSugar((("x", _walrus()), ("y", _Leaks())), None))
 
 
 @dataclass(frozen=True)
@@ -586,23 +583,6 @@ class _LeaksAsOperand(ConstructedTermSugar):
 
     def to_term(self, *, owner: str):
         raise NotImplementedError(owner)
-
-
-def test_a_later_members_halt_carries_the_walrus_an_earlier_member_bound() -> None:
-    # ``x, y = (a := 1), <halts>``: ``a`` is bound when the second member
-    # halts (no target is yet). The halt's record holds the bind, after the
-    # block's prefix; it used to offer none, and the prefix (from before
-    # ``a`` was bound) stood in for it.
-    ctx = ReduceContext.root(owner="every-halt-record.walrus")
-    before = _ReducedBlock((TermValue(7),), True, (), context=ctx)
-    statement = MultiAssignSugar((("x", _walrus()), ("y", _LeaksAsOperand())), None)
-    exits = reduce_block_to_exitset((statement,), ctx, after=before)
-    halts = [exit_ for exit_ in exits.exits if isinstance(exit_, Halted)]
-    assert halts
-    for halt in halts:
-        assert isinstance(halt.state, _ReducedBlock)
-        assert halt.state.entries == (TermValue(7),)
-        assert halt.state.context.temporal.value_if_bound(_WALRUS_KEY) == TermValue(1)
 
 
 def test_a_statement_holding_a_walrus_is_refused_a_halt_with_no_record() -> None:
@@ -677,40 +657,32 @@ class _HaltsWhereItRuns(ConstructedTermSugar):
         raise NotImplementedError(owner)
 
 
-def _targets_statement(second) -> MultiAssignSugar:
-    """``x, y = 1, <second>``, each target bound under its key."""
-    return MultiAssignSugar(
-        (("x", _One()), ("y", second)),
-        None,
-        evaluations=(("x", _X_KEY), ("y", _Y_KEY)),
+def _targets_then(second: str) -> str:
+    """``f``: ``x = 0``, then ``x, y = 1, <second>`` inside a ``try`` whose
+    handler (and the completed path) returns ``x``.  The display is built
+    whole, then unpacked (#7757 S2: the one reduce-time unpack)."""
+    return (
+        "def f():\n"
+        + "    x = 0\n"
+        + "    try:\n"
+        + f"        x, y = 1, {second}\n"
+        + "    except ValueError:\n"
+        + "        return x\n"
+        + "    return x\n"
     )
 
 
-def test_a_later_right_hand_sides_halt_carries_no_earlier_target() -> None:
+def test_a_later_right_hand_sides_halt_assigns_no_earlier_target() -> None:
     # Python evaluates the whole right side, then assigns the targets: when
-    # the second member halts, ``x`` is not assigned. The halt's record (the
-    # context the member was evaluated in) holds no binding of ``x``; it
-    # used to, since ``x`` was bound as soon as its member completed.
-    ctx = ReduceContext.root(owner="every-halt-record.targets-halt")
-    before = _ReducedBlock((TermValue(7),), True, (), context=ctx)
-    exits = reduce_block_to_exitset(
-        (_targets_statement(_HaltsWhereItRuns()),), ctx, after=before
-    )
-    halts = [exit_ for exit_ in exits.exits if isinstance(exit_, Halted)]
-    assert halts
-    for halt in halts:
-        assert isinstance(halt.state, _ReducedBlock)
-        assert halt.state.entries == (TermValue(7),)
-        assert halt.state.context.temporal.value_if_bound(_X_KEY) != TermValue(1)
+    # the second member raises, ``x`` is not assigned, so the handler
+    # returns the ``x`` from before, never the ``1`` the completed twin
+    # assigns.
+    def returned(second: str):
+        source = _targets_then(second)
+        return _returned_value(function_universe_outcome(_function(source)))
 
-
-def test_every_target_is_bound_once_the_right_side_completed() -> None:
-    # The completed twin: both targets are bound after the statement.
-    ctx = ReduceContext.root(owner="every-halt-record.targets-complete")
-    exits = reduce_block_to_exitset((_targets_statement(_One()),), ctx)
-    (completed,) = [exit_ for exit_ in exits.exits if isinstance(exit_, Completed)]
-    assert completed.value.context.temporal.value_if_bound(_X_KEY) == TermValue(1)
-    assert completed.value.context.temporal.value_if_bound(_Y_KEY) == TermValue(1)
+    assert returned("2") == TermValue(1)
+    assert returned(_RAISE) != returned("2")
 
 
 # -- every operand's halt carries the walrus binds made before it ----------------
@@ -982,7 +954,6 @@ def test_an_assert_built_from_source_holds_its_messages_walrus() -> None:
 # -- the targets are assigned left to right, stores among them -------------------
 
 _VALUE_KEY = EVALUATION_PREFIX + "every-halt-record.target.value"
-_MEMBER_KEY = EVALUATION_PREFIX + "every-halt-record.target.member"
 
 
 @dataclass(frozen=True)
@@ -1014,18 +985,6 @@ def _chain(store) -> ChainedAssignSugar:
     )
 
 
-def _unpack(store) -> UnpackStoreAssignSugar:
-    """``o.a, y = 1, 1``: ``store`` is ``o.a``'s statement."""
-    return UnpackStoreAssignSugar(
-        bindings=(("y", _One()),),
-        stores=(store,),
-        site=None,
-        evaluations=(("y", _Y_KEY),),
-        members=((_MEMBER_KEY, _One()),),
-        target_order=(0, "y"),
-    )
-
-
 def test_a_store_targets_halt_holds_the_names_to_its_left_and_none_to_its_right() -> (
     None
 ):
@@ -1044,23 +1003,10 @@ def test_a_store_targets_halt_holds_the_names_to_its_left_and_none_to_its_right(
     assert temporal.value_if_bound(_Y_KEY) is None
 
 
-def test_an_unpacks_store_leaf_halts_before_the_name_to_its_right() -> None:
-    # ``o.a, y = 1, 1`` where ``o.a`` raises: ``y`` is never assigned.
-    ctx = ReduceContext.root(owner="every-halt-record.unpack-order")
-    before = _ReducedBlock((TermValue(7),), True, (), context=ctx)
-    exits = reduce_block_to_exitset((_unpack(_HaltsAtHead()),), ctx, after=before)
-    (halt,) = [exit_ for exit_ in exits.exits if isinstance(exit_, Halted)]
-    assert halt.state.entries == (TermValue(7),)
-    temporal = halt.state.context.temporal
-    assert temporal.value_if_bound(_MEMBER_KEY) == TermValue(1)
-    assert temporal.value_if_bound(_Y_KEY) is None
-
-
-@pytest.mark.parametrize("statement", [_chain, _unpack], ids=["chain", "unpack"])
-def test_every_target_around_a_completed_store_is_assigned(statement) -> None:
+def test_every_target_around_a_completed_store_is_assigned() -> None:
     # The completed twin: every Name target is bound after the statement.
     ctx = ReduceContext.root(owner="every-halt-record.store-order-complete")
-    exits = reduce_block_to_exitset((statement(_StoresHere()),), ctx)
+    exits = reduce_block_to_exitset((_chain(_StoresHere()),), ctx)
     (completed,) = [exit_ for exit_ in exits.exits if isinstance(exit_, Completed)]
     assert completed.value.context.temporal.value_if_bound(_Y_KEY) == TermValue(1)
 
@@ -1213,14 +1159,6 @@ def test_a_step_after_a_callee_store_lays_it_in_its_halts_record() -> None:
     # ``x = f(o) + 'x'`` where ``f`` stores ``o.x``: the store happened
     # before the step raised. It used to ride the record's context alone.
     statement = AssignSugar("x", _ConsumesThenHalts(_carries_a_store()), None)
-    assert _halt_entries(statement) == (TermValue(7), _STORE)
-
-
-def test_a_later_right_hand_sides_halt_lays_an_earlier_ones_callee_store() -> None:
-    # ``x, y = f(o), <halts>``: ``f``'s store is first in the halt's entries.
-    statement = MultiAssignSugar(
-        (("x", _carries_a_store()), ("y", _HaltsWhereItRuns())), None
-    )
     assert _halt_entries(statement) == (TermValue(7), _STORE)
 
 

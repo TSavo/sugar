@@ -21,7 +21,9 @@ same arm structure as the sequential spelling.
 ONE CONTROL MODEL: the helpers below are IMPORTED from the sequential twins'
 module, not copied. If the two spellings were reading the artifact through two
 instruments, "the same laws" would be an assertion about the instruments rather
-than about the construction. ``UnpackStoreAssignSugar.desugar`` likewise owns no
+than about the construction. The one store unpack
+(``DynamicUnpackStoreAssignSugar``, a display right-hand side among them,
+#7757 S2) likewise owns no
 sequencing of its own -- it hands its store leaves to ``reduce_body``, i.e. to
 ``reduce_block_to_exitset``, the same reducer the sequential spelling reaches
 directly. The success/halt partition is minted in exactly one place
