@@ -293,7 +293,11 @@ def test_class_body_assign_of_free_call_is_opaque_dig_cue() -> None:
     ``state = make_state()`` is a class field whose value is ``call:make_state``
     with ``body=None`` — an opaque dig cue, not a missing class-member sugar.
     """
-    source = _source_file("class RenamedGuard:\n    state = make_state()\n")
+    # ``make_state`` only an unreadable star import may bind: never a NameError.
+    source = _source_file(
+        "from unread_module import *\n"
+        "class RenamedGuard:\n    state = make_state()\n"
+    )
     class_node = next(node for node in source.nodes() if isinstance(node, ClassDef))
     sugar = class_node.sugar()
     assert type(sugar).__name__ == "ClassDefinitionSugar"

@@ -9,7 +9,10 @@ from sugar_source_tree.tree import SourceFile
 
 def _fn(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
-        f.write(src)
+        # The callee ``f`` is bound by nothing the module reads: a star import
+        # it cannot read may bind it, so it is the unanswered callee, never a
+        # NameError (``NameSugar.desugar``, ``name_bound_nowhere``).
+        f.write("from unread_module import *\n" + src)
         path = f.name
     return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
 
