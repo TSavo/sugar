@@ -84,10 +84,15 @@ class _ReceiverSugar(ConstructedTermSugar):
         return self.value.to_term(owner=owner)
 
 
-def _assert_two_faced_read(outcome, owner: str):
+def _assert_two_faced_read(outcome, owner: str, *, reads: int = 1):
     """The one two-faced unanswered read: completes under the attribute's
     completes atom, else an undetermined raise owned by ``owner``; the read
-    is owed at its site.  No AttributeError is named."""
+    is owed at its site.  No AttributeError is named.
+
+    A chain of ``reads`` undecided reads (``ser.sparse.density``) is that
+    read ``reads`` times, each keyed per evaluation (#7757 NEW-3): each
+    halts on its own face, the later one under the earlier one's
+    completion.  Every halt is carried; none is dropped."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.outcome import Completed, Halted
     from sugar_lift_py_tests.unanswered_calls import owed_calls
@@ -99,13 +104,13 @@ def _assert_two_faced_read(outcome, owner: str):
         and isinstance(arm.effect, UndeterminedRaiseEffect)
         and arm.effect.producer_node_owner == owner
     ]
-    assert len(halts) == 1
+    assert len(halts) == reads, halts
     completed = [arm for arm in outcome.exits if isinstance(arm, Completed)]
     assert completed
     # Every undecided read is keyed per evaluation (``attribute_op``,
     # ``floor_value.undecided_attribute_result``), whatever the receiver.
     assert any("python:attribute_op.completes" in repr(arm.guard) for arm in completed)
-    assert "AttributeError" not in repr(halts[0].effect)
+    assert all("AttributeError" not in repr(halt.effect) for halt in halts)
     assert any(item.site is not None for item in owed_calls(outcome))
     return halts[0]
 
@@ -195,9 +200,11 @@ def _line_attribute(source: str, path: Path, *, line: int, attr: str) -> Attribu
     return matches[0]
 
 
-def _assert_bare_desugar_symbolic_attribute(node: Attribute) -> None:
+def _assert_bare_desugar_symbolic_attribute(node: Attribute, *, reads: int = 1) -> None:
     """Production door: expression.sugar().desugar(None) with no bindings."""
-    _assert_two_faced_read(node.sugar().desugar(None), "SymbolicValue.attribute")
+    _assert_two_faced_read(
+        node.sugar().desugar(None), "SymbolicValue.attribute", reads=reads
+    )
 
 
 @pytest.mark.parametrize(
@@ -217,7 +224,8 @@ def test_no_call_attribute_corpus_sites_stay_symbolic_undecided(
     source = path.read_text(encoding="utf-8")
     assert snippet in source
     node = _line_attribute(source, path, line=line, attr=attr)
-    _assert_bare_desugar_symbolic_attribute(node)
+    # ``ser.sparse.density`` is two undecided reads, each its own halt.
+    _assert_bare_desugar_symbolic_attribute(node, reads=snippet.count("."))
 
 
 def test_import_member_path_read_is_the_closed_reference() -> None:

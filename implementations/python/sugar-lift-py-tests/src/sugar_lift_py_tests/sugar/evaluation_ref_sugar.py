@@ -443,11 +443,18 @@ class EvaluationRefSugar(ConstructedTermSugar):
         ``ContainerMutationStatementSugar``), never the stored expression
         evaluated again.  A place has no name to read in its stead, so a key
         this temporal never received is refused: the store never completed
-        here, or the read was carried out of the frame that ran it."""
+        here, or the read was carried out of the frame that ran it.
+
+        The key is read as every read of a statement's key is
+        (``evaluation_read_here``): the innermost qualification of the live
+        items around the read under which the store bound it.  A place read
+        inside a comprehension's member (each member its own item segment,
+        #9029) of a store made before the comprehension reads the store's
+        own key, never the member-qualified key nothing wrote."""
         from sugar_lift_py_tests.outcome import ExitSet
 
         bound = (
-            temporal.value_if_bound(evaluation_here(self.evaluation))
+            temporal.value_if_bound(evaluation_read_here(temporal, self.evaluation))
             if temporal is not None
             else None
         )
