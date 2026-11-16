@@ -607,15 +607,9 @@ def test_pinned_pandas_name_attr_unpack_coordinate_is_real() -> None:
     function = next(
         fn for fn in tree.functions() if fn.name == "test_pickle_preserves_name"
     )
-    from sugar_lift_py_tests.sugar.assign_sugar import UnpackStoreAssignSugar
-
-    unpack = next(
-        stmt
-        for stmt in function.sugar().statements
-        if isinstance(stmt, UnpackStoreAssignSugar)
-    )
-    assert unpack.bindings[0][0] == "original_name"
-    store = unpack.stores[0]
+    unpack = _the_unpack(function)
+    assert unpack.targets[0].name == "original_name"
+    store = _store_target(unpack).store
     # The store target's own statement: the one field store, keyed.
     assert isinstance(store, KeyedStoreSugar)
     assert isinstance(store.store, ReceiverFieldStoreSugar)
@@ -624,21 +618,48 @@ def test_pinned_pandas_name_attr_unpack_coordinate_is_real() -> None:
     _undecided_store(store.desugar(_member_bound(unpack)))
 
 
+def _the_unpack(function):
+    """Line 113's one unpack: its display right-hand side is evaluated once
+    and unpacked at reduce, as any other is (#7757 S2)."""
+    from sugar_lift_py_tests.sugar.assign_sugar import DynamicUnpackStoreAssignSugar
+
+    return next(
+        stmt
+        for stmt in function.sugar().statements
+        if isinstance(stmt, DynamicUnpackStoreAssignSugar)
+    )
+
+
+def _store_target(unpack):
+    """The unpack's one store leaf (``index.name``)."""
+    from sugar_lift_py_tests.sugar.unpack_projection_targets import StoreUnpackTarget
+
+    (target,) = [t for t in unpack.targets if isinstance(t, StoreUnpackTarget)]
+    return target
+
+
 def _member_bound(unpack):
     """The context the line-113 store runs in: its member ``"foo"`` bound
     under the leaf's member key, and the Name leaf to its left
-    (``original_name``) bound under its key, as the unpack binds both before
-    the store.  The store writes the post-store state of every name that may
-    hold its receiver (``KeyedStoreSugar.writes``), ``original_name`` among
-    them, and that state reads the name where the unpack bound it: the old
-    ``index.name`` of a formal ``index``, a value no caller has supplied."""
+    (``original_name``) bound under its projection key, as the unpack binds
+    both before the store.  The store writes the post-store state of every
+    name that may hold its receiver (``KeyedStoreSugar.writes``),
+    ``original_name`` among them, and that state reads the name where the
+    unpack bound it: the old ``index.name`` of a formal ``index``, a value
+    no caller has supplied."""
     from sugar_lift_py_tests.context import ReduceContext
     from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+    from sugar_lift_py_tests.sugar.unpack_projection_targets import NameUnpackTarget
+    from sugar_lift_py_tests.temporal.temporal_context import projection_key
 
     ctx = ReduceContext.root(owner="pandas-name-store")
-    for name, name_key in unpack.evaluations:
-        ctx = ScopeRebind(name_key, SymbolicValue(make_var(name))).extend_scope(ctx)
-    ((key, _member),) = unpack.members
+    for target in unpack.targets:
+        if isinstance(target, NameUnpackTarget) and target.evaluation is not None:
+            name_key = projection_key(target.evaluation, target.name)
+            ctx = ScopeRebind(
+                name_key, SymbolicValue(make_var(target.name))
+            ).extend_scope(ctx)
+    key = _store_target(unpack).evaluation
     return ScopeRebind(key, StringValue("foo")).extend_scope(ctx)
 
 
@@ -655,14 +676,8 @@ def _real_pandas_name_store():
     function = next(
         fn for fn in tree.functions() if fn.name == "test_pickle_preserves_name"
     )
-    from sugar_lift_py_tests.sugar.assign_sugar import UnpackStoreAssignSugar
-
-    unpack = next(
-        statement
-        for statement in function.sugar().statements
-        if isinstance(statement, UnpackStoreAssignSugar)
-    )
-    keyed = unpack.stores[0]
+    unpack = _the_unpack(function)
+    keyed = _store_target(unpack).store
     store = keyed.store
     outcome = keyed.desugar(_member_bound(unpack))
     assert isinstance(store, ReceiverFieldStoreSugar)

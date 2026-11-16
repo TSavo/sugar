@@ -1,7 +1,7 @@
-"""Nested Name-only unpack against a non-display RHS.
+"""Nested Name-only unpack against any RHS, a display among them.
 
-``(a, b), (c, d) = mask_info`` — target is a tree of Names; RHS is not a display
-``Assign._destructured_binding`` can zip. Flat ``DynamicUnpackAssignSugar`` only
+``(a, b), (c, d) = mask_info`` — target is a tree of Names; the RHS is
+evaluated once and unpacked at reduce (#7757 S2). Flat ``DynamicUnpackAssignSugar`` only
 admits flat Name leaves. This sugar owns the nested Name-only tree.
 
 Same law as flat dynamic unpack: evaluate RHS once, then ask the reduced value
@@ -47,7 +47,7 @@ def pattern_desc(pattern: NameUnpackPattern) -> str:
 
 @dataclass(frozen=True)
 class NestedDynamicUnpackAssignSugar(Sugar):
-    """``(a, b), (c, d) = <rhs>`` Name-only nested targets, non-display RHS."""
+    """``(a, b), (c, d) = <rhs>`` Name-only nested targets, any RHS."""
 
     pattern: tuple[NameUnpackPattern, ...]
     value: Sugar

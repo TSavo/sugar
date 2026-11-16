@@ -1,13 +1,13 @@
-"""A display an unpack consumes element by element answers with the statement (#7757).
+"""A display an unpack consumes answers the roll (#7757).
 
-``a, b = 0, 100`` binds each target to its member, each evaluated once, left
-to right (``MultiAssignSugar``); ``x, o.a = p, q`` stores each member the same
-way (``UnpackStoreAssignSugar``).  The right-hand side display is never built
-as a whole, so it never answered the roll (the board's ``Tuple`` first
-absentees: ``tests/indexes/interval/test_interval_range.py:31:21``
-``start, end = 0, 100``, ``io/formats/console.py:43:42``
-``terminal_width, terminal_height = None, None``).  It is a structural part of
-the unpack (``Assign.structural_parts``); its members answer for themselves.
+The board's ``Tuple`` first absentees
+(``tests/indexes/interval/test_interval_range.py:31:21`` ``start, end = 0,
+100``, ``io/formats/console.py:43:42`` ``terminal_width, terminal_height =
+None, None``) were displays a substitution-time pairing consumed member by
+member and never built.  That pairing is deleted (#7757 S2): the right-hand
+side display is built whole, as Python builds it, and the one reduce-time
+unpack reads the tuple it reduces to, so the display, every nested level of
+it, and its members answer where they stand.
 """
 
 import tempfile
