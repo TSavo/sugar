@@ -6,15 +6,3 @@ an ExitSet back onto a linear block view.
 """
 
 from __future__ import annotations
-
-
-def site_inv_values(entries: tuple, site) -> tuple:
-    """Stamp ``site`` on InvValues that arrived without one."""
-    from dataclasses import replace as dc_replace
-
-    from sugar_lift_py_tests.floor.inv_value import InvValue
-
-    return tuple(
-        dc_replace(e, site=site) if isinstance(e, InvValue) and e.site is None else e
-        for e in entries
-    )

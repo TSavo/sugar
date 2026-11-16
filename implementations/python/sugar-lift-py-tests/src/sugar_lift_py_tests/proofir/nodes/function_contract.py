@@ -3,22 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Iterable, Mapping
 
-from sugar_lift_py_tests.call_symbol import call_symbol
 from sugar_lift_py_tests.ir import (
     Formula as IrFormula,
     Sort as IrSort,
-    Term as IrTerm,
     TermTableBuilder,
-    _Atomic,
-    _Connective,
-    _ConstBool,
-    _ConstInt,
-    _ConstReal,
-    _ConstStr,
-    _Ctor,
-    ctor,
     eq,
-    bool_const,
     forall,
     implies,
     make_var,
@@ -170,16 +159,6 @@ class FunctionContract(ProofIRNode):
             kind="function-contract",
             bridge_source_symbol=self.bridge_source_symbol,
         )
-
-    def floor_models_post(
-        self,
-        *,
-        arg_terms: list[IrTerm],
-        floor_term: IrTerm,
-    ) -> bool | None:
-        env = {formal.name: term for formal, term in zip(self.formals, arg_terms)}
-        env[self.out_binding] = floor_term
-        return _formula_models_post(self.post.ir_formula, env)
 
     @classmethod
     def verdict_witnesses(cls) -> VerdictWitnessPair:
@@ -425,193 +404,6 @@ def _normalize_sort(sort: Sort | IrSort) -> Sort:
     if isinstance(sort, Sort):
         return sort
     return sort_from_ir(sort)
-
-
-def _formula_models_post(formula: IrFormula, env: dict[str, IrTerm]) -> bool | None:
-    if isinstance(formula, _Atomic) and formula.name == "int32.eq-bv-expr":
-        if len(formula.args) != 2:
-            return None
-        left = _normalize_ir_term(formula.args[0], env)
-        right = _normalize_ir_term(formula.args[1], env)
-        return left == right if left is not None and right is not None else None
-    if isinstance(formula, _Atomic) and formula.name == "=":
-        if len(formula.args) != 2:
-            return None
-        left = _normalize_ir_term(formula.args[0], env)
-        right = _normalize_ir_term(formula.args[1], env)
-        return left == right if left is not None and right is not None else None
-    if isinstance(formula, _Connective) and formula.kind == "and":
-        verdicts = [_formula_models_post(operand, env) for operand in formula.operands]
-        if any(verdict is False for verdict in verdicts):
-            return False
-        if all(verdict is True for verdict in verdicts):
-            return True
-        return None
-    return None
-
-
-def _normalize_ir_term(term: IrTerm, env: dict[str, IrTerm]) -> IrTerm | None:
-    if isinstance(term, (_ConstInt, _ConstStr, _ConstBool, _ConstReal)):
-        return term
-    if isinstance(term, _Ctor):
-        normalized_args = [_normalize_ir_term(arg, env) for arg in term.args]
-        if any(arg is None for arg in normalized_args):
-            return None
-        return _fold_numeric_ctor(term.name, normalized_args) or ctor(
-            term.name,
-            [arg for arg in normalized_args if arg is not None],
-        )
-    if hasattr(term, "name"):
-        name = getattr(term, "name")
-        return env.get(name) if isinstance(name, str) else None
-    return None
-
-
-def _fold_numeric_ctor(name: str, args: list[IrTerm | None]) -> IrTerm | None:
-    # ``py.subscript(r, i)`` and the keyed undecided read
-    # ``python:subscript_result(r, i, <key>)`` (#7757 NEW-1) are one read.
-    if (
-        (
-            (name == "py.subscript" and len(args) == 2)
-            or (name == "python:subscript_result" and len(args) == 3)
-        )
-        and isinstance(args[0], _Ctor)
-        and args[0].name in {"array", "tuple"}
-        and isinstance(args[1], _ConstInt)
-    ):
-        index = args[1].value
-        if 0 <= index < len(args[0].args):
-            return args[0].args[index]
-        return None
-    if (
-        name in {"divmod", call_symbol("divmod")}
-        and len(args) == 2
-        and all(isinstance(arg, _ConstInt) for arg in args)
-    ):
-        left, right = (arg.value for arg in args if isinstance(arg, _ConstInt))
-        if right == 0:
-            return None
-        quotient, remainder = divmod(left, right)
-        return ctor("tuple", [num(quotient), num(remainder)])
-    if (
-        name.startswith("py.compare:")
-        and len(args) == 2
-        and all(isinstance(arg, _ConstInt) for arg in args)
-    ):
-        left, right = (arg.value for arg in args if isinstance(arg, _ConstInt))
-        operator = name.removeprefix("py.compare:")
-        if operator == "Lt":
-            return bool_const(left < right)
-        if operator == "LtE":
-            return bool_const(left <= right)
-        if operator == "Gt":
-            return bool_const(left > right)
-        if operator == "GtE":
-            return bool_const(left >= right)
-        if operator == "NotEq":
-            return bool_const(left != right)
-        if operator == "Eq":
-            return bool_const(left == right)
-    if name in {"==", "!="} and len(args) == 2:
-        left, right = args
-        if type(left) is type(right) and isinstance(
-            left, (_ConstBool, _ConstInt, _ConstReal, _ConstStr)
-        ):
-            equal = left == right
-            return bool_const(equal if name == "==" else not equal)
-    folded_bv32 = _fold_bv32_ctor(name, args)
-    if folded_bv32 is not None:
-        return folded_bv32
-    # Grounded Int bitwise (#4394): native `&`/`|`/`^`/`<<`/`>>` over ConstInt
-    # folds like Python so floor_models_post and callsite joins refute lies.
-    if name in {"&", "|", "^", "<<", ">>"}:
-        if len(args) != 2 or not all(isinstance(arg, _ConstInt) for arg in args):
-            return None
-        left, right = (arg.value for arg in args if isinstance(arg, _ConstInt))
-        if name == "&":
-            return num(left & right)
-        if name == "|":
-            return num(left | right)
-        if name == "^":
-            return num(left ^ right)
-        if name == "<<":
-            if right < 0:
-                return None
-            return num(left << right)
-        if right < 0:
-            return None
-        return num(left >> right)
-    if name not in {"+", "-", "*"}:
-        return None
-    if not all(isinstance(arg, _ConstInt) for arg in args):
-        return None
-    values = [arg.value for arg in args if isinstance(arg, _ConstInt)]
-    if name == "+":
-        return num(sum(values))
-    if name == "*":
-        value = 1
-        for item in values:
-            value *= item
-        return num(value)
-    if name == "-" and len(values) == 1:
-        return num(-values[0])
-    if name == "-" and len(values) == 2:
-        return num(values[0] - values[1])
-    return None
-
-
-def _fold_bv32_ctor(name: str, args: list[IrTerm | None]) -> IrTerm | None:
-    if name == "bv32.neg" and len(args) == 1 and isinstance(args[0], _ConstInt):
-        return num(_i32_signed(-_i32_signed(args[0].value)))
-    if (
-        name == "bv32.slt"
-        and len(args) == 2
-        and all(isinstance(arg, _ConstInt) for arg in args)
-    ):
-        left, right = (arg.value for arg in args if isinstance(arg, _ConstInt))
-        return bool_const(_i32_signed(left) < _i32_signed(right))
-    if name == "bv32.ite" and len(args) == 3 and isinstance(args[0], _ConstBool):
-        return args[1] if args[0].value else args[2]
-    if name not in {
-        "bv32.and",
-        "bv32.or",
-        "bv32.xor",
-        "bv32.add",
-        "bv32.mul",
-        "bv32.shl",
-        "bv32.lshr",
-    }:
-        return None
-    if len(args) != 2 or not all(isinstance(arg, _ConstInt) for arg in args):
-        return None
-    left, right = (arg.value for arg in args if isinstance(arg, _ConstInt))
-    left_bits = _u32(left)
-    right_bits = _u32(right)
-    shift = right_bits & 31
-    if name == "bv32.and":
-        result = left_bits & right_bits
-    elif name == "bv32.or":
-        result = left_bits | right_bits
-    elif name == "bv32.xor":
-        result = left_bits ^ right_bits
-    elif name == "bv32.add":
-        result = left_bits + right_bits
-    elif name == "bv32.mul":
-        result = left_bits * right_bits
-    elif name == "bv32.shl":
-        result = left_bits << shift
-    else:
-        result = left_bits >> shift
-    return num(_i32_signed(result))
-
-
-def _u32(value: int) -> int:
-    return int(value) & 0xFFFFFFFF
-
-
-def _i32_signed(value: int) -> int:
-    bits = _u32(value)
-    return bits - 0x100000000 if bits & 0x80000000 else bits
 
 
 __all__ = ["Formal", "FunctionContract", "FunctionContractBuilder"]

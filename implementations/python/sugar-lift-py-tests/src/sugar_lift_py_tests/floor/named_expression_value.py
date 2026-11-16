@@ -198,18 +198,6 @@ class NamedExpressionValue(FloorValue):
             lambda presented: left.greater_equal(presented, site, ctx), self
         )
 
-    def equals_from_left(self, left, site, ctx):
-        """``left == (n := e)`` — typed RHS door; not string-admitted."""
-        return consume_operands(
-            lambda presented: left.equals(presented, site, ctx), self
-        )
-
-    def is_identical_from_left(self, left, site):
-        """``left is (n := e)`` — typed RHS door; not string-admitted."""
-        return consume_operands(
-            lambda presented: left.is_identical(presented, site), self
-        )
-
     def subscript(self, index, site):
         # The presented value is read through the one subscript door
         # (``discharge_subscript``), and the walrus bind rides the read.

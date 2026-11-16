@@ -138,12 +138,6 @@ def _retain_call_row(origin: Node, copy: Node) -> None:
         origin.unit.retain_lexical_call_row(origin, copy)
 
 
-def iteration_segment(loop: Node, index: int) -> str:
-    """Iteration ``index`` of the loop (or comprehension) node ``loop``."""
-    span = loop.span
-    return f"loop[{span.start},{span.end})#{index}"
-
-
 def _handle_of(node: Node) -> BackendNode:
     """The backend handle behind a materialized node — source- or shadow-backed.
     Rewriting a parent points its child slots at these, never at Node objects."""

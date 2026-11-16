@@ -165,25 +165,6 @@ def _require_authenticated_exceptional_exit_citation(effect) -> None:
         )
 
 
-def _exceptional_exit_formula(effect: RaiseEffect, guards: tuple = ()):
-    # Identity and citation are enforced at the term edge. Explicit
-    # ``raise Exc(...)`` keeps its constructed name; type-coordinate-only
-    # faces pass ``None`` so the term uses the coordinate. Nameless faces
-    # never reach emission (see ``_require_authenticated_exceptional_exit_citation``).
-    exception_name = effect.exception_name
-
-    from sugar_lift_py_tests.ir import and_, eq, implies, make_var
-
-    exit_formula = eq(
-        make_var("out"),
-        _exceptional_exit_term(effect, exception_name=exception_name),
-    )
-    if not guards:
-        return exit_formula
-    guard = guards[0] if len(guards) == 1 else and_(list(guards))
-    return implies(guard, exit_formula)
-
-
 def _exceptional_exit_term(effect: RaiseEffect, *, exception_name: str | None = None):
     """Project the one source-cited term shared by raise posts and selections.
 

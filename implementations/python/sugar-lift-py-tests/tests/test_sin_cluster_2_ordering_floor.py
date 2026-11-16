@@ -48,7 +48,6 @@ _ORDERING_METHODS = frozenset(
         "greater_than",
         "greater_equal",
         "_refuse_ordering_meaning",
-        "_undecided_ordering_law",
     }
 )
 

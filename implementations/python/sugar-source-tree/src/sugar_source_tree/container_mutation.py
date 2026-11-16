@@ -248,14 +248,6 @@ def _evaluation(site_node, tags) -> str:
     return "/".join((f"[{span.start},{span.end})", *tags))
 
 
-def runs_operand_code(call, scope) -> bool:
-    """Whether ``call`` may run code that can change its operands' objects:
-    anything but a cited pure builtin over operands whose dunders are builtin."""
-    from .nodes import Call
-
-    return isinstance(call, Call) and not _is_pure_call(call, scope)
-
-
 def _identity(node):
     """The node whose object ``node`` denotes.
 
@@ -2806,20 +2798,6 @@ def _mutation_through(
 # ---------------------------------------------------------------------------
 
 
-def _same_read(node, actual) -> bool:
-    """``node`` and ``actual`` are one read of one binding: the same node, or
-    two reads of one formal's coordinate (``Name.substitute`` re-spans
-    each)."""
-    node, actual = _identity(node), _identity(actual)
-    if node is actual or _handle(node) is _handle(actual):
-        return True
-    return (
-        getattr(node, "kind", None) in _FORMAL_KINDS
-        and getattr(actual, "kind", None) in _FORMAL_KINDS
-        and _ref(node) == _ref(actual)
-    )
-
-
 def _answered_where_minted(source, followed, kept=()) -> None:
     """Answer the roll for every node the follow of a helper's body minted.
 
@@ -3845,9 +3823,3 @@ def _comprehension_scope(table) -> bool:
 
 def _handle(node):
     return getattr(node, "ref", node)
-
-
-def _untouched(name, pre_scope, scope, havocked) -> bool:
-    if name not in scope or name not in pre_scope:
-        return name not in scope
-    return scope[name] is pre_scope[name] and havocked.get(name) is scope[name]
