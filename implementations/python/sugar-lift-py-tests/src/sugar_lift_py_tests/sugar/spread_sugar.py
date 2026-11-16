@@ -170,6 +170,32 @@ def _spread_dict_pairs(spread_flags: tuple, values: tuple):
     return tuple(pairs)
 
 
+def _call_keywords(arguments: tuple, values: tuple):
+    """The keyword actuals of a spread call, ``(name, value)`` in source
+    order: a ``name=v`` as written, each ``**d`` operand its entries.
+
+    ``**d`` is read by the one ``**`` reader (``_spread_dict_pairs``): a
+    dict whose contents are current (``object_identity.contents_current``).
+    None when an operand is not one, or holds a key that is not a string
+    (Python raises ``TypeError`` there): the call has no exact keyword
+    roster, and is not bound from it."""
+    from sugar_lift_py_tests.floor import StringValue
+
+    keywords: list = []
+    for (role, name, _), value in zip(arguments, values):
+        if role == "keyword":
+            keywords.append((name, value))
+        elif role == "double-star":
+            pairs = _spread_dict_pairs((True,), (value,))
+            if pairs is None:
+                return None
+            for key, item in pairs:
+                if type(key) is not StringValue:
+                    return None
+                keywords.append((key.value, item))
+    return tuple(keywords)
+
+
 @dataclass(frozen=True)
 class SpreadCollectionSugar(ConstructedTermSugar):
     """A display containing spread operands, as encoded by the reference lifter.
@@ -440,7 +466,15 @@ class SpreadCallSugar(ConstructedTermSugar):
         # name is bound to among them (``DecoratorApplicationSugar``), never
         # the plain definition's frame.  Its own application binds through
         # the one binder and applies the body (#7756, #7757).
-        if isinstance(
+        #
+        # Its keyword actuals are read by the one ``**`` reader
+        # (``_call_keywords`` over ``_spread_dict_pairs``, the reader the
+        # ``{**d}`` display uses): a ``**d`` operand whose contents are not
+        # current has no exact keyword roster, and the call is the one
+        # unanswered call below, never bound from entries code this frame
+        # does not see may have changed (#7757 H2).
+        keywords = _call_keywords(self.arguments, values)
+        if keywords is not None and isinstance(
             callee_value, (BoundMethodValue, ClassDefinitionValue, LambdaCallable)
         ):
             from sugar_lift_py_tests.callable_application import CallableApplication
@@ -473,11 +507,6 @@ class SpreadCallSugar(ConstructedTermSugar):
                         )
                     roster.extend(value.elements)
             positional = tuple(roster)
-            keywords = tuple(
-                (("**" if role == "double-star" else name), value)
-                for (role, name, _), value in zip(self.arguments, values)
-                if role in {"keyword", "double-star"}
-            )
             return callee_value.callable_application_with(
                 CallableApplication(
                     positional + tuple(value for _name, value in keywords),
@@ -508,7 +537,8 @@ class SpreadCallSugar(ConstructedTermSugar):
             arg_terms.append(term)
         term = ctor("python:call", [callee_term, *arg_terms])
 
-        # No value this applies answered the callee: no body, contract or
+        # No value this applies answered the callee, or a ``**`` operand gave
+        # no exact keyword roster (``_call_keywords``): no body, contract or
         # floor answered for it at this site, so it is the one unanswered
         # call, two-faced and owed (#7585, #7757), never a completion.
         from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1

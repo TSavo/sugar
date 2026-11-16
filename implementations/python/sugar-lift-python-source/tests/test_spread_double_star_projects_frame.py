@@ -4,7 +4,8 @@
 ``**``-only call to the same function went without one, so ``g(**{'p': 3})``
 and ``def h(**kw): return g(**kw)`` stayed two-faced
 (an unanswered call, ``UnknownCallee:g``) even though the mapping was a constructed
-DictValue that ``bind_actuals`` merges onto the formals.  Now the ``**`` call
+DictValue whose entries bind onto the formals (expanded by the one ``**``
+reader, ``spread_sugar._call_keywords``).  Now the ``**`` call
 gets the same lexical frame, and its keys bind by name, the rest by default.
 That is numpy's ``_set_printoptions(*args, **kwargs)`` → ``_make_options_dict``
 chain under ``np.printoptions(precision=3)``.
