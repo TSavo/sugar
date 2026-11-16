@@ -139,11 +139,11 @@ def test_instrument_structurally_sees_spelling_gates_of_cluster_five(
         "        return False\n"
         "    return None\n",
     )
-    # Residual shell after Suppresses was fixed: name-keyed ExitSuppressionContract.
+    # Residual shell after Suppresses was fixed: a name-keyed suppress contract.
     _write(
         tmp_path,
         "call_site_value.py",
-        "class ExitSuppressionContract:\n"
+        "class NameKeyedSuppressContract:\n"
         "    exception_names = frozenset()\n"
         "    def suppresses_exception(self, exception_name):\n"
         "        return exception_name in self.exception_names\n",

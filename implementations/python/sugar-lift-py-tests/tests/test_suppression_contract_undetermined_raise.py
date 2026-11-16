@@ -1,15 +1,16 @@
-"""A cited suppress-set exit splits an undetermined raise on its own type tests.
+"""A cited suppress exit splits an undetermined raise on its own type test.
 
-``ExitSuppressionContract`` and ``Suppresses`` are cited exit dispositions:
+``Suppresses`` is the one cited suppressing exit disposition:
 ``__exit__(type(e), e, tb)`` suppresses exactly when ``issubclass(type(e), T)``
-for a suppressed ``T``. A may-raise operation's halt carries the one exception
-object it threw (``UndeterminedExceptionValue``) and no type coordinate, and
-both arms refused it in ``_require_exception_type_coordinate`` -- a refusal
-where the question is real and statable. Now the arm asks the one matcher,
-which retains ``adt.is_python_type(e, T)`` (the atom ``except T`` and a
-source-constructed exit retain, #7590/#7591): the exit suppresses under it and
-the original halt stands under its complement. ``BaseException`` is decided;
-a raise with no subject term stays loud.
+for the suppressed ``T``. A may-raise operation's halt carries the one
+exception object it threw (``UndeterminedExceptionValue``) and no type
+coordinate, and the arm once refused it in
+``_require_exception_type_coordinate`` -- a refusal where the question is real
+and statable. Now the arm asks the one matcher, which retains
+``adt.is_python_type(e, T)`` (the atom ``except T`` and a source-constructed
+exit retain, #7590/#7591): the exit suppresses under it and the original halt
+stands under its complement. ``BaseException`` is decided; a raise with no
+subject term stays loud.
 """
 
 from __future__ import annotations
@@ -20,12 +21,11 @@ from sugar_lift_py_tests.context_manager_contract import Suppresses
 from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.effect_router import EffectMatcher
-from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
 from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
 from sugar_lift_py_tests.floor.undetermined_exception_value import (
     UndeterminedExceptionValue,
 )
-from sugar_lift_py_tests.ir import atomic, or_
+from sugar_lift_py_tests.ir import atomic
 from sugar_lift_py_tests.outcome.exit_disposition import (
     RetainedObligation,
     exit_disposition_effect,
@@ -35,6 +35,10 @@ from sugar_lift_py_tests.sugar.function_universe_sugar import halt_record
 from sugar_source_tree.panic import SugarNotWritten
 
 _SITE = "suppress_undetermined.py:3:8"
+
+
+def _suppresses(name):
+    return Suppresses(EffectMatcher(kind="raise", name=name))
 
 
 def _undetermined(occurrence=_SITE):
@@ -58,41 +62,18 @@ def _halted(effect):
     return Halted(atomic("true", []), effect, halt_record(None))
 
 
-@pytest.mark.parametrize(
-    "disposition",
-    (
-        ExitSuppressionContract.suppresses(("ValueError",)),
-        Suppresses(EffectMatcher(kind="raise", name="ValueError")),
-    ),
-    ids=("exit-suppression-contract", "suppresses"),
-)
-def test_undetermined_raise_splits_on_the_suppressed_type(disposition):
+def test_undetermined_raise_splits_on_the_suppressed_type():
     effect = _undetermined()
-    verdict = exit_disposition_effect(disposition, _halted(effect))
+    verdict = exit_disposition_effect(_suppresses("ValueError"), _halted(effect))
     assert verdict == RetainedObligation(
         obligation=_is_type(effect, "ValueError"), held=None, failed=effect
     )
 
 
-def test_several_suppressed_types_retain_one_disjunction():
-    effect = _undetermined()
-    verdict = exit_disposition_effect(
-        ExitSuppressionContract.suppresses(("KeyError", "ValueError")),
-        _halted(effect),
-    )
-    assert isinstance(verdict, RetainedObligation)
-    assert verdict.held is None and verdict.failed is effect
-    expected = {repr(_is_type(effect, n)) for n in ("KeyError", "ValueError")}
-    assert verdict.obligation.kind == "or"
-    assert {repr(op) for op in verdict.obligation.operands} == expected
-
-
 def test_base_exception_is_decided():
     effect = _undetermined()
     assert (
-        exit_disposition_effect(
-            ExitSuppressionContract.suppresses(("BaseException",)), _halted(effect)
-        )
+        exit_disposition_effect(_suppresses("BaseException"), _halted(effect))
         is None
     )
 
@@ -101,9 +82,7 @@ def test_the_exit_leaves_both_faces_under_complementary_guards():
     effect = _undetermined()
     body = ExitSet((_halted(effect),))
     exit_es = ExitSet.completed(None)
-    out = body.and_exit(
-        exit_es, disposition=ExitSuppressionContract.suppresses(("ValueError",))
-    )
+    out = body.and_exit(exit_es, disposition=_suppresses("ValueError"))
     test = repr(_is_type(effect, "ValueError"))
     completed = [f for f in out.exits if isinstance(f, Completed)]
     halted = [f for f in out.exits if isinstance(f, Halted)]
@@ -116,7 +95,7 @@ def test_the_exit_leaves_both_faces_under_complementary_guards():
 def test_a_raise_with_no_subject_term_stays_loud():
     with pytest.raises(SugarNotWritten):
         exit_disposition_effect(
-            ExitSuppressionContract.suppresses(("ValueError",)),
+            _suppresses("ValueError"),
             # ``raise thing`` whose operand renders no term: no subject exists.
             _halted(
                 UndeterminedRaiseEffect(

@@ -5,7 +5,6 @@ from sugar_lift_py_tests.context_manager_contract import (
     Suppresses,
 )
 from sugar_lift_py_tests.effect import RaiseEffect
-from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
 from sugar_lift_py_tests.ir import and_, atomic, make_var, not_, or_
 from sugar_lift_py_tests.outcome.exit_set import (
     Completed,
@@ -166,7 +165,7 @@ def test_and_exit_never_suppresses_restores_body_halt():
     assert after == ExitSet.halted(body)
 
 
-def test_and_exit_proven_contract_consumes_named_halt():
+def test_and_exit_suppresses_contract_consumes_named_halt():
     from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
 
     _, mro = _builtin_exception_identity("ValueError")
@@ -178,7 +177,7 @@ def test_and_exit_proven_contract_consumes_named_halt():
     incoming = ExitSet.halted(body)
     after = incoming.and_exit(
         ExitSet.completed(True),
-        disposition=ExitSuppressionContract.suppresses(("ValueError",)),
+        disposition=Suppresses(EffectMatcher(kind="raise", name="ValueError")),
     )
     assert after == ExitSet.completed(None)
 
@@ -209,7 +208,7 @@ def test_and_exit_fans_exitset_across_conditional_faces():
     assert any(isinstance(e, Completed) and e.value == _STATE for e in after.exits)
 
 
-def test_and_exit_proven_contract_suppresses_only_matching_face():
+def test_and_exit_suppresses_contract_suppresses_only_matching_face():
     from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
 
     condition = _guard("condition")
@@ -222,7 +221,7 @@ def test_and_exit_proven_contract_suppresses_only_matching_face():
     incoming = ExitSet.conditional_halt(condition, effect, _STATE)
     after = incoming.and_exit(
         ExitSet.completed(True),
-        disposition=ExitSuppressionContract.suppresses(("ValueError",)),
+        disposition=Suppresses(EffectMatcher(kind="raise", name="ValueError")),
     )
     assert after == ExitSet.completed(_STATE)
 
