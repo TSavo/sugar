@@ -11,9 +11,9 @@ Three arms, all of which must move together:
 
 * **A** -- ``SourceUnit.lexical_class_owner_for`` joins the producer-owned
   ``function_class_owners`` relation.
-* **B** -- ``FunctionDef._active_initializer_owner`` classifies the LIVE
-  ``__init__`` member.  This is a policy comparison downstream of the lookup,
-  so repairing A alone does not reach it.
+* **B** -- an ``__init__``'s receiver is its ordinary formal in every shell,
+  live or overwritten, rewritten or not (#7757 B2: an ``__init__`` is an
+  ordinary method, reached from a class call by the dispatched edge).
 * **C** -- ``ClassDef._authenticated_new_constructor_shape`` admits the
   source-owned ``__new__`` shape against ``module_direct_bindings``.
 
@@ -30,7 +30,6 @@ import pytest
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import (
     ClassDef,
-    ConstructedReceiverRef,
     FormalRef,
     FunctionDef,
 )
@@ -106,38 +105,22 @@ def test_foreign_occurrence_stays_a_named_refusal() -> None:
 
 
 # --------------------------------------------------------------------------
-# Decision B -- active-member policy
+# Decision B -- an __init__'s receiver is its formal (#7757 B2)
 # --------------------------------------------------------------------------
 
 
-def test_rewritten_active_initializer_is_still_active() -> None:
-    """`active is self` cannot see a reconstructed shell of the live member."""
-    tree = _sf(_BOX, "occ_active.py")
-    init = _fn(tree, "__init__")
-    owner = init._active_initializer_owner()
-    assert isinstance(owner, ClassDef) and owner.name == "Box"
-
-    rewritten = rewrite(init)
-    rewritten_owner = rewritten._active_initializer_owner()
-    assert isinstance(rewritten_owner, ClassDef), (
-        "the reconstructed active __init__ denotes the same source occurrence "
-        "as the member retained in owner.body"
-    )
-    assert rewritten_owner.name == "Box"
-
-
-def test_rewritten_active_initializer_keeps_the_receiver_entrance() -> None:
-    """The downstream construction delta: receiver, never an ordinary formal."""
+def test_an_initializer_s_receiver_is_its_formal_in_every_shell() -> None:
+    """An ``__init__`` is an ordinary method: its receiver is its first
+    formal, live or reconstructed, never a receiver its class call makes
+    (the class call reaches it through the dispatched ``__init__`` edge)."""
     tree = _sf(_BOX, "occ_receiver.py")
     init = _fn(tree, "__init__")
     live = init._make_parameter_entry(init.params[0], 0, {})
-    assert isinstance(live, ConstructedReceiverRef)
+    assert isinstance(live, FormalRef)
 
     rewritten = rewrite(init)
     reconstructed = rewritten._make_parameter_entry(rewritten.params[0], 0, {})
-    assert isinstance(reconstructed, ConstructedReceiverRef), (
-        f"reconstructed active __init__ degraded to {type(reconstructed).__name__}"
-    )
+    assert isinstance(reconstructed, FormalRef)
 
 
 _OVERWRITTEN = (
@@ -150,20 +133,16 @@ _OVERWRITTEN = (
 )
 
 
-def test_overwritten_initializer_stays_inactive_in_both_shells() -> None:
-    """Negative twin: the shadowed __init__ is inactive, rewritten or not."""
+def test_an_overwritten_initializer_s_receiver_is_its_formal_too() -> None:
+    """Live or overwritten, each ``__init__``'s receiver is its formal."""
     tree = _sf(_OVERWRITTEN, "occ_overwritten.py")
     inits = [
         n for n in tree.nodes() if isinstance(n, FunctionDef) and n.name == "__init__"
     ]
     assert len(inits) == 2
-    overwritten, active = inits
-    assert overwritten._active_initializer_owner() is None
-    assert rewrite(overwritten)._active_initializer_owner() is None
-    assert active._active_initializer_owner() is not None
-    # and its ordinary formal entrance is preserved
-    entry = overwritten._make_parameter_entry(overwritten.params[0], 0, {})
-    assert isinstance(entry, FormalRef)
+    for init in inits:
+        entry = init._make_parameter_entry(init.params[0], 0, {})
+        assert isinstance(entry, FormalRef)
 
 
 _NEW_SHAPE = (

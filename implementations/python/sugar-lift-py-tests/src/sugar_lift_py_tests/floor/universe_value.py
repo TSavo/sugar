@@ -51,6 +51,10 @@ class UniverseValue(FloorValue):
     fields: tuple = ()
     plain_stores: tuple = ()
     fields_guard: object = None
+    #: ``(receiver, names, stores, reads)``: what an ``__init__``'s receiver
+    #: may hold where the call leaves it (``nodes._receiver_holds``), or
+    #: None (``receiver_holds_facts``).
+    receiver_holds: object = None
 
     def guarded(self, formula):
         """Ride under a branch by guarding every body record entry.
@@ -134,7 +138,64 @@ class UniverseValue(FloorValue):
         stored = self.field_facts()
         if stored is not None:
             facts.append(stored)
+        facts.extend(self.receiver_holds_facts())
         return tuple(facts)
+
+    def receiver_holds_facts(self) -> tuple:
+        """What an ``__init__``'s contract states its receiver's ``__dict__``
+        may hold where the call leaves it (``receiver_holds``,
+        ``nodes._receiver_holds``, #7757 B2), over ``o = python:after(out,
+        "<receiver>")``:
+
+        - decided: ``python:holds_decided(o)`` and one ``python:may_hold(o,
+          "<name>")`` per field it may store, under the guard that each of
+          its field stores is the plain ``__dict__`` store and each field
+          read the plain ``__dict__`` read (``python:plain_store`` /
+          ``python:plain_read`` over ``class:<receiver>``), with
+          ``python:class_undecided(o)`` under the complement;
+        - not decided: ``python:class_undecided(o)``.
+
+        The names are those it may add to what the ``__dict__`` held at
+        entry: on the fresh instance a class call makes, every name it
+        holds.  Prove composes them with the class row's ``python:type_is``
+        into the instance a caller's ``python:constructed(<class>)`` is bound
+        to (``consistency::constructed_instance``).  Nothing for any other
+        function."""
+        if self.receiver_holds is None:
+            return ()
+        from sugar_lift_py_tests.contract_input import CLASS_INPUT, input_formal
+        from sugar_lift_py_tests.ir import (
+            and_,
+            atomic,
+            implies,
+            make_var,
+            not_,
+            str_const,
+        )
+        from sugar_lift_py_tests.receiver_dispatch import (
+            CLASS_UNDECIDED,
+            HOLDS_DECIDED,
+            MAY_HOLD,
+            PLAIN_READ,
+            plain_store_atom,
+        )
+        from sugar_lift_py_tests.source_call_resolution import object_after_call
+
+        receiver, names, stores, reads = self.receiver_holds
+        obj = object_after_call(make_var("out"), receiver)
+        undecided = atomic(CLASS_UNDECIDED, [obj])
+        if names is None:
+            return (undecided,)
+        held = [atomic(HOLDS_DECIDED, [obj])]
+        held.extend(atomic(MAY_HOLD, [obj, str_const(name)]) for name in sorted(names))
+        holds = held[0] if len(held) == 1 else and_(held)
+        class_term = make_var(input_formal(CLASS_INPUT, receiver))
+        guards = [plain_store_atom(class_term, name) for name in stores]
+        guards.extend(atomic(PLAIN_READ, [class_term, str_const(name)]) for name in reads)
+        if not guards:
+            return (holds,)
+        guard = guards[0] if len(guards) == 1 else and_(guards)
+        return (implies(guard, holds), implies(not_(guard), undecided))
 
     def field_facts(self):
         """``and(plain_store(class:<p>, "<a>")...) -> and(<field facts>)``:

@@ -11119,12 +11119,13 @@ class FunctionDef(Statement):
         return _contract_inputs(self)
 
     def _make_parameter_entry(self, parameter: Param, ordinal: int, scope):
-        owner = self._active_initializer_owner()
-        if owner is not None and ordinal == 0:
-            coordinate = self._constructed_receiver_coordinate(owner, parameter)
-            ref = owner._make_constructed_receiver_ref(coordinate.cid)
-        else:
-            ref = self._make_parameter_ref(parameter, ordinal)
+        """Each parameter of this ``def``'s own contract is its formal
+        (``_make_parameter_ref``), an ``__init__``'s receiver included: an
+        ``__init__`` is an ordinary method whose contract states what it
+        leaves in ``self`` over ``python:after(out, "<self>")`` (#7757 B2),
+        and a class call reaches it through the dispatched ``__init__``
+        edge, joined at prove."""
+        ref = self._make_parameter_ref(parameter, ordinal)
         factory = scope.get(_BINDING_ENTRY_FACTORY)
         if not isinstance(factory, RuntimeBindingEntryFactoryV1):
             return ref
@@ -11132,49 +11133,6 @@ class FunctionDef(Statement):
             binding_site=parameter.fragment,
             projection_path=("formal", ordinal),
             state=ref,
-        )
-
-    def _active_initializer_owner(self) -> "ClassDef | None":
-        """The exact class whose active ``__init__`` this occurrence is.
-
-        Class ownership is projected from the backend's parent relation.  The
-        last same-name initializer is Python's live class binding; overwritten
-        definitions and genuinely free functions keep the ordinary formal
-        entrance.
-
-        Active membership is decided on the SOURCE OCCURRENCE (#7346-B), not on
-        the shell.  ``owner.body`` holds the producer's shells; a reconstructed
-        ``__init__`` is a different shell denoting the same occurrence, and the
-        shell comparison silently reclassified the live initializer as
-        overwritten -- degrading its receiver entrance to an ordinary formal.
-        A genuinely overwritten initializer denotes a DIFFERENT occurrence and
-        stays inactive.
-
-        The class value's ``__init__`` is read by the one class-namespace
-        lookup (``ClassDef.namespace_value_is_body``): a class whose
-        ``__init__`` a decorator, its creation, a store or a conditional
-        binding may have made something else has no active initializer here,
-        and this ``def`` keeps the ordinary formal entrance.
-        """
-        if self.name != "__init__":
-            return None
-        owner = self.unit.lexical_class_owner_for(self)
-        if owner is None or not owner.namespace_value_is_body("__init__"):
-            return None
-        active = owner._written_initializer()
-        if active is None:
-            return None
-        occurrence = SourceOccurrenceIdentityV1.of(self)
-        return owner if SourceOccurrenceIdentityV1.of(active) == occurrence else None
-
-    def _constructed_receiver_coordinate(self, owner: "ClassDef", parameter: Param):
-        """Mint the same receiver coordinate as the class-construction door."""
-        from sugar_source_tree.binding_provenance import BindingCoordinateV1
-
-        return BindingCoordinateV1.mint(
-            owner.fragment.seal().cid,
-            parameter.fragment,
-            ("receiver", 0),
         )
 
     def _formal_coordinate(self, parameter: Param, ordinal: int):
@@ -11402,6 +11360,9 @@ class FunctionDef(Statement):
                         cells_after_every_arm=_returns_only_last(self.body),
                         plain_stores=fields[0],
                         fields_after=fields[1],
+                        # What an ``__init__``'s receiver may hold where it
+                        # leaves (#7757 B2).
+                        receiver_holds=_receiver_holds(self),
                     )
         finally:
             _FRAMES_UNDER_CONSTRUCTION.discard(definition_cid)
@@ -11483,12 +11444,6 @@ class AsyncFunctionDef(Statement):
 
     def _make_parameter_entry(self, parameter: Param, ordinal: int, scope):
         return FunctionDef._make_parameter_entry(self, parameter, ordinal, scope)
-
-    def _active_initializer_owner(self) -> "ClassDef | None":
-        return FunctionDef._active_initializer_owner(self)
-
-    def _constructed_receiver_coordinate(self, owner: "ClassDef", parameter: Param):
-        return FunctionDef._constructed_receiver_coordinate(self, owner, parameter)
 
     def _formal_coordinate(self, parameter: Param, ordinal: int):
         return FunctionDef._formal_coordinate(self, parameter, ordinal)
@@ -21650,11 +21605,6 @@ class Lambda(Expression):
         contract, as a ``def``'s (``FunctionDef._make_parameter_ref``)."""
         return FunctionDef._make_parameter_ref(self, parameter, ordinal)
 
-    def _active_initializer_owner(self) -> "ClassDef | None":
-        """A lambda is never a class's ``__init__``: it has no receiver the
-        class call makes (``FunctionDef._active_initializer_owner``)."""
-        return None
-
     def contract_universe(self):
         """This lambda's own contract: the universe of ``return <body>`` over
         its formals, as a ``def``'s universe is (``FunctionDef.
@@ -25510,6 +25460,125 @@ def _read_receiver_class_parameters(definition) -> tuple:
     return tuple(
         name for name in parameters if name in received and name not in blocked
     )
+
+
+def _receiver_holds(definition):
+    """What an ``__init__``'s contract states its receiver's ``__dict__`` may
+    hold where the call leaves it (#7757 B2): the names a class call's
+    instance may hold after its dispatched ``__init__`` edge, which prove
+    composes with the class row's ``python:type_is`` into the instance a
+    caller's ``python:constructed(<class>)`` is bound to
+    (``consistency::constructed_instance``).
+
+    None for any definition that is no ``__init__`` written in a class body
+    with a positional receiver.  Else ``(receiver, names, stores, reads)``:
+
+    - ``names`` is None where it is not decided here: a module that may give
+      an object another class or store a computed name
+      (``receiver_dispatch.module_attribute_names``), a generator or
+      ``async def``, a receiver handed to code or read bare, rebound or read
+      by a nested function (``_receiver_uses``' ``blocked``), a
+      zero-argument ``super()`` (a base's code runs on it), a method call,
+      an item read, store or delete, or a field delete on it, a dunder field
+      name, or a field use with no ``class:<receiver>`` input to guard it;
+    - else ``names`` are the fields the body stores on the receiver, at any
+      store target (an assignment's, an augmented or annotated
+      assignment's, a ``for``'s, a comprehension's or a ``with``'s, an
+      unpack's leaf included): under the plain-store guard over each of
+      ``stores`` and the plain-read guard over each of ``reads`` (the
+      fields it reads, an augmented store's included), every store runs
+      no code and every read adds nothing, so the ``__dict__`` holds
+      nothing beyond what it held at entry but these.
+
+    Read off the ``__init__``'s own body: its own contract."""
+    if type(definition) is not FunctionDef or definition.name != "__init__":
+        return None
+    if not definition.params or definition.params[0].param_kind not in (
+        "positional_only",
+        "positional_or_keyword",
+    ):
+        return None
+    if definition.unit.lexical_class_owner_for(definition) is None:
+        return None
+    receiver = definition.params[0].name
+    undecided = (receiver, None, (), ())
+    from sugar_lift_py_tests.receiver_dispatch import is_dunder, module_attribute_names
+
+    if module_attribute_names(definition.unit)[1]:
+        return undecided
+    uses = _receiver_uses(definition)
+    if uses is None:
+        return undecided
+    _received, blocked, _read, zero_argument_super = uses
+    if zero_argument_super or receiver in blocked:
+        return undecided
+    nodes = []
+    for statement in definition.body:
+        nodes.extend(statement.walk())
+
+    def on_receiver(node) -> bool:
+        return isinstance(node.value, Name) and node.value.id == receiver
+
+    stored: set = set()
+    augmented: set = set()
+
+    def leaves(target, into) -> None:
+        pending = [target]
+        while pending:
+            node = pending.pop()
+            if isinstance(node, Attribute):
+                into.add(id(node))
+            elif isinstance(node, Starred):
+                pending.append(node.value)
+            elif isinstance(node, (Tuple_, List)):
+                pending.extend(node.elts)
+
+    for node in nodes:
+        if isinstance(node, Assign):
+            for target in node.targets:
+                leaves(target, stored)
+        elif isinstance(node, AugAssign):
+            leaves(node.target, stored)
+            leaves(node.target, augmented)
+        elif isinstance(node, (AnnAssign, For, AsyncFor, Comprehension)):
+            leaves(node.target, stored)
+        elif isinstance(node, WithItem) and node.optional_vars is not None:
+            leaves(node.optional_vars, stored)
+        elif isinstance(node, Delete):
+            deleted: set = set()
+            for target in node.targets:
+                leaves(target, deleted)
+            if any(
+                isinstance(inner, Attribute) and id(inner) in deleted and on_receiver(inner)
+                for inner in node.walk()
+            ):
+                return undecided
+        elif isinstance(node, DeleteAttribute):
+            if isinstance(node.receiver, Name) and node.receiver.id == receiver:
+                return undecided
+    callees = {
+        id(node.func)
+        for node in nodes
+        if isinstance(node, Call) and isinstance(node.func, Attribute)
+    }
+    stores: set = set()
+    reads: set = set()
+    for node in nodes:
+        if isinstance(node, Subscript) and on_receiver(node):
+            return undecided
+        if not isinstance(node, Attribute) or not on_receiver(node):
+            continue
+        if id(node) in callees or is_dunder(node.attr):
+            return undecided
+        if id(node) in stored:
+            stores.add(node.attr)
+            if id(node) in augmented:
+                reads.add(node.attr)
+        else:
+            reads.add(node.attr)
+    if (stores or reads) and receiver not in _receiver_class_parameters(definition):
+        return undecided
+    return receiver, frozenset(stores), tuple(sorted(stores)), tuple(sorted(reads))
 
 
 def _receiver_field_inputs(definition) -> tuple:

@@ -1166,6 +1166,11 @@ class FunctionUniverseSugar(Sugar):
     #: states it over ``python:after(out, "<param>")`` under the plain-store
     #: guard (``UniverseValue.fields``, #7757 step 7).
     fields_after: tuple = dataclass_field(default=(), compare=False)
+    #: ``(receiver, names, stores, reads)`` for an ``__init__``: what its
+    #: receiver's ``__dict__`` may hold where the call leaves it
+    #: (``nodes._receiver_holds``, #7757 B2), stated on every completed arm
+    #: (``UniverseValue.receiver_holds_facts``); None for any other function.
+    receiver_holds: tuple | None = dataclass_field(default=None, compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -1183,11 +1188,8 @@ class FunctionUniverseSugar(Sugar):
     def desugar(self, ctx: object = None) -> ExitSet:
         # The body was already SUBSTITUTED (FunctionDef.sugar): ordinary
         # formals stay free Vars; as-bindings are EffectRef/ObservationRef
-        # coordinates.  A class-owned initializer additionally carries one
-        # ConstructedReceiverRef coordinate, and its enumeration entrance seats
-        # that exact receiver in ``ctx``.  Threading the producer-owned context
-        # here lets the existing block reducer resolve it; callers without such
-        # authority continue to pass ``None`` and retain the ordinary behavior.
+        # coordinates.  An ``__init__``'s receiver is its first formal like
+        # any method's (#7757 B2).
         #
         # Each input the body reads (a captured cell) is read as its own free
         # formal, as a parameter is: the function's own proof has no caller
@@ -1228,6 +1230,7 @@ class FunctionUniverseSugar(Sugar):
                         fields=self._fields(state),
                         plain_stores=self.plain_stores,
                         fields_guard=self._fields_guard(state),
+                        receiver_holds=self.receiver_holds,
                     )
                 ),
             )
