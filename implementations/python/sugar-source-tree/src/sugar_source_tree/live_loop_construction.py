@@ -126,9 +126,10 @@ class LiveForRuntimeV1:
     coordinate_names: tuple[str, ...] = ()
     # The name of each ``published_evaluations`` entry, in its order.
     published_names: tuple[str, ...] = ()
-    # The names an item leaves changed that the loop does not carry
+    # The names an item leaves changed that the latch does not hand on
     # (``nodes._uncarried_item_changes``): a name a call in the body may
-    # rebind, a ``match`` capture, a ``del``.  No item hands them on, so the
+    # rebind, a ``match`` capture, a ``del``, and a carried name whose last
+    # change in the item is a call's rebinding.  No item hands them on, so the
     # loop runs its items in hand only where there is none
     # (``LoopRecurrenceSugar._desugar_with_iterable``); otherwise it runs as
     # its recurrence.
@@ -157,7 +158,17 @@ def loop_post_writes(loop, coordinate_names, scope) -> dict:
     the loop to what the items handed on.  A ``while`` has the same keys:
     it has no target, so every name its test (a walrus), body or ``else``
     writes is published through its header's key, the one its test, body
-    and ``else`` read the name through (``While.substitute``)."""
+    and ``else`` read the name through (``While.substitute``).
+
+    A name an item binds with no write key -- a ``match`` capture, a nested
+    ``def`` or ``class``, an ``import``, a ``with ... as`` -- is published
+    through its header's key too (``unkeyed_item_bindings``, read off the
+    body's threading by ``nodes._uncarried_item_changes``).  No write binds
+    that key, and such a loop never runs its items in hand (each such name is
+    among ``uncarried_item_changes``): its recurrence binds the key to its
+    value of the name, under the guard that some item wrote it
+    (``LoopRecurrenceSugar._recurrence``), so a read after the loop owes and
+    never reads the name as it stood before the loop."""
     from .nodes import (
         For,
         _loop_header_evaluation_key,
@@ -173,8 +184,10 @@ def loop_post_writes(loop, coordinate_names, scope) -> dict:
         target_names = frozenset()
         items = (loop.test, *loop.body)
     carried = frozenset(coordinate_names)
+    unkeyed = frozenset(getattr(loop, "unkeyed_item_bindings", None) or ())
     candidates = sorted(
-        (For._stmts_bound_names((*items, *loop.orelse)) | target_names) - carried
+        (For._stmts_bound_names((*items, *loop.orelse)) | target_names | unkeyed)
+        - carried
     )
     writes = _carried_writes(items, candidates)
     else_writes = _carried_writes(loop.orelse, candidates)
@@ -183,7 +196,7 @@ def loop_post_writes(loop, coordinate_names, scope) -> dict:
         if name in target_names:
             post_key = _loop_target_evaluation_key(loop, name, scope)
             published[name] = (post_key, (post_key, *writes[name]), else_writes[name])
-        elif writes[name] or else_writes[name]:
+        elif writes[name] or else_writes[name] or name in unkeyed:
             post_key = _loop_header_evaluation_key(loop, name, scope)
             published[name] = (post_key, writes[name], else_writes[name])
     return published
