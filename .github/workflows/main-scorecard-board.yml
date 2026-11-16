@@ -11,8 +11,9 @@ name: Main scorecard board
 # and main-scorecard.yml posts its own row on every merge without waiting
 # for it. The board row is posted
 # on the same "Main scorecard" issue by tools/main_scorecard_post.py;
-# SCORECARD_MEASURES names the board as this workflow's only number, so the
-# other numbers are written `-` in a board row and are never compared there.
+# SCORECARD_MEASURES names the board and the nine-step lane (below) as this
+# workflow's numbers, so the other numbers are written `-` in a board row and
+# are never compared there.
 # The board number is compared with the newest earlier row that measured the
 # board, and REGRESSION: turns the job red.
 #
@@ -36,6 +37,25 @@ name: Main scorecard board
 # the `supersede` job (tools/main_scorecard_supersede.sh) cancels every older
 # board run on main whose commit is not this run's, waiting or measuring, so
 # a merge burst measures the board of its head, not of its first commit.
+#
+# THE NINE-STEP LANE (`lift`, #8416)
+#
+# The board builds trees (roll_call.discharge calls .sugar(), never
+# .desugar()), so `board=1421/1421 cpanic=0` cannot say how much of pandas
+# goes through the nine steps (docs/path-forward.md). The `lift` seats put
+# every pinned pandas file through `sugar mint` and `sugar prove`, the
+# commands the solver twins and examples/python-base64-federation/run.sh use,
+# with tools/nine_step_lift_lane.py: LIFT_SEATS seats of --slice i/K after
+# the fast lane, on the same resolved and pin-gated corpus as the board. The
+# `lift join` job joins the seats' rows, uploads the compact refusal list
+# (`pandas-lift-refusals`, names + file:line, small JSON, so a fix agent never
+# needs the board's artifact) and posts `pandas_lift_files= pandas_lift_funcs=
+# pandas_refused= pandas_lift_ierr= pandas_lift_missing=` plus the top refusal
+# names on the same row (main_scorecard_post.py --lane). SCORECARD_MEASURES
+# names both numbers and SCORECARD_LANES names `pandas`; the board posts
+# without --final (the lane is pending until the join) and the join posts
+# --final, so a number that never reported is unmeasured and compared. A lost
+# seat is the lane unmeasured, never a partial count.
 
 on:
   push:
@@ -59,8 +79,14 @@ env:
   # Per-seat and join caps for the pandas board (seconds).
   BOARD_SEAT_CAP_S: "10800"
   BOARD_JOIN_CAP_S: "300"
+  # The nine-step lane: seats, and the cap on one seat (seconds). The
+  # per-file budget is the lane script's own.
+  LIFT_SEATS: "3"
+  LIFT_SEAT_CAP_S: "10800"
   SCORECARD_ISSUE_TITLE: "Main scorecard"
-  SCORECARD_MEASURES: "board"
+  SCORECARD_MEASURES: "board,lift"
+  # The lanes this workflow posts (main_scorecard_post.py --lane).
+  SCORECARD_LANES: "pandas"
   GH_TOKEN: ${{ github.token }}
   GH_REPO: ${{ github.repository }}
 
@@ -230,14 +256,16 @@ jobs:
               --set "board.note=partial: compose refused the board; ${failures:-?} files failed the instrument and are not counted")
           fi
           echo "board completed=$completed total=$total cpanic=$cpanic instrument_failures=${failures:-0} partial=${partial:-0}"
+          # Not --final: the lift lane's number is still pending; the lift
+          # join posts the final row.
           if [ -n "$completed" ] && [ -n "$total" ]; then
-            python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" --final \
+            python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" \
               --set "board.completed=$completed" --set "board.total=$total" \
               --set "board.cpanic=${cpanic:-?}" \
               --set "board.line=$(printf '%s' "$line" | cut -c1-300)" \
               "${partial_args[@]}"
           else
-            python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" --final \
+            python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" \
               --set board.measured=false --set "board.note=no RECENSUS DONE or RECENSUS PARTIAL line"
           fi
       - name: Upload board logs
@@ -254,3 +282,177 @@ jobs:
         if: ${{ !cancelled() }}
         shell: bash
         run: echo "job wall $(( $(date +%s) - JOB_T0 ))s"
+
+  # The nine-step lane: every pinned pandas file through `sugar mint` and
+  # `sugar prove` (tools/nine_step_lift_lane.py), seat i of LIFT_SEATS
+  # (--slice i/K), on the board's resolved and pin-gated corpus.
+  lift:
+    name: pandas lift seat ${{ matrix.seat }}
+    needs: [gate, wait]
+    if: ${{ !cancelled() && needs.gate.outputs.measure != 'false' && needs.wait.outputs.measure != 'false' }}
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        # One entry per seat; keep in step with LIFT_SEATS.
+        seat: [0, 1, 2]
+    steps:
+      - name: Start the job clock
+        shell: bash
+        run: echo "JOB_T0=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12.13"
+      - name: Scorecard environment (persistent venv, gh)
+        shell: bash
+        run: bash tools/main_scorecard_env.sh
+      - name: Set up Rust toolchain
+        uses: ./.github/actions/setup-rust-cache
+      - name: Install z3 (cached on the runner)
+        shell: bash
+        run: tools/ci-apt-install.sh z3
+      - name: Resolve authenticated pandas corpus
+        id: corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$(
+            python -c 'from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus; print(authenticated_pandas_corpus().root)'
+          )"
+          echo "root=$root" >> "$GITHUB_OUTPUT"
+          echo "pandas corpus: $root"
+      - name: Corpus pin gate (pandas 3.0.3)
+        shell: bash
+        env:
+          PANDAS_CORPUS: ${{ steps.corpus.outputs.root }}
+        run: |
+          set -euo pipefail
+          python tools/bx_corpus_pin_gate.py \
+            --expected-pin docs/ledgers/pins/pandas-3.0.3.pin.json \
+            --corpus-root "$PANDAS_CORPUS"
+      - name: Seat (sugar mint + sugar prove per file)
+        shell: bash
+        env:
+          PANDAS_CORPUS: ${{ steps.corpus.outputs.root }}
+          SEAT: ${{ matrix.seat }}
+        run: |
+          set +e -uo pipefail
+          OUT="$GITHUB_WORKSPACE/lift"
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
+          timeout -s KILL "$LIFT_SEAT_CAP_S" \
+            python -u tools/nine_step_lift_lane.py \
+              --corpus-root "$PANDAS_CORPUS" \
+              --label pandas \
+              --slice "$SEAT/$LIFT_SEATS" \
+              --out-dir "$OUT/s$SEAT" \
+              > "$OUT/s$SEAT.log" 2>&1
+          rc=$?
+          echo "$rc" > "$OUT/s$SEAT.rc"
+          # The per-file projects are scratch: only the rows travel.
+          rm -rf "$OUT/s$SEAT/work"
+          echo "lift seat s$SEAT rc=$rc wall=$(( $(date +%s) - JOB_T0 ))s"
+          tail -n 5 "$OUT/s$SEAT.log"
+      - name: Upload the seat (rows and log only)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pandas-lift-seat-${{ matrix.seat }}
+          path: |
+            lift/s*/rows.jsonl
+            lift/*.log
+            lift/*.rc
+          if-no-files-found: warn
+
+  # Joins the seats, uploads the compact refusal list, posts the final row.
+  lift-join:
+    name: lift join
+    needs: [gate, wait, board, lift]
+    if: ${{ !cancelled() && needs.gate.outputs.measure != 'false' && needs.wait.outputs.measure != 'false' }}
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 20
+    steps:
+      - name: Start the job clock
+        shell: bash
+        run: echo "JOB_T0=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12.13"
+      - name: Scorecard environment (persistent venv, gh)
+        shell: bash
+        run: bash tools/main_scorecard_env.sh
+      - name: Resolve authenticated pandas corpus
+        id: corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$(
+            python -c 'from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus; print(authenticated_pandas_corpus().root)'
+          )"
+          echo "root=$root" >> "$GITHUB_OUTPUT"
+      - name: Download the seats
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pandas-lift-seat-*
+          path: seats
+      - name: Join
+        shell: bash
+        env:
+          PANDAS_CORPUS: ${{ steps.corpus.outputs.root }}
+        run: |
+          set +e -uo pipefail
+          mkdir -p pandas-lift
+          # The enrolled count is the lane's own enumeration (--count), so a
+          # file no seat reached is counted missing, never dropped.
+          enrolled="$(python tools/nine_step_lift_lane.py --corpus-root "$PANDAS_CORPUS" --count)"
+          dirs=()
+          missing=()
+          for i in $(seq 0 $((LIFT_SEATS - 1))); do
+            d="seats/pandas-lift-seat-$i/s$i"
+            rc="$(cat "seats/pandas-lift-seat-$i/s$i.rc" 2>/dev/null || echo missing)"
+            echo "lift seat s$i rc=$rc"
+            if [ -f "$d/rows.jsonl" ]; then dirs+=("$d"); else missing+=("s$i"); fi
+          done
+          # A lost seat is the lane unmeasured, never a partial count: no
+          # summary is written and the poster calls pandas unmeasured.
+          if [ "${#missing[@]}" -ne 0 ] || ! [[ "$enrolled" =~ ^[0-9]+$ ]]; then
+            echo "lift join refused: seats missing=[${missing[*]}] enrolled=$enrolled"
+          else
+            python -u tools/nine_step_lift_lane.py --join "${dirs[@]}" \
+              --label pandas --enrolled "$enrolled" \
+              --out pandas-lift/summary.json --refusals pandas-lift/refusals.json \
+              > pandas-lift/join.log 2>&1
+            echo "join rc=$?"
+            cat pandas-lift/join.log
+          fi
+      - name: Post the lift number (final row)
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set +e -uo pipefail
+          # A missing summary is pandas unmeasured (SCORECARD_LANES names it).
+          python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" --final \
+            --lane pandas-lift/summary.json
+      - name: Upload the compact refusal list
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pandas-lift-refusals
+          path: pandas-lift/refusals.json
+          if-no-files-found: warn
+      - name: Upload the lift join
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pandas-lift-join
+          path: |
+            pandas-lift/summary.json
+            pandas-lift/join.log
+          if-no-files-found: warn
