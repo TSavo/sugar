@@ -8597,6 +8597,17 @@ class Node(Typed):
             if isinstance(state, BindingEntryV1):
                 wrapped[name] = state
                 continue
+            if state is UNDECIDED_MODULE_BINDING:
+                # No binding value: every read of the name keeps its own name
+                # and resolves through the import table at its own coordinate
+                # (``Name.substitute``).  ``import a.b`` in a function binds
+                # ``a`` to this (``_module_import_binding``: the table rows
+                # nothing for the package), as the module threading does
+                # (``_substitute_body_tracked`` stores it unwrapped).  It is
+                # never a runtime binding entry, so the trace records no entry
+                # for it rather than minting one its sealer has no state for.
+                wrapped[name] = state
+                continue
             site, path = self._binding_site_and_path(name, local_index)
             wrapped[name] = builder.mint_entry(
                 binding_site=site,
