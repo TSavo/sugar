@@ -111,7 +111,9 @@ def test_an_undecided_identity_never_reads_a_lie_sat(
 
 _ITSELF = (
     "def itself(a):\n"
-    "    return a is a\n"
+    "    if a is a:\n"
+    "        return 1\n"
+    "    return 2\n"
     "\n"
     "\n"
     "def test_identity():\n"
@@ -123,12 +125,22 @@ _ITSELF = (
 @pytest.mark.parametrize("half", ["truthful", "lying"])
 def test_a_formal_is_itself(tmp_path: Path, half: str) -> None:
     """``a is a`` is one term compared with itself: decided, owing nothing,
-    so the truthful claim reads ``sat`` and the lie never does."""
-    claim = "itself(x)" if half == "truthful" else "not itself(x)"
+    so the truthful claim reads ``sat`` and the lie never does.
+
+    The identity selects the int ``itself`` returns, read by ``==`` as the
+    early-return twins read ``x is None`` (``test_early_return_guard_is_the_
+    test``).  Were ``a is a`` owed, ``itself``'s own proof would owe it inside
+    its definition and the truthful claim would read ``open`` (#8985).  The
+    bare ``assert itself(x)`` this twin first stated took ``bool()`` of the
+    call's result, a second question: prove settles that truth only where a
+    joined post states the result's builtin type, and ``return a is a``
+    states ``out = identity(a, a)``, a predicate no builtin type is stated
+    for, so it read ``open`` whatever ``is`` decided."""
+    claim = "itself(x) == 1" if half == "truthful" else "itself(x) == 2"
     result = run_source_through_real_solver(
         tmp_path / "itself" / half, _ITSELF.format(claim=claim)
     )
-    verdict = claim_verdict(result.prove_doc, claims_from_line=5)
+    verdict = claim_verdict(result.prove_doc, claims_from_line=7)
     if half == "truthful":
         assert verdict == "sat", result.prove_doc
     else:
