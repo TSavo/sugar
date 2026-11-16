@@ -245,7 +245,11 @@ class BuiltinSuperValue(FloorValue):
             if receiver_class is None and receiver_class_decided(self.receiver):
                 receiver_class = class_value(self.receiver)
         if receiver_class is None:
-            return self.undecided_attribute(name, site, owner=_OWNER)
+            from sugar_lift_py_tests.floor.floor_value import (
+                undecided_attribute_result,
+            )
+
+            return undecided_attribute_result(self, name, site, owner=_OWNER)
         read = dispatch_edge_call(
             name, self.receiver, receiver_class, (), (), site, read=True, after=after
         )

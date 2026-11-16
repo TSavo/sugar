@@ -8,9 +8,9 @@ semantics``) -- inside numpy's ``_make_options_dict`` that refusal stopped
 
 That is the same read as ``p.x`` on a formal: the receiver answers it
 (``SymbolicValue.attribute``), whatever bound it, through the one two-faced
-undecided read (``FloorValue.undecided_attribute``): it completes with
-``attr:<name>(<receiver>)`` only under ``python:attribute.completes(...)``
-keyed on the read's site, and halts with an ``UndeterminedRaiseEffect`` under
+undecided read (``floor_value.undecided_attribute_result``): it completes
+with ``python:attribute_result(<name>, <receiver>, <key>)`` only under
+``python:attribute_op.completes(...)`` keyed per evaluation, and halts with an ``UndeterminedRaiseEffect`` under
 the complement -- the #7585 law.  There is no second law for a receiver the
 module binds only by an import, and no second lexical walk to choose it
 (#7757).
@@ -50,7 +50,8 @@ def test_an_imported_module_attribute_completes_or_raises(tmp_path, module, attr
         tmp_path, f"import {module}\ndef f():\n    return {module}.{attribute}\n"
     )
     (value,) = returns
-    assert getattr(value.term, "name", None) == f"attr:{attribute}"
+    assert getattr(value.term, "name", None) == "python:attribute_result"
+    assert value.term.args[0].value == attribute
     assert _owners(halts) == ["SymbolicValue.attribute"]
 
 
@@ -78,8 +79,11 @@ def test_the_raise_reaches_an_except_arm(tmp_path):
 def test_a_dotted_read_is_two_reads(tmp_path):
     returns, halts = _split(tmp_path, "import os\ndef f():\n    return os.path.sep\n")
     (value,) = returns
-    assert getattr(value.term, "name", None) == "attr:sep"
-    assert _owners(halts) == ["CallSiteValue.attribute", "SymbolicValue.attribute"]
+    assert getattr(value.term, "name", None) == "python:attribute_result"
+    assert value.term.args[0].value == "sep"
+    # ``os.path`` is the one undecided read, and so is ``.sep`` on its
+    # result: one builder, whatever the receiver (#7757 NEW-3).
+    assert _owners(halts) == ["SymbolicValue.attribute"] * 2
 
 
 def test_a_formal_receiver_reads_by_the_same_law(tmp_path):

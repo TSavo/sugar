@@ -292,7 +292,8 @@ def test_exception_callsite_args_are_the_constructor_arguments() -> None:
         body=None,
     )
     # An ordinary unexecuted call has no decided type: ``.args`` is the
-    # #7585 two-faced lookup of the coordinate ``attr:args``, never a tuple.
+    # #7585 two-faced undecided read (``python:attribute_result``, keyed per
+    # evaluation), never a tuple.
     from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
     faces = ordinary.attribute("args", site=site, ctx=None)
@@ -300,7 +301,8 @@ def test_exception_callsite_args_are_the_constructor_arguments() -> None:
     (completed,) = [f for f in faces.exits if isinstance(f, Completed)]
     assert [f for f in faces.exits if isinstance(f, Halted)]
     assert not isinstance(completed.value, TupleValue)
-    assert completed.value.term.name == "attr:args"
+    assert completed.value.term.name == "python:attribute_result"
+    assert completed.value.term.args[0].value == "args"
 
 
 def test_no_process_identity_in_slot_fallback() -> None:

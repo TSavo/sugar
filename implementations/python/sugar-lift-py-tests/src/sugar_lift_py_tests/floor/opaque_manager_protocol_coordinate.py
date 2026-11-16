@@ -98,14 +98,16 @@ class OpaqueManagerProtocolCoordinate(FloorValue):
 
         Only the enter-result coordinate denotes a Python value; nothing
         testified to its runtime type, so the read is the opaque attribute
-        law: complete under ``python:attribute.completes``, otherwise an
+        law: complete under ``python:attribute_op.completes``, otherwise an
         undetermined raise.  The enter/exit completion coordinates are truths,
         not values, and keep the default floor.
         """
         if self.symbol != "python:cm_enter_result":
             return super().attribute(name, site, ctx)
-        return self.undecided_attribute(
-            name, site, owner="OpaqueManagerProtocolCoordinate.attribute"
+        from sugar_lift_py_tests.floor.floor_value import undecided_attribute_result
+
+        return undecided_attribute_result(
+            self, name, site, owner="OpaqueManagerProtocolCoordinate.attribute"
         )
 
 

@@ -3,9 +3,9 @@
 ``pandas.util.version.Version.__init__`` reads ``self._version.epoch`` where
 ``_version`` is an ``_Version(...)`` namedtuple call result whose runtime
 type the lift did not decide.  ``CallSiteValue.attribute`` refused it as an
-undecided receiver.  Under the #7585 law the member completes as the
-coordinate ``attr:epoch(<receiver>)`` only under
-``python:attribute.completes(...)`` and halts with an
+undecided receiver.  Under the #7585 law the member completes as the one
+undecided read ``python:attribute_result("epoch", <receiver>, <key>)``
+only under ``python:attribute_op.completes(...)`` and halts with an
 ``UndeterminedRaiseEffect`` under the complement.
 """
 

@@ -491,8 +491,8 @@ class ClassDefinitionValue(GuardStableValue):
           value read is the value the class body bound.
 
         Every other read is the one undecided attribute read
-        (``undecided_attribute``), two-faced and owed: never a value assumed
-        and never an ``AttributeError`` named."""
+        (``floor_value.undecided_attribute_result``), two-faced and owed:
+        never a value assumed and never an ``AttributeError`` named."""
         del ctx
         if self._metaclass_is_type() and not _type_data_descriptor(name):
             decided, _found, _holder, method, value = self.namespace_member(name)
@@ -505,8 +505,10 @@ class ClassDefinitionValue(GuardStableValue):
                 from sugar_lift_py_tests.outcome import ExitSet
 
                 return ExitSet.completed(value)
-        return self.undecided_attribute(
-            name, site, owner="ClassDefinitionValue.attribute"
+        from sugar_lift_py_tests.floor.floor_value import undecided_attribute_result
+
+        return undecided_attribute_result(
+            self, name, site, owner="ClassDefinitionValue.attribute"
         )
 
     def _metaclass_is_type(self) -> bool:

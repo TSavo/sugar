@@ -10,7 +10,7 @@ from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUnivers
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 
-from .floor_value import FloorValue
+from .floor_value import FloorValue, undecided_attribute_result
 
 _FORCE_FLOOR_BUDGET = 64
 
@@ -336,7 +336,8 @@ class CallSiteValue(FloorValue):
         ``attr:__name__(receiver)`` the same way a symbolic receiver names the
         attribute and ``format_data_model`` names ``call:__format__`` without
         inventing the formatted string. Every other member is not decided
-        here: the one two-faced unanswered read (``undecided_attribute``).
+        here: the one two-faced unanswered read, keyed per evaluation
+        (``floor_value.undecided_attribute_result``).
         """
         if name in {"__name__", "__qualname__"}:
             from sugar_lift_py_tests.ir import ctor
@@ -373,8 +374,8 @@ class CallSiteValue(FloorValue):
             # states joined at prove, never the actuals.
             if self.bound_source_actuals is None and self.constructed_args is not None:
                 return ExitSet.completed(self.constructed_args)
-            return self.undecided_attribute(
-                name, site, owner="CallSiteValue.attribute"
+            return undecided_attribute_result(
+                self, name, site, owner="CallSiteValue.attribute"
             )
         if self.constructed_by_edge:
             # A field of a same-file class call's result, as its construction
@@ -390,7 +391,8 @@ class CallSiteValue(FloorValue):
                 object_after_call,
             )
 
-            return self.undecided_attribute(
+            return undecided_attribute_result(
+                self,
                 name,
                 site,
                 owner="CallSiteValue.attribute",
@@ -400,7 +402,9 @@ class CallSiteValue(FloorValue):
             )
         # Any other member -- of an opaque call result or of an authenticated
         # exception instance (``__context__``) -- is not decided here.
-        return self.undecided_attribute(name, site, owner="CallSiteValue.attribute")
+        return undecided_attribute_result(
+            self, name, site, owner="CallSiteValue.attribute"
+        )
 
     def _identity(self) -> tuple:
         """Authenticate this immutable callsite's finite coordinate once.

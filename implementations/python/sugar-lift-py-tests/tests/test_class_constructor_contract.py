@@ -82,7 +82,7 @@ def test_a_field_a_class_member_shadows_states_no_read(tmp_path):
     )
 
     post = repr(row.post.ir_formula)
-    assert "python:attribute.completes" not in post
+    assert "python:attribute_op.completes" not in post
 
 
 def test_a_class_whose_initializer_raises_states_the_halt(tmp_path):

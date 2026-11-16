@@ -18,7 +18,7 @@ It is not a read that cannot halt, either.  Python runs ``getattr`` at
 undecided outcome (``ExitSet.two_faced``, ``ImportMemberValue.read_faces``):
 it completes with the one closed reference the import table names
 (``ref:<target_symbol>``, #7837) only under its own
-``python:attribute.completes`` atom, the complement halts with an
+``python:attribute_op.completes`` atom, the complement halts with an
 undetermined raise, and both arms owe the ``undecided`` member under that
 target symbol, so the join can answer it (step 9).  A halt is never dropped;
 what is not decided here is stated by the one undecided member.
@@ -62,7 +62,7 @@ def _the_two_faces_and_no_guessed_absence(outcome, qualified_name: str) -> None:
     assert member.to_term(owner="test") == ctor(
         f"ref:{qualified_name}", [], symbol_kind="coordinate"
     )
-    assert "python:attribute.completes" in repr(completed[0].guard)
+    assert "python:attribute_op.completes" in repr(completed[0].guard)
 
     halts = [arm for arm in outcome.exits if isinstance(arm, Halted)]
     assert len(halts) == 1, outcome
@@ -70,7 +70,7 @@ def _the_two_faces_and_no_guessed_absence(outcome, qualified_name: str) -> None:
     assert type(halt.effect) is UndeterminedRaiseEffect
     assert halt.effect.producer_node_owner == "ImportMemberValue.read"
     assert halt.effect.exception_name is None
-    assert "python:attribute.completes" in repr(halt.guard)
+    assert "python:attribute_op.completes" in repr(halt.guard)
     assert halt.guard != completed[0].guard
 
     owed = owed_calls(outcome)

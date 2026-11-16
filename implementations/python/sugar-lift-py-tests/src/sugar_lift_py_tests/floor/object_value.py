@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 from sugar_lift_py_tests.call_symbol import call_symbol
 
-from .floor_value import FloorValue
+from .floor_value import FloorValue, undecided_attribute_result
 from .object_field import ObjectField
 from .object_method_value import ObjectMethodValue
 
@@ -258,7 +258,7 @@ class ObjectValue(FloorValue):
         answer but a data descriptor's waits on the ``__dict__`` this frame
         does not hold -- a recorded field, a deleted one, a method or class
         field it may shadow, a name nothing here records: each is the
-        undecided attribute read (``undecided_attribute``) over the object's
+        undecided attribute read (``undecided_attribute_result``) over the object's
         identity (``identity_term``).  Only a name the class binds to a data
         descriptor (``_class_data_descriptor``) is answered from the class,
         and never from the instance's fields.
@@ -271,7 +271,7 @@ class ObjectValue(FloorValue):
         Every member read off the class -- a property, a class field, a
         method -- is the one the one class-namespace lookup selects
         (``class_member``: the binding the class body left last); a lookup
-        it does not decide is the unanswered read (``undecided_attribute``).
+        it does not decide is the unanswered read (``undecided_attribute_result``).
         The member is read once and carried: a property's getter, and the
         method a ``BoundMethodValue`` binds, are that member, never looked up
         again by name.
@@ -292,7 +292,9 @@ class ObjectValue(FloorValue):
 
                     return ExitSet.completed(field.value)
         if not current and not self._class_data_descriptor(name):
-            return self.undecided_attribute(name, site, owner="ObjectValue.attribute")
+            return undecided_attribute_result(
+                self, name, site, owner="ObjectValue.attribute"
+            )
         for field in reversed(self.fields if current else ()):
             if field.name == name:
                 from sugar_lift_py_tests.outcome import ExitSet
@@ -300,7 +302,9 @@ class ObjectValue(FloorValue):
                 return ExitSet.completed(field.value)
         decided, selected, class_value = self.class_member(name)
         if not decided:
-            return self.undecided_attribute(name, site, owner="ObjectValue.attribute")
+            return undecided_attribute_result(
+                self, name, site, owner="ObjectValue.attribute"
+            )
         if selected is not None and selected.descriptor_kind == "property":
             from dataclasses import replace
 
@@ -384,7 +388,9 @@ class ObjectValue(FloorValue):
                 site=site,
                 owner="ObjectValue.attribute",
             )
-        return self.undecided_attribute(name, site, owner="ObjectValue.attribute")
+        return undecided_attribute_result(
+            self, name, site, owner="ObjectValue.attribute"
+        )
 
     def _absence_raises(self, name: str) -> bool:
         """Whether reading ``name`` off this instance raises ``AttributeError``

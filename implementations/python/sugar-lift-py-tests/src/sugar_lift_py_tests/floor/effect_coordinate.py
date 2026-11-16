@@ -39,10 +39,14 @@ class EffectCoordinate(FloorValue):
             # ``with m as r: r.x`` read through the body's enter-result slot:
             # the value ``__enter__`` returned at that one entry, whose runtime
             # type nothing here testified to.  The opaque attribute law holds:
-            # complete under ``python:attribute.completes``, otherwise an
+            # complete under ``python:attribute_op.completes``, otherwise an
             # undetermined raise; no member value or exception is invented.
-            return self.undecided_attribute(
-                name, site, owner="EffectCoordinate.attribute"
+            from sugar_lift_py_tests.floor.floor_value import (
+                undecided_attribute_result,
+            )
+
+            return undecided_attribute_result(
+                self, name, site, owner="EffectCoordinate.attribute"
             )
         if name != "__context__":
             return super().attribute(name, site, ctx)

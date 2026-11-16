@@ -1073,17 +1073,20 @@ def test_arrived_takes_the_allocation_off_an_instance_and_all_it_holds():
 def test_a_stale_instances_field_read_is_the_undecided_read_never_its_value():
     from dataclasses import replace
 
-    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
     made, stale = _instance_made_and_arrived()
     assert made.attribute("x", "read-site", None).completed_value() == TermValue(1)
     outcome = stale.attribute("x", "read-site", None)
     completed = _completed_values(outcome)
     assert completed and TermValue(1) not in completed
-    assert all(type(value) is CallSiteValue for value in completed)
+    # The one undecided read (``floor_value.undecided_attribute_result``,
+    # #7757 NEW-3), keyed per evaluation.
+    assert all(type(value) is SymbolicValue for value in completed)
     # The member names the object, never the fields it was built with.
     for value in completed:
-        assert value.term.name == "attr:x"
+        assert value.term.name == "python:attribute_result"
+        assert value.term.args[0].value == "x"
         assert _object_reads(value.term)
     # Whether the read completes is not decided: it may raise.
     assert outcome.halts()

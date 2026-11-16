@@ -7,9 +7,11 @@ projected, the body reads ``req`` through its ``#enter_result`` slot
 EffectCoordinate.attribute".
 
 Law (#7585, the same as ``opaque().name``): nothing testified to the runtime
-type ``__enter__`` returned, so the read completes as ``attr:<name>(<slot>)``
-only under ``python:attribute.completes(python:attribute(<slot>, <name>,
-<site>))`` and halts with an ``UndeterminedRaiseEffect`` under the
+type ``__enter__`` returned, so the read completes as
+``python:attribute_result(<name>, <slot>, <key>)`` only under
+``python:attribute_op.completes(python:attribute_op(<result>, <key>))``
+(the one undecided read, ``floor_value.undecided_attribute_result``) and
+halts with an ``UndeterminedRaiseEffect`` under the
 complement.  No member value and no exception identity are invented.
 """
 
@@ -32,8 +34,10 @@ def test_enter_result_slot_attribute_is_two_faced() -> None:
     completed = [face for face in faces if isinstance(face, Completed)]
     halted = [face for face in faces if isinstance(face, Halted)]
     assert len(completed) == 1 and len(halted) == 1
-    assert "python:attribute.completes" in repr(completed[0].guard)
-    assert "attr:headers" in repr(completed[0].value.to_term(owner="test"))
+    assert "python:attribute_op.completes" in repr(completed[0].guard)
+    term = completed[0].value.to_term(owner="test")
+    assert term.name == "python:attribute_result"
+    assert term.args[0].value == "headers"
     assert isinstance(halted[0].effect, UndeterminedRaiseEffect)
 
 
