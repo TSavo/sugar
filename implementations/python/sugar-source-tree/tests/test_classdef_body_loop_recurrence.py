@@ -139,3 +139,57 @@ def test_the_coercion_class_body_loop_builds() -> None:
     sugar = _class(COERCION_SHAPE, "TestReplaceSeriesCoercion").sugar()
     assert isinstance(sugar, ClassDefinitionSugar)
     assert {"rep", "tz", "key"} <= _row_names(sugar)
+
+
+# ``pandas/io/stata.py:715`` (``StataMissingValue``, pandas 3.0.3) as it
+# stands in its module: a module-level list (``_date_formats``), and a
+# class-body loop whose ``if`` arm runs code (``MISSING_VALUES[key] +=
+# ...``) and whose body calls an imported module (``struct.unpack``).  The
+# threading splices the ``if``'s phi after it, joining every name the arm
+# may have changed -- the module list among them, a name a call may rebind
+# (``container_mutation.havoc_after``).  That phi is no binding of the
+# class: the loop's names are the ones its source binds, so the module list
+# is never read as a class field with no key (the board's construction
+# panic ``class field _date_formats whose statement carries no evaluation
+# key``).
+STATA_MODULE_SHAPE = (
+    "import struct\n"
+    "\n"
+    "_date_formats = ['%tc', '%tC', '%td', '%d']\n"
+    "\n"
+    "class StataMissingValue:\n"
+    "    MISSING_VALUES: dict[float, str] = {}\n"
+    "    bases = (101, 32741, 2147483621)\n"
+    "    for b in bases:\n"
+    "        MISSING_VALUES[b] = '.'\n"
+    "        for i in range(1, 27):\n"
+    "            MISSING_VALUES[i + b] = '.' + chr(96 + i)\n"
+    "    float32_base: bytes = b'\\x00\\x00\\x00\\x7f'\n"
+    "    increment_32: int = struct.unpack('<i', b'\\x00\\x08\\x00\\x00')[0]\n"
+    "    for i in range(27):\n"
+    "        key = struct.unpack('<f', float32_base)[0]\n"
+    "        MISSING_VALUES[key] = '.'\n"
+    "        if i > 0:\n"
+    "            MISSING_VALUES[key] += chr(96 + i)\n"
+    "        int_value = struct.unpack('<i', struct.pack('<f', key))[0] + increment_32\n"
+    "        float32_base = struct.pack('<i', int_value)\n"
+    "\n"
+    "    def __init__(self, value):\n"
+    "        self._value = value\n"
+)
+
+
+def test_a_module_name_an_if_phi_joins_in_a_class_body_loop_is_no_class_field() -> None:
+    sugar = _class(STATA_MODULE_SHAPE, "StataMissingValue").sugar()
+    assert isinstance(sugar, ClassDefinitionSugar)
+    rows = _row_names(sugar)
+    assert {
+        "MISSING_VALUES",
+        "b",
+        "i",
+        "key",
+        "int_value",
+        "float32_base",
+        "increment_32",
+    } <= rows
+    assert "_date_formats" not in rows
