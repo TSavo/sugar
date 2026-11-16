@@ -20,6 +20,10 @@ dead.  Two laws carry that:
 A ``with`` in a branch suite is built when its ``if`` is built, never when a
 reduction selects the suite (#7757 item 19): construction does not know which
 suite is dead, so it builds both or refuses by name.
+
+Whether the suite is dead in a caller is the helper's contract, joined at
+prove: a same-file call is its coordinate and edge (#7757 step 6, #8744), so
+no caller's reduction follows ``M.__enter__`` into ``helper`` to see it.
 """
 
 from __future__ import annotations
@@ -28,7 +32,7 @@ from pathlib import Path
 
 from sugar_lift_py_tests.source_call_resolution import pinned_absent_top_level_module
 
-from test_contextmanager_generator_protocol import _function_rows, _imported
+from test_contextmanager_generator_protocol import _imported
 
 _ABSENT = "zz_sugar_absent_module_7665"
 
@@ -56,26 +60,12 @@ _IMPL = (
     "    return M()\n"
 )
 
-_RAISE_IMPL = _IMPL.replace(
-    "        with z.D().r(b'') as reader:\n            pass\n",
-    "        raise KeyError(1)\n",
-)
-
-
 def test_absence_is_read_from_the_pinned_finders_without_importing():
     assert pinned_absent_top_level_module(_ABSENT)
     assert not pinned_absent_top_level_module("json")
     assert not pinned_absent_top_level_module("os.path")  # dotted: not asked
     assert not pinned_absent_top_level_module("")
     assert not pinned_absent_top_level_module(None)
-
-
-def test_absent_module_import_halts_so_its_suite_is_dead(tmp_path: Path) -> None:
-    tree, with_node = _imported(
-        tmp_path, _RAISE_IMPL.format(name=_ABSENT), "pass", contextlib_enrolled=False
-    )
-    _consumer, rows = _function_rows(tree, with_node)
-    assert rows == [("return", 7)]
 
 
 def test_a_present_module_keeps_the_with_demanded(tmp_path: Path) -> None:

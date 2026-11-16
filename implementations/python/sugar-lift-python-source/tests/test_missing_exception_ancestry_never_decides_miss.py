@@ -18,6 +18,12 @@ closed here:
 A closed ancestry still decides a miss against a canonical (builtin or source
 class) handler; an ``import`` handler coordinate names a path, not a class, so
 it never settles a miss.
+
+A same-file class's call is its coordinate and edge (#7757 step 6, #8958):
+``raise E()`` first runs a call that may itself raise something undetermined
+(``UnknownCallee:``).  That halt is the construction's, not the raise's; the
+match the ancestry decides is the raise of the instance on the call's
+completed face.
 """
 
 from __future__ import annotations
@@ -26,7 +32,7 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+from sugar_lift_py_tests.effect.raise_effect import RaiseEffect, UndeterminedRaiseEffect
 from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_source_tree.nodes import FunctionDef, Name
 
@@ -55,20 +61,40 @@ def _try(raise_line: str, handler: str, prelude: str = "") -> str:
     )
 
 
-def _is_split_by_retained_type_test(exits) -> bool:
-    completed = [face for face in exits.exits if isinstance(face, Completed)]
-    halted = [
+def _construction_halt(face) -> bool:
+    """The halt of the class call ``raise E(...)`` runs first: the unanswered
+    call's own undetermined raise, not the raise of its instance."""
+    return (
+        isinstance(face, Halted)
+        and isinstance(face.effect, UndeterminedRaiseEffect)
+        and str(face.effect.producer_node_owner).startswith("UnknownCallee:")
+    )
+
+
+def _raise_halts(exits):
+    """The halts of the ``raise`` itself, the construction's apart."""
+    return [
         face
         for face in exits.exits
-        if isinstance(face, Halted) and isinstance(face.effect, RaiseEffect)
+        if isinstance(face, Halted) and not _construction_halt(face)
     ]
-    # The caught return is the try's own completed face, guarded by the
-    # retained type test; the escaping halt carries the complement.
+
+
+_CONSTRUCTION_RAISED = (
+    "_Connective(kind='not', operands=(_Atomic(name='python:unknown_callee_call.completes'"
+)
+
+
+def _is_split_by_retained_type_test(exits) -> bool:
+    completed = [face for face in exits.exits if isinstance(face, Completed)]
+    halted = _raise_halts(exits)
+    # The caught return is a completed face guarded by the retained type
+    # test (beside the class call's completes atom, when the raised class is
+    # a same-file class's call); the escaping raise carries the complement.
     return (
-        len(completed) == 1
+        any("adt.is_python_type" in repr(face.guard) for face in completed)
         and len(halted) == 1
-        and getattr(completed[0].guard, "name", None) == "adt.is_python_type"
-        and getattr(halted[0].guard, "kind", None) == "not"
+        and "kind='not'" in repr(halted[0].guard)
         and "adt.is_python_type" in repr(halted[0].guard)
     )
 
@@ -145,8 +171,12 @@ def test_dotted_raised_class_retains_the_match_beside_the_read(tmp_path) -> None
     ids=["source-sub-exception", "source-sub-base", "source-chain", "ioerror", "oserror", "envalias"],
 )
 def test_authenticated_ancestry_decides_the_match(tmp_path, prelude, raise_line, handler) -> None:
+    # The raise is always caught: no halt of the raise survives.  A source
+    # class's call may still raise on its own (``except Exception`` does not
+    # catch everything an unanswered call raises).
     exits = _exits(tmp_path, _try(raise_line, handler, prelude))
-    assert exits.exits and all(isinstance(face, Completed) for face in exits.exits)
+    assert any(isinstance(face, Completed) for face in exits.exits)
+    assert _raise_halts(exits) == []
 
 
 @pytest.mark.parametrize(
@@ -158,10 +188,16 @@ def test_authenticated_ancestry_decides_the_match(tmp_path, prelude, raise_line,
     ids=["builtin", "source-class"],
 )
 def test_closed_ancestry_still_decides_a_miss(tmp_path, prelude, raise_line, handler) -> None:
+    # Every halt of the raise is the decided miss; a completed face exists
+    # only where the class call itself raised (its own exception, which the
+    # handler may catch), never where the instance was raised.
     exits = _exits(tmp_path, _try(raise_line, handler, prelude))
-    assert exits.exits and all(
-        isinstance(face, Halted) and isinstance(face.effect, RaiseEffect)
+    raises = _raise_halts(exits)
+    assert raises and all(isinstance(face.effect, RaiseEffect) for face in raises)
+    assert all(
+        _CONSTRUCTION_RAISED in repr(face.guard)
         for face in exits.exits
+        if isinstance(face, Completed)
     )
 
 

@@ -8,6 +8,10 @@ on it runs on exactly the value ``__enter__`` returned, and when no floor
 projects the method body the call is two-faced (#7585): it completes under
 ``python:unknown_callee_call.completes`` and otherwise halts with an
 ``UndeterminedRaiseEffect`` owned by ``UnknownCallee:<name>``.
+
+A same-file manager's ``__enter__`` is its call, joined at prove (#7757 step
+6, #8744): what it returned, and so which ``write`` the body calls, is not
+read from its body at lift.
 """
 
 from __future__ import annotations
@@ -40,28 +44,3 @@ def test_method_on_enter_result_is_two_faced(tmp_path, source):
     completed = [face for face in exits if isinstance(face, Completed)]
     assert completed
     assert all("python:unknown_callee_call.completes" in repr(face.guard) for face in completed)
-
-
-def test_method_on_a_source_enter_result_runs_its_body(tmp_path):
-    """A source manager whose ``__enter__`` returns ``self``: ``fh`` is that
-    instance (the value ``__enter__`` returned), so ``fh.write('x')`` runs
-    ``M.write``, which always raises ``ValueError``.  Never total, and never
-    the unknown callee: the method the instance's class holds is applied."""
-    source = (
-        "class M:\n    def __enter__(self):\n        return self\n"
-        "    def __exit__(self, *a):\n        return None\n"
-        "    def write(self, v):\n        raise ValueError\n"
-        "def f(p):\n    with M() as fh:\n        fh.write('x')\n    return 1\n"
-    )
-    exits = _exits(tmp_path, source).exits
-    halts = [face.effect for face in exits if isinstance(face, Halted)]
-    assert not any(
-        isinstance(effect, UndeterminedRaiseEffect)
-        and effect.producer_node_owner == "UnknownCallee:write"
-        for effect in halts
-    )
-    assert any(
-        not isinstance(effect, UndeterminedRaiseEffect)
-        and getattr(effect, "exception_name", None) == "ValueError"
-        for effect in halts
-    )

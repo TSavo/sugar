@@ -40,6 +40,14 @@ def _exits(tmp_path: Path, body: str):
     return func.sugar().desugar()
 
 
+def _beside(tmp_path: Path, name: str) -> Path:
+    """A second corpus root in the same test: ``_corpus`` makes ``c`` under
+    the directory it is given, once."""
+    path = tmp_path / name
+    path.mkdir()
+    return path
+
+
 @pytest.mark.parametrize(
     "body",
     [
@@ -136,7 +144,7 @@ def test_os_error_with_an_errno_constructs_its_subclass(tmp_path) -> None:
     )
     assert value.builtin_exception_class.name == "FileNotFoundError"
     assert value.constructed_args == TupleValue((TermValue(2), StringValue("x")))
-    (face,) = _exits(tmp_path, "def f():\n    raise OSError(2, 'x')\n").exits
+    (face,) = _exits(_beside(tmp_path, "raise"), "def f():\n    raise OSError(2, 'x')\n").exits
     assert isinstance(face, Halted)
     assert isinstance(face.effect, RaiseEffect)
     assert face.effect.exception_type_coordinate == _exception_identity(
@@ -164,7 +172,7 @@ def test_os_error_with_one_argument_stays_os_error(tmp_path) -> None:
     )
     assert value.builtin_exception_class.name == "OSError"
     assert value.constructed_args == TupleValue((StringValue("m"),))
-    (face,) = _exits(tmp_path, "def f():\n    raise OSError('m')\n").exits
+    (face,) = _exits(_beside(tmp_path, "raise"), "def f():\n    raise OSError('m')\n").exits
     assert isinstance(face, Halted)
     assert face.effect.exception_type_coordinate == _exception_identity("OSError")
 

@@ -7,6 +7,10 @@ interpreter's own ``TypeError`` ("'X' object does not support the context
 manager protocol", or "... (missed __exit__ method)") before any enter and
 before the body (``ReducedManagerProtocolV1``, #7757).
 
+A same-file class's call result is the dispatched manager (#8744): its
+``__enter__``/``__exit__`` are calls joined at prove, where the lookup that
+finds none is decided, so no TypeError is decided at lift for it.
+
 What a decorated function's call returns is the one decorator application's
 (``DecoratorApplicationSugar``, #7757): no proof is read from a decorator's
 body.
@@ -14,7 +18,6 @@ body.
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.manager_protocol_absence_refusal import (
     cited_language_base,
@@ -29,21 +32,6 @@ def _split(tmp_path, source):
     returns = [payload for kind, payload, _ in rows if kind == "return"]
     halts = [payload for kind, payload, _ in rows if kind == "halt"]
     return returns, halts
-
-
-def _type_error_halt(tmp_path, source, type_name, *, has_enter=False):
-    returns, halts = _split(tmp_path, source)
-    assert returns == []
-    (halt,) = halts
-    assert isinstance(halt, RaiseEffect)
-    assert halt.producer_node_owner == "ReducedManagerProtocolV1"
-    refusal = observed_non_manager_with_refusal(
-        type_name, has_enter=has_enter, has_exit=False
-    )
-    assert refusal.exception_name == "TypeError"
-    assert halt.exception_name == "TypeError"
-    assert halt.raised_value == refusal.message
-    return halt
 
 
 def test_the_refusal_text_is_the_interpreters():
@@ -67,21 +55,6 @@ def test_cited_bases_are_read_from_the_interpreter():
     assert not abc_base.subclass_gains & {"__enter__", "__exit__"}
     # A binding no citation answers for (the builtin ``list``) is not cited.
     assert cited_language_base(LanguageCallee.BUILTIN_LIST) is None
-
-
-def test_a_local_class_without_enter_raises_type_error(tmp_path):
-    _type_error_halt(
-        tmp_path, "class M:\n    pass\ndef f():\n    with M():\n        return 1\n", "M"
-    )
-
-
-def test_an_inherited_enter_without_exit_raises_the_missed_exit_text(tmp_path):
-    source = (
-        "class B:\n    def __enter__(self):\n        return 1\n"
-        "class M(B):\n    pass\n"
-        "def f():\n    with M():\n        return 1\n"
-    )
-    _type_error_halt(tmp_path, source, "M", has_enter=True)
 
 
 def test_contextmanager_is_still_a_manager(tmp_path):

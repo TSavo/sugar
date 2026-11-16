@@ -104,31 +104,24 @@ def _count_sourcefiles_during(open_fn) -> tuple[Counter[str], object]:
     return seats, result
 
 
-def _locus_root_for_corpus(corpus: Path) -> Path:
-    """Install root that records seats as ``pandas/...`` (not package-relative)."""
-    import importlib.util
+def _address_root(target: Path, corpus: Path) -> Path:
+    """The root ``target``'s address is stated against: the install root its
+    distribution recorded seats against (``install_root_for``), else the
+    corpus.  The seat law refuses an installed file stated against any other
+    root (``SourceUnavailable``: ``pandas/io/json/_json.py`` recorded,
+    ``io/json/_json.py`` stated), so the open names this root as
+    ``source_workspace_root``."""
+    from sugar_lift_python_source.source_oracle import install_root_for
 
-    # __file__ = .../sugar-lift-python-source/tests/test_....py
-    # parents[0]=tests, [1]=sugar-lift-python-source, [2]=python
-    cer_path = (
-        Path(__file__).resolve().parents[2]
-        / "sugar-lift-py-tests"
-        / "scripts"
-        / "control_effect_recensus.py"
-    )
-    assert cer_path.is_file(), f"missing recensus script at {cer_path}"
-    spec = importlib.util.spec_from_file_location("cer_membrane", cer_path)
-    assert spec is not None and spec.loader is not None
-    cer = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(cer)
-    return cer.locus_root_for_corpus(corpus)
+    installed = install_root_for(str(target))
+    return corpus if installed is None else Path(installed)
 
 
 def _open_json_once():
     corpus = authenticated_pandas_corpus().root
-    locus = _locus_root_for_corpus(corpus)
     target = corpus / "io" / "json" / "_json.py"
     assert target.is_file(), f"missing planted corpus file {target}"
+    locus = _address_root(target, corpus)
     ctx = tree_construction_context_for_workspace(corpus)
     reporter = CollectingReporter()
     from sugar_source_tree.panic import SugarNotWritten
@@ -139,7 +132,7 @@ def _open_json_once():
             root=locus,
             reporter=reporter,
             construction_context=ctx,
-            source_workspace_root=corpus,
+            source_workspace_root=locus,
         )
     except SugarNotWritten:
         # In-population SNW is not this instrument; seat counts still measured.

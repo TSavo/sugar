@@ -26,6 +26,7 @@ from sugar_lift_py_tests.import_binding import (
     authenticated_import_value_use_receipts,
 )
 from sugar_lift_py_tests.ir import make_var
+from sugar_lift_py_tests.outcome import Completed
 from sugar_source_tree.nodes import Call
 from sugar_source_tree.tree import SourceFile
 
@@ -62,18 +63,19 @@ class _Op:
 
 def test_concrete_re_search_decides_truthful_and_lying(tmp_path) -> None:
     member, site = _re_search_member(tmp_path)
+    # Each answer is the one completed face of its ExitSet.
     hit = member.callable_application_with(
         _Op([StringValue("nee"), StringValue("a needle")], site), None
-    )
-    assert isinstance(hit.value, ReMatchValue)
-    truth = hit.value.truth(site=site)
+    ).completed_value()
+    assert isinstance(hit, ReMatchValue)
+    truth = hit.truth(site=site).completed_value()
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
-    assert isinstance(truth.value, TrueBoolLiteralSugar)
+    assert isinstance(truth, TrueBoolLiteralSugar)
     miss = member.callable_application_with(
         _Op([StringValue("zzz"), StringValue("a needle")], site), None
-    )
-    assert isinstance(miss.value, NoneValue)
+    ).completed_value()
+    assert isinstance(miss, NoneValue)
 
 
 def test_symbolic_subject_is_the_one_unanswered_call(tmp_path) -> None:
@@ -96,11 +98,10 @@ def test_str_subject_completes_on_its_predicate(tmp_path) -> None:
     """A subject known only to be a ``str`` completes on the two faces of
     ``py.re_search(pattern, subject)``, owing nothing."""
     member, site = _re_search_member(tmp_path)
-    subject = (
-        SymbolicValue(make_var("t"))
-        .attribute("__name__", "name-attr", None)
-        .completed_value()
-    )
+    # ``t.__name__`` is two-faced (an object need not have one): the subject
+    # is the type-name read on its completed face.
+    read = SymbolicValue(make_var("t")).attribute("__name__", "name-attr", None)
+    (subject,) = [face.value for face in read.exits if isinstance(face, Completed)]
     out = member.callable_application_with(
         _Op([StringValue("nee"), subject], site), None
     )

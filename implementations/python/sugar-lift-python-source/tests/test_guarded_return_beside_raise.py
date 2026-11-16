@@ -11,6 +11,10 @@ block reducer dropped the return in two places:
 Both claimed f always raised (or raised only under ``not c``, with nothing
 under ``c``).  Now the return is a Completed exit under exactly the guard
 where no halt holds, and the raise halts only under the fall-through guard.
+
+The condition is one nothing decides and nothing raises: ``c is None`` over a
+formal (``[3] == [3]`` is decided ``True`` member by member now, which leaves
+the raise dead).
 """
 
 from __future__ import annotations
@@ -25,9 +29,9 @@ from sugar_lift_py_tests.outcome.exit_set import Completed, Halted, complement_g
 from test_undetermined_raise_except_matching import _exits
 
 _CASES = {
-    "else-raise": "def f():\n    if [3] == [3]:\n        return 7\n    else:\n        raise ValueError\n",
-    "tail-raise": "def f():\n    if [3] == [3]:\n        return 7\n    raise ValueError\n",
-    "tail-raise-named": "def f():\n    y = [3] == [3]\n    if y:\n        return 7\n    raise ValueError\n",
+    "else-raise": "def f(c):\n    if c is None:\n        return 7\n    else:\n        raise ValueError\n",
+    "tail-raise": "def f(c):\n    if c is None:\n        return 7\n    raise ValueError\n",
+    "tail-raise-named": "def f(c):\n    y = c is None\n    if y:\n        return 7\n    raise ValueError\n",
 }
 
 
