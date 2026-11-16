@@ -13,6 +13,45 @@ class BuiltinSuperMethodValue(BoundMethodValue):
 
 _OWNER = "BuiltinSuperValue.call_method_value"
 
+#: ``python:super_check_of(<class>, "<cell class>", <occurrence>)``: the
+#: ``supercheck`` of a ``super()`` whose receiver is a parameter whose class
+#: is an input of the contract (``class:<p>``): its completion
+#: (``python:super_check_of.completes``) is decided at prove where the input
+#: is bound to a class whose order holds the cell's class
+#: (``consistency::super_check_facts``, #7757).
+SUPER_CHECK_OF = "python:super_check_of"
+
+
+def formal_class_input(receiver, site):
+    """``class:<p>`` (the free input) where ``receiver`` is the plain value of
+    a positional or keyword parameter of the function whose own proof this
+    is and that parameter's class is an input of its contract
+    (``receiver_dispatch.class_input_formals``), in a module that gives no
+    object another class (``module_attribute_names``); None otherwise.  A
+    ``super()`` on it is decided at prove over that input."""
+    from sugar_lift_py_tests.contract_input import CLASS_INPUT, input_formal
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.receiver_dispatch import (
+        class_input_formals,
+        module_attribute_names,
+    )
+
+    unit = getattr(site, "unit", None)
+    coordinate = getattr(receiver, "formal_coordinate", None)
+    if (
+        unit is None
+        or type(receiver) is not SymbolicValue
+        or not isinstance(coordinate, FormalParameterCoordinateV1)
+        or coordinate.parameter_kind
+        not in ("positional-only", "positional-or-keyword", "keyword-only")
+        or coordinate.coordinate_cid not in class_input_formals(unit)
+        or module_attribute_names(unit)[1]
+    ):
+        return None
+    return make_var(input_formal(CLASS_INPUT, coordinate.declared_name))
+
 
 @dataclass(frozen=True)
 class BuiltinSuperValue(FloorValue):
@@ -59,11 +98,29 @@ class BuiltinSuperValue(FloorValue):
         from sugar_lift_py_tests.ir import atomic, ctor
         from sugar_lift_py_tests.occurrence import occurrence_key, occurrence_term
 
+        from sugar_lift_py_tests.ir import str_const
+
         key = occurrence_key(site)
-        completes = atomic(
-            "python:super_check.completes",
-            [ctor("python:super_check", (occurrence_term(site),))],
-        )
+        class_term = formal_class_input(receiver, site)
+        cell = getattr(current_class, "class_definition", None)
+        cell_symbol = None if cell is None else cell.bridge_source_symbol()
+        if class_term is not None and cell_symbol is not None:
+            # The receiver's class is the contract's input: the check is
+            # decided at prove where the caller binds it (#7757).
+            completes = atomic(
+                SUPER_CHECK_OF + ".completes",
+                [
+                    ctor(
+                        SUPER_CHECK_OF,
+                        (class_term, str_const(cell_symbol), occurrence_term(site)),
+                    )
+                ],
+            )
+        else:
+            completes = atomic(
+                "python:super_check.completes",
+                [ctor("python:super_check", (occurrence_term(site),))],
+            )
         return ExitSet.two_faced(
             cls(current_class, receiver),
             UndeterminedRaiseEffect(
@@ -108,6 +165,11 @@ class BuiltinSuperValue(FloorValue):
                 fix="model the selected base method or keep it loud",
             )
         decided, found, holder, method, value = self._lookup(name)
+        if not decided and formal_class_input(self.receiver, blame) is not None:
+            # The receiver is a parameter whose class is the contract's input:
+            # the one dispatched call after ``__class__``, looked up at prove
+            # on the class the caller binds (#7757 entry 6).
+            return self._dispatched(name, arguments, keywords, blame)
         if not decided:
             # Not read, or the selected class holds ``name`` but not as its
             # body bound it (a decorator wrote it -- a dataclass's generated
@@ -223,12 +285,26 @@ class BuiltinSuperValue(FloorValue):
             return self.receiver._dispatched_on_class(
                 name, arguments, keywords, site, after=after
             )
-        if not receiver_class_decided(self.receiver):
-            return self._unanswered(name, arguments, keywords, site)
         from sugar_lift_py_tests.receiver_dispatch import (
             class_value,
             dispatch_edge_call,
         )
+
+        formal_class = formal_class_input(self.receiver, site)
+        if formal_class is not None:
+            # A parameter whose class is the contract's input: its class
+            # rides as that input, bound by the caller (#7757).
+            return dispatch_edge_call(
+                name,
+                self.receiver,
+                formal_class,
+                tuple(arguments),
+                tuple(keywords),
+                site,
+                after=after,
+            )
+        if not receiver_class_decided(self.receiver):
+            return self._unanswered(name, arguments, keywords, site)
 
         receiver_class = class_value(self.receiver)
         if receiver_class is None:

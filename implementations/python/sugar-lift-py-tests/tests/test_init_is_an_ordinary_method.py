@@ -104,3 +104,38 @@ def test_a_field_stored_before_a_method_call_on_self_is_guarded_by_what_it_leave
     assert "attr:n" in post
     assert "python:call_leaves" in post
     assert "python:plain_store" in post
+
+
+def test_super_init_on_the_receiver_formal_is_the_dispatched_call(tmp_path):
+    """``super().__init__()`` in ``Derived.__init__``: the receiver is the
+    formal ``self``, whose class is the contract's ``class:self`` input, so
+    the call is the one dispatched call after ``Derived`` (looked up at
+    prove on the class the caller binds) and its ``supercheck`` is decided
+    there too (``python:super_check_of``), never the unanswered call
+    (#7757)."""
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+    from sugar_lift_py_tests.tree_enumerate import function_contract_rows
+
+    producer = tmp_path / "producer.py"
+    producer.write_text(
+        "class Base:\n"
+        "    def __init__(self):\n"
+        "        self.setup()\n"
+        "\n"
+        "    def setup(self):\n"
+        "        return None\n"
+        "\n"
+        "\n"
+        "class Derived(Base):\n"
+        "    def __init__(self):\n"
+        "        super().__init__()\n"
+    )
+    tree = open_source_file_for_construction(producer, root=tmp_path)
+    inits = [fn for fn in tree.functions() if fn.name == "__init__"]
+    derived = inits[-1]
+    _memento, rows = function_contract_rows(derived, "producer.py")
+    (row,) = rows
+    assert "class:self" in row.formals
+    text = repr(row.post.ir_formula) + repr(getattr(row, "panic_loci", ()))
+    assert "dispatch:__init__" in text
+    assert "python:super_check_of" in text

@@ -9435,11 +9435,76 @@ fn class_read_runs_no_code(namespaces: &BTreeMap<String, ClassNamespace>, symbol
     })
 }
 
+/// `python:super_check_of(<class>, "<C>", <occurrence>)` (the Python kit's
+/// `builtin_super_value.SUPER_CHECK_OF`): the `supercheck` of a `super()`
+/// whose receiver is a parameter whose class is its contract's input,
+/// `<class>` that input as the call bound it and `<C>` the class the
+/// `__class__` cell holds.
+const PYTHON_SUPER_CHECK_OF: &str = "python:super_check_of";
+
+/// The ground instances of the super check law `inv` reads (#7757): for each
+/// `python:super_check_of.completes(python:super_check_of(<class>, "<C>",
+/// <occ>))` whose `<class>` is an instance of exactly one class `D`
+/// (`python:instance("<D>", ...)` or `python:constructed("<D>")`) whose
+/// order (its own namespace row, headed by `D`) holds `C`, that atom:
+/// CPython's `supercheck` (Objects/typeobject.c) passes where `type(obj)` is
+/// a subtype of `__class__`, before anything else runs. Anything else is
+/// left as it stands: the check stays owed.
+fn super_check_facts(inv: &Json, namespaces: &BTreeMap<String, ClassNamespace>) -> Vec<Json> {
+    let completes_name = format!("{PYTHON_SUPER_CHECK_OF}.completes");
+    let mut facts: Vec<Json> = Vec::new();
+    let mut pending: Vec<&Json> = vec![inv];
+    while let Some(node) = pending.pop() {
+        match node {
+            Json::Array(items) => pending.extend(items.iter()),
+            Json::Object(map) => {
+                let is_check = node.get("kind").and_then(|v| v.as_str()) == Some("atomic")
+                    && node.get("name").and_then(|v| v.as_str()) == Some(completes_name.as_str());
+                if !is_check {
+                    pending.extend(map.values());
+                    continue;
+                }
+                let Some((PYTHON_SUPER_CHECK_OF, parts)) = node
+                    .get("args")
+                    .and_then(|v| v.as_array())
+                    .and_then(|args| args.first())
+                    .and_then(ctor_parts)
+                else {
+                    continue;
+                };
+                let (Some(class), Some(cell)) = (parts.first(), parts.get(1).and_then(const_str))
+                else {
+                    continue;
+                };
+                let subject = match ctor_parts(class) {
+                    Some((PYTHON_INSTANCE | PYTHON_CONSTRUCTED, args)) => {
+                        args.first().and_then(const_str)
+                    }
+                    _ => None,
+                };
+                let Some(subject) = subject else {
+                    continue;
+                };
+                let holds = namespaces.get(subject).is_some_and(|namespace| {
+                    namespace.mro.first().map(String::as_str) == Some(subject)
+                        && namespace.mro.iter().any(|entry| entry == cell)
+                });
+                if holds && !facts.contains(node) {
+                    facts.push(node.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    facts
+}
+
 /// THE ISINSTANCE LAW: conjoin its ground instances `inv` reads
 /// (`isinstance_law_facts`). Each is true of every object whatever its
 /// class, so it is conjoined at the top, as the ancestry join's facts are.
 fn with_isinstance_law(inv: Json, namespaces: &BTreeMap<String, ClassNamespace>) -> Json {
-    let facts = isinstance_law_facts(&inv, namespaces);
+    let mut facts = isinstance_law_facts(&inv, namespaces);
+    facts.extend(super_check_facts(&inv, namespaces));
     if facts.is_empty() {
         return inv;
     }
