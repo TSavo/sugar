@@ -274,10 +274,13 @@ def test_a_function_body_read_of_a_module_def_is_its_function_value() -> None:
     assert value.evaluation is None
 
 
-def test_only_a_plain_once_bound_def_is_read_as_its_function() -> None:
-    """A generator function and an ``async def`` are no value this carries,
-    and a name the module binds twice is not one definition's: none is read
-    as a function value.  A plain ``def`` bound once is."""
+def test_every_once_bound_def_is_read_as_its_function_whatever_its_kind() -> None:
+    """A plain ``def``, a generator function and an ``async def`` bound once
+    are each read as the function its statement built (#7757: one call door,
+    whatever the definition's kind); a name the module binds twice is not one
+    definition's and is not."""
+    from sugar_source_tree.nodes import AsyncFunctionDef
+
     tree = _tree(
         "def gen():\n    yield 1\n\n\n"
         "async def co():\n    return 1\n\n\n"
@@ -291,11 +294,53 @@ def test_only_a_plain_once_bound_def_is_read_as_its_function() -> None:
         for node in tree.nodes()
         if isinstance(node, Name) and node.id in {"gen", "co", "twice", "plain"}
     }
-    assert answers["gen"] is None
-    assert answers["co"] is None
+    assert isinstance(answers["gen"], FunctionDef)
+    assert answers["gen"].name == "gen"
+    assert isinstance(answers["co"], AsyncFunctionDef)
+    assert answers["co"].name == "co"
     assert answers["twice"] is None
     assert isinstance(answers["plain"], FunctionDef)
     assert answers["plain"].name == "plain"
+
+
+def test_a_generator_coroutine_or_manager_called_by_name_is_its_edge(
+    tmp_path,
+) -> None:
+    """A generator function, an ``async def`` and a ``contextmanager``
+    generator called by name are each called through the function its
+    statement built: the definition's coordinate and edge, as a plain
+    ``def``'s call is (#7757, one call door), never a frame seated by the
+    name.  No body runs at the call: the lying half's ``ZeroDivisionError``
+    is no face of the caller's reduction."""
+    source = """\
+import contextlib
+
+
+def gen(n):
+    yield {x}
+
+
+async def co(n):
+    return {x}
+
+
+@contextlib.contextmanager
+def cm(n):
+    yield {x}
+
+
+def test_f():
+    a = gen(1)
+    b = co(1)
+    c = cm(1)
+    return 3
+"""
+    for module, x in (("truthful", "n"), ("lying", "1 // 0")):
+        outcome = _rooted_outcome(tmp_path, source.format(x=x), module)
+        owed = _owed_symbols(outcome)
+        for name in ("gen", "co", "cm"):
+            assert f"python:{module}.{name}" in owed, (name, outcome)
+        assert _raises(outcome, "ZeroDivisionError") == []
 
 
 def test_a_def_bound_to_a_local_name_is_called_through_its_function(
@@ -909,10 +954,14 @@ def test_a_read_of_a_bound_key_never_applies_the_decorators_again() -> None:
     )
     from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
 
+    class _AppliedAgain:
+        def desugar(self, ctx):
+            raise AssertionError("applied again")
+
     key = EVALUATION_PREFIX + "blake3-512:decorated-definition/scale"
     read = DecoratorApplicationSugar(
         definition_name="scale",
-        decorators=(DecoratorStepV1.refused("site", "boom", "applied again"),),
+        decorators=(DecoratorStepV1.apply("site", "boom", callee=_AppliedAgain()),),
         definition_frame=None,
         definition_class=None,
         refusal=None,
@@ -1633,27 +1682,12 @@ def test_make():
 """
 
 
-def test_a_classmethod_lookup_call_is_the_method_doors() -> None:
-    from sugar_source_tree.nodes import Attribute, _class_method_lookup_call
-
+def test_a_classmethod_frame_takes_its_class_as_a_formal() -> None:
     assert not hasattr(FunctionDef, "bound_classmethod_call_frame")
     tree = _tree(_CLASSMETHOD.format(body="return n"))
     frame = _function_named(tree, "make").source_visible_call_frame()
     assert frame.parameters == ("cls", "n")
     assert not hasattr(frame, "bound_receiver_class")
-    call = next(
-        node
-        for node in tree.nodes()
-        if isinstance(node, Call)
-        and isinstance(node.func, Attribute)
-        and node.func.attr == "make"
-    )
-    assert _class_method_lookup_call(call, frame)
-    plain = _tree("def make(n):\n    return n\n\n\ndef test_make():\n    make(3)\n")
-    assert not _class_method_lookup_call(
-        _call_of(plain, "make"),
-        _function_named(plain, "make").source_visible_call_frame(),
-    )
 
 
 def test_a_classmethod_called_off_its_class_runs_its_body(tmp_path) -> None:

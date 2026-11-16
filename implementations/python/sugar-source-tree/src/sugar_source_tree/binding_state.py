@@ -716,8 +716,6 @@ class ConstructionTestimonyReporterV1:
         "resolved-definition-kind-mismatch",
         "resolved-seal-mismatch",
         "call-occurrence-mismatch",
-        "frame-owner-ref-mismatch",
-        "frame-definition-site-foreign",
     )
 
     def _source_call_identity_fault(
@@ -727,20 +725,18 @@ class ConstructionTestimonyReporterV1:
         definition: object,
         resolved_definition: object,
         call_occurrence: object,
-        frame: object,
     ) -> str | None:
         """The ONE identity term that refused this call, named, or None.
 
         TEN FAULTS, NOT ONE. These terms were a flat ``or`` chain behind a
         single sentence, so every one of them printed the same words and the
         row was countable but not actionable -- the reader could not tell a
-        cross-FILE callee from a missing materialization from a stale frame,
-        and those ask for three different repairs.
+        cross-FILE callee from a missing materialization from a stale
+        occurrence, and those ask for three different repairs.
 
         The terms are also NOT independent, which the ``or`` chain hid. The
         seal comparison is meaningless unless ``resolved_definition`` is a
-        definition, and every frame term is meaningless unless a frame
-        exists. In the chain, safety was a property of the ORDER: evaluated
+        definition. In the chain, safety was a property of the ORDER: evaluated
         on its own, ``resolved_definition.fragment`` raises AttributeError on
         None, so reordering two neighbouring terms would have converted a
         countable construction panic into an instrument failure. Here each
@@ -819,23 +815,8 @@ class ConstructionTestimonyReporterV1:
             return "resolved-seal-mismatch"
         if value.call_occurrence != call_occurrence:
             return "call-occurrence-mismatch"
-        if frame is None:
-            # A resolved definition with no frame (an in-population class
-            # constructor whose frame is not derived) is honest testimony of
-            # the frame's absence, not a mismatch -- 9 rows on the 2026-09-05
-            # board were BooleanArray(...) / OptionError(...) /
-            # SingleBlockManager(...).
-            return None
-        # Reachable only with a frame in hand.
-        if frame.owner.ref is not definition.ref:
-            return "frame-owner-ref-mismatch"
-        # Keyed on the DEFINITION's unit, not the call's. A frame describes the
-        # callee's definition, so its site living in the callee's file is
-        # correct; comparing it to the CALLER's unit was the same same-unit
-        # demand wearing a second name, and it refused every cross-file call
-        # a second time even once the term above stopped doing so.
-        if frame.definition_site.source_cid != definition.unit.source_cid:
-            return "frame-definition-site-foreign"
+        # No call-site coordinate carries a seated frame (#7757): a call of a
+        # source ``def`` is its value's, so there is no frame term to ask.
         return None
 
     def _guard_source_call_identity(
@@ -862,13 +843,12 @@ class ConstructionTestimonyReporterV1:
             resolved_definition = _callee_definition_by_name_in_its_unit(definition)
             if resolved_definition is None:
                 resolved_definition = _callee_nested_call_method_by_seal(definition)
-        frame = value.source_call_frame
         # The two occurrences the guard asks this roll about, retained
         # from the roll that built them when this roll only hears them.
         self._retain_heard_occurrence(definition)
         self._retain_heard_occurrence(node)
         fault = self._source_call_identity_fault(
-            node, value, definition, resolved_definition, call_occurrence, frame
+            node, value, definition, resolved_definition, call_occurrence
         )
         if fault is not None:
             self._testimony_gap(
@@ -888,22 +868,6 @@ class ConstructionTestimonyReporterV1:
         )
         from sugar_source_tree.nodes import Call, FunctionDef, AsyncFunctionDef
 
-        if (
-            isinstance(node, Call)
-            and isinstance(value, CallSiteSugar)
-            and isinstance(
-                value.expected_definition_ref, DefinitionOccurrenceAbsentV1
-            )
-            and value.source_call_frame is not None
-        ):
-            self._testimony_gap(
-                node,
-                value,
-                "constructed value",
-                ValueError(
-                    "source-backed call falsely claims no definition occurrence"
-                ),
-            )
         if (
             isinstance(node, Call)
             and isinstance(value, CallSiteSugar)

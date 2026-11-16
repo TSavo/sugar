@@ -68,38 +68,51 @@ def _calls(sugar):
     return out
 
 
-def test_mutual_recursion_constructs_with_a_seat(tmp_path) -> None:
-    """Truthful twin: the entry universe constructs; the cycle is one seat."""
-    source_file = _open(tmp_path, MUTUAL)
-    entry = next(f for f in source_file.functions() if f.name == "entry")
-    sugar = entry.sugar()
+SELF = (
+    "def walk(values):\n"
+    "    if values:\n"
+    "        return walk(values[1:])\n"
+    "    return walk(*values)\n"
+)
+
+
+def test_a_self_recursive_call_is_one_seat_whatever_its_arguments(tmp_path) -> None:
+    """Truthful twin: the universe constructs; each call of the definition
+    under construction is the one seat, ``g(x)`` and ``g(*xs)`` alike
+    (``Call._recursion_seat_call``), never a call with no symbol."""
+    source_file = _open(tmp_path, SELF)
+    walk = next(f for f in source_file.functions() if f.name == "walk")
     seats = [
-        c for c in _calls(sugar)
-        if (c.contract_resolution_gap or "").startswith("call-graph-cycle:")
+        c
+        for c in _calls(walk.sugar())
+        if (c.contract_resolution_gap or "").startswith("call-graph-cycle:walk@")
     ]
-    assert seats, "the recursive call must carry the call-graph-cycle seat"
+    assert len(seats) == 2, seats
     for seat in seats:
-        # No inlined FRAME for an active definition -- that is the lie the
-        # seat forbids. A universe reference may be present: it is the
-        # definition's own (cached) meaning, i.e. the fixpoint reference.
-        assert seat.source_call_frame is None
         assert isinstance(seat.expected_definition_ref, FunctionDef)
-        assert seat.expected_definition_ref.name in {"ensure_mapped", "ensure_mapped_multi"}
-        if seat.formal_function_sugar is not None:
-            assert seat.formal_function_sugar.name == seat.expected_definition_ref.name
+        assert seat.expected_definition_ref.name == "walk"
     assert not _FRAMES_UNDER_CONSTRUCTION, "the active set is empty after construction"
 
 
-def test_non_recursive_call_still_inlines_its_frame(tmp_path) -> None:
+def test_mutual_recursion_constructs(tmp_path) -> None:
+    """The entry universe constructs; every call of a same-file definition is
+    its value's coordinate and edge, joined at prove (#7757)."""
+    source_file = _open(tmp_path, MUTUAL)
+    entry = next(f for f in source_file.functions() if f.name == "entry")
+    entry.sugar()
+    assert not _FRAMES_UNDER_CONSTRUCTION, "the active set is empty after construction"
+
+
+def test_a_non_recursive_call_is_no_seat(tmp_path) -> None:
     """The seat law never touches a call that does not recurse."""
     source_file = _open(
         tmp_path,
         "def helper(v):\n    return v\n\ndef entry(v):\n    return helper(v)\n",
     )
     entry = next(f for f in source_file.functions() if f.name == "entry")
-    calls = _calls(entry.sugar())
-    assert calls and all(c.contract_resolution_gap is None for c in calls)
-    assert all(c.formal_function_sugar is not None for c in calls)
+    assert not [
+        c for c in _calls(entry.sugar()) if c.contract_resolution_gap is not None
+    ]
 
 
 def test_reentry_at_the_door_is_refused_not_unfolded(tmp_path) -> None:
@@ -152,10 +165,9 @@ def test_shared_callee_frame_is_constructed_once(tmp_path, monkeypatch) -> None:
     built = _count_frame_constructions(monkeypatch)
     source_file = _open(tmp_path, SHARED)
     entry = next(f for f in source_file.functions() if f.name == "entry")
-    calls = _calls(entry.sugar())
-    assert len(calls) >= 3
-    assert all(c.contract_resolution_gap is None for c in calls)
-    assert all(c.formal_function_sugar is not None for c in calls)
+    assert not [
+        c for c in _calls(entry.sugar()) if c.contract_resolution_gap is not None
+    ]
     assert built == {"leaf": 1, "mid": 1}
     assert not _FRAMES_UNDER_CONSTRUCTION
 

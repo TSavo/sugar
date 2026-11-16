@@ -13,8 +13,6 @@ from sugar_lift_py_tests.lift_rpc import (
 )
 from sugar_lift_py_tests.sugar.call_site_sugar import (
     CallSiteSugar,
-    DefinitionOccurrenceAbsentV1,
-    DefinitionOccurrenceAbsenceReasonV1,
 )
 
 from sugar_lift_python_source.dependency_artifact import DependencyArtifactGraph
@@ -167,49 +165,6 @@ def test_call_site_constructor_refuses_raw_definition_handle(tmp_path) -> None:
         )
 
 
-def test_call_site_constructor_refuses_raw_frame_owner_handle(tmp_path) -> None:
-    """The primary 24-seat escape cannot inhabit the frame-owner coordinate."""
-    _source, definition, call, _reporter = _ordinary_call(
-        tmp_path, helper="predicate", caller="apply"
-    )
-
-    with pytest.raises(
-        TypeError,
-        match=(
-            r"CallSiteSugar\.expected_source_call_frame_owner must be a projected "
-            r"definition occurrence or DefinitionOccurrenceAbsentV1; got _Handle"
-        ),
-    ):
-        CallSiteSugar(
-            target_name="predicate",
-            args=(),
-            site=call.fragment,
-            expected_source_call_frame_owner=definition.ref,
-        )
-
-
-def test_source_backed_call_refuses_a_false_definition_absence(tmp_path) -> None:
-    """Positive absence cannot bypass source-call identity testimony."""
-    _source, _definition, call, _reporter = _ordinary_call(
-        tmp_path, helper="predicate", caller="apply"
-    )
-    truthful = call._construct_sugar()
-
-    with pytest.raises(
-        TypeError,
-        match=(
-            r"CallSiteSugar\.expected_definition_ref cannot claim absence "
-            r"when source_call_frame is present"
-        ),
-    ):
-        replace(
-            truthful,
-            expected_definition_ref=DefinitionOccurrenceAbsentV1(
-                DefinitionOccurrenceAbsenceReasonV1.NOT_SOURCE_RESOLVED
-            ),
-        )
-
-
 @pytest.mark.parametrize(
     "axis",
     ("foreign-source", "wrong-node", "wrong-kind", "method-shaped"),
@@ -303,14 +258,13 @@ def test_the_seal_term_is_unreachable_without_a_resolved_definition(tmp_path) ->
     truthful = call._construct_sugar()
     definition = truthful.expected_definition_ref
     call_occurrence = truthful.call_occurrence
-    frame = truthful.source_call_frame
 
     # The tooth is only worth anything if it REACHES the seal term. Prove the
     # earlier terms pass first -- otherwise this returns at term 1 and would
     # stay green against exactly the transposition it claims to catch.
     assert (
         reporter._source_call_identity_fault(
-            call, truthful, definition, definition, call_occurrence, frame
+            call, truthful, definition, definition, call_occurrence
         )
         is None
     )
@@ -320,7 +274,7 @@ def test_the_seal_term_is_unreachable_without_a_resolved_definition(tmp_path) ->
 
     for resolved in (None, _NotADefinition()):
         fault = reporter._source_call_identity_fault(
-            call, truthful, definition, resolved, call_occurrence, frame
+            call, truthful, definition, resolved, call_occurrence
         )
         # It refuses, by name, WITHOUT reaching the term that would raise.
         assert fault == "resolved-not-a-functiondef"
@@ -397,10 +351,9 @@ def test_a_cross_file_enrolled_callee_is_not_an_identity_fault(tmp_path) -> None
     """
     definition, call, reporter = _two_files_one_roll(tmp_path)
     truthful = call._construct_sugar()
-    frame = definition.source_visible_call_frame()
 
     fault = reporter._source_call_identity_fault(
-        call, truthful, definition, definition, truthful.call_occurrence, frame
+        call, truthful, definition, definition, truthful.call_occurrence
     )
     assert fault is None, fault
 
@@ -416,11 +369,10 @@ def test_an_unauthenticated_callee_unit_still_refuses_by_its_own_name(
     """
     definition, call, reporter = _two_files_one_roll(tmp_path)
     truthful = call._construct_sugar()
-    frame = definition.source_visible_call_frame()
     object.__setattr__(definition.unit, "source_cid", "")
 
     fault = reporter._source_call_identity_fault(
-        call, truthful, definition, definition, truthful.call_occurrence, frame
+        call, truthful, definition, definition, truthful.call_occurrence
     )
     assert fault == "definition-unit-unauthenticated"
 
@@ -439,39 +391,9 @@ def test_an_opaque_callee_keeps_its_own_separate_name(tmp_path) -> None:
         """Stands where a raw parser handle arrives: no unit, no fragment."""
 
     fault = reporter._source_call_identity_fault(
-        call, truthful, _OpaqueHandle(), definition, truthful.call_occurrence, None
+        call, truthful, _OpaqueHandle(), definition, truthful.call_occurrence
     )
     assert fault == "definition-not-a-functiondef"
-
-
-def test_the_frame_site_term_is_keyed_on_the_definitions_unit(tmp_path) -> None:
-    """A frame describes the CALLEE's definition, so its site lives in the
-    callee's file. Keying it on the caller's unit was the same-unit demand
-    wearing a second name -- it refused every cross-file call a second time."""
-    definition, call, reporter = _two_files_one_roll(tmp_path)
-    truthful = call._construct_sugar()
-    frame = definition.source_visible_call_frame()
-
-    # The callee's own site passes ...
-    assert (
-        reporter._source_call_identity_fault(
-            call, truthful, definition, definition, truthful.call_occurrence, frame
-        )
-        is None
-    )
-    # ... and a site belonging to neither unit is still refused, by name.
-    foreign_site = replace(frame.definition_site, source_cid="blake3-512:" + "00" * 64)
-    assert (
-        reporter._source_call_identity_fault(
-            call,
-            truthful,
-            definition,
-            definition,
-            truthful.call_occurrence,
-            replace(frame, definition_site=foreign_site),
-        )
-        == "frame-definition-site-foreign"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -528,7 +450,6 @@ def test_the_third_authority_accepts_the_true_cross_file_callee(tmp_path) -> Non
     and not a guard that refuses everything."""
     top_level, _nested, call, reporter = _shadowing_callee_unit(tmp_path)
     truthful = call._construct_sugar()
-    frame = top_level.source_visible_call_frame()
 
     # Exactly what `present_construction` now supplies: the caller's unit has
     # no answer for a cross-file callee, so the third authority answers.
@@ -539,7 +460,7 @@ def test_the_third_authority_accepts_the_true_cross_file_callee(tmp_path) -> Non
     assert resolved.fragment.seal() == top_level.fragment.seal()
     assert (
         reporter._source_call_identity_fault(
-            call, truthful, top_level, resolved, truthful.call_occurrence, frame
+            call, truthful, top_level, resolved, truthful.call_occurrence
         )
         is None
     )
@@ -559,7 +480,6 @@ def test_a_shadowed_same_name_definition_is_REFUSED(tmp_path) -> None:
     """
     _top_level, nested, call, reporter = _shadowing_callee_unit(tmp_path)
     truthful = call._construct_sugar()
-    frame = nested.source_visible_call_frame()
 
     # The third authority does NOT return the nested impostor: it reads the
     # unit's module binding table, which names the top-level definition.
@@ -569,7 +489,7 @@ def test_a_shadowed_same_name_definition_is_REFUSED(tmp_path) -> None:
     )
 
     fault = reporter._source_call_identity_fault(
-        call, truthful, nested, resolved, truthful.call_occurrence, frame
+        call, truthful, nested, resolved, truthful.call_occurrence
     )
     assert fault == "resolved-seal-mismatch", fault
 
@@ -651,13 +571,12 @@ def test_the_third_authority_accepts_the_true_allocation_callee(tmp_path) -> Non
     """The truthful arm, so the refusal below is discrimination."""
     top_level, _nested, call, reporter = _shadowing_allocation_unit(tmp_path)
     truthful = call._construct_sugar()
-    frame = top_level.source_visible_constructor_frame()
 
     resolved = _callee_definition_by_name_in_its_unit(top_level)
     assert resolved.fragment.seal() == top_level.fragment.seal()
     assert (
         reporter._source_call_identity_fault(
-            call, truthful, top_level, resolved, truthful.call_occurrence, frame
+            call, truthful, top_level, resolved, truthful.call_occurrence
         )
         is None
     )
@@ -675,7 +594,6 @@ def test_a_shadowed_same_name_CLASS_is_REFUSED(tmp_path) -> None:
     """
     _top_level, nested, call, reporter = _shadowing_allocation_unit(tmp_path)
     truthful = call._construct_sugar()
-    frame = nested.source_visible_constructor_frame()
 
     resolved = _callee_definition_by_name_in_its_unit(nested)
     assert resolved.fragment.seal() != nested.fragment.seal(), (
@@ -683,7 +601,7 @@ def test_a_shadowed_same_name_CLASS_is_REFUSED(tmp_path) -> None:
     )
 
     fault = reporter._source_call_identity_fault(
-        call, truthful, nested, resolved, truthful.call_occurrence, frame
+        call, truthful, nested, resolved, truthful.call_occurrence
     )
     assert fault == "resolved-seal-mismatch", fault
 
@@ -699,7 +617,6 @@ def test_a_class_resolving_to_a_function_of_the_same_name_is_REFUSED(
     """
     top_level, _nested, call, reporter = _shadowing_allocation_unit(tmp_path)
     truthful = call._construct_sugar()
-    frame = top_level.source_visible_constructor_frame()
     _source, function_definition, _fn_call, _fn_reporter = _ordinary_call(
         tmp_path, helper="Boom", caller="apply_function"
     )
@@ -711,7 +628,6 @@ def test_a_class_resolving_to_a_function_of_the_same_name_is_REFUSED(
         top_level,
         function_definition,
         truthful.call_occurrence,
-        frame,
     )
     assert fault == "resolved-definition-kind-mismatch", fault
 
@@ -731,7 +647,7 @@ def test_an_opaque_allocation_callee_still_refuses_by_its_own_name(
         """Stands where a raw parser handle arrives: no unit, no fragment."""
 
     fault = reporter._source_call_identity_fault(
-        call, truthful, _OpaqueHandle(), top_level, truthful.call_occurrence, None
+        call, truthful, _OpaqueHandle(), top_level, truthful.call_occurrence
     )
     assert fault == "definition-not-a-functiondef"
 
