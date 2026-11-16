@@ -201,7 +201,12 @@ def _arm_evaluations(arms, incoming) -> tuple:
     (``if c: bump()``), it is carried under the guard of the arms that did
     (``_record_on_its_arms``): the global is the call's state there and the
     state before the ``if`` on every other arm, never the call's state on a
-    path that never ran the call (#7757 H7).
+    path that never ran the call (#7757 H7).  Where the arms bound it to
+    different records (one call reached on two faces of a suite), each
+    arm's record stands on its own arm before the join
+    (``_records_on_their_own_arms``), and a later call reads the join as
+    each arm's record (``call_site_sugar._global_after_call``), never
+    skipping it (#7757 L4).
     """
     from sugar_lift_py_tests.floor.call_site_value import AfterCallRecordValue
     from sugar_lift_py_tests.outcome import Completed
@@ -232,6 +237,7 @@ def _arm_evaluations(arms, incoming) -> tuple:
                 )
     carried = []
     for key, bound in made.items():
+        bound = _records_on_their_own_arms(bound)
         value = _joined_evaluation(bound)
         if value is None:
             continue
@@ -239,6 +245,30 @@ def _arm_evaluations(arms, incoming) -> tuple:
             value = _record_on_its_arms(value, bound)
         carried.append((key, value))
     return tuple(carried)
+
+
+def _records_on_their_own_arms(bound):
+    """``bound`` (the completed arms of an ``if`` that bound one key), each
+    arm's record standing only on that arm (``record_under`` its guard)
+    where the arms bound the key to different records: their join
+    (``_joined_evaluation``) selects each arm's record by that arm's guard,
+    and a path through an arm that bound none -- or bound the key to
+    another value -- reads the state before it, never an arm's record it
+    did not run (#7757 L4).  ``bound`` as it is where the arms bound one
+    value (``_record_on_its_arms`` guards it), or any is no call's record
+    (``is_call_record``)."""
+    from sugar_lift_py_tests.floor.call_site_value import is_call_record, record_under
+    from sugar_lift_py_tests.outcome import Completed
+
+    first = bound[0].value
+    if all(arm.value is first for arm in bound) or not all(
+        is_call_record(arm.value) for arm in bound
+    ):
+        return bound
+    return [
+        Completed(arm.guard, record_under(arm.value, arm.guard), arm.faces)
+        for arm in bound
+    ]
 
 
 def _record_on_its_arms(record, bound):

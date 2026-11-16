@@ -1198,6 +1198,43 @@ class AfterCallRecordValue(FloorValue):
 EVERY_GLOBAL_SLOT = ("global", "*")
 
 
+def is_call_record(value) -> bool:
+    """Whether ``value`` is what a call's key holds: its record
+    (``AfterCallRecordValue``), or the join of the records the arms of an
+    ``if`` bound it to (``if_sugar._joined_evaluation``: a ``GuardedValue``
+    whose every leaf is one).  A join is the record on each arm's path, read
+    as each arm's (``call_site_sugar._global_after_call``), never skipped
+    (#7757 L4)."""
+    from .guarded_value import GuardedValue
+
+    if isinstance(value, AfterCallRecordValue):
+        return True
+    return (
+        isinstance(value, GuardedValue)
+        and is_call_record(value.when_true)
+        and is_call_record(value.when_false)
+    )
+
+
+def record_under(value, formula):
+    """``value`` (``is_call_record``) standing only where ``formula`` holds:
+    each record's guard conjoined with it, the join's selection kept."""
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.ir import and_
+
+    from .guarded_value import GuardedValue
+
+    if isinstance(value, GuardedValue):
+        return GuardedValue(
+            value.guard,
+            record_under(value.when_true, formula),
+            record_under(value.when_false, formula),
+        )
+    guard = formula if value.guard is None else and_([formula, value.guard])
+    return replace(value, guard=guard)
+
+
 def _call_record(presented):
     """The record (``AfterCallRecordValue``) the call whose completed value
     is ``presented`` (a ``CallSiteValue``) leaves of what it may have
