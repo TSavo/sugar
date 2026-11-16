@@ -10,10 +10,20 @@ name: Main scorecard
 #
 # This workflow measures the tip of main on every merge (push to main), once
 # an hour, and on demand, and posts one row of numbers on the "Main scorecard"
-# issue. Its concurrency group is its own with cancel-in-progress false: one
-# run measures while the newest trigger waits. Every job checks out
-# github.sha, so every number in a row is about one commit, and the row names
-# the PRs merged since the previous row.
+# issue. Every job checks out github.sha, so every number in a row is about
+# one commit, and the row names the PRs merged since the previous row.
+#
+# SUPERSEDED RUNS ARE CANCELLED (#8416, 2026-11-16)
+#
+# With one concurrency group and cancel-in-progress false, the run on the
+# first commit of a merge burst kept the three self-hosted runners while the
+# run on the head sat pending behind it (25 minutes lost). The concurrency
+# group is now per commit (a second run on the same commit waits; a run on a
+# newer commit never does), and the `supersede` job
+# (tools/main_scorecard_supersede.sh) cancels every older run of this
+# workflow on main whose commit is not this run's. A run is never cancelled
+# by a run on its own commit. The board (main-scorecard-board.yml) waits for
+# this workflow's run on the same commit before it asks for a runner.
 #
 # THE BOARD HAS ITS OWN LANE (2026-11-15)
 #
@@ -69,8 +79,21 @@ name: Main scorecard
 # group (`-schedule`), so it never replaces a push run, and its `gate` job
 # (tools/main_scorecard_schedule_gate.sh) makes it a no-op when a run of this
 # workflow on the head is queued or measuring or already posted its row.
-# Push and dispatch runs skip the gate; their group and its
-# cancel-in-progress are unchanged.
+# Push and dispatch runs skip the gate.
+#
+# ONE POOL OF SHARDS (#8416, 2026-11-16)
+#
+# Measured on runs 43789294103, 43793978518, 43781133041: the twins were one
+# 20-21 minute pytest (564 tests) that re-ran the 50 twin files the suite
+# shards had already run, and the 8 suite shards, cut by equal file counts
+# because the LPT prior lived in the wiped workspace, took 2 to 17 minutes
+# each (57 runner-minutes in all). Now the plan job packs every file that
+# must run (suite files, plus the 2 twin files outside the suite tree) onto
+# the shards by measured cost (tools/main_scorecard_suite.sh,
+# tools/main_scorecard_shard_plan.py, the prior in the shared cache), and
+# the twins number is counted from the suite's own results for the twin
+# files in the suite tree. The federation example and the Rust tests are
+# their own short jobs.
 
 on:
   push:
@@ -80,7 +103,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: main-scorecard-fast${{ github.event_name == 'schedule' && '-schedule' || '' }}
+  group: main-scorecard-fast-${{ github.sha }}${{ github.event_name == 'schedule' && '-schedule' || '' }}
   cancel-in-progress: false
 
 permissions:
@@ -100,6 +123,27 @@ env:
   GH_REPO: ${{ github.repository }}
 
 jobs:
+  # ------------------------------------------ superseded runs are cancelled
+  # Every older run of this workflow on main whose commit is not this run's.
+  # On a GitHub-hosted runner, and nothing waits for it: the measuring jobs
+  # ask for a self-hosted runner at once.
+  supersede:
+    name: cancel superseded runs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: tools/main_scorecard_supersede.sh
+          sparse-checkout-cone-mode: false
+      - name: Cancel older runs on other commits
+        shell: bash
+        run: bash tools/main_scorecard_supersede.sh main-scorecard.yml
+
   # ------------------------------------------------- (0) the schedule's gate
   # Scheduled runs only: measure=false when this head is already queued,
   # measuring or posted. Skipped on push and dispatch, where every job runs.
@@ -122,9 +166,12 @@ jobs:
         shell: bash
         run: bash tools/main_scorecard_schedule_gate.sh main-scorecard.yml
 
-  # ------------------------------------------------------- (1) package suite
+  # ------------------------------------- (1) package suite + (2) solver twins
+  # The plan: which files must run (carry), packed onto the shards by
+  # measured cost. Few files: they run here, on one runner, and this job
+  # posts the suite and twins numbers. Otherwise they fan out.
   suite:
-    name: package suite
+    name: package suite + twins (plan)
     needs: [gate]
     if: ${{ !cancelled() && needs.gate.outputs.measure != 'false' }}
     runs-on: [self-hosted, Linux, X64]
@@ -144,70 +191,41 @@ jobs:
       - name: Scorecard environment (persistent venv, gh)
         shell: bash
         run: bash tools/main_scorecard_env.sh
-      - name: Plan (which test files have a changed dependency)
+      - name: Plan (which test files run, on which shard)
         id: plan
         shell: bash
-        working-directory: implementations/python
-        run: |
-          set -euo pipefail
-          mkdir -p "$SCORECARD_RUNS/suite"
-          python "$GITHUB_WORKSPACE/tools/python_package_suite_shards.py" \
-            --repo-root "$GITHUB_WORKSPACE" \
-            --shard-count 1 --shard-index 0 \
-            --emit-paths-for-cwd > "$RUNNER_TEMP/suite-paths.txt"
-          python "$GITHUB_WORKSPACE/tools/scorecard_carry.py" suite-plan \
-            --store "$SCORECARD_STORE" --label suite \
-            --paths-file "$RUNNER_TEMP/suite-paths.txt" \
-            --summary "$SCORECARD_RUNS/suite/plan.json" \
-            --rerun-paths "$RUNNER_TEMP/suite-rerun.txt"
-          n="$(grep -c . "$RUNNER_TEMP/suite-rerun.txt" || true)"
-          echo "rerun=$n" >> "$GITHUB_OUTPUT"
-          if [ "$n" -gt "$SUITE_INLINE_MAX_FILES" ]; then fanout=true; else fanout=false; fi
-          echo "fanout=$fanout" >> "$GITHUB_OUTPUT"
-          echo "suite files to run: $n (fan out: $fanout)"
+        run: bash tools/main_scorecard_suite.sh plan
       - name: Set up Rust toolchain (only when tests run here)
         if: steps.plan.outputs.rerun != '0' && steps.plan.outputs.fanout == 'false'
         uses: ./.github/actions/setup-rust-cache
+      - name: Install z3 (cached on the runner)
+        if: steps.plan.outputs.rerun != '0' && steps.plan.outputs.fanout == 'false'
+        shell: bash
+        run: tools/ci-apt-install.sh z3
       - name: Run the files with a changed dependency
         if: steps.plan.outputs.rerun != '0' && steps.plan.outputs.fanout == 'false'
         shell: bash
-        working-directory: implementations/python
-        run: |
-          set +e -uo pipefail
-          export SUGAR_BIN="$("$GITHUB_WORKSPACE/bin/sugarbin" --profile release)"
-          mapfile -t paths < "$RUNNER_TEMP/suite-rerun.txt"
-          PYTHONPATH="$GITHUB_WORKSPACE/tools:$PYTHONPATH" python -m pytest "${paths[@]}" -q \
-            -p no:cacheprovider -p no:randomly \
-            -p scorecard_carry_pytest \
-            --carry-store "$SCORECARD_STORE" --carry-label suite \
-            --carry-summary "$SCORECARD_RUNS/suite/inline.json" \
-            > "$GITHUB_WORKSPACE/suite.log" 2>&1
-          echo "pytest exit $? (evidence only)"
-          grep -a 'SCORECARD CARRY' "$GITHUB_WORKSPACE/suite.log"
-      - name: Post the suite number
+        run: bash tools/main_scorecard_suite.sh run 0
+      - name: Post the suite and twins numbers
         if: ${{ !cancelled() && steps.plan.outputs.fanout != 'true' }}
         shell: bash
-        run: |
-          set +e -uo pipefail
-          python3 tools/scorecard_carry.py summarize --label suite \
-            --out "$RUNNER_TEMP/suite-totals.json" \
-            --result "$RUNNER_TEMP/suite-result.json" \
-            "$SCORECARD_RUNS"/suite/*.json
-          python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" \
-            --put "suite=$RUNNER_TEMP/suite-result.json"
-      - name: Upload suite log
+        run: bash tools/main_scorecard_suite.sh post
+      - name: Upload logs
         if: ${{ !cancelled() && steps.plan.outputs.rerun != '0' }}
         uses: actions/upload-artifact@v4
         with:
           name: main-scorecard-suite
-          path: suite.log
+          path: |
+            suite.log
+            twins.log
+            twin-evidence/**
           if-no-files-found: ignore
       - name: Job wall time
         if: ${{ !cancelled() }}
         shell: bash
         run: echo "job wall $(( $(date +%s) - JOB_T0 ))s"
 
-  # Empty store or a wide change: the files to run fan out over shards.
+  # Many files to run: they fan out over the shards the plan packed.
   suite-shard:
     name: suite shard ${{ matrix.shard }}
     needs: [suite]
@@ -233,42 +251,21 @@ jobs:
         run: bash tools/main_scorecard_env.sh
       - name: Set up Rust toolchain
         uses: ./.github/actions/setup-rust-cache
+      - name: Install z3 (cached on the runner)
+        shell: bash
+        run: tools/ci-apt-install.sh z3
       - name: Shard ${{ matrix.shard }}
         shell: bash
-        working-directory: implementations/python
-        env:
-          SHARD: ${{ matrix.shard }}
-        run: |
-          set +e -uo pipefail
-          tag="$(printf '%02d' "$SHARD")"
-          python "$GITHUB_WORKSPACE/tools/python_package_suite_shards.py" \
-            --repo-root "$GITHUB_WORKSPACE" \
-            --shard-count "$SUITE_SHARD_COUNT" --shard-index "$SHARD" \
-            --emit-paths-for-cwd > "$RUNNER_TEMP/paths.txt"
-          python "$GITHUB_WORKSPACE/tools/scorecard_carry.py" suite-plan \
-            --store "$SCORECARD_STORE" --label suite \
-            --paths-file "$RUNNER_TEMP/paths.txt" \
-            --summary "$SCORECARD_RUNS/suite/plan-s$tag.json" \
-            --rerun-paths "$RUNNER_TEMP/rerun.txt"
-          mapfile -t paths < "$RUNNER_TEMP/rerun.txt"
-          echo "shard $SHARD files to run: ${#paths[@]}"
-          if [ "${#paths[@]}" -gt 0 ]; then
-            export SUGAR_BIN="$("$GITHUB_WORKSPACE/bin/sugarbin" --profile release)"
-            PYTHONPATH="$GITHUB_WORKSPACE/tools:$PYTHONPATH" python -m pytest "${paths[@]}" -q \
-              -p no:cacheprovider -p no:randomly \
-              -p scorecard_carry_pytest \
-              --carry-store "$SCORECARD_STORE" --carry-label suite \
-              --carry-summary "$SCORECARD_RUNS/suite/shard-$tag.json" \
-              > "$GITHUB_WORKSPACE/suite.log" 2>&1
-            echo "pytest exit $? (evidence only)"
-            grep -a 'SCORECARD CARRY' "$GITHUB_WORKSPACE/suite.log"
-          fi
-      - name: Upload shard log
+        run: bash tools/main_scorecard_suite.sh run ${{ matrix.shard }}
+      - name: Upload shard logs
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: main-scorecard-suite-shard-${{ matrix.shard }}
-          path: suite.log
+          path: |
+            suite.log
+            twins.log
+            twin-evidence/**
           if-no-files-found: ignore
       - name: Job wall time
         if: ${{ !cancelled() }}
@@ -294,20 +291,13 @@ jobs:
       - name: Scorecard environment (persistent venv, gh)
         shell: bash
         run: bash tools/main_scorecard_env.sh
-      - name: Post the suite number
+      - name: Post the suite and twins numbers
         shell: bash
-        run: |
-          set +e -uo pipefail
-          python3 tools/scorecard_carry.py summarize --label suite \
-            --out "$RUNNER_TEMP/suite-totals.json" \
-            --result "$RUNNER_TEMP/suite-result.json" \
-            "$SCORECARD_RUNS"/suite/*.json
-          python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" \
-            --put "suite=$RUNNER_TEMP/suite-result.json"
+        run: bash tools/main_scorecard_suite.sh post
 
-  # ------------------------------------- (2) solver twins + (3) federation
-  solver:
-    name: solver twins + federation
+  # ------------------------------------------------------- (3) federation
+  federation:
+    name: federation
     needs: [gate]
     if: ${{ !cancelled() && needs.gate.outputs.measure != 'false' }}
     runs-on: [self-hosted, Linux, X64]
@@ -328,25 +318,12 @@ jobs:
       - name: Plan
         id: plan
         shell: bash
-        working-directory: implementations/python
         run: |
           set -euo pipefail
-          mkdir -p "$SCORECARD_RUNS/twins"
-          # Every test file that drives a source through the real solver.
-          git grep -l run_source_through_real_solver -- '*/tests/test_*.py' \
-            > "$RUNNER_TEMP/twins-paths.txt" || true
-          echo "real-solver twin files: $(grep -c . "$RUNNER_TEMP/twins-paths.txt" || true)"
-          python "$GITHUB_WORKSPACE/tools/scorecard_carry.py" suite-plan \
-            --store "$SCORECARD_STORE" --label twins \
-            --paths-file "$RUNNER_TEMP/twins-paths.txt" \
-            --summary "$SCORECARD_RUNS/twins/plan.json" \
-            --rerun-paths "$RUNNER_TEMP/twins-rerun.txt"
-          echo "twins_rerun=$(grep -c . "$RUNNER_TEMP/twins-rerun.txt" || true)" >> "$GITHUB_OUTPUT"
           # The federation example is a chain of subprocesses, so it is not
           # traced: a PASS is carried only while every input outside docs/
           # and the other examples is byte-identical (git tree hashes). A
           # FAIL is never carried.
-          cd "$GITHUB_WORKSPACE"
           key="$(python tools/scorecard_carry.py verdict key \
             --exclude docs --exclude examples \
             --include examples/python-base64-federation \
@@ -358,44 +335,13 @@ jobs:
           else
             echo "fed_carried=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: Set up Rust toolchain (only when something runs)
-        if: steps.plan.outputs.twins_rerun != '0' || steps.plan.outputs.fed_carried != 'true'
+      - name: Set up Rust toolchain (only when the example runs)
+        if: steps.plan.outputs.fed_carried != 'true'
         uses: ./.github/actions/setup-rust-cache
       - name: Install z3 (cached on the runner)
-        if: steps.plan.outputs.twins_rerun != '0' || steps.plan.outputs.fed_carried != 'true'
+        if: steps.plan.outputs.fed_carried != 'true'
         shell: bash
         run: tools/ci-apt-install.sh z3
-      - name: Run the twins with a changed dependency
-        if: steps.plan.outputs.twins_rerun != '0'
-        shell: bash
-        working-directory: implementations/python
-        run: |
-          set +e -uo pipefail
-          export SUGAR_BIN="$("$GITHUB_WORKSPACE/bin/sugarbin" --profile release)"
-          # Each twin keeps its source, lift doc and prove doc here; uploaded
-          # with the logs so a failing twin is diagnosed from CI's artifact.
-          rm -rf "$GITHUB_WORKSPACE/twin-evidence"
-          export SUGAR_WITNESS_EVIDENCE_DIR="$GITHUB_WORKSPACE/twin-evidence"
-          mapfile -t files < "$RUNNER_TEMP/twins-rerun.txt"
-          PYTHONPATH="$GITHUB_WORKSPACE/tools:$PYTHONPATH" python -m pytest "${files[@]}" -q \
-            -p no:cacheprovider -p no:randomly \
-            -p scorecard_carry_pytest \
-            --carry-store "$SCORECARD_STORE" --carry-label twins \
-            --carry-summary "$SCORECARD_RUNS/twins/run.json" \
-            > "$GITHUB_WORKSPACE/twins.log" 2>&1
-          echo "pytest exit $? (evidence only)"
-          grep -a 'SCORECARD CARRY' "$GITHUB_WORKSPACE/twins.log"
-      - name: Post the twins number
-        if: ${{ !cancelled() }}
-        shell: bash
-        run: |
-          set +e -uo pipefail
-          python3 tools/scorecard_carry.py summarize --label twins \
-            --out "$RUNNER_TEMP/twins-totals.json" \
-            --result "$RUNNER_TEMP/twins-result.json" \
-            "$SCORECARD_RUNS"/twins/*.json
-          python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" \
-            --put "twins=$RUNNER_TEMP/twins-result.json"
       - name: Run examples/python-base64-federation/run.sh
         id: fed
         if: ${{ !cancelled() && steps.plan.outputs.fed_carried != 'true' }}
@@ -438,15 +384,12 @@ jobs:
               --set federation.measured=false \
               --set "federation.note=run.sh did not run"
           fi
-      - name: Upload logs
+      - name: Upload log
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: main-scorecard-solver
-          path: |
-            twins.log
-            federation.log
-            twin-evidence/**
+          name: main-scorecard-federation
+          path: federation.log
           if-no-files-found: ignore
       - name: Job wall time
         if: ${{ !cancelled() }}
@@ -562,7 +505,7 @@ jobs:
   # a measure that never reported becomes unmeasured, and is compared.
   scorecard:
     name: scorecard (final row)
-    needs: [gate, suite, suite-shard, suite-join, solver, rust]
+    needs: [gate, suite, suite-shard, suite-join, federation, rust]
     if: ${{ !cancelled() && needs.gate.outputs.measure != 'false' }}
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15

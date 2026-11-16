@@ -14,12 +14,22 @@ Enable with ``-p scorecard_carry_pytest --carry-store DIR --carry-summary FILE``
   totals.
 
 Outcome buckets follow tools/python_package_suite_report.py exactly.
+
+* Every test file that ran has its wall seconds (setup + call + teardown of
+  its tests) written to the LPT cost prior when ``SUGAR_LPT_PRIOR_DIR`` is
+  set (tools/lpt_file_shards.py), so the next scorecard run packs its shards
+  by measured cost (tools/main_scorecard_shard_plan.py, #8416).
+* The PYTEST line names the peak resident memory of pytest and of its
+  children (``max_rss_mb``, ``children_max_rss_mb``): the memory floor a
+  runner seat needs.
 """
 
 from __future__ import annotations
 
 import os
+import resource
 import time
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -76,6 +86,7 @@ class CarryPlugin:
         self.buckets: dict[str, list[str]] = {}
         self.collection_errors: list[str] = []
         self.opaque: dict[str, str] = {}
+        self.file_seconds: dict[str, float] = {}
         self.collector_sinks: dict[str, carry.Sink] = {}
         self.fixture_sinks: dict[int, carry.Sink] = {}
         self._collecting: list[carry.Sink] = []
@@ -221,6 +232,10 @@ class CarryPlugin:
             self.opaque[nodeid] = reason
 
     def pytest_runtest_logreport(self, report: Any) -> None:
+        file = report.nodeid.split("::", 1)[0]
+        self.file_seconds[file] = self.file_seconds.get(file, 0.0) + float(
+            getattr(report, "duration", 0.0) or 0.0
+        )
         bucket = self.buckets.setdefault(report.nodeid, [])
 
         def add(name: str) -> None:
@@ -242,11 +257,16 @@ class CarryPlugin:
         carried = sum(1 for e in self.items_out.values() if e["how"] == "carried")
         rerun = len(self.items_out) - carried
         recorded = self.session.recorded if self.session is not None else 0
+        # ru_maxrss is KiB on Linux.
+        own_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
+        children_mb = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss // 1024
         carry.narrate(
             f"SCORECARD CARRY PYTEST label={self.label} carried={carried} rerun={rerun} "
             f"recorded={recorded} opaque={len(self.opaque)} "
-            f"collection_errors={len(self.collection_errors)} wall_s={wall}"
+            f"collection_errors={len(self.collection_errors)} wall_s={wall} "
+            f"max_rss_mb={own_mb} children_max_rss_mb={children_mb}"
         )
+        self._write_cost_prior()
         if self.summary_path:
             carry._write_json(
                 self.summary_path,
@@ -262,3 +282,31 @@ class CarryPlugin:
             )
         if self.session is not None:
             self.session.close()
+
+    def _write_cost_prior(self) -> None:
+        """Each file's measured wall seconds into the shared LPT prior."""
+        if not os.environ.get("SUGAR_LPT_PRIOR_DIR") or not self.file_seconds:
+            return
+        try:
+            from lpt_file_shards import ContentAddressedCostPrior
+
+            prior = ContentAddressedCostPrior()
+            root = Path(str(self.config.rootpath))
+            written = 0
+            for file, seconds in self.file_seconds.items():
+                path = root / file
+                if not path.is_file():
+                    continue
+                try:
+                    if prior.put_for_path(
+                        path, seconds, source="scorecard-pytest-wall", path_hint=file
+                    ):
+                        written += 1
+                except OSError:
+                    continue
+            carry.narrate(
+                f"SCORECARD CARRY COSTS label={self.label} files_written={written} "
+                f"files_measured={len(self.file_seconds)} prior_root={prior.root}"
+            )
+        except Exception as error:  # noqa: BLE001 - a prior is never the measurement
+            carry.narrate(f"SCORECARD CARRY COSTS label={self.label} not written: {error!r}")
