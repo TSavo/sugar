@@ -14185,8 +14185,11 @@ class Assign(Statement):
         fresh list (``_make_unpack_rest_list``) and never unpacked.  Nothing
         is minted here.  Where a level does not pair with a display, or a
         store leaf sits under a nested level (neither display unpack takes
-        it), none: the statement refuses by name and nothing answers with
-        it."""
+        it), none: the right-hand side is the one evaluation the reduce-time
+        unpack reads (``_dynamic_unpack_target``), built whole as any value
+        is, and answers for itself."""
+        if self._dynamic_unpack_target() is not None:
+            return ()
         walk = self._unpack_walk()
         if walk is None:
             return ()
@@ -14407,8 +14410,10 @@ class Assign(Statement):
         ``("chain", {})`` for a chain of Names and stores (every store is
         given the one value), ``("display", members)`` for a flat unpack
         against a display (each store leaf its member, by the leaf's
-        handle), ``("unpack", {})`` for an unpack of a non-display value
-        (each leaf the member the unpack hands it).  None for any other
+        handle), ``("unpack", {})`` for the reduce-time unpack of any other
+        value, a display the flat pairing does not take included
+        (``_dynamic_unpack_target``; each leaf the member the unpack hands
+        it).  None for any other
         target list (it stays a gap)."""
         if len(self.targets) > 1:
             if all(
@@ -14505,17 +14510,29 @@ class Assign(Statement):
         )
 
     def _dynamic_unpack_target(self):
-        """The Tuple/List target of an unpack whose right-hand side is not a
-        display, or None.  Substitution cannot pair such a target with
-        members; the statement's sugar unpacks its one evaluation at reduce
-        (``DynamicUnpackAssignSugar``, ``NestedDynamicUnpackAssignSugar``,
-        ``DynamicUnpackStoreAssignSugar``)."""
+        """The Tuple/List target of an unpack substitution does not pair with
+        a display's members, or None.  The statement's sugar unpacks its one
+        evaluation at reduce (``DynamicUnpackAssignSugar``,
+        ``NestedDynamicUnpackAssignSugar``,
+        ``DynamicUnpackStoreAssignSugar``).
+
+        That is every right-hand side that is not a display, and a display
+        neither display pairing takes (``_destructured_binding``,
+        ``_flat_store_unpack_pairs``): a nested level whose member is not a
+        display (``a, (b, c) = 1, [x for x in range(2)]``), an arity the
+        display does not match, a store leaf under a nested level.  Python
+        builds the display, then unpacks it: the reduce-time unpack reads the
+        decided tuple or list it reduces to exactly, and a level it cannot
+        read is owed, never refused by name (#7757 S2)."""
         if len(self.targets) != 1:
             return None
         target = self.targets[0]
         if not isinstance(target, (Tuple_, List)) or not target.elts:
             return None
-        if isinstance(self.value, (Tuple_, List)):
+        if isinstance(self.value, (Tuple_, List)) and (
+            self._destructured_binding() is not None
+            or self._flat_store_unpack_pairs() is not None
+        ):
             return None
         return target
 
@@ -15232,11 +15249,12 @@ class Assign(Statement):
         # A single Tuple/List target of plain Names destructures against a
         # matching display rhs (see _destructured_binding). A chain of plain
         # Name targets (`x = y = e`) binds each name to the same rhs.
-        # A Tuple/List target against a non-display rhs binds each Name
-        # target to a reference to its projection of the statement's one
-        # evaluation.  Attribute / subscript targets and display arity
-        # mismatches thread nothing -- their references stay honest gaps
-        # rather than a wrong binding (a store target's binding is its own
+        # A Tuple/List target against any other rhs -- a display neither
+        # pairing takes among them (``_dynamic_unpack_target``) -- binds each
+        # Name target to a reference to its projection of the statement's
+        # one evaluation.  Attribute / subscript targets thread nothing --
+        # their references stay honest gaps rather than a wrong binding (a
+        # store target's binding is its own
         # statement's: ``ReceiverFieldStoreStatement``,
         # ``ContainerMutationStatement``).
         del scope
@@ -15255,8 +15273,9 @@ class Assign(Statement):
             if store_pairs is not None:
                 names = self._name_bindings_from_store_unpack(store_pairs)
                 return names if names else None
-            # A non-display right-hand side: each Name target reads its
-            # projection of the statement's one evaluation.
+            # Any other right-hand side, a display neither pairing takes
+            # among them: each Name target reads its projection of the
+            # statement's one evaluation.
             return self._unpack_projection_binding()
         if all(isinstance(t, (Name, Attribute, Subscript)) for t in self.targets):
             # Store targets do not bind lexical names, but they also do not
@@ -15365,7 +15384,8 @@ class Assign(Statement):
 
     def unpack_store_sugar(self, value_sugar):
         """``a, o.x, *b = <rhs>`` / ``a, (b, o.x) = <rhs>`` against a
-        non-display right-hand side: the one unpack of ``value_sugar`` (the
+        right-hand side no display pairing takes (``_dynamic_unpack_target``):
+        the one unpack of ``value_sugar`` (the
         right-hand side's sugar, or what a yield assignment's resume reads its
         resumed value through) into Name / store / ``*Name`` targets, nested
         levels included (``_store_unpack_targets``), each Name bound under its
@@ -15395,9 +15415,11 @@ class Assign(Statement):
         the deferred source). A destructured tuple/list target or a chained
         `x = y = e` whose binding threaded constructs MultiAssignSugar -- both
         are inert once substitute has done its work, exactly like the single
-        Name case. Any shape whose binding did NOT thread (attribute/subscript
-        targets, starred/nested tuples, arity mismatches) stays a loud gap --
-        never a partial binding rendered inert."""
+        Name case. A Tuple/List target whose display substitution did not
+        pair -- or any other right-hand side -- is the reduce-time unpack of
+        the statement's one evaluation (``_dynamic_unpack_target``). A shape
+        no arm takes stays a loud gap -- never a partial binding rendered
+        inert."""
         if len(self.targets) == 1 and isinstance(self.targets[0], Name):
             from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
 
@@ -15453,8 +15475,11 @@ class Assign(Statement):
                     members=tuple(members),
                     target_order=_target_order(leaf for leaf, _ in store_pairs),
                 )
+            # Neither display pairing took the statement: its right-hand
+            # side, a display included, is the one evaluation unpacked at
+            # reduce (``_dynamic_unpack_target``).
             target = self.targets[0]
-            if not isinstance(self.value, (Tuple_, List)) and target.elts:
+            if target.elts:
                 from sugar_lift_py_tests.sugar.dynamic_unpack_assign_sugar import (
                     DynamicUnpackAssignSugar,
                 )

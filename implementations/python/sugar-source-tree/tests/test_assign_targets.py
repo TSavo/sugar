@@ -1,8 +1,9 @@
 """`a, b = <display>` destructures against a matching Tuple/List rhs, and
 `x = y = e` chains a single rhs to several names -- both are threaded by
 substitute exactly like the single-Name case, so both go inert at the
-meaning layer. Starred/nested targets and arity mismatches do not thread
-and stay loud gaps. Store targets (attribute/subscript) are never bound --
+meaning layer. A display that substitution does not pair (a wrong arity, a
+nested level that is no display) is built and unpacked at reduce, as any
+other right-hand side is: a wrong count is Python's ValueError. Store targets (attribute/subscript) are never bound --
 they lift straight to a typed red runtime effect instead (the fragment-type
 seam; see test_store_target_effect.py for the full witness/continuation
 discipline)."""
@@ -185,9 +186,24 @@ def test_nested_and_starred_targets_use_one_runtime_binding_entry_model():
     assert paths["z"][-2:] == ("tuple", 1)
 
 
-def test_arity_mismatch_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn("def A():\n    a, b = (1, 2, 3)\n    return a\n").sugar()
+def _ground_value_error(src):
+    """A decided display unpack whose count is wrong: Python builds the
+    display, then its unpack raises ``ValueError`` at the statement, nothing
+    bound and no completion beside it (#7757 S2: the one unpack is the
+    reduce-time unpack of the right-hand side's one evaluation)."""
+    from sugar_lift_py_tests.effect import RaiseEffect
+
+    out = _fn(src).sugar().desugar()
+    assert isinstance(out, ExitSet), out
+    (halt,) = out.halts()
+    assert out.halts() == out.exits, out
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "ValueError"
+    return halt
+
+
+def test_arity_mismatch_is_python_s_value_error():
+    _ground_value_error("def A():\n    a, b = (1, 2, 3)\n    return a\n")
 
 
 def test_non_display_rhs_constructs_and_retains_its_arity_obligation():
@@ -244,13 +260,13 @@ def test_non_display_rhs_constructs_and_retains_its_arity_obligation():
     assert halted.state.transforms == ()
 
 
-def test_display_rhs_arity_mismatch_is_still_a_refusal_not_an_effect():
+def test_display_rhs_arity_mismatch_is_decided_not_the_runtime_obligation():
     # DISCRIMINATING against the change above: a DISPLAY right-hand side has
-    # lift-time cardinality, so `a, b = (1, 2, 3)` is decidably wrong and must
-    # NOT be softened into the runtime-cardinality effect. Only the undecidable
-    # count becomes an obligation.
-    with pytest.raises(SugarNotWritten):
-        _fn("def A():\n    a, b = (1, 2, 3)\n    return a\n").sugar()
+    # a decided cardinality, so `a, b = (1, 2, 3)` is decidably wrong and must
+    # NOT be softened into the runtime-cardinality effect. It is Python's own
+    # ValueError, the one halt; only the undecidable count is an obligation.
+    halt = _ground_value_error("def A():\n    a, b = [1, 2, 3]\n    return a\n")
+    assert not isinstance(halt.effect, UndeterminedRaiseEffect)
 
 
 def test_mixed_chained_targets_stay_loud():
