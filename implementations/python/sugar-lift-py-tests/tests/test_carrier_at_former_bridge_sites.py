@@ -511,6 +511,9 @@ def _iterate_over(monkeypatch, body, carrier):
     )
     # A for's item and a while's item continue from the body by one door.
     loop._after_item = functools.partial(LoopRecurrenceSugar._after_item, loop)
+    # The item ``next`` yielded runs through the one item runner (#9020:
+    # ``advance_in_hand`` hands the value to ``_run_item``).
+    loop._run_item = functools.partial(LoopRecurrenceSugar._run_item, loop)
     runtime = SimpleNamespace(target_pattern=None, body_sugars=())
     return LoopRecurrenceSugar._advance_iterator(
         loop, None, runtime, None, entries=(), carried=()
