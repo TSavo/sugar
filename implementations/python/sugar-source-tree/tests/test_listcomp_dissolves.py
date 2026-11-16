@@ -1,14 +1,16 @@
-"""`[e for x in <concrete>]` DISSOLVES in substitute -- map disappearing for
-real: N substitutions of x into e, rewritten to the List display of the
-results. The comprehension was never a meaning; it was a count of rewrites.
-Symbolic iterables, undecidable filters, multi-generator, and async keep the
-node loud."""
+"""``[e for x in <members in hand>]`` runs member by member through the loop's
+one item runner and states the list it builds (#7757 new 6, #8957): no
+rewrite dissolves it. Over an iterable whose members are not in hand it runs
+as the loop's recurrence and completes with its own coordinate.
+
+Each file is opened through the one construction door under a workspace
+root, as the lift opens it."""
 
 import tempfile
+from pathlib import Path
 
-from sugar_lift_python_source.source_oracle import path_source
-from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 
 from native_carrier_testimony import (
     atoms_named,
@@ -19,10 +21,10 @@ from native_carrier_testimony import (
 
 
 def _fn(src):
-    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
-        f.write(src)
-        path = f.name
-    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
+    root = Path(tempfile.mkdtemp(prefix="listcomp-"))
+    path = root / "subject.py"
+    path.write_text(src, encoding="utf-8")
+    return next(open_source_file_for_construction(path, root=root).functions())
 
 
 def _out(src):
@@ -45,18 +47,24 @@ def test_tuple_target_comprehension_destructures():
 
 
 def test_composes_with_len():
+    # Every member is in hand: the list's length is decided
+    # (``ComprehensionValue.length``).
     t = _out("def A():\n    return len([x for x in [1, 2, 3]])\n")
-    assert t.name == "call:len"
+    assert t.value == 3
+
+
+def test_comprehension_over_range_dissolves():
+    # A completed ``range(...)`` over ground ints is the ints it yields
+    # (``iterator_operation.in_hand_iterable``).
+    t = _out("def A():\n    return [x + 1 for x in range(3)]\n")
+    assert t.name == "array" and [a.value for a in t.args] == [1, 2, 3]
 
 
 def test_undecidable_filtered_comprehension_is_typed_filter_guard():
-    """Live law (replaces factory SugarNotWritten): filter over formal is a coordinate.
-
-    ``[x for x in [1,2] if x > limit]`` constructs as ``py.listcomp`` carrying
-    ``python:loop.filter_guard`` — typed residual, not construction silence.
-    """
-    # The filter over the formal waits on no caller: it is the undecided
-    # ordering's two faces over the member and the formal (#7757 NEW-1).
+    """The filter over the formal waits on no caller: it is the undecided
+    ordering's two faces (#7757 NEW-1), never a guessed verdict. Which
+    members it keeps is not decided, so the comprehension runs as its
+    recurrence and the ordering's operand is its one symbolic item."""
     outcome = undecided_outcome(
         _fn("def A(limit):\n    return [x for x in [1, 2] if x > limit]\n")
     )
@@ -66,30 +74,26 @@ def test_undecidable_filtered_comprehension_is_typed_filter_guard():
         for atom in atoms_named(outcome, "python:compare.completes")
         for operation in atom.args
     }
-    assert compares == {("Gt", "x", "limit")}
+    assert compares == {("Gt", "python:loop.item", "limit")}
 
 
 def test_symbolic_comprehension_builds_coordinate():
-    t = _out("def A(xs):\n    return [x for x in xs]\n")
-    assert t.name == "py.listcomp"
-    assert t.args[0].name == "xs"
-
-
-if __name__ == "__main__":
-    test_identity_comprehension_is_the_display()
-    test_mapped_comprehension_folds_per_element()
-    test_tuple_target_comprehension_destructures()
-    test_composes_with_len()
-    test_undecidable_filtered_comprehension_stays_loud()
-    test_symbolic_comprehension_stays_loud()
-    test_comprehension_over_range_dissolves()
-    print("ok: the concrete comprehension dissolves to its display")
-
-
-def test_comprehension_over_range_dissolves():
-    # [x + 1 for x in range(3)] -> array(1, 2, 3). Also the regression for the
-    # borrowed-helper crash: ListComp borrows For's readers, and every internal
-    # call must be class-explicit (an unbound self._helper AttributeError'd on
-    # real pandas code, arrow/accessors.py).
-    t = _out("def A():\n    return [x + 1 for x in range(3)]\n")
-    assert t.name == "array" and [a.value for a in t.args] == [1, 2, 3]
+    """Over a formal: ``iter(xs)`` is stated, and every completed arm
+    returns the comprehension's own coordinate,
+    ``py.listcomp(<occurrence>, <evaluation key>)``, whose read owes."""
+    outcome = _fn("def A(xs):\n    return [x for x in xs]\n").sugar().desugar()
+    assert isinstance(outcome, ExitSet), outcome
+    terms = [
+        exit_.value.post().args[1]
+        for exit_ in outcome.normalize().exits
+        if isinstance(exit_, Completed)
+    ]
+    assert terms, outcome
+    for t in terms:
+        assert t.name == "py.listcomp"
+        assert [arg.name for arg in t.args] == [
+            "python:source-occurrence",
+            "python:occurrence",
+        ]
+    assert atoms_named(outcome, "python:iter_op.completes"), outcome
+    assert outcome.owed_items(), outcome
