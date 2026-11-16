@@ -1700,8 +1700,6 @@ def _in_a_comprehension(frame, node) -> bool:
     )
 
 
-_NESTED_COMPREHENSION_TEMPLATE = object()
-
 # Set in the scope a generator expression substitutes its conditions and
 # element in: a walrus there writes when the generator is consumed, not where
 # it is made (``NamedExpr.substitute`` marks it ``deferred``).
@@ -6193,95 +6191,6 @@ def _as_evaluation_of(node, sugar):
     return stamped
 
 
-def _iteration_copies(loop, index: int, statements) -> tuple:
-    """Iteration ``index`` of ``loop``: one occurrence copy per node.
-
-    The dissolved body shares node objects (and therefore spans and sugars)
-    across iterations; a copy per iteration is what lets each evaluation of a
-    site key its own opaque atoms (``shadow.OccurrenceShadowNode``).
-    """
-    from .shadow import as_occurrence, iteration_segment
-
-    segment = iteration_segment(loop, index)
-    return tuple(as_occurrence(statement, segment) for statement in statements)
-
-
-def _evaluates_code(node) -> bool:
-    """Whether evaluating ``node`` may run code: it holds a call or a
-    formatted value (an f-string part calls ``format``).  A member of an
-    iterable display that does is evaluated before the first item, in
-    order, by an unrolled ``for`` (``For._evaluated_before_the_first_item``)
-    and by a comprehension the unroll dissolves
-    (``ListComp._members_evaluated_first``) alike."""
-    return any(n.kind in ("Call", "FormattedValue") for n in node.walk())
-
-
-def _iteration_scope(loop, index: int, bindings, outer):
-    """The scope for substituting iteration ``index`` of ``loop``'s body:
-    ``bindings``, with that iteration's segment ahead of the segments
-    ``outer`` (the scope the loop itself was substituted in) already stood
-    for -- an inner loop's iteration inside this one."""
-    from .shadow import iteration_segment
-
-    return {
-        **bindings,
-        _EVALUATION_OCCURRENCE: (
-            iteration_segment(loop, index),
-            *outer.get(_EVALUATION_OCCURRENCE, ()),
-        ),
-    }
-
-
-def _item_threaded(statements, scope, item: "_Threaded"):
-    """``(scope, rebound)``: ``scope``, the state an item of an unrolled
-    loop begins in, threaded through the item's occurrence copies
-    (``_iteration_copies``, ``statements``) by the very bindings the block
-    took from the statements they copy (``item``, the ``_Threaded`` the
-    item's threading filled, one record per copy) and that it takes from
-    those same copies once the loop has dissolved
-    (``_substitute_body_tracked``, ``_spliced``): what was taken before
-    the first, then for each copy its own binding (or what was taken in
-    its place), each walrus's binding, what its operations may rebind by
-    the one exposure rule (``container_mutation.havoc_after``) -- a module
-    global a call rebinds through ``global``, a ``nonlocal`` cell, a name
-    bound to an object the code may reach -- keyed by the copy's own
-    evaluation (its iteration segment), and what was taken after it (a
-    nested unrolled loop's final target binding, a ``match`` capture, a
-    ``with`` or ``try`` body's net, a live loop's carried names): one rule,
-    ``_thread_taken``.  The state the next item begins in is this one: a
-    name the item binds or its call may rebind is read in the next item
-    (its body, its store targets) as the item left it, never as it stood
-    before the loop, and two items' rebindings are two evaluations.
-
-    ``rebound``: the names whose last change in the item is such a
-    rebinding, with what they read after it; a later binding of a name (a
-    walrus's, one taken after a statement) wins over it, as in the block
-    (``_rebind`` keeps a name the statement bound)."""
-    rebound = {}
-    if item.lead:
-        scope = {**scope, **item.lead}
-        for name in item.lead:
-            rebound.pop(name, None)
-    for statement, taken in zip(statements, item.taken, strict=True):
-        pre = scope
-        binding = (
-            taken.binding
-            if taken.binding is not None
-            else statement.substitution_binding(scope)
-        )
-        if binding:
-            scope = {**scope, **binding}
-            for name in binding:
-                rebound.pop(name, None)
-        scope, bound, rebinds = _thread_taken(
-            statement, pre, scope, taken, entries=False
-        )
-        for name in bound:
-            rebound.pop(name, None)
-        rebound.update(rebinds)
-    return scope, rebound
-
-
 def _exit_path_scope(clause_owner, path: str, bindings):
     """The scope for substituting ``clause_owner``'s ``finally`` for one exit
     path (``"completion"`` or ``"halt"``): ``bindings``, with that path's
@@ -7107,344 +7016,6 @@ def ground_subscript_key(node) -> "Optional[object]":
     if ground.kind == "Constant":
         return ground.value if type(ground.value) in (int, str) else None
     return For._concrete_int(ground, ground)
-
-
-def _object_read_in(reference, reads, scope) -> bool:
-    """Whether ``reads`` read a name that may reach the object ``reference``
-    denotes (``_object_names``).  A loop over a list unrolls through the
-    list's key only when its body cannot reach the list: Python iterates the
-    live list, so a body that appends to it changes how many items there
-    are."""
-    names, _identities = _object_names(reference, scope)
-    return any(
-        node.kind == "Name" and node.id in names
-        for root in reads
-        for node in root.walk()
-    )
-
-
-def _object_names(reference, scope) -> tuple:
-    """``(names, identities)``: the names that may reach the object
-    ``reference`` denotes -- the reference's own name, or any name ``scope``
-    binds to that object or to an object it was taken from -- and those
-    objects (``container_mutation._identity``, through each subscript
-    receiver), the object itself first."""
-    from .binding_state import unwrap_binding_state
-    from .container_mutation import _identity
-
-    identities = []
-    names = set()
-    node = reference
-    while isinstance(node, Node):
-        if node.kind == "EvaluationRef":
-            names.add(node.name)
-        identity = _identity(node)
-        identities.append(identity)
-        taken_from = getattr(identity, "kind", None) == "Subscript"
-        node = identity.value if taken_from else None
-    for name, state in scope.items():
-        if not isinstance(name, str):
-            continue
-        bound = _identity(unwrap_binding_state(state))
-        if any(bound is identity for identity in identities):
-            names.add(name)
-    return names, identities
-
-
-def _target_edge(node, field) -> bool:
-    """Whether ``node``'s ``field`` holds a store or delete target."""
-    if field == "target":
-        return isinstance(
-            node, (Assign, AnnAssign, AugAssign, For, AsyncFor, Comprehension, NamedExpr)
-        )
-    if field == "targets":
-        return isinstance(node, (Assign, Delete))
-    return field == "optional_vars" and isinstance(node, WithItem)
-
-
-def _runs_reaching_code(reads, scope, target=None) -> bool:
-    """Whether ``reads`` (a loop body, a comprehension's element and
-    conditions) may run code that reaches an object through something other
-    than a read of one of its names: a call that may run code over its
-    operands (``container_mutation.runs_operand_code``) or of a name
-    ``reads`` rebinds, a store or delete through an attribute or subscript,
-    a ``with`` (its manager's ``__enter__``/``__exit__``), a suspension
-    (``yield``, ``await``, ``async for``) where other code runs, a ``match``
-    (its patterns compare, read items and attributes, and check classes), a
-    class body or a decorator, or a ``raise`` of anything but a call (a
-    class it raises is instantiated).
-
-    A hidden call runs code too (``_dunder_operands``): an operator, a
-    comparison, a truth test, an attribute or item read, an f-string field,
-    an iteration, an unpacking or a hashed key dispatches a dunder of its
-    operands, and a dunder of a source class -- or a property, or
-    ``__getattr__`` -- is code.  It counts unless every operand is a builtin
-    value all the way down (``container_mutation.builtin_typed``): a
-    constant, a display or operator over builtin values, a builtin call
-    that returns one, an item of the ground list ``target`` iterates, or a
-    name ``scope`` binds to a builtin value; a name ``reads`` rebinds is
-    none of these."""
-    from .container_mutation import _state, builtin_typed, runs_operand_code
-
-    roots = [root for root in reads if isinstance(root, Node)]
-    rebound = frozenset().union(*(root.names_bound_within() for root in roots))
-    items = frozenset(_target_bound_names(target)) if target is not None else ()
-    names = set()
-    if "*" not in rebound:
-        seen = set()
-        for root in roots:
-            for node in root.walk():
-                if not isinstance(node, Name) or node.id in seen:
-                    continue
-                seen.add(node.id)
-                if node.id in rebound:
-                    continue
-                if node.id in items or (
-                    node.id in scope and builtin_typed(_state(scope[node.id]), scope)
-                ):
-                    names.add(node.id)
-    names = frozenset(names)
-
-    # Each node once per way it is reached (as a store target or not): the
-    # reads are a DAG of shared nodes (``Node.walk``), and what a node
-    # answers, and hands its children, is decided by the node and that flag.
-    asked: set = set()
-    stack = [(root, False) for root in roots]
-    while stack:
-        node, store = stack.pop()
-        if (id(node), store) in asked:
-            continue
-        asked.add((id(node), store))
-        if isinstance(node, Call) and (
-            runs_operand_code(node, scope)
-            or (isinstance(node.func, Name) and node.func.id in rebound)
-        ):
-            return True
-        if isinstance(
-            node,
-            (Yield, YieldFrom, Await, With, AsyncWith, AsyncFor, Match, ClassDef),
-        ):
-            return True
-        if isinstance(node, (FunctionDef, AsyncFunctionDef)) and node.decorators:
-            return True
-        if isinstance(node, Raise) and any(
-            part is not None and not isinstance(part, Call)
-            for part in (node.exc, node.cause)
-        ):
-            return True
-        if store and isinstance(node, (Attribute, Subscript)):
-            return True
-        if not all(
-            builtin_typed(operand, scope, names=names)
-            for operand in _dunder_operands(node, store)
-        ):
-            return True
-        unpacks = store and isinstance(node, (Tuple_, List, Starred))
-        for field, _index, child in node._child_edges():
-            if isinstance(child, Node):
-                stack.append((child, unpacks or _target_edge(node, field)))
-    return False
-
-
-def _dunder_operands(node, store) -> tuple:
-    """The operands whose dunders ``node`` dispatches when it runs: an
-    operator's, a comparison's (but ``is``/``is not``), a truth test's, an
-    attribute or item read's receiver and index, an f-string field's value,
-    an iteration's or unpacking's iterable, a hashed key.  A store target
-    reads nothing (an attribute or subscript store is code already)."""
-    if store:
-        return ()
-    if isinstance(node, BinOp):
-        return (node.left, node.right)
-    if isinstance(node, UnaryOp):
-        return (node.operand,)
-    if isinstance(node, BoolOp):
-        return tuple(node.values)
-    if isinstance(node, Compare):
-        operands = (node.left, *node.comparators)
-        return tuple(
-            operand
-            for index, op in enumerate(node.ops)
-            if op.kind not in ("Is", "IsNot")
-            for operand in operands[index : index + 2]
-        )
-    if isinstance(node, Attribute):
-        return (node.value,)
-    if isinstance(node, Subscript):
-        return (node.value, node.slice_)
-    if isinstance(node, FormattedValue):
-        return (node.value,)
-    if isinstance(node, (If, While, IfExp, Assert)):
-        return (node.test,)
-    if isinstance(node, For):
-        return (node.iter,)
-    if isinstance(node, Comprehension):
-        return (node.iter, *node.ifs)
-    if isinstance(node, Assign):
-        unpacked = any(
-            isinstance(target, (Tuple_, List, Starred)) for target in node.targets
-        )
-        return (node.value,) if unpacked else ()
-    if isinstance(node, AugAssign):
-        return (node.target, node.value)
-    if isinstance(node, Starred):
-        return (node.value,)
-    if isinstance(node, Dict):
-        return tuple(
-            item.value if item.key is None else item.key for item in node.items
-        )
-    if isinstance(node, Set):
-        return tuple(node.elts)
-    if isinstance(node, SetComp):
-        return (node.elt,)
-    if isinstance(node, DictComp):
-        return (node.key,)
-    return ()
-
-
-def _list_escapes(loop, reference, ground, scope) -> bool:
-    """Whether the list ``reference`` denotes may be reached by code other
-    than a read of one of its names (``_object_names``) while ``loop``
-    iterates it: between its binding and the loop (through the end of any
-    loop enclosing ``loop``, which runs it again) it is stored anywhere but
-    a local name, handed to any call, or unpacked; or a nested scope (a def,
-    lambda, class or generator expression) reads or declares one of its
-    names; or one of its names is declared ``global``/``nonlocal``.  A read
-    of it as a method's receiver, an item store or delete target, a test, a
-    statement or a returned value hands it to nobody; an item read or an
-    iteration over it hands an item, which is the list's only when the list
-    holds nothing but constants.
-
-    Read from the source tree of ``loop``'s unit, in the innermost function
-    that holds ``loop`` (else the module).  A list bound in another unit or
-    another scope escapes: nothing decides who else holds it.  A unit with
-    no typed module refuses by name (``SourceUnit._require_typed_module``)."""
-    names, identities = _object_names(reference, scope)
-    unit = loop.unit
-    module = unit._require_typed_module("nodes._list_escapes", blame=loop.fragment)
-    here = getattr(loop, "span", None)
-    spans = [getattr(identity, "span", None) for identity in identities]
-    if here is None or any(span is None for span in spans):
-        return True
-    source = getattr(unit, "source_cid", None)
-    if any(
-        getattr(getattr(identity, "unit", None), "source_cid", None) != source
-        for identity in identities
-    ):
-        return True
-    owner = module
-    for function in getattr(unit, "function_nodes", None) or ():
-        span = function.span
-        if span.start <= here.start and here.end <= span.end and (
-            owner is module or span.start >= owner.span.start
-        ):
-            owner = function
-    if owner is not module and not all(
-        owner.span.start <= span.start and span.end <= owner.span.end
-        for span in spans
-    ):
-        return True
-    first = min(span.start for span in spans)
-    end = here.start
-    parents: dict = {}
-    uses = []
-    captured: set = set()
-    stack = [owner]
-    while stack:
-        node = stack.pop()
-        span = node.span
-        if node is not owner and isinstance(
-            node, (Lambda, FunctionDef, AsyncFunctionDef, ClassDef, GeneratorExp)
-        ):
-            if any(span.start <= held.start and held.end <= span.end for held in spans):
-                return True
-            for inner in node.walk():
-                if isinstance(inner, Name):
-                    captured.add(inner.id)
-                elif isinstance(inner, (Global, Nonlocal)):
-                    captured.update(inner.names)
-            continue
-        if (
-            isinstance(node, (For, AsyncFor, While, ListComp, SetComp, DictComp))
-            and span.start <= here.start
-            and here.end <= span.end
-            and (span.start, span.end) != (here.start, here.end)
-        ):
-            end = max(end, span.end)
-        if isinstance(node, (Global, Nonlocal)):
-            captured.update(node.names)
-        elif isinstance(node, Name):
-            uses.append(node)
-        for field, _index, child in node._child_edges():
-            if isinstance(child, Node):
-                parents[id(child)] = (node, field)
-                stack.append(child)
-    plain = len(identities) == 1 and all(
-        element.kind == "Constant" for element in ground.elts
-    )
-    names = set(names)
-    while True:
-        if names & captured:
-            return True
-        grown: set = set()
-        for use in uses:
-            if use.id not in names or not first <= use.span.start < end:
-                continue
-            bound = _list_use(use, parents, plain)
-            if bound is None:
-                return True
-            grown |= bound - names
-        if not grown:
-            return False
-        names |= grown
-
-
-def _list_use(use, parents, plain) -> "Optional[set]":
-    """``None`` when this read of a name of a list (``_list_escapes``) may
-    hand the list to other code; else the local names it binds the list to
-    (``ys = xs``), empty when it binds none."""
-    node, in_display = use, False
-    while True:
-        parent, field = parents.get(id(node), (None, None))
-        if parent is None:
-            return None
-        if isinstance(parent, (List, Tuple_, Set, Dict, Starred)):
-            node, in_display = parent, True
-            continue
-        if _target_edge(parent, field):
-            return set()
-        if in_display:
-            return None
-        if isinstance(parent, (BoolOp, IfExp)) and field != "test":
-            node = parent
-            continue
-        break
-    if isinstance(parent, Attribute):
-        holder, holder_field = parents.get(id(parent), (None, None))
-        return set() if isinstance(holder, Call) and holder_field == "func" else None
-    if isinstance(parent, Subscript):
-        if field != "value":
-            return None
-        item = parent
-        holder, holder_field = parents.get(id(item), (None, None))
-        while isinstance(holder, (List, Tuple_, Starred)):
-            item = holder
-            holder, holder_field = parents.get(id(item), (None, None))
-        if holder is not None and _target_edge(holder, holder_field):
-            return set()
-        return set() if plain else None
-    if isinstance(parent, (For, AsyncFor, Comprehension)) and field == "iter":
-        return set() if plain else None
-    if isinstance(parent, (Assign, AnnAssign)) and field == "value":
-        targets = parent.targets if isinstance(parent, Assign) else (parent.target,)
-        if all(isinstance(target, Name) for target in targets):
-            return {target.id for target in targets}
-        return None
-    if isinstance(parent, (If, While, IfExp, Assert)) and field == "test":
-        return set()
-    if isinstance(parent, (UnaryOp, Expr, Return)):
-        return set()
-    return None
 
 
 def final_member_coordinate(member_coordinate: str) -> str:
@@ -14648,17 +14219,6 @@ def _store_member_key(evaluation: str, ordinal: int) -> str:
     return projection_key(evaluation, f"<member {ordinal}>")
 
 
-def _item_evaluation_key(evaluation: str) -> str:
-    """The key an unrolled ``for`` holds an item's element under, evaluated
-    before the first item (``For._item_evaluated_apart``): the item's
-    projection of its unpack's own evaluation ``evaluation``, which no
-    target's projection (a source name) can spell.  The item's unpack reads
-    the element there (``EvaluationRef``); no name is bound to it."""
-    from sugar_lift_py_tests.temporal.temporal_context import projection_key
-
-    return projection_key(evaluation, "<item>")
-
-
 def _store_statement_key(evaluation: str, ordinal: int) -> str:
     """The evaluation key of the ``ordinal``-th store target's own statement
     (``Assign._store_target_statement``): what that store binds, which every
@@ -17211,6 +16771,17 @@ class TypeAlias(Statement):
         return None
 
 
+# The one unroll budget of a loop's one mechanism (#7757 new 6): the
+# reduction runs a loop's or a comprehension's items one by one only where it
+# holds every member of the iterable and there are no more than this many
+# (``iterator_operation.in_hand_iterable``, ``within_unroll_budget``), and
+# runs it as its recurrence otherwise; a ``while`` whose test has not
+# decided false within this many items, or a ``for`` whose iterator yields a
+# member past it, is refused by name (``LoopRecurrenceSugar``).  Not a
+# semantic limit: no rewrite unrolls a loop.
+LOOP_UNROLL_BUDGET = 128
+
+
 class For(Statement):
     _bound_target_fields = ("target",)
     target: Expression
@@ -17220,20 +16791,16 @@ class For(Statement):
     _child_fields = ("target", "iter", "body", "orelse")
 
     def substitute(self, scope):
-        """`for <target> in <iter>: <body>` -- a loop is a FOLD, and over a
-        CONCRETE iterable it DISSOLVES: the fold has known length, so it unrolls.
-        The body is threaded once per element (the target rebound to that
-        element, every loop-carried variable threaded forward exactly as a
-        straight-line block threads its assignments -- `t = t + x` reads the
-        previous iteration's t), and the unrolled statements are SPLICED into the
-        enclosing block via ``_Splice``. The `for` node itself is gone; its
-        carried accumulator is now just block-threading over the unrolled
-        sequence, and there is no loop-sugar left to write.
-
-        A SYMBOLIC iterable is the real fold (carried variables become fold terms,
-        the body a universal `forall x in iter`); it is not lifted yet, so it
-        keeps the `for` node (masking the target) and inherits the loud
-        SugarNotWritten. `else` and a tuple target likewise stay loud."""
+        """`for <target> in <iter>: <body>` -- a loop is a FOLD, rewritten once
+        for its one mechanism: the live loop's recurrence
+        (``live_loop_construction.construct_live_loop_recurrence``,
+        ``LoopRecurrenceSugar``).  The rewrite never decides the iterable or
+        unrolls the loop: whether the items run one by one (an iterable the
+        reduction holds every member of, within the unroll budget,
+        ``LOOP_UNROLL_BUDGET``) or as the recurrence (anything else) is the
+        reduction's decision, step 6 (#7757 new 6).  Here the target and every
+        loop-carried name are masked, each read through the loop header's
+        evaluation of it, so the body reads what the item began with."""
         from sugar_lift_py_tests.engine_log import reduction_span
 
         from .shadow import rewrite
@@ -17250,18 +16817,14 @@ class For(Statement):
             # and an object its calls, or the iteration of its value
             # (``__iter__``, ``__next__``), changed is read as they left it
             # (``container_mutation.thread_header``).
-            entry = scope
             scope = self._header_scope(scope, subst_iter)
 
-            # `else` is unrollable too: the jump-guard means no `break` exists, and
-            # with no break the else ALWAYS runs -- it is just more block, spliced
-            # after the unrolled iterations.
             if not SourceUnit._owns_binding_leaf(self.target):
                 # ``for d[k] in ...`` / ``for o.f in ...``: each item stores
                 # through the target (``__setitem__`` / ``__setattr__``) and
                 # binds no name, so the target has no pattern
-                # (``target_pattern_enrollment``: no binding leaf) for either
-                # path below to read.  Refused by name here, never the
+                # (``target_pattern_enrollment``: no binding leaf) for the
+                # loop below to read.  Refused by name here, never the
                 # pattern table's lookup miss.
                 raise SugarNotWritten(
                     owner="For.substitute",
@@ -17276,181 +16839,12 @@ class For(Statement):
                         "attribute target; until then the loop stays loud"
                     ),
                 )
-            concrete = self.target.kind in ("Name", "Tuple", "List")
-            with reduction_span(
-                sugar="For.concrete_elements", role="temporal", site=where
-            ):
-                elements = (
-                    self._concrete_elements(subst_iter, self.body, scope, self.target)
-                    if concrete
-                    else None
-                )
-            if elements is not None and len(elements) > self._UNROLL_FUEL:
-                elements = None  # past the unroll budget: the fold/universal stands
-            if elements is not None:
-                with reduction_span(sugar="For.unroll", role="temporal", site=where):
-                    target_pattern = self.unit.require_target_pattern(self, self.target)
-                    bindings = [target_pattern.bindings_for(e) for e in elements]
-                    unpacks, bindings = self._iteration_unpacks(
-                        elements, bindings, scope
-                    )
-                    # The iterable is evaluated before the first item: an
-                    # item's call runs there, whatever the items after it do.
-                    hoisted, unpacks = self._evaluated_before_the_first_item(
-                        elements, unpacks
-                    )
-                    if all(b is not None for b in bindings):
-                        if self._body_has_owned_loop_control():
-                            abandoned: list = []
-                            controlled = self._unroll_concrete_controlled(
-                                bindings, scope, unpacks, abandoned
-                            )
-                            if controlled is not None:
-                                items, final_bindings = controlled
-                                For._answer_unevaluated_body(self, elements)
-                                spliced = _Threaded(
-                                    (
-                                        *self._iterable_evaluated(subst_iter),
-                                        *hoisted,
-                                    )
-                                )
-                                spliced.extend(items)
-                                return _Splice(
-                                    tuple(spliced.statements),
-                                    final_bindings,
-                                    threaded=spliced,
-                                )
-                            # A symbolic guard owns a jump.  It cannot be selected
-                            # by concrete unrolling and must remain a real loop
-                            # below.  What the abandoned unroll made answers
-                            # where it was made (``_answer_abandoned_unroll``).
-                            For._answer_abandoned_unroll(
-                                self,
-                                subst_iter,
-                                (
-                                    *hoisted,
-                                    *(u for u in unpacks if u is not None),
-                                    *abandoned,
-                                ),
-                            )
-                            elements = None
-                    if elements is not None and all(b is not None for b in bindings):
-                        For._answer_unevaluated_body(self, elements)
-                        target_names = set(target_pattern.names)
-                        unrolled = _Threaded(
-                            (
-                                *self._iterable_evaluated(subst_iter),
-                                *hoisted,
-                            )
-                        )
-                        carried = dict(
-                            scope
-                        )  # carries loop variables across iterations
-                        final_target_bindings = None
-                        # The names a halt inside an item may carry changed.
-                        halt_names: set = set()
-                        for index, element_bindings in enumerate(bindings):
-                            final_target_bindings = element_bindings
-                            unpack = self._item_unpack(
-                                unpacks[index], index, carried, scope
-                            )
-                            iter_scope = _iteration_scope(
-                                self, index, {**carried, **element_bindings}, scope
-                            )
-                            item_edges: list = []
-                            item = _Threaded()
-                            _new_body, _c, item_net = self._substitute_body_tracked(
-                                self.body,
-                                iter_scope,
-                                edge_states=item_edges,
-                                threaded=item,
-                            )
-                            halt_names |= _loop_item_halt_names(
-                                self, scope, iter_scope, item_edges, item_net
-                            )
-                            if unpack is not None:
-                                # The iteration's unpack of its item opens it.
-                                item = item.prefixed(unpack)
-                            # Each iteration is its own evaluation of the body.
-                            new_body = _iteration_copies(self, index, item.statements)
-                            unrolled.extend(item, new_body)
-                            # thread this iteration's bindings forward (the
-                            # carried fold) -- every one the block took from
-                            # the statements the copies copy -- and what its
-                            # operations may rebind (``_item_threaded``),
-                            # never the loop target's own names (rebound
-                            # next iteration).
-                            iter_scope, _rebound = _item_threaded(
-                                new_body, iter_scope, item
-                            )
-                            carried = {
-                                k: v
-                                for k, v in iter_scope.items()
-                                if k not in target_names
-                            }
-                        if self.orelse:
-                            else_scope = (
-                                {**carried, **final_target_bindings}
-                                if final_target_bindings is not None
-                                else carried
-                            )
-                            # The else runs once, outside every iteration.
-                            else_scope = {
-                                **else_scope,
-                                _EVALUATION_OCCURRENCE: scope.get(
-                                    _EVALUATION_OCCURRENCE, ()
-                                ),
-                            }
-                            else_edges: list = []
-                            else_threaded = _Threaded()
-                            _else_body, _c, else_net = self._substitute_body_tracked(
-                                self.orelse,
-                                else_scope,
-                                edge_states=else_edges,
-                                threaded=else_threaded,
-                            )
-                            halt_names |= _loop_item_halt_names(
-                                self, scope, else_scope, else_edges, else_net
-                            )
-                            unrolled.extend(else_threaded)
-                        return _Splice(
-                            tuple(unrolled.statements),
-                            final_target_bindings,
-                            _compound_halt_state(
-                                self, entry, scope, (), unknown=frozenset(halt_names)
-                            ),
-                            _header_halt_state(self, entry, scope),
-                            threaded=unrolled,
-                        )
-                if elements is not None:
-                    # A concrete iterable whose display element the target did
-                    # not destructure -- an arity or nesting the display does
-                    # not match -- is a runtime binding error, never a symbolic
-                    # universal. It stays loud. (A non-display element is
-                    # unpacked by its iteration's keyed unpack,
-                    # ``_iteration_unpacks``; the symbolic-jump case set
-                    # `elements = None` above and falls through.)
-                    raise SugarNotWritten(
-                        owner="For.substitute",
-                        blame=self.target.fragment,
-                        observed=(
-                            f"concrete for-loop target {self.target.kind} does not "
-                            "destructure its elements"
-                        ),
-                        requested="a target that binds every concrete element by name",
-                        fix=(
-                            "use a Name or a flat tuple/list of Names matching the "
-                            "element arity; a starred, nested, or arity-mismatched "
-                            "target stays loud until its destructuring is written"
-                        ),
-                    )
-
-            # Symbolic (or unsupported) loop: keep the node, mask the target AND
+            # The loop: keep the node, mask the target AND
             # every loop-carried variable (a name the body rebinds), recurse.
             # Masking the carried names keeps the update SYMBOLIC in the body
             # (`total = total + x` stays, not `total = 0 + x`) so
             # substitution_binding can read the fold; the pre-loop value seeds
-            # it from the outer scope. A symbolic loop is not a dead unroll --
+            # it from the outer scope. The loop is not unrolled here --
             # it is the universal / fold over the hole.
             #
             # In the body a carried name (one the body rebinds whose header has
@@ -17563,30 +16957,6 @@ class For(Statement):
                 _answered_where_minted(
                     getattr(self, field), suite, last_suites[field][0]
                 )
-
-    def _answer_abandoned_unroll(self, subst_iter, abandoned) -> None:
-        """Answer the roll for what an abandoned concrete unroll made.
-
-        A concrete loop whose body owns a ``break`` or ``continue`` under a
-        guard no ground value decides (``for x in [...]: if x in s:
-        break``) is not unrolled: ``_unroll_concrete_controlled`` gives up at
-        that guard and the loop stays a live loop, substituted afresh below.
-        What the attempt made first -- each item's keyed store of its item
-        (``<target> = <element>`` at the loop's span,
-        ``_iteration_unpacks``), the stores and evaluations moved before the
-        first item (``_evaluated_before_the_first_item``), the items and the
-        guard it substituted before it gave up -- is built by nothing.
-        Minting registered it, so it answers here, as a discarded round of a
-        live loop's substitution does (``_answer_discarded_rounds``,
-        ``container_mutation._answered_where_minted``).  A source node of
-        the loop, and the iterable the live loop keeps, answer where the
-        loop is built, built or refused (``style_render.py:2534``,
-        ``tests/indexes/test_common.py:61``, #7757)."""
-        from .container_mutation import _answered_where_minted
-
-        _answered_where_minted(
-            (self.target, subst_iter, *self.body, *self.orelse), abandoned
-        )
 
     def _header_scope(self, scope, subst_iter):
         """The state after the loop's header, ``subst_iter`` (the iterable
@@ -17721,568 +17091,6 @@ class For(Statement):
         sealed; it is never weakened to a universal or an inert pseudo-fold."""
         return super()._construct_sugar()
 
-    def _body_has_loop_control(self) -> bool:
-        """True when any `break`/`continue` appears anywhere in the body. The
-        plain unroll repeats the body verbatim, which would duplicate the jump
-        and silently mis-thread the carried state -- a break is the last hole
-        being filled, and the unroll must not fake past it. Conservative on
-        purpose (a nested loop's own jumps also block): over-blocking falls to
-        the symbolic branch (loud), never to a wrong unroll."""
-        return any(
-            ("break" in stmt.segment() or "continue" in stmt.segment())
-            and any(n.kind in ("Break", "Continue") for n in stmt.walk())
-            for stmt in self.body
-        )
-
-    def _body_has_owned_loop_control(self) -> bool:
-        target_cid = self.owned_loop_target.target_cid
-        return any(
-            node.kind in ("Break", "Continue")
-            and node.control_context.nearest_loop_target().target_cid == target_cid
-            for statement in self.body
-            for node in statement.walk()
-        )
-
-    def _iteration_unpacks(self, elements, bindings, scope):
-        """``for y in [x]``, ``for a, b in [p, q]``: each iteration's binding
-        of its item.
-
-        Every iteration opens with ``<target> = <element>``, keyed as that
-        iteration's own evaluation (``_iteration_scope``, as #7886 keys ``x
-        += e``), and each target name binds to a reference to its projection
-        of that evaluation (temporal choice 1, #7661;
-        ``Assign.target_evaluations``) -- never the element inlined at each
-        read of the name, which read ``x`` again wherever ``y`` was read,
-        after the body had rebound it (``for y in [x]: x = 9; r = y``).  A
-        display element is paired by the assignment's own display unpack
-        (``MultiAssignSugar``); any other element (a name, a call, a constant)
-        is evaluated once and unpacked (``DynamicUnpackAssignSugar``).  The
-        assignment's sugar binds each target under its projection at reduce.
-
-        The element is already substituted (the iterable was evaluated once,
-        before the loop), so the store is keyed, not substituted again: a
-        later iteration's rebinding never reaches an earlier element.
-
-        Returns ``(unpacks, bindings)``: per iteration, the keyed store (or
-        None) and the target bindings (None where a display did not
-        destructure, which stays loud).
-        """
-        from .shadow import rewrite_with_leaves
-
-        unpacks = []
-        resolved = []
-        destructures = self.target.kind in ("Tuple", "List")
-        for index, (element, binding) in enumerate(
-            zip(elements, bindings, strict=True)
-        ):
-            # A display that did not destructure stays loud.  (A ``*xs``
-            # member never reaches here: ``_concrete_elements`` leaves its
-            # display live.)
-            if destructures and binding is None and element.kind in ("Tuple", "List"):
-                unpacks.append(None)
-                resolved.append(binding)
-                continue
-            iteration = _iteration_scope(self, index, scope, scope)
-            store = self._make_assign(self.target, element)
-            store = rewrite_with_leaves(
-                store,
-                {
-                    "evaluation": store._evaluation_key(iteration),
-                    "evaluation_exit_path": store._evaluation_exit_path(iteration),
-                },
-            )
-            unpacks.append(store)
-            resolved.append(store.substitution_binding(iteration))
-        return tuple(unpacks), resolved
-
-    def _item_unpack(self, unpack, index, carried, scope):
-        """Item ``index``'s keyed unpack of its item (``_iteration_unpacks``,
-        None where there is none), its store targets read where Python
-        reads them: ``carried`` the state the item begins in (what the
-        items before it left), ``scope`` the loop's.
-
-        Per item Python takes the next value of the iterator, then reads
-        each target's receiver and key, left to right, then stores (code:
-        ``__setitem__``, ``__setattr__``).  An unrolled iterable is a
-        display, a ``range`` or a ground list: its iterator is a builtin
-        one and runs no code, and its members were evaluated before the
-        first item (``_evaluated_before_the_first_item``).  So a store
-        target (``for d[G], x in [p, q]``) is read in the state its item
-        begins in, by the one door every store target takes
-        (``Assign._substituted_store_targets``: ``_substituted_store_target_parts``,
-        ``_scope_after_store_target``, ``_scope_after``'s ``rebinds``):
-        a name code an earlier target or store runs may rebind is read in a
-        later target as another evaluation.  Before, the unpack was keyed
-        and never substituted: its store targets read their names by no
-        state of the item at all.  A target of names alone has nothing to
-        read: the unpack is unchanged."""
-        if unpack is None or not _has_store_leaf(self.target):
-            return unpack
-        return unpack._substituted_store_targets(
-            unpack.value, _iteration_scope(self, index, carried, scope)
-        )
-
-    def _evaluated_before_the_first_item(self, elements, unpacks):
-        """``(hoisted, unpacks)``: Python evaluates the iterable -- every
-        member of its display -- once, before the first item.  An
-        iteration's keyed store of its item (``_iteration_unpacks``) whose
-        element makes a call is moved before the first item, as that
-        iteration's own occurrence copy (``_iteration_copies``): the call's
-        caller-visible effects -- a callee's stores, its halt -- happen
-        there, in order, before the first item's body runs, and an earlier
-        item's ``break``, ``return`` or raise never drops them.  Each item
-        still reads its own key, so moving the store changes no read.
-
-        A store that unpacks a non-display element into several targets
-        after the first item is parted (``_item_evaluated_apart``): the
-        element's evaluation moves before the first item, whatever the
-        item's shape, and the unpack of that evaluation (a ``ValueError`` on
-        the wrong arity) stays where that item is taken, never before an
-        earlier item's body.  A target with a store leaf (``for d[G], x in
-        [f(), g()]``) is parted at the first item too: Python evaluates
-        every member before the first item reads its targets and stores
-        into them, so the store stays where its item is taken, after
-        ``g()``, and reads its targets there (``_item_unpack``).
-        ``unpacks`` holds None where the store was moved, and the unpack
-        alone where it was parted."""
-        hoisted = []
-        kept = []
-        stores = _has_store_leaf(self.target)
-        for index, (element, unpack) in enumerate(
-            zip(elements, unpacks, strict=True)
-        ):
-            if unpack is None or not _evaluates_code(element):
-                kept.append(unpack)
-            elif (
-                (index == 0 and not stores)
-                or self.target.kind == "Name"
-                or element.kind in ("Tuple", "List")
-            ):
-                hoisted.extend(_iteration_copies(self, index, (unpack,)))
-                kept.append(None)
-            else:
-                evaluated, unpacked = self._item_evaluated_apart(unpack, element)
-                hoisted.extend(_iteration_copies(self, index, (evaluated,)))
-                kept.append(unpacked)
-        return tuple(hoisted), tuple(kept)
-
-    def _answer_unevaluated_body(self, elements) -> None:
-        """An unrolled loop over an empty iterable (``for x in range(0)``,
-        ``for k in []``): Python evaluates no item, so the body and the
-        target are never evaluated, and the unroll substitutes neither.
-        Every node of them answers with the loop, as a structural part does
-        (``discharge_by_substitution``), as a comprehension's template the
-        unroll never evaluates answers with its display
-        (``ListComp._dissolved_iterable``).  Nothing is evaluated there, so
-        no evaluation is dropped.  The ``else`` runs and answers for
-        itself.  Nothing where there is an item."""
-        if elements:
-            return
-        for root in (self.target, *self.body):
-            for node in root.walk():
-                node.discharge_by_substitution()
-
-    def _iterable_evaluated(self, iterable) -> tuple:
-        """The statements an unrolled loop opens with for its iterable
-        (``iterable``, substituted), which Python evaluates once, before the
-        first item, and the unroll consumes by its ground value
-        (``_concrete_elements``).
-
-        A ``range(...)`` call of ground ints is evaluated there as the
-        statement it is in that position (``Expr``, the loop's own
-        occurrence, ``shadow.recast``): its value is discarded -- each item
-        is the int it yields -- and every face of it is the loop's.  Before,
-        nothing built the call: a dropped evaluation.
-
-        A list or tuple display is consumed member by member: each member is
-        evaluated once, before the first item where it calls
-        (``_evaluated_before_the_first_item``), and bound to the target as
-        its item; the display is never built as a whole.  That consumption
-        is its discharge, as an unpack's display is its statement's
-        (``Assign._unpacked_displays``); its members answer for themselves.
-
-        A read of a name bound to a ground display is read by every item
-        (``_item_of``) and needs nothing here.
-
-        What is evaluated is the one unroll step a ``for`` and a
-        comprehension share (``_iterable_evaluations``); a ``for`` places
-        each evaluation as a statement before its first item.  One whose
-        value an item reads through its key (a member of a dissolved
-        comprehension's display iterable, ``ListComp.
-        _members_evaluated_first``) is held under that key, binding no name
-        (``Expr._construct_sugar``), as an item's own evaluation is
-        (``_item_evaluated_apart``)."""
-        from .backend import Child, Leaf
-        from .shadow import _handle_of, _shadow_of
-
-        statements = []
-        for evaluation, key in For._iterable_evaluations(self, iterable):
-            slots = (("value", Child(_handle_of(evaluation))),)
-            if key is not None:
-                slots = (*slots, ("evaluation", Leaf(key)))
-            statements.append(_shadow_of(self, "Expr", slots))
-        return tuple(statements)
-
-    def _iterable_evaluations(self, iterable) -> tuple:
-        """What of an unrolled iterable (``iterable``, substituted) Python
-        evaluates once, before the first item -- the one step a ``for``
-        (``_iterable_evaluated``) and a comprehension the unroll dissolves
-        into a display (``ListComp._dissolved_iterable``) take before
-        their items -- as ``(evaluation, key)`` pairs: ``key`` is the one
-        an item reads the evaluation's value under, or None where no item
-        reads it.
-
-        A ``range(...)`` call of ground ints is evaluated whole: its value
-        is consumed by the unroll (each item is the int it yields), and
-        every face of it -- a halt, a callee's stores -- is the
-        evaluation's.  A list or tuple display is consumed member by member
-        and never built whole (its discharge is the consumption); what a
-        display that a dissolved comprehension made carries to evaluate
-        first (``iterable_evaluations``, ``ListComp._carried_evaluations``)
-        is evaluated here in its place, with the keys its members read.  A
-        read of a name bound to a ground display is read by every item
-        (``_item_of``): nothing."""
-        if iterable.kind in ("List", "Tuple"):
-            iterable.discharge_by_substitution()
-            return ListComp._carried_evaluations(iterable)
-        if iterable.kind == "Call":
-            return ((iterable, None),)
-        return ()
-
-    def _item_evaluated_apart(self, unpack, element):
-        """``(evaluated, unpacked)``: an iteration's keyed unpack of its item
-        (``unpack``: ``<target> = <element>``) parted in two.
-        ``evaluated`` is ``element`` in statement position, evaluated once
-        and held under the item's evaluation key -- its projection of the
-        unpack's own key (``Statement._evaluation_key``,
-        ``_item_evaluation_key``), which no target's projection can be --
-        binding no name (``Expr._construct_sugar``); ``unpacked`` is the
-        unpack with ``element`` read through that key (``EvaluationRef``),
-        the statement's own key kept, so every read of a target is
-        unchanged.  The iterable is evaluated before the first item and each
-        item is unpacked as it is taken: ``evaluated`` runs there,
-        ``unpacked`` here, and the element is never evaluated twice."""
-        from .backend import Child, Leaf, materialize
-        from .shadow import ShadowNode, _handle_of, rewrite_with_leaves
-
-        evaluation = _item_evaluation_key(unpack.evaluation)
-        exit_path = getattr(unpack, "evaluation_exit_path", None)
-        exit_path = exit_path if isinstance(exit_path, tuple) else ()
-        evaluated = materialize(
-            self.unit,
-            ShadowNode(
-                "Expr",
-                self.span,
-                (
-                    ("value", Child(_handle_of(element))),
-                    ("evaluation", Leaf(evaluation)),
-                    ("evaluation_exit_path", Leaf(exit_path)),
-                ),
-            ),
-            self.reporter,
-        )
-        read = _evaluation_ref(self, element.span, evaluation, "<item>", of=element)
-        unpacked = rewrite_with_leaves(
-            self._make_assign(self.target, read),
-            {"evaluation": unpack.evaluation, "evaluation_exit_path": exit_path},
-        )
-        return evaluated, unpacked
-
-    def _unroll_concrete_controlled(self, bindings, scope, unpacks=None, minted=None):
-        """Exact AST-local execution of bounded jump-bearing loop structure.
-
-        Only literal-decidable branch guards are selected.  A symbolic guard
-        returns ``None`` so the source loop remains typed and loud/opaque.
-        ``unpacks`` (``_iteration_unpacks``) opens each iteration with its
-        keyed binding of its item.  Where it gives up, what it made before
-        is put on ``minted`` (``_answer_abandoned_unroll``).
-
-        Returns ``(unrolled, final_target_bindings)``: ``unrolled``, the
-        items' copies and the ``else`` as threaded (``_Threaded``), what was
-        taken from each statement kept for the block the splice reaches.
-        """
-        unrolled = _Threaded()
-        carried = dict(scope)
-        final_target_bindings = None
-        broke = False
-        for index, element_bindings in enumerate(bindings):
-            final_target_bindings = element_bindings
-            unpack = self._item_unpack(
-                None if unpacks is None else unpacks[index], index, carried, scope
-            )
-            start = _iteration_scope(
-                self, index, {**carried, **element_bindings}, scope
-            )
-            item = _Threaded()
-            reduced = self._substitute_controlled_suite(
-                self.body, start, minted, threaded=item
-            )
-            if reduced is None:
-                if minted is not None:
-                    minted.extend(unrolled.statements)
-                    if unpack is not None:
-                        minted.append(unpack)
-                return None
-            _statements, iteration, action = reduced
-            if unpack is not None:
-                item = item.prefixed(unpack)
-            copies = _iteration_copies(self, index, item.statements)
-            unrolled.extend(item, copies)
-            # What the item's operations may rebind is carried as the copies
-            # left it, keyed by this item's evaluation (``_item_threaded``),
-            # never as the suite's untagged threading did.
-            _threaded, rebound = _item_threaded(copies, start, item)
-            target_names = set(
-                self.unit.require_target_pattern(self, self.target).names
-            )
-            carried = {
-                key: value
-                for key, value in {**iteration, **rebound}.items()
-                if key not in target_names
-            }
-            if action == "break":
-                broke = True
-                break
-            # continue and fallthrough both advance to the next concrete item;
-            # the controlled suite already omitted the skipped tail.
-        if not broke and self.orelse:
-            else_scope = (
-                {**carried, **final_target_bindings}
-                if final_target_bindings is not None
-                else carried
-            )
-            # The else runs once, outside every iteration.
-            else_scope = {
-                **else_scope,
-                _EVALUATION_OCCURRENCE: scope.get(_EVALUATION_OCCURRENCE, ()),
-            }
-            else_threaded = _Threaded()
-            self._substitute_body_tracked(
-                self.orelse, else_scope, threaded=else_threaded
-            )
-            unrolled.extend(else_threaded)
-        return unrolled, final_target_bindings
-
-    def _substitute_controlled_suite(
-        self, statements, scope, minted=None, *, threaded=None
-    ):
-        """``(produced, state, action)``: ``statements`` threaded up to the
-        loop jump a ground guard selects (``action``), or None where none
-        decides.  ``threaded`` (``_Threaded``) receives each produced
-        statement with what was taken from it, as the block's threading
-        fills it (``_substitute_body_tracked``)."""
-        if threaded is None:
-            threaded = _Threaded()
-        produced = []
-        current = dict(scope)
-
-        def abandoned(*made):
-            # Giving up: what this suite substituted so far, and ``made``,
-            # go on ``minted`` (``_unroll_concrete_controlled``).
-            if minted is not None:
-                minted.extend(produced)
-                minted.extend(made)
-            return None
-
-        for statement in statements:
-            if (
-                statement.kind == "Try"
-                and not statement.handlers
-                and not statement.orelse
-                and statement.finalbody
-                and len(statement.body) == 1
-                and statement.body[0].kind in ("Break", "Continue")
-                and statement.body[0].control_context.nearest_loop_target().target_cid
-                == self.owned_loop_target.target_cid
-            ):
-                # A concrete loop dissolves before construction, so consume its
-                # owned jump here only after routing the mandatory cleanup.  The
-                # jump has no value to evaluate; ``finally`` therefore precedes
-                # the selected loop edge.  A cleanup halt/return remains in the
-                # produced block and supersedes that edge through ordinary
-                # ExitSet reduction.  Wider Try shapes retain their live
-                # TrySugar router below rather than being linearized here.
-                incoming_action = statement.body[0].kind.lower()
-                cleanup = For._substitute_controlled_suite(
-                    self, statement.finalbody, current, minted, threaded=threaded
-                )
-                if cleanup is None:
-                    return abandoned()
-                cleanup_statements, current, cleanup_action = cleanup
-                produced.extend(cleanup_statements)
-                return produced, current, cleanup_action or incoming_action
-            if statement.kind == "Break":
-                return produced, current, "break"
-            if statement.kind == "Continue":
-                return produced, current, "continue"
-            if statement.kind == "If" and any(
-                node.kind in ("Break", "Continue")
-                and node.control_context.nearest_loop_target().target_cid
-                == self.owned_loop_target.target_cid
-                for node in statement.walk()
-            ):
-                test, _changed = statement._substitute_field(statement.test, current)
-                verdict = While._ground_truth(self, test)
-                if verdict is None:
-                    return abandoned(test)
-                branch = statement.body if verdict else statement.orelse
-                nested = For._substitute_controlled_suite(
-                    self, branch, current, minted, threaded=threaded
-                )
-                if nested is None:
-                    return abandoned(test)
-                branch_statements, current, action = nested
-                produced.extend(branch_statements)
-                if action is not None:
-                    return produced, current, action
-                continue
-            if any(
-                node.kind in ("Break", "Continue")
-                and node.control_context.nearest_loop_target().target_cid
-                == self.owned_loop_target.target_cid
-                for node in statement.walk()
-            ):
-                # A jump this loop owns inside any other statement (``try:
-                # chunk = it.read() except StopIteration: break``, a ``with``
-                # whose body breaks) is selected by no ground guard here:
-                # which items run is decided where the statement runs.
-                # Linearized, the jump was left with no enclosing loop and
-                # its construction crashed (``tests/io/test_stata.py:1313``,
-                # #7757).  The loop stays a live loop, which routes the jump.
-                return abandoned()
-            substituted = statement.substitute_in_block(current)
-            expanded, expanded_taken, expanded_lead = _spliced(substituted)
-            produced.extend(expanded)
-            if expanded_lead:
-                current = {**current, **expanded_lead}
-                threaded.after(expanded_lead)
-            for item, taken in zip(expanded, expanded_taken, strict=True):
-                pre_item = current
-                binding = (
-                    taken.binding
-                    if taken.binding is not None
-                    else item.substitution_binding(current)
-                )
-                if binding:
-                    binding = item._binding_entries(binding, current)
-                    current = {**current, **binding}
-                # Each walrus's binding, what the statement's operations may
-                # rebind and what was taken after it are read after it as
-                # the block reads them (``_substitute_body_tracked``): one
-                # rule, within the item as between items (``_item_threaded``).
-                current, _bound, _rebound = _thread_taken(
-                    item, pre_item, current, taken, entries=True
-                )
-                threaded.add(item, taken)
-            if isinstance(substituted, _Splice) and substituted.bindings:
-                projected = statement._binding_entries(substituted.bindings, current)
-                threaded.after(projected)
-                current = {**current, **projected}
-        return produced, current, None
-
-    # The unroll budget. A concrete loop within it dissolves to its unroll; past
-    # it, the SYMBOLIC form (universal / fold coordinate) stands -- not merely
-    # cheaper: 1,100 iterations of a carried update is a fold, and unrolling it
-    # grows a term chain quadratically. Small on purpose; proofs want small
-    # unrolls.
-    _UNROLL_FUEL = 128
-
-    def _concrete_elements(
-        self, iterable: "Expression", reads=(), scope=None, target=None
-    ) -> "Optional[list]":
-        """The element nodes to unroll over, or ``None`` if `iterable` is not
-        concrete. A `List`/`Tuple_` literal is concrete by construction; a
-        `range(...)` call is concrete only when every argument (after
-        substitution) is a literal `int` -- a symbolic bound leaves the fold
-        real, so it is not recognized here.
-
-        A read of a name whose key holds a ground display (``xs = [1, 2];
-        for x in xs``, ``_ground_value``) is concrete too: the display decides
-        how many items there are, and each item is ``xs[i]``, a read of the
-        key, never the display's member.  A list is unrolled this way only
-        when ``reads`` (the loop body, the comprehension's element and
-        conditions) cannot reach it: they read none of its names
-        (``_object_read_in``), and either they run no code that could reach
-        it another way (``_runs_reaching_code``; ``target`` names the items,
-        whose dunders are a ground list's) or nothing but its own names holds
-        it (``_list_escapes``).  Python iterates the live list; a list not
-        unrolled stays the live loop."""
-        if iterable.kind in ("EvaluationRef", "Subscript"):
-            ground = _ground_value(iterable)
-            if ground is None or ground.kind not in ("List", "Tuple"):
-                return None
-            if ground.kind == "List" and (
-                _object_read_in(iterable, reads, scope or {})
-                or (
-                    _runs_reaching_code(reads, scope or {}, target)
-                    and _list_escapes(self, iterable, ground, scope or {})
-                )
-            ):
-                return None
-            # Each item read, and the index minted for it, answers where it
-            # is minted, as an unpack's member read does
-            # (``_minted_member_read``): a comprehension that gives up its
-            # dissolve after minting them (``{Timestamp(d): ... for d in
-            # dates}``, whose key no ground value hashes) builds neither,
-            # and a read of the target that reaches an item builds it and
-            # answers again, built or refused by name (#7757).
-            return [
-                _minted_member_read(For._item_of(self, iterable, index))
-                for index in range(len(ground.elts))
-            ]
-        if iterable.kind in ("List", "Tuple"):
-            elements = list(iterable.elts)
-            if any(element.kind == "Starred" for element in elements):
-                # ``[self, *dtypes]`` has one item per item of ``dtypes``
-                # besides ``self``: a ``*xs`` member is no one item, and the
-                # display decides how many items there are only where each
-                # member is one (``core/dtypes/dtypes.py:974``, whose
-                # comprehension dissolved into ``cast(D, *dtypes).base`` as
-                # its second member).  The loop or comprehension stays live,
-                # as over any iterable no display decides (#7757).
-                return None
-            if any(For._is_ground_zero_division(self, element) for element in elements):
-                # A ground ZeroDivisionError is an effect, not a concrete
-                # element -- the same refusal _concrete_int already makes for
-                # a range bound. Unrolling would drop the raise when the
-                # target is unused.
-                return None
-            return elements
-        if (
-            iterable.kind == "Call"
-            and not iterable.keywords
-            and self.unit.language_callee_of(iterable.func)
-            is LanguageCallee.BUILTIN_RANGE
-        ):
-            ints = []
-            for arg in iterable.args:
-                v = For._concrete_int(self, arg)
-                if v is None:
-                    return None
-                ints.append(v)
-            if not 1 <= len(ints) <= 3 or (len(ints) == 3 and ints[2] == 0):
-                # ``range()``, ``range(1, 2, 3, 4)`` and a zero step raise:
-                # an effect, not a concrete iterable.
-                return None
-            items = range(*ints)
-            try:
-                count = len(items)
-            except OverflowError:  # more items than an index holds
-                return None
-            if count > For._UNROLL_FUEL:
-                # Past the unroll budget the live loop stands: decided before
-                # any item is minted, never after minting them all.
-                return None
-            # Each item is the int the range yields, no source occurrence:
-            # minting registered it, so it answers where it is minted
-            # (``_minted_binding_reference``), whether or not the unroll
-            # that asked goes on (a refused filter or key, a target no
-            # element reads).  A read that reaches it builds it again.
-            return [
-                _minted_binding_reference(For._int_constant(self, i)) for i in items
-            ]
-        return None
-
     def _concrete_int(self, arg: "Expression") -> "Optional[int]":
         """The literal int an arg denotes, or ``None`` if it is not one. A
         negative bound parses as `UnaryOp(USub, Constant(n))` (cpython does
@@ -18326,19 +17134,6 @@ class For(Statement):
                 "Mod": lambda: left % right,
             }.get(op, lambda: None)()
         return None
-
-
-    def _is_ground_zero_division(self, arg: "Expression") -> bool:
-        """A ground ``/``, ``//``, or ``%`` by zero is an effect, not an element.
-
-        ``_concrete_int`` already refuses ``//`` and ``%`` by zero as an int
-        (range bounds). A list or tuple display whose element is that same
-        ground ZeroDivisionError is not a concrete iterable.
-        """
-        if arg.kind != "BinOp" or arg.op.kind not in ("Div", "FloorDiv", "Mod"):
-            return False
-        right = For._concrete_int(self, arg.right)
-        return right == 0
 
     def _int_constant(self, value: int) -> "Node":
         """Synthesize an int `Constant` node bound to `value`, borrowing this
@@ -18422,47 +17217,20 @@ class While(Statement):
     orelse: Tuple[Statement, ...]
     _child_fields = ("test", "body", "orelse")
 
-    # The unroll bound. A CONCRETE while whose state never satisfies exit within
-    # this many iterations is treated as not-concrete (falls to the symbolic
-    # branch, which is loud) -- `while True:` lands there honestly rather than
-    # spinning substitute forever. Not a semantic limit: a real concrete loop
-    # that long is beyond what an unroll should dissolve anyway.
-    _FUEL = 128  # the shared unroll budget (see For._UNROLL_FUEL)
-
     def substitute(self, scope):
-        """`while <test>: <body>` -- the unbounded loop, and over CONCRETE state
-        it DISSOLVES exactly like a concrete `for`: each iteration is one more
-        substitution. The condition, substituted against the carried state, is
-        ground-decidable (constants only); while it decides True the body is
-        threaded once more (its bindings carried forward), and the unrolled
-        statements are SPLICED into the enclosing block. `i = 0; while i < 3:
-        i = i + 1` unrolls to three rebinds of i; `return i` reads 3.
-
-        A condition that is NOT ground-decidable against the carried state (a
-        formal in the state, an effect) keeps the node -- the symbolic while is
-        the recurrence-with-exit-condition, an unwritten segment that stays
-        loud. `while True:` exhausts the fuel and lands there too: an infinite
-        concrete loop is a non-termination the unroll must not fake."""
+        """`while <test>: <body>` -- the unbounded loop, rewritten once for its
+        one mechanism, the live loop's recurrence (``LiveWhileRuntimeV1``,
+        ``LoopRecurrenceSugar._test_item``).  The rewrite never decides the
+        test or unrolls the loop: the reduction evaluates the test before each
+        item and runs the body under every face it decides true, refusing by
+        name a test that has not decided false within ``LOOP_UNROLL_BUDGET``
+        items or one undecided after an item ran; a test undecided where the
+        first item begins leaves the loop its recurrence (step 6, #7757
+        new 6).  `i = 0; while i < 3: i = i + 1` runs three items there;
+        `return i` reads 3."""
         from .shadow import rewrite
 
-        # The names a halt inside an unrolled item may carry changed
-        # (``_try_unroll``); an unroll whose items hold a jump of the loop's
-        # own states none, and an enclosing halt edge reads what it changed.
-        halt_names: set = set()
-        unrolled = self._try_unroll(scope, halt_names)
-        if unrolled is not None:
-            if For._body_has_owned_loop_control(self):
-                return _Splice(tuple(unrolled.statements), threaded=unrolled)
-            return _Splice(
-                tuple(unrolled.statements),
-                None,
-                _compound_halt_state(
-                    self, scope, scope, (), unknown=frozenset(halt_names)
-                ),
-                threaded=unrolled,
-            )
-
-        # Symbolic (or unsupported) while: keep the node; mask the carried
+        # The while: keep the node; mask the carried
         # names (any name the body rebinds) so the update stays symbolic.  The
         # test runs at the start of every item and the ``else`` once after the
         # last, so each reads a carried name through the loop header's
@@ -18538,104 +17306,6 @@ class While(Statement):
             if d:
                 changed[f] = new
         return self if not changed else rewrite(self, **changed)
-
-    def _try_unroll(self, scope, halt_names=None):
-        """The unrolled statements as threaded (``_Threaded``: what was
-        taken from each kept for the block the splice reaches), or None if
-        the loop is not concrete (condition undecidable against the carried
-        state, or fuel exhausted).
-
-        ``halt_names`` collects the names a halt inside an item (or the
-        ``else``) may carry changed (``_loop_item_halt_names``); an item
-        holding a jump of the loop's own is not read for them.
-
-        An attempt given up (a test no ground value decides, a guard of the
-        loop's own jump, the fuel spent) leaves the loop live, substituted
-        afresh by ``substitute``.  What the attempt made -- each test as an
-        item's state substituted it (a formal the loop carries, re-spanned
-        to its read in ``while lo < hi``, ``core/_numba/kernels/
-        min_max_.py:29``) and each item it substituted -- is built by
-        nothing, so it answers where it was made, as an abandoned unroll of
-        a ``for`` does (``For._answer_abandoned_unroll``)."""
-        from .container_mutation import _answered_where_minted
-
-        controlled = For._body_has_owned_loop_control(self)
-        carried = dict(scope)
-        unrolled = _Threaded()
-        made: list = []
-
-        def abandoned():
-            _answered_where_minted(
-                (self.test, *self.body, *self.orelse),
-                (*made, *unrolled.statements),
-            )
-            return None
-
-        for index in range(self._FUEL):
-            test, _d = self._substitute_field(self.test, carried)
-            made.append(test)
-            verdict = self._ground_truth(test)
-            if verdict is None:
-                return abandoned()  # not decidable -- not a concrete loop
-            if verdict is False:
-                # Exit via the condition: with no break (jump-guard), the
-                # `else` always runs -- spliced after the iterations.
-                if self.orelse:
-                    else_edges: list = []
-                    else_threaded = _Threaded()
-                    _else_body, _c, else_net = self._substitute_body_tracked(
-                        self.orelse,
-                        carried,
-                        edge_states=else_edges,
-                        threaded=else_threaded,
-                    )
-                    if halt_names is not None:
-                        halt_names |= _loop_item_halt_names(
-                            self, scope, carried, else_edges, else_net
-                        )
-                    unrolled.extend(else_threaded)
-                return unrolled
-            item = _Threaded()
-            if controlled:
-                start = _iteration_scope(self, index, carried, scope)
-                reduced = For._substitute_controlled_suite(
-                    self,
-                    self.body,
-                    start,
-                    made,
-                    threaded=item,
-                )
-                if reduced is None:
-                    return abandoned()
-                new_body, carried, action = reduced
-                made.extend(new_body)
-                copies = _iteration_copies(self, index, item.statements)
-                unrolled.extend(item, copies)
-                # What the item's operations may rebind is carried keyed by
-                # this item's evaluation (``_item_threaded``).
-                _threaded, rebound = _item_threaded(copies, start, item)
-                carried = {**carried, **rebound}
-                if action == "break":
-                    return unrolled
-                continue
-            carried = _iteration_scope(self, index, carried, scope)
-            item_edges: list = []
-            new_body, _c, item_net = self._substitute_body_tracked(
-                self.body, carried, edge_states=item_edges, threaded=item
-            )
-            if halt_names is not None:
-                halt_names |= _loop_item_halt_names(
-                    self, scope, carried, item_edges, item_net
-                )
-            made.extend(new_body)
-            copies = _iteration_copies(self, index, item.statements)
-            unrolled.extend(item, copies)
-            # The item's bindings -- every one the block took from the
-            # statements the copies copy -- and what its operations may
-            # rebind (``_item_threaded``) are the state the next test and
-            # item read.
-            carried, _rebound = _item_threaded(copies, carried, item)
-        return abandoned()  # fuel exhausted: an infinite/huge loop is not an unroll
 
     def _ground_truth(self, test):
         """Decide a GROUND condition structurally, or None. Constants only --
@@ -20033,26 +18703,6 @@ def _unpack_may_raise(target, value) -> bool:
         _unpack_may_raise(element, member)
         for element, member in zip(elements, members, strict=True)
     )
-
-
-def _loop_item_halt_names(loop, header, item_scope, edge_states, net) -> set:
-    """The names a halt inside one item (or the ``else``) of an unrolled
-    loop may carry changed against ``header``: what the items before it left
-    and its own target (``item_scope``, the state the item begins with), and
-    what each of its statements that can halt carries
-    (``Try._suite_halt_states``; ``edge_states`` is the item's threading,
-    ``net`` what it bound).  The state an item reaches is that item's copy's
-    (``_iteration_copies``), never a state outside the loop: each of these
-    names is unknown at the loop's halts (``_compound_halt_state``)."""
-    names = {
-        name
-        for name, entry in item_scope.items()
-        if isinstance(name, str) and header.get(name, _MISSING) is not entry
-    }
-    closed = [*edge_states, (None, {**item_scope, **net})]
-    for state in Try._suite_halt_states(loop, closed, header):
-        names.update(name for name in state if isinstance(name, str))
-    return names
 
 
 class Try(Statement):
@@ -23241,19 +21891,7 @@ class ListComp(Expression):
 
     def substitute(self, scope):
         """A comprehension: thread each generator's target, then substitute the
-        element against the scope with every target masked.
-
-        Over a CONCRETE iterable it DISSOLVES -- `map` disappearing for real:
-        `[e for x in [1, 2, 3]]` is three substitutions of x into e, and the
-        comprehension rewrites to the List DISPLAY of those elements. The
-        comprehension was never a meaning; it was a count of rewrites."""
-        unrolled = (
-            None
-            if scope.get(_NESTED_COMPREHENSION_TEMPLATE)
-            else self._try_unroll_to_display(scope)
-        )
-        if unrolled is not None:
-            return unrolled
+        element against the scope with every target masked."""
         from .shadow import rewrite
 
         recurrence = ListComp._walrus_recurrence(
@@ -23265,8 +21903,6 @@ class ListComp(Expression):
             ListComp._recurrence_references(self, recurrence),
         )
         template_scope = inner
-        if ListComp._contains_forbidden_shape(self, (self.elt,)):
-            template_scope = {**template_scope, _NESTED_COMPREHENSION_TEMPLATE: True}
         new_elt, de = self._substitute_field(self.elt, template_scope)
         changed = {}
         if gc:
@@ -23279,148 +21915,11 @@ class ListComp(Expression):
             self, rewritten, (rewritten.elt,), scope, recurrence
         )
 
-    def _try_unroll_to_display(self, scope):
-        """The List display this comprehension dissolves to, or None. One
-        synchronous generator with ground-decidable filters,
-        over a CONCRETE iterable whose elements destructure into the target:
-        each element substitutes into `elt`, and the results are the display's
-        elements. Reuses For's readers (same structural recognition).
-
-        A comprehension holding a lambda does not dissolve
-        (``_contains_forbidden_shape``): the lambda reads the cell at its
-        call, which a display has no run of the comprehension to place."""
-        if len(self.generators) != 1 or ListComp._contains_forbidden_shape(
-            self, (self.elt,)
-        ):
-            return None
-        gen = self.generators[0]
-        if gen.is_async or ListComp._contains_forbidden_shape(
-            self, (gen.iter, *gen.ifs)
-        ):
-            return None
-        new_iter, ic = self._substitute_field(gen.iter, scope)
-        it = new_iter if ic else gen.iter
-        elements = For._concrete_elements(
-            self, it, (self.elt, *gen.ifs), scope, gen.target
-        )
-        if elements is None:
-            return None
-        if len(elements) > For._UNROLL_FUEL:
-            return None
-        elements, members = ListComp._members_evaluated_first(
-            self, it, elements, scope
-        )
-        target = gen.target
-        results = []
-        for index, element in enumerate(elements):
-            bindings = self.unit.require_target_pattern(self, target).bindings_for(
-                element
-            )
-            if bindings is None:
-                return None
-            inner = {**scope, **bindings}
-            filters_pass = ListComp._ground_filters_pass(self, gen.ifs, inner)
-            if filters_pass is None:
-                return None
-            if not filters_pass:
-                continue
-            new_elt, _d = self._substitute_field(self.elt, inner)
-            # Each member is its own evaluation of the element expression.
-            (member,) = _iteration_copies(self, index, (new_elt if _d else self.elt,))
-            results.append(member)
-        evaluations = ListComp._dissolved_iterable(
-            self, it, elements, (self.elt,) if not results else (), gen.ifs, members
-        )
-        return ListComp._make_list(self, tuple(results), evaluations)
-
-    def _members_evaluated_first(self, iterable, elements, scope):
-        """``(elements, members)``: Python evaluates an iterable display --
-        every member of it -- once, before the first element.  Substituting
-        each member into the element interleaves them where a member after
-        the first runs code (``_evaluates_code``): ``[h(x) for x in [g1(),
-        g2()]]`` was evaluated g1, h, g2, h; Python evaluates g1, g2, h, h.
-
-        There every member that runs code is evaluated before the first
-        element, in order, its value held under its item key (its own
-        occurrence's evaluation, ``Statement._evaluation_key``, projected
-        by ``_item_evaluation_key``), and the element reads it there
-        (``EvaluationRef``) -- the step an unrolled ``for`` takes over the
-        same display (``For._evaluated_before_the_first_item``).
-        ``members`` pairs each such member with its key; the display carries
-        them after its iterable's own (``_dissolved_iterable``).  Each
-        reference is minted: one no element reads (``[0 for _ in [g1(),
-        g2()]]``), or one an unroll that refuses after minting leaves,
-        answers where it is minted (``_minted_binding_reference``).  A
-        display whose only member that runs code is its first is in
-        Python's order already, and is unchanged."""
-        if iterable.kind not in ("List", "Tuple") or not any(
-            _evaluates_code(element) for element in elements[1:]
-        ):
-            return elements, ()
-        read = []
-        members = []
-        for element in elements:
-            if not _evaluates_code(element):
-                read.append(element)
-                continue
-            key = _item_evaluation_key(Statement._evaluation_key(element, scope))
-            members.append((element, key))
-            read.append(
-                _minted_binding_reference(
-                    _evaluation_ref(self, element.span, key, "<item>", of=element)
-                )
-            )
-        return read, tuple(members)
-
-    def _dissolved_iterable(
-        self, iterable, elements, unevaluated, filters, members=()
-    ):
-        """What the display this comprehension dissolved into over
-        ``iterable`` (substituted) and its ``elements`` evaluates before its
-        first member (``iterable_evaluations``), as ``(evaluation, key)``
-        pairs (``For._iterable_evaluations``).
-
-        The unroll takes the same step a ``for`` does before its items
-        (``For._iterable_evaluations``): ``range(n)`` is evaluated once,
-        before the first member, and the display carries that evaluation,
-        whose faces its sugar carries before it holds the members
-        (``collection_sugar._reduce_into``) -- never a dropped evaluation.
-        A display iterable is consumed member by member and answers with
-        it; each member the elements read through its key (``members``,
-        ``_members_evaluated_first``) is evaluated after what the iterable
-        itself carries, in order, before the first element.
-
-        A template Python never evaluates answers with the display, as a
-        structural part does (``unevaluated_parts``): ``unevaluated`` (the
-        element, or a dict comprehension's key and value, where no member
-        passed its filters), and ``filters`` too where there was no item
-        (``[0 for i in range(0)]``).  Nothing is evaluated there, so no
-        evaluation is dropped."""
-        for root in (*unevaluated, *(() if elements else filters)):
-            for node in root.walk():
-                node.discharge_by_substitution()
-        return (*For._iterable_evaluations(self, iterable), *members)
-
-    def _ground_filters_pass(self, filters, scope) -> "Optional[bool]":
-        """The conjunction of constructed ground filters, or no testimony.
-
-        Every comprehension kind shares this reader. A symbolic guard yields
-        ``None`` so the enclosing node stays loud; no guard verdict is guessed.
-        """
-        verdicts = []
-        for guard in filters:
-            new_guard, changed = self._substitute_field(guard, scope)
-            verdict = While._ground_truth(self, new_guard if changed else guard)
-            if verdict is None:
-                return None
-            verdicts.append(verdict)
-        return all(verdicts)
-
     def _contains_forbidden_shape(self, roots: tuple) -> bool:
         """True for a nested comprehension, walrus or lambda in this
         comprehension.  A lambda reads each comprehension cell at its call
         (``_escaping_at_the_call``), and a call is placed by the run of the
-        comprehension it is in or after; a display has no run."""
+        comprehension it is in or after (``_simple_generator``)."""
         return any(
             node.kind
             in (
@@ -23451,7 +21950,7 @@ class ListComp(Expression):
         all: it is simply another sugar in that position, constructed by its
         own `_construct_sugar` when the element is lifted. All four kinds
         share this one reader; `_contains_forbidden_shape` remains the
-        separate, stricter question asked only when DISSOLVING to a display.
+        separate, stricter question ``_simple_generator`` asks.
         """
         return any(node.kind == "NamedExpr" for root in roots for node in root.walk())
 
@@ -23713,60 +22212,6 @@ class ListComp(Expression):
             )
         )
 
-    def _ground_hash_key(self, expression):
-        """A Python-equality key for the small ground scalar domain, or None."""
-        integer = For._concrete_int(self, expression)
-        if integer is not None:
-            return ("number", integer)
-        if expression.kind != "Constant":
-            return None
-        value = expression.value
-        if type(value) is bool:
-            return ("number", int(value))
-        if type(value) is str:
-            return ("str", value)
-        if value is None:
-            return ("none", None)
-        return None
-
-    def _make_list(self, elements: tuple, evaluations: tuple = ()) -> "Node":
-        """Synthesize a List display of these element nodes, borrowing this
-        comprehension's span -- the dissolved `map`, a display like any other
-        -- evaluating ``evaluations`` (``_dissolved_iterable``) first."""
-        from .backend import Children, materialize
-        from .shadow import ShadowNode, _handle_of
-
-        slots = (
-            ("elts", Children(tuple(_handle_of(e) for e in elements))),
-            *ListComp._evaluations_slot(evaluations),
-        )
-        return materialize(
-            self.unit, ShadowNode("List", self.span, slots), self.reporter
-        )
-
-    @staticmethod
-    def _evaluations_slot(evaluations: tuple) -> tuple:
-        """The ``iterable_evaluations`` slot of a dissolved display, or none
-        where its iterable evaluates nothing before the first member; with
-        the key each is held under (``iterable_evaluation_keys``, None where
-        no member reads it) where a member reads one
-        (``_members_evaluated_first``)."""
-        from .backend import Children, Leaf
-        from .shadow import _handle_of
-
-        if not evaluations:
-            return ()
-        keys = tuple(key for _evaluation, key in evaluations)
-        slots = (
-            (
-                "iterable_evaluations",
-                Children(tuple(_handle_of(e) for e, _key in evaluations)),
-            ),
-        )
-        if any(key is not None for key in keys):
-            slots = (*slots, ("iterable_evaluation_keys", Leaf(keys)))
-        return slots
-
     @staticmethod
     def _carried_evaluations(display) -> tuple:
         """``(evaluation, key)`` for each evaluation a dissolved display
@@ -23978,13 +22423,6 @@ class SetComp(Expression):
     def substitute(self, scope):
         """A comprehension: thread each generator's target, then substitute the
         element against the scope with every target masked."""
-        display = (
-            None
-            if scope.get(_NESTED_COMPREHENSION_TEMPLATE)
-            else self._try_unroll_to_display(scope)
-        )
-        if display is not None:
-            return display
         from .shadow import rewrite
 
         recurrence = ListComp._walrus_recurrence(
@@ -23996,8 +22434,6 @@ class SetComp(Expression):
             ListComp._recurrence_references(self, recurrence),
         )
         template_scope = inner
-        if ListComp._contains_forbidden_shape(self, (self.elt,)):
-            template_scope = {**template_scope, _NESTED_COMPREHENSION_TEMPLATE: True}
         new_elt, de = self._substitute_field(self.elt, template_scope)
         changed = {}
         if gc:
@@ -24008,73 +22444,6 @@ class SetComp(Expression):
         recurrence = ListComp._ordered_recurrence(self, rewritten, recurrence)
         return ListComp._carrying_walrus_priors(
             self, rewritten, (rewritten.elt,), scope, recurrence
-        )
-
-    def _try_unroll_to_display(self, scope):
-        if len(self.generators) != 1 or ListComp._contains_forbidden_shape(
-            self, (self.elt,)
-        ):
-            return None
-        gen = self.generators[0]
-        if (
-            gen.is_async
-            or ListComp._contains_forbidden_shape(self, (gen.iter,))
-            # A walrus in a condition writes the enclosing scope per member:
-            # a display would drop the write.
-            or ListComp._contains_named_expression(self, gen.ifs)
-        ):
-            return None
-        new_iter, changed = self._substitute_field(gen.iter, scope)
-        iterable = new_iter if changed else gen.iter
-        elements = For._concrete_elements(
-            self, iterable, (self.elt, *gen.ifs), scope, gen.target
-        )
-        if elements is None or len(elements) > For._UNROLL_FUEL:
-            return None
-        elements, members = ListComp._members_evaluated_first(
-            self, iterable, elements, scope
-        )
-        results = []
-        for element in elements:
-            bindings = self.unit.require_target_pattern(self, gen.target).bindings_for(
-                element
-            )
-            if bindings is None:
-                return None
-            inner = {**scope, **bindings}
-            filters_pass = ListComp._ground_filters_pass(self, gen.ifs, inner)
-            if filters_pass is None:
-                return None
-            if not filters_pass:
-                continue
-            new_elt, changed = self._substitute_field(self.elt, inner)
-            result = new_elt if changed else self.elt
-            if ListComp._ground_hash_key(self, result) is None:
-                return None
-            # Every member is evaluated, in order, an equal one's included:
-            # it collapses into the first as the display is built
-            # (``collection_sugar._built_set``), as the comprehension's does.
-            results.append(result)
-        evaluations = ListComp._dissolved_iterable(
-            self,
-            iterable,
-            elements,
-            (self.elt,) if not results else (),
-            gen.ifs,
-            members,
-        )
-        return SetComp._make_set(self, tuple(results), evaluations)
-
-    def _make_set(self, elements: tuple, evaluations: tuple = ()) -> "Node":
-        from .backend import Children, materialize
-        from .shadow import ShadowNode, _handle_of
-
-        slots = (
-            ("elts", Children(tuple(_handle_of(e) for e in elements))),
-            *ListComp._evaluations_slot(evaluations),
-        )
-        return materialize(
-            self.unit, ShadowNode("Set", self.span, slots), self.reporter
         )
 
     def _construct_sugar(self):
@@ -24104,13 +22473,6 @@ class DictComp(Expression):
     def substitute(self, scope):
         """A dict comprehension: thread the generators, then key and value
         against the scope with every target masked."""
-        display = (
-            None
-            if scope.get(_NESTED_COMPREHENSION_TEMPLATE)
-            else self._try_unroll_to_display(scope)
-        )
-        if display is not None:
-            return display
         from .shadow import rewrite
 
         recurrence = ListComp._walrus_recurrence(
@@ -24122,8 +22484,6 @@ class DictComp(Expression):
             ListComp._recurrence_references(self, recurrence),
         )
         template_scope = inner
-        if ListComp._contains_forbidden_shape(self, (self.key, self.value)):
-            template_scope = {**template_scope, _NESTED_COMPREHENSION_TEMPLATE: True}
         changed = {}
         if gc:
             changed["generators"] = new_gens
@@ -24135,92 +22495,6 @@ class DictComp(Expression):
         recurrence = ListComp._ordered_recurrence(self, rewritten, recurrence)
         return ListComp._carrying_walrus_priors(
             self, rewritten, (rewritten.key, rewritten.value), scope, recurrence
-        )
-
-    def _try_unroll_to_display(self, scope):
-        if len(self.generators) != 1 or ListComp._contains_forbidden_shape(
-            self, (self.key, self.value)
-        ):
-            return None
-        gen = self.generators[0]
-        if (
-            gen.is_async
-            or ListComp._contains_forbidden_shape(self, (gen.iter,))
-            # A walrus in a condition writes the enclosing scope per member:
-            # a display would drop the write.
-            or ListComp._contains_named_expression(self, gen.ifs)
-        ):
-            return None
-        new_iter, changed = self._substitute_field(gen.iter, scope)
-        iterable = new_iter if changed else gen.iter
-        elements = For._concrete_elements(
-            self, iterable, (self.key, self.value, *gen.ifs), scope, gen.target
-        )
-        if elements is None or len(elements) > For._UNROLL_FUEL:
-            return None
-        elements, members = ListComp._members_evaluated_first(
-            self, iterable, elements, scope
-        )
-        pairs = []
-        for element in elements:
-            bindings = self.unit.require_target_pattern(self, gen.target).bindings_for(
-                element
-            )
-            if bindings is None:
-                return None
-            inner = {**scope, **bindings}
-            filters_pass = ListComp._ground_filters_pass(self, gen.ifs, inner)
-            if filters_pass is None:
-                return None
-            if not filters_pass:
-                continue
-            key, key_changed = self._substitute_field(self.key, inner)
-            value, value_changed = self._substitute_field(self.value, inner)
-            result_key = key if key_changed else self.key
-            result_value = value if value_changed else self.value
-            if ListComp._ground_hash_key(self, result_key) is None:
-                return None
-            # Every pair is evaluated, in order, a repeated key's included:
-            # the display keeps its first position and takes the last value
-            # as it is built (``collection_sugar._built_dict``), as the
-            # comprehension's does.  Dropping the earlier pair dropped its
-            # key's and value's evaluation.
-            pairs.append((result_key, result_value))
-        evaluations = ListComp._dissolved_iterable(
-            self,
-            iterable,
-            elements,
-            (self.key, self.value) if not pairs else (),
-            gen.ifs,
-            members,
-        )
-        return DictComp._make_dict(self, tuple(pairs), evaluations)
-
-    def _make_dict(self, pairs: tuple, evaluations: tuple = ()) -> "Node":
-        from .backend import Child, Children, materialize
-        from .shadow import ShadowNode, _handle_of
-
-        items = []
-        for key, value in pairs:
-            slots = (
-                ("key", Child(_handle_of(key))),
-                ("value", Child(_handle_of(value))),
-            )
-            item = materialize(
-                self.unit, ShadowNode("DictItem", self.span, slots), self.reporter
-            )
-            items.append(_handle_of(item))
-        return materialize(
-            self.unit,
-            ShadowNode(
-                "Dict",
-                self.span,
-                (
-                    ("items", Children(tuple(items))),
-                    *ListComp._evaluations_slot(evaluations),
-                ),
-            ),
-            self.reporter,
         )
 
     def _construct_sugar(self):
@@ -24285,8 +22559,6 @@ class GeneratorExp(Expression):
             ListComp._recurrence_references(self, recurrence),
         )
         template_scope = inner
-        if ListComp._contains_forbidden_shape(self, (self.elt,)):
-            template_scope = {**template_scope, _NESTED_COMPREHENSION_TEMPLATE: True}
         new_elt, de = self._substitute_field(self.elt, template_scope)
         changed = {}
         if gc:

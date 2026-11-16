@@ -9,13 +9,16 @@ nothing: ``core/dtypes/dtypes.py:974`` ended in ``FormalRef registered but
 never answered the roll call`` on the pandas board at ``d54a43717`` (run
 43739300912).  The display decides how many items there are only where each
 member is one item; otherwise the loop or comprehension stays live.
+
+Since #7757 new 6 no display is unrolled at the rewrite: every comprehension
+is reduced by its own fold, so what is left to check is that nothing is left
+unanswered.
 """
 
 import tempfile
 
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_source_tree.nodes import For, ListComp
 from sugar_source_tree.reporter import CollectingReporter
 from sugar_source_tree.roll_call import discharge
 from sugar_source_tree.tree import SourceFile
@@ -36,13 +39,6 @@ def _tree(source: str, reporter=None) -> SourceFile:
         construction_context=TreeConstructionContextV1.for_test_without_workspace(),
         **kwargs,
     )
-
-
-def test_a_starred_display_has_no_concrete_elements():
-    tree = _tree(_SOURCE)
-    (comprehension,) = [n for n in tree.nodes() if isinstance(n, ListComp)]
-    display = comprehension.generators[0].iter
-    assert For._concrete_elements(comprehension, display) is None
 
 
 def test_a_comprehension_over_a_starred_display_leaves_no_absentee():

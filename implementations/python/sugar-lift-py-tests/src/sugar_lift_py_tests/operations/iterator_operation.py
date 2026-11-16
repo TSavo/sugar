@@ -47,6 +47,74 @@ def discharge_iter(receiver, site, ctx, *, owner: str = "project_iter"):
     return IteratorOperation(owner=owner, blame=site).submit(receiver, ctx)
 
 
+# -- the iterable a loop runs item by item ------------------------------------
+#
+# A loop has one mechanism (#7757 new 6): its reduction runs its items one by
+# one where it holds every member of the iterable, within the one unroll
+# budget (``sugar_source_tree.nodes.LOOP_UNROLL_BUDGET``), and runs as its
+# recurrence everywhere else.  The rewrite never unrolls a loop or a
+# comprehension, and never decides how many items there are.
+
+
+def in_hand_iterable(iterable):
+    """``iterable`` as the reduction holds its members, for a loop
+    (``LoopRecurrenceSugar``) or a comprehension (``ComprehensionSugar``)
+    to run item by item: what a completed ``range(...)`` call over ground
+    ``int`` operands returned is the tuple of the ints it yields; any other
+    value is itself.
+
+    On every face ``range(...)`` completes on it returned a range object
+    (``source_call_resolution._range_object``: its halts are the call's own
+    faces, decided by the cited fold over ground operands), and iterating
+    one is CPython's own (``range_iter``) and never raises, so its items are
+    exactly ``range(*ints)``, as iterating that tuple yields them.  A range
+    with more items than the unroll budget (or more than an index holds)
+    stays the range object: the loop over it runs as its recurrence."""
+    from sugar_source_tree.nodes import LOOP_UNROLL_BUDGET
+
+    from sugar_lift_py_tests.floor.builtin_container_method import _ground_int
+    from sugar_lift_py_tests.floor.term_value import TermValue
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+    from sugar_lift_py_tests.source_call_resolution import _range_object
+
+    if not _range_object(iterable) or iterable.keyword_names:
+        return iterable
+    ints = []
+    for value in iterable.arg_values:
+        ground = _ground_int(value)
+        if ground is None:
+            return iterable
+        ints.append(ground)
+    if not 1 <= len(ints) <= 3 or (len(ints) == 3 and ints[2] == 0):
+        return iterable
+    items = range(*ints)
+    try:
+        count = len(items)
+    except OverflowError:
+        return iterable
+    if count > LOOP_UNROLL_BUDGET:
+        return iterable
+    return TupleValue(tuple(TermValue(item) for item in items))
+
+
+def within_unroll_budget(iterable) -> bool:
+    """Whether a loop or comprehension over ``iterable`` may run item by
+    item: no more members than the unroll budget, where the members are in
+    hand (``builtin_container_method.finite_members``, or an iterator's or a
+    projected comprehension's, ``comprehension_sugar._finite_members``).
+    One whose count is not in hand runs item by item until a member past
+    the budget, which ``LoopRecurrenceSugar`` refuses by name."""
+    from sugar_source_tree.nodes import LOOP_UNROLL_BUDGET
+
+    from sugar_lift_py_tests.floor.builtin_container_method import finite_members
+    from sugar_lift_py_tests.sugar.comprehension_sugar import _finite_members
+
+    members = finite_members(iterable)
+    if members is None:
+        members = _finite_members(iterable)
+    return members is None or len(members) <= LOOP_UNROLL_BUDGET
+
+
 # -- the one iterator path of an iteration the reduction does not step -------
 #
 # A ``for`` run as its recurrence (``LoopRecurrenceSugar._desugar_with_iterable``)

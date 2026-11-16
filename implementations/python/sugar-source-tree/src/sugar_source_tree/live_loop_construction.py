@@ -1121,6 +1121,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
     # the body's statement sugars, under the guard an item runs at all, each
     # through the one statement rule every body uses (#7757).
     from .nodes import (
+        LOOP_UNROLL_BUDGET,
         _body_statement_sugar,
         _loop_header_evaluation_key,
         _loop_target_evaluation_key,
@@ -1206,7 +1207,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
                 body_sugars,
                 else_sugars(),
                 carried_evaluations,
-                While._FUEL,
+                LOOP_UNROLL_BUDGET,
                 published_evaluations,
                 coordinate_names=coordinate_names,
                 published_names=published_names,
