@@ -7,10 +7,13 @@ Enable with ``-p scorecard_carry_pytest --carry-label L --carry-summary FILE``.
   ``scorecard_carry.py summarize`` turns summaries into totals, and
   tools/main_scorecard_shard_plan.py reads them to check every shard reported
   and to refresh the per-file test-count ledger.
-* Every test file that ran has its wall seconds (setup + call + teardown of
-  its tests) written to the LPT cost prior when ``SUGAR_LPT_PRIOR_DIR`` is
-  set (tools/lpt_file_shards.py), so the next scorecard run packs its shards
-  by measured cost (tools/main_scorecard_shard_plan.py, #8416).
+* Every test file that ran has its wall seconds (its collection -- the
+  module's import and whatever it computes there -- plus setup + call +
+  teardown of its tests) written to the LPT cost prior when
+  ``SUGAR_LPT_PRIOR_DIR`` is set (tools/lpt_file_shards.py), and into the
+  summary as ``fileSeconds`` (the path-keyed ledger), so the next scorecard
+  run packs its bins by measured cost (tools/main_scorecard_shard_plan.py,
+  #8416).
 * The PYTEST line names the peak resident memory of pytest and of its
   children (``max_rss_mb``, ``children_max_rss_mb``): the memory floor a
   runner seat needs.
@@ -67,8 +70,21 @@ class SummaryPlugin:
         self.buckets: dict[str, list[str]] = {}
         self.collection_errors: list[str] = []
         self.file_seconds: dict[str, float] = {}
+        self._collect_t0: dict[str, float] = {}
+
+    def pytest_collectstart(self, collector: Any) -> None:
+        self._collect_t0[collector.nodeid] = time.perf_counter()
 
     def pytest_collectreport(self, report: Any) -> None:
+        # A file's cost includes its collection: importing the module (and
+        # whatever it computes at import or parametrization) and collecting
+        # its classes. Each collector's report covers only its own collect()
+        # (children are collected under their own reports), so the sum per
+        # file never counts a second twice.
+        t0 = self._collect_t0.pop(report.nodeid, None)
+        file = (report.nodeid or "").split("::", 1)[0]
+        if t0 is not None and file.endswith(".py"):
+            self.file_seconds[file] = self.file_seconds.get(file, 0.0) + (time.perf_counter() - t0)
         if report.failed:
             nodeid = report.nodeid or "<root>"
             if nodeid not in self.collection_errors:
@@ -116,6 +132,11 @@ class SummaryPlugin:
                 "collectionErrors": self.collection_errors,
                 "pytestExitStatus": int(exitstatus),
                 "wallSeconds": wall,
+                # Each file's measured seconds (collection + its tests), for
+                # the path-keyed cost ledger of tools/main_scorecard_shard_plan.py.
+                "fileSeconds": {
+                    file: round(seconds, 3) for file, seconds in sorted(self.file_seconds.items())
+                },
             },
         )
 
