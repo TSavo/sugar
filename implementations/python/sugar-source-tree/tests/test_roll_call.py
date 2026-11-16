@@ -131,7 +131,7 @@ def test_report_is_only_a_view_no_construction_needed() -> None:
     report = MinorityReport(reporter=r)
     assert {e.cid for e in report.present} == {"cid1"}
     assert {e.cid for e in report.minority} == {"cid2"}
-    assert report.R == 1
+    assert report.R == 0
 
 
 def test_null_reporter_still_satisfies_construction() -> None:
@@ -144,9 +144,11 @@ def test_null_reporter_still_satisfies_construction() -> None:
 def test_total_R_sums_the_whole_minority() -> None:
     r1, r2 = CollectingReporter(), CollectingReporter()
     reps = [minority_report(_sf(_THREE, r1)), minority_report(_sf("x = 1\n", r2))]
-    # moment zero: nothing discharged, so each minority IS its whole (deduped)
-    # roster.
-    assert total_R(reps) == len(reps[0].roster) + len(reps[1].roster)
+    # R is the size of the minority, summed: what each roster has not
+    # answered (a node a substitution replaced answers as it is built, so the
+    # minority is never larger than its roster).
+    assert total_R(reps) == len(reps[0].minority) + len(reps[1].minority)
+    assert all(len(rep.minority) <= len(rep.roster) for rep in reps)
 
 
 def test_the_roster_covers_every_source_line() -> None:
@@ -175,16 +177,27 @@ def test_the_roster_covers_every_source_line() -> None:
 def test_discharge_produces_the_true_minority_written_vs_not() -> None:
     # The whole loop: construction REGISTERS (constructor), discharge ANSWERS
     # present (template) or absent (abstract). A written function's nodes
-    # discharge present; an unwritten construct (Delete has no sugar) and its
-    # ancestors stay in the minority -- red until written.
+    # discharge present; a construct refused by name (a spread over an
+    # ``await``, ``SugarNotWritten``) and its ancestors stay in the minority --
+    # red until written. ``del`` is written now (``DeleteSugar``): it answers.
     from sugar_source_tree.roll_call import discharge
 
     r = CollectingReporter()
-    report = discharge(_sf("def a(z):\n    return z\ndef b(xs):\n    del xs\n", r))
+    report = discharge(
+        _sf(
+            "def a(z):\n    return z\n"
+            "def b(xs):\n    del xs\n"
+            "async def c(xs):\n    return [*(await xs)]\n",
+            r,
+        )
+    )
     kinds_present = {e.kind for e in report.present}
     kinds_absent = {e.kind for e in report.minority}
     assert "Return" in kinds_present  # a's body desugared
-    assert "Delete" in kinds_absent  # the unwritten construct is minority
+    assert "Delete" not in kinds_absent  # the written construct answered
+    assert report.minority  # the refused construct is minority
+    # Nothing of the written functions' bodies stays unanswered.
+    assert not any(2 <= e.start_line <= 4 for e in report.minority), report.minority
     assert not report.is_clean  # R > 0 while anything is unwritten
 
 
@@ -213,12 +226,10 @@ def test_substitution_discharges_the_node_it_replaces() -> None:
     r = CollectingReporter()
     report = discharge(_sf(_SUBSTITUTED, r))
 
-    # Every source construct in this file is written, so the only honest absence
-    # left is Module. This is the presently unwritten, explicitly accounted
-    # frontier -- Module.sugar raises SugarNotWritten by design -- NOT a
-    # permanent truth. When Module.sugar is implemented this expectation should
-    # turn red, and that red is the good kind: it means the frontier moved.
-    assert [(e.kind, e.name) for e in report.minority] == [("Module", "Module")]
+    # Every source construct in this file is written, Module included: the
+    # frontier this test once pinned at Module moved (the module answers as
+    # the one module walk builds it), so nothing is left unanswered.
+    assert [(e.kind, e.name) for e in report.minority] == []
 
     # The discharge is an ANSWER, not a deletion: the replaced nodes are still
     # enrolled on the roster, they simply answered. A fix that shrank the
@@ -247,15 +258,11 @@ def test_substitution_discharges_the_node_it_replaces() -> None:
         ("Return", "Return", 6, 4),
     ]
 
-    # Every roster entry except the Module frontier answered present, by exact
-    # coordinate -- the five substituted nodes among them.
+    # Every roster entry answered present, by exact coordinate -- the five
+    # substituted nodes among them.
     assert sorted(
         (e.kind, e.name, e.start_line, e.start_col) for e in report.present
-    ) == sorted(
-        (e.kind, e.name, e.start_line, e.start_col)
-        for e in report.roster
-        if e.kind != "Module"
-    )
+    ) == sorted((e.kind, e.name, e.start_line, e.start_col) for e in report.roster)
 
     # The tooth. These five are the ONLY nodes in this file that answer by
     # substitution rather than by building something: the two Params their

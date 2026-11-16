@@ -91,10 +91,14 @@ def test_chained_names_receive_distinct_runtime_binding_coordinates():
     )
     trace = function.sugar().substitution_trace
     entries = dict(trace.records[0].post_bindings)
-    assert (
-        entries["renamed"].state.fragment.seal().cid
-        == entries["other"].state.fragment.seal().cid
-    )
+    # Each Name target binds under its own key (``ChainedAssignSugar.
+    # evaluations``), both keys holding the ONE evaluated right-hand side.
+    from sugar_source_tree.nodes import _ground_value
+
+    renamed = _ground_value(entries["renamed"].state)
+    other = _ground_value(entries["other"].state)
+    assert renamed is not None and other is not None
+    assert renamed.fragment.seal().cid == other.fragment.seal().cid
     assert entries["renamed"].coordinate.cid != entries["other"].coordinate.cid
 
 
@@ -119,12 +123,24 @@ def test_mixed_chain_sequences_existing_store_obligation_and_name_binding():
 
 
 def test_mixed_chain_never_fabricates_a_completed_subscript_store():
-    with pytest.raises(SugarNotWritten, match="undischarged subscript store"):
-        _fn(
-            "def arbitrary(xs):\n"
-            "    renamed = o.field = xs[0] = 7\n"
-            "    return renamed\n"
-        ).sugar().desugar()
+    """The subscript store target is built (the one item mutation): its own
+    halt -- the dispatched ``__setitem__`` or the undecided mutation -- is
+    kept, so no completion stands without it."""
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_py_tests.outcome.exit_set import _is_true
+
+    outcome = _fn(
+        "from unread_module import *\n"
+        "def arbitrary(xs):\n"
+        "    renamed = o.field = xs[0] = 7\n"
+        "    return renamed\n"
+    ).sugar().desugar()
+    assert any(
+        "setitem" in str(getattr(halt.effect, "producer_node_owner", "")).lower()
+        for halt in outcome.halts()
+    ), outcome.exits
+    completed = [e for e in outcome.exits if isinstance(e, Completed)]
+    assert completed and not any(_is_true(e.guard) for e in completed), outcome.exits
 
 
 def test_nested_tuple_target_binds_each_structural_projection():

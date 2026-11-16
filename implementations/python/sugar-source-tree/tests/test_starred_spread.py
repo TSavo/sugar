@@ -22,6 +22,10 @@ def _returned_term(expression: str):
     out = _function(f"def f(a, b, d):\n    return {expression}\n").sugar().desugar()
     value = out.completed_value()
     assert value is not None
+    return _the_return(value)
+
+
+def _the_return(value):
     returns = [
         entry for entry in value.record.statements if isinstance(entry, ReturnValue)
     ]
@@ -29,8 +33,28 @@ def _returned_term(expression: str):
     return returns[0].value.to_term(owner="starred-spread-test")
 
 
+def _returned_call(expression: str):
+    """The call term a call to ``make`` returns.  ``make`` may be bound only by
+    a star import the lifter cannot read (a name nothing binds is a NameError
+    halt), so the call is the unanswered call's two faces: it completes only
+    under its completes atom, as ``python:call_result(<call term>, ...)``,
+    its halt kept beside it."""
+    from sugar_lift_py_tests.outcome import Completed
+
+    out = _function(
+        "from unread_module import *\n\n\n"
+        f"def f(a, b, d):\n    return {expression}\n"
+    ).sugar().desugar()
+    assert out.halts(), out.exits
+    completed = [e for e in out.normalize().exits if isinstance(e, Completed)]
+    assert len(completed) == 1, out.exits
+    result = _the_return(completed[0].value)
+    assert result.name == "python:call_result", result
+    return result.args[0]
+
+
 def test_call_star_and_double_star_use_reference_wrappers() -> None:
-    term = _returned_term("make(*a, b, **d)")
+    term = _returned_call("make(*a, b, **d)")
     assert term.name == "python:call"
     assert term.args[0].value == "make"
     assert term.args[1].name == "python:starred_arg"
@@ -41,7 +65,7 @@ def test_call_star_and_double_star_use_reference_wrappers() -> None:
 
 
 def test_call_with_only_double_star_uses_reference_shape() -> None:
-    term = _returned_term("make(**d)")
+    term = _returned_call("make(**d)")
     assert term.name == "python:call"
     assert len(term.args) == 2
     assert term.args[0].value == "make"
@@ -85,6 +109,15 @@ def test_spread_with_unwritten_inner_expression_stays_loud(body: str) -> None:
         _function(body).sugar()
 
 
-def test_starred_assignment_target_remains_a_binding_design_gap() -> None:
-    with pytest.raises(SugarNotWritten):
-        _function("def f(xs):\n    a, *rest = xs\n    return rest\n").sugar()
+def test_starred_assignment_target_binds_and_keeps_its_arity_halt() -> None:
+    """``a, *rest = xs`` is built: the starred target binds the remainder,
+    and the unpack over a formal keeps its own undetermined halt (too few
+    items) beside the completed face -- never a completion alone."""
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed
+
+    out = _function("def f(xs):\n    a, *rest = xs\n    return rest\n").sugar().desugar()
+    assert any(isinstance(e, Completed) for e in out.exits), out.exits
+    assert any(
+        isinstance(halt.effect, UndeterminedRaiseEffect) for halt in out.halts()
+    ), out.exits

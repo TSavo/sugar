@@ -5,6 +5,7 @@ SourceFragment; sealing the resolved fragment reproduces an EQUAL memento.
 Drift is unavailable loudly (SourceUnavailable) — never silence, never None.
 """
 
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,15 @@ from sugar_source_tree import (
 SOURCE = (
     "def f(a, b):\n" "    total = a + b\n" "    return total\n" "\n" "x = f(1, 2)\n"
 )
+
+# ``oracle_source_file`` seats each file in the temporary directory, which is
+# its workspace: ``file.filename`` is relative to it, and a memento names that
+# workspace-relative address, re-read as ``project_root / file``.
+_ROOT = Path(tempfile.gettempdir())
+
+
+def _on_disk(file) -> Path:
+    return _ROOT / file.filename
 
 
 def test_every_enumerated_object_answers_fragment():
@@ -49,7 +59,7 @@ def test_fragment_seals_and_memento_resolves_back_equal():
     assert memento.source_cid == file.unit.source_cid
     assert memento.cid.startswith("blake3-512:")
 
-    resolved = resolve_memento(memento)
+    resolved = resolve_memento(memento, project_root=str(_ROOT))
     assert resolved == frag
     assert resolved.text == frag.text == "return total"
     assert isinstance(resolved.node, Node)
@@ -62,7 +72,7 @@ def test_fragment_seals_and_memento_resolves_back_equal():
 def test_file_level_fragment_round_trips():
     file = oracle_source_file(SOURCE)
     memento = file.fragment.seal()
-    resolved = resolve_memento(memento)
+    resolved = resolve_memento(memento, project_root=str(_ROOT))
     assert resolved == file.fragment
     assert resolved.text == SOURCE
     assert resolved.node.kind == "Module"
@@ -72,17 +82,17 @@ def test_drifted_source_refuses_loudly_never_silence():
     file = oracle_source_file(SOURCE)
     node = next(n for n in file.nodes() if n.kind == "Return")
     memento = node.fragment.seal()
-    Path(file.filename).write_text(SOURCE + "\ny = 3\n", encoding="utf-8")
+    _on_disk(file).write_text(SOURCE + "\ny = 3\n", encoding="utf-8")
     with pytest.raises(SourceUnavailable):
-        resolve_memento(memento)
+        resolve_memento(memento, project_root=str(_ROOT))
 
 
 def test_missing_file_refuses_loudly_never_silence():
     file = oracle_source_file(SOURCE)
     memento = file.fragment.seal()
-    Path(file.filename).unlink()
+    _on_disk(file).unlink()
     with pytest.raises(SourceUnavailable):
-        resolve_memento(memento)
+        resolve_memento(memento, project_root=str(_ROOT))
 
 
 def test_source_file_has_no_raw_text_door():
@@ -93,6 +103,6 @@ def test_source_file_has_no_raw_text_door():
 
 def test_unit_carries_the_oracle_cid_verbatim():
     file = oracle_source_file(SOURCE)
-    _, _, cid = path_source(file.filename)
+    _, _, cid = path_source(str(_on_disk(file)))
     assert file.unit.source_cid == cid
     assert cid.startswith("blake3-512:")

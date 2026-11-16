@@ -2078,7 +2078,20 @@ class SourceUnit:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
-        table = symtable.symtable(self.source, self.filename, "exec")
+        try:
+            table = symtable.symtable(self.source, self.filename, "exec")
+        except (SyntaxError, ValueError) as err:
+            # The symbol table is CPython's compiler reading the text before
+            # the backend parses it, so text it cannot read fails here first.
+            # That is the backend's could-not-parse outcome (#5946), stated
+            # under the tree's own name: CPython's native exception never
+            # escapes the unit (a recorded row, never a dead process).
+            from .backend import BackendCouldNotParse
+            from .cpython_adapter import CPythonAstBackend
+
+            raise BackendCouldNotParse(
+                backend=CPythonAstBackend.name, file=self.filename, reason=str(err)
+            ) from err
         object.__setattr__(self, "module_symtable", table)
         symbols = table.get_symbols()
         object.__setattr__(

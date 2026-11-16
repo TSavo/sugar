@@ -8,10 +8,9 @@ lookup edge.
 """
 
 import tempfile
+from pathlib import Path
 
-from sugar_lift_python_source.source_oracle import path_source
-from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 
 from native_carrier_testimony import (
     atoms_named,
@@ -21,10 +20,13 @@ from native_carrier_testimony import (
 
 
 def _fn(src: str):
-    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
-        f.write(src)
-        path = f.name
-    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
+    # The one construction door, under a workspace: an ``assert`` halts at a
+    # ground ``AssertionError`` exit whose locus is workspace-relative, as
+    # every lifted file's is (``ground_exit``).
+    root = Path(tempfile.mkdtemp())
+    path = root / "m.py"
+    path.write_text(src, encoding="utf-8")
+    return next(open_source_file_for_construction(path, root=root).functions())
 
 
 # ---- UnaryOp -----------------------------------------------------------------
@@ -153,8 +155,24 @@ def test_attribute_is_named_undecided():
     assert _undecided_read("def A(z):\n    return z.numerator\n") == ("z", "numerator")
 
 
-def test_attribute_chain_refuses_at_the_first_unowned_lookup():
-    assert _undecided_read("def A(z):\n    return z.a.b\n") == ("z", "a")
+def test_attribute_chain_keeps_each_reads_halt():
+    """``z.a.b``: each read is its own two-faced undecided read, its halt
+    kept (#7757: a halt is never dropped).  ``.a`` reads the formal; ``.b``
+    reads what ``z.a`` gave, never the formal."""
+    outcome = _fn("def A(z):\n    return z.a.b\n").sugar().desugar()
+    assert outcome.completed_value() is None
+    halts = [
+        face
+        for face in outcome.halts()
+        if face.effect.producer_node_owner == "SymbolicValue.attribute"
+    ]
+    assert len(halts) >= 2, outcome.exits
+    operations = {
+        operation for halt in halts for operation in _attribute_operations(halt.guard, [])
+    }
+    assert ("z", "a") in operations
+    assert ("python:attribute_result", "b") in operations
+    assert ("z", "b") not in operations
 
 
 if __name__ == "__main__":
@@ -164,5 +182,5 @@ if __name__ == "__main__":
     test_or_disjoins_operand_truthiness()
     test_bare_operands_use_py_truthy()
     test_attribute_is_named_undecided()
-    test_attribute_chain_refuses_at_the_first_unowned_lookup()
+    test_attribute_chain_keeps_each_reads_halt()
     print("ok: UnaryOp, BoolOp, Attribute drained through the node")
