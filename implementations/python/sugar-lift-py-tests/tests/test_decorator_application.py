@@ -1561,7 +1561,7 @@ def test_the_class_statement_evaluates_its_methods_decorators() -> None:
     """Python evaluates a method's decorator expressions when its ``def``
     statement runs, which is when the class body runs: a decorator that
     raises raises at the class statement, whether or not the method is ever
-    called, though the class body's descriptor table applies its value."""
+    called."""
     raising = _test_function_outcome(
         """\
 def test_decorator():
@@ -1574,6 +1574,91 @@ def test_decorator():
 """
     )
     assert _raises(raising, "ZeroDivisionError") != []
+
+
+def test_the_class_body_applies_a_source_decorator_where_it_runs(tmp_path) -> None:
+    """A class-body ``def`` under a source decorator is the one decorator
+    application, as a decorated ``def`` in a module or function body is
+    (#7757): Python calls ``replace(pick)`` when the class body runs, so
+    that call is ``replace``'s edge at the class statement, owed, its
+    actual the function the ``def`` built, and every face of it the class
+    statement's.  Before, the class body evaluated the decorator expression
+    and applied nothing: no edge, so a decorator that raises was a dropped
+    halt.  The plain body is never run."""
+    source = """\
+def replace(fn):
+    return lambda self: 7
+
+
+def test_box():
+    class Box:
+        @replace
+        def pick(self):
+            raise ValueError('plain body')
+
+    assert 1 == 1
+"""
+    outcome = _rooted_outcome(tmp_path, source)
+    assert "python:subject.replace" in _owed_symbols(outcome), outcome
+    (actual,) = _positional(_edge_term(outcome, "subject.replace"))
+    assert getattr(actual, "name", None) == "python:function", actual
+    assert _raises(outcome, "ValueError") == []
+
+
+def test_a_builtin_descriptor_stays_the_descriptor_tables(tmp_path) -> None:
+    """``staticmethod``, ``classmethod``, ``property`` and a property's own
+    ``@x.setter`` are builtins the class body's descriptor table models
+    (``ClassDef.descriptor_table_models``): the class statement applies
+    none of them, so it owes nothing for them, while a source decorator
+    beside them is applied and owed."""
+    source = """\
+def replace(fn):
+    return fn
+
+
+def test_box():
+    class Box:
+        @property
+        def size(self):
+            return 1
+
+        @size.setter
+        def size(self, value):
+            pass
+
+        @staticmethod
+        def make():
+            return 2
+
+        @classmethod
+        def build(cls):
+            return 3
+
+        @replace
+        def pick(self):
+            return 4
+
+    assert 1 == 1
+"""
+    tree = _rooted_tree(tmp_path, source)
+    (box,) = tuple(
+        node
+        for node in tree.nodes()
+        if isinstance(node, ClassDef) and node.name == "Box"
+    )
+    methods = tuple(item for item in box.body if isinstance(item, FunctionDef))
+    assert [box.descriptor_table_models(method) for method in methods] == [
+        True,  # @property
+        True,  # @size.setter of the body's own property
+        True,  # @staticmethod
+        True,  # @classmethod
+        False,  # @replace: the one application
+    ]
+    outcome = _rooted_outcome(tmp_path, source)
+    owed = _owed_symbols(outcome)
+    assert "python:subject.replace" in owed, outcome
+    for builtin in ("property", "staticmethod", "classmethod", "setter"):
+        assert not any(builtin in str(symbol) for symbol in owed), owed
 
 
 def test_a_def_statement_evaluates_its_annotations() -> None:

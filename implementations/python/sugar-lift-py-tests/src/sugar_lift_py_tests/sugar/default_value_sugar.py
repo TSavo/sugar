@@ -59,9 +59,11 @@ class DefinitionDefaultsSugar(Sugar):
     one decorator step (``nodes._decorator_step``) and evaluated exactly as
     the decorated statement's application evaluates them
     (``DecoratorStepV1.evaluated``); what applies their values is not this
-    statement's (a class body's descriptor table, a ``contextmanager``
-    generator's own frame).  ``values`` are the default sugars (substituted
-    in the scope the statement runs in), then the sugar of each annotation
+    statement's (a class body's descriptor table, for a method under only
+    builtins it models, ``ClassDef.descriptor_table_models``; a
+    ``contextmanager`` generator's own frame).  ``values`` are the default
+    sugars (substituted in the scope the statement runs in), then the sugar
+    of each annotation
     Python evaluates where the statement runs
     (``nodes._evaluated_annotations``); ``evaluations`` holds ``(key, value
     index)`` per default, and no annotation is bound under a key.  The

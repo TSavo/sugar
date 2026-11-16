@@ -11692,6 +11692,83 @@ class ClassDef(Statement):
             for decorator in method.decorators
         )
 
+    def descriptor_table_models(self, method) -> bool:
+        """Whether every decorator of the decorated class-body ``def``
+        ``method`` is a builtin the class body's descriptor table models
+        rather than one the class body's run applies: identity decorators
+        (``typing.final``, ``abc.abstractmethod``) around at most one builtin
+        descriptor constructor (``staticmethod``, ``classmethod``,
+        ``property``), each read through the one builtin door
+        (``SourceUnit.language_callee_of``); or exactly one
+        ``@x.setter`` / ``@x.getter`` / ``@x.deleter`` of a property ``x``
+        a ``def`` of this class body bound before it
+        (``_property_accessor``).
+
+        These are modelling of builtins, never a second application: the
+        namespace binds each by the descriptor protocol (``DispatchReceiver``,
+        the row's ``python:class_binds`` kind) or leaves it undecided
+        (``method_value_is_written``), and none of them raises when applied
+        to a function or to a descriptor it builds.  Every other decorated
+        ``def`` of a class body -- a source decorator, an imported one, any
+        other builtin (``functools.cache``, ``contextlib.contextmanager``
+        that does not apply its own frame), a decorator factory -- is the
+        one decorator application where the class body runs it
+        (``_class_method_statement``, ``_decorated_statement_sugar``), as a
+        decorated ``def`` in a module or function body is: every face of
+        it the class statement's (#7757)."""
+        if self._property_accessor(method):
+            return True
+        callees = [self.unit.language_callee_of(item) for item in method.decorators]
+        descriptors = [
+            callee for callee in callees if callee in METHOD_DESCRIPTOR_KINDS
+        ]
+        return len(descriptors) <= 1 and all(
+            callee in METHOD_DESCRIPTOR_KINDS or callee in _IDENTITY_DECORATORS
+            for callee in callees
+        )
+
+    def _property_accessor(self, method) -> bool:
+        """Whether ``method``'s one decorator is ``@x.setter``,
+        ``@x.getter`` or ``@x.deleter`` of a property ``x`` this class body
+        defined: the last statement of the body before ``method`` that binds
+        ``x`` is a ``def`` the descriptor table reads as a builtin
+        ``property`` (alone or around identity decorators), or itself such
+        an accessor.  Decided on the typed occurrences (``_typed_original``),
+        whatever shell the body's threading made of either."""
+        if len(method.decorators) != 1:
+            return False
+        decorator = method.decorators[0]
+        if (
+            not isinstance(decorator, Attribute)
+            or decorator.attr not in ("setter", "getter", "deleter")
+            or not isinstance(decorator.value, Name)
+        ):
+            return False
+        name = decorator.value.id
+        identity = SourceOccurrenceIdentityV1.of(_typed_original(method))
+        binder = None
+        for statement in self.body:
+            if isinstance(statement, (FunctionDef, AsyncFunctionDef)) and (
+                SourceOccurrenceIdentityV1.of(_typed_original(statement)) == identity
+            ):
+                break
+            if isinstance(statement, (FunctionDef, AsyncFunctionDef, ClassDef)):
+                if statement.name == name:
+                    binder = statement
+            elif name in statement.names_bound_within():
+                binder = statement
+        else:
+            return False
+        if not isinstance(binder, (FunctionDef, AsyncFunctionDef)):
+            return False
+        callees = [self.unit.language_callee_of(item) for item in binder.decorators]
+        if callees.count(LanguageCallee.BUILTIN_PROPERTY) == 1 and all(
+            callee is LanguageCallee.BUILTIN_PROPERTY or callee in _IDENTITY_DECORATORS
+            for callee in callees
+        ):
+            return True
+        return self._property_accessor(binder)
+
     def _authenticated_new_constructor_shape(self):
         """One source-owned ``__new__`` allocation followed by field stores.
 
@@ -11862,14 +11939,33 @@ class ClassDef(Statement):
             self._method_descriptor_kind(method),
         )
 
-    def _class_method_defaults(self, method):
-        """The class-body ``def`` statement ``method`` as the class body's
-        block runs it, where it stands in source order: the evaluation of
-        its decorator expressions, then its defaults
-        (``DefinitionDefaultsSugar``), or None for a statement that
-        evaluates none.  Every decorator expression is built here, each face
-        of it the class statement's, though the class body's descriptor
-        table, not this statement, applies its value.
+    def _class_method_statement(self, method):
+        """``(statement, default_keys)``: the class-body ``def`` statement
+        ``method`` as the class body's block runs it, where it stands in
+        source order, and the key of each default it binds; ``statement``
+        None for one that evaluates nothing.
+
+        It is the one ``def`` statement (``_def_statement_sugar``), as in a
+        module or function body.  Undecorated (or a ``contextmanager``
+        generator, ``call_applies_own_frame``), it evaluates its decorator
+        expressions and defaults (``DefinitionDefaultsSugar``).  Decorated
+        by any decorator the class body's descriptor table does not model
+        (``descriptor_table_models``), it is the one decorator application
+        (``_decorated_statement_sugar``): its decorator expressions, then
+        its defaults, then each decorator called on the function, innermost
+        first, the name bound to their result under the statement's
+        evaluation key.  Every face of that application -- a decorator that
+        raises, an unanswered one's ``undecided`` member, a source
+        decorator's edge -- is the class body's, and so the class
+        statement's: a decorator that raises when the class body runs halts
+        the class statement, as Python's import raises there (#7757).  The
+        namespace reads the method under such a decorator as undecided
+        (``method_value_is_written``), never the plain function.  Under only
+        builtins the descriptor table models (``staticmethod``,
+        ``classmethod``, ``property``, a property's own ``@x.setter``, and
+        identity decorators), the statement evaluates its decorator
+        expressions and defaults, and the descriptor table, not this
+        statement, reads their value: none of them raises.
 
         Python evaluates a method's defaults when its ``def`` statement runs,
         which is when the class body runs.  The statement is the one
@@ -11881,25 +11977,39 @@ class ClassDef(Statement):
         ``object_value.bind_method_call``), and to every call of the class
         for its ``__init__`` and ``__new__``
         (``ClassDefinitionValue.callable_application_with``).  A decorated method
-        (``staticmethod``, ``classmethod``, ``property``) evaluates its
-        defaults the same way, before its decorators apply: its descriptor
-        is the class body's descriptor table's, not applied here, and every
-        call through it binds the carried values.  A default that does not
-        construct is not evaluated here: a call that omits it finds its key
-        unbound and is refused by name (``DefaultValueSugar``), never
-        dropped."""
+        evaluates its defaults the same way, before its decorators apply,
+        under the same keys (``_definition_default_evaluations``), whether
+        the descriptor table reads its value or the one application applies
+        its decorators, and every call through it binds the carried values.
+        A default that does not construct is not evaluated here: a call that
+        omits it finds its key unbound and is refused by name
+        (``DefaultValueSugar``), never dropped.
+
+        Which way the statement goes is decided on the method's typed
+        occurrence (``_typed_original``), as the namespace's lookup reads it
+        (``method_value_is_written``)."""
         from sugar_lift_py_tests.sugar.default_value_sugar import (
             DefinitionDefaultsSugar,
         )
+        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
 
-        statement = (
-            _def_statement_sugar(method)
-            if call_applies_own_frame(method)
-            else _definition_defaults_sugar(method)
+        if call_applies_own_frame(method) or not self.descriptor_table_models(
+            _typed_original(method)
+        ):
+            statement = _def_statement_sugar(method)
+        else:
+            statement = _definition_defaults_sugar(method)
+        if isinstance(statement, InertSugar):
+            return None, ()
+        if isinstance(statement, DefinitionDefaultsSugar):
+            return statement, tuple(key for key, _at in statement.evaluations)
+        # The one decorator application: it evaluates the defaults under
+        # their per-parameter keys before any decorator applies.
+        return statement, tuple(
+            _default_evaluation_key(method, index)
+            for index, param in enumerate(method.params)
+            if param.default is not None
         )
-        if not isinstance(statement, DefinitionDefaultsSugar):
-            return None
-        return statement
 
     def _require_class_members(self, statements, *, top: bool = True) -> None:
         """Stop by name (``SugarNotWritten``) a class body holding a
@@ -11994,10 +12104,12 @@ class ClassDef(Statement):
         (``_body_statement_sugar``): an assignment is ``AssignSugar``, an
         ``if`` is ``IfSugar``, a nested ``class`` the one decorator
         application bound under its evaluation key.  A ``def`` statement is
-        its decorator expressions' and defaults' evaluation
-        (``_class_method_defaults``): its descriptor
-        is the class body's descriptor table's, its body runs only at a
-        call.  The docstring and ``pass`` run nothing.
+        the one ``def`` statement (``_class_method_statement``): decorated
+        by anything the class body's descriptor table does not model, the
+        one decorator application bound under its evaluation key, every
+        face of it the class statement's; else its decorator expressions'
+        and defaults' evaluation.  Its body runs only at a call.  The
+        docstring and ``pass`` run nothing.
 
         ``fields`` name what the namespace holds once that block ran: one
         row per Name a statement binds, with the key the statement's sugar
@@ -12209,10 +12321,10 @@ class ClassDef(Statement):
         for index, item in enumerate(body):
             spliced, after_if = after_if, False
             if isinstance(item, (FunctionDef, AsyncFunctionDef)):
-                defaults = self._class_method_defaults(item)
-                if defaults is not None:
-                    default_keys.extend(key for key, _at in defaults.evaluations)
-                    statements.append(defaults)
+                statement, keys = self._class_method_statement(item)
+                if statement is not None:
+                    default_keys.extend(keys)
+                    statements.append(statement)
                 continue
             if isinstance(item, Pass):
                 # ``pass`` runs nothing and binds nothing: the body consumes
@@ -12350,7 +12462,7 @@ class ClassDef(Statement):
                 if not call_applies_own_frame(statement):
                     continue
                 # A method's defaults are evaluated when the class body runs
-                # (``_class_method_defaults``); its body is not.
+                # (``_class_method_statement``); its body is not.
                 pending = [
                     param.default
                     for param in statement.params
@@ -25966,9 +26078,11 @@ def _definition_defaults_sugar(statement):
     """A ``def`` statement where its decorators apply nothing here (an
     undecorated statement in a body, a generator under
     ``contextlib.contextmanager`` whose call applies its own frame,
-    ``call_applies_own_frame``, or a class-body method, whose descriptor is
-    the class body's): it evaluates each decorator expression, top to
-    bottom, then each default, left to right, where it stands, and binds
+    ``call_applies_own_frame``, or a class-body method under only builtins
+    the class body's descriptor table models,
+    ``ClassDef.descriptor_table_models``): it evaluates each decorator
+    expression, top to bottom, then each default, left to right, where it
+    stands, and binds
     each completed default under the default's key
     (``_default_evaluation_key``), as an assignment binds its value
     (``AssignSugar``).  Every face of a decorator expression and of a
