@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_python_source.source_oracle import path_source
+from sugar_source_tree.nodes import _ground_value
 from sugar_source_tree.panic import SubstituteNotWritten
 from sugar_source_tree.tree import SourceFile
 
@@ -97,11 +98,11 @@ def test_a_block_threads_its_assignments():
     f = next(_tree("def f():\n    x = 5\n    return x\n").functions())
     ret = next(n for n in f.substitute({}).walk() if n.kind == "Return")
     assert ret.value.kind == "EvaluationRef" and ret.value.name == "x"
-    assert ret.value.ground_value().value == 5
+    assert _ground_value(ret.value).value == 5
     # a rebind shadows for the tail (single-assignment): y = 1; y = 2; return y -> 2
     g = next(_tree("def g():\n    y = 1\n    y = 2\n    return y\n").functions())
     retg = next(n for n in g.substitute({}).walk() if n.kind == "Return")
-    assert retg.value.ground_value().value == 2
+    assert _ground_value(retg.value).value == 2
 
 
 def test_binders_mask_their_bound_names():
@@ -129,7 +130,7 @@ def test_binders_mask_their_bound_names():
     masked = c1.substitute({"i": _bind_target()}).elt
     assert masked.kind == "EvaluationRef" and masked.name == "i"
     assert masked.member
-    assert masked.ground_value() is None
+    assert _ground_value(masked) is None
     c2 = next(
         n for n in _tree("a = [y for i in xs]\n").root.walk() if n.kind == "ListComp"
     )
@@ -157,7 +158,7 @@ def test_aug_assign_rebinds_to_the_operation():
     f = next(_tree("def f():\n    x = 1\n    x += 2\n    return x\n").functions())
     ret = next(n for n in f.substitute({}).walk() if n.kind == "Return")
     assert ret.value.kind == "EvaluationRef" and ret.value.name == "x"
-    assert ret.value.ground_value() is None
+    assert _ground_value(ret.value) is None
 
 
 def test_walrus_binding_leaks_to_the_block():

@@ -19,8 +19,8 @@ undecided key, the function's free ``global:`` input with no stated value
 
 An implicit call (an operator's ``__add__``, a subscript's ``__getitem__``, a
 property getter) is a call site too: its node's sugar is stamped with its
-module execution site, reduces there, and the dunder's frame is read again
-at it (``frame_at_current_module_execution_site``).
+module execution site, and reduces there: the dunder's body reads a module
+global as the module binds it at that site.
 """
 
 from __future__ import annotations
@@ -38,9 +38,6 @@ from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
-from sugar_lift_py_tests.source_call_frame import (
-    frame_at_current_module_execution_site,
-)
 from sugar_lift_py_tests.sugar.binding_projection import UnboundProjection
 from sugar_lift_py_tests.sugar.branch_result_ref_sugar import BranchResultRefSugar
 from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
@@ -1278,25 +1275,6 @@ def test_the_implicit_call_records_its_site_on_its_sugar(name: str) -> None:
     assert stamped_module_execution_site(node.sugar()) == site
 
 
-@pytest.mark.parametrize("name", sorted(IMPLICIT_CALLS))
-def test_the_dunder_frame_is_read_again_at_the_implicit_call(name: str) -> None:
-    _method, _expression, kind, method_name = IMPLICIT_CALLS[name]
-    tree = _source(_implicit_call_source(name))
-    _assignment_keys(tree, "x")
-    node = _only(tree, kind)
-    site = node.unit.module_execution_site(node)
-    # The method frame the class statement constructs: no call site.
-    frame = _function(tree, method_name).source_visible_call_frame()
-    assert frame.module_execution_site is None
-    assert frame_at_current_module_execution_site(frame) is frame
-    at_call = construct_at_module_execution_site(
-        site, lambda: frame_at_current_module_execution_site(frame)
-    )
-    assert at_call.module_execution_site == site
-    # The frame is the signature: the body is the method's own universe's.
-    assert at_call.body is None
-
-
 def test_a_stamped_sugar_reduces_at_its_site() -> None:
     tree = _source(_implicit_call_source("__add__"))
     node = _only(tree, BinOp)
@@ -1355,9 +1333,7 @@ _MODULE_WITH = (
 def test_a_module_with_enters_reading_the_binding_at_the_with() -> None:
     # ``x = 1; class M: def __enter__(self): return x; with M() as y: ...;
     # x = 2``: the with's ``__enter__`` runs where the with stands, so ``y``
-    # is the ``x = 1`` binding.  The protocol binds ``__enter__`` through
-    # the dispatched call at the with's site (``_call_protocol_method``),
-    # which reads the method frame again there.
+    # is the ``x = 1`` binding: the method body read at the with's site.
     tree = _source(_MODULE_WITH)
     first, second = _assignment_keys(tree, "x")
     node = _only(tree, With)
@@ -1371,16 +1347,6 @@ def test_a_module_with_enters_reading_the_binding_at_the_with() -> None:
     after_import = _returned(function)
     assert isinstance(after_import, EvaluationRef)
     assert after_import.evaluation == second
-    # The method frame the class statement constructs is read again at the
-    # with (``frame_at_current_module_execution_site``).
-    frame = function.source_visible_call_frame()
-    at_with = construct_at_module_execution_site(
-        site, lambda: frame_at_current_module_execution_site(frame)
-    )
-    assert at_with.module_execution_site == site
-    # The frame is the signature: the body read at the site is the method's
-    # own universe's (``_returned`` above), never rebuilt in the frame.
-    assert at_with.body is None
 
 
 # -- x += e binds its evaluation, and the name only for a live loop -----------

@@ -19,10 +19,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sugar_lift_py_tests.floor.none_value import NoneValue
+from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.source_call_resolution import (
     imported_module_value,
-    module_value_name,
     pinned_present_top_level_module,
 )
 from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
@@ -104,6 +103,6 @@ def test_a_present_module_is_its_module_coordinate():
     assert pinned_present_top_level_module("json")
     assert not pinned_present_top_level_module("zz_sugar_absent_module_7742")
     assert not pinned_present_top_level_module("os.path")  # dotted: not asked
-    assert module_value_name(imported_module_value("zstandard")) == "zstandard"
-    # Nothing else is read as a module.
-    assert module_value_name(NoneValue()) is None
+    assert imported_module_value("zstandard").term == ctor(
+        "python:module", (str_const("zstandard"),)
+    )

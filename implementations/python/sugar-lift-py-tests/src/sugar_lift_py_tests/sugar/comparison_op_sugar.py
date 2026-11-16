@@ -56,46 +56,6 @@ class CompareLaw(str, Enum):
     CHAINING = "chaining"
 
 
-_LAW_BY_OP: dict[str, CompareLaw] = {
-    "Lt": CompareLaw.ORDERING,
-    "LtE": CompareLaw.ORDERING,
-    "Gt": CompareLaw.ORDERING,
-    "GtE": CompareLaw.ORDERING,
-    "In": CompareLaw.MEMBERSHIP,
-    "NotIn": CompareLaw.MEMBERSHIP,
-    "Eq": CompareLaw.EQUALITY,
-    "NotEq": CompareLaw.EQUALITY,
-    "Is": CompareLaw.IDENTITY,
-    "IsNot": CompareLaw.IDENTITY,
-}
-
-
-def compare_law_for(op_kind: str) -> CompareLaw:
-    """The construction law that owns one comparison operator kind."""
-    try:
-        return _LAW_BY_OP[op_kind]
-    except KeyError as error:
-        raise KeyError(f"no Compare law for operator kind {op_kind!r}") from error
-
-
-def partition_key_for_law(law: CompareLaw, site, op_kind: str) -> tuple:
-    """Law-scoped ExitSet partition coordinate (not one shared monomorphic key)."""
-    return (f"compare.{law.value}.dispatch", str(site), op_kind)
-
-
-def publish_undecided_comparison_edges(left, right, site, op_kind: str, outcome):
-    """Dispatch to the law-specific dual-edge publisher for ``op_kind``."""
-    law = compare_law_for(op_kind)
-    if law is CompareLaw.ORDERING:
-        return publish_undecided_ordering_edges(left, right, site, op_kind, outcome)
-    if law is CompareLaw.MEMBERSHIP:
-        return publish_undecided_membership_edges(left, right, site, op_kind, outcome)
-    if law is CompareLaw.EQUALITY:
-        return publish_undecided_equality_edges(left, right, site, op_kind, outcome)
-    # Identity never dual-edges: ``is`` / ``is not`` cannot invoke user code.
-    return outcome
-
-
 def publish_undecided_ordering_edges(left, right, site, op_kind: str, outcome):
     """Ordering law: never dual-edge residual FOL invent (LAW_OF_ONE).
 

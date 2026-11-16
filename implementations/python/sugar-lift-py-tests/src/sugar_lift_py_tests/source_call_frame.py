@@ -135,44 +135,6 @@ def _constructing_module_execution_site():
     return current_module_execution_site()
 
 
-def frame_at_current_module_execution_site(frame):
-    """``frame`` read again at the module execution site the reduction
-    running now is under (``current_module_execution_site``), when it was
-    constructed at another one.
-
-    A method frame is constructed with its class statement, but an implicit
-    call runs its body where the call stands: ``x = 1; x += 1; class C:
-    def __add__(self, o): return x; y = C() + 0; x += 1`` runs ``__add__``
-    at ``y = C() + 0`` (the operator's sugar reduces at its stamped site,
-    ``reduce_at_stamped_module_execution_site``), so its body reads the
-    first ``x += 1``.  The frame is read again from its definition exactly
-    as ``CallSiteSugar.desugar`` reads a declaration frame at its site
-    (``frame_read_at_module_execution_site``); a frame with no definition to
-    read it from is served as it is.
-    """
-    from sugar_source_tree.nodes import current_module_execution_site
-
-    if not isinstance(frame, SourceVisibleCallFrameV1):
-        return frame
-    site = current_module_execution_site()
-    if site == frame.module_execution_site:
-        return frame
-    if not hasattr(frame.owner, "source_visible_call_frame"):
-        return frame
-    return frame_read_at_module_execution_site(frame, site)
-
-
-def frame_read_at_module_execution_site(frame, site):
-    """The frame of ``frame``'s definition, read again at the module
-    execution ``site``: its body reads a module global as the module binds
-    it there."""
-    from sugar_source_tree.nodes import construct_at_module_execution_site
-
-    return construct_at_module_execution_site(
-        site, frame.owner.source_visible_call_frame
-    )
-
-
 @dataclass(frozen=True)
 class SourceVisibleCallFrameV1:
     """A callable's call frame: its signature, formal and captured

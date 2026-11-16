@@ -3,9 +3,7 @@
 The hand-assembled arm lists in ``floor/*`` and ``sugar/match_sugar.py`` now
 compose through ``ExitSet.and_then``, join through ``ExitSet.union``, or build
 one fresh arm with ``ExitSet.completed`` / ``ExitSet.halted``. Each assembly
-that dropped what an arm carried has a test here that it now survives, and
-``ExitSet.with_partition_face`` (which read an ``exit_.partition`` no arm has)
-stamps the face ``partition`` mints.
+that dropped what an arm carried has a test here that it now survives.
 """
 
 from __future__ import annotations
@@ -22,7 +20,6 @@ from sugar_lift_py_tests.outcome.exit_set import (
     ExitSet,
     Halted,
     _are_exclusive,
-    _faces_exclusive,
     complement_guard,
     partition,
 )
@@ -40,44 +37,6 @@ from sugar_source_tree.nodes import Name, Subscript
 
 def _raised(occurrence: str) -> RaiseEffect:
     return RaiseEffect.for_builtin("ValueError", occurrence=occurrence)
-
-
-# -- ExitSet.with_partition_face ----------------------------------------------
-
-
-def test_with_partition_face_stamps_the_minted_face_and_keeps_every_arm() -> None:
-    # It read ``exit_.partition``, which ``Completed`` does not have, so any
-    # call over a completed arm raised AttributeError.
-    prior, _other = partition(("test:prior-split", 7825))
-    guard = atomic("test:stamp:7825", [])
-    arms = ExitSet(
-        (
-            Completed(guard, TermValue(1), frozenset({prior}), ("debt:done",)),
-            Halted(
-                complement_guard(guard),
-                _raised("test:stamp-raise:7825"),
-                owed=("debt:halt",),
-            ),
-        )
-    )
-    then_face, else_face = partition("test:stamp-split:7825")
-
-    done, halt = arms.with_partition_face("test:stamp-split:7825", 0).exits
-    assert isinstance(done, Completed)
-    assert done.guard == guard
-    assert done.value == TermValue(1)
-    assert done.faces == frozenset({prior, then_face})
-    assert done.owed == ("debt:done",)
-    # A halted arm stands as it was.
-    assert isinstance(halt, Halted)
-    assert halt == arms.exits[1]
-    assert halt.faces == frozenset()
-    assert halt.owed == ("debt:halt",)
-
-    (other_done, _halt) = arms.with_partition_face("test:stamp-split:7825", 1).exits
-    assert other_done.faces == frozenset({prior, else_face})
-    # The two stamps are the two sides of one split.
-    assert _faces_exclusive(done.faces, other_done.faces)
 
 
 # -- MutableGlobalValue.subscript ---------------------------------------------

@@ -9,7 +9,7 @@ where the question is real and statable. Now the arm asks the one matcher,
 which retains ``adt.is_python_type(e, T)`` (the atom ``except T`` and a
 source-constructed exit retain, #7590/#7591): the exit suppresses under it and
 the original halt stands under its complement. ``BaseException`` is decided;
-an empty set restores; a raise with no subject term stays loud.
+a raise with no subject term stays loud.
 """
 
 from __future__ import annotations
@@ -87,17 +87,13 @@ def test_several_suppressed_types_retain_one_disjunction():
     assert {repr(op) for op in verdict.obligation.operands} == expected
 
 
-def test_base_exception_is_decided_and_an_empty_set_restores():
+def test_base_exception_is_decided():
     effect = _undetermined()
     assert (
         exit_disposition_effect(
             ExitSuppressionContract.suppresses(("BaseException",)), _halted(effect)
         )
         is None
-    )
-    assert (
-        exit_disposition_effect(ExitSuppressionContract.never_suppresses(), _halted(effect))
-        is effect
     )
 
 

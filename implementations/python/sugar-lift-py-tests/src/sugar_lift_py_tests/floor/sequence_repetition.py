@@ -84,18 +84,3 @@ def known_invalid_repetition_type_error(sequence, count, site):
     from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
     return ground_type_error(site=site, owner="sequence_repetition")
-
-
-def _known_ground_term(value, *, owner: str):
-    """Project the concrete multiplier itself without stringifying it."""
-    from sugar_lift_py_tests.floor.term_value import TermValue
-    from sugar_lift_py_tests.ir import ctor, str_const
-
-    if type(value) is TermValue:
-        if type(value.value) is str:
-            return str_const(value.value)
-        if type(value.value) is bytes:
-            return ctor("python:bytes", [str_const(value.value.hex())])
-        if value.value is None:
-            return ctor("None", [])
-    return value.to_term(owner=owner)

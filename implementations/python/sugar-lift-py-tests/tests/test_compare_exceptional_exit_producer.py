@@ -848,40 +848,25 @@ def test_pandas_left_right_ordering_faces_retain_both_edges(
 
 
 @pytest.mark.parametrize(
-    ("expression", "op_kind", "law_name", "atom"),
+    ("expression", "op_kind", "atom"),
     (
-        ("left < right", "Lt", "ordering", "py.lt"),
-        ("needle in container", "In", "membership", "py.in"),
-        ("left == right", "Eq", "equality", "py.eq"),
+        ("left < right", "Lt", "py.lt"),
+        ("needle in container", "In", "py.in"),
+        ("left == right", "Eq", "py.eq"),
     ),
 )
-def test_undecided_dispatch_partition_keys_are_law_scoped(
-    expression: str, op_kind: str, law_name: str, atom: str
+def test_undecided_dispatch_dual_edges_under_each_law(
+    expression: str, op_kind: str, atom: str
 ) -> None:
-    """Equality, membership and ordering dual-edge under a law-scoped key."""
+    """Equality, membership and ordering each dual-edge an undecided dispatch."""
     from sugar_lift_py_tests.floor import SymbolicValue
     from sugar_lift_py_tests.ir import make_var
-    from sugar_lift_py_tests.sugar.comparison_op_sugar import (
-        CompareLaw,
-        ComparisonOpSugar,
-        compare_law_for,
-        partition_key_for_law,
-    )
+    from sugar_lift_py_tests.sugar.comparison_op_sugar import ComparisonOpSugar
     from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
 
-    assert compare_law_for(op_kind).value == law_name
     node = _synthetic_compare(expression)
     left = _ValueSugar(SymbolicValue(make_var("left")))
     right = _ValueSugar(SymbolicValue(make_var("right")))
-    expected_prefix = f"compare.{law_name}.dispatch"
-    assert partition_key_for_law(CompareLaw(law_name), node.fragment, op_kind)[0] == (
-        expected_prefix
-    )
-    assert CompareLaw.IDENTITY not in (
-        CompareLaw.ORDERING,
-        CompareLaw.MEMBERSHIP,
-        CompareLaw.EQUALITY,
-    )
     if op_kind == "Eq":
         outcome = EqualityOpSugar(left, right, node.fragment).desugar(None)
         _assert_dual_dispatch(outcome, atom=atom, blame=str(node.fragment))
