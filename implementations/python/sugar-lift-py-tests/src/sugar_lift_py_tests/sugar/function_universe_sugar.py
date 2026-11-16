@@ -1171,6 +1171,12 @@ class FunctionUniverseSugar(Sugar):
     #: (``nodes._receiver_holds``, #7757 B2), stated on every completed arm
     #: (``UniverseValue.receiver_holds_facts``); None for any other function.
     receiver_holds: tuple | None = dataclass_field(default=None, compare=False)
+    #: The sugar of each method call after a stated field's store whose result
+    #: a field store keeps (``q.g = p.m(a, ...)``,
+    #: ``nodes._leaving_call_store``): each arm reads the call it made, and
+    #: the fields are stated only where each such call leaves every object it
+    #: is handed (``UniverseValue.field_facts``, ``python:call_leaves``).
+    leaving_calls: tuple = dataclass_field(default=(), compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -1231,6 +1237,7 @@ class FunctionUniverseSugar(Sugar):
                         plain_stores=self.plain_stores,
                         fields_guard=self._fields_guard(state),
                         receiver_holds=self.receiver_holds,
+                        leaving_calls=self._leaving_calls(state),
                     )
                 ),
             )
@@ -1261,6 +1268,24 @@ class FunctionUniverseSugar(Sugar):
             value = plain_completed_value(read.desugar(state.context))
             if value is not None:
                 found.append((formal, value))
+        return tuple(found)
+
+    def _leaving_calls(self, state):
+        """The method call values (``leaving_calls``) the arm whose record is
+        ``state`` made, read through each statement's key in the context it
+        left; None where one of them is not one completed value (the fields
+        are then not stated)."""
+        if not self.leaving_calls or not self.fields_after:
+            return ()
+        if not (self.cells_after_every_arm or state.can_fall_through):
+            # No field is read on this arm (``_fields``).
+            return ()
+        found = []
+        for read in self.leaving_calls:
+            value = plain_completed_value(read.desugar(state.context))
+            if value is None:
+                return None
+            found.append(value)
         return tuple(found)
 
     def _fields(self, state) -> tuple:

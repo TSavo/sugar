@@ -55,6 +55,11 @@ class UniverseValue(FloorValue):
     #: may hold where the call leaves it (``nodes._receiver_holds``), or
     #: None (``receiver_holds_facts``).
     receiver_holds: object = None
+    #: The method calls this arm made after a stated field's store whose
+    #: results a field store keeps (``FunctionUniverseSugar._leaving_calls``):
+    #: the fields hold only where each leaves every object it is handed
+    #: (``field_facts``); None where one was not read (nothing is stated).
+    leaving_calls: object = ()
 
     def guarded(self, formula):
         """Ride under a branch by guarding every body record entry.
@@ -230,6 +235,10 @@ class UniverseValue(FloorValue):
         ]
         if not stated or not guards:
             return None
+        leaving = call_leaves_atoms(self.leaving_calls)
+        if leaving is None:
+            return None
+        guards.extend(leaving)
         if self.fields_guard is not None:
             # An earlier guarded ``return`` this record still carries ended
             # the frame before the store where its guard fails.
@@ -322,6 +331,44 @@ _UNSTATED_PREFIXES = ("py.object", "python:loop.", "python:loop-")
 #: parameters_left_unchanged``), stated beside its post and read by prove's
 #: dispatch (``consistency::PYTHON_LEAVES``).
 LEAVES = "python:leaves"
+
+#: ``python:call_leaves(<call>, "<key>")``: the dispatched call ``<call>``
+#: leaves the object its operand keyed ``<key>`` binds (its receiver ``"0"``,
+#: each positional actual by its position) unchanged -- decided at prove
+#: where the call resolves to a method whose contract states
+#: ``python:leaves`` of the parameter that operand binds
+#: (``consistency::call_leaves_holds``), open anywhere else.
+CALL_LEAVES = "python:call_leaves"
+
+
+def call_leaves_atoms(calls):
+    """``python:call_leaves(<call>, "<key>")`` for each operand of each
+    dispatched method call in ``calls`` (``UniverseValue.leaving_calls``):
+    the guard a field stated across such a call holds under (#7757).  None
+    where ``calls`` is None or one of them is no dispatched call (no guard
+    could name it, so nothing is stated)."""
+    if calls is None:
+        return None
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+    from sugar_lift_py_tests.ir import atomic, str_const
+
+    atoms = []
+    for value in calls:
+        call = peel_walrus_binds(value)[1]
+        symbol = getattr(call, "authenticated_target_symbol", None) or ""
+        if not isinstance(call, CallSiteValue) or not symbol.startswith(
+            "python:dispatch:"
+        ):
+            return None
+        if call.keyword_names or symbol.startswith("python:dispatch:."):
+            return None
+        term = call.to_term(owner="UniverseValue.call_leaves")
+        atoms.extend(
+            atomic(CALL_LEAVES, [term, str_const(str(position))])
+            for position in range(len(call.arg_values))
+        )
+    return atoms
 
 
 def stated_by_its_inputs(term, formals) -> bool:

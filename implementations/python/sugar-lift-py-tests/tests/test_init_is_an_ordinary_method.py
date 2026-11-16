@@ -79,3 +79,28 @@ def test_a_function_that_is_no_init_states_no_receiver_dict(tmp_path):
     post = repr(row.post.ir_formula)
     assert "python:holds_decided" not in post
     assert "python:class_undecided" not in post
+
+
+def test_a_field_stored_before_a_method_call_on_self_is_guarded_by_what_it_leaves(
+    tmp_path,
+):
+    """``self.n = n; self.state = self.check(n)``: the dispatched
+    ``self.check(n)`` may change ``self``, so ``self.n`` is stated only under
+    the guard that the call leaves each object it is handed
+    (``python:call_leaves``), decided at prove from ``check``'s own
+    ``python:leaves`` (#7757); never read off ``check``'s body here."""
+    row = _init_row(
+        tmp_path,
+        "class Box:\n"
+        "    def __init__(self, n):\n"
+        "        self.n = n\n"
+        "        self.state = self.check(n)\n"
+        "\n"
+        "    def check(self, n):\n"
+        "        return n\n",
+    )
+
+    post = repr(row.post.ir_formula)
+    assert "attr:n" in post
+    assert "python:call_leaves" in post
+    assert "python:plain_store" in post
