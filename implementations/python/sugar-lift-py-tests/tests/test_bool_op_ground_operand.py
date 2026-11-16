@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-from sugar_lift_py_tests.ir import make_var, num, py_eq
+from sugar_lift_py_tests.ir import make_var, num, str_const
 from sugar_lift_py_tests.floor.none_value import NoneValue
 from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
 from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
@@ -75,7 +75,7 @@ def _completed_values(outcome):
 
 def _has_symbolic_formula(outcome) -> bool:
     return any(
-        isinstance(value, PredicateValue) and value.formula == _symbolic_z_eq_1()
+        isinstance(value, PredicateValue) and _is_symbolic_z_eq_1(value.formula)
         for value in _completed_values(outcome)
     )
 
@@ -89,8 +89,16 @@ def _z_eq_1() -> EqualityOpSugar:
     )
 
 
-def _symbolic_z_eq_1():
-    return py_eq(make_var("z"), num(1))
+def _is_symbolic_z_eq_1(formula) -> bool:
+    """``z == 1`` on an undecided ``z``: the one undecided comparison, keyed
+    per evaluation (#7757 NEW-1, ``floor_value.undecided_predicate_result``):
+    ``python:compare_result("Eq", z, 1, <key>)``, the key its completes atom
+    and its halt carry.  The unkeyed ``py.eq(z, 1)`` is no longer minted."""
+    return (
+        getattr(formula, "name", None) == "python:compare_result"
+        and len(formula.args) == 4
+        and tuple(formula.args[:3]) == (str_const("Eq"), make_var("z"), num(1))
+    )
 
 
 def test_none_and_true_is_false() -> None:
@@ -127,7 +135,7 @@ def test_none_or_true_is_true() -> None:
 
 
 def test_symbolic_and_true_absorbs_to_symbolic() -> None:
-    """(z == 1) and True → py.eq(z, 1); True is identity of ∧."""
+    """(z == 1) and True → the keyed z == 1; True is identity of ∧."""
     site = _Site()
     outcome = _bool_op("And", _z_eq_1(), TrueBoolLiteralSugar(site=site))
     assert _has_symbolic_formula(outcome)
@@ -137,14 +145,14 @@ def test_symbolic_and_true_absorbs_to_symbolic() -> None:
 
 
 def test_true_and_symbolic_absorbs_to_symbolic() -> None:
-    """True and (z == 1) → py.eq(z, 1); order must not matter for absorption."""
+    """True and (z == 1) → the keyed z == 1; order must not matter for absorption."""
     site = _Site()
     outcome = _bool_op("And", TrueBoolLiteralSugar(site=site), _z_eq_1())
     assert _has_symbolic_formula(outcome)
 
 
 def test_symbolic_or_false_absorbs_to_symbolic() -> None:
-    """(z == 1) or False → py.eq(z, 1); False is identity of ∨."""
+    """(z == 1) or False → the keyed z == 1; False is identity of ∨."""
     site = _Site()
     outcome = _bool_op("Or", _z_eq_1(), FalseBoolLiteralSugar(site=site))
     assert _has_symbolic_formula(outcome)

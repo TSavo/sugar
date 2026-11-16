@@ -306,18 +306,25 @@ def _object_after_a_store_on_a_class_call(value) -> None:
 
 def _field_read_after_a_store_on_a_class_call(returned, attr: str) -> None:
     """The one value ``return o.<attr>`` gives after a store on ``o = C()``:
-    the undecided read ``attr:<attr>`` of the object after the store
-    (``_object_after_a_store_on_a_class_call``), never the stored value
-    decided at lift and never the field of the instance as its construction
-    left it (the read that dropped the store before #8746)."""
-    from sugar_lift_py_tests.floor import CallSiteValue
+    the one undecided read, keyed per evaluation (#7757 NEW-3,
+    ``floor_value.undecided_attribute_result``):
+    ``python:attribute_result("<attr>", <object>, <key>)``, ``<object>`` the
+    object after the store (``python:receiver_after_call``, as
+    ``_object_after_a_store_on_a_class_call`` reads it) -- never the stored
+    value decided at lift and never the field of the instance as its
+    construction left it (the read that dropped the store before #8746)."""
+    from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue
+    from sugar_lift_py_tests.ir import str_const
 
     assert len(returned) == 1, returned
     (read,) = returned
-    assert isinstance(read, CallSiteValue), read
-    assert read.target_name == attr, read
-    (receiver,) = read.arg_values
-    _object_after_a_store_on_a_class_call(receiver)
+    assert isinstance(read, SymbolicValue), read
+    assert not isinstance(read, (ObjectValue, CallSiteValue)), read
+    term = read.term
+    assert getattr(term, "name", None) == "python:attribute_result", read
+    name, receiver, _key = term.args
+    assert name == str_const(attr), read
+    assert getattr(receiver, "name", None) == "python:receiver_after_call", read
 
 
 # ---------------------------------------------------------------------------

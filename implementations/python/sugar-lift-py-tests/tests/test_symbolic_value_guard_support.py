@@ -429,7 +429,8 @@ def _negated_truth_standing_on_the_call(outcome):
     The call's body is not dug to one value, so the truth of its result is
     not decided here: taking it is two-faced (``bool_op_sugar.truth_of``).  It
     completes under its own ``python:truth.completes`` atom with the negation
-    of the undecided ``py.truthy(<call>)``, or the truth test itself raises
+    of the undecided truth of the call, keyed per evaluation
+    (``python:truth_result(<call>, <key>)``, #7757 NEW-1), or the truth test itself raises
     something undetermined (the result's ``__bool__`` may be user code).
     Exactly those two arms; never an unconditional completion."""
     from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
@@ -480,7 +481,7 @@ def test_not_of_a_two_arm_method_body_stands_on_the_call() -> None:
 
     outcome = UnaryOpSugar("Not", _Yield(callsite), "not-two-arm").desugar(None)
     negated = _negated_truth_standing_on_the_call(outcome)
-    assert "truthy" in str(negated)
+    assert "python:truth_result" in str(negated)
     assert "call:RaisesExc.matches" in str(negated)
 
 
@@ -567,7 +568,7 @@ def test_not_of_a_deferred_lookup_method_body_stands_on_the_call() -> None:
 
     outcome = UnaryOpSugar("Not", _Yield(callsite), "not-deferred-lookup").desugar(None)
     negated = _negated_truth_standing_on_the_call(outcome)
-    assert "truthy" in str(negated)
+    assert "python:truth_result" in str(negated)
     assert "call:stringify" in str(negated)
 
 
@@ -672,6 +673,6 @@ def test_not_of_a_multi_return_block_stands_on_the_call() -> None:
 
     outcome = UnaryOpSugar("Not", _Yield(callsite), "not-multi-return").desugar(None)
     negated = _negated_truth_standing_on_the_call(outcome)
-    assert "truthy" in str(negated)
+    assert "python:truth_result" in str(negated)
     assert "call:RaisesExc.matches" in str(negated)
 
