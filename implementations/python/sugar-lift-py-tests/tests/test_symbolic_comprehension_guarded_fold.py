@@ -1,27 +1,31 @@
-"""A comprehension is a scoped guarded fold over an iterable.
+"""A comprehension is a scoped recurrence over an iterable, reduced at lift.
 
 Not bounded unrolling, and not a shortcut for any particular library's
-spelling. Over a SYMBOLIC iterable the four collection forms construct one
+spelling. Over a SYMBOLIC iterable the four collection forms run one
 recurrence and differ only in the collection coordinate they head:
 
-    state0 = empty
-    for symbolic element x from iterable:
-        bound     = bind(target, x)
+    for symbolic member x from iterable:
+        bound     = unpack(target, x)
         condition = filter_1(bound) and ... and filter_n(bound)
         candidate = element(bound)
-        state_next = condition ? append(state, candidate) : state
 
 That is a RECURRENCE, so the construction never guesses an iteration count and
-never fabricates normal completion. Evaluation order is iterable, then target
-binding, then filters, then element -- which is why the destructuring
-obligation wraps the filter guards, and the filter guards wrap the element.
+never fabricates normal completion. Evaluation order is iterable, then the
+target's unpack, then the conditions, then the element -- each runs on the
+face the one before it completed on, and each halt is an arm of the
+comprehension at lift (#7757: a halt is never dropped).
+
+What the comprehension accumulates is not interpreted at prove: the proof
+states the comprehension's own coordinate, its kind over its occurrence
+(``ComprehensionSugar._own_coordinate``), and reading it owes the undecided
+member (#8916).  None of the recurrence is stated inside that term.
 
 The binding target is the capability under test. A generator target is the
 SAME binding problem a statement loop's target solves, so a tuple/list target
-binds each position to a projection of the symbolic element, recursively. A
-destructure that cannot succeed is a Python raise, never a skipped element:
-its exit is the halt coordinate, distinct from the filter latch that a
-false guard uses.
+binds each position to a projection of the symbolic member, recursively. A
+member that does not destructure is a Python raise, never a skipped member:
+the unpack's complement is a halted arm, distinct from a condition, which
+excludes a member without raising.
 """
 
 import os
@@ -29,11 +33,12 @@ import tempfile
 
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
-from sugar_lift_py_tests.ir import ctor as _ctor, make_var, num
+from sugar_lift_py_tests.ir import _Lambda, _Var, ctor as _ctor, make_var, num
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
-def _post_of(source, path=None):
+def _outcome_of(source, path=None):
+    """The function's outcome as its own proof states it."""
     if path is None:
         path = os.path.join(tempfile.mkdtemp(), "m.py")
     with open(path, "w") as handle:
@@ -48,10 +53,16 @@ def _post_of(source, path=None):
 
     # ``iter(xs)`` over a formal waits on the caller's actual: the function's
     # own proof discharges it with none (``as_its_own_proof_states``).
-    return _completed(
-        as_its_own_proof_states(function.sugar().desugar(None), None)
-    ).post()
+    return as_its_own_proof_states(function.sugar().desugar(None), None)
 
+
+def _post_of(source, path=None):
+    return _completed(_outcome_of(source, path)).post()
+
+
+# The owner of the halt of a member that does not destructure into the
+# target (``ComprehensionSugar._symbolic_member``, ``runtime_unpack_faces``).
+_UNPACK = "ComprehensionSugar.target.unpack"
 
 # The owners of the halts an undecided ``iter`` of the iterable states: over
 # a formal with no actual (the function's own proof), over any other
@@ -62,6 +73,7 @@ _ITERATION_HALT_OWNERS = (
     # ``next`` of the iterator ``iter`` completed with, whose ``__next__``
     # is not decided here (``iterator_operation.stepped``).
     "SymbolicValue.next",
+    _UNPACK,
 )
 
 
@@ -72,7 +84,8 @@ def _completed(outcome):
     halts with an ``UndeterminedRaiseEffect`` under the complement of its
     completion atom, beside the completion this file inspects.  So may
     ``iter`` of a symbolic iterable, which the fold runs before any member
-    (``ComprehensionSugar._iterated``)."""
+    (``ComprehensionSugar._iterated``), and the unpack of a member into a
+    destructuring target."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.outcome import Completed, Halted
 
@@ -91,58 +104,106 @@ def _completed(outcome):
     return completed[0].value
 
 
-def _call_result(application):
-    """``python:call_result(application, <occurrence>)`` -- one evaluation's
-    unknown result -- matched on its application."""
+def _halts(outcome, owner):
+    """The halted arms whose raise ``owner`` produced."""
+    from sugar_lift_py_tests.outcome import Halted
 
-    class _Result:
-        def __eq__(self, other):
-            return (
-                getattr(other, "name", None) == "python:call_result"
-                and other.args[0] == application
-            )
-
-        def __repr__(self):
-            return f"python:call_result({application!r}, <occurrence>)"
-
-    return _Result()
+    return [
+        face
+        for face in outcome.exits
+        if isinstance(face, Halted)
+        and getattr(face.effect, "producer_node_owner", None) == owner
+    ]
 
 
-def _fold(post):
-    """The collection coordinate this post binds, as (kind, iterable, lambda)."""
+def _call_halts(outcome, callee):
+    """The halts of the unanswered call of ``callee``: owner
+    ``UnknownCallee:<target>``, the target the call's spelling where no
+    workspace names a join symbol, as here."""
+    found = []
+    for face in _halts_of(outcome):
+        owner = str(getattr(face.effect, "producer_node_owner", ""))
+        prefix, _, target = owner.partition(":")
+        if prefix == "UnknownCallee" and target.rsplit(".", 1)[-1] == callee:
+            found.append(face)
+    return found
+
+
+def _halts_of(outcome):
+    from sugar_lift_py_tests.outcome import Halted
+
+    return [face for face in outcome.exits if isinstance(face, Halted)]
+
+
+def _owners(outcome):
+    from sugar_lift_py_tests.outcome import Halted
+
+    return sorted(
+        face.effect.producer_node_owner
+        for face in outcome.exits
+        if isinstance(face, Halted)
+    )
+
+
+def _children(term) -> tuple:
+    """A term's or a formula's immediate subterms and subformulas."""
+    children = (
+        *(getattr(term, "args", ()) or ()),
+        *(getattr(term, "operands", ()) or ()),
+    )
+    body = getattr(term, "body", None)
+    return children if body is None else (*children, body)
+
+
+def _terms_named(term, name, found=None):
+    """Every constructor named ``name`` in a term or a formula."""
+    found = [] if found is None else found
+    if getattr(term, "name", None) == name and hasattr(term, "args"):
+        found.append(term)
+    for child in _children(term):
+        _terms_named(child, name, found)
+    return found
+
+
+def _has_lambda(term) -> bool:
+    if isinstance(term, _Lambda):
+        return True
+    return any(_has_lambda(child) for child in _children(term))
+
+
+def _own(post):
+    """The kind of the comprehension's own coordinate this post binds: its
+    kind over its occurrence, and nothing else."""
     coordinate = post.args[1]
-    return coordinate.name, coordinate.args[0], coordinate.args[1]
+    (occurrence,) = coordinate.args
+    assert occurrence.name == "python:source-occurrence", coordinate
+    return coordinate.name
 
 
-def _coordinate(term):
-    """The recurrence coordinate a fold's lambda binds per element."""
-    return make_var(term.param_name)
+def _call_args(outcome, callee):
+    """The argument terms of the one call of ``callee`` the comprehension
+    made, read off the completes atom its halt's guard negates."""
+    (halt,) = _call_halts(outcome, callee)
+    calls = _terms_named(halt.guard, f"call:{callee}")
+    assert calls, halt.guard
+    assert all(call.args == calls[0].args for call in calls), calls
+    return calls[0].args
+
+
+def _unpacked_member(outcome, arity):
+    """The member the comprehension's one unpack destructured, checked to
+    demand exactly ``arity`` positions."""
+    (halt,) = _halts(outcome, _UNPACK)
+    (destructure,) = _terms_named(halt.guard, "python:unpack.destructure")
+    member, demanded = destructure.args
+    assert demanded == num(arity), destructure
+    return member
 
 
 def _project(element, index, arity):
     return _ctor(
         "python:unpack.project",
         [element, num(index), num(arity)],
-        symbol_kind="coordinate",
-    )
-
-
-def _halt():
-    return _ctor("python:unpack.halt", [], symbol_kind="coordinate")
-
-
-def _destructure(element, arity, body):
-    return _ctor(
-        "python:unpack.destructure",
-        [element, num(arity), body, _halt()],
-        symbol_kind="coordinate",
-    )
-
-
-def _filtered(guard, body):
-    return _ctor(
-        "python:loop.filter_guard",
-        [guard, body, _ctor("python:loop.latch", [], symbol_kind="coordinate")],
         symbol_kind="coordinate",
     )
 
@@ -193,20 +254,18 @@ def test_concrete_iterable_filter_selects_exactly_the_passing_elements():
 # -- symbolic iterable: recurrence, never a guessed bound --------------------
 
 
-def test_symbolic_iterable_constructs_a_recurrence_not_an_unrolling():
-    # The iterable is a parameter, so no element is known and no count is
-    # known. The construction heads the collection coordinate over the
-    # SYMBOLIC iterable with a per-element lambda and an explicit exhaustion
-    # face -- never a display of invented elements.
-    post = _post_of("def f(xs):\n    return [g(x) for x in xs]\n")
-    kind, iterable, body = _fold(post)
-    assert kind == "py.listcomp"
-    assert iterable == make_var("xs")
-    element = _coordinate(body)
-    assert body.body == _call_result(_ctor("call:g", [element])), f"body was {body.body!r}"
-    assert post.args[1].args[2] == _ctor(
-        "python:loop.exhaustion", [], symbol_kind="coordinate"
-    )
+def test_a_symbolic_comprehension_states_its_own_coordinate_not_its_fold():
+    # The iterable is a parameter, so no member and no count is known. The
+    # proof states the comprehension's own coordinate -- its kind over its
+    # occurrence -- and nothing it accumulates: prove interprets no fold, so
+    # reading it owes the undecided member (#8916), and a member binder (a
+    # lambda) is nothing the term table carries.
+    outcome = _outcome_of("def f(xs):\n    return [g(x) for x in xs]\n")
+    post = _completed(outcome).post()
+    assert _own(post) == "py.listcomp"
+    assert not _has_lambda(post), post
+    assert make_var("xs") not in post.args[1].args, post
+    assert outcome.owed_items(), outcome
 
 
 def test_symbolic_iterable_never_fabricates_a_finite_element_count():
@@ -216,47 +275,44 @@ def test_symbolic_iterable_never_fabricates_a_finite_element_count():
     assert "array" not in _names(post), f"post was {post!r}"
 
 
-def test_symbolic_filter_retains_a_guard_rather_than_deciding_it():
-    # `p(x)` is not decidable at lift time, so membership stays CONDITIONAL:
-    # the element sits under a filter guard with its latch, and the guard's
-    # formula is the real predicate over the bound coordinate.
-    post = _post_of("def f(xs):\n    return [g(x) for x in xs if p(x)]\n")
-    _kind, _iterable, body = _fold(post)
-    element = _coordinate(body)
-    assert body.body == _filtered(
-        _call_result(_ctor("call:p", [element])), _call_result(_ctor("call:g", [element]))
-    ), f"body was {body.body!r}"
+def test_a_symbolic_condition_is_reduced_at_lift_rather_than_decided():
+    # `p(x)` is not decidable at lift time: its call stands two-faced, its
+    # halt kept, and the element runs on the face it completes on -- over the
+    # same member the condition read.
+    outcome = _outcome_of("def f(xs):\n    return [g(x) for x in xs if p(x)]\n")
+    (p_halt,) = _call_halts(outcome, "p")
+    (g_halt,) = _call_halts(outcome, "g")
+    assert _terms_named(g_halt.guard, "call:p"), g_halt.guard
+    assert not _terms_named(p_halt.guard, "call:g"), p_halt.guard
+    (member,) = _call_args(outcome, "p")
+    assert _call_args(outcome, "g") == (member,)
+    assert _own(_completed(outcome).post()) == "py.listcomp"
 
 
-def test_symbolic_filters_conjoin_in_source_order():
-    # Two guards nest outermost-first, so the first filter is evaluated first
-    # -- the conjunction Python actually performs, short-circuit and all.
-    post = _post_of("def f(xs):\n    return [x for x in xs if p(x) if q(x)]\n")
-    _kind, _iterable, body = _fold(post)
-    element = _coordinate(body)
-    assert body.body == _filtered(
-        _call_result(_ctor("call:p", [element])),
-        _filtered(_call_result(_ctor("call:q", [element])), element),
-    ), f"body was {body.body!r}"
+def test_symbolic_conditions_run_in_source_order():
+    # The second condition runs only where the first completed -- the
+    # conjunction Python actually performs, short-circuit and all.
+    outcome = _outcome_of("def f(xs):\n    return [x for x in xs if p(x) if q(x)]\n")
+    (p_halt,) = _call_halts(outcome, "p")
+    (q_halt,) = _call_halts(outcome, "q")
+    assert _terms_named(q_halt.guard, "call:p"), q_halt.guard
+    assert not _terms_named(p_halt.guard, "call:q"), p_halt.guard
 
 
 # -- lexical scope -----------------------------------------------------------
 
 
 def test_nested_generators_preserve_ordering_and_binding_dependency():
-    # The second generator's iterable is the FIRST generator's binding, so the
-    # outer fold must wrap the inner one and the inner iterable must read the
-    # outer coordinate. An inner-first nesting would be a different program.
-    post = _post_of("def f(xs):\n    return [g(x, y) for x in xs for y in x]\n")
-    _kind, iterable, outer = _fold(post)
-    assert iterable == make_var("xs")
-    x = _coordinate(outer)
-    inner_fold = outer.body
-    assert inner_fold.name == "python:loop.flat_map", f"outer body {inner_fold!r}"
-    assert inner_fold.args[0] == x, "inner iterable must be the outer binding"
-    y = _coordinate(inner_fold.args[1])
-    assert inner_fold.args[1].body == _call_result(_ctor("call:g", [x, y]))
+    # The second generator's iterable is the FIRST generator's member: a
+    # symbolic value that is no formal, so its ``iter`` is the undecided read
+    # of that member (``SymbolicValue.iter``), never the formal's.  The
+    # element reads both members, each its own coordinate.
+    outcome = _outcome_of("def f(xs):\n    return [g(x, y) for x in xs for y in x]\n")
+    assert _halts(outcome, "SymbolicValue.iter"), _owners(outcome)
+    x, y = _call_args(outcome, "g")
+    assert isinstance(x, _Var) and isinstance(y, _Var), (x, y)
     assert x != y, "each generator binds its own coordinate"
+    assert make_var("xs") not in (x, y)
 
 
 def test_target_variable_does_not_leak_out_of_the_comprehension():
@@ -264,142 +320,138 @@ def test_target_variable_does_not_leak_out_of_the_comprehension():
     # per-element coordinate. If the target leaked, the returned term would
     # mention the recurrence coordinate.
     post = _post_of("def f(x, xs):\n    ys = [g(x) for x in xs]\n    return h(x)\n")
-    assert post.args[1] == _call_result(_ctor("call:h", [make_var("x")])), f"post was {post!r}"
+    result = post.args[1]
+    assert result.name == "python:call_result", f"post was {post!r}"
+    assert result.args[0] == _ctor("call:h", [make_var("x")]), f"post was {post!r}"
 
 
 def test_shadowed_outer_variable_remains_unchanged():
     # The discrimination against over-substitution: inside the comprehension,
-    # `x` is the element coordinate; outside it, the same name is still the
-    # outer binding. Both faces are asserted in ONE program.
+    # `x` is the member; outside it, the same name is still the outer
+    # binding. Both faces are asserted in ONE program.
     source = "def f(x, xs):\n    return h(x, [g(x) for x in xs])\n"
-    post = _post_of(source)
-    result = post.args[1]
+    outcome = _outcome_of(source)
+    result = _completed(outcome).post().args[1]
     assert result.name == "python:call_result"
     call = result.args[0]
     assert call.name == "call:h"
     assert call.args[0] == make_var("x"), "outer x survives unshadowed"
-    _kind, _iterable, body = _fold_of_term(call.args[1])
-    element = _coordinate(body)
-    assert body.body == _call_result(_ctor("call:g", [element])), "inner x is the coordinate"
-    assert element != make_var("x")
-
-
-def _fold_of_term(coordinate):
-    return coordinate.name, coordinate.args[0], coordinate.args[1]
+    assert call.args[1].name == "py.listcomp", call.args[1]
+    (inner,) = _call_args(outcome, "g")
+    assert inner != make_var("x"), "inner x is the member"
 
 
 # -- destructuring targets ---------------------------------------------------
 
 
-def test_tuple_destructuring_binds_every_coordinate_correctly():
-    # Each position binds its OWN projection of the symbolic element, in
+def test_tuple_destructuring_binds_every_leaf_to_its_projection():
+    # Each position binds its OWN projection of the symbolic member, in
     # order, carrying the arity the source demanded.
-    post = _post_of("def f(xs):\n    return [g(a, b) for a, b in xs]\n")
-    _kind, _iterable, body = _fold(post)
-    element = _coordinate(body)
-    assert body.body == _destructure(
-        element,
-        2,
-        _call_result(_ctor("call:g", [_project(element, 0, 2), _project(element, 1, 2)])),
-    ), f"body was {body.body!r}"
+    outcome = _outcome_of("def f(xs):\n    return [g(a, b) for a, b in xs]\n")
+    member = _unpacked_member(outcome, 2)
+    assert _call_args(outcome, "g") == (
+        _project(member, 0, 2),
+        _project(member, 1, 2),
+    )
 
 
 def test_destructuring_positions_are_not_interchangeable():
     # The discrimination against a positionally-blind binding: swapping the
-    # target names must change the constructed term.
-    straight = _post_of("def f(xs):\n    return [g(a, b) for a, b in xs]\n")
-    swapped = _post_of("def f(xs):\n    return [g(b, a) for a, b in xs]\n")
-    assert _fold(straight)[2].body != _fold(swapped)[2].body
+    # target names must swap the projections the element reads.
+    straight = _outcome_of("def f(xs):\n    return [g(a, b) for a, b in xs]\n")
+    swapped = _outcome_of("def f(xs):\n    return [g(b, a) for a, b in xs]\n")
+    member = _unpacked_member(straight, 2)
+    assert _call_args(straight, "g") == (
+        _project(member, 0, 2),
+        _project(member, 1, 2),
+    )
+    member = _unpacked_member(swapped, 2)
+    assert _call_args(swapped, "g") == (
+        _project(member, 1, 2),
+        _project(member, 0, 2),
+    )
 
 
 def test_list_shaped_target_destructures_like_a_tuple_target():
     # `for [a, b] in xs` is the same binding as `for a, b in xs`. The two sit
     # at different binding SITES, so their coordinates differ by design; what
-    # must match is the projection structure built over each.
-    def structure(source):
-        _kind, _iterable, body = _fold(_post_of(source))
-        element = _coordinate(body)
-        return (
-            _destructure(
-                element,
-                2,
-                _call_result(_ctor("call:g", [_project(element, 0, 2), _project(element, 1, 2)])),
-            )
-            == body.body
-        )
-
-    assert structure("def f(xs):\n    return [g(a, b) for [a, b] in xs]\n")
-    assert structure("def f(xs):\n    return [g(a, b) for a, b in xs]\n")
+    # must match is the unpack and the projections built over each.
+    for source in (
+        "def f(xs):\n    return [g(a, b) for [a, b] in xs]\n",
+        "def f(xs):\n    return [g(a, b) for a, b in xs]\n",
+    ):
+        outcome = _outcome_of(source)
+        member = _unpacked_member(outcome, 2)
+        assert _call_args(outcome, "g") == (
+            _project(member, 0, 2),
+            _project(member, 1, 2),
+        ), source
 
 
-def test_nested_destructuring_projects_a_projection():
-    # `for a, (b, c) in xs`: the outer obligation wraps the inner one, because
-    # the outer element must unpack before position 1 exists to unpack again.
-    post = _post_of("def f(xs):\n    return [g(a, b, c) for a, (b, c) in xs]\n")
-    _kind, _iterable, body = _fold(post)
-    element = _coordinate(body)
-    inner = _project(element, 1, 2)
-    assert body.body == _destructure(
-        element,
-        2,
-        _destructure(
-            inner,
-            2,
-            _call_result(_ctor(
-                "call:g",
-                [_project(element, 0, 2), _project(inner, 0, 2), _project(inner, 1, 2)],
-            )),
-        ),
-    ), f"body was {body.body!r}"
+def test_nested_destructuring_unpacks_a_projection_after_its_outer_unpack():
+    # `for a, (b, c) in xs`: the outer unpack runs first, because the member
+    # must unpack before position 1 exists to unpack again.  Each unpack is
+    # its own halt; the inner one runs only where the outer one completed.
+    outcome = _outcome_of("def f(xs):\n    return [g(a, b, c) for a, (b, c) in xs]\n")
+    halts = _halts(outcome, _UNPACK)
+    assert len(halts) == 2, _owners(outcome)
+    outer, inner = sorted(
+        halts,
+        key=lambda halt: len(_terms_named(halt.guard, "python:unpack.destructure")),
+    )
+    (outer_destructure,) = _terms_named(outer.guard, "python:unpack.destructure")
+    member, arity = outer_destructure.args
+    assert arity == num(2)
+    position = _project(member, 1, 2)
+    inner_destructure = _ctor(
+        "python:unpack.destructure", [position, num(2)], symbol_kind="coordinate"
+    )
+    assert set(_terms_named(inner.guard, "python:unpack.destructure")) == {
+        outer_destructure,
+        inner_destructure,
+    }
+    assert _call_args(outcome, "g") == (
+        _project(member, 0, 2),
+        _project(position, 0, 2),
+        _project(position, 1, 2),
+    )
 
 
 def test_destructuring_arity_is_carried_not_assumed():
-    # A three-wide target carries arity 3, not the two-wide shape.
-    post = _post_of("def f(xs):\n    return [g(a, b, c) for a, b, c in xs]\n")
-    _kind, _iterable, body = _fold(post)
-    element = _coordinate(body)
-    assert body.body == _destructure(
-        element,
-        3,
-        _call_result(_ctor(
-            "call:g",
-            [_project(element, 0, 3), _project(element, 1, 3), _project(element, 2, 3)],
-        )),
-    ), f"body was {body.body!r}"
+    # A three-wide target demands arity 3, not the two-wide shape.
+    outcome = _outcome_of("def f(xs):\n    return [g(a, b, c) for a, b, c in xs]\n")
+    member = _unpacked_member(outcome, 3)
+    assert _call_args(outcome, "g") == tuple(
+        _project(member, index, 3) for index in range(3)
+    )
 
 
-def test_a_failing_destructure_stays_halted_never_silently_skipped():
-    # A wrong-arity element makes Python RAISE. So the destructuring
-    # obligation's exit is the halt coordinate -- and it must NOT be the
-    # filter latch, which is the exit for an element a guard excludes.
-    post = _post_of("def f(xs):\n    return [g(a, b) for a, b in xs]\n")
-    _kind, _iterable, body = _fold(post)
-    obligation = body.body
-    assert obligation.name == "python:unpack.destructure"
-    assert obligation.args[3] == _halt(), f"exit was {obligation.args[3]!r}"
-    assert "python:loop.latch" not in _names(obligation.args[3])
+def test_a_failing_destructure_is_a_halt_of_the_comprehension_never_a_skip():
+    # A member of the wrong length makes Python RAISE.  The unpack's
+    # complement is a halted arm of the comprehension at lift -- the one
+    # undetermined raise, which owes -- never a member silently skipped, and
+    # never only a coordinate inside a stated term, where nothing reads it.
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
+    outcome = _outcome_of("def f(xs):\n    return [g(a, b) for a, b in xs]\n")
+    (halt,) = _halts(outcome, _UNPACK)
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.owed, halt
+    post = _completed(outcome).post()
+    assert not _terms_named(post, "python:unpack.destructure"), post
 
 
-def test_destructure_halt_and_filter_latch_are_distinct_exits():
-    # Both faces in one program: the destructure exit is a halt, the filter
-    # exit is a latch. Collapsing them would turn a raise into a skip.
-    post = _post_of("def f(xs):\n    return [a for a, b in xs if p(b)]\n")
-    _kind, _iterable, body = _fold(post)
-    element = _coordinate(body)
-    assert body.body == _destructure(
-        element,
-        2,
-        _filtered(_call_result(_ctor("call:p", [_project(element, 1, 2)])), _project(element, 0, 2)),
-    ), f"body was {body.body!r}"
-
-
-def test_destructuring_obligation_precedes_the_filter_guard():
-    # Evaluation order: bind the target, THEN run filters. A filter reads a
-    # projection, so the projection cannot be legal before the unpack is.
-    post = _post_of("def f(xs):\n    return [a for a, b in xs if p(b)]\n")
-    _kind, _iterable, body = _fold(post)
-    assert body.body.name == "python:unpack.destructure"
-    assert body.body.args[2].name == "python:loop.filter_guard"
+def test_the_unpack_precedes_every_condition():
+    # Evaluation order: bind the target, THEN run the conditions.  A
+    # condition reads a projection, so it runs only where the unpack
+    # completed; the unpack's halt is a raise, a condition's exclusion is not.
+    outcome = _outcome_of("def f(xs):\n    return [a for a, b in xs if p(b)]\n")
+    (unpack,) = _halts(outcome, _UNPACK)
+    (p_halt,) = _call_halts(outcome, "p")
+    assert _terms_named(p_halt.guard, "python:unpack.destructure"), p_halt.guard
+    assert not _terms_named(unpack.guard, "call:p"), unpack.guard
+    member = _unpacked_member(outcome, 2)
+    assert _call_args(outcome, "p") == (_project(member, 1, 2),)
 
 
 def test_a_starred_target_remains_loud():
@@ -428,13 +480,13 @@ def test_an_attribute_target_remains_loud():
 # -- effects and unknown members ---------------------------------------------
 
 
-def test_an_unresolved_element_call_stays_a_symbolic_coordinate_not_omitted():
+def test_an_unresolved_element_call_stays_its_call_not_omitted():
     # `g(x)` has no body here. Its member value is unknown, and the honest
-    # construction keeps the call coordinate -- never drops the element and
-    # never invents a value for it.
-    post = _post_of("def f(xs):\n    return [g(x) for x in xs]\n")
-    _kind, _iterable, body = _fold(post)
-    assert "call:g" in _names(body.body), f"body was {body.body!r}"
+    # construction keeps the call -- two-faced, owed -- never drops the
+    # element and never invents a value for it.
+    outcome = _outcome_of("def f(xs):\n    return [g(x) for x in xs]\n")
+    assert _call_halts(outcome, "g"), _owners(outcome)
+    assert outcome.owed_items(), outcome
 
 
 def test_a_raising_element_body_propagates_rather_than_completing_quietly():
@@ -455,13 +507,12 @@ def test_a_raising_filter_propagates_rather_than_deciding_membership():
 
     source = "def f(xs):\n    return [x for x in xs if raise_it(x)]\n"
     try:
-        post = _post_of(source)
+        outcome = _outcome_of(source)
     except SugarNotWritten:
         return
-    _kind, _iterable, body = _fold(post)
-    assert (
-        body.body.name == "python:loop.filter_guard"
-    ), "an undecided filter keeps its guard rather than choosing a side"
+    assert _call_halts(
+        outcome, "raise_it"
+    ), "an undecided condition keeps its halt rather than choosing a side"
 
 
 # -- the four collection semantics -------------------------------------------
@@ -475,7 +526,7 @@ def test_the_four_collection_forms_head_distinct_coordinates():
     setcomp = _post_of("def f(xs):\n    return {g(a, b) for a, b in xs}\n")
     genexp = _post_of("def f(xs):\n    return (g(a, b) for a, b in xs)\n")
     dictcomp = _post_of("def f(xs):\n    return {a: b for a, b in xs}\n")
-    kinds = [_fold(p)[0] for p in (listcomp, setcomp, genexp, dictcomp)]
+    kinds = [_own(p) for p in (listcomp, setcomp, genexp, dictcomp)]
     assert kinds == [
         "py.listcomp",
         "py.setcomp",
@@ -498,27 +549,28 @@ def test_list_set_and_generator_results_cannot_alias_one_another():
 def test_a_generator_expression_stays_lazy_rather_than_becoming_a_list():
     # The discrimination against eager fabrication: a genexp over a symbolic
     # iterable is a generator coordinate, never a list display or listcomp.
-    post = _post_of("def f(xs):\n    return (g(a, b) for a, b in xs)\n")
+    # Its pull -- the unpack, the element -- runs where it is pulled, so none
+    # of its halts is this expression's.
+    source = "def f(xs):\n    return (g(a, b) for a, b in xs)\n"
+    post = _post_of(source)
     names = _names(post)
     assert "py.generatorexp" in names
     assert "py.listcomp" not in names and "array" not in names, names
+    outcome = _outcome_of(source)
+    assert not _halts(outcome, _UNPACK), _owners(outcome)
+    assert not _call_halts(outcome, "g"), _owners(outcome)
 
 
-def test_a_dict_comprehension_retains_its_guarded_key_value_association():
-    # The key and value are projections of the SAME element, paired in one
-    # entry -- the association Python builds, not two independent sequences.
-    post = _post_of("def f(xs):\n    return {a: b for a, b in xs}\n")
-    _kind, _iterable, body = _fold(post)
-    element = _coordinate(body)
-    assert body.body == _destructure(
-        element,
-        2,
-        _ctor(
-            "python:dict_entry",
-            [_project(element, 0, 2), _project(element, 1, 2)],
-            symbol_kind="coordinate",
-        ),
-    ), f"body was {body.body!r}"
+def test_a_dict_comprehension_reads_key_and_value_off_one_member():
+    # The key and value are projections of the SAME member, the key read
+    # first -- the association Python builds, not two independent sequences.
+    outcome = _outcome_of("def f(xs):\n    return {g(a): h(b) for a, b in xs}\n")
+    assert _own(_completed(outcome).post()) == "py.dictcomp"
+    member = _unpacked_member(outcome, 2)
+    assert _call_args(outcome, "g") == (_project(member, 0, 2),)
+    assert _call_args(outcome, "h") == (_project(member, 1, 2),)
+    (h_halt,) = _call_halts(outcome, "h")
+    assert _terms_named(h_halt.guard, "call:g"), h_halt.guard
 
 
 def test_a_concrete_dict_comprehension_keeps_last_write_overwrite_behaviour():
@@ -568,95 +620,58 @@ def test_every_collection_form_is_byte_identical_across_repeats():
         assert _post_of(source, path) == _post_of(source, path), source
 
 
-def test_a_name_target_construction_carries_no_destructuring_obligation():
-    # The 'nothing else moved' twin: adding destructuring must not put an
-    # unpack obligation on the simple-name path.
-    post = _post_of("def f(xs):\n    return [g(x) for x in xs if p(x)]\n")
-    names = _names(post)
-    assert "python:unpack.destructure" not in names, names
-    assert "python:unpack.project" not in names, names
-    assert "python:loop.filter_guard" in names, names
+def test_a_name_target_carries_no_unpack():
+    # The 'nothing else moved' twin: a destructuring target's unpack must not
+    # reach the simple-name path.
+    outcome = _outcome_of("def f(xs):\n    return [g(x) for x in xs if p(x)]\n")
+    assert not _halts(outcome, _UNPACK), _owners(outcome)
+    for face in outcome.exits:
+        assert not _terms_named(face.guard, "python:unpack.destructure"), face
+        assert not _terms_named(face.guard, "python:unpack.project"), face
+    assert _call_halts(outcome, "p"), _owners(outcome)
 
 
 # -- a nested comprehension is just another sugar in that position -----------
 #
 # A comprehension appearing in another comprehension's element (or in a dict
-# comprehension's key or value) is NOT a shape the fold must refuse: it is one
-# more sugar the element position lifts, folded over the ENCLOSING coordinate.
-# Every collection form shares that one reader, so none of the four may refuse
-# what the others accept. The only obstruction is a walrus, which binds into
-# the enclosing scope -- a binding the scoped guarded fold does not model.
-
-
-def _exhaustion():
-    return _ctor("python:loop.exhaustion", [], symbol_kind="coordinate")
-
-
-def _inner_listcomp(iterable, coordinate_body):
-    return _ctor(
-        "py.listcomp",
-        [iterable, coordinate_body, _exhaustion()],
-        symbol_kind="coordinate",
-    )
+# comprehension's key or value) is NOT a shape the recurrence must refuse: it
+# is one more sugar the element position lifts, iterating the ENCLOSING
+# member.  Every collection form shares that one reader, so none of the four
+# may refuse what the others accept. The only obstruction is a walrus, which
+# binds into the enclosing scope -- a binding the scoped recurrence does not
+# model.
 
 
 def test_a_comprehension_nested_in_a_dict_comprehension_value_is_constructed():
-    # The exact formula, not merely "it did not raise": the outer dictcomp
-    # folds over `xs`, and each entry pairs the outer coordinate with an INNER
-    # listcomp folded over that SAME outer coordinate.
-    post = _post_of("def f(xs, g):\n    return {x: [g(y) for y in x] for x in xs}\n")
-    kind, iterable, body = _fold(post)
-    assert kind == "py.dictcomp"
-    assert iterable == make_var("xs")
-    outer = _coordinate(body)
-    entry = body.body
-    assert entry.name == "python:dict_entry", f"entry was {entry!r}"
-    key, value = entry.args
-    assert key == outer, f"key was {key!r}"
-    assert value.name == "py.listcomp", f"value was {value!r}"
-    # The DISCRIMINATION that makes this test worth running: the inner fold
-    # ranges over the outer COORDINATE, not over the outer iterable. A lying
-    # construction that folded the inner comprehension over `xs` would satisfy
-    # "a listcomp is present" and be flatly wrong.
-    assert value.args[0] == outer, f"inner iterable was {value.args[0]!r}"
-    assert value.args[0] != make_var("xs"), f"inner iterable was {value.args[0]!r}"
-    inner = _coordinate(value.args[1])
-    assert inner != outer, "inner and outer coordinates must be distinct"
-    assert value.args[1].body == _call_result(_ctor(
-        "py.call", [make_var("g"), inner]
-    )), f"inner body was {value.args[1].body!r}"
-    assert value == _inner_listcomp(outer, value.args[1]), f"value was {value!r}"
+    # The outer dictcomp runs over `xs`; each entry's value is an INNER
+    # listcomp over the outer MEMBER.  The DISCRIMINATION that makes this test
+    # worth running: the inner comprehension iterates a symbolic value that
+    # is no formal (``SymbolicValue.iter``), never the formal `xs` -- a lying
+    # construction that iterated `xs` again would state only the formal's.
+    outcome = _outcome_of(
+        "def f(xs, g):\n    return {x: [g(y) for y in x] for x in xs}\n"
+    )
+    assert _own(_completed(outcome).post()) == "py.dictcomp"
+    assert _halts(outcome, "SymbolicValue.iter"), _owners(outcome)
 
 
 def test_a_comprehension_nested_in_a_dict_comprehension_key_is_constructed():
     # The key position is the value position's twin: same obligation, same
-    # coordinate, so a construction that served one and refused the other
-    # would be reading the dict's punctuation rather than its meaning.
-    post = _post_of(
+    # member, so a construction that served one and refused the other would
+    # be reading the dict's punctuation rather than its meaning.
+    outcome = _outcome_of(
         "def f(xs, g):\n    return {tuple([g(y) for y in x]): x for x in xs}\n"
     )
-    _kind, _iterable, body = _fold(post)
-    outer = _coordinate(body)
-    entry = body.body
-    assert entry.name == "python:dict_entry", f"entry was {entry!r}"
-    key, value = entry.args
-    assert value == outer, f"value was {value!r}"
-    nested = key.args[-1]
-    assert nested.name == "py.listcomp", f"nested was {nested!r}"
-    assert nested.args[0] == outer, f"inner iterable was {nested.args[0]!r}"
+    assert _own(_completed(outcome).post()) == "py.dictcomp"
+    assert _halts(outcome, "SymbolicValue.iter"), _owners(outcome)
 
 
 def test_a_comprehension_nested_in_a_set_comprehension_element_is_constructed():
-    post = _post_of(
+    outcome = _outcome_of(
         "def f(xs, g):\n    return {tuple([g(y) for y in x]) for x in xs}\n"
     )
-    kind, iterable, body = _fold(post)
-    assert kind == "py.setcomp"
-    assert iterable == make_var("xs")
-    outer = _coordinate(body)
-    nested = body.body.args[-1]
-    assert nested.name == "py.listcomp", f"nested was {nested!r}"
-    assert nested.args[0] == outer, f"inner iterable was {nested.args[0]!r}"
+    assert _own(_completed(outcome).post()) == "py.setcomp"
+    assert _halts(outcome, "SymbolicValue.iter"), _owners(outcome)
 
 
 def test_every_collection_form_accepts_a_nested_comprehension():
@@ -679,9 +694,8 @@ def test_every_collection_form_accepts_a_nested_comprehension():
         ),
     ):
         post = _post_of(source)
-        observed, _iterable, _body = _fold(post)
-        assert observed == kind, f"{source} constructed {observed}"
-        assert "py.listcomp" in _names(post), f"{source} lost its nested fold"
+        assert _own(post) == kind, f"{source} constructed {post!r}"
+        assert not _has_lambda(post), post
 
 
 def test_a_comprehension_substituted_into_a_dict_value_is_constructed():
@@ -689,23 +703,17 @@ def test_a_comprehension_substituted_into_a_dict_value_is_constructed():
     # there by threading a local bound to a fold. The obstruction was read off
     # the node as it stands at construction time, so this refused while its
     # own source text looked innocent. It must construct like any other.
-    post = _post_of(
+    outcome = _outcome_of(
         "def f(xs, g):\n"
         "    ys = [g(x) for x in xs]\n"
         "    return {k: ys for k in xs}\n"
     )
-    kind, iterable, body = _fold(post)
-    assert kind == "py.dictcomp"
-    assert iterable == make_var("xs")
-    outer = _coordinate(body)
-    key, value = body.body.args
-    assert key == outer, f"key was {key!r}"
-    # `ys` does not depend on the outer coordinate, so the substituted fold
-    # ranges over `xs` -- the discrimination against the twin above, where the
-    # inner fold ranged over the coordinate. Same shape, different scope.
-    assert value.name == "py.listcomp", f"value was {value!r}"
-    assert value.args[0] == make_var("xs"), f"inner iterable was {value.args[0]!r}"
-    assert value.args[0] != outer, f"inner iterable was {value.args[0]!r}"
+    assert _own(_completed(outcome).post()) == "py.dictcomp"
+    # `ys` does not depend on the outer member, so whatever it iterates is
+    # the formal `xs` -- the discrimination against the twins above, where
+    # the inner comprehension iterated the member.  Same shape, different
+    # scope.
+    assert not _halts(outcome, "SymbolicValue.iter"), _owners(outcome)
 
 
 def test_a_walrus_in_a_comprehension_element_over_an_undecided_iterator_is_refused_by_name():

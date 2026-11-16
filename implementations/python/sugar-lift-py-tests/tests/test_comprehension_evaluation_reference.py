@@ -199,7 +199,11 @@ def test_a_symbolic_member_is_bound_before_the_element_reads_it() -> None:
     generator = sugar.generators[0]
     coordinate = generator.binding_coordinate_cid
     ctx = _bound(ReduceContext.root(owner="comprehension-member"), "x", TermValue(99))
-    inner = sugar._symbolic_member_ctx(generator, ctx)
+    unpacked, enter = sugar._symbolic_member(generator, ctx)
+    # A name target unpacks nothing: no halt, nothing owed.
+    assert not unpacked.halts(), unpacked
+    assert not unpacked.owed_items(), unpacked
+    inner = enter(())
     member = SymbolicValue(make_var(coordinate))
     assert inner.temporal.value_if_bound(coordinate) == member
     read = sugar.element.desugar(inner)
@@ -212,19 +216,35 @@ def test_a_symbolic_member_binds_without_a_context() -> None:
     comp = _comprehension("def f(xs):\n    return [x for x in xs]\n")
     sugar = comp.sugar()
     generator = sugar.generators[0]
-    inner = sugar._symbolic_member_ctx(generator, None)
+    _unpacked, enter = sugar._symbolic_member(generator, None)
+    inner = enter(())
     member = SymbolicValue(make_var(generator.binding_coordinate_cid))
     assert inner.temporal.value_if_bound(generator.binding_coordinate_cid) == member
 
 
 def test_a_symbolic_destructuring_member_binds_each_leaf_projection() -> None:
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed
+
     comp = _comprehension("def f(ps):\n    return [a - b for a, b in ps]\n")
     sugar = comp.sugar()
     generator = sugar.generators[0]
     element = make_var(generator.binding_coordinate_cid)
-    inner = sugar._symbolic_member_ctx(
+    unpacked, enter = sugar._symbolic_member(
         generator, ReduceContext.root(owner="comprehension-member")
     )
+    # The member's length is not in hand: the unpack completes only under
+    # its completes atom, and under the complement it raises (a wrong arity
+    # is ``ValueError``), the one undetermined raise, which owes.  The halt is
+    # an arm of the comprehension at lift, never only a coordinate inside a
+    # term (#7757: a halt is never dropped).
+    (halted,) = unpacked.halts()
+    assert type(halted.effect) is UndeterminedRaiseEffect
+    assert halted.effect.producer_node_owner == "ComprehensionSugar.target.unpack"
+    assert "python:unpack.destructure" in str(halted.guard)
+    assert unpacked.owed_items(), unpacked
+    (done,) = [arm for arm in unpacked.exits if isinstance(arm, Completed)]
+    inner = enter(done.value)
     a, b = (coordinate.cid for coordinate in generator.target_coordinates)
     assert inner.temporal.value_if_bound(a) == SymbolicValue(_projection(element, 0, 2))
     assert inner.temporal.value_if_bound(b) == SymbolicValue(_projection(element, 1, 2))
@@ -323,12 +343,11 @@ def test_a_symbolic_stored_lambda_reads_the_final_member_without_a_panic() -> No
     comp = _comprehension("def f(xs):\n    return [lambda: x for x in xs]\n")
     sugar = comp.sugar()
     generator = sugar.generators[0]
+    _unpacked, enter = sugar._symbolic_member(
+        generator, ReduceContext.root(owner="comprehension-closure")
+    )
     ctx = sugar._symbolic_final_ctx(
-        generator,
-        SymbolicValue(make_var("xs")),
-        sugar._symbolic_member_ctx(
-            generator, ReduceContext.root(owner="comprehension-closure")
-        ),
+        generator, SymbolicValue(make_var("xs")), enter(())
     )
     final = ctx.temporal.value_if_bound(
         final_member_coordinate(generator.binding_coordinate_cid)
@@ -438,12 +457,11 @@ def test_a_symbolic_stored_lambda_reads_the_outer_final_member() -> None:
     comp = _comprehension(_NESTED)
     sugar = comp.sugar()
     generator = sugar.generators[0]
+    _unpacked, enter = sugar._symbolic_member(
+        generator, ReduceContext.root(owner="comprehension-closure")
+    )
     ctx = sugar._symbolic_final_ctx(
-        generator,
-        SymbolicValue(make_var("xs")),
-        sugar._symbolic_member_ctx(
-            generator, ReduceContext.root(owner="comprehension-closure")
-        ),
+        generator, SymbolicValue(make_var("xs")), enter(())
     )
     cell = final_member_coordinate(generator.binding_coordinate_cid)
     final = ctx.temporal.value_if_bound(cell)

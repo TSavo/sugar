@@ -18,7 +18,7 @@ from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
 from sugar_lift_py_tests.floor import SymbolicValue
-from sugar_lift_py_tests.ir import make_var
+from sugar_lift_py_tests.ir import ctor, make_var
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import true_guard
 from sugar_lift_py_tests.sugar.comprehension_sugar import (
@@ -51,7 +51,7 @@ class _ConstructedOutcomeSugar(ConstructedTermSugar):
         return self.outcome.completed_value().to_term(owner="test fixture")
 
 
-def _comprehension(element_outcome):
+def _comprehension(element_outcome, site="comprehension-temporal-test"):
     return ComprehensionSugar(
         kind="py.listcomp",
         generators=(
@@ -70,7 +70,7 @@ def _comprehension(element_outcome):
             element_outcome,
             site="synthetic-comprehension-element",
         ),
-        site="comprehension-temporal-test",
+        site=site,
     )
 
 
@@ -124,10 +124,17 @@ def _iteration_halt(face) -> bool:
     )
 
 
-def test_completed_element_builds_fold_without_exporting_target_binding():
-    result = _comprehension(
-        ExitSet.completed(SymbolicValue(make_var("outer_x")))
-    ).desugar()
+def test_completed_element_completes_with_its_own_coordinate_exporting_nothing():
+    # A real source occurrence: the comprehension's own coordinate names it.
+    site = next(
+        node
+        for node in _source_file("def f(xs):\n    return [x for x in xs]\n").nodes()
+        if node.kind == "ListComp"
+    ).sugar().site
+    comprehension = _comprehension(
+        ExitSet.completed(SymbolicValue(make_var("outer_x"))), site=site
+    )
+    result = comprehension.desugar()
 
     # ``iter(outer_xs)`` is not decided here, nor is ``next`` of the
     # iterator it completes with: the fold follows the faces they complete
@@ -136,11 +143,18 @@ def test_completed_element_builds_fold_without_exporting_target_binding():
     owners = sorted(halted.effect.producer_node_owner for halted in result.halts())
     assert owners == ["SymbolicValue.iter", "SymbolicValue.next"], result.halts()
     assert all(_iteration_halt(halted) for halted in result.halts())
+    # What it accumulates is its own coordinate, its kind over its
+    # occurrence: neither the element nor the target's binding is stated in
+    # it, and reading it owes (#7757).
     term = _the_completed_value(result).to_term(owner="test")
-    assert term.name == "py.listcomp"
-    assert term.args[0] == make_var("outer_xs")
-    assert term.args[1].body == make_var("outer_x")
-    assert term.args[1].body != make_var("element-cid")
+    assert term == ctor(
+        "py.listcomp",
+        [comprehension.occurrence_term(owner="test")],
+        symbol_kind="coordinate",
+    )
+    assert "outer_x" not in repr(term)
+    assert "element-cid" not in repr(term)
+    assert result.owed_items(), result
 
 
 def test_halted_element_bypasses_fold_and_retains_exact_outer_state():

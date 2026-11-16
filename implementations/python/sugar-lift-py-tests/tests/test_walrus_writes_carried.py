@@ -52,6 +52,7 @@ from sugar_lift_py_tests.floor.named_expression_value import (
 )
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
+from sugar_lift_py_tests.ir import str_const
 from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
 from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
@@ -489,8 +490,11 @@ def test_two_walruses_of_one_name_over_a_symbolic_iterable_carry_one_write() -> 
     assert written.when_false == TermValue(0)
     last = written.when_true.to_term(owner="walrus-two-symbolic")
     assert last.name == "python:comprehension.last_write"
-    # The condition's writes, then the element's, member by member.
-    assert len(last.args) == 2
+    # The name's last write, whichever walrus made it: the comprehension's
+    # occurrence and the name, as its own value is its occurrence.
+    occurrence, name = last.args
+    assert occurrence.name == "python:source-occurrence"
+    assert name == str_const("n")
 
 
 def test_a_running_read_over_a_symbolic_iterable_is_refused_by_name() -> None:
