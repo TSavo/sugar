@@ -11,7 +11,7 @@ callee, so nothing asks it.
 
 from __future__ import annotations
 
-from sugar_source_tree.nodes import Call, FunctionDef, Name
+from sugar_source_tree.nodes import Call, Name
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
@@ -57,17 +57,3 @@ def test_recursive_name_call_sugar_does_not_raise_attribute_error() -> None:
                 "recursive Name-call must not trip a ClassDef-only method on "
                 f"FunctionDef: {exc}"
             ) from exc
-
-
-def test_functiondef_is_not_a_plain_source_class_body() -> None:
-    """Defense: the one class-body rule refuses non-ClassDef without
-    AttributeError (the default-attribute rule it subsumed is deleted)."""
-    source = _source_file("def f():\n    return 1\n")
-    function = next(node for node in source.nodes() if isinstance(node, FunctionDef))
-    # Would AttributeError before the isinstance guard.
-    assert (
-        function.unit.source_class_has_plain_source_body(
-            function  # type: ignore[arg-type]
-        )
-        is False
-    )

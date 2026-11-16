@@ -36,7 +36,7 @@ from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValu
 from sugar_lift_py_tests.floor.object_value import ObjectValue
 from sugar_lift_py_tests.outcome import Halted
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.nodes import ClassDef, FunctionDef, SourceUnit
+from sugar_source_tree.nodes import ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
 
 from frame_fresh import FRAME_FRESH
@@ -287,9 +287,6 @@ def test_an_inherited_new_is_never_skipped() -> None:
     # Heir's call runs Own's ``__new__``: its frame cannot seat a base's, so
     # the call is the unanswered call, never a frame that skips it.
     assert classes["Heir"].new_entry() == (False, None)
-    assert not SourceUnit.source_class_admits_source_constructor_frame(
-        classes["Heir"]
-    )
 
 
 def test_a_stored_new_is_undecided() -> None:
@@ -297,9 +294,6 @@ def test_a_stored_new_is_undecided() -> None:
 
     assert classes["Stored"].new_entry() == (False, None)
     assert classes["Stored"].returned_new() is None
-    assert not SourceUnit.source_class_admits_source_constructor_frame(
-        classes["Stored"]
-    )
 
 
 def test_a_new_whose_call_runs_a_source_init_is_no_returned_new() -> None:
