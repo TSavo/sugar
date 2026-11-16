@@ -1580,12 +1580,6 @@ def bind_call(
         site=blame,
         source_call_frame_cid=frame_cid,
         formal_coordinate_cids=formal_coordinate_cids,
-        bound_native_actuals_by_coordinate=(
-            bound_source_actuals.by_native_formal_coordinate
-            if bound_source_actuals is not None
-            and bound_source_actuals.native_formal_coordinates
-            else None
-        ),
         bound_source_actuals=bound_source_actuals,
         lexical_defining_class=lexical_defining_class,
         **testimony,

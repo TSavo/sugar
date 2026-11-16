@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from sugar_lift_python_source.canonical import cid_of_json
 from sugar_source_tree.binding_provenance import BindingCoordinateV1
 
@@ -31,39 +31,6 @@ def _reauthenticate_binding_coordinates(coordinates: tuple) -> None:
         seen.add(coordinate.cid)
 
 
-def _reauthenticate_native_coordinates(coordinates: tuple) -> None:
-    from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
-
-    seen = set()
-    for coordinate in coordinates:
-        if type(coordinate) is not FormalParameterCoordinateV1:
-            raise SourceCallBindingGap(
-                "native formal coordinate roster contains a foreign coordinate type"
-            )
-        try:
-            authenticated = FormalParameterCoordinateV1(
-                coordinate.owner_source_identity_cid,
-                coordinate.owner_definition_locus,
-                coordinate.declaration_locus,
-                coordinate.ordinal,
-                coordinate.parameter_kind,
-                coordinate.declared_name,
-                coordinate.sort,
-                coordinate.coordinate_cid,
-                coordinate.kind,
-                coordinate.schema_version,
-            )
-        except ValueError as exc:
-            raise SourceCallBindingGap(
-                "native formal coordinate roster failed authentication"
-            ) from exc
-        if authenticated != coordinate or coordinate.coordinate_cid in seen:
-            raise SourceCallBindingGap(
-                "native formal coordinate roster contains duplicate testimony"
-            )
-        seen.add(coordinate.coordinate_cid)
-
-
 def _source_coordinate(node) -> SourceFragmentCoordinateV1:
     span = node.line_col_span()
     return SourceFragmentCoordinateV1(
@@ -87,21 +54,13 @@ class BoundSourceCallActualsV1:
 
     actuals: tuple
     formal_coordinates: tuple[BindingCoordinateV1, ...]
-    native_formal_coordinates: tuple = ()
     projected_pairs: tuple[BoundFormalActualV1, ...] = ()
-    # The definition whose formals these are: a native carrier coordinate is
-    # this frame's formal only if it names this definition.
-    definition_site: object = None
 
     def __post_init__(self) -> None:
         actual_count = len(self.actuals)
-        if len(self.formal_coordinates) != actual_count or (
-            self.native_formal_coordinates
-            and len(self.native_formal_coordinates) != actual_count
-        ):
+        if len(self.formal_coordinates) != actual_count:
             raise SourceCallBindingGap("bound actual coordinate arity mismatch")
         _reauthenticate_binding_coordinates(self.formal_coordinates)
-        _reauthenticate_native_coordinates(self.native_formal_coordinates)
         _reauthenticate_binding_coordinates(
             tuple(pair.coordinate for pair in self.projected_pairs)
         )
@@ -155,7 +114,6 @@ class BoundSourceCallActualsV1:
             return (
                 self.actuals == other.actuals
                 and self.formal_coordinates == other.formal_coordinates
-                and self.native_formal_coordinates == other.native_formal_coordinates
                 and self.projected_pairs == other.projected_pairs
             )
         return NotImplemented
@@ -168,17 +126,6 @@ class BoundSourceCallActualsV1:
                 self.formal_coordinates, self.actuals, strict=True
             )
         )
-
-    @property
-    def by_native_formal_coordinate(self) -> dict[str, object]:
-        if not self.native_formal_coordinates:
-            return {}
-        return {
-            coordinate.coordinate_cid: actual
-            for coordinate, actual in zip(
-                self.native_formal_coordinates, self.actuals, strict=True
-            )
-        }
 
 
 def _constructing_module_execution_site():
@@ -247,8 +194,6 @@ class SourceVisibleCallFrameV1:
     default_fragment_cids: tuple[str | None, ...]
     body: object = field(compare=False)
     owner: object = field(compare=False, repr=False)
-    native_operation_formal_coordinates: tuple = field(default=(), compare=False)
-    pending_native_operation: object | None = field(default=None, compare=False)
     #: ``X = 1 // 0`` at module level: the module never finishes importing,
     #: so a call into any frame of it is that halt.  The one ``Halted`` arm
     #: of the first such constant in source order, reduced once per module.
@@ -488,9 +433,7 @@ class SourceVisibleCallFrameV1:
         return BoundSourceCallActualsV1(
             tuple(bound),
             self.formal_coordinates,
-            self.native_operation_formal_coordinates,
             tuple(projected_pairs),
-            self.definition_site,
         )
 
     def _validate_formal_coordinate_rosters(self) -> None:
@@ -536,65 +479,6 @@ class SourceVisibleCallFrameV1:
             raise SourceCallBindingGap(
                 "formal coordinate roster has a foreign declaration site"
             )
-
-        native = self.native_operation_formal_coordinates
-        if not native:
-            return
-        owner_parameters = tuple(self.owner.params)
-        _reauthenticate_native_coordinates(native)
-        native_cids = tuple(coordinate.coordinate_cid for coordinate in native)
-        expected_kinds = {
-            "positional_only": "positional-only",
-            "positional_or_keyword": "positional-or-keyword",
-            "vararg": "variadic-positional",
-            "keyword_only": "keyword-only",
-            "kwarg": "variadic-keyword",
-        }
-        from sugar_lift_py_tests.ir import PrimitiveSort
-
-        if (
-            len(native) != len(self.parameters)
-            or len(set(native_cids)) != len(native_cids)
-            or any(
-                coordinate.owner_source_identity_cid != self.source_identity_cid
-                or coordinate.owner_definition_locus != self.definition_site
-                or coordinate.declaration_locus
-                != _source_coordinate(owner_parameters[index])
-                or coordinate.parameter_kind
-                != expected_kinds[self.parameter_kinds[index]]
-                or coordinate.sort != PrimitiveSort("Value")
-                or coordinate.ordinal != index
-                or coordinate.declared_name != self.parameters[index]
-                for index, coordinate in enumerate(native)
-            )
-        ):
-            raise SourceCallBindingGap("native formal coordinate roster is cross-wired")
-        pending = self.pending_native_operation
-        if pending is None:
-            raise SourceCallBindingGap(
-                "native formal coordinate roster omitted its pending demand"
-            )
-        by_cid = {coordinate.coordinate_cid: coordinate for coordinate in native}
-        demanded = pending.demand.operand_coordinate_cids
-        for coordinate_cid, stored in zip(demanded, pending.coordinates, strict=True):
-            if coordinate_cid is None:
-                if stored is not None:
-                    raise SourceCallBindingGap(
-                        "pending carrier demand coordinate testimony is cross-wired"
-                    )
-                continue
-            if coordinate_cid not in by_cid or stored != by_cid[coordinate_cid]:
-                raise SourceCallBindingGap(
-                    "pending carrier demand coordinate testimony is cross-wired"
-                )
-
-    def with_native_operation_projection(self, formal_coordinates, pending):
-        """Seat one already-constructed formal operation on this call frame."""
-        return replace(
-            self,
-            native_operation_formal_coordinates=tuple(formal_coordinates),
-            pending_native_operation=pending,
-        )
 
 
 class SourceCallBindingGap(ValueError):

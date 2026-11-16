@@ -102,6 +102,5 @@ def test_a_cross_wired_keyword_projection_is_refused(variant):
         BoundSourceCallActualsV1(
             truthful.actuals,
             truthful.formal_coordinates,
-            truthful.native_formal_coordinates,
             (replace(child, coordinate=coordinate),),
         )

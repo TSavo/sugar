@@ -179,9 +179,6 @@ class CallSiteValue(FloorValue):
     )
     source_call_frame_cid: str | None = dataclass_field(default=None, compare=False)
     formal_coordinate_cids: tuple[str, ...] = dataclass_field(default=(), compare=False)
-    bound_native_actuals_by_coordinate: dict[str, FloorValue] | None = dataclass_field(
-        default=None, compare=False
-    )
     bound_source_actuals: object | None = dataclass_field(default=None, compare=False)
     # The language-owned builtin exception class this call applied, read from
     # the temporal binding of the callee (a user rebinding replaces it). It
