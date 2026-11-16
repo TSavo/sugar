@@ -12,9 +12,8 @@ Python semantic law made constructible here (distinct from BoolOp #6595):
 
 Producer method: ``UnaryOpSugar.desugar`` (op_kind ``Not``).
 Floor consumer methods: ``FloorValue.truth`` through the one truth rule
-(``bool_op_sugar.truth_of``, also the carrier's ``unary_truth`` discharge),
-and bool-literal ``negate``.
-Carrier: existing ``NativeOperationExitCarrierV1`` / three-way resolution.
+(``bool_op_sugar.truth_of``), and bool-literal ``negate``.  A parameter's
+``not`` takes the same rule, its two faces: no carrier (#7757 NEW-1).
 
 Corpus coordinates (pandas 3.0.3, verified by line content, not by path alone):
 
@@ -184,7 +183,7 @@ def _formal(node: UnaryOp) -> FormalParameterCoordinateV1:
     )
 
 
-def _carrier() -> tuple[NativeOperationExitCarrierV1, FormalParameterCoordinateV1]:
+def _formal_not() -> tuple[ExitSet, FormalParameterCoordinateV1]:
     node = _unary_node()
     formal = _formal(node)
     outcome = UnaryOpSugar(
@@ -192,7 +191,6 @@ def _carrier() -> tuple[NativeOperationExitCarrierV1, FormalParameterCoordinateV
         _ValueSugar(SymbolicValue(make_var("value"), formal)),
         node.fragment,
     ).desugar(None)
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
     return outcome, formal
 
 
@@ -362,97 +360,44 @@ def test_truthful_exceptional_face_carries_floor_type_not_boundary() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Formal carrier: unary_truth + negate continuation
+# Formal: the one truth rule's two faces, then negate (#7757 NEW-1)
 # ---------------------------------------------------------------------------
 
 
-def test_formal_not_defers_to_native_operation_carrier() -> None:
-    carrier, formal = _carrier()
-    assert carrier.demand.operator == "unary_truth"
-    assert len(carrier.demand.operand_terms) == 2
-    assert carrier.demand.operand_coordinate_cids[0] == formal.coordinate_cid
-    assert carrier.demand.operand_coordinate_cids[1] is None
-
-
-def test_formal_not_completes_to_bool_after_discharge() -> None:
-    carrier, formal = _carrier()
-    # Continuations include negate from UnaryOpSugar.desugar.
-    exits = carrier.discharge(None, {formal.coordinate_cid: TermValue(0)})
-    assert len(exits.exits) == 1
-    assert isinstance(exits.exits[0], Completed)
-    assert isinstance(exits.exits[0].value, TrueBoolLiteralSugar)
-
-    exits = carrier.discharge(None, {formal.coordinate_cid: TermValue(7)})
-    assert isinstance(exits.exits[0].value, FalseBoolLiteralSugar)
-
-
-def test_formal_not_halt_bypasses_negate_continuation() -> None:
-    carrier, formal = _carrier()
-    exits = carrier.discharge(None, {formal.coordinate_cid: _AmbiguousTruth()})
-    assert len(exits.exits) == 1
-    assert isinstance(exits.exits[0], Halted)
-    # Resolution.project keeps the authenticated type coordinate; name may be
-    # omitted on the carrier path (type identity is the authority).
-    assert exits.exits[0].effect.exception_type_coordinate == ctor(
-        "python:exception_type_identity",
-        [str_const("builtins"), str_const("TypeError")],
-    )
-    # Occurrence is the operation site, not a fabricated boundary locus.
-    assert (
-        isinstance(exits.exits[0].effect.occurrence_id, str)
-        and ":" in exits.exits[0].effect.occurrence_id
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {exits.exits[0].effect.occurrence_id!r}"
-    )
-
-
-def test_undecided_actual_is_the_two_faced_truth_on_discharge() -> None:
-    """A bare symbolic actual's ``bool`` may run code: the discharge takes it
-    through the one truth rule, so it is the two faces, and only the
-    completed truth is negated.  No exception type is named."""
+def test_formal_not_is_the_two_faced_truth_then_negate() -> None:
+    """``not value`` on a parameter mints no carrier waiting on a caller's
+    actual production never supplies: ``bool(value)`` is the one truth
+    rule's two faces (``__bool__`` then ``__len__`` then ``True`` is a
+    protocol no one dispatched method states), and only the completed
+    truth is negated.  The halt is kept; no exception type is named."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
     from sugar_lift_py_tests.ir import not_, py_truthy
 
-    carrier, formal = _carrier()
-    exits = carrier.discharge(
-        None,
-        {formal.coordinate_cid: SymbolicValue(make_var("still_unknown"))},
-    )
-    halted = [face for face in exits.exits if isinstance(face, Halted)]
-    completed = [face for face in exits.exits if isinstance(face, Completed)]
+    outcome, _formal_coordinate = _formal_not()
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
+    halted = [face for face in outcome.exits if isinstance(face, Halted)]
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
     assert len(halted) == 1 and len(completed) == 1
     assert type(halted[0].effect) is UndeterminedRaiseEffect
     assert halted[0].effect.producer_node_owner == "UnaryOpSugar.not"
     assert "TypeError" not in repr(halted[0])
     assert "python:truth.completes" in repr(completed[0].guard)
     assert isinstance(completed[0].value, PredicateValue)
-    assert completed[0].value.formula == not_(py_truthy(make_var("still_unknown")))
+    assert completed[0].value.formula == not_(py_truthy(make_var("value")))
+    assert completed[0].owed and completed[0].owed == halted[0].owed
 
 
-def test_formal_not_with_no_actual_negates_the_truth_of_the_unanswered_result() -> (
-    None
-):
-    """With no actual, the ``unary_truth`` operation is unanswered: its
-    result is a value whose truth is taken through the one truth rule before
-    it is negated, never asked to negate itself."""
-    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+def test_formal_not_is_the_truth_a_free_symbol_takes() -> None:
+    """One way: the formal's ``not`` is the same outcome a symbolic value
+    with no formal coordinate takes over the same term."""
+    node = _unary_node()
+    outcome, _formal_coordinate = _formal_not()
+    free = UnaryOpSugar(
+        "Not", _ValueSugar(SymbolicValue(make_var("value"))), node.fragment
+    ).desugar(None)
+    assert outcome == free
 
-    carrier, _formal = _carrier()
-    exits = carrier.discharge(None, {})
-    completed = [face for face in exits.exits if isinstance(face, Completed)]
-    halted = [face for face in exits.exits if isinstance(face, Halted)]
-    assert len(completed) == 1
-    assert isinstance(completed[0].value, PredicateValue)
-    assert "python:native_operation_result" in repr(completed[0].value.formula)
-    assert "python:truth.completes" in repr(completed[0].guard)
-    assert "UnaryOpSugar.not" in {
-        face.effect.producer_node_owner
-        for face in halted
-        if type(face.effect) is UndeterminedRaiseEffect
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -577,7 +522,7 @@ def test_lying_expected_type_substitution_does_not_authenticate_nameless_halt() 
 
 
 def test_producer_and_consumer_methods_are_the_named_seams() -> None:
-    """Document the exact methods this PR owns (before any further edit)."""
+    """Document the exact methods this law owns."""
     from sugar_lift_py_tests.caller_parameter_contract import (
         _NATIVE_OPERATION_PROJECTORS,
     )
@@ -587,8 +532,5 @@ def test_producer_and_consumer_methods_are_the_named_seams() -> None:
     assert hasattr(FloorValue, "truth")
     assert callable(getattr(TrueBoolLiteralSugar(_Site()), "negate"))
     assert callable(getattr(FalseBoolLiteralSugar(_Site()), "negate"))
-    # The carrier's discharge is the one truth rule on the actual.
-    probe = TermValue(0)
-    assert _NATIVE_OPERATION_PROJECTORS["unary_truth"](
-        probe, NoneValue(), _Site(), None
-    ) == probe.truth(_Site())
+    # ``not`` on a parameter mints no carrier, so it has no projector.
+    assert "unary_truth" not in _NATIVE_OPERATION_PROJECTORS

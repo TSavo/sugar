@@ -314,7 +314,7 @@ class CallSiteValue(FloorValue):
         contract's, joined at prove (#7757 steps 5 and 6), so its
         ``__iter__`` is not decided here.  The one two-faced undecided read
         (``FloorValue.undecided_iteration``), as for any symbolic receiver
-        that is no formal (``SymbolicValue.iter_with``): a ``for`` over a
+        (``SymbolicValue.iter_with``): a ``for`` over a
         same-file call's result (``for i in g():``) follows the completed
         face, never a construction panic and never a value read off the
         callee's body."""

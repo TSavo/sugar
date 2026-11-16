@@ -1,7 +1,7 @@
 """Synchronous Floor iterator surface: ``iter_with`` / ``next_with``.
 
 Law: iterable authority lives on the Floor value. Callers submit
-``IteratorOperation`` / ``NextOperation`` (or the named projectors) and are
+``IteratorOperation`` / ``NextOperation`` and are
 exhaustive over outputs — never over container species.
 
 Pins:
@@ -22,7 +22,6 @@ from dataclasses import dataclass, replace
 import pytest
 from frame_fresh import FRAME_FRESH, fresh
 
-from sugar_lift_py_tests.caller_parameter_contract import project_iter, project_next
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor.floor_value import FloorValue
@@ -80,6 +79,22 @@ def _next_op(*, owner: str = "test_next", site=None) -> NextOperation:
     return NextOperation(owner=owner, blame=site if site is not None else _site())
 
 
+def _submit_iter(receiver, site, ctx):
+    """``iter(receiver)`` at ``site``: the one ``IteratorOperation``,
+    submitted to the receiver, which owns the answer."""
+    return IteratorOperation(owner="iterator-surface-iter", blame=site).submit(
+        receiver, ctx
+    )
+
+
+def _submit_next(receiver, site, ctx):
+    """``next(receiver)`` at ``site``: the one ``NextOperation``, submitted
+    to the iterator, which owns the answer."""
+    return NextOperation(owner="iterator-surface-next", blame=site).submit(
+        receiver, ctx
+    )
+
+
 # ---------------------------------------------------------------------------
 # Exact iterable → authenticated iterator
 # ---------------------------------------------------------------------------
@@ -99,10 +114,10 @@ def test_tuple_iter_with_yields_tuple_iterator() -> None:
     assert outcome.completed_value() == TupleIteratorValue(members, index=0)
 
 
-def test_project_iter_is_the_production_edge_for_list() -> None:
+def test_iter_operation_is_the_edge_for_list() -> None:
     site = _site()
     members = (TermValue(7),)
-    outcome = project_iter(fresh(ListValue, members), site, None)
+    outcome = _submit_iter(fresh(ListValue, members), site, None)
     assert outcome.completed_value() is not None
     assert outcome.completed_value() == ListIteratorValue(members, index=0)
 
@@ -125,14 +140,14 @@ def test_list_next_yields_value_and_advanced_iterator() -> None:
 def test_list_next_exhausts_with_named_stop_iteration() -> None:
     site = _site()
     it = ListIteratorValue((TermValue(1),), index=1)
-    outcome = _next_op(owner="project_next", site=site).submit(it, None)
+    outcome = _next_op(owner="iterator-surface-next", site=site).submit(it, None)
     effect = _only_halt(outcome).effect
     assert isinstance(effect, RaiseEffect)
     assert effect.exception_name == "StopIteration"
     # Exact builtin type coordinate — not spelling-only identity.
     assert effect.exception_type_coordinate == _stopiteration_type_identity()
     # Exact next-operation occurrence + owner from the authenticated fragment.
-    assert effect.producer_node_owner == "project_next"
+    assert effect.producer_node_owner == "iterator-surface-next"
     assert effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
     assert effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
@@ -144,7 +159,7 @@ def test_tuple_next_walks_then_stops() -> None:
     first = _next_op(site=site).submit(it, None)
     assert first.completed_value() is not None
     assert first.completed_value().value == TermValue(9)
-    second = _next_op(owner="project_next", site=site).submit(
+    second = _next_op(owner="iterator-surface-next", site=site).submit(
         first.completed_value().advanced, None
     )
     second_effect = _only_halt(second).effect
@@ -153,12 +168,12 @@ def test_tuple_next_walks_then_stops() -> None:
     assert second_effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
 
-def test_project_next_matches_operation_submit() -> None:
+def test_next_operation_submit_is_deterministic() -> None:
     site = _site()
     members = (TermValue(4), TermValue(5))
     it = ListIteratorValue(members, index=0)
-    via_op = _next_op(owner="project_next", site=site).submit(it, None)
-    via_proj = project_next(it, site, None)
+    via_op = _next_op(owner="iterator-surface-next", site=site).submit(it, None)
+    via_proj = _submit_next(it, site, None)
     assert via_op == via_proj
     assert via_proj.completed_value().value == TermValue(4)
     assert via_proj.completed_value().advanced == ListIteratorValue(members, index=1)
@@ -166,14 +181,14 @@ def test_project_next_matches_operation_submit() -> None:
 
 def test_empty_list_iterator_stops_immediately() -> None:
     site = _site()
-    outcome = _next_op(owner="project_next", site=site).submit(
+    outcome = _next_op(owner="iterator-surface-next", site=site).submit(
         ListIteratorValue((), index=0), None
     )
     effect = _only_halt(outcome).effect
     assert effect.exception_name == "StopIteration"
     assert effect.exception_type_coordinate == _stopiteration_type_identity()
     assert effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
-    assert effect.producer_node_owner == "project_next"
+    assert effect.producer_node_owner == "iterator-surface-next"
 
 
 def test_stop_iteration_is_not_type_error() -> None:
@@ -194,7 +209,7 @@ def test_stop_iteration_is_not_type_error() -> None:
 def test_string_site_cannot_mint_stop_iteration() -> None:
     """Missing-authority twin: prose blame cannot fabricate exception identity."""
     with pytest.raises(ConstructionPanic) as caught:
-        project_next(ListIteratorValue((), index=0), "iterator-surface-site", None)
+        _submit_next(ListIteratorValue((), index=0), "iterator-surface-site", None)
     text = str(caught.value)
     assert (
         "fragment" in text.lower()
@@ -204,7 +219,7 @@ def test_string_site_cannot_mint_stop_iteration() -> None:
     assert "StopIteration" not in text or "no source fragment" in text
     # Lying twin: claiming string blame yields a greened StopIteration halt.
     with pytest.raises(ConstructionPanic):
-        out = project_next(
+        out = _submit_next(
             ListIteratorValue((), index=0), "iterator-surface-site", None
         )
         assert _only_halt(out).effect.exception_name == "StopIteration"
@@ -213,7 +228,7 @@ def test_string_site_cannot_mint_stop_iteration() -> None:
 def test_same_name_foreign_coordinate_is_not_truthful_stop() -> None:
     """Spelling 'StopIteration' under a foreign coordinate is not the exit."""
     site = _site()
-    truthful = project_next(ListIteratorValue((), index=0), site, None)
+    truthful = _submit_next(ListIteratorValue((), index=0), site, None)
     effect = _only_halt(truthful).effect
     assert effect.exception_name == "StopIteration"
     assert effect.exception_type_coordinate == _stopiteration_type_identity()
@@ -267,7 +282,7 @@ def test_object_without_iter_method_is_loud() -> None:
     """ObjectValue without constructor-bound ``__iter__`` cannot invent one."""
     bare = ObjectValue("Bare", (), allocation=FRAME_FRESH)
     with pytest.raises(ConstructionPanic) as caught:
-        _iter_op(owner="project_iter").submit(bare, None)
+        _iter_op(owner="iterator-surface-iter").submit(bare, None)
     text = str(caught.value)
     assert "__iter__" in text or "Bare.__iter__" in text
 
@@ -275,7 +290,7 @@ def test_object_without_iter_method_is_loud() -> None:
 def test_object_without_next_method_is_loud() -> None:
     bare = ObjectValue("Bare", (), allocation=FRAME_FRESH)
     with pytest.raises(ConstructionPanic) as caught:
-        _next_op(owner="project_next").submit(bare, None)
+        _next_op(owner="iterator-surface-next").submit(bare, None)
     text = str(caught.value)
     assert "__next__" in text or "Bare.__next__" in text
 
@@ -294,23 +309,23 @@ def test_next_does_not_mutate_prior_iterator() -> None:
     assert original is not outcome.completed_value().advanced
 
 
-def test_full_list_walk_via_projectors() -> None:
+def test_full_list_walk_via_operations() -> None:
     site = _site()
     members = (TermValue(1), TermValue(2), TermValue(3))
-    it_out = project_iter(fresh(ListValue, members), site, None)
+    it_out = _submit_iter(fresh(ListValue, members), site, None)
     assert it_out.completed_value() is not None
     cursor = it_out.completed_value()
     seen: list[object] = []
     for _ in range(3):
-        step = project_next(cursor, site, None)
+        step = _submit_next(cursor, site, None)
         assert step.completed_value() is not None
         seen.append(step.completed_value().value)
         cursor = step.completed_value().advanced
-    stop = project_next(cursor, site, None)
+    stop = _submit_next(cursor, site, None)
     stop_effect = _only_halt(stop).effect
     assert stop_effect.exception_name == "StopIteration"
     assert stop_effect.exception_type_coordinate == _stopiteration_type_identity()
-    assert stop_effect.producer_node_owner == "project_next"
+    assert stop_effect.producer_node_owner == "iterator-surface-next"
     assert stop_effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
     assert seen == [TermValue(1), TermValue(2), TermValue(3)]
 
@@ -346,7 +361,7 @@ def test_renamed_method_is_not_the_iterator_surface() -> None:
 def test_wrong_definition_stop_is_not_type_error() -> None:
     """Exhaustion must not be redefinable as TypeError or an empty completion."""
     site = _site()
-    outcome = project_next(ListIteratorValue((), index=0), site, None)
+    outcome = _submit_next(ListIteratorValue((), index=0), site, None)
     effect = _only_halt(outcome).effect
     assert effect.exception_name == "StopIteration"
     with pytest.raises(AssertionError):
@@ -358,7 +373,7 @@ def test_wrong_definition_stop_is_not_type_error() -> None:
 def test_wrong_occurrence_stop_is_not_truthful() -> None:
     """Same exception name under a foreign occurrence is not the operation exit."""
     site = _site()
-    truthful = project_next(ListIteratorValue((), index=0), site, None)
+    truthful = _submit_next(ListIteratorValue((), index=0), site, None)
     effect = _only_halt(truthful).effect
     assert effect.exception_name == "StopIteration"
     foreign = replace(
@@ -373,21 +388,21 @@ def test_wrong_occurrence_stop_is_not_truthful() -> None:
     with pytest.raises(AssertionError):
         assert foreign == effect
     with pytest.raises(AssertionError):
-        assert foreign.producer_node_owner == "project_next"
+        assert foreign.producer_node_owner == "iterator-surface-next"
 
 
 def test_cross_wired_list_iterator_is_not_tuple_iterator() -> None:
     """List and tuple iterators are distinct authenticated Floors."""
     site = _site()
     members = (TermValue(1), TermValue(2))
-    list_it = project_iter(fresh(ListValue, members), site, None).completed_value()
-    tuple_it = project_iter(TupleValue(members), site, None).completed_value()
+    list_it = _submit_iter(fresh(ListValue, members), site, None).completed_value()
+    tuple_it = _submit_iter(TupleValue(members), site, None).completed_value()
     assert isinstance(list_it, ListIteratorValue)
     assert isinstance(tuple_it, TupleIteratorValue)
     assert list_it != tuple_it
     with pytest.raises(AssertionError):
         assert list_it == tuple_it
-    step = project_next(list_it, site, None)
+    step = _submit_next(list_it, site, None)
     assert isinstance(step.completed_value().advanced, ListIteratorValue)
     assert not isinstance(step.completed_value().advanced, TupleIteratorValue)
 
@@ -398,24 +413,25 @@ def test_cross_wired_iter_and_next_methods_are_distinct() -> None:
     assert IteratorOperation.method_name == "iter_with"
     assert NextOperation.method_name == "next_with"
     assert IteratorOperation.method_name != NextOperation.method_name
-    started = project_iter(fresh(ListValue, (TermValue(1),)), site, None)
+    started = _submit_iter(fresh(ListValue, (TermValue(1),)), site, None)
     assert started.completed_value() is not None
     with pytest.raises(ConstructionPanic):
-        project_next(fresh(ListValue, (TermValue(1),)), site, None)
-    stop = project_next(ListIteratorValue((), index=0), site, None)
+        _submit_next(fresh(ListValue, (TermValue(1),)), site, None)
+    stop = _submit_next(ListIteratorValue((), index=0), site, None)
     _only_halt(stop)
     with pytest.raises(ConstructionPanic):
-        project_iter(ListIteratorValue((), index=0), site, None)
+        _submit_iter(ListIteratorValue((), index=0), site, None)
+
 
 
 # ---------------------------------------------------------------------------
-# A formal's iter / next: the carrier, decided by the caller's actual (#7757)
+# A formal's iter / next: the undecided two faces, owed (#7757 NEW-1)
 # ---------------------------------------------------------------------------
 
 
-def test_production_native_operator_projector_equality_stays_exact() -> None:
-    """``iter`` and ``next`` are minted (a formal's ``iter_with`` /
-    ``next_with``) and enrolled through the named projectors, both ways."""
+def test_iter_and_next_mint_no_carrier_and_have_no_projector() -> None:
+    """A formal's ``iter`` / ``next`` mints no carrier, so neither operator
+    is produced or projected; the equality holds both ways without them."""
     from sugar_lift_py_tests.caller_parameter_contract import (
         _NATIVE_OPERATION_PROJECTORS,
         production_native_operation_operators,
@@ -424,9 +440,8 @@ def test_production_native_operator_projector_equality_stays_exact() -> None:
     production = production_native_operation_operators()
     projectors = frozenset(_NATIVE_OPERATION_PROJECTORS)
     assert production == projectors
-    assert {"iter", "next"} <= production
-    assert _NATIVE_OPERATION_PROJECTORS["iter"] is project_iter
-    assert _NATIVE_OPERATION_PROJECTORS["next"] is project_next
+    assert not {"iter", "next"} & production
+    assert not {"iter", "next"} & projectors
 
 
 def _formal(name: str = "xs", ordinal: int = 0):
@@ -459,68 +474,63 @@ def _formal(name: str = "xs", ordinal: int = 0):
     return SymbolicValue(make_var(name), coordinate), coordinate, site
 
 
-def test_iter_on_a_formal_defers_to_the_caller() -> None:
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
+def _two_faced_and_owed(outcome, owner: str, protocol: str):
+    """One completion under ``python:<protocol>.completes``, one undetermined
+    halt under its complement, both owing the operation."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import (
+        Completed,
+        Halted,
+        complement_guard,
     )
 
-    formal, coordinate, site = _formal()
-    pending = _iter_op(owner="project_iter", site=site).submit(formal, None)
-
-    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
-    assert pending.demand.operator == "iter"
-    assert pending.demand.operand_coordinate_cids == (coordinate.coordinate_cid,)
-
-
-def test_iter_on_a_formal_resolves_with_a_list_actual() -> None:
-    formal, coordinate, site = _formal()
-    members = (TermValue(1), TermValue(2))
-    pending = _iter_op(owner="project_iter", site=site).submit(formal, None)
-
-    exits = pending.discharge(
-        None, {coordinate.coordinate_cid: fresh(ListValue, members)}
-    )
-
-    assert len(exits.exits) == 1, exits
-    assert exits.completed_value() == ListIteratorValue(members, index=0)
+    assert isinstance(outcome, ExitSet), type(outcome)
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    (halt,) = [arm for arm in outcome.exits if isinstance(arm, Halted)]
+    assert len(outcome.exits) == 2
+    assert halt.guard == complement_guard(done.guard)
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.effect.producer_node_owner == owner
+    assert f"python:{protocol}_op.completes" in repr(done.guard)
+    assert f"python:{protocol}_result" in repr(done.value)
+    assert done.owed and done.owed == halt.owed
+    return done, halt
 
 
-def test_next_on_a_formal_defers_to_the_caller() -> None:
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
+def test_iter_on_a_formal_is_the_undecided_two_faces() -> None:
+    """``iter(p)``: ``__iter__`` then the ``__getitem__`` sequence protocol is
+    a fallback no one dispatched method states, so a formal's ``iter`` is the
+    one undecided read, owed, its halt kept -- never a carrier waiting on a
+    caller's actual production never supplies."""
+    formal, _coordinate, site = _formal()
+    outcome = _iter_op(owner="iterator-surface-iter", site=site).submit(formal, None)
 
-    formal, coordinate, site = _formal("it")
-    pending = _next_op(owner="project_next", site=site).submit(formal, None)
-
-    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
-    assert pending.demand.operator == "next"
-    assert pending.demand.operand_coordinate_cids == (coordinate.coordinate_cid,)
-
-
-def test_next_on_a_formal_resolves_with_an_iterator_actual() -> None:
-    formal, coordinate, site = _formal("it")
-    members = (TermValue(7), TermValue(8))
-    pending = _next_op(owner="project_next", site=site).submit(formal, None)
-
-    exits = pending.discharge(
-        None, {coordinate.coordinate_cid: ListIteratorValue(members, index=0)}
-    )
-
-    assert len(exits.exits) == 1, exits
-    step = exits.completed_value()
-    assert isinstance(step, NextResult)
-    assert step.value == TermValue(7)
-    assert step.advanced == ListIteratorValue(members, index=1)
+    _two_faced_and_owed(outcome, "SymbolicValue.iter", "iter")
+    assert outcome.completed_value() is None
+    assert "TypeError" not in repr(outcome)
 
 
-def test_next_on_a_formal_names_stop_iteration_with_an_exhausted_actual() -> None:
-    formal, coordinate, site = _formal("it")
-    pending = _next_op(owner="project_next", site=site).submit(formal, None)
+def test_next_on_a_formal_is_the_undecided_two_faces() -> None:
+    """``next(p)``: the one undecided read; ``StopIteration`` is never named
+    and no member is chosen."""
+    formal, _coordinate, site = _formal("it")
+    outcome = _next_op(owner="iterator-surface-next", site=site).submit(formal, None)
 
-    exits = pending.discharge(
-        None, {coordinate.coordinate_cid: ListIteratorValue((), index=0)}
-    )
+    _two_faced_and_owed(outcome, "SymbolicValue.next", "next")
+    assert outcome.completed_value() is None
+    assert "StopIteration" not in repr(outcome)
 
-    effect = _only_halt(exits).effect
-    assert effect.exception_type_coordinate == _stopiteration_type_identity()
+
+def test_a_formal_iterates_as_a_free_symbol_does() -> None:
+    """One way: a formal's ``iter`` / ``next`` is the same form a symbolic
+    value with no formal coordinate takes, over the same term."""
+    from sugar_lift_py_tests.floor import SymbolicValue
+
+    formal, _coordinate, site = _formal()
+    free = SymbolicValue(formal.term)
+    for operation in (
+        _iter_op(owner="iterator-surface-iter", site=site),
+        _next_op(owner="iterator-surface-next", site=site),
+    ):
+        assert operation.submit(formal, None) == operation.submit(free, None)

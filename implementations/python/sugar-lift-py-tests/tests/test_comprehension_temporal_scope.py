@@ -118,7 +118,6 @@ def _iteration_halt(face) -> bool:
         and face.effect.producer_node_owner
         in (
             "SymbolicValue.iter",
-            "UnansweredNativeOperation:iter",
             "SymbolicValue.next",
         )
     )

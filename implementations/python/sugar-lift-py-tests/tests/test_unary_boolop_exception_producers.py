@@ -195,6 +195,9 @@ def _undecided_truth_values():
     raised = UndeterminedExceptionValue("probe:occurrence", "probe:producer")
     return (
         SymbolicValue(make_var("obj1")),
+        # A parameter: its truth waits on no caller's actual either
+        # (#7757 NEW-1).
+        SymbolicValue(make_var("p"), formal_coordinate=object()),
         raised,
         UndeterminedExceptionTypeValue(raised),
         # The class a raise threw, handed to ``__exit__``: its own formal

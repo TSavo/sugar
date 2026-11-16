@@ -1,17 +1,15 @@
 """Formal unary operators: ``-x``, ``+x``, ``~x``.
 
-Law (same door as formal binary / unary_truth):
+Law (#7757 NEW-1):
 
-  - formal alone → undischarged ``NativeOperationExitCarrierV1``
-  - production caller (positional / keyword / default) → bind_actuals →
-    carrier discharge → Completed fold
-  - wrong-coordinate / missing actual → no fabricated completion
+  - a formal operand → the undecided two faces (``FloorValue.undecided_unary``):
+    completes under ``python:<neg|pos|invert>.completes``, halts undetermined
+    under the complement, owed either way; no carrier waits on a caller
+  - production caller (positional / keyword / default) → the call is its
+    coordinate and edge, joined at prove
   - open (non-formal) SymbolicValue still refuses inventing success vs TypeError
-  - ground production folds without a carrier
-  - ``not x`` remains the separate ``unary_truth`` path (already enrolled)
-
-Discharge is proved only through the production call binder — never by
-manually building a coordinate dict and calling ``pending.discharge``.
+  - ground production folds
+  - ``not x`` is the truth rule's two faces, then negation, never ``-x``
 """
 
 from __future__ import annotations
@@ -26,9 +24,10 @@ from sugar_lift_py_tests.caller_parameter_contract import (
     production_native_operation_operators,
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import make_var
-from sugar_lift_py_tests.outcome import Completed, ExitSet
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.unary_op_sugar import UnaryOpSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -190,48 +189,61 @@ def test_discrimination_neg_is_not_identity() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Formal undischarged carriers (helper alone — no caller)
+# A formal operand: the undecided two faces (helper alone — no caller)
 # ---------------------------------------------------------------------------
 
 
+def _undecided_halts(outcome, owner: str) -> list:
+    """The undetermined halts ``owner`` minted in ``outcome``."""
+    return [
+        arm
+        for arm in outcome.exits
+        if isinstance(arm, Halted)
+        and type(arm.effect) is UndeterminedRaiseEffect
+        and arm.effect.producer_node_owner == owner
+    ]
+
+
+def _two_faced(outcome, owner: str) -> None:
+    """No carrier: the outcome keeps the operation's undetermined halt
+    (``owner``) beside its completion, and owes the operation."""
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    assert not isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert _undecided_halts(outcome, owner), outcome
+    assert any(isinstance(arm, Completed) for arm in outcome.exits), outcome
+    assert owed_calls(outcome), outcome
+
+
 @pytest.mark.parametrize(
-    "source,operator",
+    "source,method",
     [
         ("def helper(x):\n    return -x\n", "unary_minus"),
         ("def helper(x):\n    return +x\n", "unary_plus"),
         ("def helper(x):\n    return ~x\n", "bitwise_invert"),
     ],
 )
-def test_helper_alone_is_undischarged_unary_carrier(source: str, operator: str) -> None:
-    _, pending = _helper(source)
-    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
-    assert pending.demand.operator == operator
-    _unanswered(pending, {})
-
-
-def _unanswered(pending, actuals) -> None:
-    """An absent actual leaves the operation the cited unanswered face
-    (#7825): owed as an ``undecided`` member, never a completed fold."""
-    from sugar_lift_py_tests.unanswered_calls import owed_calls
-
-    exits = pending.discharge(None, actuals)
-    assert pending.unanswered_call() in owed_calls(exits)
-    assert exits.completed_value() is None
+def test_helper_alone_is_the_undecided_two_faces(source: str, method: str) -> None:
+    """#7757 NEW-1: ``-x`` / ``+x`` / ``~x`` on a parameter mints no carrier
+    waiting on a caller production never supplies; it is the undecided two
+    faces, owed, its halt kept."""
+    _, outcome = _helper(source)
+    _two_faced(outcome, f"SymbolicValue.{method}")
 
 
 def test_discrimination_helper_alone_is_not_completed() -> None:
-    _, pending = _helper("def helper(x):\n    return -x\n")
+    _, outcome = _helper("def helper(x):\n    return -x\n")
     with pytest.raises(AssertionError):
-        assert isinstance(pending, ExitSet) and pending.completed_value() is not None
+        assert isinstance(outcome, ExitSet) and outcome.completed_value() is not None
 
 
-def test_not_formal_stays_unary_truth_not_unary_minus() -> None:
-    """``not x`` is truth-then-negate; must not steal the arithmetic unary door."""
-    _, pending = _helper("def helper(x):\n    return not x\n")
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "unary_truth"
-    with pytest.raises(AssertionError):
-        assert pending.demand.operator == "unary_minus"
+def test_not_formal_is_truth_then_negate_not_unary_minus() -> None:
+    """``not x`` is truth-then-negate; must not steal the arithmetic unary door.
+    The truth is the one truth rule's two faces (#7757 NEW-1)."""
+    _, outcome = _helper("def helper(x):\n    return not x\n")
+    _two_faced(outcome, "UnaryOpSugar.not")
+    assert not _undecided_halts(outcome, "SymbolicValue.unary_minus")
 
 
 # ---------------------------------------------------------------------------
@@ -291,23 +303,24 @@ def test_discrimination_production_neg_is_not_prior_actual() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Wrong-coordinate / missing-actual: no fabricated completion
+# Nothing waits on a caller: no fabricated completion, nothing to discharge
 # ---------------------------------------------------------------------------
 
 
-def test_wrong_coordinate_actual_cannot_discharge_pending_unary() -> None:
-    """Swapped/wrong coordinate keys must not fabricate a Completed fold."""
-    function, pending = _helper("def helper(x):\n    return -x\n")
-    assert isinstance(pending, NativeOperationExitCarrierV1)
+def test_a_formal_unary_completes_only_under_its_undecided_atom() -> None:
+    """The completed face is the undecided
+    ``python:unary_result("-", x, <key>)`` under ``python:unary_op.completes``,
+    never a folded value: no ``TermValue`` is fabricated without an actual."""
+    site = _site_from()
+    function, _outcome = _helper("def helper(x):\n    return -x\n")
     (coord,) = function.formal_coordinates()
-    _unanswered(pending, {f"wrong:{coord.coordinate_cid}": TermValue(3)})
-
-
-def test_missing_actual_does_not_fabricate_completed_neg() -> None:
-    """Empty discharge stays undischarged — never Completed TermValue(0) etc."""
-    _, pending = _helper("def helper(x):\n    return -x\n")
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    _unanswered(pending, {})
+    formal = SymbolicValue(make_var("x"), coord)
+    faces = UnaryOpSugar("USub", _FloorSugar(formal), site).desugar(None)
+    (done,) = [arm for arm in faces.exits if isinstance(arm, Completed)]
+    assert "python:unary_op.completes" in repr(done.guard)
+    assert "python:unary_result" in repr(done.value)
+    assert not isinstance(done.value, TermValue)
+    assert faces.completed_value() is None
 
 
 # ---------------------------------------------------------------------------
@@ -337,32 +350,11 @@ def test_discrimination_open_symbol_is_not_silent_neg_coordinate() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_unary_projectors_enrolled_and_equal_production() -> None:
-    for name in ("unary_minus", "unary_plus", "bitwise_invert"):
-        assert name in _NATIVE_OPERATION_PROJECTORS
+def test_unary_operators_mint_no_carrier_and_have_no_projector() -> None:
+    """#7757 NEW-1: no unary operator (nor ``not``'s truth) is minted onto
+    the carrier, so none is projected; the equality holds both ways."""
     production = production_native_operation_operators()
     assert production == frozenset(_NATIVE_OPERATION_PROJECTORS)
-    for name in ("unary_minus", "unary_plus", "bitwise_invert"):
-        assert name in production
-
-
-def test_unary_projectors_call_floor_methods_not_binary_standin() -> None:
-    """Discharge projectors are unary Floor methods — arity 1 + site + ctx."""
-    import inspect
-
-    for name in ("unary_minus", "unary_plus", "bitwise_invert"):
-        projector = _NATIVE_OPERATION_PROJECTORS[name]
-        # site, then the caller's ctx, are last; one operand.
-        assert len(inspect.signature(projector).parameters) == 3
-    negated = _NATIVE_OPERATION_PROJECTORS["unary_minus"](TermValue(4), "s", None)
-    assert negated.completed_value() == TermValue(-4)
-    with pytest.raises(AssertionError):
-        # Lying: unary_minus is not add-shaped (2 operands + site + ctx).
-        assert (
-            len(
-                inspect.signature(
-                    _NATIVE_OPERATION_PROJECTORS["unary_minus"]
-                ).parameters
-            )
-            == 4
-        )
+    for name in ("unary_minus", "unary_plus", "bitwise_invert", "unary_truth"):
+        assert name not in production
+        assert name not in _NATIVE_OPERATION_PROJECTORS

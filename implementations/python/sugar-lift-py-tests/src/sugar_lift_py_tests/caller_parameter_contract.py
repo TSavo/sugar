@@ -15,7 +15,6 @@ from sugar_lift_py_tests.ir import (
     atomic,
     ctor,
     formula_to_value,
-    py_truthy,
     str_const,
     term_to_value,
 )
@@ -406,32 +405,6 @@ def production_native_operation_operators() -> frozenset[str]:
     return _typed_minted_native_operator_constants()
 
 
-def project_iter(receiver, site, ctx):
-    """``iter(receiver)`` — established ``iter_with`` floor edge, under the
-    caller's context.
-
-    Enrolled as ``iter`` in ``_NATIVE_OPERATION_PROJECTORS``: a formal's
-    ``iter`` (``SymbolicValue.iter_with``) mints the ``iter`` carrier, and
-    the caller's actual answers here; an actual that is still its own
-    caller's formal defers again.
-    """
-    from sugar_lift_py_tests.operations.iterator_operation import discharge_iter
-
-    return discharge_iter(receiver, site, ctx, owner="project_iter")
-
-
-def project_next(receiver, site, ctx):
-    """``next(receiver)`` — established ``next_with`` floor edge, under the
-    caller's context.
-
-    Enrolled as ``next``: a formal's ``next`` (``SymbolicValue.next_with``)
-    mints the ``next`` carrier, and the caller's actual answers here.
-    """
-    from sugar_lift_py_tests.operations.next_operation import discharge_next
-
-    return discharge_next(receiver, site, ctx, owner="project_next")
-
-
 # Explicit projectors for authenticated native operations.
 #
 # Each entry names its own Floor signature.  A generic
@@ -454,71 +427,12 @@ def project_next(receiver, site, ctx):
 # Every projector ends ``(..., site, ctx)``: ``ctx`` is the context of the
 # caller whose actuals filled the placeholder operands, and every floor method
 # that applies a body (a dunder, a property, a method) applies under it.
-def _project_unary_minus(value, site, ctx):
-    """Python ``-x`` — unary Floor method; discharge arity 1."""
-    del ctx
-    return value.unary_minus(site)
-
-
-def _project_unary_plus(value, site, ctx):
-    """Python ``+x`` — unary Floor method; discharge arity 1."""
-    del ctx
-    return value.unary_plus(site)
-
-
-def _project_bitwise_invert(value, site, ctx):
-    """Python ``~x`` — unary Floor method; discharge arity 1."""
-    del ctx
-    return value.bitwise_invert(site)
-
-
-def _project_truth(value, site, ctx):
-    """``bool(value)`` on the caller's actual (an ``if`` / ``while`` /
-    ``assert`` / conditional-expression test on a formal), through the one
-    truth rule (``bool_op_sugar.truth_of``)."""
-    del ctx
-    from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
-
-    return truth_of(value, site, owner="truth")
-
-
-def _project_boolop_truth(value, site, ctx):
-    """``a and b`` / ``a or b`` on the caller's actual for a formal operand:
-    its truth through the one truth rule, keeping the actual, which the
-    stopping face returns (``bool_op_sugar.boolop_truth_selection``)."""
-    del ctx
-    from sugar_lift_py_tests.sugar.bool_op_sugar import boolop_truth_selection
-
-    return boolop_truth_selection(value, site)
-
-
-def _project_unary_truth(value, unit, site, ctx):
-    """``bool(value)`` under ``not`` on the caller's actual for a formal
-    operand, through the one truth rule (``bool_op_sugar.truth_of``).  The
-    second slot is the inert unit the one-operand carrier records; the
-    negation is the producer's continuation (``UnaryOpSugar``)."""
-    del unit, ctx
-    from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
-
-    return truth_of(value, site, owner="UnaryOpSugar.not")
-
-
-_NATIVE_OPERATION_PROJECTORS = {
-    # Truth questions: each through the one truth rule.
-    "truth": _project_truth,
-    "boolop_truth": _project_boolop_truth,
-    "unary_truth": _project_unary_truth,
-    # Formal arithmetic / bitwise unary (``-x`` / ``+x`` / ``~x``).
-    # Production mints from SymbolicValue when formal_coordinate is present;
-    # ground TermValue folds on the free Floor methods these projectors call.
-    "unary_minus": _project_unary_minus,
-    "unary_plus": _project_unary_plus,
-    "bitwise_invert": _project_bitwise_invert,
-    # A formal's ``iter(p)`` / ``next(p)``: the actual answers through its
-    # own ``iter_with`` / ``next_with`` edge, under the caller's context.
-    "iter": project_iter,
-    "next": project_next,
-}
+#
+# A truth test, ``-x`` / ``+x`` / ``~x``, ``iter`` and ``next`` on a formal
+# mint no carrier: each is the undecided two faces, owed, its halt kept
+# (``bool_op_sugar._unanswered_truth``, ``FloorValue.undecided_unary``,
+# ``undecided_iteration``, ``undecided_next``; #7757 NEW-1).
+_NATIVE_OPERATION_PROJECTORS = {}
 
 
 def _native_operation_projector_arity(projector) -> int:
@@ -760,11 +674,11 @@ class NativeOperationExitCarrierV1:
         ``undecided`` member (``reason: unanswered``) at its site, and the
         halt leaves from the reducer's pre-effect state when one was enrolled.
 
-        Any operator other than a truth question names only the operator and
-        the occurrence. (A subscript read, and a binary, in-place or comparison
-        operator, is never a carrier: with a parameter operand it is the
-        undecided read or the undecided two faces where it runs, #7757 audit
-        row NEW-1.) A formal with
+        Every operator names only the operator and the occurrence. (A
+        subscript read, a binary, in-place or comparison operator, a truth
+        test, a unary operator, ``iter`` and ``next`` are never a carrier: with
+        a parameter operand each is the undecided read or the undecided two
+        faces where it runs, #7757 audit row NEW-1.) A formal with
         no actual is reduced only in its function's own proof (``FormalRefSugar.desugar``), whose
         formals are the proof's own, so the post states the read over the
         formal, and a caller's actual joined on it (step 9) decides it where
@@ -781,36 +695,14 @@ class NativeOperationExitCarrierV1:
         from sugar_lift_py_tests.occurrence import occurrence_key, occurrence_term
         from sugar_lift_py_tests.outcome import ExitSet
 
-        truth = None
         site = self.demand.source_node
-        if self.demand.operator == "truth" and len(self.demand.operand_terms) == 1:
-            # ``bool(<formal>)`` takes the one form every undecided truth
-            # takes (``bool_op_sugar._unanswered_truth``): ``py.truthy`` of the
-            # operand completing under ``python:truth.completes(python:truth(
-            # <operand>, <key>))``, over the demand's own operand term.  The
-            # generic form named no operand, so a caller's actual joined on
-            # the formal decided nothing (``f(True)`` against ``if c:``, #7757
-            # step 9).
-            (operand,) = self.demand.operand_terms
-            value = None
-            truth = py_truthy(operand)
-            guard = atomic(
-                "python:truth.completes",
-                [ctor("python:truth", (operand, str_const(occurrence_key(site))))],
-            )
-        else:
-            operation = ctor(
-                "python:unanswered_native_operation",
-                (str_const(self.demand.operator), occurrence_term(site)),
-            )
-            value = ctor("python:native_operation_result", (operation,))
-            guard = atomic("python:unanswered_native_operation.completes", [operation])
-        if truth is not None:
-            from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-
-            completed = PredicateValue(truth, self.site)
-        else:
-            completed = SymbolicValue(value)
+        operation = ctor(
+            "python:unanswered_native_operation",
+            (str_const(self.demand.operator), occurrence_term(site)),
+        )
+        value = ctor("python:native_operation_result", (operation,))
+        guard = atomic("python:unanswered_native_operation.completes", [operation])
+        completed = SymbolicValue(value)
         return ExitSet.two_faced(
             completed,
             UndeterminedRaiseEffect(

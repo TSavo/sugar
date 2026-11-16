@@ -1,26 +1,21 @@
-"""An undecided ``if`` whose two suites each hold a formal native operation.
+"""An undecided ``if`` whose two suites each hold an operation on a formal.
 
-``return -x`` and ``return ~x`` over a formal ``x`` are deferred carriers: each
-suite's exits exist only once caller actuals discharge its own demand. The
-one-sided join (#7600) waited for the deferred suite's discharge; with BOTH
-suites deferred the join fell through to the ordinary union and crashed on
-the carrier (``'NativeOperationExitCarrierV1' object has no attribute
-'union'``), so the function could not be lifted at all.
-
-Now the join waits for both: the then carrier's discharge hands its faces to a
-step that returns the else carrier, which the same caller actuals discharge,
-and only then is the ordinary union taken -- each suite's faces under its own
-polarity. Neither demand is merged into the other and neither suite is
-decided early.
+``return -x`` and ``return ~x`` over a formal ``x`` were deferred carriers
+once, and with BOTH suites deferred the join had to wait for both
+discharges.  No operation on a formal waits on a caller any more (#7757
+NEW-1): each suite's operation is the undecided two faces, owed, its halt
+kept, so the ``if`` joins the two suites by the ordinary union -- each
+suite's faces under its own polarity, neither suite decided early and no
+halt dropped.
 """
 
 from __future__ import annotations
 
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor import TermValue
-from sugar_lift_py_tests.ir import _Connective
-from sugar_lift_py_tests.outcome import Completed
+from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+from sugar_lift_py_tests.ir import str_const
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import FunctionDef
 from sugar_source_tree.tree import SourceFile
@@ -36,7 +31,7 @@ HELPER = (
 
 
 def _helper_outcome(source: str):
-    """The helper lifted on its own: formal operands stay deferred carriers."""
+    """The helper lifted on its own, its own proof."""
     tree = SourceFile(
         (source, "if-both-deferred.py", blake3_512_of(source.encode())),
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
@@ -45,50 +40,39 @@ def _helper_outcome(source: str):
     return function.sugar().desugar(None)
 
 
-def _guarded_returns(exits):
-    # ``textwrap`` is not enrolled: its call may raise, and ``bool()`` of the
-    # object it returns (no decided type) may raise at the ``if``
-    # (``IfSugar.test``, the one truth rule).  Neither halt returns anything.
-    (face,) = [face for face in exits.exits if isinstance(face, Completed)]
-    assert sorted(
-        other.effect.producer_node_owner
-        for other in exits.exits
-        if other is not face
-    ) == ["IfSugar.test", "UnknownCallee:textwrap.dedent"]
-    return [
-        entry
-        for entry in face.value.record.statements
-        if type(entry).__name__ == "GuardedReturn"
-    ]
+def _undetermined_owners(outcome) -> set[str]:
+    return {
+        face.effect.producer_node_owner
+        for face in outcome.exits
+        if isinstance(face, Halted) and type(face.effect) is UndeterminedRaiseEffect
+    }
 
 
-def test_both_deferred_suites_lift_as_one_pending_carrier() -> None:
-    pending = _helper_outcome(HELPER)
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "unary_minus"
+def test_both_suites_on_a_formal_lift_with_no_carrier() -> None:
+    outcome = _helper_outcome(HELPER)
+    assert not isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert any(isinstance(face, Completed) for face in outcome.exits), outcome
 
 
-def test_one_discharge_resolves_both_suites_under_opposite_polarity() -> None:
-    pending = _helper_outcome(HELPER)
-    (formal,) = [cid for cid in pending.demand.operand_coordinate_cids if cid]
-
-    returns = _guarded_returns(pending.discharge(None, {formal: TermValue(3)}))
-
-    assert sorted(entry.value.value for entry in returns) == [-4, -3]
-    by_value = {entry.value.value: entry.guards for entry in returns}
-    (then_guard,) = by_value[-3]
-    (else_guard,) = by_value[-4]
-    # The else suite stands under the negation of the then suite's condition.
-    assert isinstance(else_guard, _Connective) and else_guard.kind == "not"
-    assert else_guard.operands == (then_guard,)
+def test_each_suite_keeps_its_undecided_operation_halt() -> None:
+    """Both suites stay reachable: the ``-x`` halt and the ``~x`` halt both
+    stand, beside the ``if`` test's own truth halt and the unknown callee's.
+    None is dropped for the other."""
+    owners = _undetermined_owners(_helper_outcome(HELPER))
+    assert {
+        "SymbolicValue.unary_minus",
+        "SymbolicValue.bitwise_invert",
+        "IfSugar.test",
+    } <= owners, owners
 
 
-def test_each_discharge_is_its_own_resolution() -> None:
-    pending = _helper_outcome(HELPER)
-    (formal,) = [cid for cid in pending.demand.operand_coordinate_cids if cid]
-
-    first = _guarded_returns(pending.discharge(None, {formal: TermValue(3)}))
-    second = _guarded_returns(pending.discharge(None, {formal: TermValue(5)}))
-
-    assert sorted(entry.value.value for entry in first) == [-4, -3]
-    assert sorted(entry.value.value for entry in second) == [-6, -5]
+def test_neither_suite_folds_a_value_it_has_no_actual_for() -> None:
+    """No caller's actual is supplied here, so no suite completes with a
+    folded ``int``: each return is the undecided
+    ``python:unary_result("-", x, <key>)`` or ``python:unary_result("~", x,
+    <key>)``."""
+    text = repr(_helper_outcome(HELPER))
+    assert "python:unary_result" in text
+    assert "python:unary_op.completes" in text
+    assert repr(str_const("-")) in text and repr(str_const("~")) in text

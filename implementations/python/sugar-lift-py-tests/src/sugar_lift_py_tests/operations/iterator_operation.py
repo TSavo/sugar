@@ -41,12 +41,6 @@ class IteratorOperation:
         return receiver.iter_with(self, ctx)
 
 
-def discharge_iter(receiver, site, ctx, *, owner: str = "project_iter"):
-    """Production projector body: established ``iter_with`` floor edge, under
-    the caller's context."""
-    return IteratorOperation(owner=owner, blame=site).submit(receiver, ctx)
-
-
 # -- the iterable a loop runs item by item ------------------------------------
 #
 # A loop has one mechanism (#7757 new 6): its reduction runs its items one by
@@ -254,9 +248,9 @@ def iteration_total(iterable) -> bool:
 def iterated(iterable, ctx, *, owner: str, site):
     """``iter(iterable)``, run once before any item: the one ``iter``
     operation (``IteratorOperation``), submitted to the receiver, which owns
-    the answer.  A formal's is the ``iter`` carrier its caller's actual
-    discharges; any other receiver whose ``__iter__`` is not decided here is
-    the one two-faced undecided read (``FloorValue.undecided_iteration``);
+    the answer.  A receiver whose ``__iter__`` is not decided here -- a
+    formal's included (#7757 NEW-1) -- is the one two-faced undecided read
+    (``FloorValue.undecided_iteration``);
     an instance's is its class's ``__iter__``, called.  The iteration is what
     follows the face ``iter`` completes on, whose value is the iterator
     ``stepped`` steps; the face it raises on leaves before any item.
@@ -298,7 +292,7 @@ def stepped(
     operation (``NextOperation``) submitted to the iterator, which owns the
     answer: an iterator whose ``__next__`` is not decided here is the one
     two-faced undecided read (``FloorValue.undecided_next``: its value under
-    ``python:next.completes``, its undecided raise owed under the
+    ``python:next_op.completes``, its undecided raise owed under the
     complement); an instance's is its class's ``__next__``, called, whose
     authenticated ``StopIteration`` is the iteration ending.  ``record`` is
     the record a statement's halt carries (``halts_recorded``); an

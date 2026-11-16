@@ -35,7 +35,6 @@ from sugar_lift_py_tests.witness_harness import (
 # and ``next`` of the iterator it completed with.
 _ITERATION_HALT_OWNERS = frozenset(
     {
-        "UnansweredNativeOperation:iter",
         "SymbolicValue.iter",
         "CallSiteValue.iter",
         "SymbolicValue.next",

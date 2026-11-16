@@ -71,8 +71,8 @@ def predicate_formula(value, site):
 def truth_formula(truth, value):
     """The formula ``truth`` -- what ``value.truth(site)`` answered -- states:
     the one projection ``predicate_formula`` reads every guard through.  A
-    truth that is not one plain completed value is refused here; a deferred
-    truth (a formal's, ``SymbolicValue.truth``) is the caller's to carry
+    truth that is not one plain completed value is refused here; a truth with
+    several faces (a formal's, an undecided value's) is the caller's to carry
     (``IfSugar._desugar_condition``), never coerced to a formula."""
     from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
@@ -380,10 +380,9 @@ class IfSugar(Sugar):
         # (``bool_op_sugar.truth_of``): a value whose truth is not decided
         # here is its two faces, and each completed truth face selects the
         # suites under its own guard; a halted truth halted at the ``if``'s
-        # head, before either suite ran (``halts_recorded``).
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
+        # head, before either suite ran (``halts_recorded``).  A formal's
+        # truth is such a value: both suites stay reachable under its
+        # undecided atom, and its halt is kept (#7757 NEW-1).
         from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             halt_record,
@@ -398,18 +397,6 @@ class IfSugar(Sugar):
                     condition,
                     truth_formula(ExitSet.completed(truth_value), condition),
                     ctx,
-                )
-            )
-        if isinstance(truth, NativeOperationExitCarrierV1):
-            # The truth of a formal waits on its caller's actual: the
-            # deferred ``truth`` operation (``SymbolicValue.truth``) is
-            # carried, and each value it discharges to selects the suites
-            # through its own formula -- with no actual (the function's own
-            # proof, ``tree_enumerate.as_its_own_proof_states``) the
-            # unanswered truth's arms.  Never coerced to a formula here.
-            return truth.and_then(
-                lambda truth_value: self._select_suites(
-                    condition, predicate_formula(truth_value, self.site), ctx
                 )
             )
         return self._select_suites(condition, truth_formula(truth, condition), ctx)

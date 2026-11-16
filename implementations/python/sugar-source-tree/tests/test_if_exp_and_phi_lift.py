@@ -15,7 +15,7 @@ This also exercises the finished temporal cut: substitute is the sole binder
 import tempfile
 
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_lift_py_tests.outcome import ExitSet
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
@@ -34,6 +34,12 @@ def _post(src: str):
     outcome = function.sugar().desugar()
     if isinstance(outcome, ExitSet) and outcome.completed_value() is not None:
         return outcome.completed_value().post()
+    if isinstance(outcome, ExitSet):
+        # A formal's truth is the undecided two faces (#7757 NEW-1): the one
+        # completed face, beside the truth's kept halt, carries the join.
+        completed = [face for face in outcome.exits if isinstance(face, Completed)]
+        if len(completed) == 1:
+            return completed[0].value.post()
     # A formal equality is the undecided equality's two faces: the universe
     # completes under its own completes atom (#7757, audit row NEW-1).
     return undecided_function_value(function, owner="UndecidedCompare:Eq").post()

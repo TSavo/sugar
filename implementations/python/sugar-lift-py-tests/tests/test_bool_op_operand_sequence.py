@@ -12,7 +12,7 @@ from sugar_lift_py_tests.context_manager_contract import (
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
-from sugar_lift_py_tests.floor import FloorValue, SymbolicValue, TermValue
+from sugar_lift_py_tests.floor import FloorValue, SymbolicValue
 from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.ir import PrimitiveSort, ctor, make_var, str_const
@@ -104,15 +104,19 @@ def _completed_value(outcome):
     return face.value
 
 
-def _formal_carrier():
+def _boolop_node():
     source = "def choose(left, right):\n    return left and right\n"
-    node = next(
+    return next(
         item
         for item in SourceFile(
             (source, "boolop_caller.py", blake3_512_of(source.encode()))
         ).nodes()
         if isinstance(item, BoolOp)
     )
+
+
+def _formal_boolop():
+    node = _boolop_node()
     span = node.fragment.line_col_span
     locus = SourceFragmentCoordinateV1(
         node.fragment.source_cid,
@@ -132,16 +136,16 @@ def _formal_carrier():
     )
     evaluations: list[str] = []
     right = _Operand("right", _truth(True), [])
+    left = SymbolicValue(make_var("left"), formal)
     outcome = BoolOpSugar(
         "And",
         (
-            _ProbeSugar("left", SymbolicValue(make_var("left"), formal), evaluations),
+            _ProbeSugar("left", left, evaluations),
             _ProbeSugar("right", right, evaluations),
         ),
         node.fragment,
     ).desugar()
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
-    return outcome, formal, evaluations, right
+    return outcome, formal, evaluations, right, left
 
 
 class _ExpectedType:
@@ -277,46 +281,46 @@ def test_boolop_result_is_selected_operand_never_coerced_boolean() -> None:
     assert not isinstance(_completed_value(continued), TrueBoolLiteralSugar)
 
 
-def test_formal_boolop_defers_truth_to_existing_unary_carrier() -> None:
-    carrier, formal, evaluations, _ = _formal_carrier()
-    assert carrier.demand.operator == "boolop_truth"
-    assert carrier.demand.operand_coordinate_cids == (formal.coordinate_cid,)
-    assert evaluations == ["left"]
+def test_formal_boolop_takes_the_two_faced_truth_and_mints_no_carrier() -> None:
+    """#7757 NEW-1: ``left and right`` on a parameter ``left`` mints no
+    carrier waiting on a caller's actual production never supplies.  The
+    truth is the one truth rule's two faces (``__bool__`` then ``__len__``
+    then ``True`` is a protocol no one dispatched method states): it halts
+    undetermined under the complement of its completion, and its completed
+    truth selects the faces -- the stopping one returns the parameter
+    itself, the continuing one reaches and returns the right operand."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 
-
-def test_false_caller_actual_returns_that_actual_and_never_reaches_right() -> None:
-    carrier, formal, evaluations, _ = _formal_carrier()
-    actual = TermValue(0)
-    exits = carrier.discharge(None, {formal.coordinate_cid: actual})
-    assert evaluations == ["left"]
-    assert len(exits.exits) == 1
-    assert not isinstance(exits.exits[0], Halted)
-    assert exits.exits[0].value is actual
-
-
-def test_true_caller_actual_reaches_and_returns_right_operand() -> None:
-    carrier, formal, evaluations, right = _formal_carrier()
-    exits = carrier.discharge(None, {formal.coordinate_cid: TermValue(1)})
+    outcome, _formal, evaluations, right, left = _formal_boolop()
+    assert not isinstance(outcome, NativeOperationExitCarrierV1)
     assert evaluations == ["left", "right"]
-    assert len(exits.exits) == 1
-    assert exits.exits[0].value is right
+    halted = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert len(halted) == 1
+    assert type(halted[0].effect) is UndeterminedRaiseEffect
+    assert halted[0].effect.producer_node_owner == "BoolOpSugar.truth"
+    completed = [face for face in outcome.exits if not isinstance(face, Halted)]
+    assert any(face.value is right for face in completed)
+    stopped = [face for face in completed if face.value is not right]
+    assert len(stopped) == 1
+    assert stopped[0].value == left
+    assert not isinstance(stopped[0].value, FalseBoolLiteralSugar)
+    assert all("python:truth.completes" in repr(face.guard) for face in completed)
+    assert all(face.owed for face in outcome.exits)
 
 
-def test_halted_caller_truth_propagates_and_never_reaches_right() -> None:
-    carrier, formal, evaluations, _ = _formal_carrier()
-    exits = carrier.discharge(None, {formal.coordinate_cid: _ExceptionalTruth()})
-    assert evaluations == ["left"]
-    assert len(exits.exits) == 1
-    assert isinstance(exits.exits[0], Halted)
-    assert exits.exits[0].effect.exception_type_coordinate == _identity("TypeError")
-
-
-def test_wrong_boundary_type_does_not_consume_caller_truth_halt() -> None:
+def test_wrong_boundary_type_does_not_consume_left_truth_halt() -> None:
     """The assertion expectation verifies; it never creates the producer type."""
-    carrier, formal, _, _ = _formal_carrier()
-    produced = carrier.discharge(None, {formal.coordinate_cid: _ExceptionalTruth()})
+    produced = BoolOpSugar(
+        "And",
+        (
+            _ProbeSugar("left", _ExceptionalTruth(), []),
+            _ProbeSugar("right", _Operand("right", _truth(True), []), []),
+        ),
+        _boolop_node().fragment,
+    ).desugar()
     original = produced.exits[0]
     assert isinstance(original, Halted)
+    assert original.effect.exception_type_coordinate == _identity("TypeError")
 
     routed = produced.and_exit(
         ExitSet.completed(object()),
@@ -330,60 +334,3 @@ def test_wrong_boundary_type_does_not_consume_caller_truth_halt() -> None:
         if isinstance(face, Halted) and face.effect is original.effect
     ]
     assert len(surviving) == 1
-
-
-def test_undecided_caller_actual_is_the_two_faced_truth() -> None:
-    """A bare symbolic actual's ``bool`` may run code: the ``boolop_truth``
-    discharge takes it through the one truth rule, so it halts undetermined
-    under the complement of its completion, and its completed truth selects
-    the faces, the stopping one returning the actual itself."""
-    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-
-    carrier, formal, _, _ = _formal_carrier()
-    actual = SymbolicValue(make_var("still_unknown"))
-    exits = carrier.discharge(None, {formal.coordinate_cid: actual})
-    halted = [face for face in exits.exits if isinstance(face, Halted)]
-    assert len(halted) == 1
-    assert type(halted[0].effect) is UndeterminedRaiseEffect
-    assert halted[0].effect.producer_node_owner == "BoolOpSugar.truth"
-    completed = [face for face in exits.exits if not isinstance(face, Halted)]
-    assert any(face.value is actual for face in completed)
-    assert all("python:truth.completes" in repr(face.guard) for face in completed)
-
-
-def test_formal_boolop_with_no_actual_takes_the_truth_of_the_unanswered_result() -> (
-    None
-):
-    """With no actual, the ``boolop_truth`` operation is unanswered: it
-    completes with ``python:native_operation_result(..)``, which is no
-    selection.  Its truth is taken through the one truth rule (its two
-    faces), and it is the operand the stopping face returns; the continuing
-    face reaches the right operand."""
-    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-
-    carrier, _formal, evaluations, right = _formal_carrier()
-    exits = carrier.discharge(None, {})
-    completed = [face for face in exits.exits if not isinstance(face, Halted)]
-    halted = [face for face in exits.exits if isinstance(face, Halted)]
-    assert evaluations == ["left", "right"]
-    assert any(face.value is right for face in completed)
-    stopped = [face for face in completed if face.value is not right]
-    assert len(stopped) == 1
-    assert "python:native_operation_result" in repr(
-        stopped[0].value.to_term(owner="unanswered boolop operand")
-    )
-    assert all("python:truth.completes" in repr(face.guard) for face in completed)
-    assert "BoolOpSugar.truth" in {
-        face.effect.producer_node_owner
-        for face in halted
-        if type(face.effect) is UndeterminedRaiseEffect
-    }
-
-
-def test_lying_bool_coercion_cannot_replace_selected_operand() -> None:
-    carrier, formal, evaluations, _ = _formal_carrier()
-    actual = TermValue(0)
-    selected = carrier.discharge(None, {formal.coordinate_cid: actual}).exits[0].value
-    assert selected is actual
-    assert not isinstance(selected, FalseBoolLiteralSugar)
-    assert evaluations == ["left"]

@@ -598,9 +598,8 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         # comprehension's symbolic fold takes too.  The receiver answers its
         # ``iter`` as it answers
         # ``iter(x)`` (``SymbolicValue.iter_with``, ``ListValue.iter_with``):
-        # a formal's is the ``iter`` carrier its caller's actual discharges,
-        # owed as the unanswered operation where there is none; any other is
-        # the one two-faced outcome (``FloorValue.undecided_iteration``).
+        # the one two-faced outcome (``FloorValue.undecided_iteration``), a
+        # formal's included -- it waits on no caller's actual (#7757 NEW-1).
         # The loop's recurrence is what follows the face ``iter`` completes
         # on, under its guard and owing what it owes
         # (``ExitSet.and_then``); the face it raises on leaves the loop
@@ -1479,8 +1478,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             undecided = any(
                 isinstance(face, Completed)
                 and not (
-                    face.value.formula is not None
-                    and (_is_true(face.value.formula) or _is_false(face.value.formula))
+                    _is_true(face.value.formula) or _is_false(face.value.formula)
                 )
                 for face in tested.exits
             )
@@ -2407,7 +2405,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 @dataclass(frozen=True, eq=False)
 class _WhileTest:
     """One face of a live ``while``'s test in one item: the truth of the
-    test's value as a guard (None when it is not one value), the context the
+    test's value as a guard, the context the
     body runs in (after the test: a walrus in it is bound), and, for a true
     face, the body reduced there.  ``entries``: the item's record before its
     body -- the stores a callee the test called made on objects the loop's
@@ -2462,9 +2460,9 @@ class _WhileItemTestV1:
         truth is not decided here is its two faces: each completed
         truth face is a ``_WhileTest`` under its own guard, and a halted truth
         halted where this item began, so it carries that record
-        (``halts_recorded``), as a halt of the test itself does.  A truth that
-        is not one value here (a formal's, deferred on the caller's actual)
-        has no guard (None)."""
+        (``halts_recorded``), as a halt of the test itself does.  A formal's
+        truth is such a value: it waits on no caller's actual (#7757
+        NEW-1)."""
         from sugar_lift_py_tests.sugar.bool_op_sugar import truth_of
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             halt_record,
@@ -2475,8 +2473,6 @@ class _WhileItemTestV1:
 
         scope = value.extend_scope(ctx)
         truth = truth_of(value, self.site, owner="LoopRecurrenceSugar.while-test")
-        if not isinstance(truth, ExitSet):
-            return ExitSet.completed(_WhileTest(None, scope))
         if plain_completed_value(truth) is not None:
             return ExitSet.completed(_WhileTest(truth_formula(truth, value), scope))
         return halts_recorded(truth, halt_record(ctx)).and_then(

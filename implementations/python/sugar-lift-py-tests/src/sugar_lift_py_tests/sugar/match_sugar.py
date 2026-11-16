@@ -747,9 +747,9 @@ def _guard_truth_formula(value, site):
 
     A guard whose truth is one decided value states its formula, through the
     projection every guarded construct reads (``truth_formula``).  A guard
-    whose truth is not one value where the match is reduced -- a formal's,
-    which waits on its caller's actual (``SymbolicValue.truth``), or the two
-    faces of a value whose truth is not decided -- has no one formula, and
+    whose truth is not one value where the match is reduced -- the two
+    faces of a value whose truth is not decided, a formal's included
+    (``SymbolicValue.truth``) -- has no one formula, and
     this match selects its cases by formula (``earlier``).  Carrying such a
     truth means sequencing the case body and every later case after each of
     its faces, as ``IfSugar._desugar_condition`` does for an ``if``; that is

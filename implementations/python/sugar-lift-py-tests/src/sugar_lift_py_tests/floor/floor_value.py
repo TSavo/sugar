@@ -441,17 +441,17 @@ class FloorValue:
 
         The receiver's runtime type and ``__iter__`` (or ``__getitem__``) are
         not decided here, so ``iter`` may hand back any iterator or raise
-        anything.  It is the same one two-faced unanswered outcome as
-        :meth:`undecided_subscript`: the opaque iterator ``py.iter(<receiver>)``
-        completes only under ``python:iter.completes(python:iter(<term>,
-        <site>))``, the complement halts with an ``UndeterminedRaiseEffect``
-        (producer ``owner``), and both arms owe the ``undecided`` member
-        (reason ``unanswered``) at the call's site.  No ``TypeError`` is
-        guessed.  A ``for`` over an iterable the reduction has not decided
-        submits the same operation: its recurrence is what follows the
-        completed face (``LoopRecurrenceSugar._desugar_with_iterable``).
+        anything.  The opaque iterator is ``python:iter_result(<receiver>,
+        <key>)``, one per evaluation (:meth:`_undecided_result_faces`); it
+        completes only under ``python:iter_op.completes``, the complement
+        halts with an ``UndeterminedRaiseEffect`` (producer ``owner``), and
+        both arms owe the ``undecided`` member (reason ``unanswered``) at the
+        call's site.  No ``TypeError`` is guessed.  A ``for`` over an iterable
+        the reduction has not decided submits the same operation: its
+        recurrence is what follows the completed face
+        (``LoopRecurrenceSugar._desugar_with_iterable``).
         """
-        return self._undecided_protocol_faces(
+        return self._undecided_result_faces(
             "iter",
             (),
             site,
@@ -465,21 +465,46 @@ class FloorValue:
 
         The iterator's runtime type and ``__next__`` are not decided here, so
         ``next`` may yield any value or raise anything -- ``StopIteration``
-        among them, never named here.  The same one two-faced unanswered
-        outcome as :meth:`undecided_subscript`: the opaque next value
-        ``py.next(<receiver>)`` completes only under
-        ``python:next.completes(python:next(<term>, <site>))``, the
-        complement halts with an ``UndeterminedRaiseEffect`` (producer
+        among them, never named here.  The opaque next value is
+        ``python:next_result(<receiver>, <key>)``, one per evaluation
+        (:meth:`_undecided_result_faces`): two ``next`` of one iterator are
+        two unknowns.  It completes only under ``python:next_op.completes``,
+        the complement halts with an ``UndeterminedRaiseEffect`` (producer
         ``owner``), and both arms owe the ``undecided`` member at the call's
         site.
         """
-        return self._undecided_protocol_faces(
+        return self._undecided_result_faces(
             "next",
             (),
             site,
             owner=owner,
             read=f"next({type(self).__name__})",
             node="Call",
+        )
+
+    def undecided_unary(self, operator: str, site, *, owner: str):
+        """``-self`` / ``+self`` / ``~self`` whose ``__neg__`` / ``__pos__`` /
+        ``__invert__`` is not decided here: the two faces.
+
+        The result is ``python:unary_result("<op>", <operand>, <key>)``, one
+        per evaluation (:meth:`_undecided_result_faces`); it completes only
+        under ``python:unary_op.completes``, the complement halts with an
+        ``UndeterminedRaiseEffect`` (producer ``owner``), and both arms owe
+        the ``undecided`` member at the operation's site.  No ``TypeError``
+        is guessed and no result is folded.  A formal operand takes it
+        (``SymbolicValue.unary_minus``, #7757 NEW-1); an operand that is no
+        formal and whose type is undecided still refuses by name
+        (:meth:`_undecided_unary_law`).
+        """
+        from sugar_lift_py_tests.ir import str_const
+
+        return self._undecided_result_faces(
+            "unary",
+            (str_const(operator),),
+            site,
+            owner=owner,
+            read=f"{operator}{type(self).__name__}",
+            node="UnaryOp",
         )
 
     def undecided_truth(self, site, *, owner: str):
@@ -559,6 +584,50 @@ class FloorValue:
         completes = atomic(
             f"python:{protocol}.completes",
             [ctor(f"python:{protocol}", (term, str_const(key)))],
+        )
+        return ExitSet.two_faced(
+            SymbolicValue(term),
+            UndeterminedRaiseEffect(
+                blame=str(site),
+                occurrence=key,
+                producer_node_owner=owner,
+                site=site,
+            ),
+            guard=completes,
+            site=site,
+        )
+
+    def _undecided_result_faces(
+        self, name: str, leading, site, *, owner: str, read: str, node: str
+    ):
+        """The two faces of an undecided operation on ``self`` whose value is
+        one per evaluation (#7757 NEW-1).
+
+        ``python:<name>_result(*leading, <operand>, <key>)`` completes under
+        ``python:<name>_op.completes(python:<name>_op(<result>, <key>))``
+        (:func:`undecided_result_terms`), ``<key>`` the occurrence key taken
+        where the operation evaluates, so inside a live loop item it carries
+        that item's path: two evaluations over one operand term are two
+        unknowns, as the binary law's are, and a truthful ``a != b`` over
+        them cannot read ``unsat``.  The complement halts with an
+        ``UndeterminedRaiseEffect`` owned by ``owner`` at the same key;
+        ``ExitSet.two_faced`` owes the operation at ``site`` on both arms.
+        The operand is named by ``object_identity.identity_term``.  A
+        siteless operation is the lifter's own gap and refuses by name.
+        """
+        if site is None:
+            _siteless_undecided_read(owner, read, node)
+        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+        from sugar_lift_py_tests.floor.object_identity import identity_term
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.occurrence import occurrence_key
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        key = occurrence_key(site)
+        term, completes = undecided_result_terms(
+            name,
+            (*leading, identity_term(self, site, "operand", owner=owner)),
+            key,
         )
         return ExitSet.two_faced(
             SymbolicValue(term),
