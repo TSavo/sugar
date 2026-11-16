@@ -10549,46 +10549,6 @@ class WithItem(Node):
             self.reporter,
         )
 
-    def _with_selected_manager_call(self, call):
-        """This item over one arm's manager call, used at that call's own site.
-
-        The arm's contract was derived at the call's coordinate (the call is
-        where Python constructs the manager), not at the ``with ctx`` name.
-        """
-        from .backend import Leaf, materialize
-        from .shadow import ShadowNode, rewrite
-
-        span = (
-            call.base if call.kind == "OpaqueObjectStateV1" else call
-        ).line_col_span()
-        desc = rewrite(self, context_expr=call).ref.describe()
-        owner_start_line, owner_start_col, owner_end_line, owner_end_col = (
-            self._manager_use_site_span()
-        )
-        use_site = {
-            "manager_use_site_start_line": span.start_line,
-            "manager_use_site_start_col": span.start_col,
-            "manager_use_site_end_line": span.end_line,
-            "manager_use_site_end_col": span.end_col,
-            # The With item this arm belongs to: its one selected ref.
-            "selected_arm_of_start_line": owner_start_line,
-            "selected_arm_of_start_col": owner_start_col,
-            "selected_arm_of_end_line": owner_end_line,
-            "selected_arm_of_end_col": owner_end_col,
-        }
-        return materialize(
-            self.unit,
-            ShadowNode(
-                desc.kind,
-                desc.raw_span or self.span,
-                (
-                    *(slot for slot in desc.slots if slot[0] not in use_site),
-                    *((name, Leaf(value)) for name, value in use_site.items()),
-                ),
-            ),
-            self.reporter,
-        )
-
     def _manager_use_site_span(self):
         """The immutable source occurrence used by preconstruction enrollment."""
         if hasattr(self, "manager_use_site_start_line"):
@@ -19024,28 +18984,6 @@ class If(Statement):
         )
 
 
-def selected_manager_calls(expr):
-    """The arms' manager calls of a branch-selected ``with`` head, else None.
-
-    After substitution, ``with ctx:`` whose ``ctx`` was bound by a call in
-    each arm of an ``if`` has the head ``IfExp(BranchResultRef, call, call)``
-    (nested for ``elif``).  Anything else in an arm is not this shape.
-    """
-    if expr.kind == "Call" or (
-        expr.kind == "OpaqueObjectStateV1" and expr.base.kind == "Call"
-    ):
-        # An opaque call-result identity is transparent: it constructs as
-        # its base call, at the base call's coordinate.
-        return (expr,)
-    if expr.kind != "IfExp" or not isinstance(expr.test, BranchResultRef):
-        return None
-    body = selected_manager_calls(expr.body)
-    orelse = selected_manager_calls(expr.orelse)
-    if body is None or orelse is None:
-        return None
-    return (*body, *orelse)
-
-
 class With(Statement):
     """A ``with`` constructs from its head alone (#7757): its manager is what
     the head reduces to.  No table is read and no row is required."""
@@ -19092,38 +19030,6 @@ class With(Statement):
                 f"{manager_slot}#enter_result" if binds_enter_result else None
             ),
             exit_face_id=exit_face,
-            site=self.fragment,
-        )
-
-    def _selected_manager_sugar(self, expr):
-        """``with ctx:`` where the arms of an ``if`` each bound ``ctx = cm()``.
-
-        Substitution projects the head to the phi of the arms' calls,
-        ``IfExp(BranchResultRef(slot), cm_a(), cm_b())``.  Python evaluated
-        exactly one of those calls -- in its arm, once -- and the ``with``
-        enters the manager that call returned.  So the statement IS
-        ``if <that same branch result>: with cm_a(): body`` ``else: with
-        cm_b(): body``: the selection is guarded by the owning ``if``'s own
-        branch result (the slot it already authenticates), and each arm is
-        an ordinary single-manager ``with`` whose use coordinate is that
-        arm's call, where its contract was derived.  Each arm is constructed
-        here, with the statement, or refused by name.
-        """
-        from sugar_lift_py_tests.sugar.if_sugar import IfSugar
-
-        if expr.kind != "IfExp":
-            from .shadow import rewrite
-
-            return rewrite(
-                self,
-                items=(self.items[0]._with_selected_manager_call(expr),),
-                body=tuple(self.body),
-            ).sugar()
-        return IfSugar(
-            test=expr.test.sugar(),
-            branch_slot=BranchResultSlot(expr.test.slot_id),
-            then_body=(self._selected_manager_sugar(expr.body),),
-            else_body=(self._selected_manager_sugar(expr.orelse),),
             site=self.fragment,
         )
 
@@ -19204,19 +19110,17 @@ class With(Statement):
     def _construct_sugar(self):
         """Build from the head alone (#7757).
 
-        ``with a, b:`` nests; a branch-selected head is the ``if`` over its
-        arms; any other head is the manager it reduces to
-        (``_reduced_manager_sugar``).
+        ``with a, b:`` nests; every head is the manager it reduces to
+        (``_reduced_manager_sugar``), the phi of an ``if``'s arms' managers
+        (``with ctx:`` after ``if c: ctx = A() else: ctx = B()``) included:
+        that head reduces, as any ternary does, to the arm the ``if``'s own
+        reading selects (``IfExpSugar._join_on``), and each arm's manager is
+        entered and exited on its own face (``_project_manager_receiver``).
+        The statement is never split into one ``with`` per arm.
         No table is read, so no row is required and none can be missing."""
         if len(self.items) != 1:
             return self._nest_items()._construct_sugar()
         item = self.items[0]
-        if (
-            item.optional_vars is None
-            and item.context_expr.kind == "IfExp"
-            and selected_manager_calls(item.context_expr) is not None
-        ):
-            return self._selected_manager_sugar(item.context_expr)
         # The as-clause is Python's own ASSIGNMENT, not a name declaration, so
         # this node does not enumerate target shapes at all:
         #
