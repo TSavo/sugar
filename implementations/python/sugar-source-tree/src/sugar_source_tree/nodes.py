@@ -4905,38 +4905,6 @@ class SourceUnit:
         except KeyError:
             return owner, None
 
-    def decorated_definition_for_call(
-        self, call: "Call"
-    ) -> "FunctionDef | AsyncFunctionDef | ClassDef | None":
-        """The decorated module ``def``, or the module ``class`` (decorated or
-        not), a ``Name`` call reaches, or None.
-
-        Its name is bound to the statement's value under its evaluation key
-        (the decorators' result; for a class, the class its run built), so
-        the call is a call of that value (``DecoratedDefinitionRef``), never
-        of the definition's own frame or the class statement read again at
-        the call (#7757).  A ``contextlib.contextmanager`` generator function
-        is the one decorated definition whose name is bound to its function
-        (``call_applies_own_frame``): its call is that value's
-        (``Call._function_value_call``).
-
-        Which definition the callee denotes is the one resolver's
-        (``module_definition_denoted_by``).  Only a ``Name`` callee is asked:
-        this answers the source read the call must turn into the value's
-        read.  A callee the rewrite already made that read
-        (``DecoratedDefinitionRef``) is a call of it as it stands
-        (``Call._construct_sugar``'s computed call), with the key and
-        decorator bindings its substitution gave it, never rebuilt here.
-        """
-        if not isinstance(call.func, Name):
-            return None
-        definition = self.module_definition_denoted_by(
-            call.func, call.line_col_span()
-        )
-        if definition is None or call_applies_own_frame(definition):
-            return None
-        return definition
-
     def function_definition_for_read(
         self, read: "Name"
     ) -> "FunctionDef | AsyncFunctionDef | None":
@@ -22937,7 +22905,7 @@ class Call(Expression):
             # generator (``_binds_function_value``) -- to the function its
             # statement built: ``g(*a, **k)`` calls that value, through the
             # one call routine (``SpreadCallSugar._finish``), as ``g(...)``
-            # does (``_decorated_definition_call``, ``_function_value_call``),
+            # does (``_function_value_call``, the computed call),
             # and the spread is bound by the one binder and carried in the
             # edge's term like any actual.  No call seats a definition's frame
             # by its name (#7757).
@@ -22961,23 +22929,14 @@ class Call(Expression):
                         if role in ("keyword", "double-star")
                     ),
                 )
-            decorated = self.unit.decorated_definition_for_call(self)
-            named = None if decorated is not None else self._named_function_value()
-            if (
-                decorated is not None
-                or named is not None
-                or isinstance(self.func, DecoratedDefinitionRef)
-            ):
-                if named is not None:
-                    callee = named[1]
-                elif decorated is None:
-                    callee = self.func.sugar()
-                else:
-                    callee = _decorated_definition_ref(
-                        decorated,
-                        self.func.span,
-                        evaluation=_definition_evaluation_key(decorated, {}),
-                    ).sugar()
+            # The callee is what its name reads (#7757 N1): a ``def`` bound
+            # to its function (``_named_function_value``), or the key the
+            # module run or the substitution threaded in its place
+            # (``DecoratedDefinitionRef``: a decorated ``def``, a class).
+            # A name nothing threads is the unanswered call below.
+            named = self._named_function_value()
+            if named is not None or isinstance(self.func, DecoratedDefinitionRef):
+                callee = named[1] if named is not None else self.func.sugar()
                 return SpreadCallSugar(
                     callee_name=callee_name,
                     callee=callee,
@@ -22995,9 +22954,13 @@ class Call(Expression):
                 site=self.fragment,
             )
 
-        decorated = self.unit.decorated_definition_for_call(self)
-        if decorated is not None:
-            return self._decorated_definition_call(decorated)
+        # A call's callee is what its name reads (#7757 N1).  A decorated
+        # ``def``'s or a class's name reads the key the module run (or the
+        # substitution) binds the statement's value under: the callee is
+        # then that ``DecoratedDefinitionRef``, the computed call below.
+        # Where nothing threads that key -- a module statement above the
+        # definition, a name the module run leaves undecided -- the read is
+        # the bare name, and so is the call: the unanswered call.
         function_call = self._function_value_call(coordinate)
         if function_call is not None:
             return function_call
@@ -23257,26 +23220,6 @@ class Call(Expression):
                 coordinate="CallSiteSugar.expected_definition_ref",
             ),
             language_callee=language_callee,
-        )
-
-    def _decorated_definition_call(self, definition):
-        """A call of the name a decorated module ``def``/``class`` binds: the
-        call of that statement's value ``d1(d2(<definition>))``
-        (``DecoratedDefinitionRef``), as a call of any computed callee is.
-        The definition's own frame is never this call's (#7757)."""
-        from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
-
-        # The callee's spelling is absorbed into the reference to the value.
-        self.func.discharge_by_substitution()
-        return ComputedCallSugar(
-            callee=_decorated_definition_ref(
-                definition,
-                self.func.span,
-                evaluation=_definition_evaluation_key(definition, {}),
-            ).sugar(),
-            args=tuple(a.sugar() for a in self.args),
-            site=self.fragment,
-            keywords=tuple((kw.arg, kw.value.sugar()) for kw in self.keywords),
         )
 
     def language_callee(self) -> Optional[LanguageCallee]:
@@ -25941,10 +25884,11 @@ def _decorated_statement_sugar(statement):
     reference for (a module body's: no reader outside the module block is
     threaded for its name) binds its name all the same, under its own key
     (``ClassDef.statement_value_ref``; ``_definition_evaluation_key`` with
-    no scope for a ``def``): the key every read of the module name reads
-    (a call by name, ``Call._decorated_definition_call``), so the module's
-    one run leaves the value a frame called after import reads (#7757 item
-    21)."""
+    no scope for a ``def``), so the module's one run leaves the value a
+    frame called after import reads (#7757 item 21).  A read of the name in
+    the module block that substitution bound nothing for -- a call by name
+    included: a call's callee is what its name reads (#7757 N1) -- is the
+    bare name, never this key minted at the read."""
     value = getattr(statement, "decorated_value", None)
     if not isinstance(value, DecoratedDefinitionRef):
         value = (

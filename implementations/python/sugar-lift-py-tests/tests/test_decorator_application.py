@@ -205,19 +205,77 @@ def test_scale():
 
 
 def test_a_decorated_function_is_not_its_call_frame() -> None:
-    tree = _tree(_DECORATED)
+    # A call's callee is what its name reads (#7757 N1): a decorated
+    # ``def``'s name reads no function its statement built, but the key the
+    # module run binds the decorators' result under, which a reader of the
+    # module name is threaded (``module_bindings_at``).  No call-specific
+    # resolver answers it.
+    tree = _tree(_DECORATED, TreeConstructionContextV1.for_source_call_construction())
     call = _call_of(tree, "scale")
     assert call.unit.function_definition_for_read(call.func) is None
-    decorated = call.unit.decorated_definition_for_call(call)
-    assert isinstance(decorated, FunctionDef)
-    assert decorated.name == "scale"
+    final = call.unit.module_bindings_at(None, {"scale"})["scale"]
+    assert isinstance(final, DecoratedDefinitionRef)
+    assert final.definition_name == "scale"
+    assert not hasattr(call.unit, "decorated_definition_for_call")
 
 
 def test_an_undecorated_function_keeps_its_call_frame() -> None:
     tree = _tree(_DECORATED.replace("@replace\n", ""))
     call = _call_of(tree, "scale")
     assert call.unit.function_definition_for_read(call.func) is not None
-    assert call.unit.decorated_definition_for_call(call) is None
+
+
+_CALLED_BY_THE_MODULE = """\
+def replace(fn):
+    return lambda n: n * 10
+
+
+early = scale(2)
+
+
+@replace
+def scale(n):
+    return n
+
+
+class Box:
+    pass
+
+
+late = scale(2)
+made = Box()
+"""
+
+
+def test_a_module_statement_calls_what_the_name_reads_there() -> None:
+    # ``early = scale(2)`` stands above ``@replace def scale``: CPython's
+    # ``NameError``.  ``late`` and ``made`` stand below, but no reader
+    # outside the module block reads ``scale`` or ``Box``, so nothing binds
+    # their statements' keys at these reads: each read is the bare name, as
+    # ``alias = scale`` there is, and so is each call -- the one unanswered
+    # call (``NOT_SOURCE_RESOLVED``), owed both ways, never the statement's
+    # value minted at the call with no module-run gate (#7757 N1).
+    from sugar_lift_py_tests.sugar.call_site_sugar import (
+        CallSiteSugar,
+        DefinitionOccurrenceAbsentV1,
+        DefinitionOccurrenceAbsenceReasonV1,
+    )
+
+    tree = _tree(_CALLED_BY_THE_MODULE)
+    calls = [
+        node
+        for node in tree.nodes()
+        if isinstance(node, Call)
+        and isinstance(node.func, Name)
+        and node.func.id in ("scale", "Box")
+    ]
+    assert len(calls) == 3
+    for call in calls:
+        sugar = call.sugar()
+        assert isinstance(sugar, CallSiteSugar), call.func.id
+        assert sugar.expected_definition_ref == DefinitionOccurrenceAbsentV1(
+            DefinitionOccurrenceAbsenceReasonV1.NOT_SOURCE_RESOLVED
+        )
 
 
 # ---------------------------------------------------------------------------
