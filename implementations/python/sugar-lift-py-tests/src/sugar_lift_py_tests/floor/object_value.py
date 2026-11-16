@@ -1143,34 +1143,14 @@ class ObjectValue(FloorValue):
         a builtin class does.  Not decided -- ``(False, None, None)`` --
         whenever that lookup is not.
 
-        A receiver built with no class statement has only its own roster and
-        class fields (and its class value's bases' fields): no other class
-        is there to ask, and no order of its bindings either -- a name it
-        holds both as a method and as a field is not decided.
+        A receiver built with no class statement has no lookup to read
+        (``namespace_member`` says the same of its class value): not decided,
+        whatever roster or class fields it carries.  Its roster and fields
+        are never walked by name as a second lookup (#7757 S6).
         """
         defining = self.defining_class
-        definition = getattr(defining, "class_definition", None)
-        if definition is None:
-            method = next(
-                (method for method in reversed(self.methods) if method.name == name),
-                None,
-            )
-            holders = (
-                self,
-                *(defining._c3_tail() if hasattr(defining, "_c3_tail") else ()),
-            )
-            value = next(
-                (
-                    field.value
-                    for holder in holders
-                    for field in reversed(getattr(holder, "class_fields", ()))
-                    if getattr(field, "name", None) == name
-                ),
-                None,
-            )
-            if method is not None and value is not None:
-                return False, None, None
-            return True, method, value
+        if getattr(defining, "class_definition", None) is None:
+            return False, None, None
         decided, _found, _holder, method, value = defining.namespace_member(
             name,
             lambda holder: (

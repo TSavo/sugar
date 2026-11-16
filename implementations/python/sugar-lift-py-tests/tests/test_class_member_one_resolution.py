@@ -449,6 +449,38 @@ def test_a_receiver_with_no_class_statement_stores_and_deletes_its_class_by_the_
     assert getattr(halted[0].effect, "exception_name", None) != "TypeError"
 
 
+def test_a_receiver_with_no_class_statement_decides_no_member() -> None:
+    """There is one class-namespace lookup (``namespace_member``).  A
+    receiver with no class statement has none to read, so no member is
+    decided -- whatever roster or class fields it carries.  Its roster and
+    fields are never walked by name as a second lookup (#7757 S6): a name is
+    not a method because a roster entry is spelled like it, nor a field
+    because a class field is, nor absent because neither is."""
+    from sugar_lift_py_tests.floor import ObjectMethodValue
+
+    function = LambdaCallable(("self",), None, "helper")
+    receiver = ObjectValue(
+        "Box",
+        (),
+        methods=(ObjectMethodValue(name="m", parameters=("self",)),),
+        class_fields=(ObjectField("f", function), ObjectField("n", TermValue(5))),
+        identity="receiver",
+        allocation=FRAME_FRESH,
+    )
+
+    for name in ("m", "f", "n", "absent", "__eq__"):
+        assert receiver.class_member(name) == (False, None, None), name
+        assert receiver.has_method(name) is None, name
+
+    # Not decided: never a class-field value read, never a bound method.
+    _the_read(receiver.attribute("n", "n-site", None))
+    _the_read(receiver.attribute("f", "f-site", None))
+    # ``o.m()`` and ``o == p`` are the unanswered call, never a roster
+    # method chosen by name and never identity assumed for ``==``.
+    _the_edge(receiver.call_method_value("m", (), owner="test", blame="m-site"))
+    _the_edge(receiver.equals(TermValue(5), "eq-site", None))
+
+
 # --- 6. stores through other references -------------------------------------------
 
 
