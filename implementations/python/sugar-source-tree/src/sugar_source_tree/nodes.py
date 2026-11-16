@@ -7369,47 +7369,83 @@ def _loop_header_bindings(loop, names, scope, kept=frozenset()) -> dict:
     return headers
 
 
-def _uncarried_item_changes(net, carried) -> tuple:
-    """The names one item of a live loop leaves changed that the loop does
-    not carry, in name order.
+def _uncarried_item_changes(net, carried, exposed) -> tuple:
+    """``(uncarried, unkeyed)``: the names one item of a live loop leaves
+    changed that the latch does not hand the next item, and among them the
+    ones the item bound, each in name order.
 
     ``net`` is what the threading of the loop body (``_substitute_body_tracked``)
     left changed; ``carried`` the names the loop carries through its header
     (``For._stmts_bound_names`` of the body, and every name a substituted
-    write writes).  An item hands the next only what it carries: the latch
-    reads each carried name's write keys (``LoopRecurrenceSugar._latched``).
-    Anything else the threading changed -- a name a call in the body may
-    rebind (``container_mutation.havoc_after``: a global, a cell, an object
-    the caller holds), a ``match`` capture, a ``del`` -- is not handed on, so
-    a later item run in hand would read it as it stood before the loop.  A
-    loop with such a name does not run its items in hand
+    write writes); ``exposed`` what the one exposure rule left each name it
+    rebound after a statement of the body (``_thread_taken``'s ``rebound``).
+    An item hands the next only what the latch reads: each carried name's
+    write keys (``LoopRecurrenceSugar._latched``).
+
+    ``uncarried`` is what the latch does not hand on:
+
+    - every changed name the loop does not carry -- a name a call in the body
+      may rebind (``container_mutation.havoc_after``: a global, a cell, an
+      object the caller holds), a ``match`` capture, a nested ``def``, an
+      ``import``, a ``del``;
+    - every carried name whose last change in the item is a call's
+      rebinding (``net[name] is exposed[name]``): that binds no write key,
+      so the latch would hand the next item the name's last keyed write,
+      written before the call.
+
+    A later item run in hand would read either as it was not.  A loop with
+    such a name does not run its items in hand
     (``LiveForRuntimeV1.uncarried_item_changes``); it runs as its recurrence,
-    whose reads are owed, never read stale."""
-    return tuple(
+    whose reads are owed, never read stale.
+
+    ``unkeyed`` is every uncarried name the item bound rather than a call
+    rebound (a ``match`` capture, a nested ``def`` or ``class``, an
+    ``import``, a ``with ... as``): no write key holds it, and the exposure
+    rule does not rebind it after the loop, so the loop publishes it through
+    its post-loop key (``live_loop_construction.loop_post_writes``) and a
+    read after the loop never reads it as it stood before the loop."""
+
+    def named(name) -> bool:
+        return (
+            isinstance(name, str)
+            and name.isidentifier()
+            and not (name.startswith("__") and name.endswith("__"))
+        )
+
+    def rebound_last(name) -> bool:
+        return name in exposed and net[name] is exposed[name]
+
+    uncarried = tuple(
         sorted(
             name
             for name in net
-            if isinstance(name, str)
-            and name.isidentifier()
-            and not (name.startswith("__") and name.endswith("__"))
-            and name not in carried
+            if named(name) and (name not in carried or rebound_last(name))
         )
     )
+    unkeyed = tuple(
+        name
+        for name in uncarried
+        if name not in carried and not rebound_last(name)
+    )
+    return uncarried, unkeyed
 
 
-def _with_item_carry(loop, uncarried, changed):
-    """``loop`` with its substituted children ``changed`` and, as the leaf
-    ``uncarried_item_changes``, the names an item leaves changed that the
-    loop does not carry (``_uncarried_item_changes``): what decides whether
-    its items run in hand (``live_loop_construction``).  A re-substitution
-    replaces the leaf it was given."""
+def _with_item_carry(loop, changes, changed):
+    """``loop`` with its substituted children ``changed`` and, as leaves,
+    what an item leaves changed that the latch does not hand on
+    (``_uncarried_item_changes``): ``uncarried_item_changes``, which decides
+    whether its items run in hand (``live_loop_construction``), and
+    ``unkeyed_item_bindings``, which the loop publishes after it
+    (``loop_post_writes``).  A re-substitution replaces the leaves it was
+    given."""
     from .shadow import rewrite_with_leaves
 
-    leaves = (
-        {"uncarried_item_changes": uncarried}
-        if uncarried or getattr(loop, "uncarried_item_changes", None)
-        else {}
-    )
+    uncarried, unkeyed = changes
+    leaves = {}
+    if uncarried or getattr(loop, "uncarried_item_changes", None):
+        leaves["uncarried_item_changes"] = uncarried
+    if unkeyed or getattr(loop, "unkeyed_item_bindings", None):
+        leaves["unkeyed_item_bindings"] = unkeyed
     if not changed and not leaves:
         return loop
     return rewrite_with_leaves(loop, leaves, **changed)
@@ -8968,6 +9004,7 @@ class Node(Typed):
         *,
         edge_states: list | None = None,
         threaded: "Optional[_Threaded]" = None,
+        exposed: dict | None = None,
     ):
         """Substitute a statement sequence, THREADING each statement's binding:
         an assignment binds its name to its substituted rhs for the rest of the
@@ -8998,7 +9035,15 @@ class Node(Typed):
         loop's item) is threaded by the very same bindings
         (``_item_threaded``), and so is the block a ``_Splice`` of them
         reaches.  A statement spliced here from a ``_Splice`` is threaded
-        by what was taken from it where it was produced (``_spliced``)."""
+        by what was taken from it where it was produced (``_spliced``).
+
+        ``exposed`` is an out-parameter too: each name the one exposure rule
+        rebound after a statement (``_thread_taken``'s ``rebound``: what a
+        call in it may have changed, ``container_mutation.havoc_after``),
+        with the state it left.  A name whose state at the end of the block
+        is still that one (``net[name] is exposed[name]``) was last changed
+        by a call's rebinding, which binds no write key: a live loop reads
+        it to decide what its item hands the next (``_uncarried_item_changes``)."""
         from sugar_lift_py_tests.engine_log import reduction_span
 
         initial = dict(scope)
@@ -9120,9 +9165,11 @@ class Node(Typed):
                 # changed -- an object place as much as any other -- is
                 # rebound by the one exposure rule; then what was taken after
                 # it where it was produced (``_thread_taken``).
-                scope, _bound, _rebound = _thread_taken(
+                scope, _bound, rebound = _thread_taken(
                     produced_stmt, pre_produced_scope, scope, taken, entries=True
                 )
+                if exposed is not None:
+                    exposed.update(rebound)
                 out.add(produced_stmt, taken)
             # What this block takes after the statement's last produced
             # statement is taken after it by every later threading of them.
@@ -17018,10 +17065,12 @@ class For(Statement):
                         **targets,
                     }
                     # The body's threading also reports every name it left
-                    # changed (``net``): what an item hands the next is read
-                    # off it (``_uncarried_item_changes``).
+                    # changed (``net``) and what the exposure rule left each
+                    # name a call rebound (``exposed``): what an item hands
+                    # the next is read off them (``_uncarried_item_changes``).
+                    body_exposed: dict = {}
                     new_body, body_changed, body_net = self._substitute_body_tracked(
-                        self.body, body_scope
+                        self.body, body_scope, exposed=body_exposed
                     )
                     suites = {
                         "body": (new_body, body_changed),
@@ -17050,7 +17099,9 @@ class For(Statement):
                     if d:
                         changed[f] = new
                 return _with_item_carry(
-                    self, _uncarried_item_changes(body_net, bound), changed
+                    self,
+                    _uncarried_item_changes(body_net, bound, body_exposed),
+                    changed,
                 )
 
     def _answer_discarded_rounds(self, sources, rounds, last) -> None:
@@ -17403,8 +17454,9 @@ class While(Statement):
                 repeated=True,
                 operated=True,
             )
+            body_exposed: dict = {}
             new_body, body_changed, body_net = self._substitute_body_tracked(
-                self.body, body_scope
+                self.body, body_scope, exposed=body_exposed
             )
             suites = {
                 "body": (new_body, body_changed),
@@ -17428,7 +17480,9 @@ class While(Statement):
         for f, (new, d) in suites.items():
             if d:
                 changed[f] = new
-        return _with_item_carry(self, _uncarried_item_changes(body_net, bound), changed)
+        return _with_item_carry(
+            self, _uncarried_item_changes(body_net, bound, body_exposed), changed
+        )
 
     def _ground_truth(self, test):
         """Decide a GROUND condition structurally, or None. Constants only --
