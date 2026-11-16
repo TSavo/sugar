@@ -623,33 +623,6 @@ def _project_unary_truth(value, unit, site, ctx):
     return truth_of(value, site, owner="UnaryOpSugar.not")
 
 
-def _project_subscript(receiver, index, site, ctx):
-    """``receiver[index]`` re-dispatched on resolved actuals through the one
-    subscript door (``discharge_subscript``), exactly as ``SubscriptSugar``
-    asks it; an actual that is still a formal defers again to its own
-    caller."""
-    from sugar_lift_py_tests.operations.subscript_operation import (
-        discharge_subscript,
-    )
-
-    return discharge_subscript(receiver, index, site, ctx, owner="project_subscript")
-
-
-def _project_slice(lower, upper, step, site, ctx):
-    """``slice(lower, upper, step)`` rebuilt on the caller's actuals through
-    the one slice construction (``construct_slice``); an omitted bound rode
-    the carrier as ``NoneValue`` and is omitted again (``slice(None)`` is the
-    omitted bound).  An actual that is still a formal defers again."""
-    del ctx
-    from sugar_lift_py_tests.floor.none_value import NoneValue
-    from sugar_lift_py_tests.floor.slice_value import construct_slice
-
-    def bound(value):
-        return None if type(value) is NoneValue else value
-
-    return construct_slice(bound(lower), bound(upper), bound(step), site)
-
-
 _NATIVE_OPERATION_PROJECTORS = {
     # Truth questions: each through the one truth rule.
     "truth": _project_truth,
@@ -661,13 +634,6 @@ _NATIVE_OPERATION_PROJECTORS = {
     "unary_minus": _project_unary_minus,
     "unary_plus": _project_unary_plus,
     "bitwise_invert": _project_bitwise_invert,
-    # Formal subscript load (#6611): receiver[index] — binary, not the store.
-    # The actual answers through the one subscript door a source subscript
-    # takes (``discharge_subscript``), under the caller's context.
-    "subscript": _project_subscript,
-    # A slice with a parameter bound (``xs[start:]``): the slice the caller's
-    # actuals decide, which its consumer (the subscript) then reads.
-    "slice": _project_slice,
     # A formal's ``iter(p)`` / ``next(p)``: the actual answers through its
     # own ``iter_with`` / ``next_with`` edge, under the caller's context.
     "iter": project_iter,
@@ -924,11 +890,8 @@ class NativeOperationExitCarrierV1:
         ``undecided`` member (``reason: unanswered``) at its site, and the
         halt leaves from the reducer's pre-effect state when one was enrolled.
 
-        A subscript and a binary operation each take the one form every
-        undecided operation of theirs takes, over the demand's own operand
-        terms: ``py.subscript(<receiver>, <index>)`` completing under
-        ``python:subscript.completes(python:subscript(<term>, <key>))``
-        (``FloorValue.undecided_subscript``), and
+        A binary operation takes the one form every undecided binary
+        operation takes, over the demand's own operand terms:
         ``python:binary_result(op, left, right, <key>)`` completing under
         ``python:binary_op.completes`` (``undecided_binary_terms``). ``==`` and
         an ordering take the one undecided comparison form, the predicate
@@ -965,13 +928,7 @@ class NativeOperationExitCarrierV1:
         binary = _BINARY_OPERATOR_COORDINATE.get(
             self.demand.operator
         ) or _INPLACE_OPERATOR_COORDINATE.get(self.demand.operator)
-        if self.demand.operator == "subscript":
-            value = ctor("py.subscript", self.demand.operand_terms)
-            guard = atomic(
-                "python:subscript.completes",
-                [ctor("python:subscript", (value, str_const(occurrence_key(site))))],
-            )
-        elif binary is not None and len(self.demand.operand_terms) == 2:
+        if binary is not None and len(self.demand.operand_terms) == 2:
             # A binary operation takes the one undecided form every binary
             # operation takes (``undecided_binary_terms``), over the demand's
             # own operand terms: the formals of this proof, so a caller's

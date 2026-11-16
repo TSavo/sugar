@@ -197,9 +197,11 @@ def _projected(outcome):
 
 
 def _each(outcome, step):
-    """``step`` on each completed arm of ``outcome``.  A projection that waits
-    on its caller's actual (a ``subscript`` carrier) enrolls ``step`` to run
-    once it discharges; an ``ExitSet`` sequences it (its halts stand)."""
+    """``step`` on each completed arm of ``outcome``.  An operation that
+    waits on its caller's actual (a native-operation carrier) enrolls
+    ``step`` to run once it discharges; an ``ExitSet`` sequences it (its
+    halts stand).  A pattern's item read never waits: it is the one
+    subscript door's answer (``_read``)."""
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )
@@ -409,8 +411,7 @@ def _sequence_of_ground_length(spec, value, length, site, ctx):
 def _read(value, key, site, ctx):
     """``value[key]`` as the pattern reads it: through the one subscript door
     a source ``value[key]`` takes (``discharge_subscript``), so a parameter in
-    either operand defers to the caller as it does there (the ``subscript``
-    carrier, consumed through ``_each``)."""
+    either operand is read as it is there."""
     from sugar_lift_py_tests.operations.subscript_operation import (
         discharge_subscript,
     )

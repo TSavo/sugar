@@ -79,13 +79,8 @@ class SliceSugar(ConstructedTermSugar):
 
         # The bounds are operands: a walrus in one binds once, through the one
         # operand door (an omitted bound is ``None`` and carries nothing).  The
-        # slice is constructed the one way (``construct_slice``): a parameter
-        # bound defers it to the caller.
+        # slice is constructed the one way (``construct_slice``), whatever its
+        # bounds are: a parameter bound stands in it as its symbolic value.
         return outcome.and_then(
-            lambda values: consume_operands(
-                lambda lower, upper, step: construct_slice(
-                    lower, upper, step, self.site
-                ),
-                *values,
-            )
+            lambda values: consume_operands(construct_slice, *values)
         )

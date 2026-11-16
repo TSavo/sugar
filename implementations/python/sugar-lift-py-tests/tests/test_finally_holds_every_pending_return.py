@@ -16,10 +16,10 @@ one record a continuation after a halt starts from
 handler and an ``except*`` handler alike. A handler's own ``return`` never stands beside
 it, and a handler that falls through does not carry it into the tail.
 
-A ``finally`` whose statements wait on the caller's actuals (a subscript of a
-parameter) is a deferred native-operation carrier: it is composed beneath
-the arm once the caller's actual discharges it (``after_discharge``), never
-read as an ``ExitSet`` before then -- under a ``try`` and a ``try*`` alike
+A ``finally`` that subscripts at a parameter index waits on nothing: the
+read is the receiver's own read with the symbolic key, the undecided read
+with its halt kept (#7757, audit 2 row NEW-1), and the ``try`` is read as an
+``ExitSet`` at once -- under a ``try`` and a ``try*`` alike
 (``_try_outcome``).
 """
 
@@ -147,28 +147,31 @@ _SUBSCRIPTING_FINALLY = (
 )
 
 
-def test_a_finally_that_subscripts_a_parameter_defers_to_the_caller() -> None:
-    function = _function(_SUBSCRIPTING_FINALLY)
-    (coordinate,) = function.sugar().formal_coordinates
+def _assert_the_finally_read_is_undecided(exits) -> None:
+    """The ``finally``'s ``(10, 20, 30)[i]`` is the tuple's own read at a
+    parameter index (#7757, audit 2 row NEW-1): nothing waits on the
+    caller's actual, so the ``try`` is read as an ``ExitSet`` at once.  The
+    read is the undecided read: the completed face's one ``return`` is the
+    read's symbolic value, never an element chosen for it, and the read's
+    undetermined halt leaves from the ``finally``."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome.exit_set import Halted
 
-    pending = function.sugar().desugar(None)
+    assert not isinstance(exits, NativeOperationExitCarrierV1), type(exits)
+    assert isinstance(exits, ExitSet), type(exits)
+    (record,) = _returns(exits)
+    (entry,) = record
+    assert not isinstance(entry.value, TermValue), entry
+    assert any(
+        isinstance(exit_, Halted) and isinstance(exit_.effect, UndeterminedRaiseEffect)
+        for exit_ in exits.exits
+    ), exits
 
-    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
-    assert pending.demand.operator == "subscript"
-    assert pending.demand.operand_coordinate_cids == (None, coordinate.coordinate_cid)
 
-
-def test_a_deferred_finally_resolves_with_the_callers_actual() -> None:
-    function = _function(_SUBSCRIPTING_FINALLY)
-    (coordinate,) = function.sugar().formal_coordinates
-    pending = function.sugar().desugar(None)
-    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
-
-    for actual, expected in ((1, 20), (2, 30)):
-        exits = pending.discharge(None, {coordinate.coordinate_cid: TermValue(actual)})
-        assert isinstance(exits, ExitSet), type(exits)
-        returns = [entry for record in _returns(exits) for entry in record]
-        assert [entry.value for entry in returns] == [TermValue(expected)], returns
+def test_a_finally_that_subscripts_a_parameter_is_the_undecided_read() -> None:
+    _assert_the_finally_read_is_undecided(
+        _function(_SUBSCRIPTING_FINALLY).sugar().desugar(None)
+    )
 
 
 _SUBSCRIPTING_STAR_FINALLY = (
@@ -183,31 +186,13 @@ _SUBSCRIPTING_STAR_FINALLY = (
 )
 
 
-def test_a_try_star_finally_that_subscripts_a_parameter_defers_to_the_caller() -> None:
-    # ``try*`` reads its outcome the one way a ``try`` does (``_try_outcome``):
-    # a ``finally`` waiting on the caller's actual is never normalized as an
-    # ``ExitSet`` before it discharges.
-    function = _function(_SUBSCRIPTING_STAR_FINALLY)
-    (coordinate,) = function.sugar().formal_coordinates
-
-    pending = function.sugar().desugar(None)
-
-    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
-    assert pending.demand.operator == "subscript"
-    assert pending.demand.operand_coordinate_cids == (None, coordinate.coordinate_cid)
-
-
-def test_a_deferred_try_star_finally_resolves_with_the_callers_actual() -> None:
-    function = _function(_SUBSCRIPTING_STAR_FINALLY)
-    (coordinate,) = function.sugar().formal_coordinates
-    pending = function.sugar().desugar(None)
-    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
-
-    for actual, expected in ((1, 20), (2, 30)):
-        exits = pending.discharge(None, {coordinate.coordinate_cid: TermValue(actual)})
-        assert isinstance(exits, ExitSet), type(exits)
-        returns = [entry for record in _returns(exits) for entry in record]
-        assert [entry.value for entry in returns] == [TermValue(expected)], returns
+def test_a_try_star_finally_that_subscripts_a_parameter_is_the_undecided_read() -> (
+    None
+):
+    # ``try*`` reads its outcome the one way a ``try`` does (``_try_outcome``).
+    _assert_the_finally_read_is_undecided(
+        _function(_SUBSCRIPTING_STAR_FINALLY).sugar().desugar(None)
+    )
 
 
 def _assert_one_return_per_record(exits: ExitSet, guarded: int, handler: int) -> None:

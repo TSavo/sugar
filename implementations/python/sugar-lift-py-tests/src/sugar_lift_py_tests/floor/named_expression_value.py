@@ -212,8 +212,7 @@ class NamedExpressionValue(FloorValue):
 
     def subscript(self, index, site):
         # The presented value is read through the one subscript door
-        # (``discharge_subscript``): a parameter in either operand defers to
-        # the caller, and the walrus bind rides the deferred read.
+        # (``discharge_subscript``), and the walrus bind rides the read.
         from sugar_lift_py_tests.operations.subscript_operation import (
             discharge_subscript,
         )

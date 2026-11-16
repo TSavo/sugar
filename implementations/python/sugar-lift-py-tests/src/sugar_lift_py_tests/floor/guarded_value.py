@@ -428,8 +428,8 @@ class GuardedValue(FloorValue):
     def subscript_with(self, operation, ctx):
         """``guarded[index]``: each arm is read through the one subscript door
         (``discharge_subscript``), under the reading caller's context, so a
-        parameter arm defers its read to the caller (#7757).  A guarded index
-        is split first."""
+        parameter arm is the one undecided read, its halt kept, as it is
+        unguarded (#7757).  A guarded index is split first."""
         from sugar_lift_py_tests.operations.subscript_operation import (
             discharge_subscript,
         )

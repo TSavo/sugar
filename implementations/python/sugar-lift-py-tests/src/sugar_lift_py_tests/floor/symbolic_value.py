@@ -416,15 +416,10 @@ class SymbolicValue(FloorValue):
         return super().bitwise_invert(site)
 
     def subscript(self, index, site):
-        # A parameter in either operand defers to the caller's actual: the
-        # one ``subscript`` mint (``defer_formal_subscript``).
-        from sugar_lift_py_tests.operations.subscript_operation import (
-            defer_formal_subscript,
-        )
-
-        deferred = defer_formal_subscript(self, index, site)
-        if deferred is not None:
-            return deferred
+        # Nothing here decides a symbolic receiver's type or its
+        # ``__getitem__`` -- a parameter's (``p[k]``, ``p[a:b]``) included --
+        # so the read is the one undecided read: both faces, owed.  No read
+        # waits on a caller's actual (#7757).
         return self.undecided_subscript(
             index,
             site,
@@ -524,11 +519,11 @@ class SymbolicValue(FloorValue):
     def subscript_with(self, operation, ctx):
         """``symbolic[k]`` from source answers through :meth:`subscript`.
 
-        A formal receiver's subscript is decided by its caller's actual at the
-        call: the ``subscript`` carrier, discharged through the one subscript
-        door (as a formal's ``obj[k] += v``, store, delete and attribute read
-        already are).  Any other symbolic receiver is the one undecided read:
-        both faces, one debt (:meth:`undecided_subscript`).
+        Every symbolic receiver, a formal's included, is the one undecided
+        read: both faces, one debt (:meth:`undecided_subscript`).  A formal
+        read by an item read has no class input
+        (``nodes._receiver_class_parameters`` counts the read as a bare one),
+        so there is no dispatched ``__getitem__`` to make.
         """
         del ctx
         return self.subscript(operation.index, operation.blame)

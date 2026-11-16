@@ -162,8 +162,8 @@ class MappingObjectValue(ObjectValue):
     def _mapping_read(self, index, site, ctx):
         """The authenticated builtin-dict read of ``self[index]``: the shadow
         ``dict`` answers through the one subscript door
-        (``discharge_subscript``), so a parameter index defers to the caller
-        as a source subscript's does."""
+        (``discharge_subscript``), so a parameter index is read as a source
+        subscript's is."""
         from sugar_lift_py_tests.operations.subscript_operation import (
             discharge_subscript,
         )

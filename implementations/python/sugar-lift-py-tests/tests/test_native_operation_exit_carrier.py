@@ -1087,7 +1087,11 @@ def test_production_minted_operators_equal_projector_table_exactly():
     assert orphan_projectors == frozenset(), (
         "projectors with no production mint path: " f"{sorted(orphan_projectors)}"
     )
-    assert "subscript" in projectors
+    # A read on a parameter mints no carrier (``discharge_subscript``,
+    # ``construct_slice``, #7757 NEW-1): neither set names it.
+    for read_operator in ("subscript", "slice"):
+        assert read_operator not in projectors
+        assert read_operator not in production
     # An item store or delete mints no carrier (``store_effect_sugar.
     # item_mutation``, #7757), nor does an attribute store, delete or read
     # (``store_effect_sugar.attribute_mutation``,
@@ -1103,63 +1107,19 @@ def test_production_minted_operators_equal_projector_table_exactly():
         assert operator not in production
 
 
-def test_symbolic_formal_subscript_discharges_completed_through_projector():
-    """Integration tooth: SymbolicValue.subscript → mint → table → Completed.
-
-    A unit poke of the table would pass while ``subscript`` was missing from
-    it.  This path starts at the #6611 producer, mints the carrier, and
-    discharges through the projector to a completed list element.
-    """
+def test_symbolic_formal_subscript_is_the_undecided_read_not_a_carrier():
+    """A parameter's read mints no ``subscript`` carrier (#7757, audit 2 row
+    NEW-1): nothing decides ``type(p)`` or its ``__getitem__``, so
+    ``SymbolicValue.subscript`` is the one undecided read -- a completed
+    face under its own atom and an ``UndeterminedRaiseEffect`` halt, the
+    halt kept."""
     receiver_coordinate = _coordinate("receiver", 0)
     formal = SymbolicValue(make_var("receiver"), receiver_coordinate)
-    index = TermValue(0)
-    site = _site()
 
-    outcome = formal.subscript(index, site)
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
-    assert outcome.demand.operator == "subscript"
-    assert outcome.demand.operand_coordinate_cids == (
-        receiver_coordinate.coordinate_cid,
-        None,
-    )
-
-    exits = outcome.discharge(
-        None,
-        {
-            receiver_coordinate.coordinate_cid: fresh(
-                ListValue, (TermValue(7), TermValue(8))
-            ),
-        },
-    )
-    assert len(exits.exits) == 1
-    completed = exits.exits[0]
-    assert isinstance(completed, Completed)
-    assert completed.value == TermValue(7)
-
-
-def test_symbolic_formal_subscript_discharges_authenticated_exceptional_through_projector():
-    """Integration tooth: SymbolicValue.subscript → mint → table → named halt.
-
-    ``None[0]`` is TypeError with an authenticated exception-type coordinate.
-    The projector must route the Floor face; a missing projector would undischarge
-    with ``projector unavailable`` instead.
-    """
-    receiver_coordinate = _coordinate("receiver", 0)
-    formal = SymbolicValue(make_var("receiver"), receiver_coordinate)
     outcome = formal.subscript(TermValue(0), _site())
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
-    assert outcome.demand.operator == "subscript"
 
-    exits = outcome.discharge(None, {receiver_coordinate.coordinate_cid: NoneValue()})
-    assert len(exits.exits) == 1
-    halted = exits.exits[0]
-    assert isinstance(halted, Halted)
-    assert halted.effect.exception_type_coordinate == _Expected("TypeError").identity
-    assert isinstance(halted.effect.occurrence, AuthenticatedRaiseLocus)
-    assert (
-        isinstance(halted.effect.occurrence_id, str)
-        and ":" in halted.effect.occurrence_id
-    ), (
-        "authenticated raise locus must be a file:line:col occurrence id, "
-        f"not presence-only; got {halted.effect.occurrence_id!r}"
-    )
+    assert not isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
+    assert isinstance(outcome, ExitSet), type(outcome)
+    assert sum(isinstance(exit_, Completed) for exit_ in outcome.exits) == 1
+    (halted,) = [exit_ for exit_ in outcome.exits if isinstance(exit_, Halted)]
+    assert isinstance(halted.effect, UndeterminedRaiseEffect), halted.effect

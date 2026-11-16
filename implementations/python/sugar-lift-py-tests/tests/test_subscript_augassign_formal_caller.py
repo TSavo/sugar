@@ -202,8 +202,8 @@ def test_an_unsubstituted_statement_is_the_same_door() -> None:
 
 def test_discrimination_legacy_runtime_effect_is_not_the_formal_path() -> None:
     _, outcome = _helper_definition()
-    assert isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
-    assert outcome.demand.operator == "subscript"
+    # The get leg mints no ``subscript`` carrier (#7757, audit 2 row NEW-1).
+    assert getattr(getattr(outcome, "demand", None), "operator", None) != "subscript"
     with pytest.raises(AssertionError):
         assert isinstance(outcome, ExitSet) and outcome.halts() == outcome.exits
 
@@ -329,8 +329,8 @@ def test_formal_helper_desugars_without_legacy_incomplete_only() -> None:
     assert isinstance(call, PathContainerCallSugar), type(call)
     assert call.operator.project_inplace.__func__ is Add.project_inplace
     assert type(call.operator).inplace_operator == "iadd"
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
-    assert outcome.demand.operator == "subscript"
+    # The get leg mints no ``subscript`` carrier (#7757, audit 2 row NEW-1).
+    assert getattr(getattr(outcome, "demand", None), "operator", None) != "subscript"
 
 
 def test_production_get_halt_blocks_rhs_arithmetic_and_store() -> None:
@@ -661,79 +661,34 @@ def test_discrimination_projector_absence_must_not_mint_add() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Formal undischarged / authenticated discharge
+# A formal receiver: the get leg is the undecided read, never a carrier
+# (#7757, audit 2 row NEW-1)
 # ---------------------------------------------------------------------------
 
 
-def test_formal_subscript_get_carrier_missing_actuals_undischarged() -> None:
-    _, pending = _helper_definition()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "subscript"
-    from sugar_lift_py_tests.unanswered_calls import owed_calls
-
-    # No caller actual: the get leg is the cited unanswered face (#7825).
-    exits = pending.discharge(None, {})
-    assert pending.unanswered_call() in owed_calls(exits)
-    assert exits.completed_value() is None
+_DECIDED_KEY_HELPER = "def helper(obj):\n    obj[0] += 1\n"
 
 
-def _store_on_the_formal(exits) -> None:
-    """The store of ``obj[key] += rhs`` after the get carrier discharged:
-    the one item mutation on the formal ``obj`` (#8960,
-    ``store_effect_sugar.item_mutation``), never on the caller's actual.  No
-    item store waits on a caller's actual any more, and the formal's class
-    is no input here, so the store is the undecided mutation (arm 3): it
-    completes only under its own ``python:setitem.completes`` atom and halts
-    under the complement with the undetermined raise -- the halt kept,
-    nothing completed alone."""
+def test_formal_subscript_get_is_the_undecided_read_not_a_carrier() -> None:
+    """The get leg of ``obj[0] += 1`` on the formal ``obj`` waits on no
+    caller: nothing decides ``type(obj)`` or its ``__getitem__``, so it is
+    the undecided read, its halt kept (``SymbolicValue.subscript``).  The
+    store after it is the formal's undecided mutation (#8960, the class of
+    ``obj`` is no input here).  One face completes, under every atom."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 
-    assert isinstance(exits, ExitSet)
-    completed = [face for face in exits.exits if isinstance(face, Completed)]
-    halted = [face for face in exits.exits if isinstance(face, Halted)]
-    assert len(completed) == 1 and len(halted) == 1, exits
-    assert "python:setitem.completes" in repr(completed[0].guard), completed[0]
-    assert isinstance(halted[0].effect, UndeterminedRaiseEffect), halted[0].effect
-    assert exits.completed_value() is None
+    _, outcome = _helper_definition(_DECIDED_KEY_HELPER)
 
-
-def test_authenticated_caller_discharges_get_iadd_and_stores_on_the_formal() -> None:
-    """The get carrier discharges with the caller's list: the read and the
-    in-place add are decided on it (an ``IndexError`` there blocks the store,
-    ``test_authenticated_get_halt_blocks_store_on_formal_discharge``).  The
-    store is the formal's one item mutation (``_store_on_the_formal``)."""
-    function, pending = _helper_definition()
-    coords = {
-        c.declared_name: c.coordinate_cid for c in function.sugar().formal_coordinates
+    assert not isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
+    assert isinstance(outcome, ExitSet), type(outcome)
+    owners = {
+        face.effect.producer_node_owner
+        for face in outcome.exits
+        if isinstance(face, Halted) and isinstance(face.effect, UndeterminedRaiseEffect)
     }
-    exits = pending.discharge(
-        None,
-        {
-            coords["obj"]: fresh(ListValue, (TermValue(1), TermValue(2))),
-            coords["key"]: TermValue(0),
-            coords["rhs"]: TermValue(10),
-        },
-    )
-    _store_on_the_formal(exits)
-
-
-def test_authenticated_get_halt_blocks_store_on_formal_discharge() -> None:
-    function, pending = _helper_definition()
-    coords = {
-        c.declared_name: c.coordinate_cid for c in function.sugar().formal_coordinates
-    }
-    exits = pending.discharge(
-        None,
-        {
-            coords["obj"]: fresh(ListValue, (TermValue(1),)),
-            coords["key"]: TermValue(4),
-            coords["rhs"]: TermValue(10),
-        },
-    )
-    assert isinstance(exits, ExitSet)
-    assert len(exits.exits) == 1
-    assert isinstance(exits.exits[0], Halted)
-    assert exits.exits[0].effect.exception_name == "IndexError"
+    assert "SymbolicValue.subscript" in owners, owners
+    assert "UndecidedSetitem" in owners, owners
+    assert sum(isinstance(face, Completed) for face in outcome.exits) == 1, outcome
 
 
 def _operation_edge_object(stored: list):
@@ -767,33 +722,6 @@ def test_augassign_read_answers_through_the_one_subscript_door() -> None:
 
     assert out.completed_value() is not None, out
     assert stored == [(TermValue(0), TermValue(15))]
-
-
-def test_formal_augassign_discharges_an_object_actual_through_the_door() -> None:
-    """The helper defers its read to the caller; the caller's ``ObjectValue``
-    actual answers the read through its ``subscript_with`` edge.  The store
-    is the formal's one item mutation, never the actual's own ``setitem``
-    (#8960: no item store waits on a caller's actual), so the object records
-    nothing."""
-    function, pending = _helper_definition()
-    assert isinstance(pending, NativeOperationExitCarrierV1)
-    assert pending.demand.operator == "subscript"
-    coords = {
-        c.declared_name: c.coordinate_cid for c in function.sugar().formal_coordinates
-    }
-    stored: list = []
-
-    exits = pending.discharge(
-        None,
-        {
-            coords["obj"]: _operation_edge_object(stored),
-            coords["key"]: TermValue(0),
-            coords["rhs"]: TermValue(5),
-        },
-    )
-
-    _store_on_the_formal(exits)
-    assert stored == []
 
 
 def test_attribute_augassign_is_attribute_path_not_subscript_path() -> None:

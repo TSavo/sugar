@@ -230,12 +230,13 @@ def _formal_coordinate(
     )
 
 
-def _synthetic_carrier() -> tuple[
-    NativeOperationExitCarrierV1,
+def _synthetic_formals() -> tuple[
+    object,
     FormalParameterCoordinateV1,
     FormalParameterCoordinateV1,
 ]:
-    """Construct the producer-only helper form; pandas absence is tested above."""
+    """The producer-only helper's ``obj[key]`` site and its two formals;
+    pandas absence is tested above."""
     source = "def helper(obj, key):\n    return obj[key]\n"
     tree = SourceFile(
         (source, "synthetic-subscript-helper.py", blake3_512_of(source.encode())),
@@ -244,51 +245,18 @@ def _synthetic_carrier() -> tuple[
     node = next(item for item in tree.nodes() if isinstance(item, Subscript))
     obj_coordinate = _formal_coordinate(node.fragment, "obj", 0)
     key_coordinate = _formal_coordinate(node.fragment, "key", 1)
-    outcome = SymbolicValue(make_var("obj"), obj_coordinate).subscript(
-        SymbolicValue(make_var("key"), key_coordinate), node.fragment
-    )
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
-    return outcome, obj_coordinate, key_coordinate
-
-
-def test_synthetic_formals_mint_the_getitem_carrier_door() -> None:
-    """Synthetic boundary: formal ``obj[key]`` is resumable at a real caller.
-
-    The real pandas absence is established above.  This synthetic arm names
-    the general capability precisely: formal ``obj[key]`` mints a
-    ``NativeOperationExitCarrierV1`` for ``subscript`` whose operation locus
-    survives caller discharge.
-    """
-    carrier, obj_coordinate, key_coordinate = _synthetic_carrier()
-
-    assert carrier.demand.operator == "subscript"
-    assert carrier.demand.operand_coordinate_cids == (
-        obj_coordinate.coordinate_cid,
-        key_coordinate.coordinate_cid,
-    )
-
-
-def test_swapped_receiver_and_index_retain_distinct_ordered_coordinates() -> None:
-    carrier, obj_coordinate, key_coordinate = _synthetic_carrier()
-    swapped = SymbolicValue(make_var("key"), key_coordinate).subscript(
-        SymbolicValue(make_var("obj"), obj_coordinate), carrier.site
-    )
-
-    assert isinstance(swapped, NativeOperationExitCarrierV1)
-    assert swapped.demand.operand_coordinate_cids == (
-        key_coordinate.coordinate_cid,
-        obj_coordinate.coordinate_cid,
-    )
-    assert swapped.demand.demand_cid != carrier.demand.demand_cid
+    return node.fragment, obj_coordinate, key_coordinate
 
 
 def _assert_two_faced_read(exits, owner: str) -> None:
-    """The one two-faced unanswered read: completes under the subscript's
-    completes atom, else an undetermined raise owned by ``owner``; the read is
-    owed at its site.  No KeyError or IndexError is guessed."""
+    """The one two-faced unanswered read, no carrier: completes under the
+    subscript's completes atom, else an undetermined raise owned by
+    ``owner``; the read is owed at its site.  No KeyError or IndexError is
+    guessed."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.unanswered_calls import owed_calls
 
+    assert not isinstance(exits, NativeOperationExitCarrierV1), type(exits)
     (halt,) = [arm for arm in exits.exits if isinstance(arm, Halted)]
     (done,) = [arm for arm in exits.exits if isinstance(arm, Completed)]
     assert type(halt.effect) is UndeterminedRaiseEffect
@@ -297,51 +265,77 @@ def _assert_two_faced_read(exits, owner: str) -> None:
     assert any(item.site is not None for item in owed_calls(exits))
 
 
-def test_coordinate_free_subscript_is_the_two_faced_unanswered_read() -> None:
-    carrier, _, _ = _synthetic_carrier()
+def _read(receiver, index, site):
+    from sugar_lift_py_tests.operations.subscript_operation import (
+        discharge_subscript,
+    )
 
-    exits = SymbolicValue(make_var("obj")).subscript(
-        SymbolicValue(make_var("key")), carrier.site
+    return discharge_subscript(receiver, index, site, None, owner="SubscriptSugar")
+
+
+def test_synthetic_formals_read_is_the_two_faced_unanswered_read() -> None:
+    """Synthetic boundary: formal ``obj[key]`` mints no carrier waiting on a
+    caller's actual (#7757, audit 2 row NEW-1).  Nothing decides
+    ``type(obj)`` or its ``__getitem__``, so the read is the one undecided
+    read, owed at its site, its halt kept."""
+    site, obj_coordinate, key_coordinate = _synthetic_formals()
+
+    exits = SymbolicValue(make_var("obj"), obj_coordinate).subscript(
+        SymbolicValue(make_var("key"), key_coordinate), site
     )
 
     _assert_two_faced_read(exits, "SymbolicValue.subscript")
 
 
-def test_helper_alone_stays_named_undischarged() -> None:
-    carrier, _, _ = _synthetic_carrier()
+def test_swapped_receiver_and_index_is_the_same_undecided_read() -> None:
+    site, obj_coordinate, key_coordinate = _synthetic_formals()
 
-    from sugar_lift_py_tests.unanswered_calls import owed_calls
+    swapped = SymbolicValue(make_var("key"), key_coordinate).subscript(
+        SymbolicValue(make_var("obj"), obj_coordinate), site
+    )
 
-    # No caller actual: the subscript is the cited unanswered face (#7825).
-    exits = carrier.discharge(None, {})
-    assert carrier.unanswered_call() in owed_calls(exits)
+    _assert_two_faced_read(swapped, "SymbolicValue.subscript")
+
+
+def test_coordinate_free_subscript_is_the_two_faced_unanswered_read() -> None:
+    site, _, _ = _synthetic_formals()
+
+    exits = SymbolicValue(make_var("obj")).subscript(SymbolicValue(make_var("key")), site)
+
+    _assert_two_faced_read(exits, "SymbolicValue.subscript")
+
+
+def test_helper_alone_owes_its_read() -> None:
+    """With no caller the read is the cited unanswered face (#7825): owed at
+    its site, no value chosen."""
+    from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
+
+    site, obj_coordinate, key_coordinate = _synthetic_formals()
+    exits = SymbolicValue(make_var("obj"), obj_coordinate).subscript(
+        SymbolicValue(make_var("key"), key_coordinate), site
+    )
+
+    assert unanswered_call(None, site) in owed_calls(exits)
     assert exits.completed_value() is None
 
 
-def test_caller_actuals_can_complete_the_original_subscript() -> None:
-    carrier, obj_coordinate, key_coordinate = _synthetic_carrier()
+def test_a_decided_list_and_key_complete_the_read() -> None:
+    """The floor's own read where the lift decides both operands: what a
+    caller's actuals used to be projected onto."""
+    site, _, _ = _synthetic_formals()
 
-    exits = carrier.discharge(
-        None,
-        {
-            obj_coordinate.coordinate_cid: fresh(ListValue, (TermValue(7),)),
-            key_coordinate.coordinate_cid: TermValue(0),
-        },
-    )
+    exits = _read(fresh(ListValue, (TermValue(7),)), TermValue(0), site)
 
     assert exits.exits == (Completed(exits.exits[0].guard, TermValue(7)),)
 
 
-def test_caller_actuals_can_name_an_exception_at_the_original_subscript() -> None:
-    carrier, obj_coordinate, key_coordinate = _synthetic_carrier()
+def _index_error_read():
+    site, _, _ = _synthetic_formals()
+    return site, _read(fresh(ListValue, (TermValue(7),)), TermValue(1), site)
 
-    exits = carrier.discharge(
-        None,
-        {
-            obj_coordinate.coordinate_cid: fresh(ListValue, (TermValue(7),)),
-            key_coordinate.coordinate_cid: TermValue(1),
-        },
-    )
+
+def test_a_decided_out_of_range_key_names_an_exception_at_the_subscript() -> None:
+    site, exits = _index_error_read()
 
     assert len(exits.exits) == 1
     halted = exits.exits[0]
@@ -349,7 +343,6 @@ def test_caller_actuals_can_name_an_exception_at_the_original_subscript() -> Non
     # ListValue[1] on len-1 list is IndexError (not TypeError). Presence-only
     # used to green either; the value pin must name IndexError or it is a false tooth.
     assert halted.effect.exception_type_coordinate == _Expected("IndexError").identity
-    site = carrier.site
     assert halted.effect.occurrence_id == f"{site.filename}:{site.line}:{site.col}"
 
 
@@ -365,14 +358,7 @@ class _Expected:
 
 
 def test_lying_boundary_exception_type_leaves_operation_halted_and_unconsumed() -> None:
-    carrier, obj_coordinate, key_coordinate = _synthetic_carrier()
-    exits = carrier.discharge(
-        None,
-        {
-            obj_coordinate.coordinate_cid: fresh(ListValue, (TermValue(7),)),
-            key_coordinate.coordinate_cid: TermValue(1),
-        },
-    )
+    site, exits = _index_error_read()
 
     routed = exits.and_exit(
         ExitSet.completed(object()),
@@ -384,7 +370,6 @@ def test_lying_boundary_exception_type_leaves_operation_halted_and_unconsumed() 
 
     assert len(routed.exits) == 1
     assert isinstance(routed.exits[0], Halted)
-    site = carrier.site
     assert (
         routed.exits[0].effect.occurrence_id
         == f"{site.filename}:{site.line}:{site.col}"
@@ -395,36 +380,27 @@ def test_lying_boundary_exception_type_leaves_operation_halted_and_unconsumed() 
     )
 
 
-def test_undecided_caller_receiver_is_the_two_faced_unanswered_read() -> None:
-    carrier, obj_coordinate, key_coordinate = _synthetic_carrier()
+def test_undecided_receiver_is_the_two_faced_unanswered_read() -> None:
+    site, _, _ = _synthetic_formals()
 
-    exits = carrier.discharge(
-        None,
-        {
-            obj_coordinate.coordinate_cid: SymbolicValue(make_var("actual_obj")),
-            key_coordinate.coordinate_cid: TermValue(0),
-        },
-    )
+    exits = _read(SymbolicValue(make_var("actual_obj")), TermValue(0), site)
 
     _assert_two_faced_read(exits, "SymbolicValue.subscript")
 
 
-def test_undecided_caller_key_is_the_two_faced_unanswered_read() -> None:
-    carrier, obj_coordinate, key_coordinate = _synthetic_carrier()
+def test_undecided_key_on_a_decided_list_is_the_lists_two_faced_read() -> None:
+    site, _, _ = _synthetic_formals()
 
-    exits = carrier.discharge(
-        None,
-        {
-            obj_coordinate.coordinate_cid: fresh(ListValue, (TermValue(7),)),
-            key_coordinate.coordinate_cid: SymbolicValue(make_var("actual_key")),
-        },
+    exits = _read(
+        fresh(ListValue, (TermValue(7),)), SymbolicValue(make_var("actual_key")), site
     )
 
     _assert_two_faced_read(exits, "ListValue.subscript")
 
 
 # ---------------------------------------------------------------------------
-# A formal's subscript has one way: the carrier, decided by the caller's actual
+# A formal's subscript has one way: the undecided read, owed, its halt kept
+# (#7757, audit 2 row NEW-1)
 # ---------------------------------------------------------------------------
 
 
@@ -436,48 +412,57 @@ def _subscript_operation(site):
     return SubscriptOperation(index=TermValue(0), owner="SubscriptSugar", blame=site)
 
 
-def test_a_formal_subscript_through_its_operation_is_the_carrier() -> None:
-    """``SymbolicValue.subscript_with`` (every source ``formal[k]``) mints the
-    same ``subscript`` carrier as ``SymbolicValue.subscript``: the caller's
-    actual decides it, never the callee's undecided read."""
-    carrier, obj_coordinate, _ = _synthetic_carrier()
+def test_a_formal_subscript_through_its_operation_is_the_undecided_read() -> None:
+    """``SymbolicValue.subscript_with`` (every source ``formal[k]``) answers
+    as ``SymbolicValue.subscript`` does: the callee's undecided read, never a
+    carrier waiting on the caller's actual."""
+    site, obj_coordinate, _ = _synthetic_formals()
     formal = SymbolicValue(make_var("obj"), obj_coordinate)
 
-    outcome = _subscript_operation(carrier.site).submit(formal, None)
-
-    assert isinstance(outcome, NativeOperationExitCarrierV1)
-    assert outcome.demand.operator == "subscript"
-    assert outcome.demand.operand_coordinate_cids == (
-        obj_coordinate.coordinate_cid,
-        None,
+    _assert_two_faced_read(
+        _subscript_operation(site).submit(formal, None), "SymbolicValue.subscript"
     )
-    direct = formal.subscript(TermValue(0), carrier.site)
-    assert outcome.demand.demand_cid == direct.demand.demand_cid
+    _assert_two_faced_read(
+        formal.subscript(TermValue(0), site), "SymbolicValue.subscript"
+    )
 
 
-def test_a_source_formal_subscript_reaches_the_carrier() -> None:
-    """``def helper(obj, key): return obj[key]`` from source: the function
-    defers its subscript to the caller (as ``obj[key] += rhs`` already did),
-    instead of answering the undecided read in the callee."""
+def _source_function_outcome(source: str, name: str):
     from sugar_source_tree.nodes import FunctionDef
 
-    source = "def helper(obj, key):\n    return obj[key]\n"
     tree = SourceFile(
-        (source, "formal-subscript-helper.py", blake3_512_of(source.encode())),
+        (source, name, blake3_512_of(source.encode())),
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-
-    outcome = function.sugar().desugar(None)
-
-    assert isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
-    assert outcome.demand.operator == "subscript"
+    return function.sugar().desugar(None)
 
 
-def test_the_carrier_discharges_through_the_one_subscript_door() -> None:
-    """The caller's actual is asked what a source subscript asks it: a floor
-    that owns only the ``subscript_with`` edge answers through that edge (the
-    legacy ``subscript`` projector refused it as a construction gap)."""
+def _assert_read_with_its_halt(outcome) -> None:
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
+    assert not isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
+    assert any(
+        isinstance(arm, Halted) and type(arm.effect) is UndeterminedRaiseEffect
+        for arm in outcome.exits
+    ), outcome
+
+
+def test_a_source_formal_subscript_is_the_undecided_read() -> None:
+    """``def helper(obj, key): return obj[key]`` from source: the callee
+    answers the undecided read, its halt kept, instead of deferring it."""
+    _assert_read_with_its_halt(
+        _source_function_outcome(
+            "def helper(obj, key):\n    return obj[key]\n",
+            "formal-subscript-helper.py",
+        )
+    )
+
+
+def test_the_one_subscript_door_asks_the_operation_edge() -> None:
+    """A floor that owns only the ``subscript_with`` edge answers through
+    that edge (the legacy ``subscript`` path refused it as a construction
+    gap)."""
     from sugar_lift_py_tests.floor.floor_value import FloorValue
 
     @dataclass(frozen=True)
@@ -487,13 +472,9 @@ def test_the_carrier_discharges_through_the_one_subscript_door() -> None:
             assert operation.index == TermValue(0)
             return ExitSet.completed(TermValue(42))
 
-    carrier, obj_coordinate, _ = _synthetic_carrier()
-    formal = SymbolicValue(make_var("obj"), obj_coordinate)
-    pending = _subscript_operation(carrier.site).submit(formal, None)
+    site, _, _ = _synthetic_formals()
 
-    exits = pending.discharge(
-        None, {obj_coordinate.coordinate_cid: _OperationEdgeOnly()}
-    )
+    exits = _read(_OperationEdgeOnly(), TermValue(0), site)
 
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
@@ -501,88 +482,39 @@ def test_the_carrier_discharges_through_the_one_subscript_door() -> None:
 
 
 # ---------------------------------------------------------------------------
-# A parameter in any operand position defers: the formal index (#7757)
+# A parameter index on a decided receiver: the receiver's own read with the
+# symbolic key (#7757, audit 2 row NEW-1)
 # ---------------------------------------------------------------------------
 
 
-def test_a_formal_index_on_a_known_list_defers_to_the_caller() -> None:
+def test_a_formal_index_on_a_known_list_is_the_lists_own_read() -> None:
     """``[1, 2][i]`` with ``i`` a parameter: the list is decided, the index is
-    not, so the read is the ``subscript`` carrier (index slot authenticated),
-    never the callee's undecided read."""
-    from sugar_lift_py_tests.operations.subscript_operation import (
-        discharge_subscript,
-    )
+    not, so the list reads it as the undecided read, its halt kept -- never a
+    carrier, never an element chosen for it."""
+    site, _, key_coordinate = _synthetic_formals()
 
-    carrier, _, key_coordinate = _synthetic_carrier()
-    index = SymbolicValue(make_var("key"), key_coordinate)
-
-    pending = discharge_subscript(
-        fresh(ListValue, (TermValue(1), TermValue(2))),
-        index,
-        carrier.site,
-        None,
-        owner="SubscriptSugar",
-    )
-
-    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
-    assert pending.demand.operator == "subscript"
-    assert pending.demand.operand_coordinate_cids == (
-        None,
-        key_coordinate.coordinate_cid,
-    )
-
-
-def test_a_formal_index_resolves_with_the_callers_actual() -> None:
-    from sugar_lift_py_tests.operations.subscript_operation import (
-        discharge_subscript,
-    )
-
-    carrier, _, key_coordinate = _synthetic_carrier()
-    pending = discharge_subscript(
+    exits = _read(
         fresh(ListValue, (TermValue(1), TermValue(2))),
         SymbolicValue(make_var("key"), key_coordinate),
-        carrier.site,
-        None,
-        owner="SubscriptSugar",
+        site,
     )
 
-    exits = pending.discharge(None, {key_coordinate.coordinate_cid: TermValue(1)})
-
-    assert exits.exits == (Completed(exits.exits[0].guard, TermValue(2)),)
+    _assert_two_faced_read(exits, "ListValue.subscript")
 
 
-def test_a_formal_index_through_a_symbolic_receiver_is_the_same_carrier() -> None:
-    """The receiver's own ``subscript`` and the door mint the one demand."""
-    from sugar_lift_py_tests.operations.subscript_operation import (
-        discharge_subscript,
-    )
-
-    carrier, _, key_coordinate = _synthetic_carrier()
+def test_a_formal_index_through_a_symbolic_receiver_is_the_same_read() -> None:
+    """The receiver's own ``subscript`` and the door answer the one read."""
+    site, _, key_coordinate = _synthetic_formals()
     receiver = SymbolicValue(make_var("obj"))
     index = SymbolicValue(make_var("key"), key_coordinate)
 
-    direct = receiver.subscript(index, carrier.site)
-    through_door = discharge_subscript(
-        receiver, index, carrier.site, None, owner="SubscriptSugar"
+    _assert_two_faced_read(receiver.subscript(index, site), "SymbolicValue.subscript")
+    _assert_two_faced_read(_read(receiver, index, site), "SymbolicValue.subscript")
+
+
+def test_a_source_formal_index_is_the_lists_own_read() -> None:
+    _assert_read_with_its_halt(
+        _source_function_outcome(
+            "def consume(i):\n    return [1, 2][i]\n", "formal-index-helper.py"
+        )
     )
-
-    assert isinstance(direct, NativeOperationExitCarrierV1)
-    assert direct.demand.demand_cid == through_door.demand.demand_cid
-
-
-def test_a_source_formal_index_reaches_the_carrier() -> None:
-    from sugar_source_tree.nodes import FunctionDef
-
-    source = "def consume(i):\n    return [1, 2][i]\n"
-    tree = SourceFile(
-        (source, "formal-index-helper.py", blake3_512_of(source.encode())),
-        construction_context=TreeConstructionContextV1.for_source_call_construction(),
-    )
-    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-
-    outcome = function.sugar().desugar(None)
-
-    assert isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
-    assert outcome.demand.operator == "subscript"
-    assert outcome.demand.operand_coordinate_cids[0] is None
-    assert outcome.demand.operand_coordinate_cids[1] is not None
