@@ -324,7 +324,10 @@ class ObjectValue(FloorValue):
         (``class_read_guard``: ``python:class_read(<class>, "<name>")``, no
         ``__getattribute__`` or other read hook in the order and a binding
         whose value defines no ``__get__``, ``consistency::class_read_holds``);
-        under its complement the read is the dispatched read.  Where no
+        under its complement the read is the dispatched read.  The value is
+        the binding's object as it arrives here (``object_identity.arrived``):
+        a list, dict or set the class body bound is never read by the
+        contents the class body gave it (#7757 L3).  Where no
         class term is decided, the dispatched read alone (#7757 L1).  A
         lookup that does not decide is the undecided read
         (``undecided_attribute_result``).
@@ -361,7 +364,20 @@ class ObjectValue(FloorValue):
         if class_value is not None:
             from sugar_lift_py_tests.floor.lambda_callable import LambdaCallable
 
-            read = class_value
+            from .object_identity import arrived
+
+            # The class-body binding's object, never the contents the class
+            # body gave it: the body ran in the class statement's frame, and
+            # any code since (a method, a module statement, a callee
+            # mutating ``C.items``) may have changed a list, dict or set it
+            # bound, or an instance it holds.  So the value reaches this
+            # frame by binding (``arrived``), its contents not current, and
+            # every read of them is the read's undecided form over its
+            # identity -- the currency rule a stale container already obeys
+            # (#9087, #7757 L3).  An immutable value arrives unchanged.
+            # Prove's ``python:class_read`` decides which object the read
+            # is, never what it holds.
+            read = arrived(class_value, site)
             if isinstance(class_value, LambdaCallable):
                 # A function in the class namespace (``f = lambda self: 1``,
                 # ``m = some_def``) read off an instance is what its
