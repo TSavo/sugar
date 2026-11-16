@@ -514,6 +514,17 @@ def assertion_site_key(site):
     return (fragment.filename, fragment.line, fragment.col)
 
 
+def _testimony(site) -> bool:
+    """Whether a fact a record carries at ``site`` is testimony rather than
+    an assertion's claim.  Only an ``assert`` statement's fact (``AssertSugar``
+    states it at its own fragment) claims that an execution reaches its site
+    and it holds there; the fragment names its node, as a raise's site does
+    for ``tree_enumerate.halted_assertion_sites``."""
+    from sugar_source_tree.nodes import Assert
+
+    return not isinstance(getattr(site, "node", None), Assert)
+
+
 def exit_arms_payload_rows(
     *,
     name,
@@ -555,6 +566,10 @@ def exit_arms_payload_rows(
       that can be made false must not satisfy it, so this is never
       ``g -> fact``. A site an arm halted at and no completed arm holds states
       the OR over nothing: false.
+    * a fact that is no assertion's (``_testimony``: a handler's effect slot,
+      a manager's slots, a loop's recurrence) is what holds where its arm
+      ran. Held on only some completed arms it is stated as the conjunction
+      of ``g_i -> fact_i``: never a claim that one of those arms ran.
     * when no arm completed, one assertion claim per ``assert`` of the function
       no arm reached: the conjunction over the halted arms of ``not g_h``.
       Every execution the reduction states halts before it, so an execution
@@ -623,20 +638,39 @@ def exit_arms_payload_rows(
         for per_arm in by_site.values():
             arm_rows = list(per_arm.values())
             first = arm_rows[0][1][0]
+            # Only an ``assert`` claims that an execution reaches its site.
+            # Any other fact a record carries is testimony given where its
+            # arm ran (a handler's effect slot, a manager's slots, a loop's
+            # recurrence): held on only some completed arms, it is stated
+            # under each one's guard, never as a claim that one of them ran
+            # (#7757: the handler's slot facts in ``try: C(1); ok = True
+            # except AssertionError: pass`` claimed the handler ran and
+            # refuted ``ok == True``).  Held on every completed arm, the two
+            # read the same wherever the function completes.
+            given = _testimony(first.site) and len(arm_rows) < len(arms)
+
+            def stated(parts, given=given):
+                # ``parts``: each arm's guard with what it holds at the site.
+                if given:
+                    return and_(
+                        [implies(guard, and_(list(held))) for guard, held in parts]
+                    )
+                return or_([and_([guard, *held]) for guard, held in parts])
+
             derived_arms = [
                 (guard, [d for inv in invs for d in inv.derived_formulas])
                 for guard, invs in arm_rows
             ]
             derived = (
-                (or_([and_([guard, *ds]) for guard, ds in derived_arms]),)
+                (stated(derived_arms),)
                 if all(ds for _guard, ds in derived_arms)
                 else ()
             )
             combined.append(
                 InvValue(
-                    or_(
+                    stated(
                         [
-                            and_([guard, *(inv.formula for inv in invs)])
+                            (guard, [inv.formula for inv in invs])
                             for guard, invs in arm_rows
                         ]
                     ),
