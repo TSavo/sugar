@@ -229,7 +229,9 @@ jobs:
         shell: bash
         run: bash tools/main_scorecard_suite.sh post
       - name: Upload logs
-        if: ${{ !cancelled() && steps.plan.outputs.rerun != '0' }}
+        # always(): a crashed pytest's log (faulthandler stacks, the test it
+        # was running) survives whatever happened to the job.
+        if: ${{ always() && steps.plan.outputs.rerun != '0' }}
         uses: actions/upload-artifact@v4
         with:
           name: main-scorecard-suite
@@ -276,7 +278,9 @@ jobs:
         shell: bash
         run: bash tools/main_scorecard_suite.sh run ${{ matrix.shard }}
       - name: Upload shard logs
-        if: ${{ !cancelled() }}
+        # always(): a crashed shard's log (faulthandler stacks, the test it
+        # was running) survives whatever happened to the job.
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: main-scorecard-suite-shard-${{ matrix.shard }}
