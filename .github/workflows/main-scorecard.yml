@@ -94,6 +94,24 @@ name: Main scorecard
 # the twins number is counted from the suite's own results for the twin
 # files in the suite tree. The federation example and the Rust tests are
 # their own short jobs.
+#
+# A LOST SHARD IS NEVER A SMALLER TOTAL (#8416, run 43832361876)
+#
+# Shard 2 failed in its toolchain step (rustup re-fetched the 1.96.0 channel
+# checksum and the TLS peer closed) and shard 1's pytest died with SIGSEGV;
+# neither left results, the join summed the other six, and the row posted
+# suite=4209/4212 as measured with ~1450 tests missing. Now the plan writes
+# how many shards it made and how many files and tests each was planned
+# (shards.json); the join checks every planned shard left its results, and a
+# missing one makes the measure unmeasured (`?/?`, `incomplete:` note). A
+# shard whose pytest did not run its tests fails, so "re-run failed jobs"
+# redoes only it: shard results live in the run's plan directory, shared by
+# every attempt, and the final row reads the other jobs' numbers from the
+# earlier attempt. The alarm also flags a measure's total falling more than
+# 2% below its last measured total. The Rust toolchain comes from the
+# runner's own rustup with no network when the pin is installed
+# (tools/ci-rust-toolchain.sh); the shards still need it on PATH, because
+# bin/sugarbin keys and resolves the sugar binary through cargo and rustc.
 
 on:
   push:
@@ -249,7 +267,7 @@ jobs:
       - name: Scorecard environment (persistent venv, gh)
         shell: bash
         run: bash tools/main_scorecard_env.sh
-      - name: Set up Rust toolchain
+      - name: Rust toolchain (the runner's installed pin; no download)
         uses: ./.github/actions/setup-rust-cache
       - name: Install z3 (cached on the runner)
         shell: bash

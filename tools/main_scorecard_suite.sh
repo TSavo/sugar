@@ -21,12 +21,27 @@
 #
 # Every shard reads the plan from $SCORECARD_CACHE/runs/plan-$GITHUB_RUN_ID
 # (the cache directory every runner shares), so a re-run shard reads the
-# same plan. `set +e` where pytest may exit nonzero on purpose (#8293).
+# same plan, and writes its carry summaries (and pytest's exit status) under
+# $plan/results, which every attempt of the run shares: a shard re-run after
+# a failure completes the same row. `set +e` where pytest may exit nonzero on
+# purpose (#8293).
+#
+# A LOST SHARD IS NEVER A SMALLER TOTAL (run 43832361876)
+#
+# The plan writes shards.json: how many shards, and per shard how many files
+# and about how many tests (the ledger of each file's last measured count).
+# `post` checks every planned shard left its results
+# (main_scorecard_shard_plan.py check); a shard that did not -- the job died
+# before pytest, or pytest died or was interrupted -- makes the measure
+# unmeasured with an `incomplete:` note, never a smaller total. A shard whose
+# pytest did not run its tests fails its job, so "re-run failed jobs" redoes it.
 set -uo pipefail
 
 repo="$GITHUB_WORKSPACE"
 py="$repo/implementations/python"
 plan="$SCORECARD_CACHE/runs/plan-$GITHUB_RUN_ID"
+results="$plan/results"
+ledger="$SCORECARD_CACHE/file-test-counts.json"
 export SUGAR_LPT_PRIOR_DIR="${SUGAR_LPT_PRIOR_DIR:-$SCORECARD_CACHE/lpt-file-costs}"
 
 count_lines() {
@@ -37,8 +52,9 @@ count_lines() {
 
 cmd_plan() {
   set -e
-  mkdir -p "$SCORECARD_RUNS/suite" "$SCORECARD_RUNS/twins" "$plan"
-  rm -f "$plan"/shard-*.txt
+  rm -rf "$results"
+  mkdir -p "$results/suite" "$results/twins" "$plan"
+  rm -f "$plan"/shard-*.txt "$plan/shards.json"
   cd "$py"
   python "$repo/tools/python_package_suite_shards.py" \
     --repo-root "$repo" --shard-count 1 --shard-index 0 \
@@ -55,27 +71,28 @@ cmd_plan() {
   python "$repo/tools/scorecard_carry.py" suite-plan \
     --store "$SCORECARD_STORE" --label suite \
     --paths-file "$plan/suite-paths.txt" \
-    --summary "$SCORECARD_RUNS/suite/plan.json" \
+    --summary "$results/suite/plan.json" \
     --rerun-paths "$plan/suite-rerun.txt"
   python "$repo/tools/scorecard_carry.py" suite-plan \
     --store "$SCORECARD_STORE" --label twins \
     --paths-file "$plan/twins-extra.txt" \
-    --summary "$SCORECARD_RUNS/twins/plan.json" \
+    --summary "$results/twins/plan.json" \
     --rerun-paths "$plan/twins-rerun.txt"
   local n fanout shards
   n=$(( $(count_lines "$plan/suite-rerun.txt") + $(count_lines "$plan/twins-rerun.txt") ))
   if [ "$n" -gt "$SUITE_INLINE_MAX_FILES" ]; then fanout=true; shards="$SUITE_SHARD_COUNT"; else fanout=false; shards=1; fi
-  python "$repo/tools/main_scorecard_shard_plan.py" --cwd "$py" \
+  python "$repo/tools/main_scorecard_shard_plan.py" pack --cwd "$py" \
     --suite "$plan/suite-rerun.txt" --twins "$plan/twins-rerun.txt" \
-    --shard-count "$shards" --out "$plan"
+    --shard-count "$shards" --out "$plan" --ledger "$ledger"
   echo "rerun=$n" >> "$GITHUB_OUTPUT"
   echo "fanout=$fanout" >> "$GITHUB_OUTPUT"
   echo "files to run: $n (fan out over $shards shard(s): $fanout)"
 }
 
 run_pytest() {
-  # run_pytest <label> <list> <summary> <log>
-  local label="$1" list="$2" summary="$3" log="$4"
+  # run_pytest <label> <list> <summary> <log>; returns 1 when pytest did not
+  # run its tests (exit other than 0 passed, 1 failed, 5 nothing left to run).
+  local label="$1" list="$2" summary="$3" log="$4" rc
   local -a paths=()
   [ -f "$list" ] && mapfile -t paths < "$list"
   echo "$label files to run: ${#paths[@]}"
@@ -86,8 +103,15 @@ run_pytest() {
     --carry-store "$SCORECARD_STORE" --carry-label "$label" \
     --carry-summary "$summary" \
     > "$log" 2>&1
-  echo "$label pytest exit $? (evidence only)"
+  rc=$?
+  echo "$rc" > "${summary%.json}.exit"
+  echo "$label pytest exit $rc"
   grep -a 'SCORECARD CARRY' "$log"
+  case "$rc" in
+    0 | 1 | 5) return 0 ;;
+  esac
+  echo "::error::$label pytest exit $rc: this shard's tests did not run (full log in the uploaded $(basename "$log")); the row marks $label incomplete"
+  return 1
 }
 
 cmd_run() {
@@ -99,7 +123,9 @@ cmd_run() {
     echo "::error::no plan for shard $tag in $plan"
     exit 1
   fi
-  mkdir -p "$SCORECARD_RUNS/suite" "$SCORECARD_RUNS/twins"
+  mkdir -p "$results/suite" "$results/twins"
+  # This shard's results from an earlier attempt are replaced, never kept.
+  rm -f "$results"/suite/shard-"$tag".* "$results"/twins/shard-"$tag".*
   cd "$py"
   if [ -s "$suite_list" ] || [ -s "$twins_list" ]; then
     SUGAR_BIN="$("$repo/bin/sugarbin" --profile release)"
@@ -109,27 +135,33 @@ cmd_run() {
   # the logs so a failing twin is diagnosed from CI's artifact.
   rm -rf "$repo/twin-evidence"
   export SUGAR_WITNESS_EVIDENCE_DIR="$repo/twin-evidence"
-  run_pytest suite "$suite_list" "$SCORECARD_RUNS/suite/shard-$tag.json" "$repo/suite.log"
-  run_pytest twins "$twins_list" "$SCORECARD_RUNS/twins/shard-$tag.json" "$repo/twins.log"
-  return 0
+  local status=0
+  run_pytest suite "$suite_list" "$results/suite/shard-$tag.json" "$repo/suite.log" || status=1
+  run_pytest twins "$twins_list" "$results/twins/shard-$tag.json" "$repo/twins.log" || status=1
+  return "$status"
 }
 
 cmd_post() {
   cd "$repo"
   local -a filtered=()
   local f
-  for f in "$SCORECARD_RUNS"/suite/*.json; do
+  for f in "$results"/suite/*.json; do
     [ -f "$f" ] && filtered+=(--filtered "$f")
   done
   python3 tools/scorecard_carry.py summarize --label suite \
     --out "$RUNNER_TEMP/suite-totals.json" \
     --result "$RUNNER_TEMP/suite-result.json" \
-    "$SCORECARD_RUNS"/suite/*.json
+    "$results"/suite/*.json
   python3 tools/scorecard_carry.py summarize --label twins \
     --out "$RUNNER_TEMP/twins-totals.json" \
     --result "$RUNNER_TEMP/twins-result.json" \
     --only-files "$plan/twins-in-suite.txt" "${filtered[@]}" \
-    "$SCORECARD_RUNS"/twins/*.json
+    "$results"/twins/*.json
+  # A planned shard that left no results makes its measure unmeasured.
+  python3 tools/main_scorecard_shard_plan.py check --plan "$plan" --results "$results" \
+    --result "suite=$RUNNER_TEMP/suite-result.json" \
+    --result "twins=$RUNNER_TEMP/twins-result.json" \
+    --ledger "$ledger"
   python3 tools/main_scorecard_post.py --runs "$SCORECARD_RUNS" \
     --put "suite=$RUNNER_TEMP/suite-result.json" \
     --put "twins=$RUNNER_TEMP/twins-result.json"

@@ -28,7 +28,11 @@ measured it, whichever workflow wrote that row.
 Regression alarm: each number is compared with the newest earlier row (another
 run) where that number was measured. Any number that got worse, or that was
 measured before and is unmeasured now, makes the comment start with
-REGRESSION: and makes this invocation exit 1.
+REGRESSION: and makes this invocation exit 1. For the suite, twins and rust
+"worse" is more failing tests; and for every measure with a total, a total
+(passed + failed) more than SCORECARD_TOTAL_DROP_TOLERANCE (default 2%) below
+the last measured total is a regression too (``suite total 5667 -> 4212
+(shard lost?)``): counting failures alone let a lost shard post as OK (#8416).
 
 Comment shape (first line, then one machine-readable line of key=value):
   OK ... | REGRESSION: ... ; then
@@ -57,6 +61,9 @@ MEASURES = ("suite", "twins", "federation", "board", "rust")
 # Required for a comment to count as a row. `rust` is read optionally: rows
 # written before it existed have no `rust=` key and must still parse.
 ROW_KEYS = ("sha", "prev", "run", "suite", "twins", "federation", "board", "cpanic")
+# A measure's total (passed + failed) may fall by this fraction against the
+# newest earlier row that measured it (tests deleted); more is a regression.
+TOTAL_DROP_TOLERANCE = float(os.environ.get("SCORECARD_TOTAL_DROP_TOLERANCE") or "0.02")
 
 
 def gh(*args: str) -> str | None:
@@ -135,6 +142,21 @@ def row_measured(row: dict[str, str], measure: str) -> bool:
     return value.isdigit() or value in ("PASS", "FAIL")
 
 
+def attempt_dirs(runs: Path) -> list[Path]:
+    """This attempt's result directory, then the run's earlier attempts', newest first.
+
+    SCORECARD_RUNS is ``<run id>-<attempt>``. "Re-run failed jobs" re-runs only
+    the jobs that failed (a lost suite shard, the join, the final row); the
+    numbers the other jobs banked in an earlier attempt still belong to this
+    run's commit, so they are read from there rather than called unmeasured.
+    """
+    match = re.fullmatch(r"(.+)-(\d+)", runs.name)
+    if not match:
+        return [runs]
+    base, attempt = match.group(1), int(match.group(2))
+    return [runs] + [runs.parent / f"{base}-{k}" for k in range(attempt - 1, 0, -1)]
+
+
 def load_results(runs: Path, final: bool) -> tuple[dict[str, dict], list[str]]:
     results: dict[str, dict] = {}
     pending: list[str] = []
@@ -143,9 +165,13 @@ def load_results(runs: Path, final: bool) -> tuple[dict[str, dict], list[str]]:
         if measure not in own:
             results[measure] = {}
             continue
-        try:
-            results[measure] = json.loads((runs / f"{measure}.json").read_text())
-        except (OSError, ValueError):
+        for directory in attempt_dirs(runs):
+            try:
+                results[measure] = json.loads((directory / f"{measure}.json").read_text())
+                break
+            except (OSError, ValueError):
+                continue
+        else:
             if final:
                 results[measure] = {"measured": False, "note": "job did not report"}
             else:
@@ -377,9 +403,32 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
         elif int(cur_total) - int(cur_pass) > before:
             drops.append(f"{label} failing {before} -> {int(cur_total) - int(cur_pass)}")
 
+    def last_total(key: str) -> int | None:
+        """Total (passed + failed) in the newest earlier row that measured `key`."""
+        for row in earlier:
+            pieces = row.get(key, "").split("/")
+            if len(pieces) == 2 and pieces[0].isdigit() and pieces[1].isdigit():
+                return int(pieces[1])
+        return None
+
+    def total_held(label: str, measure: str, cur_total: str, key: str) -> None:
+        # Counting failures alone missed a lost shard (run 43832361876: the
+        # suite total fell from ~5667 to 4212 with three failing, and the row
+        # said OK). Tests are added and deleted, so a small drop is allowed;
+        # beyond it the total itself is the regression.
+        if measure in pending or measure in outside or not cur_total.isdigit():
+            return
+        before = last_total(key)
+        if before is not None and int(cur_total) < before * (1.0 - TOTAL_DROP_TOLERANCE):
+            drops.append(f"{label} total {before} -> {cur_total} (shard lost?)")
+
     fewer_failing_is_better("suite", "suite", suite_pass, suite_total, "suite")
     fewer_failing_is_better("twins", "twins", twins_pass, twins_total, "twins")
     fewer_failing_is_better("rust", "rust", rust_pass, rust_total, "rust")
+    total_held("suite", "suite", suite_total, "suite")
+    total_held("twins", "twins", twins_total, "twins")
+    total_held("rust", "rust", rust_total, "rust")
+    total_held("board", "board", board_total, "board")
     higher_is_better("board completed", "board", board_done, "board", 0)
     if "board" not in pending and "board" not in outside:
         before = last_measured("cpanic")
