@@ -1287,14 +1287,29 @@ def _call_targets(call, scope, bound_refs):
         rules, subject = _field_store_rules(call, operand=True)
         return [(node, rules, subject) for node in _exposed(call.value, bound_refs)]
     if call.kind == "DeleteAttribute":
-        # ``del o.<attr>`` is ``type(o).__delattr__``: it changes the object
-        # it deletes from (#7757 step 7).  The receiver's value decides at
-        # reduce whether a name bound to it still holds it as it was
-        # (``_may_change`` under ``FIELD_DELETE_METHOD``).
-        if builtin_typed(call.receiver, scope):
+        # ``del o.<attr>`` is ``type(o).__delattr__(o, "<attr>")``: a method
+        # call on the receiver (#7757 step 7), exposed as one (the receiver
+        # arm below).  A name bound to the object itself reads what the
+        # delete left in it (``_may_change`` under ``FIELD_DELETE_METHOD``,
+        # no ``sharer``).  What the object holds changes where the delete
+        # runs code -- a ``__delattr__``, a descriptor's ``__delete__`` --
+        # which the receiver's read decides at reduce (``sharer``); where no
+        # read of the receiver decides it, it is exposed as an operand handed
+        # to a call is (``_OPERAND_RULES``).
+        receiver = call.receiver
+        if builtin_typed(receiver, scope):
             return []
-        rules = ((FIELD_DELETE_METHOD, False, False),)
-        return [(node, rules, None) for node in _exposed(call.receiver, bound_refs)]
+        own = ((FIELD_DELETE_METHOD, False, False),)
+        shared = ((FIELD_DELETE_METHOD, False, True),)
+        targets = []
+        for node in _exposed(receiver, bound_refs):
+            if same_object(node, receiver):
+                targets.append((node, own, None))
+            elif getattr(receiver, "kind", None) in _READ_KINDS:
+                targets.append((node, shared, receiver))
+            else:
+                targets.append((node, _OPERAND_RULES, None))
+        return targets
     if not isinstance(call, Call):
         return []
     targets = []

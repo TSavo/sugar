@@ -162,7 +162,12 @@ def _may_change(value, method, pure, sharer, held=None) -> bool:
     no actual, an undecided value) may run any.  An operand the store hands
     that code (its rule's ``operand``; ``held`` its own value) may have
     changed when the store runs code and the operand is one a call it is
-    handed to changes."""
+    handed to changes.
+
+    ``del o.<attr>`` (``container_mutation.FIELD_DELETE_METHOD``) is
+    ``type(o).__delattr__``: a source instance's own value is its floor's
+    answer, and what it holds or shares may have changed, since the delete
+    may run code."""
     from sugar_lift_py_tests.floor import builtin_container_method as law
     from sugar_lift_py_tests.floor.object_value import ObjectValue
     from sugar_lift_py_tests.source_call_resolution import builtin_typed_value
@@ -192,11 +197,17 @@ def _may_change(value, method, pure, sharer, held=None) -> bool:
             return not sharer or value.field_store_runs_code(attr)
     kind = law.container_kind(value)
     if method == FIELD_DELETE_METHOD:
-        # ``del o.<attr>`` (``container_mutation._call_targets``): a source
-        # instance's delete is answered by its own floor
-        # (``ObjectValue.delattr``) and a builtin container's raises; any
-        # other value is changed by it, whatever it was.
-        return not isinstance(value, ObjectValue) and kind is None
+        # ``del o.<attr>`` (``container_mutation._call_targets``) is
+        # ``type(o).__delattr__``, a call.  On a source instance the object
+        # itself is what its own floor leaves (``ObjectValue.delattr``); what
+        # it holds or shares (``sharer``) is reached by whatever code the
+        # delete runs -- a ``__delattr__``, a descriptor's ``__delete__`` --
+        # which the lift never decides runs none (#7757 H4).  A builtin
+        # container's delete raises and changes nothing; any other value is
+        # changed by it, whatever it was.
+        if isinstance(value, ObjectValue):
+            return sharer
+        return kind is None
     if sharer:
         return kind is None
     if isinstance(value, ObjectValue):
