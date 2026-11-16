@@ -2837,7 +2837,8 @@ def _answered_where_minted(source, followed, kept=()) -> None:
 def _source_callee(call, scope):
     """The source ``def`` a call runs: the local ``def`` whose function value
     its callee is (``nodes._function_value_definition``); for a call by name,
-    the one the unit's lexical rows (or the module) resolve it to, or the
+    the module ``def`` its name reads (``SourceUnit.function_definition_for_read``,
+    the one resolver of which ``def`` a name denotes), or the
     local ``def`` ``scope`` binds the name to, itself or its function value
     (``nodes._local_function_bound``, as ``Call._closure_definition`` reads
     it); None otherwise.  A unit whose resolution of the call raises
@@ -2859,7 +2860,7 @@ def _source_callee(call, scope):
         return value
     if not isinstance(call.func, Name):
         return None
-    definition = call.unit.source_function_definition_for_call(call)
+    definition = call.unit.function_definition_for_read(call.func)
     if definition is not None:
         return definition
     bound = scope.get(call.func.id)

@@ -837,8 +837,16 @@ class ConstructionTestimonyReporterV1:
     ) -> None:
         """Ask the call ``node`` the identity terms of its own call-site sugar
         ``value``; a term that refuses is the one typed testimony gap."""
+        from sugar_source_tree.nodes import Name
+
         definition = value.expected_definition_ref
-        resolved_definition = node.unit.source_function_definition_for_call(node)
+        # Which ``def`` the call's callee name denotes is the one read of the
+        # name (``SourceUnit.function_definition_for_read``, #7757 N1).
+        resolved_definition = (
+            node.unit.function_definition_for_read(node.func)
+            if isinstance(node.func, Name)
+            else None
+        )
         if resolved_definition is None:
             # The caller's unit is the lexical authority for a call in it,
             # and for a cross-FILE callee it correctly has no answer -- the
