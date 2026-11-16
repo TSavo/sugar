@@ -143,12 +143,34 @@ class _FloorSugar(Sugar):
         return ()
 
 
+@dataclass(frozen=True)
+class _PlainReadObject(ObjectValue):
+    """An instance whose class prove decides reads a recorded field plainly
+    (``python:plain_read`` holds: no ``__getattribute__``, no data
+    descriptor of the name), so the read of a recorded field is that field.
+
+    These tests are about the statement's read/operate/store chain -- the
+    receiver evaluated once, the get before the right-hand side, a halt
+    blocking what follows, the value the store is handed -- not about which
+    face the read takes.  A plain ``ObjectValue`` with no class statement
+    names no class term, so since #9092 its read is the dispatched read
+    alone (``ObjectValue.plain_read_guard``), never the recorded field
+    outright; this double stands for the read's plain face, the one where
+    the chain is decided."""
+
+    def attribute(self, name, site, ctx):
+        for field in reversed(self.fields):
+            if field.name == name:
+                return ExitSet.completed(field.value)
+        return super().attribute(name, site, ctx)
+
+
 # ``(attr, value)`` every ``_RecordingStore`` store handed its call.
 _STORED: list = []
 
 
 @dataclass(frozen=True)
-class _RecordingStore(ObjectValue):
+class _RecordingStore(_PlainReadObject):
     """An instance whose store's call records what it is handed.  With no
     class term the one field store is ``type(o).__setattr__`` alone, never
     a plain store the lift decides (#7757 H1b): what the statement stores
@@ -444,7 +466,7 @@ def test_production_get_halt_blocks_rhs_arithmetic_and_store() -> None:
 def test_production_arithmetic_halt_blocks_store() -> None:
     box = {"set": 0}
 
-    class _StoreCounting(ObjectValue):
+    class _StoreCounting(_PlainReadObject):
         def field_store_call(self, name, value, site, ctx):
             box["set"] += 1
             return super().field_store_call(name, value, site, ctx)
@@ -472,7 +494,7 @@ def test_production_store_halt_is_incomplete_not_complete_raisevalue() -> None:
     """Store AttributeError via the one field store: one halted arm, never a completion."""
     from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
-    class _RefuseSet(ObjectValue):
+    class _RefuseSet(_PlainReadObject):
         def field_store_call(self, name, value, site_, ctx):
             return ground_exceptional_exit(
                 exception_name="AttributeError",
