@@ -276,9 +276,7 @@ class SymbolicValue(FloorValue):
         # a class nothing here decided.  A free/open symbol still cannot
         # invent success vs TypeError: the undecided refusal on the base law.
         if self.formal_coordinate is not None:
-            return self.undecided_unary(
-                "unary_neg", site, owner="SymbolicValue.unary_minus", read="-"
-            )
+            return self.undecided_unary("-", site, owner="SymbolicValue.unary_minus")
         return super().unary_minus(site)
 
     def multiply(self, other, site, ctx):
@@ -376,9 +374,7 @@ class SymbolicValue(FloorValue):
         # a class nothing here decided.  A free/open symbol still cannot
         # invent success vs TypeError: the undecided refusal on the base law.
         if self.formal_coordinate is not None:
-            return self.undecided_unary(
-                "unary_pos", site, owner="SymbolicValue.unary_plus", read="+"
-            )
+            return self.undecided_unary("+", site, owner="SymbolicValue.unary_plus")
         return super().unary_plus(site)
 
     def bitwise_invert(self, site):
@@ -387,9 +383,7 @@ class SymbolicValue(FloorValue):
         # a class nothing here decided.  A free/open symbol still cannot
         # invent success vs TypeError: the undecided refusal on the base law.
         if self.formal_coordinate is not None:
-            return self.undecided_unary(
-                "unary_invert", site, owner="SymbolicValue.bitwise_invert", read="~"
-            )
+            return self.undecided_unary("~", site, owner="SymbolicValue.bitwise_invert")
         return super().bitwise_invert(site)
 
     def subscript(self, index, site):

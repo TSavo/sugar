@@ -308,17 +308,17 @@ def test_discrimination_production_neg_is_not_prior_actual() -> None:
 
 
 def test_a_formal_unary_completes_only_under_its_undecided_atom() -> None:
-    """The completed face is the undecided ``py.unary_neg(x, <site>)`` under
-    ``python:unary_neg.completes``, never a folded value: no ``TermValue`` is
-    fabricated without an actual."""
+    """The completed face is the undecided
+    ``python:unary_result("-", x, <key>)`` under ``python:unary_op.completes``,
+    never a folded value: no ``TermValue`` is fabricated without an actual."""
     site = _site_from()
     function, _outcome = _helper("def helper(x):\n    return -x\n")
     (coord,) = function.formal_coordinates()
     formal = SymbolicValue(make_var("x"), coord)
     faces = UnaryOpSugar("USub", _FloorSugar(formal), site).desugar(None)
     (done,) = [arm for arm in faces.exits if isinstance(arm, Completed)]
-    assert "python:unary_neg.completes" in repr(done.guard)
-    assert "py.unary_neg" in repr(done.value)
+    assert "python:unary_op.completes" in repr(done.guard)
+    assert "python:unary_result" in repr(done.value)
     assert not isinstance(done.value, TermValue)
     assert faces.completed_value() is None
 

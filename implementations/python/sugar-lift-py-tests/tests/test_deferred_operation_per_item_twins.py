@@ -41,6 +41,14 @@ undecided two faces where it runs (``undecided_binary_faces``, #7757 audit
 row NEW-1), keyed under the live item it runs in, so the ``binary-per-item``
 twin now reads that law.
 
+``-c`` / ``+c`` / ``~c``, ``iter(c)`` and ``next(c)`` on a formal mint no
+carrier any more (#7757 NEW-1): each is the undecided read evaluated where
+it stands, its value ``python:unary_result("<op>", c, <key>)`` /
+``python:iter_result(c, <key>)`` / ``python:next_result(c, <key>)``
+(``floor_value.undecided_result_terms``), ``<key>`` the occurrence key
+inside the live item, so each item's operation is still its own
+(``test_each_item_evaluates_its_own_deferred_operation``).
+
 A lying claim is never ``sat``; a truthful one is never ``unsat``.  Each
 half goes through ``run_source_through_real_solver``: real ``sugar mint``
 then real ``sugar prove``.
@@ -204,6 +212,46 @@ _SHAPES = {
         "\n"
         "def test_twice():\n"
         "    r = twice(Reader())\n"
+        "    assert {claim}\n",
+        "r[0] != r[1]",
+        "r[0] == r[1]",
+    ),
+    # An operation on a formal that is the undecided read itself, keyed per
+    # evaluation (#7757 NEW-1): a counting ``__neg__``, and ``next`` over one
+    # iterator.
+    "unary-per-item": (
+        "class Negator:\n"
+        "    def __init__(self):\n"
+        "        self.k = 0\n"
+        "\n"
+        "    def __neg__(self):\n"
+        "        self.k += 1\n"
+        "        return self.k\n"
+        "\n"
+        "\n"
+        "def twice(c):\n"
+        "    out = []\n"
+        "    for _ in (1, 2):\n"
+        "        out.append(-c)\n"
+        "    return out\n"
+        "\n"
+        "\n"
+        "def test_twice():\n"
+        "    r = twice(Negator())\n"
+        "    assert {claim}\n",
+        "r[0] != r[1]",
+        "r[0] == r[1]",
+    ),
+    "next-per-item": (
+        "def twice(c):\n"
+        "    out = []\n"
+        "    for _ in (1, 2):\n"
+        "        out.append(next(c))\n"
+        "    return out\n"
+        "\n"
+        "\n"
+        "def test_twice():\n"
+        "    r = twice(iter([1, 2]))\n"
         "    assert {claim}\n",
         "r[0] != r[1]",
         "r[0] == r[1]",

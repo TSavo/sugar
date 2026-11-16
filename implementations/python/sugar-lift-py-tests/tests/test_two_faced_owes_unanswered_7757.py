@@ -179,8 +179,8 @@ def test_iter_on_an_undecided_value_is_two_faced_and_owes_its_call() -> None:
     faces = operation.submit(SymbolicValue(make_var("s")), None)
     _assert_two_faced_and_owed(faces, "SymbolicValue.iter")
     (done,) = [arm for arm in faces.exits if isinstance(arm, Completed)]
-    assert "python:iter.completes" in repr(done.guard)
-    assert "py.iter" in repr(done.value)
+    assert "python:iter_op.completes" in repr(done.guard)
+    assert "python:iter_result" in repr(done.value)
     assert faces.completed_value() is None
     assert "TypeError" not in repr(faces)
 
@@ -194,8 +194,8 @@ def test_next_on_an_undecided_value_is_two_faced_and_owes_its_call() -> None:
     faces = operation.submit(SymbolicValue(make_var("s")), None)
     _assert_two_faced_and_owed(faces, "SymbolicValue.next")
     (done,) = [arm for arm in faces.exits if isinstance(arm, Completed)]
-    assert "python:next.completes" in repr(done.guard)
-    assert "py.next" in repr(done.value)
+    assert "python:next_op.completes" in repr(done.guard)
+    assert "python:next_result" in repr(done.value)
     assert faces.completed_value() is None
     assert "StopIteration" not in repr(faces)
 
@@ -218,27 +218,57 @@ def test_a_formals_iter_and_next_are_the_same_two_faces() -> None:
 
 
 @pytest.mark.parametrize(
-    ("method", "protocol"),
-    [
-        ("unary_minus", "unary_neg"),
-        ("unary_plus", "unary_pos"),
-        ("bitwise_invert", "unary_invert"),
-    ],
+    ("method", "operator"),
+    [("unary_minus", "-"), ("unary_plus", "+"), ("bitwise_invert", "~")],
 )
 def test_a_formals_unary_operator_is_two_faced_and_owes_it(
-    method: str, protocol: str
+    method: str, operator: str
 ) -> None:
     """#7757 NEW-1: ``-p`` / ``+p`` / ``~p`` on a parameter is the undecided
     two faces (``FloorValue.undecided_unary``), owed, its halt kept: no
-    carrier, no ``TypeError`` guessed, no result folded."""
+    carrier, no ``TypeError`` guessed, no result folded.  Its value is
+    ``python:unary_result("<op>", p, <key>)``, keyed per evaluation."""
+    from sugar_lift_py_tests.ir import str_const
+    from sugar_lift_py_tests.occurrence import occurrence_key
+
     formal = SymbolicValue(make_var("p"), formal_coordinate=object())
     faces = getattr(formal, method)(_Site())
     _assert_two_faced_and_owed(faces, f"SymbolicValue.{method}")
     (done,) = [arm for arm in faces.exits if isinstance(arm, Completed)]
-    assert f"python:{protocol}.completes" in repr(done.guard)
-    assert f"py.{protocol}" in repr(done.value)
+    (halt,) = [arm for arm in faces.exits if isinstance(arm, Halted)]
+    key = occurrence_key(_Site())
+    term = done.value.term
+    assert term.name == "python:unary_result"
+    assert term.args == (str_const(operator), make_var("p"), str_const(key))
+    assert "python:unary_op.completes" in repr(done.guard)
+    assert halt.effect.occurrence == key
     assert faces.completed_value() is None
     assert "TypeError" not in repr(faces)
+
+
+def test_two_evaluations_of_one_formal_operation_are_two_unknowns() -> None:
+    """#7757 NEW-1 key rule: each evaluation's value names its own
+    occurrence, so two ``next(p)`` (or ``-p``) at two sites are never one
+    term, and a truthful ``a != b`` over them cannot read ``unsat``."""
+    from sugar_lift_py_tests.operations import IteratorOperation, NextOperation
+
+    class _Other(_Site):
+        class _Span:
+            start_line, start_col, end_line, end_col = 4, 4, 4, 12
+
+        line_col_span = _Span()
+
+    formal = SymbolicValue(make_var("p"), formal_coordinate=object())
+    for operate in (
+        lambda site: NextOperation(owner="t", blame=site).submit(formal, None),
+        lambda site: IteratorOperation(owner="t", blame=site).submit(formal, None),
+        lambda site: formal.unary_minus(site),
+    ):
+        first = operate(_Site())
+        second = operate(_Other())
+        (one,) = [arm for arm in first.exits if isinstance(arm, Completed)]
+        (two,) = [arm for arm in second.exits if isinstance(arm, Completed)]
+        assert one.value.term != two.value.term
 
 
 def test_a_formals_truth_is_two_faced_and_owes_it() -> None:

@@ -1176,14 +1176,14 @@ def _assert_one_unpack_halt_on_the_iterations_completed_face(
     reduction has not decided submits the one two-faced undecided iteration
     (``FloorValue.undecided_iteration``) and its recurrence follows the
     completed face, so every arm of the item, the unpack's halt among them,
-    holds ``python:iter.completes`` beside its own guard; the iteration's own
+    holds ``python:iter_op.completes`` beside its own guard; the iteration's own
     halt is another arm.  Never the unpack's halt dropped, and never one that
     stands where the iteration halted."""
     (halt,) = unpack_halts
     held = _subformulas(halt.guard)
     assert not_(completes) in held, halt.guard
     assert any(
-        getattr(formula, "name", None) == "python:iter.completes" for formula in held
+        getattr(formula, "name", None) == "python:iter_op.completes" for formula in held
     ), halt.guard
 
 

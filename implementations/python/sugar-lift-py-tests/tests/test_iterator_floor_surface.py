@@ -492,8 +492,8 @@ def _two_faced_and_owed(outcome, owner: str, protocol: str):
     assert halt.guard == complement_guard(done.guard)
     assert type(halt.effect) is UndeterminedRaiseEffect
     assert halt.effect.producer_node_owner == owner
-    assert f"python:{protocol}.completes" in repr(done.guard)
-    assert f"py.{protocol}" in repr(done.value)
+    assert f"python:{protocol}_op.completes" in repr(done.guard)
+    assert f"python:{protocol}_result" in repr(done.value)
     assert done.owed and done.owed == halt.owed
     return done, halt
 

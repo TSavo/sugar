@@ -292,7 +292,7 @@ def stepped(
     operation (``NextOperation``) submitted to the iterator, which owns the
     answer: an iterator whose ``__next__`` is not decided here is the one
     two-faced undecided read (``FloorValue.undecided_next``: its value under
-    ``python:next.completes``, its undecided raise owed under the
+    ``python:next_op.completes``, its undecided raise owed under the
     complement); an instance's is its class's ``__next__``, called, whose
     authenticated ``StopIteration`` is the iteration ending.  ``record`` is
     the record a statement's halt carries (``halts_recorded``); an

@@ -207,7 +207,7 @@ def test_nonfinite_iterable_with_undecided_filter_owes_the_filter_read() -> None
     assert all(type(arm.effect) is UndeterminedRaiseEffect for arm in halts), outcome
     assert any(arm.effect.producer_node_owner == "ListValue.iter" for arm in halts)
     # The completed arm stands only under both completes atoms.
-    assert "python:iter.completes" in repr(done.guard), done.guard
+    assert "python:iter_op.completes" in repr(done.guard), done.guard
     assert "python:attribute.completes" in repr(done.guard), done.guard
     # Nothing is projected: the value is the comprehension's own coordinate,
     # its kind over its occurrence and this evaluation of it.  The filter's

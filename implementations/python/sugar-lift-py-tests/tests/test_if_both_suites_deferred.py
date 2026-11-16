@@ -14,6 +14,7 @@ from __future__ import annotations
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+from sugar_lift_py_tests.ir import str_const
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import FunctionDef
@@ -68,9 +69,10 @@ def test_each_suite_keeps_its_undecided_operation_halt() -> None:
 
 def test_neither_suite_folds_a_value_it_has_no_actual_for() -> None:
     """No caller's actual is supplied here, so no suite completes with a
-    folded ``int``: each return is the undecided ``py.unary_neg`` /
-    ``py.unary_invert``."""
+    folded ``int``: each return is the undecided
+    ``python:unary_result("-", x, <key>)`` or ``python:unary_result("~", x,
+    <key>)``."""
     text = repr(_helper_outcome(HELPER))
-    assert "py.unary_neg" in text and "py.unary_invert" in text
-    assert "python:unary_neg.completes" in text
-    assert "python:unary_invert.completes" in text
+    assert "python:unary_result" in text
+    assert "python:unary_op.completes" in text
+    assert repr(str_const("-")) in text and repr(str_const("~")) in text
