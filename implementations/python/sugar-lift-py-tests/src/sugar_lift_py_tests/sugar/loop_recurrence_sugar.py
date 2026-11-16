@@ -1286,27 +1286,36 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         item stepped from ``advanced`` (``_advance_iterator``)."""
         from dataclasses import replace
 
+        from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
         from sugar_lift_py_tests.outcome import Halted
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             halt_record,
             reduce_block_to_exitset,
         )
 
-        projected = self._project_iteration_target(runtime.target_pattern, value, ctx)
-        # On a halted arm assignment has not begun: the positional-unpack
-        # Floor owns the halt, and its record is the empty one in the exact
-        # context entering this iteration (``halt_record``).  The item runs
-        # beneath each completed arm: one plain roster, or the completed face
-        # of a symbolic member's runtime unpack beside its halt.
-        projected = ExitSet(
-            tuple(
-                replace(face, state=halt_record(ctx))
-                if isinstance(face, Halted)
-                else face
-                for face in projected.exits
+        # The item's unpack is the item's own evaluation, inside its segment
+        # as the body is (and as a comprehension member's unpack is,
+        # ``ComprehensionSugar._run_in_hand``, and the symbolic item's,
+        # ``_enter_symbolic_item``): two items' unpacks of a symbolic member
+        # are two keys, never one.
+        with entered(loop_iteration_segment(self.target_cid, index)):
+            projected = self._project_iteration_target(
+                runtime.target_pattern, value, ctx
             )
-        ).normalize()
-        from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
+            # On a halted arm assignment has not begun: the positional-unpack
+            # Floor owns the halt, and its record is the empty one in the
+            # exact context entering this iteration (``halt_record``).  The
+            # item runs beneath each completed arm: one plain roster, or the
+            # completed face of a symbolic member's runtime unpack beside its
+            # halt.
+            projected = ExitSet(
+                tuple(
+                    replace(face, state=halt_record(ctx))
+                    if isinstance(face, Halted)
+                    else face
+                    for face in projected.exits
+                )
+            ).normalize()
 
         def resume(ctx, *, entries, carried, index):
             # The next item takes the iterator's next element.
