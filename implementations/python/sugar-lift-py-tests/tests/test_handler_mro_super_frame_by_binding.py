@@ -8,7 +8,7 @@
   (``matches_raise_effect``). A superclass handler (``Exception``, bare
   ``except``) gates; a rebound, imported or source class never does by
   spelling; an undecided handler leaves the plain join.
-- A mapping object's dunders resolve through the class's MRO
+- A ``dict`` subclass's dunders resolve through the class's MRO
   (``ClassDef.namespace_owner`` over the one base walk): a source override
   before ``dict`` wins, a source method after ``dict`` does not.
 - A zero-argument ``super()`` reads the frame its call runs in: a lambda is
@@ -25,13 +25,12 @@ import pytest
 from frame_fresh import FRAME_FRESH
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor import CallSiteValue, MappingObjectValue
+from sugar_lift_py_tests.floor import CallSiteValue, ObjectValue
 from sugar_lift_py_tests.floor.builtin_semantic_callable import (
     zero_argument_super_has_no_arguments,
     zero_argument_super_receiver,
 )
 from sugar_lift_py_tests.floor.string_value import StringValue
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.import_binding import (
     TryImportGate,
     _ImportDef,
@@ -180,26 +179,31 @@ def _receivers():
 def test_a_source_override_before_dict_wins_every_dunder() -> None:
     _context, receivers = _receivers()
     override = receivers["Override"]
-    assert type(override) is MappingObjectValue
+    # A ``dict`` subclass's instance is a plain instance (#7757 S1): each
+    # dunder is read by the one class-namespace lookup (``class_member``,
+    # ``lacks_item_method``), never a second walk of its own.
+    assert type(override) is ObjectValue
 
-    assert override.protocol_owner("__getitem__", "t") == "source"
-    assert override.protocol_owner("__delitem__", "t") == "source"
-    assert override.protocol_owner("__setitem__", "t") == "dict"
-    assert override.protocol_owner("__len__", "t") == "dict"
+    assert override.has_method("__getitem__") is True
+    assert override.has_method("__delitem__") is True
+    # ``dict`` binds ``__setitem__`` and ``__len__``: no source member.
+    assert override.has_method("__setitem__") is False
+    assert not override.lacks_item_method("__setitem__")
+    assert not override.lacks_item_method("__len__")
     # ``dict`` binds no ``__bool__``: truth falls to ``__len__``.
-    assert override.protocol_owner("__bool__", "t") is None
+    assert override.lacks_item_method("__bool__")
 
 
 def test_a_source_method_after_dict_in_the_mro_does_not_win() -> None:
     _context, receivers = _receivers()
     after = receivers["After"]
-    assert type(after) is MappingObjectValue
+    assert type(after) is ObjectValue
     # The roster holds Mixin's ``__getitem__``, but the one class-namespace
     # lookup reaches dict first: no source method answers.
     assert any(method.name == "__getitem__" for method in after.methods)
     assert after.has_method("__getitem__") is False
-
-    assert after.protocol_owner("__getitem__", "t") == "dict"
+    # ``dict`` binds it.
+    assert not after.lacks_item_method("__getitem__")
 
 
 def test_getitem_dispatches_the_source_override() -> None:
@@ -229,13 +233,6 @@ def test_getitem_dispatches_the_source_override() -> None:
     assert completed.value.body is None
     assert completed.value.target_name.endswith("Override.__getitem__")
     assert halted.effect.exception_name is None
-
-
-def test_a_door_without_context_refuses_a_source_override() -> None:
-    _context, receivers = _receivers()
-
-    with pytest.raises(ConstructionPanic):
-        receivers["Override"].subscript(StringValue("k"), "override-subscript")
 
 
 # --- zero-argument super(): the frame the call runs in -----------------------

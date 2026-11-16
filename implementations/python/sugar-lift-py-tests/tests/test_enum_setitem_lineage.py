@@ -20,7 +20,7 @@ from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import (
     BuiltinSuperValue,
     CallSiteValue,
-    MappingObjectValue,
+    ObjectValue,
     ReceiverOwnedMutationResult,
     RuntimeClassValue,
     StringValue,
@@ -49,7 +49,7 @@ def _source_receiver(source: str):
     receiver = class_outcome.completed_value().fresh_receiver(
         "namespace-coordinate", allocation=FRAME_FRESH
     )
-    assert isinstance(receiver, MappingObjectValue)
+    assert type(receiver) is ObjectValue
     return receiver, context
 
 

@@ -3,7 +3,7 @@ leftovers of #8118).
 
 - The ``__class__`` cell is the class whose body defines the function the
   call runs, at every application: a method (its own frame), a source
-  store through a mapping (``MappingObjectValue._source_store``).  A class
+  item store through an instance (``ObjectValue._implicit_item_call``).  A class
   call dispatches ``__init__`` (#7757 B3), whose own frame seats its cell.
   ``class A: def m(self): return super().m()`` / ``class B(A): pass`` /
   ``B().m()`` searches after ``A``, never after ``B``.
@@ -28,8 +28,8 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.floor import (
     BuiltinSuperValue,
     CallSiteValue,
-    MappingObjectValue,
     NoneValue,
+    ObjectValue,
     ReceiverOwnedMutationResult,
     StringValue,
     TermValue,
@@ -110,7 +110,7 @@ def test_a_source_store_runs_an_inherited_override_with_its_defining_class() -> 
     (done,) = [arm for arm in stored.exits if isinstance(arm, Completed)]
     assert stored.halts(), stored
     assert isinstance(done.value, SymbolicValue)
-    assert not isinstance(done.value, MappingObjectValue)
+    assert not isinstance(done.value, ObjectValue)
 
 
 # --- (2) the frame a zero-argument super() runs in ---------------------------
@@ -219,9 +219,7 @@ _DICT_OVERRIDES = (
 def _override():
     context, classes = _classes(_DICT_OVERRIDES, "dict_overrides.py")
     definition = classes["Override"]
-    receiver = definition.fresh_receiver("receiver", allocation=FRAME_FRESH).mapping_with_entries(
-        ((StringValue("k"), TermValue(7)),)
-    )
+    receiver = definition.fresh_receiver("receiver", allocation=FRAME_FRESH)
     return context, definition, receiver
 
 
@@ -269,14 +267,12 @@ def test_super_into_the_dict_base_is_the_one_call(name, arguments) -> None:
 
 
 def _undecided_deletion_arms(outcome):
-    """``del`` on the dict base: whether the key is held is read off storage
-    that is not current (``MappingObjectValue._builtin_dict``), so the
-    deletion is the undecided item mutation
-    (``store_effect_sugar.undecided_item_mutation_faces``): it completes under its own
-    site-keyed atom, leaving the receiver after it unknown, and halts with an
-    undetermined raise under the complement.  Neither ``KeyError`` nor the
-    key's removal is decided from contents the object may no longer hold, and
-    neither face is dropped."""
+    """``del`` through the instance's ``__delitem__``: the implicit
+    special-method call (``ObjectValue._implicit_item_call``), which reads no
+    storage: it completes under the call's own atom, leaving the receiver
+    after it unknown, and halts with an undetermined raise under the
+    complement.  Neither ``KeyError`` nor the key's removal is decided here,
+    and neither face is dropped."""
     from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 
@@ -299,4 +295,4 @@ def test_del_through_the_source_override_leaves_the_dict_base_undecided() -> Non
     # The override's ``super().__delitem__(key)`` leaves the receiver its one
     # mutation states: unknown, never ``entries == ()``.
     assert isinstance(done.value, SymbolicValue)
-    assert not isinstance(done.value, MappingObjectValue)
+    assert not isinstance(done.value, ObjectValue)

@@ -6,9 +6,8 @@ implement ``subscript_with`` re-dispatch here; floors that only implement
 this one calls a floor's ``subscript`` / ``subscript_with`` /
 ``subscript_with_occurrence`` on another value, and a floor calls its own only
 inside those protocol methods (``test_subscript_one_door_7757``): every read
-(a source subscript, a pattern's projection, a walrus's presented value, a
-mapping object's ``__getitem__``, an opaque operation's downstream value, each
-arm of a guarded value) reaches the receiver through the door.  No read waits
+(a source subscript, a pattern's projection, a walrus's presented value, an
+opaque operation's downstream value, each arm of a guarded value) reaches the receiver through the door.  No read waits
 on a caller's actual (#7757): a parameter receiver (``p[k]``, ``p[a:b]``) is
 the one undecided read (``FloorValue.undecided_subscript``), and a parameter
 index or slice bound on a receiver the lift decides is that receiver's own

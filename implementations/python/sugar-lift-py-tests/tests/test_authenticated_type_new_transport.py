@@ -18,7 +18,7 @@ from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import (
     BuiltinSuperValue,
     CallSiteValue,
-    MappingObjectValue,
+    DictValue,
     RuntimeClassValue,
     StringValue,
     TermValue,
@@ -69,11 +69,8 @@ def _the_one_call(outcome) -> None:
 
 
 def test_super_new_over_type_is_the_one_call_never_a_class_built_here() -> None:
-    namespace = MappingObjectValue(
-        "Namespace",
-        (),
-        identity="namespace-coordinate",
-        entries=((StringValue("member"), TermValue(7)),),
+    namespace = DictValue(
+        ((StringValue("member"), TermValue(7)),),
         allocation=FRAME_FRESH,
     )
 

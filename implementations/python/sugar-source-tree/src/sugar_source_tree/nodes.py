@@ -12226,8 +12226,8 @@ class ClassDef(Statement):
         """One base expression of this class statement, read by its binding
         where it stands: the module ``class`` statement the read reaches
         (also under a subscript ``Base[T]``), ``"object"`` for the builtin
-        ``object``, ``"dict"`` for the builtin ``dict`` (a mapping object's
-        storage base, ``namespace_owner``), ``"type"`` for the builtin
+        ``object``, ``"dict"`` for the builtin ``dict`` (a ``dict`` subclass's
+        base, ``namespace_owner``), ``"type"`` for the builtin
         ``type`` (a metaclass's base, whose ``__new__`` a zero-argument
         ``super()`` reaches), a builtin exception class's canonical name,
         else None."""

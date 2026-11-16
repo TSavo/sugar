@@ -28,7 +28,6 @@ from sugar_lift_py_tests.context_manager_resolution import (
 )
 from sugar_lift_py_tests.floor import (
     LambdaCallable,
-    MappingObjectValue,
     ObjectField,
     TermValue,
 )
@@ -386,23 +385,6 @@ def test_a_receiver_with_no_class_statement_stores_and_deletes_its_class_by_the_
     completed = [face for face in outcome.exits if not isinstance(face, Halted)]
     assert len(halted) == 1 and len(completed) == 1
     assert getattr(halted[0].effect, "exception_name", None) != "TypeError"
-
-
-def test_delattr_keeps_a_mapping_receiver_a_mapping() -> None:
-    box = _bare_class_value(_classes("class Box(dict):\n    pass\n")["Box"])
-    receiver = MappingObjectValue(
-        "Box",
-        (ObjectField("x", TermValue(1)),),
-        identity="receiver",
-        defining_class=box,
-        allocation=FRAME_FRESH,
-        entries=((TermValue(1), TermValue(2)),),
-    )
-
-    after = receiver.delattr("x", "del-site", None).completed_value()
-    assert type(after) is MappingObjectValue
-    assert after.entries == receiver.entries
-    assert after.defining_class is box
 
 
 # --- 6. stores through other references -------------------------------------------

@@ -4,7 +4,7 @@
 receiver answers, and nothing waits on a caller's actual (audit 2 row NEW-1).
 A parameter receiver is the one undecided read; a parameter index on a
 receiver the lift decides is that receiver's own read with the symbolic key.
-A pattern's read, a walrus's read, a mapping object's ``__getitem__``, an
+A pattern's read, a walrus's read, an
 opaque operation's downstream read and an append's residual read all take
 it, and no module outside the door calls a floor's ``subscript`` /
 ``subscript_with`` on another value (the law below).
@@ -23,7 +23,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from frame_fresh import FRAME_FRESH, fresh
+from frame_fresh import fresh
 from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
@@ -372,35 +372,6 @@ def test_a_walrus_read_with_a_parameter_index_is_the_undecided_read() -> None:
     walrus = NamedExpressionValue("ys", fresh(ListValue, (TermValue(1), TermValue(2))))
 
     _assert_undecided_read(walrus.subscript(index, site), site)
-
-
-def test_a_mapping_object_getitem_with_a_parameter_key_is_the_undecided_read() -> (
-    None
-):
-    from sugar_lift_py_tests.floor.mapping_object_value import MappingObjectValue
-
-    site = _site()
-    key, _coordinate = _formal(site)
-    mapping = MappingObjectValue(
-        "Registry",
-        (),
-        entries=((StringValue("a"), TermValue(1)),),
-        allocation=FRAME_FRESH,
-    )
-
-    for exits in (
-        mapping.subscript(key, site),
-        mapping.call_method_value(
-            "__getitem__", (key,), owner="test", blame=site, ctx=None
-        ),
-    ):
-        # The dict base's storage is not current
-        # (``MappingObjectValue._builtin_dict``) and the key is a parameter:
-        # the undecided read -- two faces, each owing the ``undecided``
-        # member at the read's site -- never the entry it holds, never a
-        # refusal and never a carrier.
-        _assert_undecided_read(exits, site)
-        assert exits.completed_value() is None
 
 
 def test_a_guarded_parameter_arm_is_the_undecided_read_through_the_door() -> None:

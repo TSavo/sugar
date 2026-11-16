@@ -1,9 +1,12 @@
+from dataclasses import replace
+
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.floor import (
     BuiltinSuperValue,
-    MappingObjectValue,
     NoneValue,
+    ObjectField,
+    ObjectValue,
     ReceiverOwnedMutationResult,
     StringValue,
     TermValue,
@@ -63,20 +66,18 @@ def test_builtin_super_setitem_is_the_one_call_never_dicts_answer_here():
 def test_receiver_transition_updates_every_exact_identity_alias_only():
     definition, receiver = _definition_and_receiver()
     del definition
-    distinct = MappingObjectValue(
-        "Mapping", (), identity="other", allocation=FRAME_FRESH
-    )
-    # A receiver transition with the operation's ``None`` kept apart, as a
-    # mapping's own mutation states it.
+    distinct = ObjectValue("Mapping", (), identity="other", allocation=FRAME_FRESH)
+    # A receiver transition with the operation's ``None`` kept apart: the
+    # same object (its identity) after the operation.
     result = ReceiverOwnedMutationResult(
         receiver,
-        receiver.mapping_with_entries(((StringValue("member"), TermValue(7)),)),
+        replace(receiver, fields=(ObjectField("member", TermValue(7)),)),
         NoneValue(),
     )
     ctx = ReduceContext.root(owner="test")
     ctx = ctx.with_temporal(ctx.temporal.bind_value("left", receiver))
     ctx = ctx.with_temporal(
-        ctx.temporal.bind_value("alias", receiver.mapping_with_entries(()))
+        ctx.temporal.bind_value("alias", replace(receiver))
     )
     ctx = ctx.with_temporal(ctx.temporal.bind_value("distinct", distinct))
 

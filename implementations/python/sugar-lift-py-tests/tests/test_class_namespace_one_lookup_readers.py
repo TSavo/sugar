@@ -5,8 +5,8 @@
 holds.  Three things follow, each tested here:
 
 1. Every reader of a class's methods and attributes -- an instance's member
-   read, call, comparison and store (``ObjectValue.class_member``), a mapping
-   receiver's protocol owner, ``Cls.m(...)``, the ``__init__`` a class call
+   read, call, comparison and store (``ObjectValue.class_member``), a
+   ``dict`` subclass's protocol name, ``Cls.m(...)``, the ``__init__`` a class call
    runs (``ClassDef.initializer_entry``) -- reads that lookup; a name it does
    not decide is the one unanswered form, never the body's ``def``.
 2. A class body's binding stands only when its own control flow decides it:
@@ -26,7 +26,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-from sugar_lift_py_tests.floor import MappingObjectValue, StringValue
+from sugar_lift_py_tests.floor import StringValue
 from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
 from sugar_lift_py_tests.floor.object_value import ObjectValue
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -174,7 +174,9 @@ def test_a_mapping_protocol_name_a_store_writes_is_undecided() -> None:
         "M.get = g\n"
         "M.__getitem__ = g\n"
     )["M"]
-    receiver = MappingObjectValue(
+    # A ``dict`` subclass's instance is a plain instance (#7757 S1): its
+    # members are read and called through the one lookup, as any instance's.
+    receiver = ObjectValue(
         "M",
         (),
         identity="receiver",
@@ -183,9 +185,14 @@ def test_a_mapping_protocol_name_a_store_writes_is_undecided() -> None:
     )
 
     # Neither the body's ``__getitem__`` nor dict's ``get`` is assumed.
-    assert receiver._protocol_owner("__getitem__") == "undecided"
-    assert receiver._protocol_owner("get") == "undecided"
-    assert receiver._protocol_owner("__len__") == "dict"
+    assert receiver.has_method("__getitem__") is None
+    assert receiver.has_method("get") is None
+    _unanswered(
+        receiver.call_method_value(
+            "__getitem__", (StringValue("k"),), owner="test", blame="getitem-site"
+        ),
+        "M.__getitem__",
+    )
     _unanswered(
         receiver.call_method_value(
             "get", (StringValue("k"),), owner="test", blame="get-site"

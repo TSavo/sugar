@@ -23,11 +23,10 @@ class BoundMethodValue(FloorValue):
     (``LambdaCallable``).  Every call of the value binds that very member
     (``ObjectValue.call_member``), never one selected again by name; ``o.m(...)``
     on a source instance is the attribute read answering this value, then
-    this call.  None only for a method the receiver answers itself by name:
-    a builtin base's (a mapping receiver's ``dict`` storage,
-    ``MappingObjectValue.call_method_value``) or the one a ``super()``
-    lookup selects (``BuiltinSuperMethodValue``).  Any other use of the value
-    (truthiness, comparison, further attributes) stays a FloorValue panic.
+    this call.  None only for the method a ``super()`` lookup selects
+    (``BuiltinSuperMethodValue``), which the receiver answers by name.  Any
+    other use of the value (truthiness, comparison, further attributes) stays
+    a FloorValue panic.
     """
 
     receiver: object

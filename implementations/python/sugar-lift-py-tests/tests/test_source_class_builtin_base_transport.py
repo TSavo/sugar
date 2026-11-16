@@ -5,7 +5,6 @@ from sugar_lift_py_tests.floor import (
     BlockValue,
     BuiltinDictClassValue,
     ClassValue,
-    MappingObjectValue,
     ObjectValue,
 )
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -35,7 +34,8 @@ def test_builtin_dict_base_is_evaluated_through_the_temporal_floor() -> None:
     assert len(class_value.base_classes) == 1
     assert type(class_value.base_classes[0]) is BuiltinDictClassValue
     receiver = class_value.fresh_receiver("receiver", allocation=FRAME_FRESH)
-    assert type(receiver) is MappingObjectValue
+    # A ``dict`` subclass's instance is a plain instance (#7757 S1).
+    assert type(receiver) is ObjectValue
 
 
 def test_source_subclass_transports_its_authenticated_builtin_base() -> None:
@@ -50,7 +50,8 @@ def test_source_subclass_transports_its_authenticated_builtin_base() -> None:
 
     assert derived_value.base_classes == (base_value,)
     receiver = derived_value.fresh_receiver("receiver", allocation=FRAME_FRESH)
-    assert type(receiver) is MappingObjectValue
+    # A ``dict`` subclass's instance is a plain instance (#7757 S1).
+    assert type(receiver) is ObjectValue
 
 
 def test_class_named_dict_cannot_fabricate_builtin_mapping_semantics() -> None:

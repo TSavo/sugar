@@ -57,7 +57,6 @@ from .none_value import NoneValue
 from .object_field import ObjectField
 from .object_method_value import ObjectMethodValue
 from .object_value import ObjectValue
-from .mapping_object_value import MappingObjectValue
 from .runtime_class_value import RuntimeClassValue
 from .receiver_field_store_value import ReceiverFieldStoreValue
 from .receiver_owned_mutation_result import ReceiverOwnedMutationResult
@@ -123,7 +122,6 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     NoneValue,
     ObjectMethodValue,
     ObjectValue,
-    MappingObjectValue,
     RuntimeClassValue,
     TupleIteratorValue,
     OpaqueOpCallsite,
@@ -200,7 +198,6 @@ __all__ = [
     "ObjectField",
     "ObjectMethodValue",
     "ObjectValue",
-    "MappingObjectValue",
     "RuntimeClassValue",
     "TupleIteratorValue",
     "ReceiverFieldStoreValue",

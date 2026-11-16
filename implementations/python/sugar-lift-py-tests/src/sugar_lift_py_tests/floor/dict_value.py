@@ -37,10 +37,6 @@ class DictValue(GuardStableValue):
     def mapping_entries(self) -> tuple:
         return self.entries
 
-    def mapping_with_entries(self, entries: tuple) -> "DictValue":
-        # The same object: it keeps its ``allocation``.
-        return replace(self, entries=entries)
-
     def denotes_value(self) -> bool:
         """This floor value denotes a ``dict``."""
         return True
