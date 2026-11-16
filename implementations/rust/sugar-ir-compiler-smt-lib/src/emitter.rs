@@ -4827,6 +4827,15 @@ fn emit_python_value_atomic(name: &str, args: &[Term]) -> Result<Option<String>,
     // `bool(x)` of a decided builtin value is Python's own truth of it
     // (`py_builtin_truth`), where the value holds; else the atom as it
     // stands (#7757 step 9).
+    //
+    // Of an undecided Int-universe value (a call's result) it is the same
+    // truth read at the builtin type the value is stated to have
+    // (`py_stated`: `python:value.is_int` / `python:value.is_str`, the
+    // guards `py.eq` reads), and the atom where no type is stated.  A joined
+    // contract's `out = False` (a manager's `__exit__` that returns False)
+    // states its result is the int 0 (`py_literal_type_axioms`), so the
+    // caller's `bool()` of it is false and the face that needed it true is
+    // ruled out; with nothing stated both faces stand, as before.
     if name == PY_TRUTHY {
         if let [operand] = args {
             if let Some(decided) = py_decided(operand) {
@@ -4834,6 +4843,17 @@ fn emit_python_value_atomic(name: &str, args: &[Term]) -> Result<Option<String>,
                     let atom = emit_atomic(name, args)?;
                     return Ok(Some(smt_ite(&decided.holds(), &truth, &atom)));
                 }
+            }
+            if let Some(PySide::Undecided(_)) = py_side(operand) {
+                let mut rendered = emit_atomic(name, args)?;
+                for ty in [PyType::Str, PyType::Int] {
+                    if let Some(stated) = py_stated(operand, ty) {
+                        if let Some(truth) = py_builtin_truth(&stated) {
+                            rendered = smt_ite(&stated.holds(), &truth, &rendered);
+                        }
+                    }
+                }
+                return Ok(Some(rendered));
             }
         }
         return Ok(None);

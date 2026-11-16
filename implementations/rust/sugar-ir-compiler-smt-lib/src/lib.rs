@@ -2592,6 +2592,35 @@ mod tests {
     }
 
     #[test]
+    fn python_truth_of_a_call_result_a_joined_post_states_is_its_value() {
+        // `bool(m.__exit__(...))` where the joined contract states the
+        // result `out = False`: the result is the int 0, so its truth is
+        // false (#7757 step 9).
+        let truthy = |operand: serde_json::Value| atomic("py.truthy", vec![operand]);
+        let call = ctor(
+            "python:call_result",
+            vec![
+                ctor("call:m.exit", vec![string_const("x")]),
+                ctor("python:occurrence", vec![string_const("exit-site")]),
+            ],
+        );
+        let stated = |value: serde_json::Value| eq(call.clone(), value);
+        assert_twin(
+            all_of(vec![stated(bool_const(false)), not_formula(truthy(call.clone()))]),
+            all_of(vec![stated(bool_const(false)), truthy(call.clone())]),
+            "bool(f()) where f() returns False",
+        );
+        assert_twin(
+            all_of(vec![stated(int_const(3)), truthy(call.clone())]),
+            all_of(vec![stated(int_const(3)), not_formula(truthy(call.clone()))]),
+            "bool(f()) where f() returns 3",
+        );
+        // Nothing states the result: both faces stand.
+        assert_eq!(solve(&truthy(call.clone())), "sat", "an unjoined result may be true");
+        assert_eq!(solve(&not_formula(truthy(call))), "sat", "an unjoined result may be false");
+    }
+
+    #[test]
     fn python_str_subscript_is_smt_string_index() {
         let at = |i: i64| ctor("py.subscript", vec![string_const("xyz"), int_const(i)]);
         assert_twin(
