@@ -40,7 +40,7 @@ def _source_call_binding_gap_row(error) -> dict[str, object]:
     return {
         "exception_type": type(error).__name__,
         "gap": {
-            "owner": "SourceCallFrame.bind_node_actuals",
+            "owner": "SourceVisibleCallFrameV1.bind_actuals",
             "observed": str(error),
             "requested": "every call actual consumed by the authenticated frame",
             "fix": "bind or reject the unconsumed actual at the call frame",

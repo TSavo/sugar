@@ -13331,7 +13331,6 @@ class ClassDef(Statement):
             body=self._source_visible_body(formal_scope, dataclass_fields=fields),
             owner=self,
             constructed_new_method=None,
-            dataclass_fields=fields,
         )
 
     def _make_field_coordinate_ref(self, target, coordinate) -> "Node":
@@ -13466,7 +13465,6 @@ class ClassDef(Statement):
                 ),
                 owner=self,
                 constructed_new_method=constructed_new_method,
-                exception_args_coordinate_cid=args_coordinate.cid,
             )
         params = () if constructor is None else constructor.params[1:]
         coordinates = tuple(
@@ -20998,8 +20996,9 @@ class Lambda(Expression):
 
         A module global the body reads is read where the lambda is called,
         as a ``def``'s body reads one (``_module_global_references``): this
-        substitution holds it out of the body's scope, and the lambda's call
-        frame binds it (``_source_visible_body``).  The binding standing
+        substitution holds it out of the body's scope, and the lambda's own
+        construction binds it (``_construct_sugar``, ``contract_universe``).
+        The binding standing
         where the lambda was made (at module level, in a class body, or a
         ``def`` body's own reference) is never read."""
         from .shadow import rewrite, rewrite_with_leaves
@@ -21258,7 +21257,15 @@ class Lambda(Expression):
         return any(name not in covered for name in names)
 
     def source_visible_call_frame(self):
-        """Project the lambda through the ordinary source-call-frame door."""
+        """This lambda's call frame: its signature, the coordinates its
+        formals and captured cells are read through, and its defaults' keys
+        -- what a call of it binds by the one binder (``bind_call``) and
+        supplies on its edge (``LambdaCallable._edge_call``), as a ``def``'s
+        frame is (``FunctionDef.source_visible_call_frame``).  It holds no
+        body: the body is substituted and constructed once, in the lambda's
+        own construction (``_construct_sugar``, its universe
+        ``contract_universe``), and no call applies or rebuilds it (#7757
+        N4)."""
         from sugar_lift_py_tests.context_manager_resolution import (
             SourceFragmentCoordinateV1,
         )
@@ -21278,10 +21285,6 @@ class Lambda(Expression):
             BindingCoordinateV1.mint(owner_cid, param.fragment, ("formal", index))
             for index, param in enumerate(self.params)
         )
-        formal_scope = {
-            param.name: self._make_coordinate_ref(param, coordinate)
-            for param, coordinate in zip(self.params, coordinates, strict=True)
-        }
         captured_names, captured_coordinates = self._captured_bindings()
         return SourceVisibleCallFrameV1(
             source_identity_cid=self.unit.source_cid,
@@ -21311,25 +21314,10 @@ class Lambda(Expression):
                 param.default.fragment.seal().cid if param.default is not None else None
                 for param in self.params
             ),
-            body=self._source_visible_body(formal_scope),
+            body=None,
             owner=self,
             captured_names=captured_names,
             captured_coordinates=captured_coordinates,
-        )
-
-    def _source_visible_body(self, scope):
-        """The body a call of this lambda runs: its formals bound, and each
-        module global it reads bound where it is called
-        (``_module_global_references``), as a ``def``'s body is
-        (``FunctionDef._substitute_body``)."""
-        from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
-        from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
-            SourceVisibleFunctionBodySugar,
-        )
-
-        body = self.body.substitute({**self._module_global_references(), **scope})
-        return SourceVisibleFunctionBodySugar(
-            (ReturnSugar(value=body.sugar(), site=self.fragment),), self.fragment
         )
 
     def _make_coordinate_ref(self, param: "Param", coordinate) -> "Node":
@@ -21381,7 +21369,8 @@ class Lambda(Expression):
         its formals, as a ``def``'s universe is (``FunctionDef.
         _construct_sugar``), named by its join symbol.
 
-        The body is the one its call frame runs (``_source_visible_body``):
+        The body is the lambda's own, built here and in ``_construct_sugar``
+        (its frame holds none, #7757 N4):
         the lambda substituted where it stands (``_construct_sugar``: a lambda
         asked for outside a substituted body is substituted first), each
         module global it reads bound where it is called, and each formal
@@ -22839,7 +22828,7 @@ class Call(Expression):
         Empty when a read name has no value binding here (unbound, or bound
         to a definition or an import).  Empty, too, when this scope's binding of a
         read name is not the cell's: a lambda reached in another function (a
-        formal specialized to it, ``bind_node_actuals``), or a name a
+        formal given it), or a name a
         comprehension or lambda around this call rebinds
         (``_nearer_bound_names``)."""
         names, _coordinates = definition._captured_bindings()
@@ -23442,20 +23431,12 @@ class Call(Expression):
         ):
             callee = callee.of
         if isinstance(callee, Lambda):
-            from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
-
-            if any(keyword.arg is None for keyword in self.keywords):
-                raise SourceCallBindingGap(
-                    "spread keyword requires typed variadic projection"
-                )
-            source_call_frame = callee.source_visible_call_frame().bind_node_actuals(
-                self.args,
-                tuple(
-                    (keyword.arg, keyword.value)
-                    for keyword in self.keywords
-                    if keyword.arg is not None
-                ),
-            )
+            # The lambda's frame is its signature (#7757 N4): the call reads
+            # only its identity and the closure cells it names
+            # (``_captured_cells``); the actuals are bound by the one binder
+            # where the call reduces (``LambdaCallable.callable_application_with``
+            # -> ``bind_call``), and the body is the lambda's own construction's.
+            source_call_frame = callee.source_visible_call_frame()
         return ComputedCallSugar(
             callee=self.func.sugar(),
             args=tuple(a.sugar() for a in self.args),

@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from sugar_lift_python_source.canonical import cid_of_json
 from sugar_source_tree.binding_provenance import BindingCoordinateV1
-from sugar_source_tree.binding_provenance import BoundBindingStateV1
-from sugar_source_tree.binding_state import BindingEntryV1
 
 from .context_manager_resolution import SourceFragmentCoordinateV1
 
@@ -304,8 +302,9 @@ def frame_read_at_module_execution_site(frame, site):
 class SourceVisibleCallFrameV1:
     """A callable's call frame: its signature, formal and captured
     coordinates and default keys, what the one binder binds a call by.  A
-    ``def``'s frame holds no body (``body`` None): its body is its own
-    universe's.  A lambda's and a class constructor's frame carry theirs."""
+    ``def``'s frame and a lambda's hold no body (``body`` None): the body is
+    the function's own universe's, built once (#7757 N4).  A class
+    constructor's frame carries its body."""
 
     source_identity_cid: str
     definition_site: SourceFragmentCoordinateV1
@@ -322,28 +321,11 @@ class SourceVisibleCallFrameV1:
     owner: object = field(compare=False, repr=False)
     native_operation_formal_coordinates: tuple = field(default=(), compare=False)
     pending_native_operation: object | None = field(default=None, compare=False)
-    runtime_entries: tuple[BindingEntryV1, ...] = field(
-        default=(), compare=False, repr=False
-    )
     #: ``X = 1 // 0`` at module level: the module never finishes importing,
     #: so a call into any frame of it is that halt.  The one ``Halted`` arm
     #: of the first such constant in source order, reduced once per module.
     module_halt: object | None = field(default=None, compare=False)
     constructed_new_method: object | None = field(default=None, compare=False)
-    #: The fields of the ``__init__`` ``@dataclasses.dataclass`` writes
-    #: (``ClassDef._dataclass_generated_init_fields``), when this frame is
-    #: that ``__init__``'s: the body is rebuilt from them at each call
-    #: (``bind_actuals``).  The class statement (``definition_fragment_cid``)
-    #: fixes them, so they are no part of the frame's identity.
-    dataclass_fields: tuple | None = field(default=None, compare=False, repr=False)
-    #: The coordinate of the ``args`` tuple, when this frame is the
-    #: inherited ``BaseException`` ``(*args)`` constructor
-    #: (``ClassDef._inherits_default_exception_constructor``): the body is
-    #: rebuilt with it at each call (``bind_node_actuals``).  It is the
-    #: frame's one formal coordinate, already part of the frame's identity.
-    exception_args_coordinate_cid: str | None = field(
-        default=None, compare=False, repr=False
-    )
     declaration_frame_cid: str | None = field(default=None, compare=False)
     #: Where the call this frame was constructed for runs while its module
     #: body runs (``sugar_source_tree.nodes.ModuleExecutionSiteV1``), or None:
@@ -514,8 +496,7 @@ class SourceVisibleCallFrameV1:
                 continue
             if kind == "kwarg":
                 # Each collected keyword is the ``variadic-keyword`` projection
-                # of this formal, in collection order -- the same coordinate
-                # ``bind_node_actuals`` seats on the entry's actual Node -- so a
+                # of this formal, in collection order, so a
                 # body read of that entry finds the caller's Floor, exactly as
                 # a ``variadic`` (``*args``) element does.
                 root = self.formal_coordinates[index]
@@ -687,256 +668,9 @@ class SourceVisibleCallFrameV1:
             pending_native_operation=pending,
         )
 
-    def bind_node_actuals(
-        self,
-        positional: tuple,
-        keywords: tuple,
-        testimonies: tuple[object | None, ...] | None = None,
-    ) -> "SourceVisibleCallFrameV1":
-        """Substitute real typed actual Nodes before constructing body Sugars.
-
-        A formal the call omits is never given its default expression here:
-        the specialised body reads the formal's own coordinate, which the one
-        binder binds to the default's value (``bind_actuals``,
-        ``DefaultValueSugar``: the value the ``def`` statement or the lambda
-        expression bound under the default's key).  Defaults come only from
-        those keys."""
-        remaining = list(positional)
-        named = dict(keywords)
-        if len(named) != len(keywords):
-            raise SourceCallBindingGap("duplicate keyword actual")
-        bound = []
-        for index, (name, kind, default) in enumerate(
-            zip(
-                self.parameters,
-                self.parameter_kinds,
-                self.default_sugars,
-                strict=True,
-            )
-        ):
-            if kind == "vararg":
-                coordinate = self.formal_coordinates[index]
-                bound.append(
-                    self._tuple_node(
-                        tuple(
-                            _same_unit_actual_node(
-                                self.owner.unit,
-                                value,
-                                coordinate.project("variadic", actual_index),
-                            )
-                            for actual_index, value in enumerate(remaining)
-                        )
-                    )
-                )
-                remaining.clear()
-                continue
-            if kind == "kwarg":
-                coordinate = self.formal_coordinates[index]
-                bound.append(
-                    self._dict_node(
-                        tuple(
-                            (
-                                key,
-                                _same_unit_actual_node(
-                                    self.owner.unit,
-                                    value,
-                                    coordinate.project(
-                                        "variadic-keyword", actual_index
-                                    ),
-                                ),
-                            )
-                            for actual_index, (key, value) in enumerate(named.items())
-                        )
-                    )
-                )
-                named.clear()
-                continue
-            value = None
-            present = False
-            if kind in {"positional_only", "positional_or_keyword"} and remaining:
-                value = remaining.pop(0)
-                present = True
-                if name in named:
-                    raise SourceCallBindingGap("formal received positional and keyword")
-            elif kind != "positional_only" and name in named:
-                value = named.pop(name)
-                present = True
-            if not present and default is not None:
-                # The binder binds this coordinate from the default's key.
-                value = _formal_coordinate_ref(
-                    self.owner.unit, self.formal_coordinates[index], self.owner.reporter
-                )
-                present = True
-            if not present:
-                raise SourceCallBindingGap(f"missing required formal {index}")
-            bound.append(value)
-        if remaining or named:
-            raise SourceCallBindingGap("unconsumed call actual")
-
-        # Rehost foreign-unit actuals onto this frame's SourceUnit so binding
-        # never carries cross-unit LineTable offsets into construction.
-        owner_unit = self.owner.unit
-        bound = tuple(
-            _same_unit_actual_node(owner_unit, node, coordinate)
-            for node, coordinate in zip(bound, self.formal_coordinates, strict=True)
-        )
-
-        supplied_testimonies = testimonies or (None,) * len(bound)
-        if len(supplied_testimonies) != len(bound):
-            raise SourceCallBindingGap("formal testimony arity mismatch")
-        entries = tuple(
-            BindingEntryV1(
-                coordinate,
-                node,
-                BoundBindingStateV1(testimony) if testimony is not None else None,
-            )
-            for coordinate, node, testimony in zip(
-                self.formal_coordinates, bound, supplied_testimonies, strict=True
-            )
-        )
-        # Specialize the body by inlining the exact typed actual Nodes for each
-        # formal. A source-visible callback (a formal invoked as ``fn(value)``)
-        # then reduces through the actual callable's own construction, rather
-        # than raising on the unspecialized BindingCoordinateRef formal.
-        node_scope = dict(zip(self.parameters, bound, strict=True))
-        rebuild = getattr(self.owner, "_source_visible_body", None)
-        if rebuild is None:
-            body = self.body
-        elif (
-            self.constructed_new_method is not None
-            or self.dataclass_fields is not None
-            or self.exception_args_coordinate_cid is not None
-        ):
-            # A class call's frame: the body is rebuilt with everything the
-            # class statement seated on it -- its own ``__new__``, the
-            # dataclass-written ``__init__``'s fields, the inherited
-            # ``(*args)`` constructor's ``args`` coordinate.
-            body = rebuild(
-                node_scope,
-                constructed_new_method=self.constructed_new_method,
-                dataclass_fields=self.dataclass_fields,
-                exception_args_coordinate_cid=self.exception_args_coordinate_cid,
-            )
-        else:
-            body = rebuild(node_scope)
-        return replace(
-            self,
-            runtime_entries=entries,
-            body=body,
-        )
-
-    def _tuple_node(self, values: tuple):
-        from sugar_source_tree.backend import Children, materialize
-        from sugar_source_tree.shadow import ShadowNode, _handle_of
-
-        return materialize(
-            self.owner.unit,
-            ShadowNode(
-                "Tuple",
-                self.owner.span,
-                (("elts", Children(tuple(_handle_of(value) for value in values))),),
-            ),
-            self.owner.reporter,
-        )
-
-    def _dict_node(self, values: tuple[tuple[str, object], ...]):
-        from sugar_source_tree.backend import Child, Children, Leaf, materialize
-        from sugar_source_tree.shadow import ShadowNode, _handle_of
-
-        items = []
-        for key, value in values:
-            key_node = materialize(
-                self.owner.unit,
-                ShadowNode(
-                    "Constant",
-                    self.owner.span,
-                    (("value", Leaf(key)),),
-                ),
-                self.owner.reporter,
-            )
-            items.append(
-                materialize(
-                    self.owner.unit,
-                    ShadowNode(
-                        "DictItem",
-                        self.owner.span,
-                        (
-                            ("key", Child(_handle_of(key_node))),
-                            ("value", Child(_handle_of(value))),
-                        ),
-                    ),
-                    self.owner.reporter,
-                )
-            )
-        return materialize(
-            self.owner.unit,
-            ShadowNode(
-                "Dict",
-                self.owner.span,
-                (("items", Children(tuple(_handle_of(item) for item in items))),),
-            ),
-            self.owner.reporter,
-        )
-
 
 class SourceCallBindingGap(ValueError):
     pass
-
-
-def _same_unit_actual_node(owner_unit, node, coordinate):
-    """Rehost a bound actual onto the frame owner unit when needed.
-
-    Same-unit nodes pass through. Foreign-unit actuals must never carry their
-    LineTable offsets into owner-unit construction (``offset N outside 0..M``):
-    mint a ``BindingCoordinateRef`` at the formal's owner-local span only.
-
-    Value-use resolutions are **not** transferred or re-seated here: frames
-    consume exact seats on the owning SourceUnit (source-CID authenticated at
-    publication). No broad Exception catch, no fallback fabrication of seats.
-    """
-    from sugar_source_tree.nodes import Node
-
-    if not isinstance(node, Node):
-        return node
-    if node.unit.source_cid == owner_unit.source_cid:
-        return node
-    return _formal_coordinate_ref(owner_unit, coordinate, node.reporter)
-
-
-def _formal_coordinate_ref(owner_unit, coordinate, reporter):
-    """A ``BindingCoordinateRef`` to the formal ``coordinate`` at its
-    owner-local declaration span: what a body reads a formal through when the
-    binder, not the call's node, supplies its value."""
-    from sugar_source_tree.backend import Leaf, materialize
-    from sugar_source_tree.shadow import ShadowNode
-    from sugar_source_tree.spans import Span
-
-    site = coordinate.binding_site
-    if not isinstance(site, dict):
-        raise SourceCallBindingGap(
-            "foreign actual requires owner-local formal binding site"
-        )
-    site_cid = site.get("source_cid") or site.get("sourceCid")
-    if site_cid != owner_unit.source_cid:
-        raise SourceCallBindingGap("formal binding site is not on the frame owner unit")
-    span_info = site.get("span")
-    if not isinstance(span_info, dict):
-        raise SourceCallBindingGap("formal binding site missing sealed span")
-    start = span_info.get("start")
-    end = span_info.get("end")
-    if not isinstance(start, int) or not isinstance(end, int) or end < start:
-        raise SourceCallBindingGap("formal binding site span is not unit-local")
-    owner_span = Span(start, end)
-
-    return materialize(
-        owner_unit,
-        ShadowNode(
-            "BindingCoordinateRef",
-            owner_span,
-            (("coordinate", Leaf(coordinate)),),
-        ),
-        reporter,
-    )
 
 
 SourceCallFrameV1 = SourceVisibleCallFrameV1

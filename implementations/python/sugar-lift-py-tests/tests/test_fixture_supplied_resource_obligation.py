@@ -147,6 +147,20 @@ def _function_and_actual():
     return function, actual
 
 
+def _formal_entry(frame, actual, testimony=None):
+    """The binding entry of ``frame``'s first formal holding ``actual``,
+    with the constructed-value testimony the caller supplies (none when not
+    given)."""
+    from sugar_source_tree.binding_provenance import BoundBindingStateV1
+    from sugar_source_tree.binding_state import BindingEntryV1
+
+    return BindingEntryV1(
+        frame.formal_coordinates[0],
+        actual,
+        BoundBindingStateV1(testimony) if testimony is not None else None,
+    )
+
+
 def test_fixture_resource_is_discharged_at_authenticated_formal_binding():
     """No local manager is invented: the caller-bound formal is the boundary."""
     function, actual = _function_and_actual()
@@ -155,12 +169,11 @@ def test_fixture_resource_is_discharged_at_authenticated_formal_binding():
         actual.fragment,
         cid_of_json({"kind": "external-resource", "state": "ready"}),
     )
-    bound = frame.bind_node_actuals((actual,), (), (testimony,))
-    obligation = FixtureSuppliedResourceObligationV1.mint(bound.formal_coordinates[0])
+    obligation = FixtureSuppliedResourceObligationV1.mint(frame.formal_coordinates[0])
 
-    discharge = obligation.discharge(bound.runtime_entries[0])
+    discharge = obligation.discharge(_formal_entry(frame, actual, testimony))
 
-    assert discharge.formal_coordinate_cid == bound.formal_coordinates[0].cid
+    assert discharge.formal_coordinate_cid == frame.formal_coordinates[0].cid
     assert discharge.constructed_value_testimony_cid == testimony.cid
     assert discharge.obligation_cid == obligation.obligation_cid
 
@@ -169,13 +182,12 @@ def test_fixture_resource_without_binding_testimony_is_a_named_refusal():
     """LYING TWIN: a supplied-looking formal cannot discharge itself."""
     function, actual = _function_and_actual()
     frame = function.source_visible_call_frame()
-    bound = frame.bind_node_actuals((actual,), ())
-    obligation = FixtureSuppliedResourceObligationV1.mint(bound.formal_coordinates[0])
+    obligation = FixtureSuppliedResourceObligationV1.mint(frame.formal_coordinates[0])
 
     with pytest.raises(FixtureResourceBindingRefusal) as caught:
-        obligation.discharge(bound.runtime_entries[0])
+        obligation.discharge(_formal_entry(frame, actual))
 
-    assert caught.value.coordinate == bound.formal_coordinates[0].cid
+    assert caught.value.coordinate == frame.formal_coordinates[0].cid
     assert "constructed-value testimony unavailable" in caught.value.detail
 
 
@@ -186,7 +198,7 @@ def test_fixture_resource_obligation_refuses_a_different_formal_coordinate():
         actual.fragment,
         cid_of_json({"kind": "external-resource", "state": "ready"}),
     )
-    bound = frame.bind_node_actuals((actual,), (), (testimony,))
+    entry = _formal_entry(frame, actual, testimony)
     other = function.source_visible_call_frame().formal_coordinates[0]
     obligation = FixtureSuppliedResourceObligationV1.mint(other)
 
@@ -195,9 +207,9 @@ def test_fixture_resource_obligation_refuses_a_different_formal_coordinate():
     from dataclasses import replace
 
     wrong_entry = replace(
-        bound.runtime_entries[0],
+        entry,
         coordinate=replace(
-            bound.runtime_entries[0].coordinate,
+            entry.coordinate,
             cid="blake3-512:" + "f" * 128,
         ),
     )
@@ -214,10 +226,9 @@ def _authenticated_obligation_and_entry():
         actual.fragment,
         cid_of_json({"kind": "external-resource", "state": "ready"}),
     )
-    bound = frame.bind_node_actuals((actual,), (), (testimony,))
     return (
-        FixtureSuppliedResourceObligationV1.mint(bound.formal_coordinates[0]),
-        bound.runtime_entries[0],
+        FixtureSuppliedResourceObligationV1.mint(frame.formal_coordinates[0]),
+        _formal_entry(frame, actual, testimony),
     )
 
 

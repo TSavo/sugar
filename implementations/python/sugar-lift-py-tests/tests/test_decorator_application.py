@@ -1969,34 +1969,6 @@ def test_a_lambda_value_carries_its_defaults_under_the_frames_keys() -> None:
     assert carried.to_term(owner="test") is not None
 
 
-# ---------------------------------------------------------------------------
-# A specialised body never carries a default expression.
-# ---------------------------------------------------------------------------
-
-
-def test_no_default_expression_appears_in_a_specialised_body() -> None:
-    """``bind_node_actuals`` gives an omitted formal its own coordinate,
-    which the one binder binds from the default's key: the default
-    expression is never copied into the body."""
-    from sugar_source_tree.nodes import BindingCoordinateRef
-
-    tree = _tree(
-        "def f(a, b=7):\n    return b\n\n\ndef test_f():\n    assert f(1) == 7\n"
-    )
-    definition = _function_named(tree, "f")
-    frame = definition.source_visible_call_frame()
-    bound = frame.bind_node_actuals(tuple(_call_of(tree, "f").args), ())
-    entry = bound.runtime_entries[1]
-    assert isinstance(entry.state, BindingCoordinateRef), entry.state
-    assert entry.state.coordinate == frame.formal_coordinates[1]
-    default = definition.params[1].default
-    assert all(
-        item.state is not default
-        and item.state.fragment.seal().cid != default.fragment.seal().cid
-        for item in bound.runtime_entries
-    )
-
-
 def test_an_omitted_formal_still_binds_its_default_at_the_call(tmp_path) -> None:
     """``f(1)`` omits ``b``: ``f``'s edge (#7757 step 5, #8705) supplies the
     value its ``def`` statement bound as ``py.default(b, 7)``, which prove's
