@@ -1175,47 +1175,6 @@ class CallSiteValue(FloorValue):
         )
 
 
-def caller_visible_stores(entries) -> tuple:
-    """The receiver field stores among a callee record's ``entries`` that
-    reach its caller: every unconditional one, as a ``ReceiverFieldStoreValue``.
-
-    A store whose guard is truth -- a nested empty ``and`` included -- is
-    unconditional: a folded ``isinstance(match, str)`` still stamps the tail
-    with ``true_guard``, and that is not a branch.  A store under a real
-    branch guard stays in the callee's nested record; it is never flattened
-    onto the receiver."""
-    from sugar_lift_py_tests.floor.guarded_receiver_field_store_value import (
-        GuardedReceiverFieldStoreValue,
-    )
-    from sugar_lift_py_tests.floor.receiver_field_store_value import (
-        ReceiverFieldStoreValue,
-    )
-
-    stores = []
-    for entry in entries:
-        if isinstance(entry, GuardedReceiverFieldStoreValue):
-            if _unconditional(entry.guard):
-                stores.append(
-                    ReceiverFieldStoreValue(entry.receiver, entry.attr, entry.value)
-                )
-        elif isinstance(entry, ReceiverFieldStoreValue):
-            stores.append(entry)
-    return tuple(stores)
-
-
-def _unconditional(guard) -> bool:
-    """A guard that is truth, a nested empty ``and`` included."""
-    from sugar_lift_py_tests.outcome.exit_set import _is_true
-
-    if _is_true(guard):
-        return True
-    if getattr(guard, "kind", None) == "and":
-        return all(
-            _unconditional(operand) for operand in getattr(guard, "operands", ())
-        )
-    return False
-
-
 def receiver_after_its_call(receiver, result):
     """``receiver`` as an ordinary call made on it left it (``result``, the
     call's completed value), where the call states that; None where it does
@@ -1271,37 +1230,6 @@ def _same_object_value(value, receiver) -> bool:
         and type(value) is type(receiver)
         and getattr(value, "identity", None) == identity
     )
-
-
-def at_the_call(ctx, carried=()):
-    """The state a call's halt carries once it leaves the callee (#7757).
-
-    A halt raised inside a called function reaches its caller at the call:
-    what the callee bound is the callee's frame, gone with it, and a name the
-    callee binds never shadows the caller's. So the halt leaves the callee in
-    the caller's record at the call site: the caller's context there
-    (``ctx``, the context the call was reduced in) -- the caller's reducer
-    splices every entry the caller made before the call in front
-    (``function_universe_sugar._halt_state``), as it does for any statement's
-    halt. The halt keeps the callee's effect, and its arm keeps what the
-    callee owes (``ExitSet.and_then``).
-
-    What the call did before its halt to an object the caller can see is
-    not rolled back: ``carried`` are the writes the call carries on this
-    arm, each applied to the caller's context (``bind_walrus_binds``) as a
-    completed call's value carries them to its statement; the receiver field
-    stores among them are the record's entries.  A class call publishes no
-    halt of its class statement: the statement ran where it stands, and the
-    call reads the class it bound."""
-    from sugar_lift_py_tests.floor.named_expression_value import (
-        bind_walrus_binds,
-        caller_stores_of,
-    )
-    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
-
-    _writes, stores = caller_stores_of(tuple(carried))
-    context = bind_walrus_binds(tuple(carried), ctx)
-    return _ReducedBlock(tuple(stores), True, (), context=context)
 
 
 def force_floor(

@@ -451,7 +451,7 @@ def laid_in_record(entries, outcome, *, halts_only: bool = False):
     statement alone lays the stores its call carried
     (``expr_statement_sugar.record_statement_value``): the record is what a
     ``return`` and the frame's exit hand the caller
-    (``call_site_value.caller_visible_stores``) and what a suite resuming
+    and what a suite resuming
     after a halt starts from (``resumed``).  A completed arm's record is its
     value -- a block's record (``_ReducedBlock``), a ``BlockValue``'s
     statements, a symbolic ``if``'s faces (``GuardedFaces``: before every
@@ -536,8 +536,8 @@ def stores_laid_on_completion(value, outcome, ctx):
     carries them on, becomes the statement's record (``statement_record``,
     in the context it leaves: every write applied to ``ctx``, then what the
     step bound).  The stores were made before the step ran, and a
-    record's entries are what its caller reads of it
-    (``caller_visible_stores``), not the context alone.  A halted arm holds
+    record's entries are what its caller reads of it,
+    not the context alone.  A halted arm holds
     them already (the door lays them, ``_halted_after``).  ``outcome`` as
     it is where ``value`` carried no callee store.
 

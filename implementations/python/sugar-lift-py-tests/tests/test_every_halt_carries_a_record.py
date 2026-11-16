@@ -662,7 +662,7 @@ _Y_KEY = EVALUATION_PREFIX + "every-halt-record.target.y"
 @dataclass(frozen=True)
 class _HaltsWhereItRuns(ConstructedTermSugar):
     """An expression that halts carrying the record of the context it was
-    evaluated in, as a call's halt does (``at_the_call``)."""
+    evaluated in."""
 
     site: object = field(compare=False, default=None)
 
@@ -1287,7 +1287,7 @@ def test_a_later_operands_own_record_lays_an_earlier_operands_callee_store() -> 
     None
 ):
     # ``x = [f(o), g()]`` where ``g`` raises inside its body: the call's halt
-    # carries its own record (``at_the_call``); ``f``'s store is laid first.
+    # carries its own record; ``f``'s store is laid first.
     statement = AssignSugar(
         "x", _Display((_carries_a_store(), _HaltsWhereItRuns())), None
     )
