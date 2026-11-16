@@ -7847,9 +7847,19 @@ def _module_import_binding(statement, scope):
     its readers (``_module_threads``): the one import table's row for that
     binding (``SourceUnit.import_binding_reference``) as an
     ``ImportBindingRef``.  A binding the table rows nothing for is
-    ``UNDECIDED_MODULE_BINDING`` from here on.  Anywhere else an import
-    binds nothing in the threading: its reads resolve through the table at
-    their own coordinate.
+    ``UNDECIDED_MODULE_BINDING`` from here on.
+
+    The same holds in every frame for a name the threading already holds a
+    binding of (``m = None`` before ``import os as m``, a formal, a loop's
+    header): the import replaces that binding, so no read after it reads the
+    binding from before it.  A read the table rows with the import's target
+    still resolves through the table at its own coordinate
+    (``Name.substitute``); a read it does not row -- after a loop whose items
+    import the name -- is the import's row, and a live loop whose body
+    imports the name sees it changed (``_uncarried_item_changes``) and
+    publishes it after the loop (``unkeyed_item_bindings``).  A name the
+    threading holds no binding of is bound by nothing here: its reads resolve
+    through the table at their own coordinate.
 
     A star import (``from m import *``) is a binding statement like any
     other: from it on, every module name it may bind is
@@ -7871,7 +7881,10 @@ def _module_import_binding(statement, scope):
                     for name in sorted(record.names):
                         binding[name] = UNDECIDED_MODULE_BINDING
                 continue
-            if not _module_threads(scope, local):
+            if not (
+                _module_threads(scope, local)
+                or scope.get(local, _MISSING) is not _MISSING
+            ):
                 continue
             reference = statement.unit.import_binding_reference(statement, local)
             if reference is None:

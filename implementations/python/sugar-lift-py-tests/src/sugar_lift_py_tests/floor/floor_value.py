@@ -1063,6 +1063,14 @@ class FloorValue:
         )
 
     def is_identical(self, other, site):
+        # An ``except ... as e`` / ``with ... as x`` / ``pytest.raises ... as
+        # ei`` slot answers identity on either side (``slot_identity``): its
+        # coordinate is a value prove does not interpret, so ``x is e`` owes
+        # exactly as ``e is x`` does.
+        from sugar_lift_py_tests.floor.effect_coordinate import reads_an_effect_slot
+
+        if reads_an_effect_slot(other) and not reads_an_effect_slot(self):
+            return other.is_identical(self, site)
         # A reduced object whose value term is not its object (a container,
         # an instance, a tuple/str/bytes/number value) answers by the one
         # object rule, on either side: its value term would state `1 is 1`

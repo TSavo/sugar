@@ -29,6 +29,13 @@ live items around it wherever it becomes a term
 (``evaluation_ref_sugar.effect_slot_here``), as ``evaluation_here`` keys a
 statement's evaluation and ``branch_slot_here`` an ``if``'s slot.
 
+Two slot terms are still two coordinates prove does not interpret: ``=``
+over them is a choice the solver makes, and a claim reads ``sat`` where some
+choice satisfies it, so with the slots keyed the lie still read ``sat``.  The
+identity of a slot coordinate with anything but its own term is the
+undecided read (``effect_coordinate.slot_identity``): the claim owes the
+undecided member, never a free choice.
+
 ``e = None`` / ``x = None`` in the body make the name one the loop carries,
 so the items can run in hand.
 
@@ -95,3 +102,62 @@ def test_two_items_bind_two_objects(tmp_path: Path, shape: str, half: str) -> No
     else:
         assert verdict != "unsat", result.prove_doc
         assert whole != "unsat", result.prove_doc
+
+
+# -- the term each read gets, and what its identity owes ----------------------
+
+_SLOT = "blake3-512:test-except-slot"
+_LOOP = "blake3-512:test-live-loop"
+
+
+def _read_in_item(index: int):
+    """``e`` read in live item ``index``: the handler's ``EffectRef`` with no
+    deposit, so its pure coordinate."""
+    from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
+    from sugar_lift_py_tests.sugar.effect_ref_sugar import EffectRefSugar
+
+    with entered(loop_iteration_segment(_LOOP, index)):
+        return EffectRefSugar(slot_id=_SLOT, site=None).desugar(None).completed_value()
+
+
+def _owes(outcome) -> bool:
+    from sugar_lift_py_tests.unanswered_calls import UnansweredCallV1
+
+    return any(isinstance(item, UnansweredCallV1) for item in outcome.owed_items())
+
+
+def test_each_item_reads_its_own_slot_term() -> None:
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.occurrence import loop_iteration_segment
+
+    for index in (0, 1):
+        item = loop_iteration_segment(_LOOP, index)
+        assert _read_in_item(index).to_term(owner="test") == ctor(
+            "python:effect_slot", [str_const(f"{_SLOT}@{item}")]
+        )
+
+
+def test_two_items_objects_identity_owes_never_a_free_choice() -> None:
+    # ``=`` over two slot terms is a choice the solver makes; a claim is
+    # ``sat`` where some choice satisfies it.  The identity owes instead.
+    first, second = _read_in_item(0), _read_in_item(1)
+    assert _owes(first.is_identical(second, None))
+    assert _owes(second.is_identical(first, None))
+
+
+def test_one_items_binding_read_twice_is_one_object_and_owes_nothing() -> None:
+    first = _read_in_item(0)
+    assert not _owes(first.is_identical(_read_in_item(0), None))
+
+
+def test_an_exception_info_and_its_exception_are_two_objects_that_owe() -> None:
+    from sugar_lift_py_tests.floor.effect_coordinate import (
+        EffectCoordinate,
+        ExceptionInfoCoordinate,
+    )
+
+    info = ExceptionInfoCoordinate(slot_id=_SLOT)
+    exception = EffectCoordinate(slot_id=_SLOT)
+    assert _owes(info.is_identical(exception, None))
+    assert _owes(exception.is_identical(info, None))
+    assert not _owes(info.is_identical(ExceptionInfoCoordinate(slot_id=_SLOT), None))
