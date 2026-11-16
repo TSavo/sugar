@@ -1112,14 +1112,46 @@ def function_universe_outcome(fn):
                 requested="the class its __class__ cell holds (PEP 3135)",
                 fix="seat the cell with the class its statement bound",
             )
-        held = entry.with_temporal(
-            entry.temporal.bind_value(
-                "__class__", value, blame=f"{value.class_name}.{fn.name}"
-            )
+        temporal = entry.temporal.bind_value(
+            "__class__", value, blame=f"{value.class_name}.{fn.name}"
         )
+        receiver = _first_positional_formal(fn)
+        if receiver is not None:
+            # A zero-argument ``super()`` binds the frame's first positional
+            # formal, read by the name the ``def`` declares
+            # (``builtin_semantic_callable.zero_argument_super_receiver``):
+            # here the free formal of this contract, the very value a read of
+            # it in the body is (``FormalRefSugar``), so the dispatched call
+            # after the class is made on the receiver the contract states
+            # over (``class:<self>``).
+            name, formal = receiver
+            temporal = temporal.bind_value(
+                name, formal, blame=f"{value.class_name}.{fn.name}"
+            )
+        held = entry.with_temporal(temporal)
         return as_its_own_proof_states(sugar.desugar(held), held)
 
     return _class_statement_read(cell, entry).and_then(in_its_cell)
+
+
+def _first_positional_formal(fn):
+    """``(name, value)``: ``fn``'s first parameter where it is positional, and
+    its value in ``fn``'s own contract -- the free formal
+    (``SymbolicValue`` carrying its ``FormalParameterCoordinateV1``), exactly
+    what ``FormalRefSugar`` reads it as.  None where the first parameter is
+    not positional or there is none."""
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.ir import make_var
+
+    if not fn.params or fn.params[0].param_kind not in (
+        "positional_only",
+        "positional_or_keyword",
+    ):
+        return None
+    coordinate = fn.formal_coordinates()[0]
+    return fn.params[0].name, SymbolicValue(
+        make_var(coordinate.declared_name), formal_coordinate=coordinate
+    )
 
 
 def _class_cell_statement(fn):

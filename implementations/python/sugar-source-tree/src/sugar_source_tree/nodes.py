@@ -1136,7 +1136,45 @@ _FIELD_REGION_STATEMENTS = frozenset(
 )
 
 
-def _stores_after_the_field(region, attr: str, inputs):
+def _leaving_call_store(statement, inputs, attr: str):
+    """The call ``p.m(a, ...)`` of a statement ``q.g = p.m(a, ...)`` that
+    stores the result of a method call on a parameter in ``inputs`` as a
+    field of a parameter in ``inputs`` (``g`` no dunder name and never
+    ``attr``, ``m`` no dunder name), each actual a name or a constant (its
+    evaluation runs no code), no keyword: the dispatched call
+    (``receiver_dispatch.dispatch_on_receiver``) whose contract prove asks
+    whether it leaves every object it is handed (``python:leaves``).  None
+    for any other statement."""
+    from sugar_lift_py_tests.receiver_dispatch import is_dunder
+
+    if not isinstance(statement, Assign) or len(statement.targets) != 1:
+        return None
+    (target,) = statement.targets
+    value = statement.value
+    if not (
+        isinstance(target, Attribute)
+        and isinstance(target.value, Name)
+        and target.value.id in inputs
+        and not is_dunder(target.attr)
+        and target.attr != attr
+    ):
+        return None
+    if not (
+        isinstance(value, Call)
+        and isinstance(value.func, Attribute)
+        and isinstance(value.func.value, Name)
+        and value.func.value.id in inputs
+        and not is_dunder(value.func.attr)
+    ):
+        return None
+    if getattr(value, "keywords", ()) or not all(
+        isinstance(argument, (Name, Constant)) for argument in value.args
+    ):
+        return None
+    return value
+
+
+def _stores_after_the_field(region, attr: str, inputs, calls=None):
     """``((param, attr), ...)``: the field stores the statements ``region``
     make on parameters in ``inputs``, in source order, where nothing
     ``region`` runs may change the field ``attr`` of the object a stored
@@ -1155,7 +1193,15 @@ def _stores_after_the_field(region, attr: str, inputs):
       dunder name, and never ``attr``: another parameter may hold the same
       object), which the contract states only under its plain-store guard,
       returned so the guard takes it;
-    - a read of an import's member (``container_mutation._import_member``).
+    - a read of an import's member (``container_mutation._import_member``);
+    - where ``calls`` is given, a statement ``q.g = p.m(a, ...)``
+      (``_leaving_call_store``): a dispatched method call whose result a
+      field store keeps.  The call may change any object it is handed, so
+      the statement is appended to ``calls``, and the contract states the
+      field only under the guard that the call's contract leaves each of
+      them unchanged (``python:call_leaves``, decided at prove from the
+      resolved method's ``python:leaves``, ``UniverseValue.field_facts``).
+      Never a same-file function's body read here.
 
     Anything else -- a method call, a field read (``type(q).__getattribute__``
     and whatever it finds), a call of anything else (a same-file source
@@ -1172,12 +1218,23 @@ def _stores_after_the_field(region, attr: str, inputs):
         _sites_at,
     )
 
+    allowed: set = set()
+    if calls is not None:
+        for statement in region:
+            call = _leaving_call_store(statement, inputs, attr)
+            if call is None:
+                continue
+            calls.append(statement)
+            allowed.add(id(statement))
+            allowed.update(id(node) for node in call.walk())
     nodes: list = []
     for statement in region:
         nodes.extend(statement.walk())
     targets = _attribute_store_targets(nodes)
     stores: list = []
     for node in nodes:
+        if id(node) in allowed:
+            continue
         if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
             return None
         if isinstance(node, Statement) and node.kind not in _FIELD_REGION_STATEMENTS:
@@ -10626,14 +10683,14 @@ class FunctionDef(Statement):
         no dunder name; anywhere else nothing is stated and the caller's
         read of the field after the call stays undecided."""
         if type(self) is not FunctionDef or FunctionDef._owns_yield(self.body):
-            return (), ()
+            return (), (), ()
         inputs = frozenset(_receiver_class_parameters(self))
         if not inputs:
-            return (), ()
+            return (), (), ()
         from sugar_lift_py_tests.receiver_dispatch import module_attribute_names
 
         if module_attribute_names(self.unit)[1]:
-            return (), ()
+            return (), (), ()
         statements = list(self.body)
         last: dict = {}
         for index, statement in enumerate(statements):
@@ -10641,24 +10698,43 @@ class FunctionDef(Statement):
             if store is not None:
                 last[store] = index
         if not last:
-            return (), ()
+            return (), (), ()
         reads = _stored_value_reads(body)
         stores: list = []
         stated = []
+        leaving: list = []
         for (param, attr), index in sorted(last.items(), key=lambda item: item[1]):
-            after = _stores_after_the_field(statements[index + 1 :], attr, inputs)
+            calls: list = []
+            after = _stores_after_the_field(
+                statements[index + 1 :], attr, inputs, calls
+            )
             if after is None:
                 continue
             read = reads.get(_line_col_key(statements[index]))
             if read is None or read[0] != attr:
                 continue
+            # Each method call after the store whose result a field store
+            # keeps (``q.g = p.m(a, ...)``): the field holds only where that
+            # call leaves every object it is handed (``python:leaves``,
+            # decided at prove, ``UniverseValue.field_facts``).
+            call_reads = [reads.get(_line_col_key(call)) for call in calls]
+            if any(call_read is None for call_read in call_reads):
+                continue
             stated.append((param, attr, read[1].sugar()))
             for pair in ((param, attr), *after):
                 if pair not in stores:
                     stores.append(pair)
+            for call, call_read in zip(calls, call_reads, strict=True):
+                key = _line_col_key(call)
+                if all(held != key for held, _sugar in leaving):
+                    leaving.append((key, call_read[1].sugar()))
         if not stated:
-            return (), ()
-        return tuple(stores), tuple(stated)
+            return (), (), ()
+        return (
+            tuple(stores),
+            tuple(stated),
+            tuple(sugar for _key, sugar in leaving),
+        )
 
     def substitute_in_block(self, scope):
         """The ``def`` statement where a block threads it: Python evaluates
@@ -11114,6 +11190,7 @@ class FunctionDef(Statement):
                         cells_after_every_arm=_returns_only_last(self.body),
                         plain_stores=fields[0],
                         fields_after=fields[1],
+                        leaving_calls=fields[2],
                         # What an ``__init__``'s receiver may hold where it
                         # leaves (#7757 B2).
                         receiver_holds=_receiver_holds(self),
