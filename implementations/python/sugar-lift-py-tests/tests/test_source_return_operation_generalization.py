@@ -568,7 +568,10 @@ def test_lambda_inside_nested_function_result_is_not_decided_at_lift() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Lexical resolution of a nested definition
+# Which ``def`` a call's callee name denotes is the one read of the name
+# (``SourceUnit.function_definition_for_read``, #7757 N1).  A local ``def`` is
+# no module binding: its value is the key the substitution threads to the
+# call (``_local_definition_binding``), never a second, call-specific lookup.
 # ---------------------------------------------------------------------------
 
 
@@ -587,18 +590,19 @@ def _nested_definition_and_call(source: str):
     return tree, context, nested, calls
 
 
-def test_nested_call_after_definition_resolves_exact_lexical_definition() -> None:
-    _, _, definitions, calls = _nested_definition_and_call(
+def test_a_call_of_a_module_def_reads_the_def_its_name_reads() -> None:
+    tree, _, definitions, calls = _nested_definition_and_call(
+        "def inner(value):\n"
+        "    return value + 1\n\n"
         "def outer():\n"
-        "    def inner(value):\n"
-        "        return value + 1\n"
         "    return inner(3)\n"
     )
     assert len(definitions) == len(calls) == 1
-    assert calls[0].unit.source_function_definition_for_call(calls[0]) is definitions[0]
+    call = calls[0]
+    assert call.unit.function_definition_for_read(call.func) is definitions[0]
 
 
-def test_nested_definition_shadows_same_name_module_definition() -> None:
+def test_a_local_def_is_not_the_module_binding_its_name_shadows() -> None:
     _, _, definitions, calls = _nested_definition_and_call(
         "def inner(value):\n"
         "    return value + 10\n\n"
@@ -608,8 +612,8 @@ def test_nested_definition_shadows_same_name_module_definition() -> None:
         "    return inner(3)\n"
     )
     assert len(definitions) == 2 and len(calls) == 1
-    nested = max(definitions, key=lambda node: node.line_col_span().start_line)
-    assert calls[0].unit.source_function_definition_for_call(calls[0]) is nested
+    # ``inner`` is a local of ``outer``: the module ``inner`` is never read.
+    assert calls[0].unit.function_definition_for_read(calls[0].func) is None
 
 
 def test_nested_definition_is_not_visible_outside_its_lexical_function() -> None:
@@ -622,7 +626,7 @@ def test_nested_definition_is_not_visible_outside_its_lexical_function() -> None
         "    return inner(4)\n"
     )
     outside = max(calls, key=lambda node: node.line_col_span().start_line)
-    assert outside.unit.source_function_definition_for_call(outside) is None
+    assert outside.unit.function_definition_for_read(outside.func) is None
 
 
 def test_nested_definition_after_call_does_not_authorize_earlier_call() -> None:
@@ -634,4 +638,19 @@ def test_nested_definition_after_call_does_not_authorize_earlier_call() -> None:
         "    return result\n"
     )
     assert len(calls) == 1
-    assert calls[0].unit.source_function_definition_for_call(calls[0]) is None
+    assert calls[0].unit.function_definition_for_read(calls[0].func) is None
+
+
+def test_a_module_level_call_reads_what_a_module_level_read_reads() -> None:
+    """A call the module body runs stands before or after the ``def``
+    statement in that run (``inner(1)`` above ``def inner`` is a NameError):
+    the read there is not answered, so neither is the call."""
+    _, _, _, calls = _nested_definition_and_call(
+        "early = inner(1)\n\n"
+        "def inner(value):\n"
+        "    return value + 1\n\n"
+        "late = inner(2)\n"
+    )
+    assert len(calls) == 2
+    for call in calls:
+        assert call.unit.function_definition_for_read(call.func) is None

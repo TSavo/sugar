@@ -11,8 +11,8 @@ builtin one through the one builtin door with its real semantics or a refusal
 by name; an imported one is the ``undecided`` member under its target symbol.
 
 Before this, a call of a decorated module function seated the function's own
-frame (``SourceUnit.source_function_definition_for_call`` answered the
-decorated definition), so ``@d def f`` ran ``f``'s plain body: a wrong value.
+frame (the call-specific resolver, deleted since, answered the decorated
+definition), so ``@d def f`` ran ``f``'s plain body: a wrong value.
 """
 
 from __future__ import annotations
@@ -207,7 +207,7 @@ def test_scale():
 def test_a_decorated_function_is_not_its_call_frame() -> None:
     tree = _tree(_DECORATED)
     call = _call_of(tree, "scale")
-    assert call.unit.source_function_definition_for_call(call) is None
+    assert call.unit.function_definition_for_read(call.func) is None
     decorated = call.unit.decorated_definition_for_call(call)
     assert isinstance(decorated, FunctionDef)
     assert decorated.name == "scale"
@@ -216,7 +216,7 @@ def test_a_decorated_function_is_not_its_call_frame() -> None:
 def test_an_undecorated_function_keeps_its_call_frame() -> None:
     tree = _tree(_DECORATED.replace("@replace\n", ""))
     call = _call_of(tree, "scale")
-    assert call.unit.source_function_definition_for_call(call) is not None
+    assert call.unit.function_definition_for_read(call.func) is not None
     assert call.unit.decorated_definition_for_call(call) is None
 
 

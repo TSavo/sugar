@@ -4813,65 +4813,6 @@ class SourceUnit:
             return None
         return definition
 
-    def source_function_definition_for_call(
-        self, call: "Call"
-    ) -> "FunctionDef | AsyncFunctionDef | None":
-        """Resolve one ordinary source function at an exact lexical call site.
-
-        The name is only a lookup key. Authority is the unique typed module
-        binding plus CPython's scope classification at this occurrence. A
-        parameter, local, free, nonlocal, ambiguous, or recursive binding is
-        not silently treated as this module definition.
-        """
-        # Ask the producer's applicability question FIRST; read the relation
-        # only for an enrolled occurrence.  A stranded enrolled row now refuses
-        # instead of entering the fallback and answering with a different
-        # module-level definition (#7348 caller 2).
-        enrollment = self.lexical_call_enrollment(call)
-        if isinstance(enrollment, LexicalCallNotEnrolledV1):
-            if enrollment.reason == "non-name-callee":
-                return None
-            # module-scope-call / no-lexical-binding-in-scope /
-            # binding-not-a-function-definition: the lawful symtable-classified
-            # path below is this outcome's ONE named continuation.
-            lexical_rows = ()
-        else:
-            lexical_rows = self.require_lexical_call_rows(call)
-        if lexical_rows:
-            row = lexical_rows[0]
-            definition = row.definition_occurrence
-            if row.source_cid != self.source_cid or not isinstance(
-                definition, (FunctionDef, AsyncFunctionDef)
-            ):
-                from .panic import backend_defect
-
-                backend_defect(
-                    blame=call.fragment,
-                    owner="SourceUnit.source_function_definition_for_call",
-                    observed="foreign or malformed lexical call row",
-                    requested="this SourceUnit's exact typed function definition",
-                    fix="repair Backend.materialize_module lexical call testimony",
-                )
-            # A decorated definition binds its name to the decorators'
-            # result: the call is that value's (``DecoratedDefinitionRef``),
-            # never this definition's body (#7757).
-            return definition if call_applies_own_frame(definition) else None
-
-        span = call.line_col_span()
-        definition = self.module_definition_denoted_by(call.func, span)
-        if not isinstance(
-            definition, (FunctionDef, AsyncFunctionDef)
-        ) or not call_applies_own_frame(definition):
-            return None
-        definition_span = definition.line_col_span()
-        if (
-            (definition_span.start_line, definition_span.start_col)
-            <= (span.start_line, span.start_col)
-            <= (definition_span.end_line, definition_span.end_col)
-        ):
-            return None
-        return definition
-
     def module_definition_at(
         self, name: str, span
     ) -> "FunctionDef | AsyncFunctionDef | ClassDef | None":
@@ -5012,13 +4953,24 @@ class SourceUnit:
         is the function applies it, as ``g()`` does.  The read is never the
         bare name with no function value behind it.
 
-        Answered by the same law a call of the name is
-        (``module_definition_at``: the one module binding, CPython's scope
-        classification at the read), for every ``def`` whose name is bound to
-        its function, whatever its kind (a plain function, a generator
-        function, an ``async def``, a ``contextmanager`` generator, #7757); a
-        decorated ``def`` or a ``class`` binds its statement's value under its
-        own key.
+        THE one answer to which ``def`` a name denotes, for a value read and
+        for a call alike: a call's callee is the value its name reads
+        (#7757 N1), so a call by name asks this of its callee ``Name``
+        (``Call._named_function_value``, ``Call._recursion_seat``,
+        ``Call._closure_definition``, ``_same_file_callees``,
+        ``container_mutation._source_callee``) and never a second resolver.
+        Answered by one law (``module_definition_at``: the one module
+        binding, CPython's scope classification at the read), for every
+        ``def`` whose name is bound to its function, whatever its kind (a
+        plain function, a generator function, an ``async def``, a
+        ``contextmanager`` generator, #7757); a decorated ``def`` or a
+        ``class`` binds its statement's value under its own key.  A local
+        ``def`` is not a module binding: the value its statement binds is
+        the key the substitution threads to every read and call of the name
+        (``_local_definition_binding``, ``_function_value_definition``).  A
+        read inside the definition's own body is answered as any other: where
+        its universe is under construction up the stack, the frame door
+        names the recursion seat (``_definition_call_frame``).
         Answered only for a read that runs when some function is called
         (``module_execution_site`` is None: it sits in a ``def`` or lambda
         body).  A read the module body itself runs (a module statement, a
@@ -22983,7 +22935,7 @@ class Call(Expression):
         builtin = self.unit.builtin_reference_at(func.id, func.line_col_span())
         if builtin is not None:
             return builtin in _KEY_CALLBACK_BUILTINS and position == ("keyword", "key")
-        definition = self.unit.source_function_definition_for_call(self)
+        definition = self.unit.function_definition_for_read(func)
         if not isinstance(definition, FunctionDef) or definition.decorators:
             return False
         formal = _receiving_formal(definition.params, position)
@@ -23017,9 +22969,9 @@ class Call(Expression):
         itself, or the object a name's reference denotes, ``of``, as
         ``_construct_sugar`` follows it); otherwise None.
 
-        A callee name ``scope`` does not bind is the call by name of the
-        ``def`` the call applies (``_named_function_value``: the
-        lexical row, ``SourceUnit.source_function_definition_for_call``)."""
+        A callee name ``scope`` does not bind is the call of the ``def`` its
+        name reads (``_named_function_value``,
+        ``SourceUnit.function_definition_for_read``)."""
         from .binding_state import unwrap_binding_state
 
         func = self.func
@@ -23028,7 +22980,7 @@ class Call(Expression):
             if isinstance(definition, (FunctionDef, AsyncFunctionDef)):
                 return definition
         if isinstance(func, Name) and func.id not in scope:
-            definition = self.unit.source_function_definition_for_call(self)
+            definition = self.unit.function_definition_for_read(func)
             if _binds_function_value(definition):
                 return definition
         callee = rewritten.func if isinstance(rewritten, Call) else None
@@ -23480,8 +23432,8 @@ class Call(Expression):
         The callee is the function's value: the read of the key a local
         ``def`` bound it under (``DecoratedDefinitionRef``, directly or
         through ``x = g``: ``_function_value_definition``), or, for a call by
-        name (``SourceUnit.source_function_definition_for_call``: the
-        lexical row, else the module binding), the same application with no
+        name, the value its name reads (``SourceUnit.function_definition_for_read``,
+        the one resolver of which ``def`` a name denotes), the same application with no
         decorator to apply and no key (``_decorated_definition_ref``), as a
         value read of a module ``def`` is (``Name._construct_sugar``).  The
         application reads each closure cell where this call stands
@@ -23524,15 +23476,16 @@ class Call(Expression):
         """``(definition, value sugar)``: for a call by name of a ``def``
         whose name is bound to the function its statement built
         (``_binds_function_value``: a plain function, a generator function,
-        an ``async def``, a ``contextmanager`` generator) the name resolves
-        to (``SourceUnit.source_function_definition_for_call``), that
+        an ``async def``, a ``contextmanager`` generator) the name reads
+        (``SourceUnit.function_definition_for_read``: a call's callee is the
+        value its name reads), that
         function (``_decorated_definition_ref`` with no key: the application
         applies no decorator and evaluates no default).  None for any other
         callee, and where the definition is at its recursion seat
         (``_recursion_seat``)."""
         if not isinstance(self.func, Name):
             return None
-        definition = self.unit.source_function_definition_for_call(self)
+        definition = self.unit.function_definition_for_read(self.func)
         if not _binds_function_value(definition):
             return None
         frame, _seat = _definition_call_frame(definition)
@@ -23549,7 +23502,7 @@ class Call(Expression):
         (``_recursion_seat_call``)."""
         if not isinstance(self.func, Name):
             return None
-        definition = self.unit.source_function_definition_for_call(self)
+        definition = self.unit.function_definition_for_read(self.func)
         if not _binds_function_value(definition):
             return None
         frame, seat = _definition_call_frame(definition)
@@ -25860,7 +25813,7 @@ def _global_input_names(definition) -> frozenset:
       ``_module_globals_read`` and those of each ``def`` or lambda nested in
       it, which the call may run), and
     - for each same-file call it makes by name
-      (``SourceUnit.source_function_definition_for_call``), the callee
+      (``SourceUnit.function_definition_for_read``), the callee
       contract's own ``global:`` inputs: this same answer for the callee,
       read off the callee's contract, never by walking the callee's body
       (the owner's ruling of 2026-11-15, "Edge, join at prove": what the
@@ -25926,13 +25879,15 @@ def _own_global_reads(definition) -> frozenset:
 
 def _same_file_callees(definition) -> tuple:
     """Each source ``def`` of this file ``definition``'s body calls by name
-    (``SourceUnit.source_function_definition_for_call``), in source order,
-    once each; the definition itself is not one."""
+    (``SourceUnit.function_definition_for_read``: the ``def`` its callee
+    name reads), in source order, once each; the definition itself is not
+    one.  A ``def`` nested in ``definition`` is no callee here: its reads are
+    ``definition``'s own (``_own_global_reads``)."""
     unit = definition.unit
     callees: dict[int, object] = {}
     for node in definition.walk():
         if isinstance(node, Call) and isinstance(node.func, Name):
-            callee = unit.source_function_definition_for_call(node)
+            callee = unit.function_definition_for_read(node.func)
             if callee is not None and callee is not definition:
                 callees.setdefault(id(callee), callee)
     return tuple(callees.values())
