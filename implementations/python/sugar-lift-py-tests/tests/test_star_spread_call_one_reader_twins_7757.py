@@ -115,7 +115,15 @@ def test_a_star_spread_never_refutes_a_truth_nor_admits_a_lie(
     source, truthful, lying, decided = _SHAPES[shape]
     text = source.format(claim=truthful if half == "truthful" else lying)
     result = run_source_through_real_solver(tmp_path / shape / half, text)
-    verdict = claim_verdict(result.prove_doc, claims_from_line=_claims_line(text))
+    # The lift document names the contracts nested in the test function (the
+    # local lambda): what such a contract owes over its own formals (``a - b``
+    # with no caller) is its own proof's, never the test function's claim
+    # (``witness_harness.claim_verdict``, #8687).
+    verdict = claim_verdict(
+        result.prove_doc,
+        claims_from_line=_claims_line(text),
+        lift_doc=result.lift_doc,
+    )
     whole = prove_verdict(result.prove_doc)
     if half == "lying":
         assert verdict != "sat", result.prove_doc
