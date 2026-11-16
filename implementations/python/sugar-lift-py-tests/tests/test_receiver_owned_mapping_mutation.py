@@ -31,7 +31,17 @@ def _definition_and_receiver():
     return value, value.fresh_receiver("receiver", allocation=FRAME_FRESH)
 
 
-def test_builtin_super_setitem_carries_receiver_transition_and_none_separately():
+def test_builtin_super_setitem_is_the_one_call_never_dicts_answer_here():
+    """``super().__setitem__`` over ``Mapping(dict)``: the order after
+    ``__class__`` is ``dict``, ``object``.  The lift no longer answers it by
+    dict's own mutation (#7757 L5): it is the one dispatched call after
+    ``__class__`` (with no workspace root, the unanswered ``super.__setitem__``),
+    owed, both faces standing, and no receiver transition is stated."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+    from sugar_lift_py_tests.outcome import Completed
+
     definition, receiver = _definition_and_receiver()
     outcome = BuiltinSuperValue(definition, receiver).call_method_value(
         "__setitem__",
@@ -40,34 +50,29 @@ def test_builtin_super_setitem_carries_receiver_transition_and_none_separately()
         blame="site",
     )
 
-    assert outcome.completed_value() is not None
-    assert isinstance(outcome.completed_value(), ReceiverOwnedMutationResult)
-    assert isinstance(
-        outcome.completed_value().project_operation_receiver(None, owner="test"), NoneValue
-    )
-    assert outcome.completed_value().receiver_before is receiver
-    assert outcome.completed_value().receiver_after.identity == receiver.identity
-    assert outcome.completed_value().receiver_after.entries == (
-        (StringValue("member"), TermValue(7)),
-    )
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
+    assert halt.effect.producer_node_owner == "UnknownCallee:super.__setitem__"
+    _binds, call = peel_walrus_binds(done.value)
+    assert isinstance(call, CallSiteValue), type(call)
+    assert not isinstance(call, ReceiverOwnedMutationResult)
+    assert outcome.owed_items()
 
 
 def test_receiver_transition_updates_every_exact_identity_alias_only():
     definition, receiver = _definition_and_receiver()
+    del definition
     distinct = MappingObjectValue(
         "Mapping", (), identity="other", allocation=FRAME_FRESH
     )
-    result = (
-        BuiltinSuperValue(definition, receiver)
-        .call_method_value(
-            "__setitem__",
-            (StringValue("member"), TermValue(7)),
-            owner="test",
-            blame="site",
-        )
-        .completed_value()
+    # A receiver transition with the operation's ``None`` kept apart, as a
+    # mapping's own mutation states it.
+    result = ReceiverOwnedMutationResult(
+        receiver,
+        receiver.mapping_with_entries(((StringValue("member"), TermValue(7)),)),
+        NoneValue(),
     )
-    assert isinstance(result, ReceiverOwnedMutationResult)
     ctx = ReduceContext.root(owner="test")
     ctx = ctx.with_temporal(ctx.temporal.bind_value("left", receiver))
     ctx = ctx.with_temporal(

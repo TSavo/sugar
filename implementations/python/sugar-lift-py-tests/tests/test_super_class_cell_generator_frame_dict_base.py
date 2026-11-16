@@ -12,8 +12,8 @@ leftovers of #8118).
   frame around it (PEP 709, CPython 3.12+); a generator's outermost iterable
   runs in the frame around it.
 - ``super().__getitem__``/``__delitem__``/``__contains__``/``get`` that select
-  ``dict`` are dict's own method through the mapping's one door per
-  operation (``MappingObjectValue.dict_base_call``).
+  ``dict`` are the one dispatched call after ``__class__``, as through any
+  source class (#7757 L5): the lift never answers them by dict's own method.
 """
 
 from __future__ import annotations
@@ -201,7 +201,7 @@ def test_a_lambda_in_a_generator_is_its_own_frame() -> None:
     )
 
 
-# --- (3) super() into dict: dict's own method, one door per operation ---------
+# --- (3) super() into dict: the one dispatched call, never dict answered here ---
 
 _DICT_OVERRIDES = (
     "class Override(dict):\n"
@@ -232,47 +232,40 @@ def _super_call(name: str, *arguments):
     )
 
 
-def _assert_undecided_read(outcome, site) -> None:
-    """The dict base's storage is not current
-    (``MappingObjectValue._builtin_dict``), so dict's own read of it is not
-    decided here: the read's two faces, both owing the ``undecided`` member
-    (reason ``unanswered``) at the read's site -- never a member it holds and
-    never a refusal."""
-    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
-    from sugar_lift_py_tests.unanswered_calls import owed_calls, unanswered_call
+@pytest.mark.parametrize(
+    "name, arguments",
+    [
+        ("__getitem__", (StringValue("k"),)),
+        ("__contains__", (StringValue("k"),)),
+        ("get", (StringValue("k"), NoneValue())),
+        ("get", (StringValue("absent"), NoneValue())),
+        ("__delitem__", (StringValue("k"),)),
+    ],
+)
+def test_super_into_the_dict_base_is_the_one_call(name, arguments) -> None:
+    """``super().<name>(...)`` whose order after ``__class__`` is ``dict``,
+    ``object``: the one dispatched call after ``__class__`` (#7757 L5), as
+    the same lookup through any source class is.  With no workspace root it
+    is the one unanswered call ``super.<name>``, owed, both faces standing:
+    never dict's own read, test or deletion answered here (no member it
+    holds, no default, no receiver transition)."""
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+    from sugar_lift_py_tests.outcome.exit_set import Completed
 
-    owed = (unanswered_call(None, site),)
+    outcome = _super_call(name, *arguments)
+
     (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
-    (halt,) = [arm for arm in outcome.exits if isinstance(arm, Halted)]
+    (halt,) = outcome.halts()
     assert len(outcome.exits) == 2
-    assert outcome.completed_value() is None
-    assert done.owed == halt.owed == owed
-    assert owed_calls(outcome) == owed
-
-
-def test_super_getitem_reads_the_dict_base() -> None:
-    _assert_undecided_read(
-        _super_call("__getitem__", StringValue("k")), "super-__getitem__"
-    )
-
-
-def test_super_contains_tests_the_dict_base() -> None:
-    outcome = _super_call("__contains__", StringValue("k"))
-    _assert_undecided_read(outcome, "super-__contains__")
-    assert not any(
-        isinstance(getattr(arm, "value", None), TrueBoolLiteralSugar)
-        for arm in outcome.exits
-    )
-
-
-def test_super_get_reads_the_dict_base_with_its_default() -> None:
-    assert _super_call("get", StringValue("k"), NoneValue()).completed_value() == (
-        TermValue(7)
-    )
-    assert isinstance(
-        _super_call("get", StringValue("absent"), NoneValue()).completed_value(),
-        NoneValue,
-    )
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
+    assert halt.effect.producer_node_owner == f"UnknownCallee:super.{name}"
+    _binds, call = peel_walrus_binds(done.value)
+    assert isinstance(call, CallSiteValue), type(call)
+    assert not isinstance(call, ReceiverOwnedMutationResult)
+    assert call != TermValue(7)
+    assert not isinstance(call, (NoneValue, TrueBoolLiteralSugar))
+    assert outcome.owed_items()
 
 
 def _undecided_deletion_arms(outcome):
@@ -292,26 +285,6 @@ def _undecided_deletion_arms(outcome):
     assert len(outcome.exits) == 2
     assert isinstance(halt.effect, UndeterminedRaiseEffect)
     return done
-
-
-def test_super_delitem_is_the_receivers_transition() -> None:
-    from sugar_lift_py_tests.floor import SymbolicValue
-
-    _context, definition, receiver = _override()
-
-    done = _undecided_deletion_arms(
-        BuiltinSuperValue(definition, receiver).call_method_value(
-            "__delitem__", (StringValue("k"),), owner="test", blame="super-del"
-        )
-    )
-
-    deleted = done.value
-    assert isinstance(deleted, ReceiverOwnedMutationResult)
-    assert deleted.receiver_before is receiver
-    # The receiver after it is the deletion's unknown post-state: never a
-    # mapping read as holding no entries (nor as still holding ``k``).
-    assert isinstance(deleted.receiver_after, SymbolicValue)
-    assert not isinstance(deleted.receiver_after, MappingObjectValue)
 
 
 def test_del_through_the_source_override_leaves_the_dict_base_undecided() -> None:
