@@ -48,21 +48,17 @@ def _resolves(module: str) -> bool:
 # method IS the door. Eleven arms reached for the shim.
 
 
-def test_floor_to_term_arms_project_through_the_value_s_own_to_term() -> None:
-    index, value = TermValue(0), TermValue(7)
+def test_a_symbolic_receiver_has_no_store_arm_of_its_own() -> None:
+    """The ``SymbolicValue.setitem``/``delitem`` arms that projected a
+    ``py.setitem``/``py.delitem`` coordinate are deleted: they completed with
+    no halt face.  A symbolic receiver's store is the one item mutation's
+    undecided arm (``store_effect_sugar.item_mutation``); a path that reaches
+    the floor's own method instead refuses by name (#7757 step 7)."""
+    assert "setitem" not in SymbolicValue.__dict__
+    assert "delitem" not in SymbolicValue.__dict__
     receiver = SymbolicValue(make_var("xs"))
-
-    outcome = receiver.setitem(index, value, "setitem-site", None)
-
-    assert outcome.completed_value() is not None
-    term = outcome.completed_value().term
-    assert isinstance(term, _Ctor)
-    assert term.name == "py.setitem"
-    # Exact cardinality: receiver, index, value -- one projected term each, and
-    # the index/value legs are precisely what the value projects for itself.
-    assert len(term.args) == 3
-    assert term.args[1] == index.to_term(owner="SymbolicValue.setitem index")
-    assert term.args[2] == value.to_term(owner="SymbolicValue.setitem value")
+    with pytest.raises(ConstructionPanic):
+        receiver.setitem(TermValue(0), TermValue(7), "setitem-site", None)
 
 
 def test_the_deleted_floor_terms_shim_is_not_quietly_back() -> None:

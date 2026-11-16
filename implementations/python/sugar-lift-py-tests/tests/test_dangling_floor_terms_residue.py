@@ -100,21 +100,48 @@ def test_symbolic_isinstance_re_i_regexflag_projects_value_directly(tmp_path) ->
     assert operation.args == (imported_flag.term, regex_flag.term)
 
 
+def _undecided_item_mutation(outcome, owner: str):
+    """The one item mutation's undecided arm: one completion under the
+    site's own ``completes`` atom, one undetermined raise under its
+    complement, the receiver after it unknown."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome.exit_set import (
+        Completed,
+        Halted,
+        complement_guard,
+    )
+
+    (done,) = [face for face in outcome.exits if isinstance(face, Completed)]
+    (halt,) = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert len(outcome.exits) == 2
+    assert halt.guard == complement_guard(done.guard)
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
+    assert halt.effect.producer_node_owner == owner
+    assert "python:receiver_after_call" in str(done.value.term)
+
+
 @pytest.mark.parametrize("receiver_kind", ("symbolic", "callsite"))
-def test_setitem_projects_index_and_value_directly(
+def test_setitem_on_an_undecided_receiver_is_the_undecided_mutation(
     tmp_path, receiver_kind: str
 ) -> None:
+    """The ``py.setitem`` arm this receiver had completed with no halt face;
+    it is deleted, and the store is the one item mutation's undecided arm,
+    its halt kept (#7757 step 7)."""
+    from sugar_lift_py_tests.sugar.store_effect_sugar import item_mutation
+
     receiver = _receiver(receiver_kind)
-    index = TermValue(0)
-    value = TermValue(7)
+    assert "setitem" not in type(receiver).__dict__
 
-    outcome = receiver.setitem(index, value, _sites(tmp_path)[1], None)
-
-    assert outcome.completed_value() is not None
-    assert outcome.completed_value().term.args[1:] == (
-        index.to_term(owner=f"{type(receiver).__name__}.setitem index"),
-        value.to_term(owner=f"{type(receiver).__name__}.setitem value"),
+    outcome = item_mutation(
+        "__setitem__",
+        receiver,
+        (TermValue(0), TermValue(7)),
+        _sites(tmp_path)[1],
+        None,
+        unit=None,
     )
+
+    _undecided_item_mutation(outcome, "UndecidedSetitem")
 
 
 def test_callsite_append_projects_appended_value_directly(tmp_path) -> None:
@@ -130,16 +157,25 @@ def test_callsite_append_projects_appended_value_directly(tmp_path) -> None:
 
 
 @pytest.mark.parametrize("receiver_kind", ("symbolic", "callsite"))
-def test_delitem_projects_index_directly(tmp_path, receiver_kind: str) -> None:
+def test_delitem_on_an_undecided_receiver_is_the_undecided_mutation(
+    tmp_path, receiver_kind: str
+) -> None:
+    """The ``py.delitem`` arm is deleted as the ``py.setitem`` one is."""
+    from sugar_lift_py_tests.sugar.store_effect_sugar import item_mutation
+
     receiver = _receiver(receiver_kind)
-    index = TermValue(0)
+    assert "delitem" not in type(receiver).__dict__
 
-    outcome = receiver.delitem(index, _sites(tmp_path)[3], None)
-
-    assert outcome.completed_value() is not None
-    assert outcome.completed_value().term.args[1] == index.to_term(
-        owner=f"{type(receiver).__name__}.delitem index"
+    outcome = item_mutation(
+        "__delitem__",
+        receiver,
+        (TermValue(0),),
+        _sites(tmp_path)[3],
+        None,
+        unit=None,
     )
+
+    _undecided_item_mutation(outcome, "UndecidedDelitem")
 
 
 def _receiver(kind: str):

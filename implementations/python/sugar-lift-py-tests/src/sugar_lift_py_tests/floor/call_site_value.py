@@ -767,34 +767,14 @@ class CallSiteValue(FloorValue):
             return decided
         return self.undecided_subscript(index, site, owner="CallSiteValue.subscript")
 
-    def setitem(self, index, value, site, ctx):
-        """Rebind an opaque mapping/list-shaped callsite after ``xs[k] = v``.
-
-        Concrete containers fold post-state. A callsite receiver has no element
-        history, but the store still rebinds the name: carry prior coordinate,
-        index, and value on ``py.setitem``. Non-name receivers stay halted
-        at the sugar layer (``SubscriptAssignSugar._cite_update``) because no
-        name exists to rebind. Do not invent members.
-        """
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        index_term = index.to_term(owner="CallSiteValue.setitem index")
-        value_term = value.to_term(owner="CallSiteValue.setitem value")
-        return ExitSet.completed(
-            CallSiteValue(
-                target_name="setitem",
-                arg_values=(self, index, value),
-                parameters=(),
-                term=ctor(
-                    "py.setitem",
-                    [self.to_term(owner=str(site)), index_term, value_term],
-                    symbol_kind="method-coordinate",
-                ),
-                body=None,
-                site=site,
-            )
-        )
+    # No ``setitem``/``delitem`` here: what a call returned is its callee's
+    # contract's, so its type is not decided and its item store or delete is
+    # the one item mutation (``store_effect_sugar.item_mutation``): the
+    # dispatched edge for a same-file class's call result, else the undecided
+    # arm (completes under its own atom or raises something undetermined,
+    # owed).  A path that reaches the floor's own method instead refuses by
+    # name (``FloorValue.setitem``), never completes with the halt dropped
+    # (#7757 step 7).
 
     def append_with(self, value, site):
         """Construct a proven list-shaped callsite after ``.append(v)``.
@@ -933,33 +913,6 @@ class CallSiteValue(FloorValue):
                 "prove that the call result is a mutable list and construct "
                 "its post-append state, or leave it loud"
             ),
-        )
-
-    def delitem(self, index, site, ctx):
-        """Rebind an opaque mapping/list-shaped callsite after ``del xs[k]``.
-
-        Concrete containers fold post-state. A callsite receiver (for example
-        ``dict_class(...)``) has no element history, but the delete still
-        rebinds the name: carry prior coordinate and index on ``py.delitem``.
-        Do not invent members; do not hide the gap — silence stays illegal.
-        """
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        index_term = index.to_term(owner="CallSiteValue.delitem index")
-        return ExitSet.completed(
-            CallSiteValue(
-                target_name="delitem",
-                arg_values=(self, index),
-                parameters=(),
-                term=ctor(
-                    "py.delitem",
-                    [self.to_term(owner=str(site)), index_term],
-                    symbol_kind="method-coordinate",
-                ),
-                body=None,
-                site=site,
-            )
         )
 
     def callsites(self):

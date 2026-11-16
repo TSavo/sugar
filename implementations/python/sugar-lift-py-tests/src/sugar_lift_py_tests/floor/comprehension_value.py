@@ -314,32 +314,24 @@ class ComprehensionValue(GuardStableValue):
     def setitem(  # pyright: ignore[reportIncompatibleMethodOverride]
         self, index, value, site, ctx
     ):
-        """Carry the exact post-state of a name-bound comprehension store."""
-        from typing import cast
+        """``comprehension[index] = value``: the undecided item mutation
+        (``store_effect_sugar.undecided_item_mutation_faces``).  The
+        comprehension's members and count are not in hand, so whether the
+        store raises (a list index out of range, a set or generator that
+        binds no ``__setitem__``) is not decided here: it completes, the
+        receiver after it unknown, only under its site-keyed completes atom,
+        and halts with an undetermined raise under the complement, both faces
+        owed.  Never a completion with the halt dropped (#7757 step 7)."""
+        del index, value, ctx
+        from sugar_lift_py_tests.sugar.store_effect_sugar import (
+            undecided_item_mutation_faces,
+        )
 
-        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.ir import Term, ctor
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        index_term = index.to_term(owner="ComprehensionValue.setitem index")
-        value_term = value.to_term(owner="ComprehensionValue.setitem value")
-        return ExitSet.completed(
-            CallSiteValue(
-                target_name="setitem",
-                arg_values=(self, index, value),
-                parameters=(),
-                term=ctor(
-                    "py.setitem",
-                    [
-                        cast(Term, self.to_term(owner=str(site))),
-                        index_term,
-                        value_term,
-                    ],
-                    symbol_kind="method-coordinate",
-                ),
-                body=None,
-                site=site,
-            )
+        return undecided_item_mutation_faces(
+            site,
+            noun="setitem",
+            method="__setitem__",
+            owner="ComprehensionValue.setitem",
         )
 
 
