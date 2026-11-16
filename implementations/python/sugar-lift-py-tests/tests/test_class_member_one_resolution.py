@@ -4,7 +4,8 @@
 1. Every reader of an instance's class member -- the attribute read, the
    explicit call ``o.m()``, an implicit special-method call -- reads the one
    class-namespace lookup once (``ObjectValue.class_member``).  A class-field
-   value it finds is read and carried; a ``def`` (of any kind) is never
+   value it finds is read and carried only under prove's ``python:class_read``
+   (#7757 L1); a ``def`` (of any kind) is never
    classified here: the read and the call are the dispatched read and call,
    whose member prove's one walk of the order decides (#7757 L3).
 2. The member is the binding the class body left last (``ClassDef.body_binder``):
@@ -171,16 +172,63 @@ def test_a_def_after_a_property_is_the_member_every_reader_meets() -> None:
     _the_edge(outcome)
 
 
-def test_an_assignment_after_a_def_is_the_member() -> None:
-    _value, receiver, ctx = _built(
+def _rooted_tree(tmp_path, source: str):
+    """``source`` opened under a workspace root: its classes name join
+    symbols, so an instance names its class term
+    (``receiver_dispatch.class_value``)."""
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+
+    path = tmp_path / "one_resolution_rooted.py"
+    path.write_text(source)
+    return open_source_file_for_construction(path, root=tmp_path)
+
+
+def _rooted_built(tmp_path, source: str):
+    """``_built`` under a workspace root (``_rooted_tree``)."""
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+
+    tree = _rooted_tree(tmp_path, source)
+    (class_def,) = tuple(node for node in tree.nodes() if isinstance(node, ClassDef))
+    ctx = ReduceContext.root(owner="test")
+    value = class_def.sugar().desugar(ctx).completed_value()
+    return value, value.fresh_receiver("receiver-cid", allocation=FRAME_FRESH), ctx
+
+
+def _class_read(outcome, matches):
+    """The one completed face of a class-field value read whose value
+    ``matches``: it holds only under prove's ``python:class_read`` (#7757
+    L1), and the read's other face, the dispatched read, keeps its halt."""
+    from sugar_lift_py_tests.outcome import Completed
+
+    (face,) = (
+        face
+        for face in outcome.exits
+        if isinstance(face, Completed) and matches(face.value)
+    )
+    assert "python:class_read" in repr(face.guard), face.guard
+    assert outcome.halts(), outcome
+    return face.value
+
+
+def test_an_assignment_after_a_def_is_the_member(tmp_path) -> None:
+    source = (
         "class Box:\n"
         "    def m(self):\n"
         "        raise ValueError('the def')\n"
         "    m = 5\n"
     )
+    _value, receiver, ctx = _built(source)
 
     assert receiver.class_member("m") == (True, None, TermValue(5))
-    assert receiver.attribute("m", "m-site", ctx).completed_value() == TermValue(5)
+    # With no workspace root no class term is named: the class-field value
+    # is never read as decided, the read is the undecided read (#7757 L1).
+    _the_read(receiver.attribute("m", "m-site", ctx))
+
+    _value, receiver, ctx = _rooted_built(tmp_path, source)
+    assert receiver.class_member("m") == (True, None, TermValue(5))
+    _class_read(
+        receiver.attribute("m", "m-site", ctx), lambda value: value == TermValue(5)
+    )
 
 
 def test_a_def_after_an_assignment_is_the_member() -> None:
@@ -203,11 +251,15 @@ def test_a_def_after_an_assignment_is_the_member() -> None:
 # --- 3. a function in the class namespace, read off an instance ------------------
 
 
-def test_a_lambda_class_field_read_off_an_instance_binds_self() -> None:
-    _value, receiver, ctx = _built("class Box:\n    f = lambda self, n: n // 0\n")
+def test_a_lambda_class_field_read_off_an_instance_binds_self(tmp_path) -> None:
+    _value, receiver, ctx = _rooted_built(
+        tmp_path, "class Box:\n    f = lambda self, n: n // 0\n"
+    )
 
-    read = receiver.attribute("f", "f-site", ctx).completed_value()
-    assert isinstance(read, BoundMethodValue)
+    read = _class_read(
+        receiver.attribute("f", "f-site", ctx),
+        lambda value: isinstance(value, BoundMethodValue),
+    )
     assert isinstance(read.member, LambdaCallable)
     assert read.receiver is receiver
     # ``self`` is bound to the receiver, so the one written actual is ``n``;
@@ -216,10 +268,11 @@ def test_a_lambda_class_field_read_off_an_instance_binds_self() -> None:
     _the_edge(_call(read, (TermValue(3),), "f-site", ctx))
 
 
-def test_a_def_held_as_a_class_field_read_off_an_instance_is_bound() -> None:
-    box = _classes("def helper(self):\n    return 7\n\nclass Box:\n    m = helper\n")[
-        "Box"
-    ]
+def test_a_def_held_as_a_class_field_read_off_an_instance_is_bound(tmp_path) -> None:
+    tree = _rooted_tree(
+        tmp_path, "def helper(self):\n    return 7\n\nclass Box:\n    m = helper\n"
+    )
+    box = next(node for node in tree.root.body if isinstance(node, ClassDef))
     # The function a ``def`` builds is a ``LambdaCallable``
     # (``decorator_application_sugar._function_value``).
     function = LambdaCallable(("self",), None, "helper")
@@ -232,8 +285,10 @@ def test_a_def_held_as_a_class_field_read_off_an_instance_is_bound() -> None:
     )
 
     assert receiver.class_member("m") == (True, None, function)
-    read = receiver.attribute("m", "m-site", None).completed_value()
-    assert isinstance(read, BoundMethodValue)
+    read = _class_read(
+        receiver.attribute("m", "m-site", None),
+        lambda value: isinstance(value, BoundMethodValue),
+    )
     assert read.member is function and read.receiver is receiver
 
 

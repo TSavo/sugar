@@ -29,16 +29,6 @@ if TYPE_CHECKING:
 _OBJECT_CLASS_SLOT = vars(object)["__class__"]
 
 
-def _builtin_binds_data_descriptor(owner: str, name: str) -> bool:
-    """Whether the builtin class ``owner`` (its name in ``builtins``) binds
-    ``name`` in its own namespace to a data descriptor: a value whose type
-    defines ``__set__`` or ``__delete__`` (``object.__class__``)."""
-    import builtins
-
-    held = type(vars(getattr(builtins, owner)).get(name))
-    return hasattr(held, "__set__") or hasattr(held, "__delete__")
-
-
 def _attribute_owned(outcome):
     """A dispatched read's raise continues as the Attribute's own halt
     beneath its arm (guard, faces and ``owed`` ride on); every other arm
@@ -262,18 +252,13 @@ class ObjectValue(FloorValue):
         arrived by binding may have been changed since by another alias,
         which may have stored, deleted or added any name in its ``__dict__``.
 
-        CPython reads ``o.name`` (``object.__getattribute__``,
-        ``_PyObject_GenericGetAttrWithDict``) as: a data descriptor the
-        class's MRO binds for ``name`` wins; else the instance ``__dict__``
-        entry; else the class's attribute (a method, a class field); else
-        ``AttributeError``.  So on an instance that is not current, every
-        answer but a data descriptor's waits on the ``__dict__`` this frame
-        does not hold -- a recorded field, a deleted one, a method or class
-        field it may shadow, a name nothing here records: each is the
-        undecided attribute read (``undecided_attribute_result``) over the object's
-        identity (``identity_term``).  Only a name the class binds to a data
-        descriptor (``_class_data_descriptor``) is answered from the class,
-        and never from the instance's fields.
+        On an instance that is not current, every name but one a store in
+        this frame put on it is the dispatched read (``_dispatched_read``):
+        which member a data descriptor or the ``__dict__`` answers it with is
+        prove's walk of the order to decide (``consistency::dispatch_walk``),
+        never the lift's.  Such an instance names no class term
+        (``receiver_dispatch.class_value``), so the read is the undecided
+        read over its identity (``identity_term``).
 
         A field a store in this frame put on the instance
         (``stored_fields``, the one field store) is the instance's field now,
@@ -282,8 +267,13 @@ class ObjectValue(FloorValue):
 
         A class-field value (a class-body binding other than a ``def``) is
         read off the class by the one class-namespace lookup
-        (``class_member``: the binding the class body left last): no proof
-        row states a field's value, so the lift is its only answerer.  A
+        (``class_member``: the binding the class body left last) only on the
+        face where prove decides that the read IS that binding's value
+        (``class_read_guard``: ``python:class_read(<class>, "<name>")``, no
+        ``__getattribute__`` or other read hook in the order and a binding
+        whose value defines no ``__get__``, ``consistency::class_read_holds``);
+        under its complement the read is the dispatched read.  Where no
+        class term is decided, the dispatched read alone (#7757 L1).  A
         lookup that does not decide is the undecided read
         (``undecided_attribute_result``).
 
@@ -296,26 +286,20 @@ class ObjectValue(FloorValue):
         the read names no class it is the undecided read.  ``o.m(...)``
         written as a call is the dispatched call itself
         (``dispatched_method_call``)."""
+        from sugar_lift_py_tests.outcome import ExitSet
+
         from .object_identity import contents_current
 
-        current = contents_current(self)
-        if not current and name in self.stored_fields:
-            # A store this frame made: the field is the instance's now,
-            # whatever the rest of an arrived instance holds.  A stored name
-            # meets no data descriptor (``with_field_store`` refuses one).
-            for field in reversed(self.fields):
-                if field.name == name:
-                    from sugar_lift_py_tests.outcome import ExitSet
-
-                    return ExitSet.completed(field.value)
-        if not current and not self._class_data_descriptor(name):
-            return undecided_attribute_result(
-                self, name, site, owner="ObjectValue.attribute"
-            )
-        for field in reversed(self.fields if current else ()):
+        if not contents_current(self):
+            if name in self.stored_fields:
+                # A store this frame made: the field is the instance's now,
+                # whatever the rest of an arrived instance holds.
+                for field in reversed(self.fields):
+                    if field.name == name:
+                        return ExitSet.completed(field.value)
+            return self._dispatched_read(name, site)
+        for field in reversed(self.fields):
             if field.name == name:
-                from sugar_lift_py_tests.outcome import ExitSet
-
                 return ExitSet.completed(field.value)
         decided, _selected, class_value = self.class_member(name)
         if not decided:
@@ -324,8 +308,8 @@ class ObjectValue(FloorValue):
             )
         if class_value is not None:
             from sugar_lift_py_tests.floor.lambda_callable import LambdaCallable
-            from sugar_lift_py_tests.outcome import ExitSet
 
+            read = class_value
             if isinstance(class_value, LambdaCallable):
                 # A function in the class namespace (``f = lambda self: 1``,
                 # ``m = some_def``) read off an instance is what its
@@ -337,8 +321,8 @@ class ObjectValue(FloorValue):
                     BoundMethodValue,
                 )
 
-                return ExitSet.completed(BoundMethodValue(self, name, class_value))
-            return ExitSet.completed(class_value)
+                read = BoundMethodValue(self, name, class_value)
+            return self._class_read_faces(name, ExitSet.completed(read), site)
         # No recorded field answers the name, and the one class-namespace lookup found no class-field
         # value for it: a ``def`` the class wrote (plain, ``staticmethod``,
         # ``classmethod``, ``property``) or nothing.  Which member that is,
@@ -351,11 +335,59 @@ class ObjectValue(FloorValue):
         # fields its ``__dict__`` may hold now (``receiver_dispatch.
         # class_value``), both faces
         # kept.  Where it names no class, the one undecided read.
+        return self._dispatched_read(name, site)
+
+    def _dispatched_read(self, name, site):
+        """``self.<name>`` as the one dispatched read
+        (``_dispatched_call(read=True)``), its raise the Attribute's own;
+        where the instance names no class term, the undecided read."""
         dispatched = self._dispatched_call(name, (), (), site, read=True)
         if dispatched is not None:
             return _attribute_owned(dispatched)
         return undecided_attribute_result(
             self, name, site, owner="ObjectValue.attribute"
+        )
+
+    def class_read_guard(self, name: str):
+        """``python:class_read(<class>, "<name>")``
+        (``receiver_dispatch.class_read_atom``): prove's statement that a
+        read of ``name`` on this instance is its class's binding of it, by
+        Python's own rule (``consistency::class_read_holds``).  None where no
+        class term is decided -- an instance not current, one whose
+        ``__class__`` was stored, no class symbol (no workspace root), no
+        class statement -- or ``name`` is a dunder name: the read is then
+        only the dispatched read."""
+        from sugar_lift_py_tests.receiver_dispatch import (
+            class_read_atom,
+            class_value,
+            is_dunder,
+        )
+
+        if is_dunder(name) or any(item.name == "__class__" for item in self.fields):
+            return None
+        term = class_value(self)
+        if term is None:
+            return None
+        return class_read_atom(term, name)
+
+    def _class_read_faces(self, name, read, site):
+        """The one shape of a class-field value read (#7757 L1): ``read`` --
+        the class binding's value, as its descriptor binds it -- under
+        ``class_read_guard``, and the dispatched read under its complement,
+        the two faces of one partition.  Where no guard is decided, the
+        dispatched read alone: the lift never decides that no hook runs or
+        that the value is no descriptor."""
+        from sugar_lift_py_tests.ir import not_
+        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.outcome.exit_set import partition
+
+        dispatched = self._dispatched_read(name, site)
+        guard = self.class_read_guard(name)
+        if guard is None or not isinstance(dispatched, ExitSet):
+            return dispatched
+        then, otherwise = partition(("ObjectValue.class_read", guard, str(site)))
+        return read.guarded(guard, then).union(
+            dispatched.guarded(not_(guard), otherwise)
         )
 
     def dispatched_method_call(self, name, positional, kw_values, site):
@@ -1099,33 +1131,6 @@ class ObjectValue(FloorValue):
             site=site,
         )
         return UnknownCalleeCallV1(target).faces(callsite, site, halted_at=halted_at)
-
-    def _class_data_descriptor(self, name: str) -> bool:
-        """Whether the class's binding of ``name`` is a data descriptor,
-        which wins over the instance ``__dict__`` (``attribute``).
-
-        The owner is the one class-namespace lookup on the type
-        (``ClassDef.namespace_owner``, the MRO read by binding).  A builtin
-        owner's binding is a data descriptor when its type defines
-        ``__set__`` or ``__delete__`` (``object.__class__``); a source
-        owner's when the value its namespace holds is the one its body bound
-        (``namespace_value_is_body``) and that is a ``property`` defined by
-        that class (``descriptor_kind``) -- a property is a data descriptor
-        with or without a setter.  Anything not decided -- no class
-        statement, a lookup the walk does not decide, no class binding the
-        name, a class field (its value's own descriptor protocol is not read
-        here) -- is not one."""
-        definition = getattr(self.defining_class, "class_definition", None)
-        if definition is None:
-            return False
-        decided, owner = definition.namespace_owner(name)
-        if not decided or owner is None:
-            return False
-        if isinstance(owner, str):
-            return _builtin_binds_data_descriptor(owner, name)
-        # A source owner's member is the one ``class_member`` selects.
-        decided, method, _value = self.class_member(name)
-        return decided and method is not None and method.descriptor_kind == "property"
 
     def _floor_gap(
         self,

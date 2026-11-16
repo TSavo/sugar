@@ -205,6 +205,24 @@ def stored_class_input(receiver, name: str, unit):
 #: (``consistency::PYTHON_PLAIN_READ``, decided on the namespace rows).
 PLAIN_READ = "python:plain_read"
 
+#: ``python:class_read(<class>, <field>)``: a read of ``<field>`` on an
+#: instance of ``<class>`` is the value its class's namespace binds the
+#: name to, by Python's own rule -- the instance's ``__dict__`` does not
+#: hold it, no class of the order binds ``__getattribute__`` (or another
+#: read hook), and the first class binding it binds a value whose class
+#: defines no ``__get__`` or a function held as a field
+#: (``consistency::PYTHON_CLASS_READ``, decided on the namespace rows,
+#: ``tree_enumerate._VALUE_KIND``).  ``ObjectValue.attribute`` states a
+#: class-field value only under it (#7757 L1).
+CLASS_READ = "python:class_read"
+
+
+def class_read_atom(class_term, name: str):
+    """``python:class_read(<class_term>, "<name>")`` (``CLASS_READ``)."""
+    from sugar_lift_py_tests.ir import atomic, str_const
+
+    return atomic(CLASS_READ, [class_term, str_const(name)])
+
 # A read of any of these names, or of these attributes, may store any name
 # on any object: ``setattr(o, name, v)``, ``vars(o)[name] = v``,
 # ``o.__dict__[name] = v``, ``object.__setattr__(o, name, v)`` -- and so
