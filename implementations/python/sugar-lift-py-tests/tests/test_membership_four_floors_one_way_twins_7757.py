@@ -268,6 +268,40 @@ def _halts_and_completions(outcome):
     return halts, completions
 
 
+def _names_in(formula) -> set:
+    """Every variable and atom name ``formula`` mentions, through its
+    connectives' operands and its atoms' and constructors' arguments."""
+    names = set()
+    pending = [formula]
+    while pending:
+        node = pending.pop()
+        name = getattr(node, "name", None)
+        if isinstance(name, str):
+            names.add(name)
+        pending.extend(getattr(node, "operands", ()) or ())
+        pending.extend(getattr(node, "args", ()) or ())
+    return names
+
+
+def _assert_both_arms_halt(halts) -> None:
+    """Both arms' halts are kept, each under its own polarity of ``chosen``.
+
+    The two arms' undecided memberships halt at one site with one producer,
+    so they are one destination, and the one sibling join
+    (``ExitSet.union`` -> ``normalize``) merges them into one exit whose
+    guard is the disjunction of the two arms' guards.  Whether that is one
+    exit or two, the halted face has to name each arm's comparison: a halt
+    is never dropped (#7757)."""
+    assert halts, halts
+    assert {halt.effect.producer_node_owner for halt in halts} == {
+        "UndecidedCompare:In"
+    }
+    mentioned = set()
+    for halt in halts:
+        mentioned |= _names_in(halt.guard)
+    assert {"a", "b", "chosen", "python:compare.completes"} <= mentioned, halts
+
+
 def test_a_guarded_container_of_two_formals_keeps_both_arms_halts() -> None:
     """``1 in (a if c else b)``: each arm is the undecided membership, kept
     under its own polarity.  Before, the rejoin demanded one value per arm
@@ -277,11 +311,8 @@ def test_a_guarded_container_of_two_formals_keeps_both_arms_halts() -> None:
 
     guarded = GuardedValue(atomic("chosen", []), _symbolic("a"), _symbolic("b"))
     halts, completions = _halts_and_completions(guarded.contains(TermValue(1), "site"))
-    assert len(halts) == 2, halts
+    _assert_both_arms_halt(halts)
     assert len(completions) == 2, completions
-    assert {halt.effect.producer_node_owner for halt in halts} == {
-        "UndecidedCompare:In"
-    }
 
 
 def test_a_guarded_needle_of_two_formals_in_a_string_keeps_both_arms_halts() -> None:
@@ -294,7 +325,7 @@ def test_a_guarded_needle_of_two_formals_in_a_string_keeps_both_arms_halts() -> 
     halts, completions = _halts_and_completions(
         StringValue("abc").contains(needle, "site")
     )
-    assert len(halts) == 2, halts
+    _assert_both_arms_halt(halts)
     assert len(completions) == 2, completions
 
 

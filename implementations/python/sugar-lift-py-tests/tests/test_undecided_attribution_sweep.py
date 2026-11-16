@@ -14,13 +14,7 @@ Triage: vocabulary already exists on FloorValue; offenders were wrong entrance
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from sugar_lift_py_tests.floor.mutable_global_value import MutableGlobalValue
-from sugar_source_tree.fragment import SourceMemento
-
-_CID = "blake3-512:" + ("ab" * 64)
-_CID2 = "blake3-512:" + ("cd" * 64)
 
 
 def _pinned(tmp_path, monkeypatch, source: str, kind: str, node_type):
@@ -42,22 +36,6 @@ def _pinned(tmp_path, monkeypatch, source: str, kind: str, node_type):
     site = next(node for node in tree.nodes() if isinstance(node, node_type)).fragment
     pin = MutableGlobalValue("G", kind, binding.source_cid, binding.seal())
     return pin, site
-
-
-def _mutable(*, kind: str = "list") -> MutableGlobalValue:
-    memento = SourceMemento(
-        file="mod.py",
-        source_cid=_CID,
-        cid=_CID2,
-        start=0,
-        end=1,
-    )
-    return MutableGlobalValue(
-        name="g",
-        kind=kind,
-        pin_source_cid=_CID,
-        binding_memento=memento,
-    )
 
 
 def _assert_undecided_membership_faces(outcome) -> None:
@@ -111,14 +89,18 @@ def test_mutable_global_attribute_is_undecided_not_write_more_floor(
     assert done.guard.name == "python:attribute_op.completes"
 
 
-def test_mutable_global_dict_contains_still_constructs() -> None:
-    """Do not break decided dict membership on the pin."""
+def test_mutable_global_dict_contains_is_the_undecided_membership(
+    tmp_path, monkeypatch
+) -> None:
+    """A dict pin's membership is the one undecided membership too (#9109):
+    another function may have stored a key whose ``__eq__`` raises on a
+    hash collision, so ``k in D`` may raise.  It constructs -- two faces,
+    never a refusal -- and is never the bare completed ``py.in`` it was."""
+    from sugar_source_tree.nodes import Compare
+
+    v, site = _pinned(
+        tmp_path, monkeypatch, "G = {}\nfound = 0 in G\n", "dict", Compare
+    )
     from sugar_lift_py_tests.floor.term_value import TermValue
 
-    v = _mutable(kind="dict")
-    site_ok = SimpleNamespace(
-        __str__=lambda self: "site:mod.py:1:1",
-        source_cid=_CID,
-    )
-    outcome = v.contains(TermValue(1), site_ok)
-    assert outcome.completed_value() is not None
+    _assert_undecided_membership_faces(v.contains(TermValue(0), site))
