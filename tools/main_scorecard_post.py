@@ -34,8 +34,36 @@ tree "worse" is more failing tests; and for every measure with a total, a total
 the last measured total is a regression too (``suite total 5667 -> 4212
 (shard lost?)``): counting failures alone let a lost shard post as OK (#8416).
 
+Sticky alarm: comparing only with the previous row let a regression go
+unread. The pandas board fell from 1420/1421 cpanic=0 to 1235 cpanic=181;
+that row said REGRESSION once (9bd3d4dde), and every later row at 1237
+cpanic=179 said OK for eight hours, because 1237 is not worse than 1235. So
+each number is also compared with its best measured value since the baseline:
+the lowest failing count (suite, twins, rust, tree), the highest total (with
+the same SCORECARD_TOTAL_DROP_TOLERANCE allowance, so deleted tests do not
+stick), the highest board completed, the lowest cpanic, and federation PASS.
+Any number worse than its best makes the comment start ``STILL REGRESSED:``,
+naming the number, its best and the row where the best was measured
+(``board 1237 < best 1420 @4c041edf1; cpanic 179 > best 0 @4c041edf1``),
+and this invocation exit 1; it never says OK. A fresh drop against the
+previous row still starts ``REGRESSION:`` (and a number already named there
+is not repeated under STILL REGRESSED). Best is read per measure from the rows
+that measured it, so the board's best comes from the board lane's rows and the
+suite's from the fast lane's rows.
+
+Baseline: best is read from every row on the issue (all comments are paged
+in), unless someone resets it on purpose by writing a comment on the issue
+with a line
+
+    scorecard-baseline: <sha> [measure,measure,...]
+
+(sha: 7 to 40 hex characters; measures default to all). From then on, those
+measures' best is read only from the rows starting at the first row measured
+at <sha> (or, when no row has that sha, from the rows written after the
+marker comment). The newest marker naming a measure wins.
+
 Comment shape (first line, then one machine-readable line of key=value):
-  OK ... | REGRESSION: ... ; then
+  OK ... | REGRESSION: ... | STILL REGRESSED: ... ; then
   sha= prev= run= suite=p/t twins=p/t federation= rust=p/t tree=p/t board=c/t cpanic=
   issues= prs= pending= rerun= carried= wall=
 
@@ -77,6 +105,13 @@ ROW_KEYS = ("sha", "prev", "run", "suite", "twins", "federation", "board", "cpan
 # A measure's total (passed + failed) may fall by this fraction against the
 # newest earlier row that measured it (tests deleted); more is a regression.
 TOTAL_DROP_TOLERANCE = float(os.environ.get("SCORECARD_TOTAL_DROP_TOLERANCE") or "0.02")
+# Measures whose cell is passed/total and whose alarm is "more failing".
+FAILING_MEASURES = ("suite", "twins", "rust", "tree")
+# A human or coordinator resets the best on purpose with this line.
+BASELINE_RE = re.compile(
+    r"^[ \t]*scorecard-baseline:[ \t]*([0-9a-fA-F]{7,40})(?:[ \t]+([a-z][a-z, \t]*?))?[ \t]*$",
+    re.MULTILINE,
+)
 
 
 def gh(*args: str) -> str | None:
@@ -110,6 +145,213 @@ def parse_row(body: str) -> dict[str, str] | None:
         if all(k in fields for k in ROW_KEYS):
             return fields
     return None
+
+
+def parse_baselines(body: str) -> list[tuple[str, tuple[str, ...]]]:
+    """The ``scorecard-baseline: <sha> [measures]`` lines of a comment."""
+    markers = []
+    for match in BASELINE_RE.finditer(body):
+        sha = match.group(1).lower()
+        named = [m for m in re.split(r"[,\s]+", match.group(2) or "") if m]
+        if not named:
+            markers.append((sha, MEASURES))
+            continue
+        known = tuple(m for m in MEASURES if m in named)
+        unknown = [m for m in named if m not in MEASURES]
+        if unknown or not known:
+            print(f"::warning::ignored scorecard-baseline line naming {unknown}: {match.group(0).strip()}")
+            continue
+        markers.append((sha, known))
+    return markers
+
+
+def read_history(
+    bodies: list[str], run_id: str
+) -> tuple[list[dict[str, str]], dict[str, list[dict[str, str]]], dict[str, str]]:
+    """Read the issue's comments (oldest first) into the rows to compare with.
+
+    Returns the earlier rows (other runs), newest first; for each measure, the
+    rows its best is read from (since its baseline), newest first; and each
+    reset measure's baseline sha.
+    """
+    rows: list[tuple[int, dict[str, str]]] = []
+    markers: list[tuple[int, str, tuple[str, ...]]] = []
+    for index, body in enumerate(bodies):
+        row = parse_row(body)
+        if row is not None:
+            if row.get("run") != run_id:
+                rows.append((index, row))
+            continue
+        for sha, measures in parse_baselines(body):
+            markers.append((index, sha, measures))
+    start = {m: 0 for m in MEASURES}
+    baseline: dict[str, str] = {}
+    for index, sha, measures in markers:  # oldest first: the newest marker wins
+        at = next((j for j, row in rows if j < index and row["sha"].lower().startswith(sha)), index)
+        for measure in measures:
+            start[measure] = at
+            baseline[measure] = sha
+    earlier = [row for _, row in reversed(rows)]
+    window = {m: [row for j, row in reversed(rows) if j >= start[m]] for m in MEASURES}
+    return earlier, window, baseline
+
+
+def split_pair(cell: str) -> tuple[int, int] | None:
+    pieces = cell.split("/")
+    if len(pieces) == 2 and pieces[0].isdigit() and pieces[1].isdigit():
+        return int(pieces[0]), int(pieces[1])
+    return None
+
+
+def judge(
+    current: dict[str, str],
+    earlier: list[dict[str, str]],
+    window: dict[str, list[dict[str, str]]],
+    skip: set[str] | frozenset[str] = frozenset(),
+) -> tuple[list[str], list[str]]:
+    """Compare this row's cells with the previous measured rows and with the best.
+
+    ``current`` holds this row's cells by row key (suite, twins, rust, tree,
+    board, cpanic, federation); ``skip`` names measures that are pending or not
+    this workflow's. Returns (fresh drops against the previous measured row,
+    numbers still worse than their best since the baseline).
+    """
+    drops: dict[tuple[str, str], str] = {}
+    still: dict[tuple[str, str], str] = {}
+
+    def newest(rows: list[dict[str, str]], read) -> object | None:
+        for row in rows:
+            value = read(row)
+            if value is not None:
+                return value
+        return None
+
+    def best(rows: list[dict[str, str]], read, better) -> tuple[int, str] | None:
+        """Best value and the sha of the newest row that measured it."""
+        found: tuple[int, str] | None = None
+        for row in rows:  # newest first: a tie keeps the newest row
+            value = read(row)
+            if value is not None and (found is None or better(value, found[0])):
+                found = (value, row.get("sha", "?"))
+        return found
+
+    def failing(row: dict[str, str], key: str) -> int | None:
+        pair = split_pair(row.get(key, ""))
+        return pair[1] - pair[0] if pair else None
+
+    def total(row: dict[str, str], key: str) -> int | None:
+        pair = split_pair(row.get(key, ""))
+        return pair[1] if pair else None
+
+    def digit(row: dict[str, str], key: str, part: int | None = None) -> int | None:
+        value = row.get(key, "")
+        if part is not None:
+            pieces = value.split("/")
+            value = pieces[part] if len(pieces) > part else ""
+        return int(value) if value.isdigit() else None
+
+    lower = lambda a, b: a < b  # noqa: E731
+    higher = lambda a, b: a > b  # noqa: E731
+
+    for m in FAILING_MEASURES:
+        if m in skip:
+            continue
+        cur = split_pair(current.get(m, ""))
+        before = newest(earlier, lambda r: failing(r, m))
+        if before is not None:
+            if cur is None:
+                drops[(m, "failing")] = f"{m} unmeasured (was {before} failing)"
+            elif cur[1] - cur[0] > before:
+                drops[(m, "failing")] = f"{m} failing {before} -> {cur[1] - cur[0]}"
+        top = best(window[m], lambda r: failing(r, m), lower)
+        if cur is not None and top is not None and cur[1] - cur[0] > top[0]:
+            still[(m, "failing")] = f"{m} failing {cur[1] - cur[0]} > best {top[0]} @{top[1][:9]}"
+
+    for m in FAILING_MEASURES + ("board",):
+        if m in skip:
+            continue
+        cur = split_pair(current.get(m, ""))
+        if cur is None:
+            continue
+        floor = 1.0 - TOTAL_DROP_TOLERANCE
+        before = newest(earlier, lambda r: total(r, m))
+        if before is not None and cur[1] < before * floor:
+            drops[(m, "total")] = f"{m} total {before} -> {cur[1]} (shard lost?)"
+        top = best(window[m], lambda r: total(r, m), higher)
+        if top is not None and cur[1] < top[0] * floor:
+            still[(m, "total")] = (
+                f"{m} total {cur[1]} < best {top[0]} @{top[1][:9]} "
+                f"(beyond {TOTAL_DROP_TOLERANCE:.0%})"
+            )
+
+    if "board" not in skip:
+        cur_done = digit(current, "board", 0)
+        before = newest(earlier, lambda r: digit(r, "board", 0))
+        if before is not None:
+            if cur_done is None:
+                drops[("board", "completed")] = f"board completed unmeasured (was {before})"
+            elif cur_done < before:
+                drops[("board", "completed")] = f"board completed {before} -> {cur_done}"
+        top = best(window["board"], lambda r: digit(r, "board", 0), higher)
+        if cur_done is not None and top is not None and cur_done < top[0]:
+            still[("board", "completed")] = f"board {cur_done} < best {top[0]} @{top[1][:9]}"
+
+        cur_panic = digit(current, "cpanic")
+        before = newest(earlier, lambda r: digit(r, "cpanic"))
+        if before is not None:
+            if cur_panic is None:
+                drops[("board", "cpanic")] = f"board cpanic unmeasured (was {before})"
+            elif cur_panic > before:
+                drops[("board", "cpanic")] = f"board cpanic {before} -> {cur_panic}"
+        top = best(window["board"], lambda r: digit(r, "cpanic"), lower)
+        if cur_panic is not None and top is not None and cur_panic > top[0]:
+            still[("board", "cpanic")] = f"cpanic {cur_panic} > best {top[0]} @{top[1][:9]}"
+
+    if "federation" not in skip:
+        fed = current.get("federation", "?")
+        verdict = lambda r: r.get("federation") if r.get("federation") in ("PASS", "FAIL") else None  # noqa: E731
+        if newest(earlier, verdict) == "PASS" and fed != "PASS":
+            drops[("federation", "verdict")] = (
+                f"federation PASS -> {fed if fed in ('PASS', 'FAIL') else 'unmeasured'}"
+            )
+        passed = next((r for r in window["federation"] if verdict(r) == "PASS"), None)
+        if fed == "FAIL" and passed is not None:
+            still[("federation", "verdict")] = f"federation FAIL, best PASS @{passed.get('sha', '?')[:9]}"
+
+    return list(drops.values()), [text for key, text in still.items() if key not in drops]
+
+
+def headline(
+    drops: list[str],
+    still: list[str],
+    *,
+    prev_error: bool = False,
+    first: bool = False,
+    pending: list[str] | None = None,
+    range_txt: str = "",
+    baseline: dict[str, str] | None = None,
+) -> str:
+    """The comment's first line: OK, REGRESSION:, STILL REGRESSED: or UNCOMPARED."""
+    tail = f" | pending: {', '.join(pending)}" if pending else ""
+    if baseline:
+        by_sha: dict[str, list[str]] = {}
+        for measure, sha in baseline.items():
+            by_sha.setdefault(sha[:9], []).append(measure)
+        tail += " | baseline " + ", ".join(f"{','.join(ms)}@{sha}" for sha, ms in by_sha.items())
+    if range_txt:
+        tail += f" | {range_txt}"
+    if prev_error:
+        return f"UNCOMPARED: the previous rows could not be read{tail}"
+    parts = []
+    if drops:
+        parts.append("REGRESSION: " + "; ".join(drops))
+    if still:
+        parts.append("STILL REGRESSED: " + "; ".join(still))
+    if parts:
+        return " | ".join(parts) + tail
+    if first:
+        return f"OK first machine-readable row, nothing to compare{tail}"
+    return f"OK all measured numbers held or improved and none is below its best{tail}"
 
 
 class Lock:
@@ -202,6 +444,40 @@ def run_wall(repo: str, run_id: str) -> str:
     except ValueError:
         return "?"
     return f"{int((datetime.now(timezone.utc) - start).total_seconds())}s"
+
+
+def read_comments(owner: str, name: str, issue: str) -> list[dict] | None:
+    """Every comment on the scorecard issue, oldest first; None when unreadable.
+
+    Paged backwards 100 at a time: the best since the baseline needs the whole
+    history, not only the newest 100 comments.
+    """
+    query = (
+        "query($o:String!,$r:String!,$n:Int!,$b:String){repository(owner:$o,name:$r)"
+        "{issue(number:$n){comments(last:100,before:$b){"
+        "pageInfo{hasPreviousPage startCursor} nodes{databaseId body}}}}}"
+    )
+    pages: list[list[dict]] = []
+    before: str | None = None
+    for _ in range(200):
+        args = ["api", "graphql", "-f", f"query={query}",
+                "-f", f"o={owner}", "-f", f"r={name}", "-F", f"n={issue}"]
+        if before:
+            args += ["-f", f"b={before}"]
+        raw = gh(*args)
+        if raw is None:
+            return None
+        try:
+            comments = json.loads(raw)["data"]["repository"]["issue"]["comments"]
+        except (ValueError, KeyError, TypeError):
+            print("::warning::unreadable scorecard comment page")
+            return None
+        pages.append(comments.get("nodes") or [])
+        info = comments.get("pageInfo") or {}
+        before = info.get("startCursor")
+        if not info.get("hasPreviousPage") or not before:
+            break
+    return [node for page in reversed(pages) for node in page]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -314,7 +590,9 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
                  "board), on every push to main, hourly, on demand. Each measuring "
                  "job edits its run's comment as soon as its own number lands; `?` "
                  "is pending until then and `-` is the other workflow's number. "
-                 "Each comment starts with OK or REGRESSION:, then one "
+                 "Each comment starts with OK, REGRESSION: or STILL REGRESSED: "
+                 "(a number worse than its best since the baseline; reset the best "
+                 "with a comment line `scorecard-baseline: <sha> [measures]`), then one "
                  "machine-readable line: sha= prev= run= suite= twins= federation= "
                  "rust= tree= board= cpanic= issues= prs= pending= rerun= carried= wall=.")
         if url is None:
@@ -325,25 +603,21 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
             print(f"::warning::could not pin issue #{issue}")
 
     owner, name = repo.split("/", 1)
-    query = (
-        "query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r)"
-        "{issue(number:$n){comments(last:100){nodes{databaseId body}}}}}"
-    )
-    raw = gh("api", "graphql", "-f", f"query={query}",
-             "-f", f"o={owner}", "-f", f"r={name}", "-F", f"n={issue}")
+    nodes = read_comments(owner, name, issue)
     own_comment = None
     earlier: list[dict[str, str]] = []  # newest first
-    prev_error = raw is None
-    if raw is not None:
-        nodes = json.loads(raw)["data"]["repository"]["issue"]["comments"]["nodes"]
+    window: dict[str, list[dict[str, str]]] = {m: [] for m in MEASURES}
+    baseline: dict[str, str] = {}
+    prev_error = nodes is None
+    if nodes is not None:
         for node in reversed(nodes):
             row = parse_row(node.get("body") or "")
-            if row is None:
-                continue
-            if row.get("run") == run_id:
-                own_comment = own_comment or node.get("databaseId")
-            else:
-                earlier.append(row)
+            if row is not None and row.get("run") == run_id:
+                own_comment = node.get("databaseId")
+                break
+        earlier, window, baseline = read_history(
+            [node.get("body") or "" for node in nodes], run_id
+        )
     # The comment this run already wrote: banked next to the results, so a
     # second job never creates a duplicate even if the listing lags.
     banked_id = runs / ".comment-id"
@@ -355,16 +629,6 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
     # workflow's numbers, so the PR range is the range those numbers moved in.
     comparable = [row for row in earlier if any(row_measured(row, m) for m in own)]
     prev_sha = (comparable or earlier)[0]["sha"] if earlier else "none"
-
-    def last_measured(key: str, part: int | None = None) -> str | None:
-        for row in earlier:
-            value = row.get(key, "")
-            if part is not None:
-                pieces = value.split("/")
-                value = pieces[part] if len(pieces) > part else ""
-            if value.isdigit() or value in ("PASS", "FAIL"):
-                return value
-        return None
 
     prs: list[str] = []
     prs_known = True
@@ -382,95 +646,33 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
         prs_known = not prev_error
     prs_cell = ",".join(prs) if prs_known else "?"
 
-    drops: list[str] = []
-
-    def higher_is_better(label: str, measure: str, cur: str, key: str, part: int | None) -> None:
-        if measure in pending or measure in outside:
-            return
-        before = last_measured(key, part)
-        if before is None or not before.isdigit():
-            return
-        if not cur.isdigit():
-            drops.append(f"{label} unmeasured (was {before})")
-        elif int(cur) < int(before):
-            drops.append(f"{label} {before} -> {cur}")
-
-    def last_failing(key: str) -> int | None:
-        """Failing count (total - passed) in the newest earlier row that measured `key`."""
-        for row in earlier:
-            pieces = row.get(key, "").split("/")
-            if len(pieces) == 2 and pieces[0].isdigit() and pieces[1].isdigit():
-                return int(pieces[1]) - int(pieces[0])
-        return None
-
-    def fewer_failing_is_better(label: str, measure: str, cur_pass: str, cur_total: str, key: str) -> None:
-        # A suite or twin set gains and loses tests as code is deleted, so the
-        # passed count alone drops when a passing test is deleted. What must not
-        # rise is the number of tests that do not pass.
-        if measure in pending or measure in outside:
-            return
-        before = last_failing(key)
-        if before is None:
-            return
-        if not (cur_pass.isdigit() and cur_total.isdigit()):
-            drops.append(f"{label} unmeasured (was {before} failing)")
-        elif int(cur_total) - int(cur_pass) > before:
-            drops.append(f"{label} failing {before} -> {int(cur_total) - int(cur_pass)}")
-
-    def last_total(key: str) -> int | None:
-        """Total (passed + failed) in the newest earlier row that measured `key`."""
-        for row in earlier:
-            pieces = row.get(key, "").split("/")
-            if len(pieces) == 2 and pieces[0].isdigit() and pieces[1].isdigit():
-                return int(pieces[1])
-        return None
-
-    def total_held(label: str, measure: str, cur_total: str, key: str) -> None:
-        # Counting failures alone missed a lost shard (run 43832361876: the
-        # suite total fell from ~5667 to 4212 with three failing, and the row
-        # said OK). Tests are added and deleted, so a small drop is allowed;
-        # beyond it the total itself is the regression.
-        if measure in pending or measure in outside or not cur_total.isdigit():
-            return
-        before = last_total(key)
-        if before is not None and int(cur_total) < before * (1.0 - TOTAL_DROP_TOLERANCE):
-            drops.append(f"{label} total {before} -> {cur_total} (shard lost?)")
-
-    fewer_failing_is_better("suite", "suite", suite_pass, suite_total, "suite")
-    fewer_failing_is_better("twins", "twins", twins_pass, twins_total, "twins")
-    fewer_failing_is_better("rust", "rust", rust_pass, rust_total, "rust")
-    fewer_failing_is_better("tree", "tree", tree_pass, tree_total, "tree")
-    total_held("suite", "suite", suite_total, "suite")
-    total_held("twins", "twins", twins_total, "twins")
-    total_held("rust", "rust", rust_total, "rust")
-    total_held("tree", "tree", tree_total, "tree")
-    total_held("board", "board", board_total, "board")
-    higher_is_better("board completed", "board", board_done, "board", 0)
-    if "board" not in pending and "board" not in outside:
-        before = last_measured("cpanic")
-        if before is not None:
-            if not cpanic.isdigit():
-                drops.append(f"board cpanic unmeasured (was {before})")
-            elif int(cpanic) > int(before):
-                drops.append(f"board cpanic {before} -> {cpanic}")
-    if (
-        "federation" not in pending
-        and "federation" not in outside
-        and last_measured("federation") == "PASS"
-        and fed != "PASS"
-    ):
-        drops.append(f"federation PASS -> {fed if fed != '?' else 'unmeasured'}")
+    # Fresh drops against the newest earlier row that measured each number, and
+    # numbers still worse than their best since the baseline (sticky). Failing
+    # counts, not passed counts, are compared: tests are added and deleted. A
+    # total may fall by the small tolerance (tests deleted); beyond it the
+    # total itself is the regression (run 43832361876 lost a shard: suite total
+    # ~5667 -> 4212 with three failing, and the row said OK).
+    current = {
+        "suite": f"{suite_pass}/{suite_total}",
+        "twins": f"{twins_pass}/{twins_total}",
+        "rust": f"{rust_pass}/{rust_total}",
+        "tree": f"{tree_pass}/{tree_total}",
+        "board": f"{board_done}/{board_total}",
+        "cpanic": cpanic,
+        "federation": fed,
+    }
+    drops, still = judge(current, earlier, window, set(pending) | set(outside))
 
     range_txt = f"PRs {prs_cell or 'none'} ({prev_sha[:9]}..{sha[:9]})"
-    pending_txt = f" | pending: {', '.join(pending)}" if pending else ""
-    if prev_error:
-        status = f"UNCOMPARED: the previous rows could not be read{pending_txt} | {range_txt}"
-    elif drops:
-        status = "REGRESSION: " + "; ".join(drops) + f"{pending_txt} | {range_txt}"
-    elif not earlier:
-        status = f"OK first machine-readable row, nothing to compare{pending_txt}"
-    else:
-        status = f"OK all measured numbers held or improved{pending_txt} | {range_txt}"
+    status = headline(
+        drops,
+        still,
+        prev_error=prev_error,
+        first=not earlier,
+        pending=pending,
+        range_txt=range_txt if (earlier or prev_error) else "",
+        baseline={m: s for m, s in baseline.items() if m in own},
+    )
 
     def carry_cell(field: str) -> str:
         # Nothing is carried (#8416: the carry recorder is deleted): every
@@ -542,7 +744,7 @@ def post(repo: str, run_id: str, sha: str, title: str, run_url: str, runs: Path,
         print(f"::error::could not write the row on #{issue}")
         return 1
     print(f"{'updated' if own_comment else 'posted'} on #{issue}:\n{body}")
-    if drops or prev_error:
+    if drops or still or prev_error:
         print(f"::error::{status}")
         return 1
     return 0
