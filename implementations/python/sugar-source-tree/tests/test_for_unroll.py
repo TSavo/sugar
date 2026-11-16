@@ -13,7 +13,7 @@ from sugar_source_tree.panic import SugarNotWritten
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
-from native_carrier_testimony import authenticated_function_value
+from native_carrier_testimony import native_carrier_for
 
 
 def _fn(src):
@@ -24,21 +24,23 @@ def _fn(src):
 
 
 def _invs(src):
-    function = _fn(src)
-    outcome = function.sugar().desugar()
-    if isinstance(outcome, ExitSet) and outcome.completed_value() is not None:
-        return outcome.completed_value().invs()
-    # Deleted expectation: each formal loop-body equality completed before binding.
-    return authenticated_function_value(function, operator="equals").invs()
+    outcome = _fn(src).sugar().desugar()
+    assert isinstance(outcome, ExitSet), outcome
+    value = outcome.completed_value()
+    assert value is not None, outcome
+    return value.invs()
 
 
 def test_concrete_for_unrolls_the_body_per_element():
-    invs = _invs(
-        "def A(z):\n    for x in [1, 2, 3]:\n        assert x == z\n    return z\n"
+    """Deleted expectation: each formal loop-body equality completed with an
+    actual the test supplied. The first element's equality waits on ``z``."""
+    carrier = native_carrier_for(
+        _fn("def A(z):\n    for x in [1, 2, 3]:\n        assert x == z\n    return z\n"),
+        operator="equals",
     )
-    assert len(invs) == 3
-    assert [i.args[0].value for i in invs] == [1, 2, 3]  # x = each element
-    assert all(i.name == "py.eq" and i.args[1].name == "z" for i in invs)
+    left, right = carrier.operands
+    assert left.to_term(owner="loop equality carrier tooth").value == 1
+    assert right.to_term(owner="loop equality carrier tooth").name == "z"
 
 
 def test_empty_concrete_for_states_nothing():

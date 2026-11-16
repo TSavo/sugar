@@ -1003,7 +1003,7 @@ def as_its_own_proof_states(outcome, ctx):
     A body whose operation on a formal waits for the caller's actual reduces
     to a deferred native operation (``NativeOperationExitCarrierV1``): the
     one mechanism a caller applying the body in place discharges with its
-    actuals (``CallSiteValue``, ``SourceCallFrame.project_native_carrier``).
+    actuals (``CallSiteValue``).
     The function's own proof has no caller, so no formal has an actual: the
     carrier discharges with none. Each such operation then stands at its
     site as the two-faced arm the absence of an actual is

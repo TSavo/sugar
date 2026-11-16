@@ -3,9 +3,7 @@
 import pytest
 
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
-from sugar_lift_py_tests.floor import SymbolicValue
-from sugar_lift_py_tests.ir import make_var
-from sugar_lift_py_tests.outcome import Completed, ExitSet
+from sugar_lift_py_tests.outcome import ExitSet
 
 
 def completed_function_value(function):
@@ -26,18 +24,3 @@ def native_carrier_for(function, *, operator):
     assert outcome.demand.operator == operator
     return outcome
 
-
-def authenticated_function_value(function, *, operator, actuals=None):
-    """Completed through the function's own source-frame binder testimony."""
-    carrier = native_carrier_for(function, operator=operator)
-    frame = function.source_visible_call_frame()
-    if actuals is None:
-        actuals = tuple(SymbolicValue(make_var(name)) for name in frame.parameters)
-    bound = frame.bind_actuals(tuple(actuals), ())
-    projected = bound.project_native_carrier(carrier, None)
-    assert isinstance(projected, ExitSet), projected
-    completed = tuple(
-        exit_ for exit_ in projected.exits if isinstance(exit_, Completed)
-    )
-    assert len(completed) == 1, projected.exits
-    return completed[0].value

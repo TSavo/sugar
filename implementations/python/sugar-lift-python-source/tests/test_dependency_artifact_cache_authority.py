@@ -162,8 +162,6 @@ def _isolated_memos(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
     monkeypatch.setattr(da, "_AUTHENTICATE_GRAPH_CACHE", {})
     monkeypatch.setattr(da, "_AUTHENTICATE_CACHE_ENABLED", True)
-    monkeypatch.setattr(da, "_PACKAGES_DISTRIBUTIONS_CACHE", None)
-    monkeypatch.setattr(da, "_TOP_LEVEL_GRAPH_CACHE", {})
     yield
 
 
@@ -430,7 +428,6 @@ def test_a_cold_process_table_parses_each_recorded_module_once(tmp_path, monkeyp
     monkeypatch.setattr(da, "_require_parseable_module_source", counted_gate)
     # A new process: every process-local table is empty.
     da._AUTHENTICATE_GRAPH_CACHE.clear()
-    da._TOP_LEVEL_GRAPH_CACHE.clear()
     cold = DependencyArtifactGraph.authenticate(
         importlib.metadata.Distribution.at(distribution._path)
     )

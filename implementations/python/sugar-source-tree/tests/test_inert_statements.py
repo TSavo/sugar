@@ -16,19 +16,22 @@ from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
-from native_carrier_testimony import authenticated_function_value
+from native_carrier_testimony import native_carrier_for
 
 
-def _val(src):
+def _fn(src):
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(src)
         path = f.name
-    function = next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
-    outcome = function.sugar().desugar()
-    if isinstance(outcome, ExitSet) and outcome.completed_value() is not None:
-        return outcome.completed_value()
-    # Deleted expectation: the later formal equality completed without caller testimony.
-    return authenticated_function_value(function, operator="equals")
+    return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
+
+
+def _val(src):
+    outcome = _fn(src).sugar().desugar()
+    assert isinstance(outcome, ExitSet), outcome
+    value = outcome.completed_value()
+    assert value is not None, outcome
+    return value
 
 
 def test_import_is_inert():
@@ -68,10 +71,15 @@ def test_nonlocal_is_inert():
 
 
 def test_import_does_not_block_a_later_fact():
-    v = _val("def A(z):\n    import m\n    assert z == 1\n    return z\n")
-    assert len(v.invs()) == 1
-    assert v.invs()[0].name == "py.eq"
-    assert v.post().args[1].name == "z"
+    """Deleted expectation: the later formal equality completed with an actual
+    the test supplied. The import states nothing; the equality is what waits."""
+    carrier = native_carrier_for(
+        _fn("def A(z):\n    import m\n    assert z == 1\n    return z\n"),
+        operator="equals",
+    )
+    left, right = carrier.operands
+    assert left.to_term(owner="post-import equality carrier tooth").name == "z"
+    assert right.value == 1
 
 
 if __name__ == "__main__":
