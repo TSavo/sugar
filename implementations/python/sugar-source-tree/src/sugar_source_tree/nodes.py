@@ -25178,8 +25178,10 @@ def _receiver_class_parameters(definition) -> tuple:
     - no call reaches the object through a field (``p.x.f()``);
     - no nested function, lambda or class reads ``p`` at all (code that runs
       when the frame does not see it);
-    - for the first parameter, the body makes no zero-argument ``super()``
-      call (the base's method runs on the object).
+    - for the first parameter where the body makes a zero-argument
+      ``super()`` call, the body calls no method of it (the base's method
+      runs on the object and may store a field that shadows one); the
+      super call is then itself a dispatched call over this input.
 
     A generator function or an ``async def`` has none: its body runs after
     its call returned, where the caller's class of the object says nothing
@@ -25212,7 +25214,28 @@ def _read_receiver_class_parameters(definition) -> tuple:
         return ()
     received, blocked, _read, zero_argument_super = uses
     if zero_argument_super:
-        blocked = blocked | {parameters[0]}
+        # ``super().m(...)`` runs a base's method on the first parameter's
+        # object, and is itself the dispatched call over that parameter's
+        # class (``BuiltinSuperValue._dispatched``): ``super_getattro`` reads
+        # no instance ``__dict__``, so what the base's method stores cannot
+        # shadow it.  A method call on the parameter itself does read the
+        # ``__dict__`` the base's code may have changed, so the class is an
+        # input only where the body calls no method of it (#7757).
+        first = parameters[0]
+        body = definition.body
+        statements = tuple(body) if isinstance(body, (list, tuple)) else (body,)
+        calls_a_method = any(
+            isinstance(node, Call)
+            and isinstance(node.func, Attribute)
+            and isinstance(node.func.value, Name)
+            and node.func.value.id == first
+            for statement in statements
+            for node in statement.walk()
+        )
+        if calls_a_method or first in blocked:
+            blocked = blocked | {first}
+        else:
+            received = received | {first}
     # A method's receiver whose fields are inputs (``_receiver_field_inputs``)
     # takes its class as an input too: the plain-read guard reads it.
     received = received | {name for name, _field in _receiver_field_inputs(definition)}
